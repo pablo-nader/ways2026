@@ -57,6 +57,7 @@ function Pedidor() {
     <div>
       <p data-testid="ruta">{pathname}</p>
       <p data-testid="aviso">{aviso}</p>
+      <p data-testid="imposible">{String(estado?.imposible)}</p>
       <p data-testid="listo">{String(estado?.listo)}</p>
       <p data-testid="cerrar-habilitada">{String(estado?.habilitadas.cerrarTurno)}</p>
       <button onClick={() => solicitar('cerrarTurno')}>pedir cierre</button>
@@ -264,5 +265,47 @@ describe('ProveedorDeAccionesDePos — pedidos que no deben correr tarde', () =>
 
     expect(ejecutores.sincronizar).not.toHaveBeenCalled()
     expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo sincronizar')
+  })
+
+  it('pedir el foco (F1) no borra un pedido de caja pendiente: sigue corriendo una vez cuando la pantalla queda lista', async () => {
+    const ejecutores = ejecutoresFixture()
+    const { Pantalla, control } = pantallaPorFases([estadoFixture(ESTADO_SIN_CARGAR), estadoFixture()], ejecutores)
+    montar(<Pantalla />)
+
+    await userEvent.click(screen.getByText('pedir cierre'))
+    await userEvent.click(screen.getByText('pedir foco'))
+    act(() => control.avanzar())
+
+    expect(ejecutores.cerrarTurno).toHaveBeenCalledTimes(1)
+  })
+
+  it('pedir el foco (F1) no borra un aviso que el cajero todavía no leyó', async () => {
+    const ejecutores = ejecutoresFixture()
+    montar(<PantallaDeVenta estado={estadoFixture(ESTADO_CON_ERROR)} ejecutores={ejecutores} />)
+    await userEvent.click(screen.getByText('pedir cierre'))
+    expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo cerrar el turno')
+
+    await userEvent.click(screen.getByText('pedir foco'))
+
+    expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo cerrar el turno')
+    expect(ejecutores.enfocarEscaneo).toHaveBeenCalledTimes(1)
+  })
+
+  it('el aviso de descarte por "imposible" no afirma una causa concreta (también aplica en modo presupuesto o sin punto de venta)', async () => {
+    montar(<PantallaDeVenta estado={estadoFixture(ESTADO_CON_ERROR)} ejecutores={ejecutoresFixture()} />)
+
+    await userEvent.click(screen.getByText('pedir cierre'))
+
+    expect(screen.getByTestId('aviso')).toHaveTextContent('la pantalla de venta no puede operar el turno ahora')
+    expect(screen.getByTestId('aviso')).not.toHaveTextContent('consultar')
+  })
+
+  it('en reposo conserva "imposible": tras una consulta fallida, salir de la venta no hace creer que hay una consulta en curso', async () => {
+    montar(<PantallaDeVenta estado={estadoFixture(ESTADO_CON_ERROR)} ejecutores={ejecutoresFixture()} />)
+    expect(screen.getByTestId('imposible')).toHaveTextContent('true')
+
+    await userEvent.click(screen.getByText('ir a ventas'))
+
+    expect(screen.getByTestId('imposible')).toHaveTextContent('true')
   })
 })

@@ -142,7 +142,7 @@ function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSes
         <MenuDeAcciones etiqueta="Sistema" items={itemsDeSistema} />
       </nav>
       {aviso && (
-        <span role="status" className="small text-warning text-nowrap">
+        <span role="status" className="small text-warning text-truncate flex-shrink-1" style={{ minWidth: 0, maxWidth: '22rem' }} title={aviso}>
           {aviso}
         </span>
       )}
@@ -352,78 +352,77 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   return (
     <AuthContext.Provider value={valorAuth}>
       <ProveedorDePuntoVentaFijo puntoVenta={puntoVenta}>
-        {/* stage-pos-caja-en-cabecera: envuelve el árbol existente sin reindentarlo, a propósito
-            (mantiene chico el diff de un archivo que otro trabajo en paralelo también toca, en las
-            rutas de más abajo) — `RanuraHeaderPosContext` solo agrega el `Provider` alrededor. */}
+        {/* stage-pos-caja-en-cabecera: `RanuraHeaderPosContext` expone el nodo del header donde
+            `Pos.tsx` monta sus chips de estado. */}
         <RanuraHeaderPosContext.Provider value={nodoRanuraHeader}>
-        {/* stage-pos-adjustments: por encima de `<Routes>`, para que el borrador de un ticket en
-            curso sobreviva a navegar entre "Vender"/"Ventas del turno"/"Gastos" — el `Provider` es
-            una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
-        <ProveedorDeBorradoresDeTicket>
-        <ProveedorDeAccionesDePos>
-          <div className="d-flex flex-column min-vh-100">
-            <CabeceraPos
-              dispositivo={dispositivo}
-              usuario={usuario}
-              cerrandoSesion={cerrandoSesion}
-              inerte={instalandoActualizacion}
-              alCerrarSesion={() => void cerrarSesion()}
-              refRanura={setNodoRanuraHeader}
-            />
+          {/* stage-pos-adjustments: por encima de `<Routes>`, para que el borrador de un ticket en
+              curso sobreviva a navegar entre "Vender"/"Ventas del turno"/"Gastos" — el `Provider` es
+              una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
+          <ProveedorDeBorradoresDeTicket>
+            <ProveedorDeAccionesDePos>
+              <div className="d-flex flex-column min-vh-100">
+                <CabeceraPos
+                  dispositivo={dispositivo}
+                  usuario={usuario}
+                  cerrandoSesion={cerrandoSesion}
+                  inerte={instalandoActualizacion}
+                  alCerrarSesion={() => void cerrarSesion()}
+                  refRanura={setNodoRanuraHeader}
+                />
 
-            <AvisoDeActualizacion
-              motivoDeBloqueo={
-                ventaEnCurso
-                  ? 'Terminá la venta en curso para instalarla.'
-                  : imprimiendo
-                    ? 'Esperá a que termine la impresión para instalarla.'
-                    : null
-              }
-              alCambiarInstalando={setInstalandoActualizacion}
-            />
+                <AvisoDeActualizacion
+                  motivoDeBloqueo={
+                    ventaEnCurso
+                      ? 'Terminá la venta en curso para instalarla.'
+                      : imprimiendo
+                        ? 'Esperá a que termine la impresión para instalarla.'
+                        : null
+                  }
+                  alCambiarInstalando={setInstalandoActualizacion}
+                />
 
-            {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
-                propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
-                a cualquier otra navegación del shell). Un aviso por trabajo fallido (regla 14): el
-                de un trabajo nunca lo pisa ni lo borra el de otro. */}
-            {avisosDeImpresion.map((aviso) => (
-              <div
-                key={aviso.id}
-                role="alert"
-                className="alert alert-warning py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
-              >
-                <span>
-                  No se pudo imprimir {aviso.descripcion}: {aviso.mensaje}
-                </span>
-                <div className="d-flex gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline-secondary"
-                    disabled={aviso.reintentando}
-                    onClick={() => reimprimir(aviso)}
+                {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
+                    propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
+                    a cualquier otra navegación del shell). Un aviso por trabajo fallido (regla 14): el
+                    de un trabajo nunca lo pisa ni lo borra el de otro. */}
+                {avisosDeImpresion.map((aviso) => (
+                  <div
+                    key={aviso.id}
+                    role="alert"
+                    className="alert alert-warning py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
                   >
-                    {aviso.reintentando ? 'Imprimiendo…' : 'Reimprimir'}
-                  </button>
-                  <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => cerrarAviso(aviso.id)}>
-                    Cerrar
-                  </button>
-                </div>
-              </div>
-            ))}
+                    <span>
+                      No se pudo imprimir {aviso.descripcion}: {aviso.mensaje}
+                    </span>
+                    <div className="d-flex gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        disabled={aviso.reintentando}
+                        onClick={() => reimprimir(aviso)}
+                      >
+                        {aviso.reintentando ? 'Imprimiendo…' : 'Reimprimir'}
+                      </button>
+                      <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => cerrarAviso(aviso.id)}>
+                        Cerrar
+                      </button>
+                    </div>
+                  </div>
+                ))}
 
-            <main className="flex-grow-1" inert={instalandoActualizacion}>
-              <Routes>
-                <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
-                <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
-                <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
-                <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
-                <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
-                <Route path="*" element={<Navigate to="/vender" replace />} />
-              </Routes>
-            </main>
-          </div>
-        </ProveedorDeAccionesDePos>
-        </ProveedorDeBorradoresDeTicket>
+                <main className="flex-grow-1" inert={instalandoActualizacion}>
+                  <Routes>
+                    <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
+                    <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
+                    <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
+                    <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
+                    <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
+                    <Route path="*" element={<Navigate to="/vender" replace />} />
+                  </Routes>
+                </main>
+              </div>
+            </ProveedorDeAccionesDePos>
+          </ProveedorDeBorradoresDeTicket>
         </RanuraHeaderPosContext.Provider>
       </ProveedorDePuntoVentaFijo>
     </AuthContext.Provider>

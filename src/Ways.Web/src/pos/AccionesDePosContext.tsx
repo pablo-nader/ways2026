@@ -69,7 +69,6 @@ function estadoEnReposo(estado: EstadoDeAccionesDePos): EstadoDeAccionesDePos {
   return {
     ...estado,
     listo: false,
-    imposible: false,
     verificandoCierre: false,
     sincronizando: false,
     habilitadas: {
@@ -169,7 +168,7 @@ export function ProveedorDeAccionesDePos({ children }: { children: ReactNode }) 
     const pedido = pedidoPendienteRef.current
     if (pedido === null) return
     if (pedido !== 'enfocarEscaneo' && registro.montado && registro.estado?.imposible) {
-      descartarPedido(pedido, 'no se pudo consultar el turno.')
+      descartarPedido(pedido, 'la pantalla de venta no puede operar el turno ahora.')
       return
     }
     if (!puedeEjecutar(pedido, registro)) return
@@ -181,22 +180,29 @@ export function ProveedorDeAccionesDePos({ children }: { children: ReactNode }) 
 
   const solicitar = useCallback(
     (pedido: PedidoDePos) => {
+      // Pedir el foco no toca un pedido de caja pendiente ni un aviso que el cajero todavía no leyó.
+      if (pedido === 'enfocarEscaneo') {
+        if (puedeEjecutar(pedido, registro)) ejecutar(pedido, registro.estado)
+        else if (pedidoPendienteRef.current === null) {
+          pedidoPendienteRef.current = pedido
+          if (pathname !== RUTA_DE_VENTA) void navegar(RUTA_DE_VENTA)
+        }
+        return
+      }
       avisar(null)
       if (puedeEjecutar(pedido, registro)) {
         ejecutar(pedido, registro.estado)
         return
       }
-      if (pedido !== 'enfocarEscaneo' && registro.montado && registro.estado?.imposible) {
-        descartarPedido(pedido, 'no se pudo consultar el turno.')
+      if (registro.montado && registro.estado?.imposible) {
+        descartarPedido(pedido, 'la pantalla de venta no puede operar el turno ahora.')
         return
       }
       soltarPedido()
       pedidoPendienteRef.current = pedido
-      if (pedido !== 'enfocarEscaneo') {
-        plazoDelPedidoRef.current = setTimeout(() => {
-          if (pedidoPendienteRef.current === pedido) descartarPedido(pedido, 'la pantalla de venta tardó demasiado en estar lista.')
-        }, PLAZO_DEL_PEDIDO_PENDIENTE_MS)
-      }
+      plazoDelPedidoRef.current = setTimeout(() => {
+        if (pedidoPendienteRef.current === pedido) descartarPedido(pedido, 'la pantalla de venta tardó demasiado en estar lista.')
+      }, PLAZO_DEL_PEDIDO_PENDIENTE_MS)
       if (pathname !== RUTA_DE_VENTA) void navegar(RUTA_DE_VENTA)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
