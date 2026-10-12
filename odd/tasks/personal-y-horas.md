@@ -117,7 +117,20 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   corriente lo requiere); con origen cajón el gasto lleva el instante real y `fecha` solo
   fecha el asiento; la referencia de la línea se guarda en el detalle del gasto; tope de 20
   líneas. No se valida que la empresa del empleado coincida con la que paga.
-  Seguimientos: anular un pago; etiqueta web del tipo nuevo en la cuenta corriente.
+  Judgment-day: ronda 1 sin críticos; los dos jueces sin ciclos de locks ni caminos que
+  dejen los libros inconsistentes. Corregido en `42c0d4ff`, `cf880c5b` y `f63b2ff6`: línea
+  nula y origen numérico inválido respondían 500; etiqueta web del tipo nuevo; el descuento
+  alcanzaba a un cliente dado de baja en carrera (ahora el UPDATE exige cliente vivo); los
+  listados de gastos exponen `idMovimientoPersonal` y las pantallas deshabilitan editar,
+  eliminar y vincular. La re-evaluación confirmó todo y encontró un defecto del arreglo
+  (campo ausente tratado como vinculado), corregido en el commit siguiente.
+  Cambio de alcance aceptado en la revisión: pagar desde tesorería exige Admin (403 al
+  Supervisor), igual que el gasto de administración; cajón y descuento siguen para ambos.
+  Verificación tras las correcciones: Domain 1408/1408, Application 875/875, integración
+  filtrada 431/431, web 5912/5912 (una falla intermitente sin identificar en la primera
+  corrida); verificación del padre: integración de pago 52/52, web de gastos 110/110.
+  Seguimientos: anular un pago; `CompraEditor` con `?desdeGasto=` de un gasto vinculado no
+  se frena en pantalla (termina en 409); la etiqueta nueva del POS requiere release.
 - [ ] T4 — Pantalla de personal (web). Ruta: delegada.
   ABM con selector de usuario y de cliente, ruta, entrada de menú.
   Checks: tests de helpers de mapeo y de componente.
@@ -130,4 +143,4 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
 T1 cerrada (1.551 líneas de autoría sin contar el código generado de la migración).
 T1 mergeada en main (PR #402). T2 cerrada (1.712 líneas de autoría).
 T2 mergeada en main (PR #407). T3 cerrada (2.492 líneas de autoría).
-Próximo paso: judgment-day y PR de T3, luego T4.
+Próximo paso: PR de T3, luego T4.
