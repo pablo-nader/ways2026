@@ -297,6 +297,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
@@ -368,6 +369,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
@@ -412,6 +414,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");

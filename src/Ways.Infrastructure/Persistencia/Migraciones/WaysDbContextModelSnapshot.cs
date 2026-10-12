@@ -54,6 +54,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_caja", new[] { "apertura_cajon", "refuerzo", "retiro" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc", new[] { "actualizacion_precios", "ajuste", "consumo", "descuento_personal", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cuenta", new[] { "ajuste", "cobro", "comision", "deposito", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "gasto", "retiro_caja" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "importe", "peso", "unidad" });
@@ -693,6 +694,73 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("arqueos_turno", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Caja.CuentaTesoreria", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cuenta_tesoreria");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<decimal>("SaldoInicial")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("saldo_inicial");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_cuentas_tesoreria");
+
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_cuentas_tesoreria_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_cuentas_tesoreria_empresa");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_cuentas_tesoreria_nombre_empresa")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("cuentas_tesoreria", (string)null);
+                });
+
             modelBuilder.Entity("Ways.Domain.Caja.MovimientoCaja", b =>
                 {
                     b.Property<int>("Id")
@@ -748,6 +816,107 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_movimientos_caja_importe", "(tipo = 'apertura_cajon' AND importe = 0) OR (tipo <> 'apertura_cajon' AND importe > 0)");
 
                             t.HasCheckConstraint("ck_movimientos_caja_motivo_minimo", "length(btrim(motivo)) >= 5");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.Caja.MovimientoCuenta", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_movimiento_cuenta");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal?>("BaseBruta")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("base_bruta");
+
+                    b.Property<string>("Concepto")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("concepto");
+
+                    b.Property<decimal>("Egreso")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("egreso");
+
+                    b.Property<DateTimeOffset>("Fecha")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha");
+
+                    b.Property<decimal>("Final")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("final");
+
+                    b.Property<int>("IdCuentaTesoreria")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cuenta_tesoreria");
+
+                    b.Property<int>("IdEmpleado")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empleado");
+
+                    b.Property<int?>("IdMedioPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<int?>("IdTurnoCaja")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_turno_caja");
+
+                    b.Property<decimal>("Ingreso")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("ingreso");
+
+                    b.Property<decimal>("Inicio")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("inicio");
+
+                    b.Property<decimal?>("PorcentajeAplicado")
+                        .HasColumnType("numeric(6,3)")
+                        .HasColumnName("porcentaje_aplicado");
+
+                    b.Property<TipoMovimientoCuenta>("Tipo")
+                        .HasColumnType("tipo_movimiento_cuenta")
+                        .HasColumnName("tipo");
+
+                    b.HasKey("Id")
+                        .HasName("pk_movimientos_cuenta");
+
+                    b.HasIndex("IdEmpleado")
+                        .HasDatabaseName("ix_movimientos_cuenta_empleado");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_movimientos_cuenta_tenant");
+
+                    b.HasIndex("IdCuentaTesoreria", "IdTenant");
+
+                    b.HasIndex("IdMedioPago", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_cuenta_medio_pago");
+
+                    b.HasIndex("IdTurnoCaja", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_cuenta_turno");
+
+                    b.HasIndex("IdTenant", "IdCuentaTesoreria", "Id")
+                        .HasDatabaseName("ix_movimientos_cuenta_cuenta_id");
+
+                    b.HasIndex("IdTenant", "IdTurnoCaja", "IdMedioPago", "Tipo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_movimientos_cuenta_cierre")
+                        .HasFilter("id_turno_caja IS NOT NULL");
+
+                    b.ToTable("movimientos_cuenta", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_movimientos_cuenta_cadena", "final = inicio + ingreso - egreso");
+
+                            t.HasCheckConstraint("ck_movimientos_cuenta_importes_no_negativos", "ingreso >= 0 AND egreso >= 0");
+
+                            t.HasCheckConstraint("ck_movimientos_cuenta_un_solo_lado", "ingreso = 0 OR egreso = 0");
                         });
                 });
 
@@ -1458,6 +1627,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("boolean")
                         .HasColumnName("admite_vuelto");
 
+                    b.Property<decimal>("ComisionPorcentaje")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(6,3)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("comision_porcentaje");
+
                     b.Property<ComportamientoMedioPago>("Comportamiento")
                         .HasColumnType("comportamiento_medio_pago")
                         .HasColumnName("comportamiento");
@@ -1469,6 +1644,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdCuentaTesoreria")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cuenta_tesoreria");
 
                     b.Property<int?>("IdEmpresa")
                         .HasColumnType("integer")
@@ -1502,6 +1681,24 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("boolean")
                         .HasColumnName("requiere_referencia");
 
+                    b.Property<decimal>("RetencionGananciasPorcentaje")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(6,3)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("retencion_ganancias_porcentaje");
+
+                    b.Property<decimal>("RetencionIibbPorcentaje")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(6,3)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("retencion_iibb_porcentaje");
+
+                    b.Property<decimal>("RetencionIvaPorcentaje")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(6,3)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("retencion_iva_porcentaje");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -1513,6 +1710,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_medios_pago_tenant");
+
+                    b.HasIndex("IdCuentaTesoreria", "IdTenant")
+                        .HasDatabaseName("ix_medios_pago_cuenta_tesoreria");
 
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_medios_pago_empresa");
@@ -1529,7 +1729,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("medios_pago", null, t =>
                         {
+                            t.HasCheckConstraint("ck_medios_pago_cuenta_solo_electronico", "comportamiento = 'electronico' OR (id_cuenta_tesoreria IS NULL AND comision_porcentaje = 0 AND retencion_iibb_porcentaje = 0 AND retencion_iva_porcentaje = 0 AND retencion_ganancias_porcentaje = 0)");
+
                             t.HasCheckConstraint("ck_medios_pago_porcentaje_facturacion", "porcentaje_facturacion >= 0 AND porcentaje_facturacion <= 100");
+
+                            t.HasCheckConstraint("ck_medios_pago_porcentajes_cuenta_rango", "comision_porcentaje BETWEEN 0 AND 100 AND retencion_iibb_porcentaje BETWEEN 0 AND 100 AND retencion_iva_porcentaje BETWEEN 0 AND 100 AND retencion_ganancias_porcentaje BETWEEN 0 AND 100");
+
+                            t.HasCheckConstraint("ck_medios_pago_porcentajes_cuenta_suma", "comision_porcentaje + retencion_iibb_porcentaje + retencion_iva_porcentaje + retencion_ganancias_porcentaje <= 100");
                         });
                 });
 
@@ -5642,6 +5848,24 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasConstraintName("fk_arqueos_turno_turno");
                 });
 
+            modelBuilder.Entity("Ways.Domain.Caja.CuentaTesoreria", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cuentas_tesoreria_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cuentas_tesoreria_empresa");
+                });
+
             modelBuilder.Entity("Ways.Domain.Caja.MovimientoCaja", b =>
                 {
                     b.HasOne("Ways.Domain.Usuarios.Usuario", null)
@@ -5665,6 +5889,45 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_movimientos_caja_turno");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Caja.MovimientoCuenta", b =>
+                {
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpleado")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_cuenta_empleado");
+
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_cuenta_tenant");
+
+                    b.HasOne("Ways.Domain.Caja.CuentaTesoreria", null)
+                        .WithMany()
+                        .HasForeignKey("IdCuentaTesoreria", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_cuenta_cuenta_tesoreria");
+
+                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdMedioPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_cuenta_medio_pago");
+
+                    b.HasOne("Ways.Domain.Caja.TurnoCaja", null)
+                        .WithMany()
+                        .HasForeignKey("IdTurnoCaja", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_cuenta_turno");
                 });
 
             modelBuilder.Entity("Ways.Domain.Caja.MovimientoTesoreria", b =>
@@ -5863,6 +6126,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_medios_pago_tenant");
+
+                    b.HasOne("Ways.Domain.Caja.CuentaTesoreria", null)
+                        .WithMany()
+                        .HasForeignKey("IdCuentaTesoreria", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_medios_pago_cuenta_tesoreria");
 
                     b.HasOne("Ways.Domain.Organizacion.Empresa", null)
                         .WithMany()
