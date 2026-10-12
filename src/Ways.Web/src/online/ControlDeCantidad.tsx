@@ -2,7 +2,7 @@ import { useId, useState } from 'react'
 
 import type { UnidadVenta } from '../api/tipos'
 import { CANTIDAD_MAXIMA, formatearCantidad, normalizarCantidad, parsearCantidad, pasoDelBoton } from './carrito'
-import { useCarrito } from './CarritoContext'
+import { useAccionesDelCarrito } from './CarritoContext'
 
 type PropsDeControl = { idArticulo: number; nombre: string; unidadVenta: UnidadVenta; cantidad: number }
 
@@ -19,7 +19,7 @@ function etiquetas(unidadVenta: UnidadVenta, nombre: string) {
  * vuelve a mostrarla. Bajar del mínimo quita la línea.
  */
 export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad }: PropsDeControl) {
-  const { cambiarCantidad, quitar } = useCarrito()
+  const { cambiarCantidad, quitar } = useAccionesDelCarrito()
   const [borrador, setBorrador] = useState<string | null>(null)
   const idDeAyuda = useId()
   const paso = pasoDelBoton(unidadVenta)

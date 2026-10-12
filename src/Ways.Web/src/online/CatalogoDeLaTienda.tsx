@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { Chevrones } from '../publico/Glifos'
 import { BarraDelCatalogo } from './BarraDelCatalogo'
+import { useCarrito } from './CarritoContext'
 import { TarjetaDeArticulo } from './TarjetaDeArticulo'
 import { useCatalogo } from './useCatalogo'
 
@@ -52,6 +53,7 @@ export function CatalogoDeLaTienda() {
   const [buscar, setBuscar] = useState('')
   const [idCategoria, setIdCategoria] = useState<number | null>(null)
   const catalogo = useCatalogo({ buscar, idCategoria })
+  const { cantidades } = useCarrito()
 
   if (!catalogo.cargadoAlgunaVez) {
     return catalogo.fase === 'error' ? (
@@ -89,7 +91,7 @@ export function CatalogoDeLaTienda() {
           ) : (
             <ul className={cargando ? 'publico-grilla publico-grilla-atenuada' : 'publico-grilla'} aria-busy={cargando}>
               {catalogo.articulos.map((articulo) => (
-                <TarjetaDeArticulo key={articulo.id} articulo={articulo} />
+                <TarjetaDeArticulo key={articulo.id} articulo={articulo} cantidad={cantidades.get(articulo.id) ?? 0} />
               ))}
             </ul>
           )}

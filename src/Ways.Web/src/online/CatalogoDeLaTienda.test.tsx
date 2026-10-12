@@ -12,13 +12,25 @@ import { Tienda } from './Tienda'
 const obtenerVitrinaMock = vi.fn()
 const obtenerCatalogoMock = vi.fn<(consulta: ConsultaDeCatalogo) => Promise<CatalogoPublico>>()
 
-vi.mock('../api/publico', async (importarOriginal) => ({
-  ...(await importarOriginal<typeof import('../api/publico')>()),
-  clienteDePublico: {
-    obtenerVitrina: () => obtenerVitrinaMock(),
-    obtenerCatalogo: (consulta: ConsultaDeCatalogo) => obtenerCatalogoMock(consulta),
-  },
-}))
+const urlDeLaImagenMock = vi.fn<(id: number, version: number | null) => void>()
+
+vi.mock('../api/publico', async (importarOriginal) => {
+  const original = await importarOriginal<typeof import('../api/publico')>()
+
+  return {
+    ...original,
+    // Pasa la llamada al original y la cuenta: cada dibujo de la imagen de una tarjeta es una llamada.
+    urlDeLaImagenDelArticulo: (id: number, version: number | null) => {
+      urlDeLaImagenMock(id, version)
+
+      return original.urlDeLaImagenDelArticulo(id, version)
+    },
+    clienteDePublico: {
+      obtenerVitrina: () => obtenerVitrinaMock(),
+      obtenerCatalogo: (consulta: ConsultaDeCatalogo) => obtenerCatalogoMock(consulta),
+    },
+  }
+})
 
 const vitrina: VitrinaPublica = {
   nombre: 'Ferretería Sur',
@@ -56,6 +68,7 @@ async function verCatalogo(catalogo: CatalogoPublico = catalogoPublico({ articul
 beforeEach(() => {
   obtenerVitrinaMock.mockReset()
   obtenerCatalogoMock.mockReset()
+  urlDeLaImagenMock.mockClear()
 })
 
 afterEach(() => {
@@ -364,6 +377,23 @@ describe('catálogo de la tienda', () => {
       expect(cantidad).toHaveValue('2')
       expect(cantidad).toHaveAttribute('aria-invalid', 'false')
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    /**
+     * Mide el redibujado por el efecto que deja: cada dibujo de una tarjeta con imagen llama a
+     * `urlDeLaImagenDelArticulo`. Prueba que la tarjeta del Martillo no se vuelve a dibujar cuando el
+     * carrito cambia por otro artículo; no mide el costo de dibujar las que sí cambian.
+     */
+    it('agregar un artículo no vuelve a dibujar la tarjeta de otro', async () => {
+      await verCatalogo()
+      const dibujosDelMartillo = () => urlDeLaImagenMock.mock.calls.filter(([id]) => id === 1).length
+      const antes = dibujosDelMartillo()
+      expect(antes).toBeGreaterThan(0)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar Clavos al carrito' }))
+
+      expect(screen.getByRole('textbox', { name: 'Cantidad de Clavos' })).toBeInTheDocument()
+      expect(dibujosDelMartillo()).toBe(antes)
     })
 
     it('en 999 el + queda deshabilitado', async () => {

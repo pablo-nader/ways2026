@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 
 import { urlDeLaImagenDelArticulo, type ArticuloPublico } from '../api/publico'
 import { Chevrones } from '../publico/Glifos'
 import { formatearPrecio } from './carrito'
-import { useCarrito } from './CarritoContext'
+import { useAccionesDelCarrito } from './CarritoContext'
 import { ControlDeCantidad } from './ControlDeCantidad'
 
 /** Lado de la caja de la imagen en píxeles; fija la proporción antes de que cargue y evita saltos de layout. */
@@ -30,9 +30,19 @@ function ImagenDelArticulo({ articulo }: { articulo: ArticuloPublico }) {
   )
 }
 
-export function TarjetaDeArticulo({ articulo }: { articulo: ArticuloPublico }) {
-  const { cantidadDe, agregar } = useCarrito()
-  const cantidad = cantidadDe(articulo.id)
+/**
+ * Tarjeta de un artículo. Recibe su cantidad en el carrito por prop (0 = no está) y opera con las
+ * acciones, que no cambian: así `memo` evita redibujar las tarjetas a las que un cambio del
+ * carrito no les toca.
+ */
+export const TarjetaDeArticulo = memo(function TarjetaDeArticulo({
+  articulo,
+  cantidad,
+}: {
+  articulo: ArticuloPublico
+  cantidad: number
+}) {
+  const { agregar } = useAccionesDelCarrito()
 
   return (
     <li className="publico-articulo">
@@ -70,4 +80,4 @@ export function TarjetaDeArticulo({ articulo }: { articulo: ArticuloPublico }) {
       )}
     </li>
   )
-}
+})

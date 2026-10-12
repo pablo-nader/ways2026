@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
 
 import { guardarCarrito, leerCarrito, reducirCarrito, totalDelCarrito, type ArticuloParaElCarrito } from './carrito'
-import { CarritoContext } from './CarritoContext'
+import { AccionesDelCarritoContext, CarritoContext } from './CarritoContext'
 
 type AlmacenDelCarrito = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
@@ -50,13 +50,19 @@ export function CarritoProvider({
     [anunciar],
   )
 
+  // `quitar` anuncia el nombre de la línea que se va; lo lee de acá para conservar su identidad entre renders.
+  const itemsRef = useRef(items)
+  useEffect(() => {
+    itemsRef.current = items
+  }, [items])
+
   const quitar = useCallback(
     (idArticulo: number) => {
-      const item = items.find((i) => i.idArticulo === idArticulo)
+      const item = itemsRef.current.find((i) => i.idArticulo === idArticulo)
       despachar({ tipo: 'quitar', idArticulo })
       if (item !== undefined) anunciar(`${item.nombre} quitado del carrito`)
     },
-    [items, anunciar],
+    [anunciar],
   )
 
   const cambiarCantidad = useCallback((idArticulo: number, cantidad: number) => {
@@ -68,26 +74,30 @@ export function CarritoProvider({
     anunciar('Carrito vaciado')
   }, [anunciar])
 
+  const acciones = useMemo(
+    () => ({ agregar, quitar, cambiarCantidad, vaciar }),
+    [agregar, quitar, cambiarCantidad, vaciar],
+  )
+
   const valor = useMemo(
     () => ({
+      ...acciones,
       items,
       cantidad: items.length,
       total: totalDelCarrito(items),
-      cantidadDe: (idArticulo: number) => items.find((i) => i.idArticulo === idArticulo)?.cantidad ?? 0,
-      agregar,
-      quitar,
-      cambiarCantidad,
-      vaciar,
+      cantidades: new Map(items.map((i) => [i.idArticulo, i.cantidad])),
     }),
-    [items, agregar, quitar, cambiarCantidad, vaciar],
+    [items, acciones],
   )
 
   return (
-    <CarritoContext.Provider value={valor}>
-      {children}
-      <div className="publico-solo-lectura" aria-live="polite" aria-atomic="true">
-        <span key={anuncio.numero}>{anuncio.texto}</span>
-      </div>
-    </CarritoContext.Provider>
+    <AccionesDelCarritoContext.Provider value={acciones}>
+      <CarritoContext.Provider value={valor}>
+        {children}
+        <div className="publico-solo-lectura" aria-live="polite" aria-atomic="true">
+          <span key={anuncio.numero}>{anuncio.texto}</span>
+        </div>
+      </CarritoContext.Provider>
+    </AccionesDelCarritoContext.Provider>
   )
 }
