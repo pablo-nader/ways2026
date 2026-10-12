@@ -71,12 +71,21 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   alta y la revisión independiente es judgment-day. Namespace `Plantel`, clase `Personal`.
   Pendiente heredado por T2: la baja de personal no tiene guarda de referencias porque aún
   ninguna tabla lo referencia; se agrega junto con `movimientos_personal`.
-- [ ] T2 — Libro de personal y carga de horas (backend). Ruta: delegada.
+- [x] T2 — Libro de personal y carga de horas (backend). Ruta: delegada.
   Tabla `movimientos_personal`, saldo cacheado en `personal`, carga de horas con valor hora
   congelado, ajuste con detalle obligatorio, estado de cuenta paginado.
   Aceptación: horas × valor hora da el importe y sube el saldo; el ajuste lo corrige con
   signo; dos cargas concurrentes dejan el saldo exacto.
   Checks: tests de dominio del cálculo, integración del libro y de concurrencia.
+  Evidencia: commit `7c04fe94`. Domain.Tests 1368/1368, Application.Tests completo 867/867,
+  integración filtrada 301/301; verificación del padre: Application.Tests 867/867 e
+  integración del libro 49/49. RED observado solo en la regla de dominio; servicio, endpoints
+  y esquema se probaron por mutación. Una mutación sobrevive: el desempate por id en el
+  `ORDER BY` del estado de cuenta no es matable de forma determinista.
+  Modelo: `personal.saldo`; `movimientos_personal` (fecha `date`, enum
+  `tipo_movimiento_personal` = horas|pago|ajuste, un CHECK de forma por tipo, FK compuesta a
+  personal, RLS). Desvío deliberado del libro de proveedores: sin `id_punto_venta`.
+  Sin resolver: no se rechaza una carga con fecha futura (la zona horaria es por empresa).
 - [ ] T3 — Pago de personal (backend). Ruta: delegada.
   Operación única con líneas de descuento de cuenta corriente y de medios de pago, origen de
   fondos por pago (tesorería o cajón del turno), gasto `sueldos` por línea de medio, valor
@@ -95,4 +104,5 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
 ## Progreso
 
 T1 cerrada (1.551 líneas de autoría sin contar el código generado de la migración).
-Próximo paso: judgment-day y PR de T1, luego T2.
+T1 mergeada en main (PR #402). T2 cerrada (1.712 líneas de autoría).
+Próximo paso: judgment-day y PR de T2, luego T3.
