@@ -91,6 +91,36 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
 
     // ---- disponibilidad ---------------------------------------------------------------------------
 
+    [Fact]
+    public async Task UnArticuloPorImporteNoSePuedeOfrecerEnLaTiendaPeroSiRetirarse()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-por-importe");
+        var porImporte = await apoyo.SembrarArticuloAsync(tienda, "Fiambrería", disponibleOnline: false, unidadVenta: Ways.Domain.Articulos.UnidadVenta.Importe);
+
+        var ofrecer = await admin.PutAsJsonAsync(RutaDisponibilidad(porImporte), Disponibilidad(venta: true, online: true));
+
+        Assert.Equal(HttpStatusCode.BadRequest, ofrecer.StatusCode);
+        Assert.Equal("articulo_por_importe_no_publicable", (await LeerAsync(ofrecer)).GetProperty("codigo").GetString());
+        Assert.False((await apoyo.LeerArticuloAsync(porImporte)).DisponibleOnline);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaDisponibilidad(porImporte), Disponibilidad(venta: true, online: false))).StatusCode);
+    }
+
+    /// <summary>Un artículo por importe que ya tiene la bandera online encendida (el valor por defecto de las filas
+    /// existentes) no rompe al cambiar solo la bandera de venta: el rechazo es de encender, no de estar encendida.</summary>
+    [Fact]
+    public async Task CambiarSoloLaVentaDeUnArticuloPorImporteConLaBanderaOnlineYaEncendidaNoFalla()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-por-importe-venta");
+        var porImporte = await apoyo.SembrarArticuloAsync(tienda, "Verdulería", unidadVenta: Ways.Domain.Articulos.UnidadVenta.Importe);
+
+        var respuesta = await admin.PutAsJsonAsync(RutaDisponibilidad(porImporte), Disponibilidad(venta: false, online: true));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var articulo = await apoyo.LeerArticuloAsync(porImporte);
+        Assert.False(articulo.DisponibleVenta);
+        Assert.True(articulo.DisponibleOnline);
+    }
+
     /// <summary>Las dos banderas se escriben juntas y cada una por su cuenta: A (online, no se vende), B (se vende, no
     /// está online) y un vecino C sin tocar, con valores DISTINTOS por artículo y por bandera, de modo que ni un cruce
     /// entre las dos ni un <c>Where</c> perdido que alcance al vecino pasen. Detalle, listado y grilla leen lo mismo.</summary>

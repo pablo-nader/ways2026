@@ -106,6 +106,11 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         // escrita recién en slice 8.
         builder.Property(i => i.IdLote).HasColumnName("id_lote");
 
+        builder.Property(i => i.PorImporte)
+            .HasColumnName("por_importe")
+            .HasDefaultValue(false)
+            .IsRequired();
+
         builder.Property(i => i.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(i => i.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(i => i.DeletedAt).HasColumnName("deleted_at");

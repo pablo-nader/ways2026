@@ -4705,6 +4705,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("orden");
 
+                    b.Property<bool>("PorImporte")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("por_importe");
+
                     b.Property<decimal>("PorcentajeIva")
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("porcentaje_iva");

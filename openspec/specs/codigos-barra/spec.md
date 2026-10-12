@@ -130,6 +130,23 @@ than adding a new line.
 - WHEN it is resolved
 - THEN 3 units of the matching articulo are added to the cart
 
+#### Scenario: The prefix of an articulo sold by amount is the amount, not a quantity
+
+- GIVEN an articulo with `unidad_venta = 'importe'` and `codigo_interno = "500"`
+- WHEN the scan input `"150*500"` is resolved
+- THEN the response carries `cantidad = 1` and `importe = 150`
+- AND the input `"500"` (no `*`) resolves to the same articulo with `cantidad = 1`
+  and no `importe`, so the client asks for the amount
+
+#### Scenario: An unreadable amount prefix is rejected, not defaulted
+
+- GIVEN an articulo with `unidad_venta = 'importe'`
+- WHEN the scan input has a prefix that is empty, `0`, negative, not a number,
+  uses a comma or thousands separator, has more than 2 decimals or exceeds
+  `numeric(14,2)` (e.g. `"0*500"`, `"150,50*500"`)
+- THEN the scan is rejected with `400 importe_invalido` and no line is added
+  (the defaulting to `1` above applies only to the other articulos)
+
 #### Scenario: Re-scanning sums quantity instead of duplicating the line
 
 - GIVEN a cart already containing 2 units of an articulo

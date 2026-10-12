@@ -82,7 +82,7 @@ public static class ArmadorDeInstantanea
     /// <summary>
     /// Arma los artículos a partir de la resolución de <see cref="LineasDeResolucion"/> (mismo
     /// orden). Una lista sin precio vigente para el artículo no genera entrada; un artículo sin
-    /// precio en ninguna lista no viaja.
+    /// precio en ninguna lista no viaja, salvo el que se vende por importe: ese viaja siempre y sin precios.
     /// </summary>
     public static IReadOnlyList<ArticuloDeInstantanea> ArmarArticulos(
         IReadOnlyList<ArticuloAResolver> articulos,
@@ -101,7 +101,11 @@ public static class ArmadorDeInstantanea
         for (var i = 0; i < articulos.Count; i++)
         {
             var precios = new List<PrecioDeListaDeInstantanea>(idsLista.Count);
-            for (var j = 0; j < idsLista.Count; j++)
+            var porImporte = articulos[i].UnidadVenta == UnidadVenta.Importe;
+
+            // Un artículo por importe se vende por el monto que tipea el cajero: viaja sin precios aunque conserve
+            // alguno de lista, que el dispositivo no debe usar.
+            for (var j = 0; j < idsLista.Count && !porImporte; j++)
             {
                 var linea = resolucion[(i * idsLista.Count) + j];
                 if (linea.Resultado.PrecioOriginal is not { } precioOriginal)
@@ -119,7 +123,7 @@ public static class ArmadorDeInstantanea
                     linea.EscalonesDeFamilia is { Count: > 0 } ? linea.EscalonesDeFamilia : null));
             }
 
-            if (precios.Count == 0)
+            if (precios.Count == 0 && !porImporte)
             {
                 continue;
             }

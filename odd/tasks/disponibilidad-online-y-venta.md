@@ -453,6 +453,23 @@ filter (Articulos, Disponibilidad, TeclaAtajo, Importe, Familia, CatalogoPublico
 Ofertas, Combos, Instantanea) 1196 passed in 10 m 35 s; web `tsc -b`, `oxlint` (22 baseline warnings),
 `vitest run` 216 files / 6097 tests, `vite build` ok. Parent spot check: Domain 1429 passed.
 
+### Second merge (#413, artículos por importe)
+
+`origin/main` (6843bb2a) landed "vender artículos por importe" (`UnidadVenta.Importe`). Five files conflicted
+(`ServicioDePresupuestos`, `ServicioDeRemitos`, `ServicioDeVentas`, `ServicioDeCatalogoWeb`,
+`CatalogoOnlineAdminTests`); every resolution keeps both sides: presupuestos and remitos run
+`ReglaDeArticuloVendible.Exigir` and then `ArticulosPorImporte.RechazarEn`; ventas keeps two independent blocks
+(the sale rule and `ExigirImporteEnLosArticulosPorImporte`). Rule chosen for the admin PUT: the
+`articulo_por_importe_no_publicable` (400) guard fires only when the request turns the online flag ON for an Importe
+article (`disponibleOnline && !articulo.DisponibleOnline && UnidadVenta == Importe`); existing rows default to
+`disponible_online = true` and the public catalog already filters Importe out, so changing only `disponibleVenta`
+does not fail. The PUT keeps requiring both values (`disponible_venta_requerido` / `disponible_online_requerido`),
+so the pinning test sends `venta: false, online: true` on an Importe article already online and expects 200.
+Verification on the merged tree: `dotnet build Ways.slnx` 0 errors (6 baseline warnings in IntegrationTests);
+`Ways.Api -warnaserror` 0 warnings 0 errors; Domain 1466 and Application 874 passed; IntegrationTests filter
+(CatalogoOnline, CatalogoPublico, Importe, Presupuesto, Remito, ArticulosNoVendibles, Ventas, CombosPublicos) 618
+passed, 0 failed, in 6 m 16 s. `src/Ways.Web` is untouched by main in this merge, so no web checks were run.
+
 ## Delivery slices
 
 - PR #417: T1 + T2 (the tasks' "PR 11" and "PR 12" labels), against main. Next PR ("PR 13"): T3, stacked on #417.

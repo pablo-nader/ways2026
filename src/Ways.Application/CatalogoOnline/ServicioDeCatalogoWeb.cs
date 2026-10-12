@@ -47,6 +47,16 @@ public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, Gu
             var articulo = await db.Articulos.FirstOrDefaultAsync(a => a.Id == idArticulo, ct)
                 ?? throw SinArticulo(idArticulo);
 
+            // La tienda online no vende por importe: el cliente no tiene dónde tipear el monto. Solo se rechaza
+            // encender la bandera; lo que ya estaba encendido por defecto el catálogo público ya lo filtra.
+            if (disponibleOnline && !articulo.DisponibleOnline && articulo.UnidadVenta == UnidadVenta.Importe)
+            {
+                throw new ErrorDominio(
+                    "articulo_por_importe_no_publicable",
+                    $"El artículo {articulo.CodigoInterno} se vende por importe: no se puede ofrecer en la tienda online.",
+                    400);
+            }
+
             if (articulo.DisponibleVenta != disponibleVenta || articulo.DisponibleOnline != disponibleOnline)
             {
                 articulo.DisponibleVenta = disponibleVenta;
