@@ -4,7 +4,9 @@ import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vitrina } from './Vitrina'
 import { ErrorApi } from '../api/cliente'
+import { ROL } from '../api/tipos'
 import type { EmpresaListado, ListaPrecioListado, SitioPublico, VitrinaAdmin, VitrinaEdicion } from '../api/tipos'
+import { AuthContext } from '../auth/AuthContext'
 
 // Vitrina de una empresa: lectura, guardado, logo (subir y quitar) y baja.
 
@@ -21,6 +23,7 @@ vi.mock('../api/cliente', () => ({
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
     post: vi.fn(),
   },
+  alPerderLaSesion: vi.fn(),
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
     codigo: string
@@ -153,6 +156,17 @@ function montar(parcial: Partial<Mundo> = {}, envolver = (nodo: React.ReactEleme
   const mundo = prepararMundo(parcial)
 
   return { mundo, ...render(envolver(<Vitrina />)) }
+}
+
+/** La pantalla lee el rol de `AuthContext` (sin proveedor se comporta como Admin del tenant). */
+function comoRoot(nodo: React.ReactElement) {
+  const usuario = { id: 1, usuario: 'root', mail: 'root@ways.test', rolId: ROL.Root, rol: 'Root', ultimaConexion: null, idTenant: null }
+
+  return (
+    <AuthContext.Provider value={{ usuario, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }}>
+      {nodo}
+    </AuthContext.Provider>
+  )
 }
 
 function diferida<T>() {
@@ -1159,9 +1173,9 @@ describe('Vitrina — lista de precios de la tienda', () => {
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     const alerta = await screen.findByRole('alert')
-    expect(alerta).toHaveTextContent(/La lista de precios no existe, está inactiva o no corresponde a esta empresa/)
+    expect(alerta).toHaveTextContent('La lista guardada ya no está disponible: elegí otra o dejá la lista por defecto.')
     expect(alerta).not.toHaveTextContent('texto crudo')
-    expect(selector).toHaveAccessibleDescription(/no existe, está inactiva/)
+    expect(selector).toHaveAccessibleDescription(/ya no está disponible/)
     expect(selector).toHaveAttribute('aria-invalid', 'true')
     expect(selector).toHaveValue('2')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
@@ -1194,7 +1208,7 @@ describe('Vitrina — lista de precios de la tienda', () => {
     expect(llamadasA(apiGetMock, '/empresas/5/vitrina')).toHaveLength(0)
   })
 
-  it('una lista guardada que ya no se ofrece se muestra tal cual y guardar no la cambia', async () => {
+  it('una lista guardada que ya no se ofrece se muestra tal cual y guardar la manda sin cambiarla', async () => {
     const usuario = userEvent.setup()
     montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 9 }) } })
     const selector = await selectorDeLista()
@@ -1208,21 +1222,91 @@ describe('Vitrina — lista de precios de la tienda', () => {
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 9 })
   })
 
-  it('si las listas no cargan lo dice, bloquea el selector y guardar conserva la lista actual', async () => {
+  it('si el servidor rechaza la lista guardada que ya no se ofrece, se sale volviendo a la lista por defecto', async () => {
+    const usuario = userEvent.setup()
+    const { mundo } = montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 9 }) } })
+    const selector = await selectorDeLista()
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(400, 'lista_invalida', 'texto crudo'))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('La lista guardada ya no está disponible')
+    expect(selector).toBeEnabled()
+
+    await usuario.selectOptions(selector, '')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    expect(apiPutMock.mock.calls[1][1]).toMatchObject({ idListaPrecio: null })
+    expect(mundo.vitrinas[4].idListaPrecio).toBeNull()
+  })
+
+  /**
+   * Cláusula bajo prueba: el selector ya no se bloquea por `errorDeListas`, así que con las listas caídas siempre
+   * queda la salida a la lista por defecto. Mutación: volver a `|| errorDeListas !== ''` deja el selector deshabilitado.
+   */
+  it('si las listas no cargan lo dice y el selector sigue usable: ofrece la lista actual y la lista por defecto', async () => {
     const usuario = userEvent.setup()
     montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 2 }) }, listas: 'falla' })
     await esperarFormulario()
 
     expect(await screen.findByText(/No se pudieron cargar las listas de precios/)).toBeInTheDocument()
     const selector = screen.getByLabelText('Lista de precios de la tienda')
-    expect(selector).toBeDisabled()
+    expect(selector).toBeEnabled()
     expect(selector).toHaveValue('2')
-    expect(screen.getByRole('option', { name: 'Lista 2' })).toBeInTheDocument()
+    expect(Array.from((selector as HTMLSelectElement).options).map((o) => o.text)).toEqual(['Lista por defecto', 'Lista 2'])
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
     expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 2 })
+  })
+
+  it('con las listas caídas se puede volver a la lista por defecto', async () => {
+    const usuario = userEvent.setup()
+    montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 2 }) }, listas: 'falla' })
+    await screen.findByText(/No se pudieron cargar las listas de precios/)
+
+    await usuario.selectOptions(screen.getByLabelText('Lista de precios de la tienda'), '')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: null })
+  })
+
+  describe('Root', () => {
+    it('no pide las listas, no rinde el selector y dice quién la elige', async () => {
+      montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 2 }) } }, comoRoot)
+      await esperarFormulario()
+
+      expect(screen.getByText('La lista de precios de la tienda la elige el administrador del comercio.')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Lista de precios de la tienda')).not.toBeInTheDocument()
+      expect(screen.queryByText(/No se pudieron cargar las listas de precios/)).not.toBeInTheDocument()
+      expect(llamadasA(apiGetMock, '/catalogos/listas-precio')).toHaveLength(0)
+    })
+
+    it('guardar manda la lista guardada sin tocarla', async () => {
+      const usuario = userEvent.setup()
+      montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 2 }) } }, comoRoot)
+      await usuario.type(await esperarFormulario(), ' nuevo')
+
+      await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+      expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+      expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idListaPrecio: 2 })
+    })
+
+    it('un lista_invalida se muestra junto a las acciones y manda a pedírselo al administrador', async () => {
+      const usuario = userEvent.setup()
+      montar({ vitrinas: { 4: vitrina(4, { idListaPrecio: 9 }) } }, comoRoot)
+      await esperarFormulario()
+      apiPutMock.mockRejectedValue(new ErrorApi(400, 'lista_invalida', 'texto crudo'))
+
+      await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+      const alerta = await screen.findByRole('alert')
+      expect(alerta).toHaveTextContent('pedile al administrador del comercio que elija otra')
+      expect(alerta).not.toHaveTextContent('texto crudo')
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+    })
   })
 
   it('mientras la escritura está en vuelo el selector queda inerte', async () => {

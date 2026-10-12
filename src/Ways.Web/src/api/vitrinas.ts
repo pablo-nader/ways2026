@@ -194,7 +194,7 @@ const COPIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
   ],
   [
     'lista_invalida',
-    'La lista de precios no existe, está inactiva o no corresponde a esta empresa. Elegí otra o dejá la lista por defecto.',
+    'La lista guardada ya no está disponible: elegí otra o dejá la lista por defecto.',
   ],
   ['logo_demasiado_grande', COPIA_LOGO_DEMASIADO_GRANDE],
   ['logo_no_admitido', COPIA_LOGO_NO_ADMITIDO],

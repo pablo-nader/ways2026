@@ -331,11 +331,7 @@ describe('copiaDeFalloDeVitrina', () => {
       409,
       'Otra empresa de este comercio ya tiene su vitrina publicada. Despublicala antes de publicar esta.',
     ],
-    [
-      'lista_invalida',
-      400,
-      'La lista de precios no existe, está inactiva o no corresponde a esta empresa. Elegí otra o dejá la lista por defecto.',
-    ],
+    ['lista_invalida', 400, 'La lista guardada ya no está disponible: elegí otra o dejá la lista por defecto.'],
     ['logo_demasiado_grande', 413, 'El logo no puede pesar más de 1 MB.'],
     ['logo_no_admitido', 415, 'El logo tiene que ser una imagen PNG, JPG o WebP.'],
   ])('el código %s rinde su copia propia y no el texto del servidor', (codigo, estado, copia) => {
