@@ -102,4 +102,19 @@ authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
 
-Nothing implemented yet.
+- T1 — implemented in `0318a9f9` (delegated writer; trigger: 2+ non-trivial files). Not checked
+  off yet: judgment-day in progress, and the unfiltered integration run of record predates the
+  final migration fix.
+  - Observed: Domain.Tests 1363/1363 (re-run by the parent), Application.Tests 859/859,
+    IntegrationTests unfiltered 3338 passed / 1 failed (`FiscalSchemaTests` Up-Down-Up, caused by
+    the first enum migration and fixed afterwards), then 68/68 on
+    `FiscalSchemaTests|ArticulosPorImporte` after the fix. Full suite after the fix: pending (CI).
+  - No RED-first evidence: the writer wrote rules before tests; mutation evidence recorded instead
+    (10 mutants killed; the service pre-checks survive by design because the DB backstop answers
+    the same status and code).
+  - Review tier: `gentle-ai review assess` → high risk; RDD is off for this clone, so the
+    independent check is judgment-day.
+  - Writer choices beyond the brief: `AltaArticulo.AcumulaEnVenta` is now `bool?` (omitted →
+    true, or false for `Importe`); on edit a null `teclaAtajo` clears the shortcut; `Importe`
+    admits quantity 1 or −1; grouping an article that holds a shortcut into a family answers 409
+    `articulo_con_tecla_atajo`.
