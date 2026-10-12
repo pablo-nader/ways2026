@@ -62,7 +62,7 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
 
 ## Progress
 
-- T1 implemented on `pnader/combos-productos-pesables-9b821d`. Route: delegated writer. No migration.
+- T1 implemented on `pnader/combos-productos-pesables-9b821d` — commit `bc585f3a`. Route: delegated writer. No migration.
   - Engine (`ResolvedorDeCombos`): quantities in integer thousandths (`long`), mirror of A5. `LineaParaCombos` gained
     `UnidadVenta` (last positional parameter, default `Unidad`, so the parity fixtures compile untouched). A line is
     detectable when its unit admits its quantity; a line is a candidate for a component only when its unit admits the
@@ -93,7 +93,7 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
     tests pin that a one-unit sale does not pay the combos query; a document with any weighable line always pays it.
   - Known limit of A4: the rounding is per application and multiplied by the times applied, so a single weighable
     line consumed 100 or more times can drift one peso from `times × combo price`. Unit lines have no drift.
-  - Checks: Domain 1376/1376, Application 846/846, Integration full suite (see the commit report). 23 mutations
+  - Checks: Domain 1376/1376, Application 846/846, Integration 3758/3758 (full, unfiltered). 23 mutations
     killed (16 unit, 7 integration).
 
 Next step: T2.
