@@ -58,6 +58,7 @@ export type PropsDeModalDeArticulo = {
   onGuardar: () => void
   onCerrar: () => void
   alDeEscribir: (enCurso: boolean) => void
+  alCambiarTienda: () => void
   onCategoriaCreada: (categoria: CategoriaListado) => void
   onMarcaCreada: (marca: MarcaListado) => void
   onGrupoCreada: (grupo: GrupoListado) => void
@@ -110,6 +111,7 @@ export function ModalDeArticulo({
   onGuardar,
   onCerrar,
   alDeEscribir,
+  alCambiarTienda,
   onCategoriaCreada,
   onMarcaCreada,
   onGrupoCreada,
@@ -172,6 +174,7 @@ export function ModalDeArticulo({
             onGuardar={onGuardar}
             onCancelar={onCerrar}
             alDeEscribir={alDeEscribir}
+            alCambiarTienda={alCambiarTienda}
             onCategoriaCreada={onCategoriaCreada}
             onMarcaCreada={onMarcaCreada}
             onGrupoCreada={onGrupoCreada}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { RefObject } from 'react'
 
 /**
  * Puerta MODAL de confirmación (etapa 20, slice 5), compartida por las CUATRO pantallas raíz —
@@ -41,6 +42,13 @@ type Props = {
    * tests: el del componente lo fuerza a mano.
    */
   disparador?: HTMLElement | null
+  /**
+   * Destino explícito del foco cuando el disparador ya no sirve, para una puerta que no vive dentro
+   * de una `Box` (p. ej. dentro de un `Modal`, en un portal, donde no hay un `.box` al que subir). Es
+   * un `RefObject` y se lee recién al cerrar. Sin él, o con su `.current` en `null`, rige el respaldo
+   * de la `Box`.
+   */
+  regreso?: RefObject<HTMLElement | null> | null
   onConfirmar: () => void
   onCancelar: () => void
 }
@@ -67,6 +75,7 @@ export function ConfirmacionDeBaja({
   etiquetaEnCurso = 'Dando de baja…',
   ocupado,
   disparador = null,
+  regreso: regresoExplicito = null,
   onConfirmar,
   onCancelar,
 }: Props) {
@@ -89,7 +98,7 @@ export function ConfirmacionDeBaja({
         return
       }
 
-      const regreso = regresoRef.current
+      const regreso = regresoExplicito?.current ?? regresoRef.current
       if (!regreso) return
 
       // Un encabezado o una tabla no son tabulables: para poder recibir el foco necesitan un
@@ -97,22 +106,28 @@ export function ConfirmacionDeBaja({
       if (!regreso.hasAttribute('tabindex')) regreso.setAttribute('tabindex', '-1')
       regreso.focus()
     }
-  }, [disparador])
+  }, [disparador, regresoExplicito])
 
   /** Escape = Cancelar, y se escucha en `document` y no en el panel a propósito: el foco puede
    * haberse ido a la nada si la fila que lo tenía desapareció. Mientras la escritura está en vuelo
-   * no cancela nada, igual que el botón. */
+   * no cancela nada, igual que el botón.
+   *
+   * Se escucha en la fase de captura y se corta la propagación: la puerta puede montarse DENTRO de un
+   * `Modal` (la sección de tienda del artículo), cuyo propio listener de `document` cerraría el editor
+   * entero con la misma tecla. En captura la puerta corre antes que cualquier listener de burbujeo,
+   * sin importar quién se registró primero. */
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'Escape' || ocupado) return
 
       evento.preventDefault()
+      evento.stopImmediatePropagation()
       onCancelar()
     }
 
-    document.addEventListener('keydown', alTeclado)
+    document.addEventListener('keydown', alTeclado, true)
 
-    return () => document.removeEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado, true)
   }, [ocupado, onCancelar])
 
   return (

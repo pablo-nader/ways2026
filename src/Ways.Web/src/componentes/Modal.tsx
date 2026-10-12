@@ -169,9 +169,12 @@ export function Modal({
 
   // Escape cierra ÚNICAMENTE el modal tope de la pila — con dos modales apilados, el de abajo no
   // debe reaccionar a una tecla que ni siquiera puede ver (el de arriba se la robó visualmente).
+  // Un Escape que otro control ya atendió (`defaultPrevented`, p. ej. una puerta de confirmación
+  // abierta dentro del modal) no cierra el modal.
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'Escape') return
+      if (evento.defaultPrevented) return
       if (pilaDeModales[pilaDeModales.length - 1] !== idPropio) return
       if (noDescartable) {
         evento.preventDefault()
