@@ -17,6 +17,10 @@ namespace Ways.Domain.Combos;
 /// exactamente el cobro, cada parte entre cero y el importe de lista de la cantidad que aporta
 /// (hacia abajo al peso). El importe de lista de la cantidad que aporta una línea se redondea a dos decimales antes
 /// del reparto, así que el ahorro de cada línea (ese importe menos su parte del cobro) lleva a lo sumo dos decimales.
+/// El cobro es exacto por aplicación; como el redondeo del importe de lista se repite en cada una de las k
+/// aplicaciones, el ahorro acumulado de una línea se acota al final por el importe de lista, redondeado a dos
+/// decimales, de todo lo que consumió. Así nunca supera el bruto de sus unidades consumidas (lo que exige el servidor
+/// a una venta offline) y la línea no puede quedar cobrada en negativo.
 /// Un combo que tras ese redondeo no cobra
 /// menos que las ofertas, o cuyos topes no alcanzan a contener el cobro, no se aplica. Un componente
 /// familia toma líneas en orden de documento (el orden de entrada es el orden del documento), así
@@ -103,8 +107,9 @@ public static class ResolvedorDeCombos
         {
             if (consumidas[i] > 0)
             {
+                var tope = Math.Round(ACantidad(consumidas[i]) * lineas[i].PrecioLista, 2, MidpointRounding.AwayFromZero);
                 resultadoLineas.Add(new ConsumoDeLinea(
-                    lineas[i].Indice, ACantidad(consumidas[i]), ahorroPorLinea[i], [.. combosPorLinea[i]]));
+                    lineas[i].Indice, ACantidad(consumidas[i]), Math.Min(ahorroPorLinea[i], tope), [.. combosPorLinea[i]]));
             }
         }
 

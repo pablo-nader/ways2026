@@ -164,4 +164,32 @@ public class ParidadDeCombosConElMotorWebTests
     [Fact]
     public void UnaLineaPorUnidadConCantidadFraccionariaSeIgnora() =>
         Verificar([Linea(0, 1, 3000m, 1.5m), Linea(1, 2, 2500m)], Combo(7, 5000m, 1, 2), [4500m, 2500m], [0m, 0m]);
+
+    [Fact]
+    public void ElAhorroAcumuladoDeUnaLineaPesableNoSuperaElBrutoDeLoQueConsumio() =>
+        Verificar(
+            [PorPeso(0, Jamon, 9.99m, 0.750m), Linea(1, 2, 500m, 3m)],
+            ComboDe(7, 100m, Art(Jamon, 0.250m), Art(2, 1m)),
+            [0m, 300m], [7.49m, 1200m]);
+
+    [Fact]
+    public void UnaLineaPorUnidadQueRecibeUnaTomaDeCeroDeUnaFamiliaNoFiguraEnLosCombosQueNoLaConsumieron()
+    {
+        LineaParaCombos[] lineas =
+        [
+            PorPeso(0, Jamon, 1000m, 1.500m, FamiliaFiambres),
+            Linea(1, Salame, 400m, 2m, 0m, UnidadVenta.Unidad, FamiliaFiambres),
+            PorPeso(2, Queso, 1000m, 0.500m, FamiliaFiambres)
+        ];
+
+        var resolucion = ResolvedorDeCombos.Resolver(
+            lineas, [ComboDe(3, 1000m, Fam(FamiliaFiambres, 2m)), ComboDe(9, 500m, Art(Salame, 2m))]);
+
+        Assert.Equal(
+            [(0, 1.500m, 750m, new[] { 3 }), (1, 2m, 300m, new[] { 9 }), (2, 0.500m, 250m, new[] { 3 })],
+            resolucion.Lineas.Select(l => (l.Indice, l.UnidadesConsumidas, l.AhorroDeCombo, l.IdsDeCombo.ToArray())).ToArray());
+        Assert.Equal(
+            [(3, 1, 1000m), (9, 1, 300m)],
+            resolucion.Combos.Select(c => (c.IdCombo, c.Veces, c.Ahorro)).ToArray());
+    }
 }

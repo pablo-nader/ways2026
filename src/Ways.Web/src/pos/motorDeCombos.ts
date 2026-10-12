@@ -14,7 +14,10 @@
  * entre cero y el importe de lista de la cantidad que aporta (hacia abajo al peso); el resto cae
  * hacia atrás desde la última línea. El importe de lista de la cantidad que aporta una línea se redondea a dos
  * decimales antes del reparto, así que el ahorro de cada línea (ese importe menos su parte del cobro) lleva a lo
- * sumo dos decimales. Un combo cuyo cobro redondeado no es menor al costo con ofertas ni al total de lista,
+ * sumo dos decimales. El cobro es exacto por aplicación; como ese redondeo se repite en cada una de las k aplicaciones,
+ * el ahorro acumulado de una línea se acota al final por el importe de lista, redondeado a dos decimales, de todo lo que
+ * consumió: nunca supera el bruto de sus unidades consumidas (lo que exige el servidor) ni deja la línea en negativo.
+ * Un combo cuyo cobro redondeado no es menor al costo con ofertas ni al total de lista,
  * o cuyos topes no alcanzan a contener el cobro, no se aplica.
  *
  * Cantidades: una línea aporta toda su cantidad y el combo consume exactamente la cantidad de cada componente; lo
@@ -185,8 +188,9 @@ function intentar(preparado: ComboPreparado, lineas: readonly LineaParaCombos[],
 
       let milesimas = Math.min(faltan, disponibles[i])
       // De una línea por unidad solo se toman unidades enteras. Si le llega menos de una unidad la toma queda en cero y
-      // se anota sin efecto: no consume, no recibe parte del cobro y no figura en la salida.
+      // la línea se salta: no consume, no recibe parte del cobro ni figura entre los combos de la línea.
       if (lineas[i].unidadVenta === 'Unidad') milesimas -= milesimas % MILESIMAS_POR_UNIDAD
+      if (milesimas === 0) continue
 
       disponibles[i] -= milesimas
       faltan -= milesimas
@@ -252,6 +256,7 @@ export function resolverCombos(lineas: readonly LineaParaCombos[], combos: reado
     descuento: lineas.map((l) => escalar(l.descuentoUnitarioDeOferta, escala)),
   }
   const escalaDeCuenta = escala + DECIMALES_DE_CANTIDAD
+  const unidadDeCentavo = 10n ** BigInt(escalaDeCuenta - DECIMALES_DE_IMPORTE)
 
   const restantes = lineas.map(milesimasDetectables)
   const consumidas = lineas.map(() => 0)
@@ -289,10 +294,11 @@ export function resolverCombos(lineas: readonly LineaParaCombos[], combos: reado
   const resultadoLineas: ConsumoDeLinea[] = []
   lineas.forEach((linea, i) => {
     if (consumidas[i] > 0) {
+      const topeDeLinea = dividirRedondeando(BigInt(consumidas[i]) * escalados.precioLista[i], unidadDeCentavo) * unidadDeCentavo
       resultadoLineas.push({
         indice: linea.indice,
         unidadesConsumidas: desescalar(BigInt(consumidas[i]), DECIMALES_DE_CANTIDAD),
-        ahorroDeCombo: desescalar(ahorroPorLinea[i], escalaDeCuenta),
+        ahorroDeCombo: desescalar(minimo(ahorroPorLinea[i], topeDeLinea), escalaDeCuenta),
         idsDeCombo: [...combosPorLinea[i]].sort((a, b) => a - b),
       })
     }

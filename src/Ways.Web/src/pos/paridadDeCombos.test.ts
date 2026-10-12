@@ -156,4 +156,30 @@ describe('paridad de combos con el servidor', () => {
   it('una línea por unidad con cantidad fraccionaria se ignora', () => {
     verificar([linea(0, 1, 3000, 1.5), linea(1, 2, 2500)], combo(7, 5000, 1, 2), [4500, 2500], [0, 0])
   })
+
+  it('el ahorro acumulado de una línea pesable no supera el bruto de lo que consumió (3 × 0,250 kg a 9,99)', () => {
+    // Por aplicación el importe de lista sube a 2,50 y la parte de cobro de la línea es cero: 3 × 2,50 = 7,50 superaría
+    // el bruto de 0,750 kg (7,49).
+    verificar(
+      [porPeso(0, JAMON, 9.99, 0.75), linea(1, 2, 500, 3)],
+      comboDe(7, 100, art(JAMON, 0.25), art(2, 1)),
+      [0, 300],
+      [7.49, 1200],
+    )
+  })
+
+  it('una línea por unidad que recibe una toma de cero de una familia no figura en los combos que no la consumieron', () => {
+    const lineas = [porPeso(0, JAMON, 1000, 1.5, FAMILIA_FIAMBRES), linea(1, SALAME, 400, 2, 0, 'Unidad', FAMILIA_FIAMBRES), porPeso(2, QUESO, 1000, 0.5, FAMILIA_FIAMBRES)]
+    const resolucion = resolverCombos(lineas, [comboDe(3, 1000, fam(FAMILIA_FIAMBRES, 2)), comboDe(9, 500, art(SALAME, 2))])
+
+    expect(resolucion.lineas.map((l) => [l.indice, l.unidadesConsumidas, l.ahorroDeCombo, l.idsDeCombo])).toEqual([
+      [0, 1.5, 750, [3]],
+      [1, 2, 300, [9]],
+      [2, 0.5, 250, [3]],
+    ])
+    expect(resolucion.combos.map((c) => [c.idCombo, c.veces, c.ahorro])).toEqual([
+      [3, 1, 1000],
+      [9, 1, 300],
+    ])
+  })
 })

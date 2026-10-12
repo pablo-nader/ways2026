@@ -780,4 +780,16 @@ describe('motorDeCombos — más allá de los casos de C#', () => {
 
     expect(ahorroTotal(r)).toBe(50)
   })
+
+  // Cláusula: el ahorro acumulado de una línea se acota por el bruto de lo que consumió. Sin el tope, el redondeo hacia
+  // arriba del importe de lista de cada aplicación (2,4975 → 2,50) suma 7,50 en tres aplicaciones y supera 7,49.
+  it('el ahorro acumulado de una línea no supera el importe de lista de lo que consumió', () => {
+    const r = resolverCombos(
+      [linea(0, JAMON, 9.99, { cantidad: 0.75, unidad: 'Peso' }), linea(1, COCA, 500, { cantidad: 3 })],
+      [combo(1, 100, art(JAMON, 0.25), art(COCA))],
+    )
+
+    expect(r.lineas.map((l) => l.ahorroDeCombo)).toEqual([7.49, 1200])
+    expect(r.combos.map((c) => c.veces)).toEqual([3])
+  })
 })

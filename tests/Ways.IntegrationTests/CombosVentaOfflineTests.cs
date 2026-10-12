@@ -431,6 +431,27 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Empty(await DiscrepanciasAuditadasAsync(ctx));
     }
 
+    /// <summary>Cláusula: el ahorro acumulado de una línea pesable nunca supera el bruto de lo que consumió. Tres
+    /// aplicaciones de 0,250 kg a 9,99 redondean 2,4975 a 2,50 cada una (7,50 en total) y la parte de cobro de la
+    /// línea es cero; el motor acota el ahorro a 7,49 y la venta offline correcta no se rechaza.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineConElAhorroAcotadoDeUnaLineaPesableSeAdmite()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(UnaVentaOfflineConElAhorroAcotadoDeUnaLineaPesableSeAdmite), ModoPuntoVenta.Escritorio);
+        await ReservarBloqueAsync(ctx);
+        var jamon = await apoyo.ArticuloAsync(ctx, "jamon", 9.99m, Ways.Domain.Articulos.UnidadVenta.Peso);
+        var coca = await apoyo.ArticuloAsync(ctx, "coca", 500m);
+        var combo = await apoyo.ComboAsync(ctx, 100m, [Art(jamon, 0.250m), Art(coca)]);
+
+        var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 300m, "TX",
+            Offline(jamon, 0.750m, 9.99m, unidades: 0.750m, ahorro: 7.49m, idCombo: combo),
+            Offline(coca, 3m, 500m, unidades: 3m, ahorro: 1200m, idCombo: combo)));
+
+        Assert.Equal(300m, emitido.Total);
+        Assert.Equal([0m, 300m], emitido.Items.Select(i => i.Total));
+        Assert.Empty(await DiscrepanciasAuditadasAsync(ctx));
+    }
+
     /// <summary>Cláusula: un artículo pesable admite hasta tres decimales en las unidades de combo; con cuatro se
     /// rechaza aunque estén dentro de la cantidad de la línea.</summary>
     [Fact]

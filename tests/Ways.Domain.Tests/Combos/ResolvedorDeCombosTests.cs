@@ -864,4 +864,17 @@ public class ResolvedorDeCombosTests
         Assert.Empty(Resolver([], Combo(1, 5000m, Art(Pancho), Art(Coca))).Combos);
         Assert.Empty(Resolver([Linea(0, Pancho, 3000m)]).Lineas);
     }
+
+    [Fact]
+    public void ElAhorroAcumuladoDeUnaLineaNoSuperaElImporteDeListaDeLoQueConsumio()
+    {
+        // Cada aplicación redondea 0,250 × 9,99 = 2,4975 hacia arriba (2,50): tres veces suman 7,50 y el bruto es 7,49.
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 9.99m, 0.750m), Linea(1, Coca, 500m, cantidad: 3m)],
+            Combo(1, 100m, Art(Jamon, 0.250m), Art(Coca)));
+
+        Assert.Equal(7.49m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(1200m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(3, resolucion.Combos[0].Veces);
+    }
 }

@@ -93,6 +93,13 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
     tests pin that a one-unit sale does not pay the combos query; a document with any weighable line always pays it.
   - Known limit of A4: the rounding is per application and multiplied by the times applied, so a single weighable
     line consumed 100 or more times can drift one peso from `times × combo price`. Unit lines have no drift.
+    Judgment Day round 1 (F1) found a second effect: the accumulated saving of a line could exceed
+    `round2(consumed × list price)` (9.99/kg, 0.250 kg × 3 applications: 3 × 2.50 = 7.50 > 7.49), which the server
+    refused as `combo_offline_invalido`. Both engines now cap the accumulated saving of each line at that bound after
+    accumulating, so the server check holds by construction; unit-only combos are unchanged. The per-combo saving
+    (`ComboAplicado.ahorro`) is not capped. F2: the zero-take guard was restored in TypeScript (the earlier note that
+    it had no observable effect was wrong: the line gained a combo id the server never lists); a mirrored parity case
+    kills its removal. F3: stale prose in code docs and `docs/10` was aligned with the weighable behavior.
   - Checks: Domain 1376/1376, Application 846/846, Integration 3758/3758 (full, unfiltered). 23 mutations
     killed (16 unit, 7 integration).
 - T2 implemented on the same branch — commit `ac620511`. Route: delegated writer.
@@ -113,8 +120,8 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
     - The "saving with more than 2 decimals → drop every combo" guard of `resolverDocumentoOffline` was removed: A4
       makes it unreachable, and its tests could only pass by asserting the old engine. A document with a sub-cent price
       now applies the combo with 2-decimal savings, like the server.
-    - The zero-take guard of the C# engine (`if (milesimas == 0) continue`) is not ported: in TypeScript a take of zero
-      has no observable effect (no integer division by zero), so no test can kill it; it ships as a comment.
+    - The zero-take guard of the C# engine (`if (milesimas == 0) continue`) was first not ported (superseded by F2 of
+      Judgment Day round 1: it is ported, because a zero entry adds a combo id to the line).
     - Cart merge (`carrito.ts`): the sum is exact to 3 decimals only when both quantities have at most 3 decimals; a
       quantity with more decimals is added as is instead of being rounded into a valid one.
     - Load (`cargaDeCombos.ts`): with a single candidate the component quantity must be admitted by that article's
