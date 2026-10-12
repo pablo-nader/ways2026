@@ -9,11 +9,26 @@ export type Escritura = 'horas' | 'ajuste' | 'pago'
 
 const COPIA_GENERICA = 'No se pudo registrar.'
 
-/** `true` solo para un rechazo del servidor (4xx): la escritura no se hizo. Un 5xx o un fallo sin
- * respuesta (red cortada, tiempo agotado) no dicen si el servidor llegó a escribir, y como las tres
- * escrituras no llevan clave de idempotencia, reintentarlas a ciegas puede registrarlas dos veces. */
+/** Código que `pedir` le pone a un error cuando la respuesta no trae un cuerpo de error de la API
+ * (`problema.codigo ?? 'error'` en `api/cliente.ts`): un 4xx con este código lo pudo producir un intermediario. */
+const CODIGO_GENERICO_DE_ERROR = 'error'
+
+/** Un 408 y un 429 son 4xx que no dicen que la escritura se rechazó: el pedido pudo llegar y aplicarse. */
+const ESTADOS_4XX_INCIERTOS: readonly number[] = [408, 429]
+
+/** `true` solo para un rechazo que emitió NUESTRA API: un 4xx (salvo 408 y 429) con el código de error del
+ * cuerpo. Todo lo demás es incierto: un 5xx, un fallo sin respuesta (red cortada, tiempo agotado), una
+ * respuesta 2xx ilegible y un 4xx sin cuerpo de la API (proxy, balanceador). Como las tres escrituras no
+ * llevan clave de idempotencia, reintentar a ciegas una incierta puede registrarla dos veces. */
 export function esRechazoCierto(e: unknown): e is ErrorApi {
-  return e instanceof ErrorApi && e.estado < 500
+  return (
+    e instanceof ErrorApi &&
+    e.estado >= 400 &&
+    e.estado < 500 &&
+    !ESTADOS_4XX_INCIERTOS.includes(e.estado) &&
+    e.codigo !== '' &&
+    e.codigo !== CODIGO_GENERICO_DE_ERROR
+  )
 }
 
 /** Se elige por `codigo`, nunca por `mensaje`. Es un `Map` porque el código viene del servidor: sobre un

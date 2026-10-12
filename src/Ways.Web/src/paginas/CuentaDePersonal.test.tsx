@@ -534,7 +534,7 @@ describe('CuentaDePersonal — según el rol', () => {
     expect(lecturas('/empresas')).toHaveLength(1)
   })
 
-  it('el Supervisor no pide empresas y el origen solo le ofrece el cajón', async () => {
+  it('el Supervisor no pide empresas y el origen solo le ofrece la caja del turno', async () => {
     rolActual = ROL.Supervisor
     const evento = userEvent.setup()
     renderCuenta()
@@ -627,10 +627,10 @@ describe('CuentaDePersonal — cargar horas', () => {
   })
 
   it.each([
-    ['1.5', '1,5', 1.5, '$ 5.250,00'],
-    ['1,5', '1,5', 1.5, '$ 5.250,00'],
-    ['7.5', '7,5', 7.5, '$ 26.250,00'],
-  ])('las horas "%s" se entienden como %s: el punto y la coma son decimales, no separador de miles', async (tipeado, mostrado, horas, importe) => {
+    ['1.5', 1.5, '$ 5.250,00'],
+    ['1,5', 1.5, '$ 5.250,00'],
+    ['7.5', 7.5, '$ 26.250,00'],
+  ])('las horas "%s" se entienden como %s: el punto y la coma son decimales, no separador de miles', async (tipeado, horas, importe) => {
     apiPostMock.mockResolvedValue(MOV_HORAS)
     const evento = userEvent.setup()
     renderCuenta()
@@ -639,21 +639,28 @@ describe('CuentaDePersonal — cargar horas', () => {
 
     await evento.type(within(dialogo).getByLabelText('Horas'), tipeado)
 
-    expect(within(dialogo).getByLabelText('Horas')).toHaveValue(mostrado)
+    expect(within(dialogo).getByLabelText('Horas')).toHaveValue(tipeado)
     expect(within(dialogo).getByText(`Importe: ${importe}`)).toBeInTheDocument()
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/personal/1/horas', { fecha: HOY, horas, valorHora: 3500 }))
   })
 
-  it('un tercer decimal no se puede tipear', async () => {
+  /** Cláusula bajo prueba: el patrón de `parsearHoras`. Un texto ambiguo no se adivina: sin vista previa y con error al enviar. */
+  it.each(['1.234,5', '1,5.2', '-8', '1,234'])('las horas "%s" son inválidas: sin importe en la vista previa y con error al enviar', async (tipeado) => {
     const evento = userEvent.setup()
     renderCuenta()
     await esperarCuenta()
     const dialogo = await abrir(evento, 'Cargar horas')
 
-    await evento.type(within(dialogo).getByLabelText('Horas'), '1,234')
+    await evento.type(within(dialogo).getByLabelText('Horas'), tipeado)
 
-    expect(within(dialogo).getByLabelText('Horas')).toHaveValue('1,23')
+    expect(within(dialogo).getByText('Importe: —')).toBeInTheDocument()
+    await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+    expect(
+      await within(dialogo).findByText('Las horas tienen que ser un número con hasta dos decimales, por ejemplo 7,5.'),
+    ).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Horas')).toHaveAttribute('aria-invalid', 'true')
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 
   it('sin horas no llama a la API y marca el campo', async () => {
@@ -1126,7 +1133,7 @@ describe('CuentaDePersonal — pago', () => {
     expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
   })
 
-  it('cajón del turno: manda el punto de venta de la sesión y nunca la empresa', async () => {
+  it('caja del turno: manda el punto de venta de la sesión y nunca la empresa', async () => {
     apiPostMock.mockResolvedValue(MOV_PAGO)
     const evento = userEvent.setup()
     renderCuenta()
@@ -1148,7 +1155,7 @@ describe('CuentaDePersonal — pago', () => {
     )
   })
 
-  it('cajón del turno sin punto de venta elegido lo avisa antes de enviar y no llama a la API', async () => {
+  it('caja del turno sin punto de venta elegido lo avisa antes de enviar y no llama a la API', async () => {
     puntoVentaActual = null
     const evento = userEvent.setup()
     renderCuenta()
@@ -1436,7 +1443,7 @@ describe('CuentaDePersonal — pago', () => {
 
   /** Cláusula bajo prueba: el 403 solo va al origen cuando el origen enviado fue la tesorería. */
   it.each([
-    ['con el cajón del turno', async (evento: Evento, dialogo: HTMLElement) => {
+    ['con la caja del turno', async (evento: Evento, dialogo: HTMLElement) => {
       await agregarLinea(evento, dialogo, 1, '4', '1000')
       await evento.selectOptions(within(dialogo).getByLabelText('Origen del dinero'), 'CajaTurno')
     }],
@@ -1481,7 +1488,40 @@ describe('CuentaDePersonal — pago', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
 
     expect(await within(dialogo).findByText('El descuento no puede superar la deuda del cliente ($ 300,00).')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/)).toBeEnabled()
     expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: `puedeDescontar` en el descuento efectivo de `ModalDePago`. */
+  it('si la deuda releída es cero, el descuento se limpia y se puede seguir pagando sin cerrar la modal', async () => {
+    let lecturasDeDeuda = 0
+    mockearRutas({ cliente: () => Promise.resolve(cliente(++lecturasDeDeuda === 1 ? 750 : 0)) })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'descuento_supera_la_deuda', 'x')).mockResolvedValue(MOV_PAGO)
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+
+    await evento.type(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/), '700')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await within(dialogo).findByText('El cliente no tiene deuda que descontar.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/)).toBeDisabled()
+    expect(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/)).toHaveValue('')
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+
+    await agregarLinea(evento, dialogo, 1, '4', '1000')
+    await evento.selectOptions(within(dialogo).getByLabelText('Origen del dinero'), 'CajaTurno')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenLastCalledWith('/personal/1/pagos', {
+        fecha: HOY,
+        origenFondos: 'CajaTurno',
+        idPuntoVenta: 9,
+        lineas: [{ idMedioPago: 4, importe: 1000 }],
+      }),
+    )
+    expect(apiPostMock).toHaveBeenCalledTimes(2)
   })
 
   it('si el empleado ya no tiene cliente vinculado, se relee al empleado: el descuento desaparece y no viaja', async () => {
@@ -1668,8 +1708,8 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
     await evento.click(within(dialogo).getByRole('button', { name: escritor.envio }))
 
     const aviso = await screen.findByText(avisoIncierto(escritor.descripcion(FECHA_DE_HOY)))
-    expect(aviso).toHaveClass('alert-warning')
-    expect(aviso).not.toHaveClass('alert-success')
+    expect(aviso.closest('[role="alert"]')).toHaveClass('alert-warning')
+    expect(aviso.closest('[role="alert"]')).not.toHaveClass('alert-success')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(await screen.findByText('$ 9.000,00')).toBeInTheDocument()
     expect(lecturasDeCuenta()).toHaveLength(cuentaAntes + 1)
@@ -1716,8 +1756,63 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
     const aviso = await screen.findByText(
       `No se pudo confirmar si se registró esta operación: ${ESCRITORES[0].descripcion(FECHA_DE_HOY)}. Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.`,
     )
-    expect(aviso).toHaveClass('alert-warning')
+    expect(aviso.closest('[role="alert"]')).toHaveClass('alert-warning')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el aviso se AGREGA a la lista; otra incierta, un éxito posterior, paginar o
+   * filtrar no lo borran, y solo su propio "Ya lo revisé" lo quita. */
+  it('dos escrituras inciertas dejan dos avisos; descartar uno conserva el otro y un éxito posterior no los toca', async () => {
+    apiPostMock.mockRejectedValue(new Error('Failed to fetch'))
+    mockearRutas({ cuenta: (ruta) => Promise.resolve(paginaSegunLaRuta(ruta, { total: 60 })) })
+    const evento = userEvent.setup()
+    renderCuenta()
+    const horas = await prepararEscritura(evento, ESCRITORES[0])
+    await evento.click(within(horas).getByRole('button', { name: 'Cargar horas' }))
+    const primero = avisoIncierto(ESCRITORES[0].descripcion(FECHA_DE_HOY))
+    await screen.findByText(primero)
+
+    const ajuste = await abrir(evento, 'Ajuste manual')
+    await ESCRITORES[1].cargar(evento, ajuste)
+    await evento.click(within(ajuste).getByRole('button', { name: 'Registrar ajuste' }))
+    const segundo = avisoIncierto(ESCRITORES[1].descripcion(FECHA_DE_HOY))
+    await screen.findByText(segundo)
+    expect(screen.getByText(primero)).toBeInTheDocument()
+
+    apiPostMock.mockResolvedValue(MOV_HORAS)
+    const otra = await abrir(evento, 'Cargar horas')
+    await evento.type(within(otra).getByLabelText('Horas'), '8')
+    await evento.click(within(otra).getByRole('button', { name: 'Cargar horas' }))
+    await screen.findByText('Horas cargadas.')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled())
+    await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    expect(screen.getByText(primero)).toBeInTheDocument()
+    expect(screen.getByText(segundo)).toBeInTheDocument()
+
+    const entradaDelPrimero = screen.getByText(primero).closest('[role="alert"]') as HTMLElement
+    await evento.click(within(entradaDelPrimero).getByRole('button', { name: 'Ya lo revisé' }))
+
+    expect(screen.queryByText(primero)).not.toBeInTheDocument()
+    expect(screen.getByText(segundo)).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `disabled={bloqueado}` del "Ya lo revisé". */
+  it('mientras hay una escritura en vuelo, "Ya lo revisé" queda inerte', async () => {
+    apiPostMock.mockRejectedValueOnce(new Error('Failed to fetch')).mockImplementation(() => new Promise(() => {}))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const horas = await prepararEscritura(evento, ESCRITORES[0])
+    await evento.click(within(horas).getByRole('button', { name: 'Cargar horas' }))
+    await screen.findByText(avisoIncierto(ESCRITORES[0].descripcion(FECHA_DE_HOY)))
+    const revisado = screen.getByRole('button', { name: 'Ya lo revisé' })
+    await waitFor(() => expect(revisado).toBeEnabled())
+
+    const otra = await abrir(evento, 'Cargar horas')
+    await evento.type(within(otra).getByLabelText('Horas'), '8')
+    await evento.click(within(otra).getByRole('button', { name: 'Cargar horas' }))
+
+    await waitFor(() => expect(revisado).toBeDisabled())
   })
 
   /** Cláusula bajo prueba: solo un 4xx deja la modal abierta; el incierto no. Una por escritura. */
@@ -1773,6 +1868,30 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
         ),
       ).toBeInTheDocument()
       expect(lecturasDeCuenta().at(-1)?.[0]).toBe(`/personal/1/cuenta?desde=${FECHA_VIEJA.iso}&pagina=1&tamanio=25`)
+    })
+
+    /** Cláusula bajo prueba: `ampliado && cuentaOk`, y los filtros que solo cambian si la cuenta se releyó. */
+    it('si la relectura falla, no ensancha los filtros ni habla del rango', async () => {
+      let lecturasHechas = 0
+      mockearRutas({
+        cuenta: (ruta) =>
+          ++lecturasHechas === 1 ? Promise.resolve(paginaSegunLaRuta(ruta)) : Promise.reject(new ErrorApi(500, 'error', 'Se cayó la cuenta.')),
+      })
+      apiPostMock.mockRejectedValue(new Error('Failed to fetch'))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+      const desdeAntes = (screen.getByLabelText('Desde') as HTMLInputElement).value
+      const dialogo = await prepararEscritura(evento, ESCRITORES[0], FECHA_VIEJA.tipeada)
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+
+      expect(
+        await screen.findByText(
+          `No se pudo confirmar si se registró esta operación: ${ESCRITORES[0].descripcion(FECHA_VIEJA.texto)}. Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.`,
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getByLabelText('Desde')).toHaveValue(desdeAntes)
     })
 
     it('una fecha dentro del rango no lo toca ni lo menciona', async () => {

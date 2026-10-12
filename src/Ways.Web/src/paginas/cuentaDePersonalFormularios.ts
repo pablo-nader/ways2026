@@ -69,36 +69,37 @@ export function formularioDeHorasVacio(hoy: string, valorHora: number): Formular
 /** Vista previa del importe: la misma cuenta que el servidor (horas por valor hora, al centavo, los
  * empates se alejan de cero) con aritmética decimal exacta. */
 export function importeDeHoras(horas: number | null, valorHora: number | null): number | null {
-  if (horas === null || valorHora === null) return null
+  if (horas === null || Number.isNaN(horas) || valorHora === null) return null
 
   return productoRedondeado([horas, valorHora])
 }
 
-const DECIMALES_DE_HORAS = 2
+/** Dígitos con un solo separador decimal ("," o ".") y hasta dos decimales: "24", "1,5", "1.5", ".5", "1.". */
+const PATRON_DE_HORAS = /^\d*(?:[.,]\d{0,2})?$/
 
-/** Tipeo del campo de horas. Las horas son una cantidad, no un importe: tanto "," como "." son el
- * separador decimal (en un importe el "." es de miles y se descarta). Se queda con el primer separador,
- * lo normaliza a "," y recorta a dos decimales. */
+/** Tipeo del campo de horas: solo descarta lo que no puede ser parte de un número (letras, espacios). Lo
+ * demás se conserva tal cual, incluidos signos y separadores de más, para que `parsearHoras` lo declare
+ * inválido en vez de adivinar qué quiso decir quien tipeó. */
 export function sanearTipeoDeHoras(bruto: string): string {
-  const soloValidos = bruto.replace(/[^0-9.,]/g, '')
-  const posicion = soloValidos.search(/[.,]/)
-  if (posicion === -1) return soloValidos
-
-  const decimales = soloValidos.slice(posicion + 1).replace(/[.,]/g, '').slice(0, DECIMALES_DE_HORAS)
-
-  return `${soloValidos.slice(0, posicion)},${decimales}`
+  return bruto.replace(/[^0-9.,+-]/g, '')
 }
 
-/** Texto tipeado → horas, o `null` si todavía no hay un número ("", ","). */
+/** Texto tipeado → horas. `null` si todavía no hay número ("", ",") y `NaN` si lo escrito no es una cantidad
+ * válida (más de un separador, un signo, más de dos decimales): las horas se convierten en dinero y no se adivinan. */
 export function parsearHoras(texto: string): number | null {
   const saneado = sanearTipeoDeHoras(texto)
-  if (saneado === '' || saneado === ',') return null
+  if (saneado === '' || saneado === ',' || saneado === '.') return null
+  if (!PATRON_DE_HORAS.test(saneado)) return Number.NaN
 
   return Number(saneado.replace(',', '.'))
 }
 
 export function validarHoras(f: FormularioDeHoras): ErrorDeCuenta | null {
   if (f.fecha === '') return error('fecha', 'Ingresá el día trabajado.')
+
+  if (f.horas !== null && Number.isNaN(f.horas)) {
+    return error('horas', 'Las horas tienen que ser un número con hasta dos decimales, por ejemplo 7,5.')
+  }
 
   if (f.horas === null || f.horas <= 0 || f.horas > MAXIMO_DE_HORAS) {
     return error('horas', `Las horas deben ser mayores que 0 y hasta ${MAXIMO_DE_HORAS}.`)
@@ -309,7 +310,7 @@ export function validarPago(f: FormularioDePago, ctx: ContextoDePago): ErrorDeCu
 }
 
 /** Manda solo lo que la solicitud admite en cada caso: la empresa únicamente con tesorería, el origen
- * únicamente con líneas y el punto de venta únicamente con el cajón o con descuento. */
+ * únicamente con líneas y el punto de venta únicamente con la caja del turno o con descuento. */
 export function aSolicitudDePago(f: FormularioDePago, ctx: ContextoDePago): SolicitudDePagoDePersonal {
   const conLineas = f.lineas.length > 0
   const origen = conLineas ? exigir(f.origen === '' ? null : f.origen, 'el origen de los fondos') : null

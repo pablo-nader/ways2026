@@ -62,7 +62,7 @@ describe('errorDeEscritura — por estado', () => {
   })
 
   it.each([
-    ['el cajón del turno', 'CajaTurno'],
+    ['la caja del turno', 'CajaTurno'],
     ['un pago sin líneas de dinero', null],
   ] as const)('un 403 en un pago con %s no habla de la tesorería y va arriba del formulario', (_caso, origen) => {
     expect(errorDeEscritura(rechazo(403, 'prohibido'), 'pago', origen)).toEqual({
@@ -98,16 +98,29 @@ describe('errorDeEscritura — por estado', () => {
 })
 
 describe('esRechazoCierto — qué escrituras se pueden dar por no hechas', () => {
-  it.each([400, 401, 403, 404, 409, 422])('un %i es un rechazo del servidor: la escritura no se hizo', (estado) => {
-    expect(esRechazoCierto(rechazo(estado, 'x'))).toBe(true)
+  it.each([400, 401, 403, 404, 409, 422])('un %i con un código de la API es un rechazo cierto: la escritura no se hizo', (estado) => {
+    expect(esRechazoCierto(rechazo(estado, 'horas_invalidas'))).toBe(true)
+  })
+
+  it.each([408, 429])('un %i no dice que se rechazó, aunque traiga un código', (estado) => {
+    expect(esRechazoCierto(rechazo(estado, 'horas_invalidas'))).toBe(false)
+  })
+
+  it.each([400, 403, 404, 409, 502])('un %i sin cuerpo de la API (código genérico "error") lo pudo producir un intermediario', (estado) => {
+    expect(esRechazoCierto(rechazo(estado, 'error', 'Error 4xx.'))).toBe(false)
+  })
+
+  it('un código vacío tampoco es de la API', () => {
+    expect(esRechazoCierto(rechazo(400, ''))).toBe(false)
   })
 
   it.each([500, 502, 503])('un %i no dice si el servidor llegó a escribir', (estado) => {
     expect(esRechazoCierto(rechazo(estado, 'resultado_incierto'))).toBe(false)
   })
 
-  it('un fallo sin respuesta (red cortada, tiempo agotado) tampoco lo dice', () => {
+  it('un fallo sin respuesta (red cortada, tiempo agotado) o una respuesta 2xx ilegible tampoco lo dice', () => {
     expect(esRechazoCierto(new Error('Failed to fetch'))).toBe(false)
+    expect(esRechazoCierto(new SyntaxError('Unexpected end of JSON input'))).toBe(false)
     expect(esRechazoCierto(undefined)).toBe(false)
   })
 })

@@ -238,7 +238,7 @@ describe('validarPago', () => {
   const conTesoreria = (parcial: Partial<FormularioDePago> = {}) =>
     pago({ lineas: [linea()], origen: 'Tesoreria', idEmpresa: 2, ...parcial })
 
-  it('acepta un pago de tesorería, uno del cajón y uno solo de descuento', () => {
+  it('acepta un pago de tesorería, uno de la caja del turno y uno solo de descuento', () => {
     expect(validarPago(conTesoreria(), contexto())).toBeNull()
     expect(validarPago(pago({ lineas: [linea()], origen: 'CajaTurno' }), contexto())).toBeNull()
     expect(validarPago(pago({ descuento: 500 }), contexto())).toBeNull()
@@ -307,7 +307,7 @@ describe('validarPago', () => {
     expect(validarPago({ ...f, idEmpresa: 2 }, contexto())).toBeNull()
   })
 
-  it('el cajón necesita el punto de venta de la sesión', () => {
+  it('la caja del turno necesita el punto de venta de la sesión', () => {
     const f = pago({ lineas: [linea()], origen: 'CajaTurno' })
 
     expect(validarPago(f, contexto({ idPuntoVenta: null }))).toMatchObject({
@@ -322,7 +322,7 @@ describe('validarPago', () => {
 })
 
 describe('avisoDeUbicacionDelPago', () => {
-  it('avisa antes de enviar que el cajón y el descuento necesitan punto de venta', () => {
+  it('avisa antes de enviar que la caja del turno y el descuento necesitan punto de venta', () => {
     const sinPuntoDeVenta = contexto({ idPuntoVenta: null })
 
     expect(avisoDeUbicacionDelPago(pago({ lineas: [linea()], origen: 'CajaTurno' }), sinPuntoDeVenta)).toContain(
@@ -360,7 +360,7 @@ describe('aSolicitudDePago', () => {
     })
   })
 
-  it('cajón: manda el punto de venta y no la empresa, aunque haya una empresa en el formulario', () => {
+  it('caja del turno: manda el punto de venta y no la empresa, aunque haya una empresa en el formulario', () => {
     const f = pago({ lineas: [linea()], origen: 'CajaTurno', idEmpresa: 2 })
 
     const solicitud = aSolicitudDePago(f, contexto())
@@ -399,7 +399,7 @@ describe('aSolicitudDePago', () => {
     ).toThrow()
   })
 
-  it('tesorería sin empresa, o cajón sin punto de venta, lanza', () => {
+  it('tesorería sin empresa, o caja del turno sin punto de venta, lanza', () => {
     expect(() => aSolicitudDePago(pago({ lineas: [linea()], origen: 'Tesoreria' }), contexto())).toThrow()
     expect(() =>
       aSolicitudDePago(pago({ lineas: [linea()], origen: 'CajaTurno' }), contexto({ idPuntoVenta: null })),
@@ -441,24 +441,11 @@ describe('etiquetas', () => {
 })
 
 describe('sanearTipeoDeHoras y parsearHoras — las horas son una cantidad: "," y "." son decimales', () => {
-  it.each([
-    ['1.5', '1,5'],
-    ['1,5', '1,5'],
-    ['7.5', '7,5'],
-    ['8', '8'],
-    ['0,75', '0,75'],
-    ['.5', ',5'],
-    ['1,', '1,'],
-    ['', ''],
-  ])('"%s" se muestra como "%s"', (tipeado, esperado) => {
-    expect(sanearTipeoDeHoras(tipeado)).toBe(esperado)
-  })
-
-  it('recorta a dos decimales, deja un solo separador y descarta lo que no es dígito', () => {
-    expect(sanearTipeoDeHoras('1,234')).toBe('1,23')
-    expect(sanearTipeoDeHoras('1.2.3')).toBe('1,23')
-    expect(sanearTipeoDeHoras('1,2,3')).toBe('1,23')
-    expect(sanearTipeoDeHoras('a1-x,5')).toBe('1,5')
+  it('solo descarta letras y espacios: no reinterpreta separadores, signos ni decimales de más', () => {
+    expect(sanearTipeoDeHoras('a 1 x,5')).toBe('1,5')
+    expect(sanearTipeoDeHoras('1.234,5')).toBe('1.234,5')
+    expect(sanearTipeoDeHoras('-8')).toBe('-8')
+    expect(sanearTipeoDeHoras('1,234')).toBe('1,234')
   })
 
   it.each([
@@ -466,15 +453,38 @@ describe('sanearTipeoDeHoras y parsearHoras — las horas son una cantidad: "," 
     ['1,5', 1.5],
     ['7.5', 7.5],
     ['8', 8],
+    ['24', 24],
+    ['24,00', 24],
     ['0,75', 0.75],
     ['.5', 0.5],
     ['1,', 1],
+    ['1.', 1],
   ])('"%s" son %s horas', (texto, horas) => {
     expect(parsearHoras(texto)).toBe(horas)
   })
 
   it.each(['', ',', '.', 'abc'])('"%s" todavía no es un número', (texto) => {
     expect(parsearHoras(texto)).toBeNull()
+  })
+
+  it.each(['1,5.2', '1.234,5', '1.2.3', '1,2,3', '-8', '+8', '1,234', '1.234', '8-'])('"%s" es inválido: no se adivina qué quiso decir', (texto) => {
+    expect(parsearHoras(texto)).toBeNaN()
+  })
+
+  it('un valor inválido no tiene vista previa y se rechaza en el campo de horas', () => {
+    const f = { ...formularioDeHorasVacio(HOY, 3500), horas: Number.NaN }
+
+    expect(importeDeHoras(Number.NaN, 3500)).toBeNull()
+    expect(validarHoras(f)).toEqual({
+      campo: 'horas',
+      mensaje: 'Las horas tienen que ser un número con hasta dos decimales, por ejemplo 7,5.',
+    })
+  })
+
+  it('24,01 sigue rechazado por el rango, no por el formato', () => {
+    expect(validarHoras({ ...formularioDeHorasVacio(HOY, 3500), horas: parsearHoras('24,01') })?.mensaje).toBe(
+      'Las horas deben ser mayores que 0 y hasta 24.',
+    )
   })
 })
 

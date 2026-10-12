@@ -109,9 +109,10 @@ function SinEmpleado() {
  * Las escrituras no llevan clave de idempotencia: reintentar a ciegas una que quizá se hizo puede registrar
  * dos veces el mismo pago (y sus gastos, el egreso de caja o tesorería y el descuento al cliente). Por eso un
  * resultado incierto (red cortada, cualquier 5xx) cierra la modal y descarta el formulario, relee la cuenta,
- * el saldo y la deuda, y deja un aviso persistente (`avisoIncierto`, con su propio estado: es una
- * precondición vigente que ninguna acción posterior borra) que manda a revisar los movimientos antes de
- * volver a cargarla. Solo un rechazo cierto (4xx) deja la modal abierta con el error en su campo.
+ * el saldo y la deuda, y agrega una entrada a `avisosInciertos` (su propio estado: cada una es una precondición
+ * vigente). Ninguna otra escritura, refresco, paginado ni filtro las borra: solo las quita el "Ya lo revisé"
+ * de cada una, inerte mientras hay una escritura en vuelo. Mandan a revisar los movimientos antes de volver
+ * a cargarla. Solo un rechazo cierto (4xx) deja la modal abierta con el error en su campo.
  */
 function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   const { usuario } = useAuth()
@@ -141,7 +142,9 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   const [modal, setModal] = useState<ModalAbierta>(null)
   const [errorDeModal, setErrorDeModal] = useState<ErrorDeCuenta | null>(null)
   const [aviso, setAviso] = useState('')
-  const [avisoIncierto, setAvisoIncierto] = useState('')
+  /** Una entrada por escritura de resultado incierto. Solo se agregan y solo las quita su propio "Ya lo revisé". */
+  const [avisosInciertos, setAvisosInciertos] = useState<{ id: number; texto: string }[]>([])
+  const ultimoAvisoIncierto = useRef(0)
   const [escribiendo, setEscribiendo] = useState(false)
   const contenedorRef = useRef<HTMLDivElement>(null)
 
@@ -216,7 +219,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
 
   // Catálogos del pago. La empresa solo la elige el Admin (pagar de la tesorería); el Supervisor ni la pide.
   // Cada catálogo que falla tiene su propia bandera: sin medios no hay líneas de dinero; sin empresas no se
-  // ofrece la tesorería, pero el cajón del turno y el descuento siguen funcionando.
+  // ofrece la tesorería, pero la caja del turno y el descuento siguen funcionando.
   useEffect(() => {
     let vigente = true
 
@@ -259,14 +262,16 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
    * deuda del cliente. Va fuera del try/catch de la escritura y nunca lanza: `fallo` dice si alguna lectura falló. */
   async function releerTrasEscribir(fecha: string) {
     const { filtros: primera, ampliado } = ampliarRangoParaFecha({ ...filtros, pagina: 1 }, fecha)
-    setFiltros(primera)
 
     const lecturas = await Promise.allSettled([
       cargarCuenta(primera, true),
       idCliente === null ? Promise.resolve() : cargarDeuda(idCliente, true),
     ])
+    // Los filtros solo cambian si la tabla realmente se releyó: `cargarCuenta` ya volcó en ellos el rango efectivo.
+    const cuentaOk = lecturas[0].status === 'fulfilled'
+    if (cuentaOk) setFiltros((previos) => ({ ...previos, pagina: 1 }))
 
-    return { ampliado, fallo: lecturas.some((l) => l.status === 'rejected') }
+    return { ampliado: ampliado && cuentaOk, fallo: lecturas.some((l) => l.status === 'rejected') }
   }
 
   /** El rechazo dejó vieja la deuda o el cliente vinculado: se releen, así el tope del formulario se corrige. */
@@ -277,13 +282,15 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   /** El POST no se pudo dar por hecho ni por no hecho: la modal se cierra con su formulario, la cuenta se relee
    * y queda el aviso persistente. Reabrir arranca de cero, así repetir la operación exige volver a cargarla. */
   async function resolverResultadoIncierto(operacion: Operacion) {
+    const id = ++ultimoAvisoIncierto.current
     setModal(null)
     setAviso('')
-    setAvisoIncierto(avisoDeResultadoIncierto(operacion.descripcion, true))
+    setAvisosInciertos((previos) => [...previos, { id, texto: avisoDeResultadoIncierto(operacion.descripcion, true) }])
 
     const { ampliado, fallo } = await releerTrasEscribir(operacion.fecha)
     const nota = ampliado ? ` ${notaDeRangoAmpliado(operacion.fecha)}` : ''
-    setAvisoIncierto(`${avisoDeResultadoIncierto(operacion.descripcion, !fallo)}${nota}`)
+    const texto = `${avisoDeResultadoIncierto(operacion.descripcion, !fallo)}${nota}`
+    setAvisosInciertos((previos) => previos.map((a) => (a.id === id ? { id, texto } : a)))
   }
 
   async function escribir(operacion: Operacion, accion: () => Promise<MovimientoDePersonal>) {
@@ -399,11 +406,14 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   return (
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo={`Cuenta de ${cuenta?.encabezado.nombre ?? empleado?.nombre ?? 'personal'}`} variante="inverse" herramientas={volver}>
-        {avisoIncierto && (
-          <div role="alert" className="alert alert-warning border border-warning fw-semibold">
-            {avisoIncierto}
+        {avisosInciertos.map((a) => (
+          <div key={a.id} role="alert" className="alert alert-warning border border-warning d-flex justify-content-between align-items-center gap-3">
+            <span className="fw-semibold">{a.texto}</span>
+            <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0" disabled={bloqueado} onClick={() => setAvisosInciertos((previos) => previos.filter((x) => x.id !== a.id))}>
+              Ya lo revisé
+            </button>
           </div>
-        )}
+        ))}
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorEmpleado && (
           <div className="alert alert-danger d-flex justify-content-between align-items-center">

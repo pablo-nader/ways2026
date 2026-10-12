@@ -311,8 +311,12 @@ export function ModalDePago({
   })
   const [proximaClave, setProximaClave] = useState(1)
   const { error, escribiendo } = resto
-  // Si el empleado ya no tiene cliente vinculado el campo del descuento no se dibuja: lo que quedó cargado no cuenta.
-  const f = nombreCliente === null && formulario.descuento !== null ? { ...formulario, descuento: null } : formulario
+  const deudaLeida = deudaDelCliente !== null
+  const puedeDescontar = nombreCliente !== null && deudaLeida && deudaDelCliente > 0
+  // Si el descuento dejó de estar disponible (sin cliente vinculado, sin deuda o deuda sin leer) el campo queda
+  // deshabilitado o no se dibuja: lo que quedó cargado no cuenta, así el formulario nunca se traba en un campo
+  // que no se puede editar. Con la deuda solo más baja que lo tipeado el campo sigue editable y el tope lo avisa.
+  const f = !puedeDescontar && formulario.descuento !== null ? { ...formulario, descuento: null } : formulario
 
   const ctx: ContextoDePago = {
     deudaDelCliente,
@@ -324,8 +328,6 @@ export function ModalDePago({
   const total = totalDelPago(f)
   const saldoResultante = saldoTrasPago(saldo, f)
   const tieneLineas = f.lineas.length > 0
-  const deudaLeida = deudaDelCliente !== null
-  const puedeDescontar = nombreCliente !== null && deudaLeida && deudaDelCliente > 0
 
   function cambiar(parcial: Partial<FormularioDePago>) {
     setF((prev) => ({ ...prev, ...parcial }))
