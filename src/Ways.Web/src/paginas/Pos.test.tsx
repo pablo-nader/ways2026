@@ -7393,7 +7393,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         )
 
         expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
-        expect(screen.getByTestId('header')).toHaveTextContent('true|true|true|true')
+        await waitFor(() => expect(screen.getByTestId('header')).toHaveTextContent('true|true|true|true'))
       }))
 
     it('la lista de clientes del servidor que llega tarde no pisa al cliente que el cajero eligió de la copia local', () =>
