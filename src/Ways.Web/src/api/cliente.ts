@@ -276,6 +276,15 @@ export const api = {
     }),
   put: <T>(ruta: string, cuerpo: unknown) =>
     pedir<T>(ruta, { method: 'PUT', body: JSON.stringify(cuerpo) }),
+  /** `PUT` con el archivo crudo como cuerpo. `pedir` pone `application/json` a todo cuerpo y los
+   * `headers` propios van después, así que el tipo del archivo lo reemplaza; sin tipo conocido sale
+   * `application/octet-stream`, que el servidor rechaza con su propio código. */
+  putBinario: <T>(ruta: string, archivo: Blob) =>
+    pedir<T>(ruta, {
+      method: 'PUT',
+      body: archivo,
+      headers: { 'Content-Type': archivo.type || 'application/octet-stream' },
+    }),
   delete: <T>(ruta: string) => pedir<T>(ruta, { method: 'DELETE' }),
   descargar: (ruta: string) => descargar(ruta),
 }

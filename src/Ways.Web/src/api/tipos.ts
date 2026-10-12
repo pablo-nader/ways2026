@@ -370,6 +370,34 @@ export type DominioListado = {
 
 export type DominioAlta = { host: string; esPrincipal: boolean }
 
+export type TemaDeVitrina = 'claro' | 'oscuro'
+
+/** `GET /api/empresas/{id}/vitrina` y lo que devuelven los `PUT`. `existe: false` es la forma por
+ * defecto de una empresa sin vitrina guardada (sin publicar, tema oscuro). `tema` llega como texto
+ * y el cliente lo reduce a `TemaDeVitrina`. `logoVersion` es la marca de la última carga del logo
+ * (cambia con cada subida) y se usa solo para refrescar la vista previa. */
+export type VitrinaAdmin = {
+  existe: boolean
+  idEmpresa: number
+  publicada: boolean
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: string
+  tieneLogo: boolean
+  logoVersion: number | null
+}
+
+/** Cuerpo de `PUT /api/empresas/{id}/vitrina` (espejo de `SolicitudDeVitrina`): los cinco campos
+ * se guardan, ninguno se descarta. El logo viaja aparte. */
+export type VitrinaEdicion = {
+  publicada: boolean
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: TemaDeVitrina
+}
+
 /** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la
  * empresa se sigue listando con el nombre en `null` y se muestra como anomalía en vez de
  * desaparecer. `idTenant` deja de renderizarse y pasa a ser la clave del filtro por tenant. */
