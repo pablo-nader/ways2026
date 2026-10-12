@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Ways.Application.Abstracciones;
+using Ways.Application.Combos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Domain.Catalogos;
@@ -197,6 +198,15 @@ public class ServicioDeInstantaneaDePos(
         var toleranciaPago = JsonSerializer.Deserialize<decimal>(
             ResolucionDeParametros.Resolver(ParametroConocido.ToleranciaPago.Clave, candidatosTolerancia, puntoVenta.Id));
 
-        return new InstantaneaDePos(momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago);
+        // Combos: UNA consulta (combos vivos y activos de la empresa del punto de venta o de todo el tenant, con todos sus
+        // componentes), solo para el formato nuevo; el original no los lleva. Se filtran contra los artículos que
+        // acaban de armarse para que ningún combo viaje si no se puede completar con esta misma instantánea.
+        var combos = soloListaDelConsumidorFinal
+            ? null
+            : ArmadorDeInstantanea.ArmarCombos(
+                await ServicioDeCombos.CargarParaInstantaneaAsync(db, idEmpresa, ct), articulosDeInstantanea);
+
+        return new InstantaneaDePos(
+            momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago, combos);
     }
 }

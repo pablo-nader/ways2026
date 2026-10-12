@@ -909,7 +909,8 @@ documento y reparte el ahorro entre las líneas consumidas:
 
 `ServicioDeVentas.EmitirAsync` aplica combos en la fase de decisión, después de resolver las ofertas y antes de los
 totales, el FEFO y la validación de pagos. Solo en la venta online de signo positivo: quedan afuera la conversión de un
-presupuesto (precios congelados), la venta con `NumeroPreasignado` (precios del dispositivo) y las notas de crédito, que
+presupuesto (precios congelados), la venta con `NumeroPreasignado` (precios del dispositivo: el servidor detecta combos
+solo para auditar, ver "Combos en el POS offline") y las notas de crédito, que
 nunca detectan combos (la asociada a una venta con combo devuelve lo cobrado: ver "Nota de crédito de una venta con
 combo" más abajo).
 El combo nunca es una línea de la venta: la venta conserva las líneas de los artículos reales y el combo es un descuento
@@ -983,6 +984,111 @@ de `EmitirAsync` (`DevolucionDeCombos`, pura); nada ocurre dentro de la lambda r
 - **Costo de consultas.** UNA consulta más (los items de combo de la venta asociada, de los artículos devueltos), solo en la
   NCX asociada: una sin comprobante asociado no la paga, y una asociada a una venta sin combos la paga y recibe el
   resultado vacío. La nota de crédito no tiene un techo de consultas fijado en `VentasCheckoutTests`.
+
+##### Vista previa del carrito (`POST /api/ofertas/resolver-con-combos`)
+
+El POS en línea muestra el mismo total que el servidor cobrará. Recibe el mismo cuerpo que `POST /api/ofertas/resolver`
+(`SolicitudDeResolucion`) pero responde un objeto y no un arreglo, así que vive en su propia ruta: cambiar la forma de
+`/resolver` rompería a los POS ya instalados, que siguen recibiendo el arreglo de siempre sin ninguna clave nueva
+(`combo` se omite cuando es `null`). Misma policy que `/resolver` (`OperacionDePos`); no escribe nada.
+
+```jsonc
+{
+  "lineas": [   // en el orden de la solicitud; cada una es un ResultadoDeResolucion de siempre
+    { "idArticulo": 1, "idListaPrecio": 1, "precioOriginal": 3000, "precioFinal": 3000, "descuentoUnitario": 0,
+      "aplicadas": [],
+      "combo": { "unidadesConsumidas": 1, "ahorro": 272.73, "idCombo": 7 } }  // solo si un combo consumió unidades
+  ],
+  "combos": [   // combos aplicados al documento, ascendentes por idCombo; [] si ninguno
+    { "idCombo": 7, "codigo": 1, "nombre": "Pancho + coca", "veces": 1, "ahorro": 500 }
+  ]
+}
+```
+
+- `combo.unidadesConsumidas` son las unidades de la línea que entraron a un combo; `combo.ahorro` es la parte del combo como
+  IMPORTE DE LÍNEA (no unitario) y `combo.idCombo` el combo que la venta guardará en `id_combo` (el de menor id entre los
+  que consumieron la línea). El neto de la línea es `round(cantidad × precioOriginal) − (round(descuentoUnitario ×
+  (cantidad − unidadesConsumidas)) + ahorro)`, la fórmula del checkout, y el del documento la suma de las líneas.
+  `combos[].ahorro` es el ahorro de una aplicación (importe de lista de las unidades consumidas menos el precio del combo)
+  por `veces`; coincide con la suma de lo repartido a las líneas por ese combo porque `ResolvedorDeCombos` reparte el ahorro
+  de cada aplicación entre las líneas para que sume exacto (cada conjunto completo cobra el precio del combo) y multiplica
+  cada parte por las veces. `combo.ahorro` de una línea suma las partes de todos los combos que la consumieron. `veces` es
+  cuántos conjuntos completó.
+- Es el mismo código que la venta online: ambos llaman a `CombosEnVenta.DetectarAsync`, que arma las líneas a partir de la
+  resolución de ofertas y carga los candidatos con `ServicioDeCombos.CargarCandidatosParaVentaAsync`. Mismas exclusiones
+  (artículos cuya unidad de venta no es `Unidad`, líneas sin precio vigente, descuento de oferta negativo), mismo mínimo de 2
+  unidades, mismo combo de menor id por línea. La paridad la fija `CombosPrevisualizacionTests`: el neto por línea y el total
+  que calcula la vista previa son los que `POST /api/ventas` persiste para varios carritos.
+- `agregacion: PorLinea` no es un documento y nunca devuelve combos (`lineas` como en `/resolver`, `combos: []`); un valor de
+  agregación inválido da `400 agregacion_invalida`.
+- Empresa y lista (REQUISITO del contrato): la vista previa toma la empresa y la lista de lo que el cliente ENVÍA en cada
+  línea, mientras que la venta usa la empresa del punto de venta y la lista del cliente. Para que la vista previa sea el
+  total de la venta, el cliente envía en TODAS las líneas la `idEmpresa` del punto de venta y la `idListaPrecio` del cliente.
+  Si omite la `idEmpresa`, solo participan los combos de todo el tenant y un combo propio de la empresa no aparece en la
+  vista previa aunque la venta lo aplique (lo fija `CombosPrevisualizacionTests.SiElClienteOmiteLaEmpresaLaVistaPreviaNoMuestraUnComboPropioQueLaVentaSiAplica`).
+  El servidor solo rechaza lo que es incoherente dentro del documento: líneas con empresas distintas (incluida la mezcla
+  de con y sin empresa) dan `400 empresa_inconsistente` y líneas con listas distintas dan `400 lista_inconsistente`;
+  `/resolver` no rechaza ninguna mezcla porque filtra las ofertas línea por línea, y los combos se detectan sobre el
+  documento entero. Que los valores enviados sean los del punto de venta y el cliente no lo verifica el servidor.
+- Costo: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite si el documento suma menos de 2
+  unidades (6 y 5 respectivamente, fijado en `CombosConsultasTests`). Los combos aplican en un documento de signo positivo; la vista previa no sabe de notas de crédito.
+
+##### Combos en el POS offline
+
+**Instantánea (`GET /api/pos/instantanea?version=2`).** Trae `combos[]`: los combos vivos y activos del punto de venta (de su
+empresa o de todo el tenant) que el dispositivo puede completar con los artículos de esa misma instantánea, ascendentes por
+`idCombo`. Cada uno es `{ idCombo, codigo, nombre, precio, componentes[] }` y cada componente `{ idArticulo | idFamilia,
+cantidad }` (viaja exactamente uno de los dos ids, el otro se omite), con los artículos primero y las familias después, cada
+grupo ascendente por id. El componente familia se empareja con `articulos[].idFamilia`, que la instantánea ya trae. La clave
+`combos` se omite (no se manda `[]`) si no hay ninguno: una instantánea sin combos y su ETag son los de antes de la
+funcionalidad. El ETag es el hash del contenido serializado, así que cambia cuando cambia un combo, su precio o un componente
+(o un artículo que deja un combo sin poder completarse), y no cambia por nada que no figure en la respuesta (tocar
+`updated_at`, por ejemplo). El formato original (sin `version=2`) no lleva combos. Cuesta UNA consulta más, solo en `version=2`
+(`CombosConsultasTests` cuenta las consultas a `combos`: 1 en `version=2`, 0 en el formato original).
+
+Un combo viaja ENTERO o no viaja (`ArmadorDeInstantanea.ArmarCombos`): uno parcial haría creer al dispositivo que puede
+armarlo. Se descarta si algún componente no se puede vender con esta instantánea: un componente artículo tiene que figurar
+en ella (activo y con precio en alguna lista; un artículo dado de baja ya no figura) y venderse por `Unidad` (como en la venta
+online, un artículo pesable nunca consume un combo); un componente familia necesita al menos un artículo vendible de esa
+familia en la instantánea (la misma regla de emparejamiento que la venta online, que compara la familia del artículo; una
+familia dada de baja deja de contar cuando sus artículos dejan de figurar). Una cantidad no entera descarta el combo. Es la
+lectura de la regla de `dangling-fk-read-models` para este caso: una referencia que apunta a algo no vendible se trata igual
+que una ausente, y como el motor del dispositivo necesita el conjunto completo, la ausencia descarta el combo y no solo el
+componente.
+
+**Venta offline (`POST /api/ventas` con `NumeroPreasignado`).** `LineaDeVenta` suma tres campos opcionales, válidos solo
+junto al precio offline de la línea: `unidadesConsumidasPorCombo` (entero), `ahorroDeCombo` (importe de línea) e `idCombo`. El
+servidor los graba tal cual: el descuento de la línea es `round(descuentoUnitario × (cantidad − unidadesConsumidasPorCombo)) +
+ahorroDeCombo` (`CalculadorDeTotales`) y el combo queda en `items_comprobante_venta.id_combo`; una línea con todas sus
+unidades en el combo no lleva `id_oferta`, una con unidades fuera del combo conserva la oferta. Validación
+(`ExigirPreciosOfflineValidos`): sin `precioUnitario` en la línea `400 combo_offline_no_admitido`; los tres o ninguno
+(`400 combo_offline_incompleto`); unidades entre 1 y la cantidad de la línea, ahorro entre 0 y el bruto de las unidades
+consumidas con a lo sumo dos decimales, e id positivo (`400 combo_offline_invalido`); una nota de crédito no admite combos
+(`400 combo_offline_no_admitido`). Unidades fraccionarias no llegan al servicio (el binding las rechaza). El camino online
+nunca los admite: sin precio offline son siempre un rechazo.
+
+- **Id de combo inexistente.** La venta ya ocurrió y el ticket está en manos del cliente: nunca se la deja varada. Si el id no
+  existe en el tenant (la FK lo rechazaría), se conservan los importes, `id_combo` queda en `null` y la línea se audita con
+  `combo_cobrado.inexistente = true`. Un combo dado de baja después de que el dispositivo lo sincronizó SÍ existe (la baja es
+  lógica): la venta conserva su `id_combo`. Cuesta UNA consulta, solo si alguna línea trae `idCombo`.
+- **Auditoría.** El servidor detecta combos sobre el carrito offline con su propio motor, SOLO para comparar (los importes del
+  dispositivo siguen siendo los que se graban): `NetoDeLinea` ahora calcula el neto esperado con `CalculadorDeTotales` incluyendo
+  la parte del combo, de modo que un combo bien calculado no es una discrepancia y uno mal calculado, o ausente, sí (el
+  dispositivo no lo detectó, la parte no coincide, o el combo ya no existe o está inactivo para el servidor). Cada item auditado
+  en `venta.discrepancia` suma `combo_cobrado` y `combo_esperado` (`{ unidades, ahorro, id_combo, inexistente }`, `null` si no hay).
+  Se compara el neto, no el id: dos combos que dan el mismo neto no son una discrepancia. Cuesta UNA consulta de candidatos más
+  en la venta offline de al menos 2 unidades (la misma de la venta online). `CombosConsultasTests` fija el costo de la venta
+  offline: sin datos de combo, 19 consultas con una unidad y 20 con dos (las 16 de la venta online de una línea más 3 propias
+  del camino de dispositivo con número pre-asignado, y los candidatos); con datos de combo en un carrito de dos unidades, 21
+  (los candidatos y la lectura de ids).
+- **Despliegue.** Un dispositivo que no aplica combos (una versión vieja del POS o una instantánea vieja) y vende un
+  carrito que coincide con un combo activo queda registrado por lo que cobró, sin combo, y se audita como discrepante
+  (`PrecioDiscrepante = true`, `combo_cobrado = null`). Es lo esperado hasta que el dispositivo se actualice; no es un error
+  de la venta ni la bloquea.
+- **Reenvío idempotente.** Los tres campos NO forman parte del "mismo contenido" de `ExigirMismoContenido`, igual que el precio y
+  el descuento de la línea: son dinero que calculó el dispositivo, no la identidad de lo vendido. Un reenvío con otra parte de
+  combo bajo el mismo número devuelve el comprobante ya emitido sin pisarlo, y no duplica la auditoría. Todo se decide antes de
+  la transacción; nada se calcula dentro de la lambda reintentable.
 
 Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
 sus componentes (`Cascade`). La baja de negocio del combo es lógica (`deleted_at`) y borra físicamente sus componentes
@@ -2643,7 +2749,9 @@ bloqueo" que `ItemComprobanteVenta.LoteVencido`):
 
 1. `ItemEmitido.PrecioDiscrepante` (`true`/`false`) en la respuesta del emit — visible solo en el
    checkout fresco que detectó la discrepancia, como `LoteVencido`; una relectura/reprint no lo
-   recalcula (siempre `false` ahí).
+   recalcula (siempre `false` ahí). Desde los combos también es `true` cuando SOLO difiere el combo: el dispositivo no
+   detectó uno que el servidor sí (una versión vieja del POS o una instantánea vieja) o trajo una parte de combo distinta
+   de la que el servidor calcula. Lo cobrado se graba igual (ver "Combos en el POS offline").
 2. Una fila en `auditoria` (`AccionAuditada.VentaDiscrepancia = ("venta.discrepancia",
    "comprobante_venta")`, catálogo de 18 entradas) con el número/id del comprobante y, por línea
    discrepante, artículo/cantidad/precio y descuento cobrados vs. esperados — durable, consultable
@@ -2670,6 +2778,10 @@ y esperar aprobación explícita antes de aplicar cualquier migración — no pr
 modelo que el dueño todavía no vio. Auditoría cierra el requisito ("hacer visible, nunca
 silenciosa") sin ese riesgo; si el volumen de discrepancias justifica más adelante un reporte
 dedicado, ESE es el momento de proponer las columnas y pedir la aprobación.
+
+**Combos (feature combos).** La instantánea trae `combos[]` y la línea offline puede traer las unidades
+consumidas por un combo, la parte del combo y el combo; el servidor los graba tal cual y audita la diferencia contra su
+propia detección. Contrato y decisiones en "Combos en el POS offline" (sección Combos).
 
 **El camino online/web queda byte-idéntico.** Ningún actor sin `NumeroPreasignado` puede mandar
 precio de línea (guard arriba); sin precio de línea, `MaterializarItems` sigue exactamente la
