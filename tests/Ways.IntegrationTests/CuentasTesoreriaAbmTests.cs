@@ -166,7 +166,7 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
     {
         var ctx = await PrepararAsync(nameof(ElAbmCompletoDelAdminDevuelveElContratoYLaBajaLoOcultaDeLaLectura));
 
-        var alta = await ctx.Admin.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "  Mercado Pago ", 1500.25m));
+        var alta = await ctx.Admin.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "  Mercado Pago ", 1500.25m, true));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         var creada = (await alta.Content.ReadFromJsonAsync<CuentaTesoreriaListado>())!;
         Assert.Equal($"{Ruta}/{creada.Id}", alta.Headers.Location!.OriginalString);
@@ -219,6 +219,51 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
     }
 
     [Fact]
+    public async Task UnCuerpoSinAlgunCampoSeRechazaCon400NombrandoElCampoYLaFilaQuedaIntacta()
+    {
+        var ctx = await PrepararAsync(nameof(UnCuerpoSinAlgunCampoSeRechazaCon400NombrandoElCampoYLaFilaQuedaIntacta));
+        var cuenta = await CrearOkAsync(ctx, "Cuenta", saldoInicial: 100m, activo: false);
+
+        static StringContent Json(string texto) => new(texto, System.Text.Encoding.UTF8, "application/json");
+        var empresa = ctx.IdEmpresa;
+
+        var altas = new (string Cuerpo, string Codigo)[]
+        {
+            ($$"""{"nombre":"Nueva","saldoInicial":1,"activo":true}""", "id_empresa_requerido"),
+            ($$"""{"idEmpresa":{{empresa}},"saldoInicial":1,"activo":true}""", "nombre_requerido"),
+            ($$"""{"idEmpresa":{{empresa}},"nombre":"Nueva","activo":true}""", "saldo_inicial_requerido"),
+            ($$"""{"idEmpresa":{{empresa}},"nombre":"Nueva","saldoInicial":1}""", "activo_requerido"),
+            ($$"""{"idEmpresa":null,"nombre":"Nueva","saldoInicial":null,"activo":null}""", "id_empresa_requerido"),
+        };
+        foreach (var (cuerpo, codigo) in altas)
+        {
+            var respuesta = await ctx.Admin.PostAsync(Ruta, Json(cuerpo));
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            Assert.Equal(codigo, await CodigoAsync(respuesta));
+        }
+
+        var ediciones = new (string Cuerpo, string Codigo)[]
+        {
+            ("""{"saldoInicial":100,"activo":false}""", "nombre_requerido"),
+            ("""{"nombre":"Cuenta","activo":false}""", "saldo_inicial_requerido"),
+            ("""{"nombre":"Cuenta","saldoInicial":100}""", "activo_requerido"),
+            ("""{"nombre":"X"}""", "saldo_inicial_requerido"),
+            ("""{}""", "nombre_requerido"),
+        };
+        foreach (var (cuerpo, codigo) in ediciones)
+        {
+            var respuesta = await ctx.Admin.PutAsync($"{Ruta}/{cuenta.Id}", Json(cuerpo));
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            Assert.Equal(codigo, await CodigoAsync(respuesta));
+        }
+
+        Assert.Equal(cuenta, Assert.Single(await ListarAsync(ctx.Admin)));
+
+        var inexistente = await ctx.Admin.PutAsync($"{Ruta}/{int.MaxValue}", Json("{}"));
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+    }
+
+    [Fact]
     public async Task ElSaldoInicialPuedeSerNegativoYElAltaRechazaLoQueNoEsValido()
     {
         var ctx = await PrepararAsync(nameof(ElSaldoInicialPuedeSerNegativoYElAltaRechazaLoQueNoEsValido));
@@ -229,12 +274,12 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var casos = new (AltaDeCuentaTesoreria Cuerpo, HttpStatusCode Estado, string Codigo)[]
         {
-            (new(ctx.IdEmpresa, "   ", 0m), HttpStatusCode.BadRequest, "nombre_requerido"),
-            (new(ctx.IdEmpresa, new string('a', 151), 0m), HttpStatusCode.BadRequest, "nombre_muy_largo"),
-            (new(ctx.IdEmpresa, "Tres decimales", 0.001m), HttpStatusCode.BadRequest, "saldo_inicial_invalido"),
-            (new(ctx.IdEmpresa, "Fuera de rango", 1_000_000_000_000m), HttpStatusCode.BadRequest, "saldo_inicial_invalido"),
-            (new(0, "Sin empresa", 0m), HttpStatusCode.BadRequest, "referencia_invalida"),
-            (new(int.MaxValue, "Empresa inexistente", 0m), HttpStatusCode.BadRequest, "referencia_invalida"),
+            (new(ctx.IdEmpresa, "   ", 0m, true), HttpStatusCode.BadRequest, "nombre_requerido"),
+            (new(ctx.IdEmpresa, new string('a', 151), 0m, true), HttpStatusCode.BadRequest, "nombre_muy_largo"),
+            (new(ctx.IdEmpresa, "Tres decimales", 0.001m, true), HttpStatusCode.BadRequest, "saldo_inicial_invalido"),
+            (new(ctx.IdEmpresa, "Fuera de rango", 1_000_000_000_000m, true), HttpStatusCode.BadRequest, "saldo_inicial_invalido"),
+            (new(0, "Sin empresa", 0m, true), HttpStatusCode.BadRequest, "referencia_invalida"),
+            (new(int.MaxValue, "Empresa inexistente", 0m, true), HttpStatusCode.BadRequest, "referencia_invalida"),
         };
 
         foreach (var (cuerpo, estado, codigo) in casos)
@@ -253,7 +298,7 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
         var a = await PrepararAsync(nameof(NoSePuedeCrearUnaCuentaEnUnaEmpresaDeOtroTenant) + "A");
         var b = await PrepararAsync(nameof(NoSePuedeCrearUnaCuentaEnUnaEmpresaDeOtroTenant) + "B");
 
-        var respuesta = await a.Admin.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(b.IdEmpresa, "Intrusa", 0m));
+        var respuesta = await a.Admin.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(b.IdEmpresa, "Intrusa", 0m, true));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.Equal("referencia_invalida", await CodigoAsync(respuesta));
@@ -269,7 +314,7 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
         var segunda = await CrearOkAsync(ctx, "Banco");
 
         var repetidaAlCrear = await ctx.Admin.PostAsJsonAsync(
-            Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "MERCADO pago", 0m));
+            Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "MERCADO pago", 0m, true));
         Assert.Equal(HttpStatusCode.Conflict, repetidaAlCrear.StatusCode);
         Assert.Equal("cuenta_tesoreria_duplicada", await CodigoAsync(repetidaAlCrear));
 
@@ -308,7 +353,7 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
             await insert.ExecuteNonQueryAsync();
         }
 
-        var pedido = ctx.Admin.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "Carrera", 0m));
+        var pedido = ctx.Admin.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "Carrera", 0m, true));
         await EsperarUnaSesionBloqueadaAsync();
         await transaccion.CommitAsync();
 
@@ -510,7 +555,7 @@ public class CuentasTesoreriaAbmTests(WaysApiFixture fixture) : IClassFixture<Wa
             Assert.Equal(esperado, (await cliente.GetAsync($"{Ruta}/{cuenta.Id}")).StatusCode);
             Assert.Equal(
                 esperado,
-                (await cliente.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "Otra", 0m))).StatusCode);
+                (await cliente.PostAsJsonAsync(Ruta, new AltaDeCuentaTesoreria(ctx.IdEmpresa, "Otra", 0m, true))).StatusCode);
             Assert.Equal(
                 esperado,
                 (await cliente.PutAsJsonAsync($"{Ruta}/{cuenta.Id}", new EdicionDeCuentaTesoreria("Otra", 0m, true))).StatusCode);

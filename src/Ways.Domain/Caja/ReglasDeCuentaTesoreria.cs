@@ -35,8 +35,18 @@ public static class ReglasDeCuentaTesoreria
         return limpio;
     }
 
-    public static void ExigirSaldoInicialValido(decimal saldoInicial)
+    public static int ExigirEmpresa(int? idEmpresa) =>
+        idEmpresa ?? throw new ErrorDominio("id_empresa_requerido", "El campo idEmpresa es obligatorio.", 400);
+
+    public static bool ExigirActivo(bool? activo) =>
+        activo ?? throw new ErrorDominio("activo_requerido", "El campo activo es obligatorio.", 400);
+
+    /// <summary>Exige que el campo venga y que sea válido.</summary>
+    public static decimal ExigirSaldoInicialValido(decimal? valor)
     {
+        var saldoInicial = valor
+            ?? throw new ErrorDominio("saldo_inicial_requerido", "El campo saldoInicial es obligatorio.", 400);
+
         if (Math.Abs(saldoInicial) > SaldoInicialMaximo || decimal.Round(saldoInicial, 2) != saldoInicial)
         {
             throw new ErrorDominio(
@@ -44,5 +54,7 @@ public static class ReglasDeCuentaTesoreria
                 "El saldo inicial debe estar entre -999999999999.99 y 999999999999.99, con hasta dos decimales.",
                 400);
         }
+
+        return saldoInicial;
     }
 }

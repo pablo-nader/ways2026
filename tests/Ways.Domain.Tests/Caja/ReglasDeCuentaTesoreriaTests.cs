@@ -77,4 +77,28 @@ public class ReglasDeCuentaTesoreriaTests
         Assert.Equal("saldo_inicial_invalido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
     }
+
+    [Fact]
+    public void UnSaldoInicialAusenteEsRequerido()
+    {
+        var error = Assert.Throws<ErrorDominio>(() => ReglasDeCuentaTesoreria.ExigirSaldoInicialValido(null));
+
+        Assert.Equal("saldo_inicial_requerido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void ElSaldoInicialPresenteSeDevuelveSinCambios()
+    {
+        Assert.Equal(-12.5m, ReglasDeCuentaTesoreria.ExigirSaldoInicialValido(-12.5m));
+    }
+
+    [Fact]
+    public void ActivoYEmpresaAusentesSonRequeridos()
+    {
+        Assert.Equal("activo_requerido", Assert.Throws<ErrorDominio>(() => ReglasDeCuentaTesoreria.ExigirActivo(null)).Codigo);
+        Assert.Equal("id_empresa_requerido", Assert.Throws<ErrorDominio>(() => ReglasDeCuentaTesoreria.ExigirEmpresa(null)).Codigo);
+        Assert.False(ReglasDeCuentaTesoreria.ExigirActivo(false));
+        Assert.Equal(0, ReglasDeCuentaTesoreria.ExigirEmpresa(0));
+    }
 }

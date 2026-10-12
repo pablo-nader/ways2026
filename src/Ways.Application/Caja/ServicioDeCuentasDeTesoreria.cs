@@ -42,23 +42,25 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
     public async Task<CuentaTesoreriaListado> CrearAsync(AltaDeCuentaTesoreria datos, CancellationToken ct = default)
     {
         var nombre = ReglasDeCuentaTesoreria.NormalizarNombre(datos.Nombre);
-        ReglasDeCuentaTesoreria.ExigirSaldoInicialValido(datos.SaldoInicial);
+        var idEmpresa = ReglasDeCuentaTesoreria.ExigirEmpresa(datos.IdEmpresa);
+        var saldoInicial = ReglasDeCuentaTesoreria.ExigirSaldoInicialValido(datos.SaldoInicial);
+        var activo = ReglasDeCuentaTesoreria.ExigirActivo(datos.Activo);
 
         // El filtro de tenant de EF esconde las empresas de otros tenants y las dadas de baja.
-        if (!await db.Empresas.AnyAsync(e => e.Id == datos.IdEmpresa, ct))
+        if (!await db.Empresas.AnyAsync(e => e.Id == idEmpresa, ct))
         {
-            throw new ErrorDominio("referencia_invalida", $"No existe la empresa {datos.IdEmpresa}.", 400);
+            throw new ErrorDominio("referencia_invalida", $"No existe la empresa {idEmpresa}.", 400);
         }
 
-        await ExigirNombreLibreAsync(datos.IdEmpresa, nombre, excluirId: null, ct);
+        await ExigirNombreLibreAsync(idEmpresa, nombre, excluirId: null, ct);
 
         var ahora = reloj.Ahora;
         var cuenta = new CuentaTesoreria
         {
-            IdEmpresa = datos.IdEmpresa,
+            IdEmpresa = idEmpresa,
             Nombre = nombre,
-            SaldoInicial = datos.SaldoInicial,
-            Activo = datos.Activo,
+            SaldoInicial = saldoInicial,
+            Activo = activo,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
@@ -91,11 +93,12 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
                 ?? throw SinCuenta(id);
 
             var nombre = ReglasDeCuentaTesoreria.NormalizarNombre(datos.Nombre);
-            ReglasDeCuentaTesoreria.ExigirSaldoInicialValido(datos.SaldoInicial);
+            var saldoInicial = ReglasDeCuentaTesoreria.ExigirSaldoInicialValido(datos.SaldoInicial);
+            var activo = ReglasDeCuentaTesoreria.ExigirActivo(datos.Activo);
 
             await ExigirNombreLibreAsync(cuenta.IdEmpresa, nombre, excluirId: id, ct);
 
-            if (datos.SaldoInicial != cuenta.SaldoInicial
+            if (saldoInicial != cuenta.SaldoInicial
                 && await db.MovimientosCuenta.AnyAsync(m => m.IdCuentaTesoreria == id, ct))
             {
                 throw ErrorDominio.Conflicto(
@@ -104,8 +107,8 @@ public class ServicioDeCuentasDeTesoreria(IWaysDbContext db, IRelojDelSistema re
             }
 
             cuenta.Nombre = nombre;
-            cuenta.SaldoInicial = datos.SaldoInicial;
-            cuenta.Activo = datos.Activo;
+            cuenta.SaldoInicial = saldoInicial;
+            cuenta.Activo = activo;
             cuenta.UpdatedAt = reloj.Ahora;
 
             await db.SaveChangesAsync(ct);

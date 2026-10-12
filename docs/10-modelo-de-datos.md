@@ -2550,7 +2550,7 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > cambia), baja lógica. El nombre repetido entre las vivas de la empresa da 409 `cuenta_tesoreria_duplicada` (pre-chequeo y 
 > backstop del 23505 de `ux_cuentas_tesoreria_nombre_empresa`). El saldo inicial puede ser negativo y no cambia una vez que hay 
 > movimientos (409 `saldo_inicial_con_movimientos`): la edición lo comprueba tras el `FOR UPDATE` de la fila de la cuenta, con la 
-> que choca el `FOR KEY SHARE` de la FK de un primer movimiento concurrente. La baja solo procede sin referencias de 
+> que choca el `FOR KEY SHARE` de la FK de un primer movimiento concurrente. Para que la protección sea completa, el escritor de movimientos debe leer `saldo_inicial` DENTRO de su transacción y DESPUÉS de tomar un lock sobre la fila de la cuenta que choque con ese `FOR UPDATE`; leerlo antes puede armar el primer movimiento con un saldo inicial viejo. Desactivar una cuenta no desvincula los medios de pago que apuntan a ella. Todos los campos del cuerpo son obligatorios: uno ausente da 400 `id_empresa_requerido`, `nombre_requerido`, `saldo_inicial_requerido` o `activo_requerido`. La baja solo procede sin referencias de 
 > `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
 > se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
 >
