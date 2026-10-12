@@ -557,6 +557,61 @@ describe('SeccionDeTiendaOnline — quitar la imagen', () => {
   })
 })
 
+describe('SeccionDeTiendaOnline — la puerta de "Quitar imagen" deja inerte todo el modal', () => {
+  /** El padre cuenta las escrituras en vuelo: lo que importa es el saldo de `true` menos `false`. */
+  function saldo() {
+    return alDeEscribir.mock.calls.reduce((suma, [enCurso]) => suma + (enCurso ? 1 : -1), 0)
+  }
+
+  it('abrir la puerta avisa al padre y cancelar lo suelta', async () => {
+    const usuario = userEvent.setup()
+    montar({ tieneImagen: true })
+
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+
+    expect(saldo()).toBe(1)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(saldo()).toBe(0)
+  })
+
+  it('confirmar deja el saldo en cero: la puerta y la escritura se sueltan por separado', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockResolvedValue(undefined)
+    montar({ tieneImagen: true })
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar imagen' }))
+
+    expect(await screen.findByText('Se quitó la imagen.')).toBeInTheDocument()
+    await waitFor(() => expect(saldo()).toBe(0))
+  })
+
+  it('un rechazo deja la puerta abierta y el saldo en 1', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso.'))
+    montar({ tieneImagen: true })
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar imagen' }))
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    await waitFor(() => expect(saldo()).toBe(1))
+  })
+
+  it('desmontar la sección con la puerta abierta deja el saldo en cero', async () => {
+    const usuario = userEvent.setup()
+    const { unmount } = montar({ tieneImagen: true })
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+    expect(saldo()).toBe(1)
+
+    unmount()
+
+    expect(saldo()).toBe(0)
+  })
+})
+
 /**
  * La sección vive dentro del `Modal` del artículo (en un portal): ahí la puerta de "Quitar imagen" comparte el Escape
  * con el editor y no tiene una `Box` a la que devolver el foco.

@@ -1,4 +1,4 @@
-import { useContext, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, MouseEvent } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import {
@@ -46,8 +46,10 @@ export function SeccionDeTiendaOnline(props: Props) {
  * mientras está en vuelo, lo que escribe es estado de esta instancia (que muere con el artículo que la montó) y no
  * navega. La relectura tras un fallo incierto corre dentro de esa misma ventana inerte y es la única lectura.
  *
- * La puerta de confirmación de "Quitar imagen" es inerte a nivel de esta sección, no del modal: el resto del
- * formulario sigue operable y no puede cambiar lo que la puerta confirma.
+ * La puerta de confirmación de "Quitar imagen" es inerte a nivel del modal entero: mientras está abierta se avisa a
+ * `alDeEscribir` (igual que durante una escritura) y se suelta al cerrarla o desmontar la sección, así que el resto del
+ * formulario queda deshabilitado y no se puede abrir ningún modal apilado (alta rápida) sobre ella. Su Escape en
+ * captura es el correcto porque la puerta es la capa de arriba.
  */
 function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscribir, alCambiar }: Props) {
   const [publicado, setPublicado] = useState(inicial.publicadoWeb)
@@ -69,6 +71,15 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   /** Adónde vuelve el foco si "Quitar imagen" desaparece con la confirmación: la sección vive en el portal del
    * `Modal`, donde la puerta no encuentra una `Box` a la que subir. */
   const tituloRef = useRef<HTMLElement>(null)
+
+  // El contador del padre se mantiene balanceado por construcción: el cleanup corre al cerrar la puerta y al desmontar.
+  useEffect(() => {
+    if (!puertaAbierta) return
+
+    alDeEscribir(true)
+
+    return () => alDeEscribir(false)
+  }, [puertaAbierta, alDeEscribir])
 
   const bloqueado = ocupado || bloqueadoPorPadre || puertaAbierta
   const urlDeLaImagen = urlDeImagenDeArticuloAdmin(idArticulo, version)

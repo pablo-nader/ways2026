@@ -3007,6 +3007,47 @@ describe('Articulos — tienda online del artículo', () => {
     expect(within(dialogo).getByRole('img', { name: 'Imagen del artículo' })).toBeInTheDocument()
   })
 
+  /**
+   * Cláusula bajo prueba: la sección avisa a `alDeEscribir` mientras la puerta de "Quitar imagen" está abierta. Sin
+   * eso el resto del formulario seguía operable y se podía apilar una alta rápida encima de la puerta, cuyo Escape en
+   * captura le impedía cerrarse. Mutación: quitar `alDeEscribir(true)` de la apertura deja "Nueva marca" habilitado.
+   */
+  it('con la puerta de "Quitar imagen" abierta el resto del formulario queda inerte y Escape solo cierra la puerta', async () => {
+    mockearApiGet({ articulos: [articuloFixture({ id: 1, tieneImagen: true }), articuloDos] })
+    renderArticulos('/articulos/edit/1', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    const nuevaMarca = await within(dialogo).findByRole('button', { name: 'Nueva marca' })
+    await waitFor(() => expect(nuevaMarca).toBeEnabled())
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Quitar imagen' }))
+
+    expect(within(dialogo).getByRole('alertdialog')).toBeInTheDocument()
+    expect(nuevaMarca).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Nueva categoría' })).toBeDisabled()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(within(dialogo).queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
+    await waitFor(() => expect(nuevaMarca).toBeEnabled())
+  })
+
+  it('confirmar quitar la imagen devuelve el formulario a la normalidad', async () => {
+    apiDeleteMock.mockResolvedValue(undefined)
+    mockearApiGet({ articulos: [articuloFixture({ id: 1, tieneImagen: true }), articuloDos] })
+    renderArticulos('/articulos/edit/1', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    const nuevaMarca = await within(dialogo).findByRole('button', { name: 'Nueva marca' })
+    await waitFor(() => expect(nuevaMarca).toBeEnabled())
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Quitar imagen' }))
+    expect(nuevaMarca).toBeDisabled()
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar quitar imagen' }))
+
+    expect(await within(dialogo).findByText('Se quitó la imagen.')).toBeInTheDocument()
+    await waitFor(() => expect(nuevaMarca).toBeEnabled())
+  })
+
   it('en un alta no hay sección: primero hay que guardar el artículo', async () => {
     renderArticulos('/articulos/create', ROL.Admin)
     const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
