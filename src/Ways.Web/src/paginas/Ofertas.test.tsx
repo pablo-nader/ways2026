@@ -787,11 +787,16 @@ describe('Ofertas — disponible online', () => {
     expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/ofertas/2', expect.objectContaining({ disponibleOnline: true }))
   })
 
-  it('la grilla muestra la columna "Online" con Sí o No por oferta', async () => {
+  /**
+   * Cláusula bajo prueba: la columna "Online" dice Sí solo si la oferta está disponible online Y activa. Mutación: quitar
+   * `&& o.activo` hace fallar la aserción de la oferta inactiva.
+   */
+  it('la grilla muestra la columna "Online" con Sí solo si la oferta está disponible online y activa', async () => {
     mockearApiGet({
       ofertas: [
         ofertaFixture({ id: 1, nombre: 'En la tienda', disponibleOnline: true }),
         ofertaFixture({ id: 2, nombre: 'Solo en el local', disponibleOnline: false }),
+        ofertaFixture({ id: 3, nombre: 'Dada de baja', disponibleOnline: true, activo: false }),
       ],
     })
     render(<Ofertas />)
@@ -809,6 +814,7 @@ describe('Ofertas — disponible online', () => {
 
     expect(celdaDe('En la tienda')).toHaveTextContent('Sí')
     expect(celdaDe('Solo en el local')).toHaveTextContent('No')
+    expect(celdaDe('Dada de baja')).toHaveTextContent('No')
   })
 
   it('un 400 disponible_online_requerido se explica dentro del modal, que sigue abierto', async () => {

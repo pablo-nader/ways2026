@@ -208,8 +208,9 @@ export function aValoresOferta(o: OfertaListado): FormularioOferta {
 
 const COPIA_ONLINE_REQUERIDO = 'Falta indicar si la oferta está disponible online. Recargá la pantalla e intentá de nuevo.'
 
-/** Texto a mostrar ante el fallo de guardar una oferta: el `400 disponible_online_requerido` (un cliente viejo que no
- * manda el campo) rinde su copia propia; cualquier otro rechazo de la API, el mensaje del servidor. */
+/** Texto a mostrar ante el fallo de guardar una oferta. El `400 disponible_online_requerido` es defensivo y hoy no se
+ * alcanza: el servidor toma un campo ausente como "sin cambios" y el formulario lo manda siempre; la copia queda por si
+ * una versión del servidor vuelve a exigirlo. Cualquier otro rechazo de la API rinde el mensaje del servidor. */
 export function copiaDeFalloAlGuardarOferta(e: unknown): string {
   if (!(e instanceof ErrorApi)) return 'No se pudo guardar la oferta.'
   if (e.codigo === 'disponible_online_requerido') return COPIA_ONLINE_REQUERIDO

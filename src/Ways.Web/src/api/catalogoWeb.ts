@@ -1,6 +1,6 @@
 /**
  * Disponibilidad del back office: a la venta, en la tienda online, y la imagen del artículo. Llamadas a la API y
- * copia de la sección "Disponibilidad" del formulario de artículo. Las funciones de cabecera son
+ * copia de la sección "Venta y tienda online" del formulario de artículo. Las funciones de cabecera son
  * finas a propósito; lo que se prueba sin montar nada son los helpers puros de abajo.
  */
 import { api, ErrorApi } from './cliente'

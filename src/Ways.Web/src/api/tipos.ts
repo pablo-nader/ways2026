@@ -1043,7 +1043,7 @@ export type AltaOferta = {
   acumulable: boolean
   idsListas: number[] | null
   activo: boolean
-  /** En el alta el servidor asume `true` si falta; en la edición es obligatorio (`400 disponible_online_requerido`). El
+  /** En el alta el servidor asume `true` si falta; en la edición, si falta, la oferta conserva el valor que tenía. El
    * formulario lo manda siempre. */
   disponibleOnline: boolean
 }
@@ -1265,7 +1265,7 @@ export type AltaCombo = {
   precio: number
   idEmpresa: number | null
   activo: boolean
-  /** En el alta el servidor asume `true` si falta; en la edición es obligatorio (`400 disponible_online_requerido`). El
+  /** En el alta el servidor asume `true` si falta; en la edición, si falta, el combo conserva el valor que tenía. El
    * formulario lo manda siempre. */
   disponibleOnline: boolean
   componentes: ComponenteDeSolicitudDeCombo[]

@@ -295,6 +295,90 @@ describe('SeccionDeDisponibilidad — interruptores', () => {
     expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
   })
 
+  /**
+   * Cláusula bajo prueba: el interruptor que escribió recupera el foco cuando la escritura termina, salga bien o mal
+   * (`react-async-state` regla 12). jsdom no implementa el "focus fixup" del navegador, que al deshabilitar el control
+   * enfocado lo pasa a `<body>`: el test simula esa pérdida llevando el foco a otro elemento dentro de `act`. Mutación:
+   * quitar el `focus()` del efecto deja el foco en ese otro elemento y las cuatro variantes fallan.
+   */
+  it.each([
+    [VENTA, 'bien'],
+    [VENTA, 'mal'],
+    [ONLINE, 'bien'],
+    [ONLINE, 'mal'],
+  ])('el interruptor "%s" recupera el foco cuando su escritura sale %s', async (etiqueta, desenlace) => {
+    const usuario = userEvent.setup()
+    const pendiente = diferida<{ idArticulo: number; disponibleVenta: boolean; disponibleOnline: boolean }>()
+    apiPutMock.mockReturnValue(pendiente.promesa)
+    montar()
+    const interruptor = screen.getByRole('switch', { name: etiqueta })
+
+    await usuario.click(interruptor)
+    expect(interruptor).toBeDisabled()
+    // `blur()` no hace nada sobre un control deshabilitado en jsdom: el foco "perdido" se simula llevándolo al título.
+    act(() => screen.getByText('Venta y tienda online').focus())
+    expect(interruptor).not.toHaveFocus()
+
+    await act(async () => {
+      if (desenlace === 'bien') pendiente.resolver({ idArticulo: 7, disponibleVenta: true, disponibleOnline: true })
+      else pendiente.rechazar(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
+    })
+
+    await waitFor(() => expect(interruptor).toBeEnabled())
+    expect(interruptor).toHaveFocus()
+  })
+
+  it('subir una imagen no le roba el foco a ningún interruptor', async () => {
+    const usuario = userEvent.setup()
+    apiPutBinarioMock.mockResolvedValue({ idArticulo: 7, tieneImagen: true, imagenVersion: 1 })
+    montar()
+
+    await usuario.upload(screen.getByLabelText('Subir una imagen'), imagen())
+
+    expect(await screen.findByText('Se subió la imagen.')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: VENTA })).not.toHaveFocus()
+    expect(screen.getByRole('switch', { name: ONLINE })).not.toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el rechazo de un interruptor queda asociado, con `aria-describedby`, solo al que falló y junto
+   * a su texto de ayuda. Mutación: asociar el error a los dos interruptores hace fallar la aserción del otro.
+   */
+  it.each([
+    [VENTA, ONLINE],
+    [ONLINE, VENTA],
+  ])('el rechazo del interruptor "%s" queda asociado a él y no al otro', async (fallido, otro) => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
+    montar()
+    expect(screen.getByRole('switch', { name: fallido })).not.toHaveAccessibleDescription(/No tenés permiso/)
+
+    await usuario.click(screen.getByRole('switch', { name: fallido }))
+
+    const alerta = await screen.findByRole('alert')
+    expect(screen.getByRole('switch', { name: fallido })).toHaveAttribute(
+      'aria-describedby',
+      expect.stringContaining(alerta.id),
+    )
+    expect(screen.getByRole('switch', { name: fallido })).toHaveAccessibleDescription(
+      /Desmarcalo.*No tenés permiso para cambiar la disponibilidad\./,
+    )
+    expect(screen.getByRole('switch', { name: otro })).not.toHaveAccessibleDescription(/No tenés permiso/)
+  })
+
+  it('cambiar el interruptor de nuevo suelta la asociación del rechazo anterior', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
+    apiPutMock.mockReturnValueOnce(new Promise(() => {}))
+    montar()
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+    await screen.findByRole('alert')
+
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+
+    expect(screen.getByRole('switch', { name: VENTA })).not.toHaveAttribute('aria-describedby', expect.stringContaining('error'))
+  })
+
   it.each([
     ['disponible_venta_requerido', 'La disponibilidad a la venta es obligatoria.'],
     ['disponible_online_requerido', 'La disponibilidad online es obligatoria.'],

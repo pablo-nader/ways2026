@@ -254,14 +254,47 @@ Decisions and deviations:
    poder continuar."; wired into the POS charge, and the presupuesto and remito draft saves (`api/articuloNoVendible.ts`). Emitting
    or invoicing a remito does not re-check on the server, so there is nothing to map there.
 4. `clienteDeArticulos.listar` gained an optional fourth parameter `{ soloVendibles }`; purchases, stock, transfers, families and the
-   offer and combo component pickers do not send it. The combo component picker was left alone on purpose: a combo built on an
-   internal-use article just never reaches the POS, which the server already handles.
+   offer and family pickers do not send it. The combo component picker first was left alone on purpose, but judgment-day found
+   that an internal-use article could then be added as a component; it now sends `soloVendibles=true` (see "Judgment-day
+   adjustments").
 5. `AltaOferta`/`EdicionOferta`/`AltaCombo`/`EdicionCombo` carry `disponibleOnline: boolean` as required on the web (the form always
    sends it); `comboCoincideConAlta` now also compares it, so the ambiguous-create reconciliation cannot match a combo created with
    the other value.
 6. Two commits instead of one: articles plus selling screens (`804e57a2`), offers plus combos (`fd368023`); the shared files
    (`tipos.ts`, `Pos.test.tsx`) were split by hunk. Only the final tree was type-checked and tested; the first commit alone was not
    built in isolation.
+
+#### Judgment-day adjustments (commit on `pnader/disponibilidad-web-admin-ajustes`)
+
+Informational findings of the judgment-day round, applied with no other change:
+
+1. Combo component picker (`SelectorDeArticuloDeCombo.tsx`) sends `soloVendibles=true`; offer and family pickers untouched.
+   Test: `Combos.test.tsx` "el buscador de componentes pide soloVendibles=true".
+2. `SeccionDeDisponibilidad.tsx`: the toggled switch is disabled during its write and loses focus in real browsers, so
+   after the write settles (success or failure) focus returns to that same switch (`react-async-state` rule 12). Tests for both
+   switches and both outcomes; jsdom has no focus fix-up, so they move focus away explicitly inside `act`.
+3. The "Online" badge (articles grid) and the "Online" column (offers, combos) require the row to be active as well. Tests with an
+   inactive row in the three screens.
+4. The failure alert of the switches has an id (`art-disponibilidad-error`) referenced by the `aria-describedby` of the switch
+   that failed, next to its help text id, like the image error. Tests for both switches and for the association being dropped on
+   the next action.
+5. Prose: the section is "Venta y tienda online" in `FormularioArticulo.tsx` and `api/catalogoWeb.ts` comments; the comments in
+   `api/tipos.ts`, `api/ofertas.ts` and `api/combosAbm.ts` no longer call `disponibleOnline` mandatory on edit (the server
+   treats an omitted field as "unchanged"; the web always sends it). The `disponible_online_requerido` copy entries stay,
+   with a comment saying they are defensive and currently unreachable.
+
+Mutation evidence (mutate, run the four affected files, revert; each went red in the named test):
+
+| Clause mutated | Killed by |
+|---|---|
+| combo picker `listar` without `soloVendibles` | `Combos.test.tsx` "el buscador de componentes pide soloVendibles=true" |
+| grid "Online" badge without `a.activo` | `GrillaDeArticulos.test.tsx` "la columna Disponibilidad marca…" (inactive row) |
+| combos "Online" column without `combo.activo` | `Combos.test.tsx` "la columna "Online" dice Sí solo si el combo está disponible online y activo" |
+| offers "Online" column without `o.activo` | `Ofertas.test.tsx` "la grilla muestra la columna "Online" con Sí solo si la oferta está disponible online y activa" |
+| switch focus restore removed (`destino?.focus()`) | `SeccionDeDisponibilidad.test.tsx` "el interruptor … recupera el foco…" (the four variants) |
+
+Verification on the adjusted tree: `npx tsc -b` exit 0; `npx oxlint` 0 errors, 17 warnings (baseline); `npx vitest run
+src/paginas src/api src/componentes` 153 files, 4562 tests passed; whole suite 210 files, 5939 tests passed.
 
 ### Full integration run
 

@@ -339,7 +339,7 @@ export function Ofertas() {
                         {o.activo ? 'Activa' : 'Inactiva'}
                       </span>
                     </td>
-                    <td>{o.disponibleOnline ? 'Sí' : 'No'}</td>
+                    <td>{o.disponibleOnline && o.activo ? 'Sí' : 'No'}</td>
                     <td className="text-end text-nowrap">
                       <BotonIcono
                         icono="editar"

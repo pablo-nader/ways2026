@@ -284,7 +284,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <td>{a.proveedor ?? '—'}</td>
                     <td className="text-nowrap">
                       {!a.disponibleVenta && <span className="badge text-bg-warning me-1">No se vende</span>}
-                      {a.disponibleOnline && a.disponibleVenta && <span className="badge text-bg-primary me-1">Online</span>}
+                      {a.disponibleOnline && a.disponibleVenta && a.activo && <span className="badge text-bg-primary me-1">Online</span>}
                       {a.tieneImagen && <span className="badge text-bg-light border">Con imagen</span>}
                     </td>
                     <td>

@@ -323,6 +323,7 @@ const RECHAZOS_CONOCIDOS: ReadonlyMap<string, ErrorDeServidorDeCombo> = new Map<
     'activo_requerido',
     { campo: 'formulario', mensaje: 'Falta indicar si el combo está activo. Recargá la pantalla e intentá de nuevo.' },
   ],
+  // Defensivo y hoy inalcanzable: el servidor toma un `disponibleOnline` ausente como "sin cambios" y el formulario lo manda siempre.
   [
     'disponible_online_requerido',
     { campo: 'formulario', mensaje: 'Falta indicar si el combo está disponible online. Recargá la pantalla e intentá de nuevo.' },

@@ -58,7 +58,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   const [tieneImagen, setTieneImagen] = useState(inicial.tieneImagen)
   const [version, setVersion] = useState<number | null>(null)
   // Cada fuente tiene su propio slot (regla 14); `limpiarMensajes` los borra al empezar cualquier acción (regla 16).
-  const [errorDeDisponibilidad, setErrorDeDisponibilidad] = useState('')
+  const [errorDeDisponibilidad, setErrorDeDisponibilidad] = useState<{ texto: string; interruptor: 'venta' | 'online' } | null>(null)
   const [errorDeImagen, setErrorDeImagen] = useState('')
   const [aviso, setAviso] = useState('')
   const [ocupado, setOcupado] = useState(false)
@@ -73,6 +73,11 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   /** Adónde vuelve el foco si "Quitar imagen" desaparece con la confirmación: la sección vive en el portal del
    * `Modal`, donde la puerta no encuentra una `Box` a la que subir. */
   const tituloRef = useRef<HTMLElement>(null)
+  const interruptorDeVentaRef = useRef<HTMLInputElement>(null)
+  const interruptorOnlineRef = useRef<HTMLInputElement>(null)
+  /** Interruptor al que le toca recuperar el foco cuando termine de habilitarse: deshabilitado durante su escritura, el
+   * navegador lo pasa a `<body>` (regla 12 de `react-async-state`). Lo asigna `escribir` al empezar, nunca un efecto. */
+  const focoPendienteRef = useRef<'venta' | 'online' | null>(null)
 
   // El contador del padre se mantiene balanceado por construcción: el cleanup corre al cerrar la puerta y al desmontar.
   useEffect(() => {
@@ -86,8 +91,17 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   const bloqueado = ocupado || bloqueadoPorPadre || puertaAbierta
   const urlDeLaImagen = urlDeImagenDeArticuloAdmin(idArticulo, version)
 
+  // Habilitado de nuevo el interruptor que escribió, el foco vuelve a él (un `disabled` en vuelo lo había perdido).
+  useEffect(() => {
+    if (bloqueado || focoPendienteRef.current === null) return
+
+    const destino = focoPendienteRef.current === 'venta' ? interruptorDeVentaRef.current : interruptorOnlineRef.current
+    focoPendienteRef.current = null
+    destino?.focus()
+  }, [bloqueado])
+
   function limpiarMensajes() {
-    setErrorDeDisponibilidad('')
+    setErrorDeDisponibilidad(null)
     setErrorDeImagen('')
     setAviso('')
   }
@@ -119,6 +133,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
   ) {
     if (ocupadoRef.current) return
     ocupadoRef.current = true
+    if (cual !== 'imagen') focoPendienteRef.current = cual
     setOcupado(true)
     setEscribiendo(cual)
     limpiarMensajes()
@@ -161,7 +176,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
         )
       },
       quiere ? 'No se pudo habilitar la venta del artículo.' : 'No se pudo sacar el artículo de la venta.',
-      setErrorDeDisponibilidad,
+      (texto) => setErrorDeDisponibilidad({ texto, interruptor: 'venta' }),
     )
   }
 
@@ -179,7 +194,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
         )
       },
       quiere ? 'No se pudo mostrar el artículo en la tienda online.' : 'No se pudo sacar el artículo de la tienda online.',
-      setErrorDeDisponibilidad,
+      (texto) => setErrorDeDisponibilidad({ texto, interruptor: 'online' }),
     )
   }
 
@@ -247,6 +262,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
 
       <div className="form-check form-switch mt-2">
         <input
+          ref={interruptorDeVentaRef}
           id="art-disponible-venta"
           type="checkbox"
           role="switch"
@@ -254,7 +270,11 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
           checked={disponibleVenta}
           onChange={(e) => void cambiarLaVenta(e.target.checked)}
           disabled={bloqueado}
-          aria-describedby="art-disponible-venta-ayuda"
+          aria-describedby={
+            errorDeDisponibilidad?.interruptor === 'venta'
+              ? 'art-disponible-venta-ayuda art-disponibilidad-error'
+              : 'art-disponible-venta-ayuda'
+          }
         />
         <label className="form-check-label" htmlFor="art-disponible-venta">
           Disponible a la venta
@@ -268,6 +288,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
 
       <div className="form-check form-switch mt-2">
         <input
+          ref={interruptorOnlineRef}
           id="art-disponible-online"
           type="checkbox"
           role="switch"
@@ -275,7 +296,11 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
           checked={disponibleOnline}
           onChange={(e) => void cambiarLoOnline(e.target.checked)}
           disabled={bloqueado}
-          aria-describedby="art-disponible-online-ayuda"
+          aria-describedby={
+            errorDeDisponibilidad?.interruptor === 'online'
+              ? 'art-disponible-online-ayuda art-disponibilidad-error'
+              : 'art-disponible-online-ayuda'
+          }
         />
         <label className="form-check-label" htmlFor="art-disponible-online">
           Disponible online
@@ -287,8 +312,8 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
         {escribiendo === 'online' && ' Guardando…'}
       </div>
       {errorDeDisponibilidad && (
-        <div className="text-danger small mt-1" role="alert">
-          {errorDeDisponibilidad}
+        <div id="art-disponibilidad-error" className="text-danger small mt-1" role="alert">
+          {errorDeDisponibilidad.texto}
         </div>
       )}
 

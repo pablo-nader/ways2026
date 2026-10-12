@@ -189,6 +189,7 @@ describe('GrillaDeArticulos — columnas', () => {
         filaFixture({ id: 3, nombre: 'Sin nada', disponibleOnline: false, tieneImagen: false }),
         filaFixture({ id: 4, nombre: 'Uso interno', disponibleVenta: false, disponibleOnline: true }),
         filaFixture({ id: 5, nombre: 'Interno y fuera', disponibleVenta: false, disponibleOnline: false, tieneImagen: true }),
+        filaFixture({ id: 6, nombre: 'Dado de baja', activo: false, disponibleVenta: true, disponibleOnline: true }),
       ]),
     )
     renderGrilla()
@@ -217,6 +218,8 @@ describe('GrillaDeArticulos — columnas', () => {
     expect(celdaDe('Interno y fuera')).toHaveTextContent('No se vende')
     expect(celdaDe('Interno y fuera')).toHaveTextContent('Con imagen')
     expect(celdaDe('Interno y fuera')).not.toHaveTextContent('Online')
+    // Un artículo inactivo tampoco figura como online (la tienda solo muestra activos), aunque venta y online estén prendidos.
+    expect(celdaDe('Dado de baja')).not.toHaveTextContent('Online')
   })
 
   it('la fila de "No hay artículos" abarca todas las columnas de la tabla', async () => {

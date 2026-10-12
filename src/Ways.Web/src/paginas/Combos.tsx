@@ -336,7 +336,7 @@ export function Combos() {
                         {combo.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td>{combo.disponibleOnline ? 'Sí' : 'No'}</td>
+                    <td>{combo.disponibleOnline && combo.activo ? 'Sí' : 'No'}</td>
                     <td className="text-end text-nowrap">
                       <BotonIcono
                         icono="editar"

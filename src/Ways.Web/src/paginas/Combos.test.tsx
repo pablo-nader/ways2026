@@ -177,11 +177,16 @@ describe('Combos — listado', () => {
     expect(screen.getByText(/tipeando su código con la C adelante/)).toBeInTheDocument()
   })
 
-  it('la columna "Online" dice Sí o No por combo, independiente del estado', async () => {
+  /**
+   * Cláusula bajo prueba: la columna "Online" dice Sí solo si el combo está disponible online Y activo. Mutación: quitar
+   * `&& combo.activo` hace fallar la aserción del combo inactivo.
+   */
+  it('la columna "Online" dice Sí solo si el combo está disponible online y activo', async () => {
     mockearApiGet({
       combos: [
         comboFixture({ id: 4, nombre: 'En la tienda', disponibleOnline: true }),
         comboFixture({ id: 5, codigo: 13, nombre: 'Solo en el local', disponibleOnline: false, activo: true }),
+        comboFixture({ id: 6, codigo: 14, nombre: 'Dado de baja', disponibleOnline: true, activo: false }),
       ],
     })
 
@@ -194,6 +199,8 @@ describe('Combos — listado', () => {
     expect(celdaDe('En la tienda')).toHaveTextContent('Sí')
     expect(celdaDe('Solo en el local')).toHaveTextContent('No')
     expect(within(screen.getByText('Solo en el local').closest('tr')!).getByText('Activo')).toBeInTheDocument()
+    expect(celdaDe('Dado de baja')).toHaveTextContent('No')
+    expect(within(screen.getByText('Dado de baja').closest('tr')!).getByText('Inactivo')).toBeInTheDocument()
   })
 
   it('marca en la fila el combo con un componente no disponible', async () => {
@@ -362,6 +369,20 @@ describe('Combos — alta', () => {
     expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual(['A1 — Pancho', 'A2 — Gaseosa 500'])
     expect(fila(1).getByText(/Se ocultaron 2 resultados de los mostrados/)).toBeInTheDocument()
     expect(fila(1).queryByText(/Se muestran los primeros/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el buscador de componentes pide `soloVendibles=true`, así un artículo de uso interno no llega a
+   * ofrecerse. Mutación: llamar a `listar` sin la opción hace fallar esta aserción.
+   */
+  it('el buscador de componentes pide soloVendibles=true', async () => {
+    await abrirNuevo()
+
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'pancho')
+    await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
+
+    await fila(1).findByRole('listbox')
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=pancho&soloVendibles=true')
   })
 
   it('con más resultados que los recibidos avisa que son los primeros y aclara que lo oculto es de lo mostrado', async () => {
