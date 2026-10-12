@@ -12,7 +12,9 @@ const SELECTOR_DE_FOCUSABLES = 'a[href], button:not([disabled]), input:not([disa
  * Panel lateral modal del carrito (`role="dialog"` con `aria-modal`). Mientras está abierto:
  * - lleva el foco al botón de cerrar y el scroll de la página queda bloqueado (se restaura al cerrar);
  * - Tab y Shift+Tab circulan dentro del panel, aunque el foco esté fuera de él;
- * - Escape lo cierra desde cualquier punto del documento, y el clic en el velo también.
+ * - Escape lo cierra desde cualquier punto del documento, y el clic en el velo también;
+ * - al quitar una línea (con "Quitar" o con "−" desde la cantidad mínima) el foco pasa al "Quitar" de
+ *   la línea siguiente, o de la anterior si era la última, o a "Cerrar" si no queda ninguna.
  * "Vaciar carrito" pide confirmación en línea: no es una compuerta modal, el resto del panel sigue activo.
  * No marca el resto de la página como inerte: el aislamiento para lectores de pantalla descansa en
  * `aria-modal`. Devolver el foco al botón del carrito es tarea de quien lo abre (`alCerrar`).
@@ -25,6 +27,20 @@ export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
   const cancelarVaciado = useRef<HTMLButtonElement>(null)
   const pedirVaciado = useRef<HTMLButtonElement>(null)
   const focoTrasElCambio = useRef<'cancelar' | 'pedir' | null>(null)
+  const botonesQuitar = useRef(new Map<number, HTMLButtonElement>())
+
+  /**
+   * Quita la línea llevando antes el foco a donde sigue la tarea: el "Quitar" de la línea que
+   * queda después, o el de la anterior si era la última, o "Cerrar" si no queda ninguna. Se mueve
+   * antes de quitar porque el botón que tenía el foco se va con la línea.
+   */
+  const quitarLinea = (idArticulo: number) => {
+    const posicion = items.findIndex((i) => i.idArticulo === idArticulo)
+    const vecina = items[posicion + 1] ?? items[posicion - 1]
+    const destino = (vecina === undefined ? undefined : botonesQuitar.current.get(vecina.idArticulo)) ?? cerrar.current
+    destino?.focus()
+    quitar(idArticulo)
+  }
 
   useEffect(() => {
     const destino = focoTrasElCambio.current === 'cancelar' ? cancelarVaciado : pedirVaciado
@@ -108,13 +124,18 @@ export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
                     nombre={item.nombre}
                     unidadVenta={item.unidadVenta}
                     cantidad={item.cantidad}
+                    alQuitar={() => quitarLinea(item.idArticulo)}
                   />
                   <p className="publico-carrito-subtotal">{formatearPrecio(totalDeLinea(item))}</p>
                   <button
+                    ref={(boton) => {
+                      if (boton === null) botonesQuitar.current.delete(item.idArticulo)
+                      else botonesQuitar.current.set(item.idArticulo, boton)
+                    }}
                     type="button"
                     className="publico-boton publico-boton-contorno publico-boton-chico"
                     aria-label={`Quitar ${item.nombre} del carrito`}
-                    onClick={() => quitar(item.idArticulo)}
+                    onClick={() => quitarLinea(item.idArticulo)}
                   >
                     Quitar
                   </button>

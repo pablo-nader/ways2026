@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -86,6 +86,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Primero se desmonta: el desmontaje vacía los efectos pendientes y uno de ellos puede guardar el
+  // carrito. Si el almacenamiento se limpiara antes, esa escritura le llegaría al test siguiente.
+  cleanup()
   vi.useRealTimers()
   localStorage.clear()
   document.documentElement.removeAttribute('data-bs-theme')
@@ -481,6 +484,75 @@ describe('catálogo de la tienda', () => {
       expect(cantidad).toHaveValue('0,25')
       expect(cantidadesGuardadas()).toEqual([{ idArticulo: 2, cantidad: 0.25 }])
       expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+    })
+
+    /**
+     * jsdom no aplica el "focus fixup" del navegador (mandar el foco a `<body>` cuando se quita el
+     * elemento enfocado): se afirma el destino que el código elige, no la pérdida de foco real.
+     */
+    describe('el foco en la tarjeta', () => {
+      it('"Agregar" lleva el foco al + del selector de cantidad', async () => {
+        await verCatalogo()
+
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
+
+        expect(screen.getByRole('button', { name: 'Agregar uno más de Martillo' })).toHaveFocus()
+      })
+
+      it('lo mismo con Enter sobre "Agregar" en un artículo por peso', async () => {
+        await verCatalogo()
+        screen.getByRole('button', { name: 'Agregar Clavos al carrito' }).focus()
+
+        await userEvent.keyboard('{Enter}')
+
+        expect(screen.getByRole('button', { name: 'Agregar medio kilo más de Clavos' })).toHaveFocus()
+      })
+
+      it('"−" que quita la línea lleva el foco al "Agregar" de esa misma tarjeta', async () => {
+        await verCatalogo()
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar Clavos al carrito' }))
+
+        await userEvent.click(screen.getByRole('button', { name: 'Quitar uno de Martillo' }))
+
+        expect(screen.getByRole('button', { name: 'Agregar Martillo al carrito' })).toHaveFocus()
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Clavos' })).toBeInTheDocument()
+      })
+
+      it('"−" que no quita la línea deja el foco donde estaba', async () => {
+        await verCatalogo()
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar Clavos al carrito' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar medio kilo más de Clavos' }))
+        const menos = screen.getByRole('button', { name: 'Quitar medio kilo de Clavos' })
+
+        await userEvent.click(menos)
+
+        expect(menos).toHaveFocus()
+      })
+
+      it('un selector que aparece sin que se haya pulsado "Agregar" aquí (carrito guardado) no roba el foco', async () => {
+        localStorage.setItem(
+          claveDelCarrito(window.location.host),
+          JSON.stringify([{ idArticulo: 1, nombre: 'Martillo', precio: 100, unidadVenta: 'Unidad', cantidad: 2, imagenVersion: null }]),
+        )
+
+        await verCatalogo()
+
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Martillo' })).toBeInTheDocument()
+        expect(document.body).toHaveFocus()
+      })
+
+      it('quitar la línea desde el panel no manda el foco al "Agregar" de la tarjeta', async () => {
+        await verCatalogo()
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
+        await userEvent.click(screen.getByRole('button', { name: /^Carrito/ }))
+        const panel = screen.getByRole('dialog', { name: 'Carrito' })
+
+        await userEvent.click(within(panel).getByRole('button', { name: 'Quitar Martillo del carrito' }))
+
+        expect(screen.getByRole('button', { name: 'Agregar Martillo al carrito' })).not.toHaveFocus()
+        expect(within(panel).getByRole('button', { name: 'Cerrar' })).toHaveFocus()
+      })
     })
 
     describe('cantidad tipeada', () => {

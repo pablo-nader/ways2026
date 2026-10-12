@@ -1,10 +1,19 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type Ref } from 'react'
 
 import type { UnidadVenta } from '../api/tipos'
 import { CANTIDAD_MAXIMA, formatearCantidad, normalizarCantidad, parsearCantidad, pasoDelBoton } from './carrito'
 import { useAccionesDelCarrito } from './CarritoContext'
 
-type PropsDeControl = { idArticulo: number; nombre: string; unidadVenta: UnidadVenta; cantidad: number }
+type PropsDeControl = {
+  idArticulo: number
+  nombre: string
+  unidadVenta: UnidadVenta
+  cantidad: number
+  /** Quien lo usa decide qué pasa con el foco cuando "−" quita la línea, porque el botón se va con ella. */
+  alQuitar: () => void
+  /** Referencia al botón "+", para que quien lo usa pueda llevarle el foco. */
+  refMas?: Ref<HTMLButtonElement>
+}
 
 function etiquetas(unidadVenta: UnidadVenta, nombre: string) {
   return unidadVenta === 'Unidad'
@@ -24,10 +33,11 @@ function avisoDeCantidadRechazada(unidadVenta: UnidadVenta): string {
  * salir del campo o con Enter, no tecla por tecla: mientras se escribe no se avisa nada, porque
  * "0" o "1," son pasos de una cantidad válida. Si lo tipeado no vale, el campo vuelve a la última
  * cantidad buena, el carrito no cambia y un aviso cortés (`aria-live="polite"`) lo dice; el aviso
- * se va con la próxima acción sobre el campo o los botones. Bajar del mínimo con − quita la línea.
+ * se va con la próxima acción sobre el campo o los botones. Bajar del mínimo con − quita la línea
+ * (`alQuitar`).
  */
-export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad }: PropsDeControl) {
-  const { cambiarCantidad, quitar } = useAccionesDelCarrito()
+export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad, alQuitar, refMas }: PropsDeControl) {
+  const { cambiarCantidad } = useAccionesDelCarrito()
   const [borrador, setBorrador] = useState<string | null>(null)
   const [rechazada, setRechazada] = useState(false)
   const paso = pasoDelBoton(unidadVenta)
@@ -36,7 +46,7 @@ export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad }:
   const restar = () => {
     setRechazada(false)
     const nueva = normalizarCantidad(cantidad - paso)
-    if (nueva <= 0) quitar(idArticulo)
+    if (nueva <= 0) alQuitar()
     else cambiarCantidad(idArticulo, nueva)
   }
 
@@ -81,6 +91,7 @@ export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad }:
         onKeyDown={alPresionarTecla}
       />
       <button
+        ref={refMas}
         type="button"
         className="publico-cantidad-boton"
         aria-label={mas}

@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,6 +55,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Primero se desmonta: el desmontaje vacía los efectos pendientes y uno de ellos puede guardar el
+  // carrito. Si el almacenamiento se limpiara antes, esa escritura le llegaría al test siguiente.
+  cleanup()
   localStorage.clear()
   document.documentElement.removeAttribute('data-bs-theme')
   document.documentElement.style.removeProperty('--vitrina-acento')
@@ -114,6 +117,64 @@ describe('panel del carrito con artículos', () => {
     const finalizar = within(panel).getByRole('button', { name: 'Finalizar pedido' })
     expect(finalizar).toBeDisabled()
     expect(finalizar).toHaveAccessibleDescription('Muy pronto vas a poder enviar tu pedido desde acá.')
+  })
+
+  /**
+   * jsdom no aplica el "focus fixup" del navegador (mandar el foco a `<body>` cuando se quita el
+   * elemento enfocado): estas pruebas afirman el destino que el código elige a propósito, no
+   * reproducen la pérdida de foco real.
+   */
+  describe('el foco al quitar una línea', () => {
+    it('"Quitar" en la primera línea lleva el foco al "Quitar" de la siguiente', async () => {
+      const panel = await conDosLineas()
+
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar Martillo del carrito' }))
+
+      expect(within(panel).getAllByRole('listitem')).toHaveLength(1)
+      expect(within(panel).getByRole('button', { name: 'Quitar Clavos del carrito' })).toHaveFocus()
+    })
+
+    it('"Quitar" en la última línea lleva el foco al "Quitar" de la anterior', async () => {
+      const panel = await conDosLineas()
+
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar Clavos del carrito' }))
+
+      expect(within(panel).getByRole('button', { name: 'Quitar Martillo del carrito' })).toHaveFocus()
+    })
+
+    it('"Quitar" en la única línea lleva el foco a "Cerrar"', async () => {
+      const panel = await conDosLineas()
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar Martillo del carrito' }))
+
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar Clavos del carrito' }))
+
+      expect(within(panel).getByText('Tu carrito está vacío')).toBeInTheDocument()
+      expect(within(panel).getByRole('button', { name: 'Cerrar' })).toHaveFocus()
+    })
+
+    it('"−" desde la cantidad mínima quita la línea y mueve el foco igual que "Quitar"', async () => {
+      const panel = await conDosLineas()
+
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar uno de Martillo' }))
+      expect(within(panel).getByRole('button', { name: 'Quitar Clavos del carrito' })).toHaveFocus()
+      const menosClavos = within(panel).getByRole('button', { name: 'Quitar medio kilo de Clavos' })
+      await userEvent.click(menosClavos)
+      expect(menosClavos).toHaveFocus()
+      await userEvent.click(menosClavos)
+
+      expect(within(panel).getByText('Tu carrito está vacío')).toBeInTheDocument()
+      expect(within(panel).getByRole('button', { name: 'Cerrar' })).toHaveFocus()
+    })
+
+    it('"−" en la última de dos líneas lleva el foco al "Quitar" de la anterior', async () => {
+      const panel = await conDosLineas()
+
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar medio kilo de Clavos' }))
+      await userEvent.click(within(panel).getByRole('button', { name: 'Quitar medio kilo de Clavos' }))
+
+      expect(within(panel).getAllByRole('listitem')).toHaveLength(1)
+      expect(within(panel).getByRole('button', { name: 'Quitar Martillo del carrito' })).toHaveFocus()
+    })
   })
 
   describe('vaciar el carrito', () => {
