@@ -4122,33 +4122,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
         <div className="col-lg-4">
           <Box titulo="Datos de la venta">
-            {errorCargaClientes && !(errorCargaClientesEsDeRed && datosLocalesDisponibles && instantaneaDelPuntoVenta?.clientes.some((c) => c.esConsumidorFinal)) && (
-              <div className="alert alert-danger py-1 px-2 small">{errorCargaClientes}</div>
-            )}
-            {errorClientes && <div className="alert alert-danger py-1 px-2 small">{errorClientes}</div>}
 
-            {combosAplicados.map((c) => (
-              <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
-                <span>Combo {rotuloDeComboAplicado(c)}</span>
-                <span>{formatearMoneda(-c.ahorro)}</span>
-              </div>
-            ))}
-            {ajustesManuales.descuentoManualTotal !== 0 && (
-              <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
-                <span>Desc. manual</span>
-                <span>{formatearMoneda(-ajustesManuales.descuentoManualTotal)}</span>
-              </div>
-            )}
-            {ajustesManuales.recargoManualTotal !== 0 && (
-              <div className="d-flex justify-content-between mb-1 text-info-emphasis">
-                <span>Recargo</span>
-                <span>{formatearImporteConSigno(ajustesManuales.recargoManualTotal, { simbolo: true })}</span>
-              </div>
-            )}
-
-            <div className="d-flex justify-content-between mb-3">
-              <strong>Total previo</strong>
-              <strong>
+            <div className="text-center mb-3">
+              <span className="d-block text-muted small">Total previo</span>
+              <strong className="d-block display-5 lh-1">
                 {modoPresupuesto
                   ? cargandoPresupuesto
                     ? 'Cargando…'
@@ -4161,6 +4138,33 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </strong>
             </div>
 
+            {(combosAplicados.length > 0 || ajustesManuales.descuentoManualTotal !== 0 || ajustesManuales.recargoManualTotal !== 0) && (
+              <div className="small mb-3">
+                {combosAplicados.map((c) => (
+                  <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
+                    <span>Combo {rotuloDeComboAplicado(c)}</span>
+                    <span>{formatearMoneda(-c.ahorro)}</span>
+                  </div>
+                ))}
+                {ajustesManuales.descuentoManualTotal !== 0 && (
+                  <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
+                    <span>Desc. manual</span>
+                    <span>{formatearMoneda(-ajustesManuales.descuentoManualTotal)}</span>
+                  </div>
+                )}
+                {ajustesManuales.recargoManualTotal !== 0 && (
+                  <div className="d-flex justify-content-between mb-1 text-info-emphasis">
+                    <span>Recargo</span>
+                    <span>{formatearImporteConSigno(ajustesManuales.recargoManualTotal, { simbolo: true })}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {errorCargaClientes && !(errorCargaClientesEsDeRed && datosLocalesDisponibles && instantaneaDelPuntoVenta?.clientes.some((c) => c.esConsumidorFinal)) && (
+              <div className="alert alert-danger py-1 px-2 small">{errorCargaClientes}</div>
+            )}
+            {errorClientes && <div className="alert alert-danger py-1 px-2 small">{errorClientes}</div>}
             {errorMedios && <div className="alert alert-danger py-1 px-2 small">{errorMedios}</div>}
             {errorParametros && <div className="alert alert-danger py-1 px-2 small">{errorParametros}</div>}
             {errorCobro && <div className="alert alert-danger py-1 px-2 small">{errorCobro}</div>}
@@ -4253,13 +4257,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               + Agregar medio de pago
             </button>
 
-            <div className="d-flex justify-content-between small">
-              <span>Falta</span>
-              <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(faltante)}</span>
-            </div>
-            <div className="d-flex justify-content-between small mb-2">
-              <span>Vuelto</span>
-              <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(excedente)}</span>
+            <div className="d-flex justify-content-between align-items-baseline mb-2">
+              <span>{pagosCubrenElTotal ? 'Vuelto' : 'Falta'}</span>
+              <span className={`fw-semibold ${previaFallida ? 'text-muted' : pagosCubrenElTotal ? 'text-success' : 'text-danger'}`}>
+                {previaFallida ? 'se confirma al cobrar' : formatearMoneda(pagosCubrenElTotal ? excedente : faltante)}
+              </span>
             </div>
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}

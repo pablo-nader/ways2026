@@ -900,6 +900,85 @@ describe('Pos — selector de cliente', () => {
   })
 })
 
+describe('Pos — panel "Datos de la venta": total, pagos y Falta/Vuelto', () => {
+  async function conUnaLineaDe100() {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(await screen.findByLabelText('Medio de pago'), medioEfectivo.nombre)
+    return screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+  }
+
+  const lineaDeResto = () => within(panelDatosDeLaVenta()).getByText(/^(Falta|Vuelto)$/).parentElement as HTMLElement
+
+  it('el total va primero, grande, y después los pagos y el botón Cobrar, en ese orden', async () => {
+    await conUnaLineaDe100()
+
+    const panel = panelDatosDeLaVenta()
+    const total = within(panel).getByText('$ 100,00', { selector: 'strong' })
+    const pagos = within(panel).getByRole('heading', { name: 'Pagos' })
+    const agregarMedio = within(panel).getByRole('button', { name: '+ Agregar medio de pago' })
+    const resto = lineaDeResto()
+    const cobrar = within(panel).getByRole('button', { name: /Cobrar/ })
+
+    const precede = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(precede(total, pagos)).toBe(true)
+    expect(precede(pagos, agregarMedio)).toBe(true)
+    expect(precede(agregarMedio, resto)).toBe(true)
+    expect(precede(resto, cobrar)).toBe(true)
+    expect(within(panel).getByText('Total previo')).toBeInTheDocument()
+    expect(total).toHaveClass('display-5')
+  })
+
+  it('el total sigue siendo lo primero del panel aunque haya un aviso de carga de clientes', async () => {
+    mockearApiGet((ruta) => (ruta === '/clientes' ? Promise.reject(new Error('boom')) : undefined))
+    renderPos()
+    const aviso = await screen.findByText('No se pudieron cargar los clientes.')
+
+    const total = within(panelDatosDeLaVenta()).getByText('Total previo')
+    expect(total.compareDocumentPosition(aviso) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('con el pago incompleto dice "Falta" con el importe en rojo, y no muestra "Vuelto"', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '50')
+
+    const linea = within(lineaDeResto())
+    await waitFor(() => expect(linea.getByText('$ 50,00')).toHaveClass('text-danger'))
+    expect(within(panelDatosDeLaVenta()).getByText('Falta')).toBeInTheDocument()
+    expect(within(panelDatosDeLaVenta()).queryByText('Vuelto')).not.toBeInTheDocument()
+  })
+
+  it('con el pago completo dice "Vuelto" con el importe en verde, y no muestra "Falta"', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '150')
+
+    await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Vuelto')).toBeInTheDocument())
+    expect(within(lineaDeResto()).getByText('$ 50,00')).toHaveClass('text-success')
+    expect(within(panelDatosDeLaVenta()).queryByText('Falta')).not.toBeInTheDocument()
+  })
+
+  it('un faltante dentro de la tolerancia de pago ($ 10) ya no es "Falta": es el mismo criterio con el que se habilita Cobrar', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '95')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    expect(within(panelDatosDeLaVenta()).getByText('Vuelto')).toBeInTheDocument()
+    expect(within(lineaDeResto()).getByText('$ 0,00')).toHaveClass('text-success')
+  })
+
+  it('un faltante justo por encima de la tolerancia sigue siendo "Falta" y Cobrar sigue deshabilitado', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '89')
+
+    await waitFor(() => expect(within(lineaDeResto()).getByText('$ 11,00')).toHaveClass('text-danger'))
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+})
+
 describe('Pos — regresión: carga inicial de clientes vs. selección del usuario', () => {
   it('una respuesta tardía del fetch de montaje no pisa una selección hecha durante una búsqueda posterior', async () => {
     let resolverMontaje: (pagina: PaginaDe<ClienteListado>) => void = () => {}
@@ -1083,7 +1162,9 @@ describe('Pos — vista previa de precios', () => {
     const filaTotalPrevio = screen.getByText('Total previo').closest('div') as HTMLElement
     await waitFor(() => expect(within(filaTotalPrevio).getByText('—')).toBeInTheDocument())
     expect(screen.queryByText('$ 200,00', { selector: 'strong' })).not.toBeInTheDocument()
-    expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(2)
+    expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(1)
+    // Con la vista previa caída no se sabe si falta o sobra: ni rojo ni verde.
+    expect(screen.getByText('se confirma al cobrar')).toHaveClass('text-muted')
   })
 
   it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
