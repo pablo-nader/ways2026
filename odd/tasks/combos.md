@@ -189,6 +189,37 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
   3. Quantity-tier and family-minimum ofertas are resolved over the full quantity before the
      combo removes units (consequence of D1).
 
+- T3 delivered: PR pablo-nader/ways2026#382 (auto-merge + Auto-fix).
+- CI incident 2026-10-11: `backend-integration` was cancelled at its 45-minute cap on #381,
+  #382 and on main after #380; no test failed. The suite takes 24–28 or 41–43 minutes
+  depending on the runner and the day's new tests pushed slow runs past the cap. Fixed in
+  PR pablo-nader/ways2026#386 (cap 75); the same commit was merged into the combo branches
+  to rerun their CI. Follow-up proposed to the owner: split the suite into two jobs.
+- Owner decision 2026-10-11: "que devuelva lo que se pagó" — OPEN item 1 is resolved.
+- TNC implemented on `pnader/combos-nota-credito` — commit `ebbfce42`. Route: delegated
+  writer. Rule: an NCX with `IdComprobanteAsociado` (no `NumeroPreasignado`) whose associated
+  sale has combo items of a returned article credits, per original item, what was paid, pro
+  rata by cumulative units: credit of a draw = round(total × units drawn so far / quantity) −
+  already credited (exact at exhaustion, no negative draw for total ≥ 0). Units come only from
+  combo items in ascending `orden`; excess units are priced as today in a separate item; a
+  request line crossing several original items yields one item per tranche. The item keeps the
+  original unit price, IVA rate, `id_combo`, `id_oferta` and `id_lista_precio`. One extra
+  query, only on associated NCX. NCX of sales without combos are unchanged. Pure rule in
+  `Ways.Domain/Ventas/DevolucionDeCombos`. Observed (fix actor): build 0 errors; Domain
+  1219/1219; Application 805/805; integration `Combos|Ventas|Ncx` 362/362. Parent spot check:
+  `DevolucionDeCombos` 15/15. Implementation preceded the tests (no RED); mutation evidence:
+  gate, pro-rata formula, rounding, ordering, original-IVA, per-draw rounding, `IdOferta`.
+- Judgment-day, TNC: round 1 — 0 CRITICAL. Confirmed by both and fixed: N1 the exhausting
+  draw could come out negative by a cent (now cumulative). Also fixed: N2 test gaps, N3 stale
+  `IdCombo` comments, N4 doc (surcharge case, per-tranche adjustment). Scoped re-judgment:
+  both judges recomputed every literal, all resolved, 0 CRITICAL → APPROVED.
+- OPEN, found while doing TNC (existing behaviour, not changed):
+  4. The system does not track units already returned: a second NCX of the same sale can
+     credit the same item again.
+  5. A credit note accepts fractional quantities of a per-unit article (the integer check runs
+     only for positive-sign documents), so half a pancho can be returned.
+  6. NCX of a sale WITHOUT combos still credits today's list and ofertas, not what was paid.
+
 ## Next step
 
-PR for T3 (slice 3); owner answer on the credit-note question; then T3b.
+PR for TNC (slice 4); then T3b.

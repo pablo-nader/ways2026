@@ -1,7 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ErrorApi } from '../api/cliente'
+import { pulsoDeCajon } from '../impresion/plantillas'
 import { GastosDelTurno } from './GastosDelTurno'
+import type { CajaDeEscritorio } from './Pos'
 import type { AreaListado, DetalleDeTurno, GastoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
@@ -434,6 +437,334 @@ describe('GastosDelTurno — alta', () => {
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     resolverPost({ id: 1 })
+  })
+})
+
+describe('GastosDelTurno — efectivo en caja', () => {
+  const medioTransferencia: MedioPagoListado = {
+    ...medioEfectivo,
+    id: 3,
+    nombre: 'Transferencia',
+    orden: 3,
+    comportamiento: 'Electronico',
+    admiteVuelto: false,
+  }
+
+  function detalleConEfectivo(importeEsperado: number): DetalleDeTurno {
+    const base = detalleFixture()
+    return { ...base, resumen: { ...base.resumen, idMedioAncla: 1, medios: [{ idMedioPago: 1, importeEsperado }] } }
+  }
+
+  function cajaDeEscritorioFixture(): CajaDeEscritorio {
+    return {
+      contexto: { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' },
+      encolarImpresion: vi.fn(),
+    }
+  }
+
+  async function esperarDetalle() {
+    await screen.findByLabelText('Importe')
+    await screen.findByText('Este turno todavía no tiene gastos.')
+  }
+
+  function mockearEfectivo(disponible: number) {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(disponible) })
+  }
+
+  describe('efectivo disponible y faltante', () => {
+    it('con Efectivo desde la caja del turno muestra el efectivo disponible del ancla', async () => {
+      mockearEfectivo(400)
+      render(<GastosDelTurno />)
+      await esperarDetalle()
+
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+
+      expect(screen.getByText('Disponible en caja: $ 400,00')).toBeInTheDocument()
+    })
+
+    it.each([
+      ['un medio electrónico', 'Transferencia', 'Caja del turno'],
+      ['Efectivo pagado desde Caja general', 'Efectivo', 'Caja general'],
+    ])('no muestra disponible ni faltante con %s', async (_caso, medio, origen) => {
+      mockearEfectivo(400)
+      render(<GastosDelTurno />)
+      await esperarDetalle()
+
+      await userEvent.type(screen.getByLabelText('Importe'), '1000')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio)
+      await userEvent.selectOptions(screen.getByLabelText('Pagado desde'), origen)
+
+      expect(screen.queryByText(/Disponible en caja/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('sin medio elegido no muestra disponible', async () => {
+      mockearEfectivo(400)
+      render(<GastosDelTurno />)
+      await esperarDetalle()
+
+      expect(screen.queryByText(/Disponible en caja/)).not.toBeInTheDocument()
+    })
+
+    it('si el importe supera el disponible avisa cuánto falta, sin bloquear el registro', async () => {
+      mockearEfectivo(400)
+      apiPostMock.mockResolvedValueOnce({ id: 1 })
+      render(<GastosDelTurno />)
+      await esperarDetalle()
+
+      await userEvent.type(screen.getByLabelText('Importe'), '1000')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Falta $ 600,00 en la caja para pagar este gasto.')
+      expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+      await waitFor(() =>
+        expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ importe: 1000, origenFondos: 'CajaTurno' })),
+      )
+    })
+
+    it('con un importe que no supera el disponible no hay aviso', async () => {
+      mockearEfectivo(400)
+      render(<GastosDelTurno />)
+      await esperarDetalle()
+
+      await userEvent.type(screen.getByLabelText('Importe'), '400')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+
+      expect(screen.getByText('Disponible en caja: $ 400,00')).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('apertura del cajón', () => {
+    async function registrar(medio: string, origen?: string) {
+      await esperarDetalle()
+      await userEvent.type(screen.getByLabelText('Importe'), '100')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio)
+      if (origen) await userEvent.selectOptions(screen.getByLabelText('Pagado desde'), origen)
+      await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    }
+
+    it('un gasto en Efectivo desde la caja del turno, ya registrado, encola el pulso del cajón', async () => {
+      mockearEfectivo(400)
+      apiPostMock.mockResolvedValueOnce({ id: 1 })
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+      await registrar('Efectivo')
+
+      await screen.findByText('Gasto registrado.')
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith('la apertura de cajón', pulsoDeCajon())
+    })
+
+    it('si el seam del cajón lanza, el alta ya confirmada no se informa como fallida, el formulario se limpia y hay un solo POST', async () => {
+      mockearEfectivo(400)
+      apiPostMock.mockResolvedValue({ id: 1 })
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      vi.mocked(cajaDeEscritorio.encolarImpresion).mockImplementation(() => {
+        throw new Error('cola caída')
+      })
+      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+      await registrar('Efectivo')
+
+      await screen.findByText('Gasto registrado.')
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+      expect(screen.queryByText('No se pudo registrar el gasto.')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Importe')).toHaveValue('')
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('el pulso se encola recién cuando el POST confirma', async () => {
+      mockearEfectivo(400)
+      let resolverPost: (valor: unknown) => void = () => undefined
+      apiPostMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolverPost = resolve
+          }),
+      )
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+      await registrar('Efectivo')
+      await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+
+      await act(async () => resolverPost({ id: 1 }))
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+    })
+
+    it('si el POST falla no encola el pulso', async () => {
+      mockearEfectivo(400)
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(500, 'error', 'No se pudo registrar el gasto.'))
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+      await registrar('Efectivo')
+
+      await screen.findByText('No se pudo registrar el gasto.')
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['Efectivo pagado desde Caja general', 'Efectivo', 'Caja general'],
+      ['un medio electrónico', 'Transferencia', undefined],
+    ])('con %s no encola el pulso', async (_caso, medio, origen) => {
+      mockearEfectivo(400)
+      apiPostMock.mockResolvedValueOnce({ id: 1 })
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+      await registrar(medio, origen)
+
+      await screen.findByText('Gasto registrado.')
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+    })
+
+    it('sin el seam de escritorio registra igual y no falla', async () => {
+      mockearEfectivo(400)
+      apiPostMock.mockResolvedValueOnce({ id: 1 })
+      render(<GastosDelTurno />)
+
+      await registrar('Efectivo')
+
+      expect(await screen.findByText('Gasto registrado.')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('GastosDelTurno — área del alta', () => {
+  const general = { id: 10, nombre: 'General', activo: true, idEmpresa: null, orden: 1 }
+  const cocina = { id: 11, nombre: 'Cocina', activo: true, idEmpresa: null, orden: 2 }
+
+  async function esperarAreas() {
+    await screen.findByLabelText('Importe')
+    await screen.findByRole('option', { name: 'General' })
+  }
+
+  async function completar() {
+    await userEvent.type(screen.getByLabelText('Importe'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+  }
+
+  it('el select arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await esperarAreas()
+
+    const select = screen.getByLabelText('Área')
+    expect(select).toHaveValue('10')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['General', 'Cocina'])
+
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
+  })
+
+  it('el área elegida a mano es la que viaja', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await esperarAreas()
+
+    await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 11 })))
+  })
+
+  it('tras un alta exitoso el formulario vuelve a la primera área activa', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await esperarAreas()
+
+    await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await screen.findByText('Gasto registrado.')
+    expect(screen.getByLabelText('Área')).toHaveValue('10')
+  })
+
+  it('si las áreas llegan después de abrir el formulario, el default se completa cuando aterrizan', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    let entregarAreas: (lista: AreaListado[]) => void = () => undefined
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas'
+        ? new Promise<AreaListado[]>((resolve) => {
+            entregarAreas = resolve
+          })
+        : baseline(ruta),
+    )
+    render(<GastosDelTurno />)
+    await screen.findByLabelText('Importe')
+    expect(screen.getByLabelText('Área')).toHaveValue('')
+
+    await act(async () => entregarAreas([general, cocina]))
+
+    expect(screen.getByLabelText('Área')).toHaveValue('10')
+  })
+
+  it('con las áreas pendientes "Registrar" queda deshabilitado; al llegar se habilita y el alta lleva el área por defecto', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    let entregarAreas: (lista: AreaListado[]) => void = () => undefined
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas'
+        ? new Promise<AreaListado[]>((resolve) => {
+            entregarAreas = resolve
+          })
+        : baseline(ruta),
+    )
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await screen.findByLabelText('Importe')
+    expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled()
+
+    await act(async () => entregarAreas([general, cocina]))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled())
+
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
+  })
+
+  it('si las áreas no cargan avisa que el gasto se registra sin área y deja registrar', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas' ? Promise.reject(new ErrorApi(500, 'error', 'boom')) : baseline(ruta),
+    )
+    render(<GastosDelTurno />)
+
+    expect(await screen.findByText('No se pudieron cargar las áreas: los gastos se registran sin área.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled())
+  })
+
+  it('sin áreas el select muestra una única opción vacía deshabilitada y el alta manda idArea null', async () => {
+    mockearRutas({ areas: [] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await screen.findByLabelText('Importe')
+    await screen.findByText('Este turno todavía no tiene gastos.')
+
+    const select = screen.getByLabelText('Área')
+    const opciones = within(select).getAllByRole('option')
+    expect(opciones).toHaveLength(1)
+    expect(opciones[0]).toBeDisabled()
+    expect(select).toHaveValue('')
+
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: null })))
   })
 })
 

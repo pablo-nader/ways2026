@@ -658,9 +658,9 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     [Fact]
-    public async Task UnaNotaDeCreditoNoDetectaCombos()
+    public async Task UnaNotaDeCreditoSinVentaAsociadaNoDetectaCombos()
     {
-        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoNoDetectaCombos));
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoSinVentaAsociadaNoDetectaCombos));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
@@ -827,6 +827,548 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
         Assert.Equal(-2m, await StockAsync(ctx, pancho));
         Assert.Equal(-2m, await StockAsync(ctx, coca));
+    }
+
+    // =================================================================================================
+    // Nota de crédito asociada a una venta con combo: devuelve lo que se cobró
+    // =================================================================================================
+
+    private static SolicitudDeVenta Devolucion(Contexto ctx, int idAsociado, params LineaDeVenta[] lineas) =>
+        new(ctx.IdPuntoVenta, ctx.IdCliente, "NCX", idAsociado, [.. lineas], [], null, null);
+
+    private async Task DesactivarOfertasAsync(Contexto ctx)
+    {
+        await using var db = Db(ctx.IdTenant);
+        foreach (var oferta in await db.Ofertas.ToListAsync())
+        {
+            oferta.Activo = false;
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<decimal> SaldoDelClienteAsync(Contexto ctx)
+    {
+        await using var db = Db(ctx.IdTenant);
+
+        return await db.Clientes.Where(c => c.Id == ctx.IdCliente).Select(c => c.Saldo).SingleAsync();
+    }
+
+    [Fact]
+    public async Task LaNotaDeCreditoDeTodoElComboDevuelveLoCobradoYNoLaListaYReponeElStock()
+    {
+        var ctx = await PrepararAsync(nameof(LaNotaDeCreditoDeTodoElComboDevuelveLoCobradoYNoLaListaYReponeElStock));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
+
+        Assert.Equal(-5000m, ncx.Total);
+        Assert.Equal(-5500m, ncx.Subtotal);
+        Assert.Equal(-500m, ncx.DescuentoTotal);
+        Assert.Equal([pancho, coca], ncx.Items.Select(i => i.IdArticulo));
+        Assert.Equal([-2727.27m, -2272.73m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-272.73m, -227.27m], ncx.Items.Select(i => i.Descuento));
+        Assert.Equal([3000m, 2500m], ncx.Items.Select(i => i.PrecioUnitario));
+        Assert.Equal([-1m, -1m], ncx.Items.Select(i => i.Cantidad));
+        Assert.All(ncx.Items, i => Assert.Equal(combo, i.IdCombo));
+
+        var persistidos = await ItemsAsync(ctx, ncx.Id);
+        Assert.Equal([-2727.27m, -2272.73m], persistidos.Select(i => i.Total));
+        Assert.All(persistidos, i => Assert.Equal(combo, i.IdCombo));
+
+        Assert.Equal(0m, await StockAsync(ctx, pancho));
+        Assert.Equal(0m, await StockAsync(ctx, coca));
+        Assert.Equal(0m, await SaldoDelClienteAsync(ctx));
+    }
+
+    [Fact]
+    public async Task LaDevolucionParcialDeUnaVentaConDosJuegosDevuelveLaMitadDeLoCobradoPorEseItem()
+    {
+        var ctx = await PrepararAsync(nameof(LaDevolucionParcialDeUnaVentaConDosJuegosDevuelveLaMitadDeLoCobradoPorEseItem));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 10000m, (pancho, 2m), (coca, 2m));
+        Assert.Equal([5454.54m, 4545.46m], venta.Items.Select(i => i.Total));
+
+        var uno = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var item = Assert.Single(uno.Items);
+        Assert.Equal(-2727.27m, item.Total);
+        Assert.Equal(-2727.27m, uno.Total);
+        Assert.Equal(3000m, item.PrecioUnitario);
+        Assert.Equal(-272.73m, item.Descuento);
+        Assert.Equal(-1m, item.Cantidad);
+
+        var todos = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        Assert.Equal(-5454.54m, Assert.Single(todos.Items).Total);
+        Assert.Equal(-545.46m, Assert.Single(todos.Items).Descuento);
+    }
+
+    [Fact]
+    public async Task UnaLineaDevueltaQueNoEstabaEnElComboSePreciaComoSiempreYLaDelComboAlPrecioCobrado()
+    {
+        var ctx = await PrepararAsync(nameof(UnaLineaDevueltaQueNoEstabaEnElComboSePreciaComoSiempreYLaDelComboAlPrecioCobrado));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var otro = await ArticuloAsync(ctx, "otro", 100m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5100m, (pancho, 1m), (coca, 1m), (otro, 1m));
+        await OfertaDePrecioAsync(ctx, otro, 80m);
+
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(otro, 1m, null), new LineaDeVenta(pancho, 1m, null)));
+
+        // El artículo que nunca estuvo en un combo se acredita al precio de HOY (con su oferta de hoy); el del combo, a lo cobrado.
+        Assert.Equal([-80m, -2727.27m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-20m, -272.73m], ncx.Items.Select(i => i.Descuento));
+        Assert.Null(ncx.Items[0].IdCombo);
+        Assert.NotNull(ncx.Items[1].IdCombo);
+    }
+
+    [Fact]
+    public async Task LaDevolucionDeUnaVentaSinCombosSeSigueUsandoAlPrecioDeHoyYNoAlCobrado()
+    {
+        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnaVentaSinCombosSeSigueUsandoAlPrecioDeHoyYNoAlCobrado));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await OfertaDePrecioAsync(ctx, pancho, 2700m);
+        var venta = await EmitirAsync(ctx, 5200m, (pancho, 1m), (coca, 1m));
+        Assert.Equal(5200m, venta.Total);
+
+        await DesactivarOfertasAsync(ctx);
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
+
+        // Se cobraron 5200 con la oferta; sin combos la nota de crédito no mira lo cobrado: precia con la lista de hoy.
+        Assert.Equal(-5500m, ncx.Total);
+        Assert.Equal([-3000m, -2500m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([0m, 0m], ncx.Items.Select(i => i.Descuento));
+        Assert.All(ncx.Items, i => Assert.Null(i.IdCombo));
+        Assert.All(ncx.Items, i => Assert.Null(i.IdOferta));
+    }
+
+    [Fact]
+    public async Task LaDevolucionDeUnaLineaDelComboConAjusteManualDevuelveElTotalQueIncluiaEseAjuste()
+    {
+        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnaLineaDelComboConAjusteManualDevuelveElTotalQueIncluiaEseAjuste));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 4772.73m,
+                new LineaDeVenta(pancho, 1m, null),
+                new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
+        Assert.Equal([2727.27m, 2045.46m], venta.Items.Select(i => i.Total));
+
+        var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null)));
+
+        var item = Assert.Single(ncx.Items);
+        Assert.Equal(-2045.46m, item.Total);
+        Assert.Equal(-454.54m, item.Descuento);
+        Assert.Equal(0m, item.AjusteManual);
+        Assert.Null(item.AjusteManualPorcentaje);
+    }
+
+    [Fact]
+    public async Task ElAjusteManualDeLaLineaDeLaNotaDeCreditoSeAplicaSobreLoDevueltoComoEnCualquierNotaDeCredito()
+    {
+        var ctx = await PrepararAsync(nameof(ElAjusteManualDeLaLineaDeLaNotaDeCreditoSeAplicaSobreLoDevueltoComoEnCualquierNotaDeCredito));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
+
+        // Neto devuelto −2272.73; −10 % sobre ese neto: −2272.73 × −0.10 = +227.27 (se devuelve menos).
+        var item = Assert.Single(ncx.Items);
+        Assert.Equal(-10m, item.AjusteManualPorcentaje);
+        Assert.Equal(227.27m, item.AjusteManual);
+        Assert.Equal(-2045.46m, item.Total);
+        Assert.Equal(-2045.46m, ncx.Total);
+    }
+
+    [Fact]
+    public async Task LaNotaDeCreditoConservaLaAlicuotaDeIvaDelItemVendidoAunqueElArticuloLaHayaCambiado()
+    {
+        var ctx = await PrepararAsync(nameof(LaNotaDeCreditoConservaLaAlicuotaDeIvaDelItemVendidoAunqueElArticuloLaHayaCambiado));
+        List<AlicuotaIva> alicuotas;
+        await using (var db = Db(ctx.IdTenant))
+        {
+            alicuotas = await db.AlicuotasIva
+                .Where(a => a.CodigoAfip != null && a.Porcentaje > 0)
+                .OrderBy(a => a.Porcentaje)
+                .ToListAsync();
+        }
+
+        var vieja = alicuotas.First();
+        var nueva = alicuotas.Last(a => a.Porcentaje != vieja.Porcentaje);
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m, idAlicuotaIva: vieja.Id);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m, idAlicuotaIva: vieja.Id);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        await using (var db = Db(ctx.IdTenant))
+        {
+            foreach (var articulo in await db.Articulos.Where(a => a.Id == pancho || a.Id == coca).ToListAsync())
+            {
+                articulo.IdAlicuotaIva = nueva.Id;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
+
+        Assert.All(ncx.Items, i =>
+        {
+            Assert.Equal(vieja.Id, i.IdAlicuotaIva);
+            Assert.Equal(vieja.Porcentaje, i.PorcentajeIva);
+        });
+        var persistidos = await ItemsAsync(ctx, ncx.Id);
+        Assert.All(persistidos, i => Assert.Equal(vieja.Id, i.IdAlicuotaIva));
+    }
+
+    [Fact]
+    public async Task ConDosItemsDeComboDelMismoArticuloLasUnidadesSeTomanDelDeMenorOrden()
+    {
+        var ctx = await PrepararAsync(nameof(ConDosItemsDeComboDelMismoArticuloLasUnidadesSeTomanDelDeMenorOrden));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        // Dos juegos en cuatro líneas; el segundo pancho lleva −10 %: queda en 2727.27 − 272.73 = 2454.54.
+        var venta = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 9727.27m,
+                new LineaDeVenta(pancho, 1m, null),
+                new LineaDeVenta(coca, 1m, null),
+                new LineaDeVenta(pancho, 1m, null, AjusteManualPorcentaje: -10m),
+                new LineaDeVenta(coca, 1m, null)));
+        Assert.Equal([2727.27m, 2272.73m, 2454.54m, 2272.73m], venta.Items.Select(i => i.Total));
+
+        var unaUnidad = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        Assert.Equal(-2727.27m, Assert.Single(unaUnidad.Items).Total);
+
+        var dosUnidades = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        Assert.Equal([-2727.27m, -2454.54m], dosUnidades.Items.Select(i => i.Total));
+        Assert.Equal(-5181.81m, dosUnidades.Total);
+
+        var enDosLineas = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(pancho, 1m, null)));
+        Assert.Equal([-2727.27m, -2454.54m], enDosLineas.Items.Select(i => i.Total));
+    }
+
+    [Fact]
+    public async Task ConElMismoArticuloEnUnItemDeComboYEnOtroFueraDelComboSeDevuelveElDelComboPrimeroYElExcedenteAlPrecioDeHoy()
+    {
+        var ctx = await PrepararAsync(
+            nameof(ConElMismoArticuloEnUnItemDeComboYEnOtroFueraDelComboSeDevuelveElDelComboPrimeroYElExcedenteAlPrecioDeHoy));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 8000m, (pancho, 1m), (coca, 1m), (pancho, 1m));
+        Assert.Equal([combo, combo, (int?)null], venta.Items.Select(i => i.IdCombo));
+        await OfertaDePrecioAsync(ctx, pancho, 2900m);
+
+        var una = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var item = Assert.Single(una.Items);
+        Assert.Equal(-2727.27m, item.Total);
+        Assert.Equal(combo, item.IdCombo);
+
+        // La segunda unidad ya no la cubre ningún item de combo: se precia con la lista y la oferta de hoy.
+        var dos = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        Assert.Equal([-2727.27m, -2900m], dos.Items.Select(i => i.Total));
+        Assert.Equal([combo, (int?)null], dos.Items.Select(i => i.IdCombo));
+        Assert.Equal([-1m, -1m], dos.Items.Select(i => i.Cantidad));
+        Assert.Equal(-5627.27m, dos.Total);
+    }
+
+    [Fact]
+    public async Task LasUnidadesQueExcedenLasVendidasEnComboSePreciaComoSiempreSinDetectarUnComboNuevo()
+    {
+        var ctx = await PrepararAsync(nameof(LasUnidadesQueExcedenLasVendidasEnComboSePreciaComoSiempreSinDetectarUnComboNuevo));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null), new LineaDeVenta(coca, 1m, null)));
+
+        Assert.Equal([-2727.27m, -3000m, -2272.73m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-1m, -1m, -1m], ncx.Items.Select(i => i.Cantidad));
+        Assert.Null(ncx.Items[1].IdCombo);
+    }
+
+    [Fact]
+    public async Task DosNotasDeCreditoDeLaMismaVentaNoSeDescuentanLoYaDevueltoEntreSiHoyElTopeEsPorDocumento()
+    {
+        var ctx = await PrepararAsync(nameof(DosNotasDeCreditoDeLaMismaVentaNoSeDescuentanLoYaDevueltoEntreSiHoyElTopeEsPorDocumento));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        var primera = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var segunda = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+
+        // Sin acumulado de lo devuelto por documentos anteriores: cada nota de crédito parte de la venta original.
+        Assert.Equal(-2727.27m, primera.Total);
+        Assert.Equal(-2727.27m, segunda.Total);
+    }
+
+    [Fact]
+    public async Task LaDevolucionDeUnArticuloConLoteDeUnaVentaConComboExigeIdLoteYReponeElLoteIndicado()
+    {
+        var ctx = await PrepararAsync(nameof(LaDevolucionDeUnArticuloConLoteDeUnaVentaConComboExigeIdLoteYReponeElLoteIndicado));
+        await HabilitarLotesAsync(ctx);
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m, controlaLote: true);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        int idLote;
+        await using (var db = Db(ctx.IdTenant))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var lote = new Lote
+            {
+                IdArticulo = pancho, Codigo = "L-NCX-COMBO", FechaVencimiento = new DateOnly(2099, 12, 31),
+                EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.Lotes.Add(lote);
+            await db.SaveChangesAsync();
+            idLote = lote.Id;
+
+            db.StockLotes.Add(new StockLote
+            {
+                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
+            });
+            db.Stock.Add(new Stock
+            {
+                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 10m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        var sinLote = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(coca, 1m, null)));
+        Assert.Equal(HttpStatusCode.BadRequest, sinLote.StatusCode);
+        Assert.Contains("lote_requerido", await sinLote.Content.ReadAsStringAsync());
+
+        var ncx = await EmitirAsync(
+            ctx,
+            Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null, idLote), new LineaDeVenta(coca, 1m, null)));
+
+        Assert.Equal(-5000m, ncx.Total);
+        Assert.Equal(idLote, ncx.Items[0].IdLote);
+        Assert.Equal(combo, ncx.Items[0].IdCombo);
+
+        await using var lectura = Db(ctx.IdTenant);
+        Assert.Equal(10m, await lectura.StockLotes
+            .Where(sl => sl.IdArticulo == pancho && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Select(sl => sl.Cantidad).SingleAsync());
+        Assert.Equal(10m, await StockAsync(ctx, pancho));
+        Assert.Equal(0m, await StockAsync(ctx, coca));
+    }
+
+    [Fact]
+    public async Task LaLineaDevueltaQueCruzaDosItemsDeComboReponeElStockYElLoteUnaVezPorTramo()
+    {
+        var ctx = await PrepararAsync(nameof(LaLineaDevueltaQueCruzaDosItemsDeComboReponeElStockYElLoteUnaVezPorTramo));
+        await HabilitarLotesAsync(ctx);
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m, controlaLote: true);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        int idLote;
+        await using (var db = Db(ctx.IdTenant))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var lote = new Lote
+            {
+                IdArticulo = pancho, Codigo = "L-NCX-TRAMOS", FechaVencimiento = new DateOnly(2099, 12, 31),
+                EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.Lotes.Add(lote);
+            await db.SaveChangesAsync();
+            idLote = lote.Id;
+
+            db.StockLotes.Add(new StockLote
+            {
+                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
+            });
+            db.Stock.Add(new Stock
+            {
+                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 10m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // El segundo pancho lleva −10 %: cada item original pagó un total distinto (2727.27 y 2454.54), así que el
+        // total de cada item de la nota de crédito dice de cuál de los dos salió.
+        var venta = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 9727.27m,
+                new LineaDeVenta(pancho, 1m, null),
+                new LineaDeVenta(coca, 1m, null),
+                new LineaDeVenta(pancho, 1m, null, AjusteManualPorcentaje: -10m),
+                new LineaDeVenta(coca, 1m, null)));
+        Assert.Equal([2727.27m, 2272.73m, 2454.54m, 2272.73m], venta.Items.Select(i => i.Total));
+
+        var ncx = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null, idLote)));
+
+        Assert.Equal(2, ncx.Items.Count);
+        Assert.All(ncx.Items, i => Assert.Equal(idLote, i.IdLote));
+        Assert.Equal([-1m, -1m], ncx.Items.Select(i => i.Cantidad));
+        Assert.Equal([-2727.27m, -2454.54m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([3000m, 3000m], ncx.Items.Select(i => i.PrecioUnitario));
+        Assert.Equal([-272.73m, -545.46m], ncx.Items.Select(i => i.Descuento));
+        Assert.Equal(-5181.81m, ncx.Total);
+
+        var persistidos = await ItemsAsync(ctx, ncx.Id);
+        Assert.Equal([-1m, -1m], persistidos.Select(i => i.Cantidad));
+        Assert.Equal([-2727.27m, -2454.54m], persistidos.Select(i => i.Total));
+        Assert.Equal([-272.73m, -545.46m], persistidos.Select(i => i.Descuento));
+        Assert.Equal(10m, await StockAsync(ctx, pancho));
+
+        await using var lectura = Db(ctx.IdTenant);
+        Assert.Equal(10m, await lectura.StockLotes
+            .Where(sl => sl.IdArticulo == pancho && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Select(sl => sl.Cantidad).SingleAsync());
+    }
+
+    [Fact]
+    public async Task ElItemDeLaNotaDeCreditoConservaLaOfertaYLaListaDelItemVendidoConComboYUnidadesFueraDelCombo()
+    {
+        var ctx = await PrepararAsync(
+            nameof(ElItemDeLaNotaDeCreditoConservaLaOfertaYLaListaDelItemVendidoConComboYUnidadesFueraDelCombo));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var oferta = await OfertaDePrecioAsync(ctx, pancho, 2900m);
+
+        // Un item de pancho con 2 unidades: una entra al combo y la otra conserva la oferta de la línea.
+        var venta = await EmitirAsync(ctx, 7900m, (pancho, 2m), (coca, 1m));
+        var vendido = (await ItemsAsync(ctx, venta.Id)).First(i => i.IdArticulo == pancho);
+        Assert.Equal(combo, vendido.IdCombo);
+        Assert.Equal(oferta, vendido.IdOferta);
+        Assert.Equal(ctx.IdListaPrecio, vendido.IdListaPrecio);
+
+        // Sin ofertas vigentes hoy, el id_oferta de la nota de crédito solo puede venir del item vendido.
+        await DesactivarOfertasAsync(ctx);
+
+        var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+
+        var persistido = Assert.Single(await ItemsAsync(ctx, ncx.Id));
+        Assert.Equal(oferta, persistido.IdOferta);
+        Assert.Equal(ctx.IdListaPrecio, persistido.IdListaPrecio);
+        Assert.Equal(combo, persistido.IdCombo);
+        Assert.Equal(oferta, Assert.Single(ncx.Items).IdOferta);
+        Assert.Equal(5627.27m, vendido.Total);
+        Assert.Equal(-2813.64m, persistido.Total);
+    }
+
+    private async Task CerrarElPrecioVigenteAsync(Contexto ctx, int idArticulo)
+    {
+        await using var db = Db(ctx.IdTenant);
+        foreach (var precio in await db.Precios.Where(p => p.IdArticulo == idArticulo).ToListAsync())
+        {
+            precio.VigenteHasta = DateTimeOffset.UtcNow.AddHours(-1);
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task UnArticuloDelComboSinPrecioVigenteSeDevuelveSiLoCubrenLosItemsVendidosEnComboYFallaSiHayExcedente()
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnArticuloDelComboSinPrecioVigenteSeDevuelveSiLoCubrenLosItemsVendidosEnComboYFallaSiHayExcedente));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+        await CerrarElPrecioVigenteAsync(ctx, pancho);
+
+        // Con excedente: la segunda unidad no la cubre ningún item de combo y se precia con la lista de hoy, que ya no existe.
+        var conExcedente = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas", Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        Assert.Equal(HttpStatusCode.BadRequest, conExcedente.StatusCode);
+        Assert.Contains("articulo_sin_precio_vigente", await conExcedente.Content.ReadAsStringAsync());
+
+        // Cubierto por completo por el item vendido: se acredita lo cobrado sin necesitar el precio de hoy.
+        var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
+        var item = Assert.Single(ncx.Items);
+        Assert.Equal(-2727.27m, item.Total);
+        Assert.Equal(3000m, item.PrecioUnitario);
+        Assert.Equal(-272.73m, item.Descuento);
+    }
+
+    [Fact]
+    public async Task LaNotaDeCreditoNoExigeCantidadEnteraDeUnArticuloDeUnidadYAcreditaLaFraccionProporcionalDeLoCobrado()
+    {
+        var ctx = await PrepararAsync(
+            nameof(LaNotaDeCreditoNoExigeCantidadEnteraDeUnArticuloDeUnidadYAcreditaLaFraccionProporcionalDeLoCobrado));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        // La regla de cantidad entera de una unidad de venta Unidad solo alcanza a las ventas (signo positivo): una
+        // devolución fraccionaria llega al reparto, y el crédito es la mitad de lo cobrado por el item, 2727.27 / 2.
+        var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 0.5m, null)));
+
+        var item = Assert.Single(ncx.Items);
+        Assert.Equal(-0.5m, item.Cantidad);
+        Assert.Equal(-1363.64m, item.Total);
+        Assert.Equal(-1363.64m, ncx.Total);
+    }
+
+    [Fact]
+    public async Task LaDevolucionDeUnaLineaDelComboConRecargoManualAcreditaMasQueElBrutoConDescuentoPositivo()
+    {
+        var ctx = await PrepararAsync(
+            nameof(LaDevolucionDeUnaLineaDelComboConRecargoManualAcreditaMasQueElBrutoConDescuentoPositivo));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        // +20 % sobre la coca: 2272.73 de combo + 454.55 de recargo = 2727.28, más que su precio de lista (2500).
+        var venta = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 5454.55m,
+                new LineaDeVenta(pancho, 1m, null),
+                new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: 20m)));
+        Assert.Equal([2727.27m, 2727.28m], venta.Items.Select(i => i.Total));
+
+        var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null)));
+
+        // Se devuelve lo pagado (2727.28 > bruto 2500): el descuento del item tiene signo POSITIVO, al revés que el de
+        // una nota de crédito común, porque bruto (−2500) − descuento (+227.28) = −crédito (−2727.28).
+        var item = Assert.Single(ncx.Items);
+        Assert.Equal(-2727.28m, item.Total);
+        Assert.Equal(-2727.28m, ncx.Total);
+        Assert.Equal(-2500m, item.Cantidad * item.PrecioUnitario);
+        Assert.Equal(227.28m, item.Descuento);
+
+        var persistido = Assert.Single(await ItemsAsync(ctx, ncx.Id));
+        Assert.Equal(-2727.28m, persistido.Total);
+        Assert.Equal(227.28m, persistido.Descuento);
     }
 
     // =================================================================================================

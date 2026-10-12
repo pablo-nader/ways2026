@@ -129,7 +129,8 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 ///
 /// <see cref="IdCombo"/> sí se persiste (<c>items_comprobante_venta.id_combo</c>) y una relectura devuelve
 /// lo mismo que el checkout fresco: el combo (el de menor id si varios consumieron la línea) cuyo descuento
-/// está incluido en <see cref="Descuento"/>; <c>null</c> si ninguno. Solo el id, igual que
+/// está incluido en <see cref="Descuento"/>; <c>null</c> si ninguno. En un item de nota de crédito asociada a
+/// una venta con combo es el <c>id_combo</c> del item original cuyas unidades devuelve. Solo el id, igual que
 /// <see cref="IdOferta"/>: el nombre no viaja en la venta emitida y un combo dado de baja después no la
 /// afecta. Un item de un <c>TXR</c> siempre lo lleva en <c>null</c>.</summary>
 public sealed record ItemEmitido(

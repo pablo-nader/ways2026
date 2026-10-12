@@ -549,4 +549,19 @@ public class CalculadorDeTotalesTests
         Assert.Equal(4873m, resultado.Total);
         Assert.Equal(resultado.Items.Sum(i => i.Total), resultado.Total);
     }
+
+    [Fact]
+    public void LaDevolucionDeComboConAhorroConElSignoDeLaCantidadDevuelveExactamenteElImporteCobrado()
+    {
+        // Se devuelven 1 pancho de 3000 que en el combo costó 2727.27: bruto −3000, descuento −272.73 (el signo
+        // de la cantidad, como cualquier descuento de una nota de crédito) ⇒ neto −2727.27.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(-1m, 3000m, 0m, null, -1m, -272.73m)]);
+
+        Assert.Equal(-3000m, resultado.Subtotal);
+        Assert.Equal(-272.73m, resultado.Items[0].Descuento);
+        Assert.Equal(-272.73m, resultado.DescuentoTotal);
+        Assert.Equal(-2727.27m, resultado.Items[0].Total);
+        Assert.Equal(-2727.27m, resultado.Total);
+    }
 }

@@ -1812,15 +1812,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
-  /** Cancelar el monto — el cajón ya está abierto (spec del dueño: eso ya quedó auditado), así que
-   * cancelar acá es seguro: solo descarta el monto sin registrar ningún `Retiro`. */
-  function cancelarMontoRetiro() {
-    if (registrandoRetiroRef.current) return
-    cambiarPasoRetiro(null)
-    setMontoRetiro(null)
-    setErrorRetiro('')
-  }
-
   /** Confirmar el monto — registra el `Retiro` real y encola su ticket. NUNCA vuelve a pulsar el
    * cajón (ya se pulsó en `confirmarAperturaParaRetiro`). */
   async function confirmarMontoRetiro() {
@@ -4070,12 +4061,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         <Modal
           titulo="Monto retirado"
           ocupado={registrandoRetiro}
-          onCerrar={cancelarMontoRetiro}
+          noDescartable
           pie={
             <>
-              <button type="button" className="btn btn-outline-secondary" disabled={registrandoRetiro} onClick={cancelarMontoRetiro}>
-                Cancelar
-              </button>
               <button
                 type="button"
                 className="btn btn-primary"
