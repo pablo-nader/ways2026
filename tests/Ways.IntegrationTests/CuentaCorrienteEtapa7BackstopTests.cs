@@ -208,6 +208,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     // migrar hasta HEAD sin este mapeo dispara PendingModelChangesWarning.
                     npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                     npgsql.MapEnum<Ways.Domain.Plantel.TipoMovimientoPersonal>("tipo_movimiento_personal");
+                    npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");
                     // stage-16-ordenes-de-compra, Slice 1 (mismo gap que la desviación de la
                     // etapa 15 documentada arriba): migrar hasta HEAD sin este mapeo dispara
                     // PendingModelChangesWarning.

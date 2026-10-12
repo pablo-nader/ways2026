@@ -115,6 +115,8 @@ public interface IWaysDbContext
     // del mismo punto de venta.
     DbSet<ArqueoTurno> ArqueosTurno { get; }
     DbSet<MovimientoTesoreria> MovimientosTesoreria { get; }
+    DbSet<CuentaTesoreria> CuentasTesoreria { get; }
+    DbSet<MovimientoCuenta> MovimientosCuenta { get; }
 
     // stage-6-turnos-caja, Slice 3: ServicioDeGastos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).

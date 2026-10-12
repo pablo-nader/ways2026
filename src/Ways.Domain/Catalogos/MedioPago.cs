@@ -22,4 +22,17 @@ public class MedioPago : CatalogoSimple
     /// <summary>Parte de lo vendido con este medio que debe salir facturada, de 0 a 100 con hasta
     /// 2 decimales. 0 = no se factura por este medio.</summary>
     public decimal PorcentajeFacturacion { get; set; }
+
+    /// <summary>Cuenta de tesorería a la que entra lo cobrado con este medio. Solo para medios
+    /// <see cref="ComportamientoMedioPago.Electronico"/>.</summary>
+    public int? IdCuentaTesoreria { get; set; }
+
+    /// <summary>Comisión de la plataforma, de 0 a 100 con hasta 3 decimales.</summary>
+    public decimal ComisionPorcentaje { get; set; }
+
+    public decimal RetencionIibbPorcentaje { get; set; }
+
+    public decimal RetencionIvaPorcentaje { get; set; }
+
+    public decimal RetencionGananciasPorcentaje { get; set; }
 }

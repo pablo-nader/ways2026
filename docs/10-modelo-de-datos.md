@@ -325,6 +325,12 @@ medios_pago (                 -- [catálogo]
     porcentaje_facturacion numeric(5,2) NOT NULL DEFAULT 0,
                     -- parte (0..100) de lo vendido con este medio que debe facturarse
                     -- fiscalmente; CHECK ck_medios_pago_porcentaje_facturacion
+    id_cuenta_tesoreria integer NULL,        -- cuenta (§7) donde entra lo cobrado con este medio;
+                    -- FK compuesta (id_cuenta_tesoreria, id_tenant) a cuentas_tesoreria, RESTRICT
+    comision_porcentaje            numeric(6,3) NOT NULL DEFAULT 0,  -- comisión de la plataforma
+    retencion_iibb_porcentaje      numeric(6,3) NOT NULL DEFAULT 0,
+    retencion_iva_porcentaje       numeric(6,3) NOT NULL DEFAULT 0,
+    retencion_ganancias_porcentaje numeric(6,3) NOT NULL DEFAULT 0,
     orden, activo
 )
 ```
@@ -335,6 +341,16 @@ tenant, no una migración.
 
 `porcentaje_facturacion` solo se guarda y se expone (ABM y copia offline del POS); la
 decisión de qué tickets se facturan es de una etapa posterior.
+
+> **Estado (cuentas de tesorería, esquema):** `id_cuenta_tesoreria` y los cuatro porcentajes de
+> comisión y retenciones son solo esquema: ningún DTO, endpoint, descriptor ni la instantánea del
+> POS los expone todavía, y el servicio del catálogo no los lee ni los escribe (las filas
+> existentes quedan en 0 y sin cuenta). Tres CHECK: `ck_medios_pago_porcentajes_cuenta_rango` (cada
+> porcentaje entre 0 y 100), `ck_medios_pago_porcentajes_cuenta_suma` (la suma de los cuatro es a lo
+> sumo 100) y `ck_medios_pago_cuenta_solo_electronico` (cuenta y porcentajes distintos de cero solo
+> con `comportamiento = 'electronico'`). Que la cuenta pertenezca a la misma empresa que el medio
+> no lo valida la base: lo valida el servicio que escriba el campo. Índice de soporte de la FK:
+> `ix_medios_pago_cuenta_tesoreria`.
 
 ---
 
@@ -2481,6 +2497,74 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
 > no se encadenan entre sí porque la cadena entera vive a nivel empresa, nunca por punto de venta.
 
+### Cuentas de tesorería
+
+```sql
+cuentas_tesoreria (           -- [catálogo por empresa: id_empresa NOT NULL] — Mercado Pago, banco
+    id_cuenta_tesoreria, id_empresa,
+    nombre citext,                           -- único por (id_tenant, id_empresa) entre las vivas
+    saldo_inicial numeric(14,2) NOT NULL DEFAULT 0,
+    activo, created_at, updated_at, deleted_at
+);
+
+movimientos_cuenta (          -- [operativa — libro append-only] encadenado por cuenta
+    id_movimiento_cuenta, id_cuenta_tesoreria, fecha,
+    tipo tipo_movimiento_cuenta,             -- enum: cobro | comision | retencion_iibb | retencion_iva |
+                                             -- retencion_ganancias | ajuste | transferencia | deposito | retiro
+    id_turno_caja NULL, id_medio_pago NULL, concepto,
+    inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_cuenta_tesoreria)
+    id_empleado,
+    base_bruta numeric(14,2) NULL,           -- base sobre la que se calculó el porcentaje, congelada
+    porcentaje_aplicado numeric(6,3) NULL    -- porcentaje vigente al escribir la fila, congelado
+);
+```
+
+> **Estado (cuentas de tesorería, esquema):** la tesorería de efectivo (`movimientos_tesoreria`,
+> una cadena por empresa) y las cuentas digitales (`movimientos_cuenta`, una cadena por cuenta) son
+> libros separados: cada uno con su propia cadena y su propio candado. Esta etapa solo agrega el
+> esquema; ningún servicio escribe estas tablas todavía.
+>
+> `cuentas_tesoreria`: clave alterna `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant` (destino de
+> las FK compuestas), FK compuesta `fk_cuentas_tesoreria_empresa` a `empresas` (RESTRICT), único
+> parcial `ux_cuentas_tesoreria_nombre_empresa` `(id_tenant, id_empresa, nombre) WHERE deleted_at IS
+> NULL`, índices `ix_cuentas_tesoreria_tenant` e `ix_cuentas_tesoreria_empresa`. RLS estándar.
+>
+> `movimientos_cuenta`: `ck_movimientos_cuenta_cadena` (`final = inicio + ingreso − egreso`, igual
+> que la tesorería de efectivo), más dos CHECK que `movimientos_tesoreria` no tiene:
+> `ck_movimientos_cuenta_importes_no_negativos` (`ingreso` y `egreso` no negativos) y
+> `ck_movimientos_cuenta_un_solo_lado` (`ingreso = 0 OR egreso = 0`; una fila con los dos lados en
+> cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
+> `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
+> es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
+> `ix_movimientos_cuenta_cuenta_id` `(id_cuenta_tesoreria, id_tenant, id_movimiento_cuenta)`, que
+> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro;
+> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
+> como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
+> id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',
+> 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')`: respaldo de idempotencia de las
+> filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
+> `id_medio_pago` admite `NULL`, no cubre una fila de turno sin medio. RLS estándar.
+>
+> **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
+> debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
+> hay movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene
+> movimientos: lo deberá exigir el servicio de cuentas (sin trigger en la base).
+>
+> **Lo que la base NO exige y debe exigir un servicio:**
+> - La continuidad de la cadena: la base solo valida cada fila (`final = inicio + ingreso - egreso`).
+>   Que el `inicio` de un movimiento sea el `final` del anterior, que el primero parta de
+>   `saldo_inicial` y que el libro sea solo de altas (sin UPDATE ni DELETE) lo garantiza el escritor,
+>   que agrega bajo el lock de la cuenta.
+> - La cuenta de un medio de pago pertenece a la empresa del medio; un medio de todo el tenant
+>   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa.
+> - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta.
+> - La baja lógica de una cuenta solo se permite sin referencias (medios o movimientos): la baja lógica
+>   esquiva RESTRICT.
+> - Cambiar `comportamiento` de un medio con cuenta o porcentajes distintos de cero a algo que no es
+>   `electronico` falla con 23514: el servicio de medios de pago debe limpiarlos antes.
+> - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
+> - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
+
 ## 8. Cuenta corriente de clientes
 
 ```sql
@@ -2848,6 +2932,9 @@ erDiagram
     comprobantes_venta }o--o| turnos_caja : ""
     turnos_caja ||--o{ arqueos_turno : ""
     turnos_caja ||--o{ movimientos_caja : ""
+    empresas ||--o{ cuentas_tesoreria : ""
+    cuentas_tesoreria ||--o{ movimientos_cuenta : ""
+    medios_pago }o--o| cuentas_tesoreria : ""
     movimientos_stock }o--o| comprobantes_venta : ""
     movimientos_stock }o--o| comprobantes_compra : ""
     movimientos_cuenta_corriente }o--|| clientes : ""
