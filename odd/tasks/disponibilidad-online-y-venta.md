@@ -88,7 +88,7 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
   - Article form: section "Disponibilidad" with two switches (own write), grid badges ("No se
     vende", "Online") and the existing image block; offers modal and grid: checkbox and column
     "Online"; combos modal and grid: the same.
-- [ ] **T3 — Web storefront and landing.** Delegated. PR 13.
+- [x] **T3 — Web storefront and landing.** Delegated. PR 13. Commit `9ff3e9c5` (code and tests); the doc commit that records this closes the task.
   - Cards show the offer price with the original struck through and an "Oferta" tag; combos
     section in `/online` ("Combos") with cards listing components and "Agregar" creating a
     `combo` cart line (integer quantity, fixed price, components shown in the panel); cart
@@ -220,10 +220,52 @@ Added:
 
 `dotnet test tests/Ways.IntegrationTests`, once and alone, on the final tree (before this doc commit): 3797 passed, 0 failed, 39 min 54 s.
 
+### T3
+
+Route: delegated writer (one), web only (`src/Ways.Web/src/{api/publico.ts,publico,online,landing}`).
+
+- `npx tsc -b`: clean. `npx oxlint`: no finding in the touched directories (the rest is the existing warning baseline).
+  `npx vite build`: built. `npx vitest run src/publico src/online src/landing`: all green; whole
+  `npx vitest run`: 213 files, 5967 tests, 0 failed.
+- New tests: `carritoCombos.test.ts` (40: combo reducer add/merge/clamp/change/remove, identity of article vs combo lines,
+  totals, unavailable exclusion, sync, persistence migration and malformed lines), `Combos.test.tsx` (23: section render/hide,
+  images, add to cart, panel, unavailable combo, stale response under StrictMode, `#combos` scroll), `Ofertas.test.tsx` (9),
+  `Landing.ofertasYCombos.test.tsx` (7). Existing fixtures adapted to the storage format 2 and the `tipo` field.
+
+Mutation evidence (mutate, run the named files, revert; each went red in the named test and green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| offer rendering predicate `precioOriginal !== undefined` → `true` / `false` | `Ofertas.test` (card without offer / with offer, zero list price), `Landing.ofertasYCombos.test` |
+| `Ahora` sr-only text shown without an offer | `Ofertas.test` "sin precioOriginal..." |
+| combo line total = `precio` only (no × cantidad) | `carritoCombos.test` totals, `Combos.test` panel total / 99 cap |
+| unavailable combo not excluded from the total | `carritoCombos.test` "no disponible no suma", `Combos.test` (two panel tests) |
+| storage migration: line without `tipo` not read as an article | `carritoCombos.test` "carrito viejo se migra", "al guardar un carrito migrado" |
+| combos read error treated as an empty list (marks every cart combo unavailable) | `Combos.test` "si la lectura de combos falla ... ninguno se marca" |
+| section shown for an empty list | `Combos.test` "con una lista vacía no hay sección" |
+| section shown with a search or category filter active | `Combos.test` (two filter cases) |
+| combos read without the generation gate | `Combos.test` stale response under StrictMode |
+
+Decisions:
+
+1. **Storage format 2** is `{ version: 2, items }` under the same key. A legacy array (version 1, lines without `tipo`) is read as articles and
+   rewritten as format 2 on the next save; a line without `tipo` inside format 2, and any other `version`, is discarded.
+   An old tab reading format 2 sees no cart (it expects an array), which only costs that tab its in-memory view.
+2. **Combos are identified by `id` only**: per the coordinator's amendment (backend judgment-day) `ComboPublico` has no `codigo`;
+   the web renders and stores no code, and no "ahorrás" claim exists anywhere (component prices are not in the payload).
+3. **`sincronizarCombos` is its own cart action** (sibling of `sincronizar`) fed by `GET /api/publico/combos`. It runs only after a good read:
+   an empty list marks every combo line `noDisponible`; a failed read or a 404 marks nothing (unknown is not "gone").
+   `noDisponible` lines stay visible with "Ya no está disponible. No se suma al total.", no stepper, only "Quitar", and are persisted.
+4. **Combos hide while a search or category filter is active** (the catalog itself only returns them on the unfiltered first page and they
+   are not filtered by those fields); `#combos` scrolls to the section once it first renders.
+5. **Accent usage**: the offer tag uses the accent as background with the theme-computed ink (`--pub-tinta-sobre-acento`); prices stay
+   in the text colour, because the accent as text colour is not contrast-safe for an arbitrary commerce colour.
+6. **`ControlDeCantidad` no longer reads the cart**: it receives `alCambiar` and an optional `maximo` (99 for combos), so both line types share it.
+
 ## Delivery slices
 
 - PR 11: T1 (stacked on #403). PR 12: T2. PR 13: T3.
 
 ## Next step
 
-T2 (web admin), stacked on T1. T1 is merged after the judgment-day round the owner's protocol requires.
+T2 (web admin), stacked on T1; T3 is ready for its judgment-day round. T1 is merged after the judgment-day round the owner's protocol requires.
