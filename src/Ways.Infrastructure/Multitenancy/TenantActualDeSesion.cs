@@ -25,14 +25,14 @@ public sealed class TenantActualDeSesion : ITenantActual
 
     public void Establecer(ModoDeAcceso modo, int? idTenant)
     {
-        if (modo == ModoDeAcceso.Tenant && idTenant is null)
+        if (modo is ModoDeAcceso.Tenant or ModoDeAcceso.Publico && idTenant is null)
         {
             throw new InvalidOperationException(
-                $"{nameof(ModoDeAcceso.Tenant)} requiere un id_tenant.");
+                $"{modo} requiere un id_tenant.");
         }
 
         Modo = modo;
-        Id = modo == ModoDeAcceso.Tenant ? idTenant : null;
+        Id = modo is ModoDeAcceso.Tenant or ModoDeAcceso.Publico ? idTenant : null;
     }
 
     public IDisposable Suplantar(int idTenant)
@@ -60,10 +60,13 @@ public sealed class TenantActualDeSesion : ITenantActual
                 // (sesión completa), acá el GUC solo tiene que durar lo que dure ESTA
                 // transacción de aprovisionamiento: vuelve solo al valor anterior al hacer
                 // commit o rollback, sin depender de que Suplantar.Dispose() lo revierta.
-                "SELECT set_config('app.acceso', $1, true), set_config('app.tenant_id', $2, true)",
+                "SELECT set_config('app.acceso', $1, true), set_config('app.tenant_id', $2, true), " +
+                "set_config('app.tenant_publico', $3, true)",
                 (NpgsqlConnection)conexion);
-            comando.Parameters.Add(new NpgsqlParameter { Value = Modo.ComoGuc() });
-            comando.Parameters.Add(new NpgsqlParameter { Value = Id?.ToString() ?? string.Empty });
+            var (modo, idTenant, idTenantPublico) = this.ComoGucs();
+            comando.Parameters.Add(new NpgsqlParameter { Value = modo });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idTenantPublico });
 
             await comando.ExecuteNonQueryAsync(ct);
         }

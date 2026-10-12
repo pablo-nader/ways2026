@@ -25,6 +25,7 @@ using Ways.Application.Reportes;
 using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
+using Ways.Application.Vitrinas;
 
 namespace Ways.Application;
 
@@ -51,6 +52,9 @@ public static class DependencyInjection
 
         // Dominios propios de cada tenant: alta, verificación y baja, solo plataforma.
         services.AddScoped<ServicioDeDominios>();
+
+        // Vitrina pública de cada empresa: la administra el admin del tenant.
+        services.AddScoped<ServicioDeVitrinas>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();
