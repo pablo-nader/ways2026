@@ -64,7 +64,7 @@ well above 400 authored lines → one PR per slice below.
     payment methods, then ONE line that reads "Falta" (amount in red) while the payment
     is incomplete and "Vuelto" (amount in green) otherwise, and the Cobrar button last
     as it is today.
-- [ ] **T5 — Current-account modal and tickets** (delegated)
+- [x] **T5 — Current-account modal and tickets** (delegated)
   - Max viewport height with scroll; no "Cerrar" button; "Registrar pago" on top;
     date range (default today − 7 days).
   - Payment ticket (previous balance, payment, new balance); drawer pulse when any
@@ -83,8 +83,9 @@ well above 400 authored lines → one PR per slice below.
 | T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3, 9cb176a8, ff59cebe | #405 (merged) | tsc clean; oxlint exit 0; vitest 208 files / 5790 passed; judgment-day: round 1 no severe (7 warnings fixed in 9cb176a8), scoped re-judgment clean, polish ff59cebe; not checked in a real Tauri window |
 | T2 | delegated (writer trigger: 17 files) | f9b7f3ab, b0c0c368, 02d91938, d9909ed3, 0eb7eeb1 (merge de main) | #406 (merged) | tsc clean; oxlint exit 0; vitest 209 files / 5830 passed; judgment-day: round 1 no severe (fixes in 02d91938), scoped re-judgment no severe (polish d9909ed3); not checked in a real Tauri window |
 | T3 | delegated (preparation trigger: Pos.tsx 4.6k lines) | 5f0a4264, 0d7268ab | #409 (merged) | tsc clean; oxlint exit 0; vitest 212 files / 5965 passed on the branch merged with main; judgment-day: round 1 no severe (2 confirmed warnings fixed in 0d7268ab), scoped re-judgment no severe; residual: local-snapshot scan behind the modal, unreachable through the focus trap; F10 preventDefault not checked in WebView2 |
-| T4 | delegated (writer trigger: 13 files) | ac9bd2a9, 606a2a0f, 794e02cb, 84c49383, 395cfc0e, e6f18d5c | this PR | tsc clean; oxlint exit 0; vitest on the branch merged with main (see PR); judgment-day: round 1 no severe (fixes in 395cfc0e), scoped re-judgment no severe; carried to T5: truncated-list announcement, clear remote cache when the text is emptied; not checked in a real browser (1366x768 header, chip, popup) |
+| T4 | delegated (writer trigger: 13 files) | ac9bd2a9, 606a2a0f, 794e02cb, 84c49383, 395cfc0e, e6f18d5c | #410 (merged) | tsc clean; oxlint exit 0; vitest on the branch merged with main (see PR); judgment-day: round 1 no severe (fixes in 395cfc0e), scoped re-judgment no severe; carried to T5: truncated-list announcement, clear remote cache when the text is emptied; not checked in a real browser (1366x768 header, chip, popup) |
+| T5 | delegated (writer trigger: 12 files) | 969460d3, 169ef31e, 3a50542b, fcef1ff5, bad215ae, d5a2ff27 | this PR | tsc clean; oxlint exit 0; vitest 216 files / 6148 passed (merged with main); judgment-day: round 1 found one severe (balances ignored queued offline sales) fixed in fcef1ff5; round 2 fixes d5a2ff27; final re-judgment no severe. Open follow-ups: a customer re-read started before a sale can land after it and re-confirm a stale balance when the customer stays selected (presupuesto mode / no Consumidor Final); one re-read per drained sale (no debounce); a failed re-read after a drain is not retried; not checked on a real printer |
 
 ## Next step
 
-T5.
+T6 (check the owner's porcentajeFacturacion work on medios de pago first).
