@@ -84,10 +84,14 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
     rls-migration-backfills; offer applied/not applied by flag, list targeting incl. derived
     list; combo listed/excluded by each rule; POS snapshot and `EmitirAsync` with a non-sellable
     article; admin round-trips), structural guards.
-- [ ] **T2 — Web admin.** Delegated. PR 12.
-  - Article form: section "Disponibilidad" with two switches (own write), grid badges ("No se
+- [x] **T2 — Web admin.** Delegated. PR 12. Commits `804e57a2` (articles and selling screens),
+  `fd368023` (offers and combos); the doc commit that records this closes the task.
+  - Article form: section "Venta y tienda online" (not "Disponibilidad": the form already has an
+    empresas section with that title) with two switches (own write), grid badges ("No se
     vende", "Online") and the existing image block; offers modal and grid: checkbox and column
     "Online"; combos modal and grid: the same.
+  - Selling pickers (POS search modal, presupuesto and remito line search) send `soloVendibles=true`;
+    409 `articulo_no_vendible` has its own copy in the POS charge, presupuesto and remito saves.
 - [ ] **T3 — Web storefront and landing.** Delegated. PR 13.
   - Cards show the offer price with the original struck through and an "Oferta" tag; combos
     section in `/online` ("Combos") with cards listing components and "Agregar" creating a
@@ -216,6 +220,49 @@ Added:
 - The storefront never sees articles with `disponible_venta = false`, so a `combo` cart line must reference only listed combos;
   the checkout (later) re-detects combos server-side.
 
+### T2
+
+Route: delegated writer (one), no inline source edits by the parent.
+
+- `npx tsc -b`: red first (renamed DTO fields), then exit 0 on the final tree.
+- `npx oxlint`: exit 0, 17 warnings, all the baseline `only-export-components` / `exhaustive-deps` ones; none in a new file.
+- `npx vitest run`, whole suite: 210 files, 5930 tests passed on the final tree (runs 1 and 3 green; runs 2 and 4 each had one
+  load-induced timeout, 2nd run unidentified, 4th run `NuevaFamilia.test.tsx > con más de 100 artículos…` at its 5 s limit; that
+  test takes 2.1 s alone, passes alone, and its only change here is the two renamed fixture fields).
+
+Mutation evidence (mutate, run the named files, revert; every row went red in the named test and green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| venta switch sends `disponibleOnline: true` instead of the current value | `SeccionDeDisponibilidad.test.tsx` "el interruptor de la venta escribe con su propio PUT…" and "dos escrituras seguidas arrastran lo que dejó la anterior" |
+| online switch sends `disponibleVenta: true` instead of the current value | same file, "el interruptor online escribe con su propio PUT…" |
+| role gate reduced to `usuario === null` | `SeccionDeDisponibilidad.test.tsx` (vendedor, supervisor, root) and `Articulos.test.tsx` "quien no administra el catálogo no ve la sección" |
+| `formularioOfertaVacio` with `disponibleOnline: false` | `ofertas.test.ts` (defaults, `aAltaOferta`) and `Ofertas.test.tsx` (checked on create, POST body) |
+| `formularioComboVacio` with `disponibleOnline: false` | `combosAbm.test.ts` "formularioComboVacio" and `Combos.test.tsx` (checked on create, POST body, ambiguous-create reconciliation) |
+| POS search modal without `soloVendibles` | `ModalDeBusquedaDeArticulos.test.tsx` "la búsqueda pide soloVendibles=true" |
+| presupuesto / remito line search without `soloVendibles` (two runs) | `Presupuesto.test.tsx` / `Remito.test.tsx` "el buscador de la línea pide soloVendibles=true" |
+| grid "Online" badge without the `disponibleVenta` condition | `GrillaDeArticulos.test.tsx` "la columna Disponibilidad marca…" |
+
+Decisions and deviations:
+
+1. The section is titled "Venta y tienda online", not "Disponibilidad": `FormularioArticulo.tsx` already renders a "Disponibilidad"
+   heading for the empresas the article is available in. The grid column is still "Disponibilidad".
+2. `SeccionDeTiendaOnline` was renamed to `SeccionDeDisponibilidad` (git rename, test included); its two switches share one error
+   slot, one re-entrancy ref and one inert window with the image writes. The PUT always carries the changed value and the other
+   switch as shown on screen.
+3. The 409 `articulo_no_vendible` copy is the server message (it names the article by internal code, not by name) plus "Sacalo para
+   poder continuar."; wired into the POS charge, and the presupuesto and remito draft saves (`api/articuloNoVendible.ts`). Emitting
+   or invoicing a remito does not re-check on the server, so there is nothing to map there.
+4. `clienteDeArticulos.listar` gained an optional fourth parameter `{ soloVendibles }`; purchases, stock, transfers, families and the
+   offer and combo component pickers do not send it. The combo component picker was left alone on purpose: a combo built on an
+   internal-use article just never reaches the POS, which the server already handles.
+5. `AltaOferta`/`EdicionOferta`/`AltaCombo`/`EdicionCombo` carry `disponibleOnline: boolean` as required on the web (the form always
+   sends it); `comboCoincideConAlta` now also compares it, so the ambiguous-create reconciliation cannot match a combo created with
+   the other value.
+6. Two commits instead of one: articles plus selling screens (`804e57a2`), offers plus combos (`fd368023`); the shared files
+   (`tipos.ts`, `Pos.test.tsx`) were split by hunk. Only the final tree was type-checked and tested; the first commit alone was not
+   built in isolation.
+
 ### Full integration run
 
 `dotnet test tests/Ways.IntegrationTests`, once and alone, on the final tree (before this doc commit): 3797 passed, 0 failed, 39 min 54 s.
@@ -226,4 +273,4 @@ Added:
 
 ## Next step
 
-T2 (web admin), stacked on T1. T1 is merged after the judgment-day round the owner's protocol requires.
+T3 (web storefront and landing), stacked on T2. T1 and T2 are merged after the judgment-day round the owner's protocol requires.
