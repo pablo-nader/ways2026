@@ -106,7 +106,8 @@ function minimosFixture(sobrescribir: Partial<MinimosDeStock> = {}): MinimosDeSt
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 50,
     codigoInterno: 'ART-50',

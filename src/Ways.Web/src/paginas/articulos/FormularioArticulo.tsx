@@ -42,7 +42,7 @@ import {
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 import { SeccionDeFamilia } from './SeccionDeFamilia'
-import { SeccionDeTiendaOnline } from './SeccionDeTiendaOnline'
+import { SeccionDeDisponibilidad } from './SeccionDeDisponibilidad'
 
 export type Formulario = {
   id: number | null
@@ -83,9 +83,10 @@ export type Formulario = {
   /** En un alta, el nombre de la familia que el servidor crea junto con el artículo (él queda como su referencia); `''` si no
    * se pidió ninguna. Excluyente con `idFamilia`. */
   nombreFamiliaNueva: string
-  /** Estado del artículo en la tienda online tal como se cargó. Solo lectura: la sección "Tienda online" los toma al
+  /** Disponibilidad e imagen del artículo tal como se cargaron. Solo lectura: la sección "Disponibilidad" los toma al
    * montar y escribe por su cuenta, así que no entran en `aAlta`/`aEdicion` ni cuentan como cambios sin guardar. */
-  publicadoWeb: boolean
+  disponibleVenta: boolean
+  disponibleOnline: boolean
   tieneImagen: boolean
 }
 
@@ -127,7 +128,8 @@ export function formularioVacio(): Formulario {
     acumulaEnVenta: true,
     idFamilia: '',
     nombreFamiliaNueva: '',
-    publicadoWeb: false,
+    disponibleVenta: true,
+    disponibleOnline: true,
     tieneImagen: false,
   }
 }
@@ -170,7 +172,8 @@ export function aFormulario(a: ArticuloListado): Formulario {
     acumulaEnVenta: a.acumulaEnVenta,
     idFamilia: a.idFamilia ?? '',
     nombreFamiliaNueva: '',
-    publicadoWeb: a.publicadoWeb,
+    disponibleVenta: a.disponibleVenta,
+    disponibleOnline: a.disponibleOnline,
     tieneImagen: a.tieneImagen,
   }
 }
@@ -304,7 +307,7 @@ export function FormularioArticulo({
   onGuardar: () => void
   onCancelar: () => void
   alDeEscribir: (enCurso: boolean) => void
-  /** La sección "Tienda online" escribió algo que la grilla de artículos muestra (publicación o imagen). */
+  /** La sección "Disponibilidad" escribió algo que la grilla de artículos muestra (disponibilidad o imagen). */
   alCambiarTienda: () => void
   onCategoriaCreada: (categoria: CategoriaListado) => void
   onMarcaCreada: (marca: MarcaListado) => void
@@ -1053,9 +1056,13 @@ export function FormularioArticulo({
             alCambiarLaFamilia={accionesDeFamilia.alCambiarLaFamilia}
           />
           <hr />
-          <SeccionDeTiendaOnline
+          <SeccionDeDisponibilidad
             idArticulo={valor.id}
-            inicial={{ publicadoWeb: valor.publicadoWeb, tieneImagen: valor.tieneImagen }}
+            inicial={{
+              disponibleVenta: valor.disponibleVenta,
+              disponibleOnline: valor.disponibleOnline,
+              tieneImagen: valor.tieneImagen,
+            }}
             bloqueadoPorPadre={bloqueado}
             alDeEscribir={alDeEscribir}
             alCambiar={alCambiarTienda}

@@ -1,13 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SeccionDeTiendaOnline } from './SeccionDeTiendaOnline'
+import { SeccionDeDisponibilidad } from './SeccionDeDisponibilidad'
 import { ErrorApi } from '../../api/cliente'
 import { ROL, type ArticuloListado, type UsuarioAutenticado } from '../../api/tipos'
 import { AuthContext } from '../../auth/AuthContext'
 import { Modal } from '../../componentes/Modal'
 
-// Sección "Tienda online" del formulario de artículo: la publicación y la imagen escriben por su cuenta.
+// Sección "Venta y tienda online" del formulario de artículo: los dos interruptores y la imagen escriben por su cuenta.
 
 const apiGetMock = vi.fn()
 const apiPutMock = vi.fn()
@@ -42,17 +42,24 @@ function sesion(rolId: number | null) {
 
 type Opciones = {
   rolId?: number | null
-  publicado?: boolean
+  venta?: boolean
+  online?: boolean
   tieneImagen?: boolean
   bloqueadoPorPadre?: boolean
 }
 
-function montar({ rolId = ROL.Admin, publicado = false, tieneImagen = false, bloqueadoPorPadre = false }: Opciones = {}) {
+function montar({
+  rolId = ROL.Admin,
+  venta = true,
+  online = true,
+  tieneImagen = false,
+  bloqueadoPorPadre = false,
+}: Opciones = {}) {
   return render(
     <AuthContext.Provider value={sesion(rolId)}>
-      <SeccionDeTiendaOnline
+      <SeccionDeDisponibilidad
         idArticulo={7}
-        inicial={{ publicadoWeb: publicado, tieneImagen }}
+        inicial={{ disponibleVenta: venta, disponibleOnline: online, tieneImagen }}
         bloqueadoPorPadre={bloqueadoPorPadre}
         alDeEscribir={alDeEscribir}
         alCambiar={alCambiar}
@@ -76,13 +83,14 @@ function imagen(tipo = 'image/png', bytes = 10, nombre = 'foto.png') {
   return new File([new Uint8Array(bytes)], nombre, { type: tipo })
 }
 
-const SWITCH = 'Publicado en la tienda'
-const RUTA_WEB = '/articulos/7/web'
+const VENTA = 'Disponible a la venta'
+const ONLINE = 'Disponible online'
+const RUTA_DISPONIBILIDAD = '/articulos/7/disponibilidad'
 const RUTA_IMAGEN = '/articulos/7/imagen'
 const UN_MB = 1024 * 1024
 
 function articuloLeido(sobrescribir: Partial<ArticuloListado> = {}) {
-  return { id: 7, publicadoWeb: false, tieneImagen: false, ...sobrescribir }
+  return { id: 7, disponibleVenta: true, disponibleOnline: true, tieneImagen: false, ...sobrescribir }
 }
 
 beforeEach(() => {
@@ -94,11 +102,11 @@ beforeEach(() => {
   alCambiar.mockReset()
 })
 
-describe('SeccionDeTiendaOnline — quién la ve', () => {
+describe('SeccionDeDisponibilidad — quién la ve', () => {
   it('un admin ve la sección', () => {
     montar({ rolId: ROL.Admin })
 
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeInTheDocument()
     expect(screen.getByLabelText('Subir una imagen')).toBeInTheDocument()
   })
 
@@ -110,16 +118,16 @@ describe('SeccionDeTiendaOnline — quién la ve', () => {
   ])('%s no la ve', (_nombre, rolId) => {
     montar({ rolId })
 
-    expect(screen.queryByText('Tienda online')).not.toBeInTheDocument()
+    expect(screen.queryByText('Venta y tienda online')).not.toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Subir una imagen')).not.toBeInTheDocument()
   })
 
   it('sin un AuthProvider por encima tampoco la ve', () => {
     render(
-      <SeccionDeTiendaOnline
+      <SeccionDeDisponibilidad
         idArticulo={7}
-        inicial={{ publicadoWeb: false, tieneImagen: false }}
+        inicial={{ disponibleVenta: true, disponibleOnline: true, tieneImagen: false }}
         bloqueadoPorPadre={false}
         alDeEscribir={alDeEscribir}
         alCambiar={alCambiar}
@@ -130,50 +138,116 @@ describe('SeccionDeTiendaOnline — quién la ve', () => {
   })
 })
 
-describe('SeccionDeTiendaOnline — publicar', () => {
-  it('arranca con lo que trajo el artículo', () => {
-    montar({ publicado: true })
+describe('SeccionDeDisponibilidad — interruptores', () => {
+  it('arrancan con lo que trajo el artículo', () => {
+    montar({ venta: false, online: true })
 
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeChecked()
+    expect(screen.getByRole('switch', { name: VENTA })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeChecked()
   })
 
-  it('el interruptor escribe con su propio PUT, refleja lo que contestó el servidor y avisa a la grilla', async () => {
-    const usuario = userEvent.setup()
-    apiPutMock.mockResolvedValue({ idArticulo: 7, publicado: true })
+  it('cada interruptor explica qué hace', () => {
     montar()
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    expect(screen.getByRole('switch', { name: VENTA })).toHaveAccessibleDescription(
+      /Desmarcalo para un artículo de uso interno: se compra y se stockea, pero no se vende\./,
+    )
+    expect(screen.getByRole('switch', { name: ONLINE })).toHaveAccessibleDescription(
+      /Desmarcalo para que no aparezca en la tienda online\./,
+    )
+  })
 
-    expect(await screen.findByText('El artículo quedó publicado en la tienda.')).toBeInTheDocument()
+  /**
+   * Cláusula bajo prueba: el PUT lleva SIEMPRE los dos valores, el que se cambió y el otro tal como está en pantalla
+   * (el servidor exige ambos). Cada caso cambia un interruptor y deja el otro en un valor distinto del que tendría por
+   * defecto, para que un body con un valor fijo o intercambiado no coincida.
+   */
+  it('el interruptor de la venta escribe con su propio PUT, mandando la venta nueva y lo online actual', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: false, disponibleOnline: false })
+    montar({ venta: true, online: false })
+
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+
+    expect(await screen.findByText('El artículo quedó fuera de la venta.')).toBeInTheDocument()
     expect(apiPutMock).toHaveBeenCalledTimes(1)
-    expect(apiPutMock).toHaveBeenCalledWith(RUTA_WEB, { publicado: true })
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeChecked()
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeEnabled()
+    expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: false, disponibleOnline: false })
+    expect(screen.getByRole('switch', { name: VENTA })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: VENTA })).toBeEnabled()
     expect(alCambiar).toHaveBeenCalledTimes(1)
     expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
   })
 
-  it('despublicar manda publicado: false', async () => {
+  it('el interruptor online escribe con su propio PUT, mandando lo online nuevo y la venta actual', async () => {
     const usuario = userEvent.setup()
-    apiPutMock.mockResolvedValue({ idArticulo: 7, publicado: false })
-    montar({ publicado: true })
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: false, disponibleOnline: true })
+    montar({ venta: false, online: false })
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
-    expect(await screen.findByText('El artículo quedó fuera de la tienda.')).toBeInTheDocument()
-    expect(apiPutMock).toHaveBeenCalledWith(RUTA_WEB, { publicado: false })
-    expect(screen.getByRole('switch', { name: SWITCH })).not.toBeChecked()
+    expect(await screen.findByText('El artículo quedó disponible en la tienda online.')).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: false, disponibleOnline: true })
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeChecked()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeEnabled()
+    expect(alCambiar).toHaveBeenCalledTimes(1)
   })
 
-  it('el interruptor muestra lo que quedó guardado, no lo que se pidió', async () => {
+  it('sacar el artículo de la tienda manda disponibleOnline: false y lo avisa', async () => {
     const usuario = userEvent.setup()
-    apiPutMock.mockResolvedValue({ idArticulo: 7, publicado: false })
-    montar()
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: true, disponibleOnline: false })
+    montar({ venta: true, online: true })
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
+    expect(await screen.findByText('El artículo quedó fuera de la tienda online.')).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: true, disponibleOnline: false })
+    expect(screen.getByRole('switch', { name: ONLINE })).not.toBeChecked()
+  })
+
+  it('habilitar la venta manda disponibleVenta: true y lo avisa', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: true, disponibleOnline: true })
+    montar({ venta: false, online: true })
+
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+
+    expect(await screen.findByText('El artículo quedó disponible a la venta.')).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledWith(RUTA_DISPONIBILIDAD, { disponibleVenta: true, disponibleOnline: true })
+  })
+
+  it('los interruptores muestran lo que quedó guardado, no lo que se pidió', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: true, disponibleOnline: true })
+    montar({ venta: true, online: false })
+
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
     await waitFor(() => expect(alCambiar).toHaveBeenCalled())
-    expect(screen.getByRole('switch', { name: SWITCH })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeChecked()
+
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: true, disponibleOnline: true })
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+    await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(2))
+
+    // Se pidió quitar la venta y el servidor contestó que sigue vendiéndose.
+    expect(screen.getByRole('switch', { name: VENTA })).toBeChecked()
+  })
+
+  it('dos escrituras seguidas arrastran lo que dejó la anterior', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValueOnce({ idArticulo: 7, disponibleVenta: true, disponibleOnline: false })
+    apiPutMock.mockResolvedValueOnce({ idArticulo: 7, disponibleVenta: false, disponibleOnline: false })
+    montar({ venta: true, online: true })
+
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: ONLINE })).not.toBeChecked())
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+    await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(2))
+
+    expect(apiPutMock.mock.calls).toEqual([
+      [RUTA_DISPONIBILIDAD, { disponibleVenta: true, disponibleOnline: false }],
+      [RUTA_DISPONIBILIDAD, { disponibleVenta: false, disponibleOnline: false }],
+    ])
   })
 
   /**
@@ -183,7 +257,7 @@ describe('SeccionDeTiendaOnline — publicar', () => {
   it('dos clics del mismo tick salen como una sola request', async () => {
     apiPutMock.mockReturnValue(new Promise(() => {}))
     montar()
-    const interruptor = screen.getByRole('switch', { name: SWITCH })
+    const interruptor = screen.getByRole('switch', { name: ONLINE })
 
     act(() => {
       fireEvent.click(interruptor)
@@ -193,19 +267,47 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     expect(apiPutMock).toHaveBeenCalledTimes(1)
   })
 
-  it('un rechazo conserva el estado, explica el motivo y no avisa a la grilla ni relee', async () => {
-    const usuario = userEvent.setup()
-    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para publicar.'))
+  it('un clic en cada interruptor dentro del mismo tick también sale como una sola request', () => {
+    apiPutMock.mockReturnValue(new Promise(() => {}))
     montar()
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    act(() => {
+      fireEvent.click(screen.getByRole('switch', { name: VENTA }))
+      fireEvent.click(screen.getByRole('switch', { name: ONLINE }))
+    })
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('No tenés permiso para publicar.')
-    expect(screen.getByRole('switch', { name: SWITCH })).not.toBeChecked()
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeEnabled()
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un rechazo conserva el estado, explica el motivo y no avisa a la grilla ni relee', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
+    montar({ venta: true, online: true })
+
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No tenés permiso para cambiar la disponibilidad.')
+    expect(screen.getByRole('switch', { name: VENTA })).toBeChecked()
+    expect(screen.getByRole('switch', { name: VENTA })).toBeEnabled()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeChecked()
     expect(alCambiar).not.toHaveBeenCalled()
     expect(apiGetMock).not.toHaveBeenCalled()
     expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
+  })
+
+  it.each([
+    ['disponible_venta_requerido', 'La disponibilidad a la venta es obligatoria.'],
+    ['disponible_online_requerido', 'La disponibilidad online es obligatoria.'],
+  ])('un 400 %s muestra el mensaje del servidor y no cambia nada', async (codigo, mensaje) => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValue(new ErrorApi(400, codigo, mensaje))
+    montar({ venta: true, online: false })
+
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(mensaje)
+    expect(screen.getByRole('switch', { name: ONLINE })).not.toBeChecked()
+    expect(apiGetMock).not.toHaveBeenCalled()
   })
 
   it('un 404 dice que el artículo ya no existe y la grilla se entera, aunque la relectura también dé 404', async () => {
@@ -214,24 +316,27 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     apiGetMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el artículo 7.'))
     montar()
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo publicar el artículo. El artículo ya no existe.')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No se pudo sacar el artículo de la tienda online. El artículo ya no existe.',
+    )
     await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(1))
   })
 
-  it('un fallo incierto relee el artículo, muestra el estado real, deja el mensaje a la vista y avisa a la grilla DESPUÉS de releer', async () => {
+  it('un fallo incierto relee el artículo, muestra el estado real de los dos interruptores, deja el mensaje a la vista y avisa a la grilla DESPUÉS de releer', async () => {
     const usuario = userEvent.setup()
     apiPutMock.mockRejectedValue(new ErrorApi(500, 'error', 'Error 500.'))
-    apiGetMock.mockResolvedValue(articuloLeido({ publicadoWeb: true }))
-    montar()
+    apiGetMock.mockResolvedValue(articuloLeido({ disponibleVenta: false, disponibleOnline: true }))
+    montar({ venta: true, online: false })
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
     await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(1))
     expect(apiGetMock).toHaveBeenCalledWith('/articulos/7')
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeChecked()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeChecked()
+    expect(screen.getByRole('switch', { name: VENTA })).not.toBeChecked()
     expect(apiGetMock.mock.invocationCallOrder[0]).toBeLessThan(alCambiar.mock.invocationCallOrder[0])
   })
 
@@ -239,42 +344,46 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     const usuario = userEvent.setup()
     apiPutMock.mockRejectedValue(new Error('sin red'))
     apiGetMock.mockRejectedValue(new Error('sin red'))
-    montar()
+    montar({ venta: true, online: false })
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo publicar el artículo. No se pudo confirmar el resultado')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No se pudo mostrar el artículo en la tienda online. No se pudo confirmar el resultado',
+    )
     await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeEnabled()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeEnabled()
   })
 
   it('mientras se escribe, todo lo de la sección queda inerte', async () => {
     const usuario = userEvent.setup()
-    const pendiente = diferida<{ idArticulo: number; publicado: boolean }>()
+    const pendiente = diferida<{ idArticulo: number; disponibleVenta: boolean; disponibleOnline: boolean }>()
     apiPutMock.mockReturnValue(pendiente.promesa)
     montar({ tieneImagen: true })
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: VENTA })).toBeDisabled()
     expect(screen.getByLabelText('Reemplazar la imagen')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Quitar imagen' })).toBeDisabled()
 
-    await act(async () => pendiente.resolver({ idArticulo: 7, publicado: true }))
+    await act(async () => pendiente.resolver({ idArticulo: 7, disponibleVenta: true, disponibleOnline: false }))
 
-    await waitFor(() => expect(screen.getByRole('switch', { name: SWITCH })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('switch', { name: ONLINE })).toBeEnabled())
   })
 
   it('si el formulario está ocupado con otra cosa, los controles quedan inertes', () => {
     montar({ tieneImagen: true, bloqueadoPorPadre: true })
 
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: VENTA })).toBeDisabled()
     expect(screen.getByLabelText('Reemplazar la imagen')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Quitar imagen' })).toBeDisabled()
   })
 })
 
-describe('SeccionDeTiendaOnline — imagen', () => {
+describe('SeccionDeDisponibilidad — imagen', () => {
   it('sin imagen lo dice y no ofrece quitar', () => {
     montar({ tieneImagen: false })
 
@@ -468,7 +577,7 @@ describe('SeccionDeTiendaOnline — imagen', () => {
   })
 })
 
-describe('SeccionDeTiendaOnline — quitar la imagen', () => {
+describe('SeccionDeDisponibilidad — quitar la imagen', () => {
   it('pide confirmación y recién al confirmar borra; la vista previa desaparece y la grilla se entera', async () => {
     const usuario = userEvent.setup()
     apiDeleteMock.mockResolvedValue(undefined)
@@ -509,7 +618,7 @@ describe('SeccionDeTiendaOnline — quitar la imagen', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
 
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: ONLINE })).toBeDisabled()
     expect(screen.getByLabelText('Reemplazar la imagen')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Quitar imagen' })).toBeDisabled()
   })
@@ -557,7 +666,7 @@ describe('SeccionDeTiendaOnline — quitar la imagen', () => {
   })
 })
 
-describe('SeccionDeTiendaOnline — la puerta de "Quitar imagen" deja inerte todo el modal', () => {
+describe('SeccionDeDisponibilidad — la puerta de "Quitar imagen" deja inerte todo el modal', () => {
   /** El padre cuenta las escrituras en vuelo: lo que importa es el saldo de `true` menos `false`. */
   function saldo() {
     return alDeEscribir.mock.calls.reduce((suma, [enCurso]) => suma + (enCurso ? 1 : -1), 0)
@@ -616,15 +725,15 @@ describe('SeccionDeTiendaOnline — la puerta de "Quitar imagen" deja inerte tod
  * La sección vive dentro del `Modal` del artículo (en un portal): ahí la puerta de "Quitar imagen" comparte el Escape
  * con el editor y no tiene una `Box` a la que devolver el foco.
  */
-describe('SeccionDeTiendaOnline — dentro del modal del artículo', () => {
+describe('SeccionDeDisponibilidad — dentro del modal del artículo', () => {
   function montarEnModal() {
     const alCerrarElModal = vi.fn()
     render(
       <AuthContext.Provider value={sesion(ROL.Admin)}>
         <Modal titulo="Editar artículo" onCerrar={alCerrarElModal}>
-          <SeccionDeTiendaOnline
+          <SeccionDeDisponibilidad
             idArticulo={7}
-            inicial={{ publicadoWeb: false, tieneImagen: true }}
+            inicial={{ disponibleVenta: true, disponibleOnline: true, tieneImagen: true }}
             bloqueadoPorPadre={false}
             alDeEscribir={alDeEscribir}
             alCambiar={alCambiar}
@@ -675,7 +784,7 @@ describe('SeccionDeTiendaOnline — dentro del modal del artículo', () => {
 
     expect(await screen.findByText('Se quitó la imagen.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Quitar imagen' })).not.toBeInTheDocument()
-    expect(screen.getByText('Tienda online')).toHaveFocus()
+    expect(screen.getByText('Venta y tienda online')).toHaveFocus()
   })
 
   it('al cancelar, el foco vuelve al botón "Quitar imagen"', async () => {
@@ -689,13 +798,13 @@ describe('SeccionDeTiendaOnline — dentro del modal del artículo', () => {
   })
 })
 
-describe('SeccionDeTiendaOnline — cada acción borra lo que dijo la anterior', () => {
+describe('SeccionDeDisponibilidad — cada acción borra lo que dijo la anterior', () => {
   it('subir una imagen borra el rechazo del interruptor', async () => {
     const usuario = userEvent.setup()
-    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para publicar.'))
+    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
     apiPutBinarioMock.mockReturnValue(new Promise(() => {}))
     montar()
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
     expect(await screen.findByRole('alert')).toBeInTheDocument()
 
     await usuario.upload(screen.getByLabelText('Subir una imagen'), imagen())
@@ -703,7 +812,7 @@ describe('SeccionDeTiendaOnline — cada acción borra lo que dijo la anterior',
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('publicar borra el aviso de éxito de la subida anterior', async () => {
+  it('cambiar la disponibilidad borra el aviso de éxito de la subida anterior', async () => {
     const usuario = userEvent.setup()
     apiPutBinarioMock.mockResolvedValue({ idArticulo: 7, tieneImagen: true, imagenVersion: 1 })
     apiPutMock.mockReturnValue(new Promise(() => {}))
@@ -711,33 +820,46 @@ describe('SeccionDeTiendaOnline — cada acción borra lo que dijo la anterior',
     await usuario.upload(screen.getByLabelText('Subir una imagen'), imagen())
     expect(await screen.findByText('Se subió la imagen.')).toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
 
     expect(screen.queryByText('Se subió la imagen.')).not.toBeInTheDocument()
   })
 
   it('elegir un archivo inválido borra el rechazo del interruptor', async () => {
     const usuario = userEvent.setup({ applyAccept: false })
-    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para publicar.'))
+    apiPutMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
     montar()
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
-    expect(await screen.findByText('No tenés permiso para publicar.')).toBeInTheDocument()
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
+    expect(await screen.findByText('No tenés permiso para cambiar la disponibilidad.')).toBeInTheDocument()
 
     await usuario.upload(screen.getByLabelText('Subir una imagen'), imagen('image/gif', 10, 'foto.gif'))
 
-    expect(screen.queryByText('No tenés permiso para publicar.')).not.toBeInTheDocument()
+    expect(screen.queryByText('No tenés permiso para cambiar la disponibilidad.')).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('La imagen tiene que ser PNG, JPG o WebP.')
   })
 
   it('abrir la puerta borra el aviso de éxito de una acción anterior', async () => {
     const usuario = userEvent.setup()
-    apiPutMock.mockResolvedValue({ idArticulo: 7, publicado: true })
+    apiPutMock.mockResolvedValue({ idArticulo: 7, disponibleVenta: true, disponibleOnline: false })
     montar({ tieneImagen: true })
-    await usuario.click(screen.getByRole('switch', { name: SWITCH }))
-    expect(await screen.findByText('El artículo quedó publicado en la tienda.')).toBeInTheDocument()
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
+    expect(await screen.findByText('El artículo quedó fuera de la tienda online.')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
 
-    expect(screen.queryByText('El artículo quedó publicado en la tienda.')).not.toBeInTheDocument()
+    expect(screen.queryByText('El artículo quedó fuera de la tienda online.')).not.toBeInTheDocument()
+  })
+
+  it('cambiar un interruptor borra el rechazo que dejó el otro', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(403, 'prohibido', 'No tenés permiso para cambiar la disponibilidad.'))
+    apiPutMock.mockReturnValueOnce(new Promise(() => {}))
+    montar()
+    await usuario.click(screen.getByRole('switch', { name: VENTA }))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('switch', { name: ONLINE }))
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

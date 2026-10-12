@@ -26,6 +26,7 @@ import {
   type LineaCarrito,
 } from '../api/carrito'
 import { clienteDeCatalogo } from '../api/catalogos'
+import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
@@ -3468,7 +3469,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         aplicarTurnoConfirmado(null)
         setGateTurno(true)
       } else {
-        setErrorCobro(e instanceof ErrorApi ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? e.message) : 'No se pudo registrar la venta.')
+        setErrorCobro(
+          copiaDeArticuloNoVendible(e) ??
+            (e instanceof ErrorApi ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? e.message) : 'No se pudo registrar la venta.'),
+        )
       }
     } finally {
       if (generacionCobroRef.current === miGeneracion) {

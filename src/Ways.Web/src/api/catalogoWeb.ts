@@ -1,6 +1,6 @@
 /**
- * Tienda online del back office: publicar un artículo y cargarle su imagen. Llamadas a la API y
- * copia de la sección "Tienda online" del formulario de artículo. Las funciones de cabecera son
+ * Disponibilidad del back office: a la venta, en la tienda online, y la imagen del artículo. Llamadas a la API y
+ * copia de la sección "Disponibilidad" del formulario de artículo. Las funciones de cabecera son
  * finas a propósito; lo que se prueba sin montar nada son los helpers puros de abajo.
  */
 import { api, ErrorApi } from './cliente'
@@ -14,16 +14,23 @@ export const TAMANO_MAXIMO_DE_LA_IMAGEN = TAMANO_MAXIMO_DEL_LOGO
 /** Valor del atributo `accept` del selector de archivo. */
 export const ACEPTAR_IMAGEN = ACEPTAR_LOGO
 
-/** `PUT /api/articulos/{id}/web`: lo que quedó guardado. */
-export type PublicacionWeb = { idArticulo: number; publicado: boolean }
+/** `PUT /api/articulos/{id}/disponibilidad`: lo que quedó guardado. */
+export type DisponibilidadDeArticulo = { idArticulo: number; disponibleVenta: boolean; disponibleOnline: boolean }
+
+/** Los dos interruptores viajan siempre juntos: el servidor exige ambos (`400 disponible_venta_requerido` /
+ * `400 disponible_online_requerido`). */
+export type ValoresDeDisponibilidad = { disponibleVenta: boolean; disponibleOnline: boolean }
 
 /** Lo que contesta el servidor después de escribir o quitar la imagen. `imagenVersion` son los segundos Unix de la
  * última carga y solo sirve para romper la caché de la vista previa. */
 export type ImagenDeArticuloAdmin = { idArticulo: number; tieneImagen: boolean; imagenVersion: number | null }
 
-/** Escribe la publicación y nada más: no es un campo de la edición del artículo. Idempotente. */
-export const publicarEnLaWeb = (idArticulo: number, publicado: boolean) =>
-  api.put<PublicacionWeb>(`/articulos/${idArticulo}/web`, { publicado })
+/** Escribe la disponibilidad (a la venta y online) y nada más: no es un campo de la edición del artículo. Idempotente. */
+export const cambiarDisponibilidad = (idArticulo: number, valores: ValoresDeDisponibilidad) =>
+  api.put<DisponibilidadDeArticulo>(`/articulos/${idArticulo}/disponibilidad`, {
+    disponibleVenta: valores.disponibleVenta,
+    disponibleOnline: valores.disponibleOnline,
+  })
 
 /** El cuerpo es la imagen cruda con su tipo; contesta el estado de la imagen ya con la versión nueva. */
 export const subirImagenDeArticulo = (idArticulo: number, archivo: File) =>

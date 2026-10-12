@@ -184,7 +184,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   <th scope="col">Costo</th>
                   <th scope="col">{tituloColumnaPrecio}</th>
                   <th scope="col">Proveedor</th>
-                  <th scope="col">Tienda</th>
+                  <th scope="col">Disponibilidad</th>
                   <th scope="col">Estado</th>
                   <th scope="col" className="text-end">
                     Acciones
@@ -283,7 +283,8 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <td>{formatearPrecio(a.precio)}</td>
                     <td>{a.proveedor ?? '—'}</td>
                     <td className="text-nowrap">
-                      {a.publicadoWeb && <span className="badge text-bg-primary me-1">Publicado</span>}
+                      {!a.disponibleVenta && <span className="badge text-bg-warning me-1">No se vende</span>}
+                      {a.disponibleOnline && a.disponibleVenta && <span className="badge text-bg-primary me-1">Online</span>}
                       {a.tieneImagen && <span className="badge text-bg-light border">Con imagen</span>}
                     </td>
                     <td>
