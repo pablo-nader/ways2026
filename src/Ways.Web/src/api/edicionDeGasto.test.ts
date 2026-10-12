@@ -39,6 +39,12 @@ describe('esGastoDeUnPagoDePersonal', () => {
   it('un gasto sin idMovimientoPersonal es común', () => {
     expect(esGastoDeUnPagoDePersonal({ idMovimientoPersonal: null })).toBe(false)
   })
+
+  it('una respuesta que no trae el campo se trata como gasto común', () => {
+    const respuestaSinElCampo = {} as { idMovimientoPersonal: number | null }
+
+    expect(esGastoDeUnPagoDePersonal(respuestaSinElCampo)).toBe(false)
+  })
 })
 
 describe('aFormularioDeEdicion', () => {

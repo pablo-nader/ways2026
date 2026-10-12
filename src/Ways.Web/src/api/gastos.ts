@@ -262,7 +262,7 @@ export const ADVERTENCIA_TURNO_CERRADO =
  * separado: el servidor lo rechaza con 409 `gasto_de_pago_de_personal`, así que las pantallas ofrecen esas
  * acciones deshabilitadas. */
 export function esGastoDeUnPagoDePersonal(gasto: Pick<GastoDeAdministracionListado, 'idMovimientoPersonal'>): boolean {
-  return gasto.idMovimientoPersonal !== null
+  return typeof gasto.idMovimientoPersonal === 'number'
 }
 
 export const MOTIVO_GASTO_DE_PAGO_DE_PERSONAL = 'Pertenece a un pago de personal y no se modifica por separado.'
