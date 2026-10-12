@@ -1204,6 +1204,42 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   artículo que es componente de un combo vivo responde `409 articulo_en_uso` ("tiene combos"); la de un combo dado de
   baja no bloquea.
 
+#### Cargar un combo en el POS
+
+Un combo nunca es una línea de la venta: cargarlo en el carrito agrega las MISMAS líneas de artículo que se agregarían
+escaneándolas por separado, por el camino del escaneo (`acumulaEnVenta`, reglas de cantidad y resolución de precios
+idénticas), y es el carrito el que después detecta el combo por sí mismo. Hay dos entradas:
+
+- El botón "Buscar combo" (atajo F3, junto a "Buscar artículo" F2): un modal con los combos activos del punto de venta
+  (`C<codigo>`, nombre, precio, resumen de componentes), filtro por nombre o código, flechas y Enter. Un combo con un
+  componente sin artículos vendibles se muestra deshabilitado con el motivo.
+- Escribir `C` + dígitos en el input de código. Solo una entrada que cumple `^[cC]\d{1,6}$` con un valor entre 1 y 999999
+  toma este camino; cualquier otra (`C0`, `C1000000`, `C12X`, `3*C7`) va directo a la búsqueda de artículos y no hace
+  ninguna lectura de combos. Se busca primero un combo activo con ese número (D7); si no hay (o la lectura falla), la
+  búsqueda de artículos sigue con el texto ORIGINAL tal como se tipeó, porque el `codigo_interno` de un artículo es libre
+  y puede ser `C12`. Un combo que existe pero no se puede cargar avisa el motivo y NO cae a artículos.
+
+Todo o nada: el combo entra entero o no entra. Una familia con un solo candidato se agrega directo; con varios, un único
+selector reparte la cantidad de cada componente de familia entre sus miembros y "Agregar combo" queda deshabilitado hasta
+que cada total sea exactamente la cantidad del componente. Cancelar (botón, Escape o ×) no agrega ni una línea, tampoco las
+de los componentes que no necesitaban elegir.
+
+Fuente de datos: con una instantánea utilizable del punto de venta (POS de escritorio) la lista, la búsqueda por código y
+los candidatos salen de la instantánea, también sin conexión: un candidato es un artículo `Unidad` (una unidad ausente es
+`Peso`) con precio en la lista del cliente, y los miembros de una familia se buscan por el `idFamilia` de cada artículo.
+Sin instantánea (web) salen de la API: `GET /api/combos` para la lista y el endpoint de abajo para los candidatos.
+
+`GET /api/combos/{id}/cargable?idEmpresa=` (`OperacionDePos`, como las demás lecturas; es un GET, no entra en la lista de
+excepciones de `SuperficieDeAutorizacionTests`): devuelve `{ id, codigo, nombre, precio, componentes[] }` con cada
+componente `{ idArticulo, idFamilia, nombre, cantidad, candidatos[] }` en el orden en que se armó el combo. Un candidato
+tiene la forma del escaneo (`ArticuloEscaneado` con `cantidad = 1` y sin código de barra): para un componente de artículo,
+ese artículo; para uno de familia, sus miembros vivos, activos y de unidad `Unidad`, ordenados por nombre. Es lo que el
+escaneo resuelve (artículo vivo y activo) más la unidad `Unidad`; no mira el precio, que se resuelve aparte como en
+cualquier línea. Un componente colgante (artículo o familia dada de baja, artículo inactivo o pesable, familia sin miembros
+vendibles) vuelve con `candidatos = []` y el cliente muestra el combo como no cargable. `404 no_encontrado` para un id
+inexistente, dado de baja, inactivo, de otro tenant o de una empresa distinta de `idEmpresa` (sin `idEmpresa` solo vale un
+combo de todo el tenant, igual que en la venta). Tres consultas sin importar la cantidad de componentes o miembros.
+
 ---
 
 ## 4. Comprobantes de venta
