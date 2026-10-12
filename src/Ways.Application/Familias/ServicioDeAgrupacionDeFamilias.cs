@@ -114,6 +114,11 @@ public class ServicioDeAgrupacionDeFamilias(
             .Where(id => articulos.TryGetValue(id, out var a) && (a.IdFamilia is null || a.IdFamilia == referencia.IdFamilia))
             .ToList();
 
+        problemas.AddRange(alineables
+            .Where(id => PerderiaSuTeclaDeAtajo(articulos[id], referencia))
+            .Select(id => new ProblemaDeAgrupacion(
+                "articulo_con_tecla_atajo", MensajeDeArticuloConTeclaDeAtajo(articulos[id], referencia), id, null)));
+
         var valoresDeLaReferencia = ValoresCompartidosDeFamilia.De(referencia);
         var visibles = await CatalogosVisibles.LeerAsync(
             db, [valoresDeLaReferencia, .. alineables.Select(id => ValoresCompartidosDeFamilia.De(articulos[id]))], ct);
@@ -351,6 +356,12 @@ public class ServicioDeAgrupacionDeFamilias(
 
                     throw ErrorDominio.Conflicto(
                         "articulo_en_otra_familia", MensajeDeArticuloEnOtraFamilia(articulos[enOtraFamilia[0]], nombres));
+                }
+
+                if (destinos.Select(id => articulos[id]).FirstOrDefault(d => PerderiaSuTeclaDeAtajo(d, referencia)) is { } conTecla)
+                {
+                    throw ErrorDominio.Conflicto(
+                        "articulo_con_tecla_atajo", MensajeDeArticuloConTeclaDeAtajo(conTecla, referencia));
                 }
 
                 await ExigirCatalogosDeLaReferenciaAsync(referencia, ct);
@@ -603,6 +614,15 @@ public class ServicioDeAgrupacionDeFamilias(
         $"El artículo {articulo.CodigoInterno} ya pertenece a la familia " +
         $"\"{(nombresDeFamilias.TryGetValue(articulo.IdFamilia!.Value, out var nombre) ? nombre : $"{articulo.IdFamilia}")}\": " +
         "hay que sacarlo de ella antes de agruparlo.";
+
+    /// <summary>Alinear copia la unidad de venta de la referencia: un destino con tecla de atajo solo la conserva si la
+    /// referencia también se vende por importe. La tecla es propia del artículo y no se quita en silencio.</summary>
+    private static bool PerderiaSuTeclaDeAtajo(Articulo destino, Articulo referencia) =>
+        destino.TeclaAtajo is not null && referencia.UnidadVenta != UnidadVenta.Importe;
+
+    private static string MensajeDeArticuloConTeclaDeAtajo(Articulo destino, Articulo referencia) =>
+        $"El artículo {destino.CodigoInterno} tiene la tecla de atajo {destino.TeclaAtajo} y el de referencia " +
+        $"{referencia.CodigoInterno} no se vende por importe: hay que sacarle la tecla antes de agruparlo.";
 
     private static string MensajeDePrecioInalineable(Articulo articulo, ListaFija lista, AlineacionDeUnPar par) =>
         $"No se puede alinear el artículo {articulo.CodigoInterno} en la lista \"{lista.Nombre}\": " + par.Resolucion switch

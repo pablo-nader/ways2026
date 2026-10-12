@@ -150,7 +150,7 @@ public class ServicioDeInstantaneaDePos(
         var articulos = await db.Articulos.AsNoTracking()
             .Where(a => a.Activo)
             .OrderBy(a => a.Id)
-            .Select(a => new ArmadorDeInstantanea.ArticuloAResolver(a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva, a.AcumulaEnVenta, a.UnidadVenta, a.IdFamilia))
+            .Select(a => new ArmadorDeInstantanea.ArticuloAResolver(a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva, a.AcumulaEnVenta, a.UnidadVenta, a.IdFamilia, a.TeclaAtajo))
             .ToListAsync(ct);
 
         var idsArticulo = articulos.Select(a => a.Id).ToList();

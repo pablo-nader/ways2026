@@ -12,7 +12,8 @@ namespace Ways.Application.Ventas;
 /// <see cref="CodigoBarra"/> es <c>null</c> cuando la entrada resolvió por
 /// <c>codigo_interno</c> — el llamador (carrito del POS) usa <see cref="Cantidad"/> tal cual la
 /// devolvió <see cref="Ways.Domain.Ventas.ParserDeEscaneo"/>. <see cref="UnidadVenta"/> le dice al
-/// carrito si la línea admite fracciones (<see cref="ReglaDeCantidadDeVenta"/>).</summary>
+/// carrito si la línea admite fracciones (<see cref="ReglaDeCantidadDeVenta"/>). <see cref="TeclaAtajo"/> es la tecla
+/// de función asignada a un artículo por importe, tal como está guardada (<c>null</c> = sin atajo).</summary>
 public record ArticuloEscaneado(
     int IdArticulo,
     string CodigoInterno,
@@ -20,7 +21,8 @@ public record ArticuloEscaneado(
     string? CodigoBarra,
     decimal Cantidad,
     bool AcumulaEnVenta,
-    UnidadVenta UnidadVenta);
+    UnidadVenta UnidadVenta,
+    TeclaAtajo? TeclaAtajo = null);
 
 /// <summary>
 /// Resolución de escaneo del POS (design decisiones 7 y 10) — servicio de Application dedicado,
@@ -64,6 +66,7 @@ public class ServicioDeEscaneo(IWaysDbContext db)
             parseado.Objetivo == ObjetivoDeEscaneo.CodigoBarra ? parseado.Codigo : null,
             parseado.Cantidad,
             articulo.AcumulaEnVenta,
-            articulo.UnidadVenta);
+            articulo.UnidadVenta,
+            articulo.TeclaAtajo);
     }
 }
