@@ -197,6 +197,10 @@ public class ServicioDeVentas(
         if (solicitud.NumeroPreasignado is null && presupuestoOrigen is null && tipo.Signo > 0)
         {
             ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
+
+            // Un artículo de uso interno no se vende: misma excepción que la regla de cantidades, porque lo ya
+            // cobrado offline, lo congelado en un presupuesto y la devolución de lo que se vendió no se reescriben.
+            ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
         }
 
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();

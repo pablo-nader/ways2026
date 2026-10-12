@@ -145,7 +145,8 @@ public static class ArmadorDeInstantanea
     /// Los combos que el dispositivo puede completar sin red con los <paramref name="articulos"/> de esta misma
     /// instantánea. Un combo solo viaja ENTERO: si algún componente no se puede vender, el combo completo se descarta
     /// (uno parcial haría creer al dispositivo que puede armarlo). Un componente artículo es vendible si figura en la
-    /// instantánea (activo y con precio en alguna lista) y se vende por unidad: como en la venta online
+    /// instantánea (activo, disponible a la venta y con precio en alguna lista; la instantánea ya dejó afuera los de uso
+    /// interno, así que un combo con un componente que no se vende no viaja) y se vende por unidad: como en la venta online
     /// (<c>CombosEnVenta</c>), un artículo pesable nunca consume ni es consumido por un combo. Un componente familia
     /// es vendible si algún artículo vendible de la instantánea tiene esa familia (la misma regla de emparejamiento que
     /// la venta online, que compara la familia del artículo); una familia dada de baja deja de contar cuando sus
