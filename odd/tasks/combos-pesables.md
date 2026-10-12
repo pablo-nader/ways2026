@@ -95,7 +95,7 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
     line consumed 100 or more times can drift one peso from `times × combo price`. Unit lines have no drift.
   - Checks: Domain 1376/1376, Application 846/846, Integration 3758/3758 (full, unfiltered). 23 mutations
     killed (16 unit, 7 integration).
-- T2 implemented on the same branch. Route: delegated writer.
+- T2 implemented on the same branch — commit `ac620511`. Route: delegated writer.
   - Two tests of `src/Ways.Web/src/paginas/Pos.test.tsx` pinned the old restriction and were flipped (the surface was
     extended by the parent): a weighable article with quantity 1 now enters a combo of integer quantities, as on the
     server, and a weighable family member is a candidate of a component of quantity 2, so the member selector opens.
