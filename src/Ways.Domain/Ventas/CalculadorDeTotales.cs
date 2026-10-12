@@ -9,7 +9,9 @@ namespace Ways.Domain.Ventas;
 /// es "sin ajuste" y deja el cálculo idéntico al previo a esa columna.
 /// <see cref="UnidadesConsumidasPorCombo"/> son las unidades de la línea que un combo ya consumió
 /// (mismo signo que <see cref="Cantidad"/>) y <see cref="AhorroDeCombo"/> es el importe de LÍNEA que
-/// el combo les repartió (positivo, sin signo de cantidad). El descuento de la línea es
+/// el combo les repartió: positivo en una venta. En una devolución de combo (cantidad negativa) lleva el
+/// signo de la cantidad, igual que cualquier descuento de línea de una nota de crédito, y expresa la
+/// diferencia entre el bruto de la línea y lo que se devuelve. El descuento de la línea es
 /// <c>round(DescuentoUnitario × (Cantidad − UnidadesConsumidasPorCombo)) + AhorroDeCombo</c>: la
 /// oferta unitaria solo alcanza a las unidades que el combo no consumió. Con ambos en cero el
 /// cálculo es el de siempre.</summary>
