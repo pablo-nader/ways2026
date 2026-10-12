@@ -224,6 +224,11 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
   for (const [indice, linea] of lineas.entries()) {
     const precios = vigentes[indice]
     if (!precios) return null
+    // La línea por importe viaja con su importe y nunca con precio de lista ni descuento (el servidor rechaza la mezcla).
+    if (linea.importe !== undefined) {
+      enriquecidas.push(linea)
+      continue
+    }
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
     // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`

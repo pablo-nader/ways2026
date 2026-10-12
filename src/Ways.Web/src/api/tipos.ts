@@ -1088,6 +1088,11 @@ export type ArticuloEscaneado = {
   cantidad: number
   acumulaEnVenta: boolean
   unidadVenta?: UnidadVenta
+  /** Solo en un artículo por importe y solo si el escaneo trajo el monto antes del `*` (`150*500`): el precio unitario de la
+   * línea, con `cantidad` en 1. Ausente en cualquier otro artículo, y en uno por importe cuando se escaneó su código a secas. */
+  importe?: number | null
+  /** Tecla de función asignada a un artículo por importe; ausente si no tiene. */
+  teclaAtajo?: TeclaAtajo | null
 }
 
 /** Cómo el servidor interpreta el lote de `POST /api/ofertas/resolver` (espejo de
@@ -1096,7 +1101,14 @@ export type ArticuloEscaneado = {
 export type AgregacionDeResolucion = 'Documento' | 'PorLinea'
 
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
-export type LineaDeResolucion = { idArticulo: number; idEmpresa: number | null; idListaPrecio: number; cantidad: number }
+export type LineaDeResolucion = {
+  idArticulo: number
+  idEmpresa: number | null
+  idListaPrecio: number
+  cantidad: number
+  /** Solo de un artículo por importe: la línea se resuelve a ese precio, sin lista, ofertas ni combos. */
+  importe?: number
+}
 
 export type OfertaAplicada = { idOferta: number; nombre: string; descuentoUnitario: number }
 
@@ -1192,7 +1204,10 @@ export type ArticuloDeInstantanea = {
   /** Ausente en una instantánea guardada antes de que el servidor la enviara: se trata como
    * `Peso`, sin bloquear ninguna venta. El servidor siempre la manda. */
   unidadVenta?: UnidadVenta
+  /** Un artículo por importe viaja con `preciosPorLista` vacío: se vende por el monto que tipea el cajero. */
   preciosPorLista: PrecioDeListaDeInstantanea[]
+  /** Tecla de función del artículo por importe; ausente si no tiene, y en una instantánea guardada antes de que existiera. */
+  teclaAtajo?: TeclaAtajo | null
   /** Ausente en una instantánea guardada antes de que existiera el campo: se toma como `true`. */
   acumulaEnVenta?: boolean
   /** Familia del artículo; ausente/`null` si no tiene, o en una instantánea guardada antes de que
@@ -1873,6 +1888,10 @@ export type LineaDeVenta = {
    * (ausente = sin ajuste, el payload queda idéntico al de antes): el servidor recalcula el monto
    * sobre el neto posterior a las ofertas y es la única autoridad del importe. */
   ajusteManualPorcentaje?: number | null
+  /** Solo de un artículo por importe, y obligatorio en él: el monto que tipeó el cajero, su precio unitario (la cantidad es 1).
+   * Nunca viaja junto a `precioUnitario`/`descuentoUnitario`: en una venta offline la línea por importe lleva solo su importe y
+   * queda fuera del todas-o-ninguna del precio de las demás líneas. */
+  importe?: number
   /** Combos de una venta offline (espejo de `LineaDeVenta`): las TRES viajan juntas o ninguna, solo con
    * `precioUnitario`, en la línea que un combo consumió. `ahorroDeCombo` es un importe de línea. */
   unidadesConsumidasPorCombo?: number
@@ -1970,6 +1989,8 @@ export type ItemEmitido = {
    * (negativo = descuento, positivo = recargo) ya incluido en `total`. */
   ajusteManualPorcentaje: number | null
   ajusteManual: number
+  /** `true` si la línea se vendió por el importe que tipeó el cajero (`precioUnitario` es ese importe). Ausente se toma como `false`. */
+  porImporte?: boolean
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */

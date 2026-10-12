@@ -23,10 +23,12 @@ import type {
   MedioPagoListado,
   OfertaAplicada,
   PrecioDeListaDeInstantanea,
+  TeclaAtajo,
 } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 import type { PreciosPorLinea } from '../api/ventas'
 import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
+import { leerImporteTipeado } from '../api/importeDeVenta'
 import { redondearImporte } from '../formato/importes'
 import { normalizarParaBuscar } from '../formato/texto'
 import { resolverCombos, tieneMasDeDosDecimales, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
@@ -95,6 +97,8 @@ function esArticulo(valor: unknown): boolean {
     valor.preciosPorLista.every(esPrecioDeLista) &&
     // Una instantánea guardada antes de `acumulaEnVenta` no lo trae y sigue siendo válida.
     (valor.acumulaEnVenta == null || typeof valor.acumulaEnVenta === 'boolean') &&
+    // La tecla falta en una instantánea guardada antes del campo y en todo artículo que no es por importe.
+    (valor.teclaAtajo == null || typeof valor.teclaAtajo === 'string') &&
     (valor.idFamilia == null || typeof valor.idFamilia === 'number')
   )
 }
@@ -173,14 +177,9 @@ export type EntradaDeEscaneo = { cantidad: number; codigo: string; objetivo: Obj
  * invalida el escaneo, cae a cantidad 1 (mismo criterio que `ParserDeEscaneo.SepararCantidadYCodigo`).
  * `null` solo cuando la entrada (recortada) queda vacía. */
 export function parsearEntradaDeEscaneoOffline(entradaCruda: string): EntradaDeEscaneo | null {
-  const texto = entradaCruda.trim()
-  if (texto === '') return null
-
-  const indice = texto.indexOf('*')
-  const [prefijo, codigoCrudo] = indice < 0 ? [null, texto] : [texto.slice(0, indice).trim(), texto.slice(indice + 1).trim()]
-
-  const codigo = codigoCrudo.trim()
-  if (codigo === '') return null
+  const separada = separarPrefijoYCodigo(entradaCruda)
+  if (!separada) return null
+  const { prefijo, codigo } = separada
 
   const cantidadParseada = prefijo === null ? Number.NaN : Number(prefijo)
   const cantidad = prefijo !== null && Number.isFinite(cantidadParseada) && cantidadParseada > 0 ? cantidadParseada : 1
@@ -188,6 +187,26 @@ export function parsearEntradaDeEscaneoOffline(entradaCruda: string): EntradaDeE
   const objetivo: ObjetivoDeEscaneo = codigo.length < LONGITUD_MINIMA_CODIGO_BARRA ? 'CodigoInterno' : 'CodigoBarra'
   return { cantidad, codigo, objetivo }
 }
+
+/** Texto antes del `*` (`null` si la entrada no trae `*`; vacío si estaba solo) y código, ambos recortados. `null` cuando la entrada
+ * o el código quedan vacíos. */
+function separarPrefijoYCodigo(entradaCruda: string): { prefijo: string | null; codigo: string } | null {
+  const texto = entradaCruda.trim()
+  if (texto === '') return null
+
+  const indice = texto.indexOf('*')
+  const [prefijo, codigoCrudo] = indice < 0 ? [null, texto] : [texto.slice(0, indice).trim(), texto.slice(indice + 1).trim()]
+
+  const codigo = codigoCrudo.trim()
+  return codigo === '' ? null : { prefijo, codigo }
+}
+
+/** Qué encontró el escaneo local. `importeInvalido` es el equivalente del 400 `importe_invalido` del servidor: un artículo por
+ * importe cuyo prefijo no es un importe válido no cae a cantidad 1. */
+export type ResultadoDeEscaneoOffline =
+  | { tipo: 'noEncontrado' }
+  | { tipo: 'importeInvalido' }
+  | { tipo: 'articulo'; articulo: ArticuloEscaneado }
 
 /**
  * Busca un artículo en la instantánea local por código escaneado/tipeado — mismo camino de
@@ -198,25 +217,95 @@ export function parsearEntradaDeEscaneoOffline(entradaCruda: string): EntradaDeE
  * `null` cuando la entrada está vacía o el código no existe en la instantánea (nunca lanza).
  */
 export function buscarArticuloOffline(instantanea: InstantaneaDePos, entradaCruda: string): ArticuloEscaneado | null {
+  const resultado = resolverEscaneoOffline(instantanea, entradaCruda)
+  return resultado.tipo === 'articulo' ? resultado.articulo : null
+}
+
+/**
+ * `buscarArticuloOffline` con el desenlace completo, espejo de `ServicioDeEscaneo.ResolverAsync` para un artículo por importe: el
+ * prefijo es el monto (cantidad 1, `importe` en el resultado) y un prefijo que no es un importe válido se rechaza; sin `*` el
+ * artículo vuelve sin importe y la pantalla lo pide. Para cualquier otro artículo el prefijo sigue siendo la cantidad.
+ */
+export function resolverEscaneoOffline(instantanea: InstantaneaDePos, entradaCruda: string): ResultadoDeEscaneoOffline {
   const entrada = parsearEntradaDeEscaneoOffline(entradaCruda)
-  if (!entrada) return null
+  const separada = separarPrefijoYCodigo(entradaCruda)
+  if (!entrada || !separada) return { tipo: 'noEncontrado' }
 
   const articulo =
     entrada.objetivo === 'CodigoInterno'
       ? instantanea.articulos.find((a) => a.codigoInterno === entrada.codigo)
       : instantanea.articulos.find((a) => a.codigosBarra.includes(entrada.codigo))
 
-  if (!articulo) return null
+  if (!articulo) return { tipo: 'noEncontrado' }
 
+  const codigoBarra = entrada.objetivo === 'CodigoBarra' ? entrada.codigo : null
+
+  if (articulo.unidadVenta !== 'Importe') {
+    return {
+      tipo: 'articulo',
+      articulo: {
+        idArticulo: articulo.idArticulo,
+        codigoInterno: articulo.codigoInterno,
+        nombre: articulo.nombre,
+        codigoBarra,
+        cantidad: entrada.cantidad,
+        acumulaEnVenta: articulo.acumulaEnVenta ?? true,
+        unidadVenta: articulo.unidadVenta,
+      },
+    }
+  }
+
+  if (separada.prefijo === null) return { tipo: 'articulo', articulo: escaneadoPorImporte(articulo, codigoBarra) }
+
+  const importe = leerImporteTipeado(separada.prefijo)
+  return importe === null ? { tipo: 'importeInvalido' } : { tipo: 'articulo', articulo: escaneadoPorImporte(articulo, codigoBarra, importe) }
+}
+
+/** El artículo por importe como lo responde el escaneo del servidor: cantidad 1, sin acumular, con `importe` solo si se tipeó. */
+function escaneadoPorImporte(articulo: ArticuloDeInstantanea, codigoBarra: string | null, importe?: number): ArticuloEscaneado {
   return {
     idArticulo: articulo.idArticulo,
     codigoInterno: articulo.codigoInterno,
     nombre: articulo.nombre,
-    codigoBarra: entrada.objetivo === 'CodigoBarra' ? entrada.codigo : null,
-    cantidad: entrada.cantidad,
-    acumulaEnVenta: articulo.acumulaEnVenta ?? true,
-    unidadVenta: articulo.unidadVenta,
+    codigoBarra,
+    cantidad: 1,
+    acumulaEnVenta: false,
+    unidadVenta: 'Importe',
+    teclaAtajo: articulo.teclaAtajo ?? null,
+    ...(importe !== undefined ? { importe } : {}),
   }
+}
+
+/** Un artículo por importe con tecla de función, tal como lo muestra el encabezado de la venta. */
+export type AtajoDeImporte = { teclaAtajo: TeclaAtajo; idArticulo: number; codigoInterno: string; nombre: string }
+
+const ORDEN_DE_TECLAS: readonly string[] = ['F5', 'F6', 'F7', 'F8']
+
+/** Los artículos por importe de la instantánea con tecla asignada, ordenados por tecla. Una tecla en un artículo que no es por
+ * importe no cuenta: el servidor no la admite, y una instantánea inconsistente no la convierte en atajo. */
+export function atajosDeImporteOffline(instantanea: InstantaneaDePos): AtajoDeImporte[] {
+  return instantanea.articulos
+    .filter((a): a is ArticuloDeInstantanea & { teclaAtajo: TeclaAtajo } => a.unidadVenta === 'Importe' && a.teclaAtajo != null)
+    .map((a) => ({ teclaAtajo: a.teclaAtajo, idArticulo: a.idArticulo, codigoInterno: a.codigoInterno, nombre: a.nombre }))
+    .sort((a, b) => ORDEN_DE_TECLAS.indexOf(a.teclaAtajo) - ORDEN_DE_TECLAS.indexOf(b.teclaAtajo))
+}
+
+/** Artículo por importe asignado a `tecla`, o `null` si ninguno la tiene. */
+export function articuloDeAtajoOffline(instantanea: InstantaneaDePos, tecla: TeclaAtajo): AtajoDeImporte | null {
+  return atajosDeImporteOffline(instantanea).find((a) => a.teclaAtajo === tecla) ?? null
+}
+
+export type ResultadoDeAtajoOffline = { tipo: 'sinArticulo' } | { tipo: 'importeInvalido' } | { tipo: 'articulo'; articulo: ArticuloEscaneado }
+
+/** Lo que agrega apretar `tecla` con `textoImporte` en el campo de código: el mismo artículo que devolvería escribir
+ * `importe*código`, pero tomado del registro de la tecla (no del parser de códigos, que decide por la longitud del código). */
+export function resolverAtajoOffline(instantanea: InstantaneaDePos, tecla: TeclaAtajo, textoImporte: string): ResultadoDeAtajoOffline {
+  const atajo = articuloDeAtajoOffline(instantanea, tecla)
+  const articulo = atajo ? instantanea.articulos.find((a) => a.idArticulo === atajo.idArticulo) : undefined
+  if (!articulo) return { tipo: 'sinArticulo' }
+
+  const importe = leerImporteTipeado(textoImporte)
+  return importe === null ? { tipo: 'importeInvalido' } : { tipo: 'articulo', articulo: escaneadoPorImporte(articulo, null, importe) }
 }
 
 /** Precio del artículo en la lista pedida; `null` si el artículo no tiene precio en esa lista. */
@@ -308,10 +397,11 @@ function indicePorArticulo(instantanea: InstantaneaDePos): Map<number, ArticuloD
  * (`enriquecerLineasConPrecioOffline`) y el ticket sintético (`construirComprobanteOfflineSintetico`):
  * si divergieran, el cajero vería un importe y se cobraría otro. La cantidad de familia de cada
  * línea es la suma de las cantidades de TODAS las líneas cuyo artículo comparte su `idFamilia`
- * (una línea sin familia, o de un artículo ausente de la instantánea, solo cuenta la suya).
+ * (una línea sin familia, o de un artículo ausente de la instantánea, solo cuenta la suya). Una línea por importe (`importe`) se
+ * cotiza a ese importe, sin lista ni oferta, y no suma a la cantidad de ninguna familia: el servidor tampoco la cuenta.
  */
 export function preciosVigentesDeLasLineas(
-  lineas: readonly { idArticulo: number; cantidad: number }[],
+  lineas: readonly { idArticulo: number; cantidad: number; importe?: number }[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
 ): (PreciosVigentesOffline | null)[] {
@@ -319,6 +409,7 @@ export function preciosVigentesDeLasLineas(
 
   const cantidadPorFamilia = new Map<number, number>()
   for (const linea of lineas) {
+    if (linea.importe !== undefined) continue
     const idFamilia = porId.get(linea.idArticulo)?.idFamilia
     if (idFamilia != null) cantidadPorFamilia.set(idFamilia, (cantidadPorFamilia.get(idFamilia) ?? 0) + linea.cantidad)
   }
@@ -327,6 +418,9 @@ export function preciosVigentesDeLasLineas(
   for (const [idFamilia, cantidad] of cantidadPorFamilia) cantidadPorFamilia.set(idFamilia, redondearImporte(cantidad, DECIMALES_DE_PESO))
 
   return lineas.map((linea) => {
+    if (linea.importe !== undefined) {
+      return { precioOriginal: linea.importe, precioFinal: linea.importe, descuentoUnitario: 0, aplicadas: [] }
+    }
     const articulo = porId.get(linea.idArticulo)
     const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
     if (!articulo || !precio) return null
@@ -350,12 +444,12 @@ function candidatosDeCombos(combos: readonly ComboDeInstantanea[]): ComboCandida
  * ÚNICO lugar donde se aplica la regla de combos offline — la consumen la vista previa del carrito, el
  * payload encolado y el ticket sintético, como `preciosVigentesDeLasLineas` con la regla de precio. Mismas
  * exclusiones que el servidor (`CombosEnVenta.Detectar`): quedan fuera de la detección los artículos cuya
- * unidad de venta no es `Unidad` (la unidad decide, nunca la cantidad; una unidad ausente es `Peso`), las
+ * unidad de venta no es `Unidad` (la unidad decide, nunca la cantidad; una unidad ausente es `Peso`), las líneas por importe, las
  * líneas sin precio y las de descuento de oferta negativo. La compuerta de cantidades enteras la aplica el
  * motor. Una instantánea sin `combos` devuelve los precios vigentes tal cual.
  */
 export function resolverDocumentoOffline(
-  lineas: readonly { idArticulo: number; cantidad: number }[],
+  lineas: readonly { idArticulo: number; cantidad: number; importe?: number }[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
 ): { lineas: (PreciosDeLineaConCombo | null)[]; combos: ComboAplicadoEnPrevia[] } {
@@ -368,7 +462,7 @@ export function resolverDocumentoOffline(
   lineas.forEach((linea, i) => {
     const precios = vigentes[i]
     const articulo = porId.get(linea.idArticulo)
-    if (!precios || !articulo || articulo.unidadVenta !== 'Unidad' || precios.descuentoUnitario < 0) return
+    if (!precios || !articulo || linea.importe !== undefined || articulo.unidadVenta !== 'Unidad' || precios.descuentoUnitario < 0) return
     entrada.push({
       indice: i,
       idArticulo: linea.idArticulo,
@@ -433,11 +527,12 @@ export function resolverPreciosOffline(lineas: LineaCarrito[], instantanea: Inst
 
 /** `true` si TODAS las líneas tienen precio en la lista pedida dentro de la instantánea — la
  * precondición de la vista previa local y del checkout offline (todas con precio, o directamente
- * ir por la red en vez de mostrar o vender media venta a precio inventado). ÚNICO gate para esa
+ * ir por la red en vez de mostrar o vender media venta a precio inventado); una línea por importe cuenta con su importe y no
+ * necesita lista. ÚNICO gate para esa
  * precondición. Tipo de línea mínimo (`{ idArticulo }`) para validar tanto el carrito en pantalla
  * como un `LineaDeVenta[]` ya armado. */
 export function todasLasLineasTienenPrecioOffline(
-  lineas: readonly { idArticulo: number }[],
+  lineas: readonly { idArticulo: number; importe?: number }[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
 ): boolean {
@@ -446,7 +541,8 @@ export function todasLasLineasTienenPrecioOffline(
     lineas.length > 0 &&
     lineas.every((l) => {
       const articulo = porId.get(l.idArticulo)
-      return articulo !== undefined && precioEnLista(articulo, idListaPrecio) !== null
+      // La línea por importe lleva su precio consigo: solo necesita que la instantánea conozca el artículo (para el ticket).
+      return articulo !== undefined && (l.importe !== undefined || precioEnLista(articulo, idListaPrecio) !== null)
     })
   )
 }

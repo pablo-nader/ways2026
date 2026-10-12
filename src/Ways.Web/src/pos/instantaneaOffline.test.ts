@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   aClienteListado,
   aMedioPagoListado,
+  articuloDeAtajoOffline,
+  atajosDeImporteOffline,
   buscarArticuloOffline,
   buscarClientesOffline,
   edadDeInstantaneaEnMinutos,
@@ -18,6 +20,8 @@ import {
   preciosVigentesOffline,
   resolverPreciosOffline,
   resolverDocumentoOffline,
+  resolverAtajoOffline,
+  resolverEscaneoOffline,
   resolverPreviaOffline,
   sanearCombosDeInstantanea,
   TOPE_DE_RESULTADOS_DE_CLIENTES,
@@ -1091,5 +1095,264 @@ describe('resolverPreviaOffline — combos', () => {
     const lineas = lineasDe([PANCHO, 1], [COCA, 1])
     const instantanea = instantaneaConCombos([comboPanchoCoca])
     expect(resolverPreciosOffline(lineas, instantanea, LISTA)).toEqual(resolverPreviaOffline(lineas, instantanea, LISTA).precios)
+  })
+})
+
+// --- Artículos por importe ----------------------------------------------------------------------
+
+const FIAMBRERIA = 500
+
+function articuloPorImporteFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+  return articuloFixture({
+    idArticulo: FIAMBRERIA,
+    codigoInterno: '500',
+    nombre: 'Fiambrería',
+    codigosBarra: [],
+    unidadVenta: 'Importe',
+    preciosPorLista: [],
+    acumulaEnVenta: false,
+    teclaAtajo: 'F5',
+    ...sobrescribir,
+  })
+}
+
+function instantaneaConImporte(sobrescribir: Partial<InstantaneaDePos> = {}): InstantaneaDePos {
+  return instantaneaFixture({ articulos: [articuloFixture(), articuloPorImporteFixture()], ...sobrescribir })
+}
+
+const lineaPorImporte = (importe: number, idLinea = `f-${importe}`) =>
+  lineaFixture({ idLinea, idArticulo: FIAMBRERIA, codigoInterno: '500', nombre: 'Fiambrería', codigoBarra: null, unidadVenta: 'Importe', acumulaEnVenta: false, cantidad: 1, importe })
+
+describe('resolverEscaneoOffline — artículo por importe', () => {
+  it('"150*500" da cantidad 1 con el importe tipeado', () => {
+    expect(resolverEscaneoOffline(instantaneaConImporte(), '150*500')).toEqual({
+      tipo: 'articulo',
+      articulo: {
+        idArticulo: FIAMBRERIA,
+        codigoInterno: '500',
+        nombre: 'Fiambrería',
+        codigoBarra: null,
+        cantidad: 1,
+        acumulaEnVenta: false,
+        unidadVenta: 'Importe',
+        teclaAtajo: 'F5',
+        importe: 150,
+      },
+    })
+  })
+
+  it('lee la coma decimal del cajero como punto', () => {
+    const resultado = resolverEscaneoOffline(instantaneaConImporte(), '150,50*500')
+
+    expect(resultado.tipo === 'articulo' && resultado.articulo.importe).toBe(150.5)
+  })
+
+  it('el código a secas devuelve el artículo sin importe (la pantalla lo pide)', () => {
+    const resultado = resolverEscaneoOffline(instantaneaConImporte(), '500')
+
+    expect(resultado.tipo).toBe('articulo')
+    expect(resultado.tipo === 'articulo' && resultado.articulo).not.toHaveProperty('importe')
+    expect(resultado.tipo === 'articulo' && resultado.articulo.cantidad).toBe(1)
+  })
+
+  it.each(['abc*500', '0*500', '-5*500', '*500', '150.555*500', '1e3*500', '1.234,50*500'])('el prefijo de "%s" es un importe inválido, no cantidad 1', (entrada) => {
+    expect(resolverEscaneoOffline(instantaneaConImporte(), entrada)).toEqual({ tipo: 'importeInvalido' })
+  })
+
+  it('también resuelve por código de barra', () => {
+    const instantanea = instantaneaConImporte({ articulos: [articuloPorImporteFixture({ codigosBarra: ['7791234000001'] })] })
+
+    const resultado = resolverEscaneoOffline(instantanea, '99*7791234000001')
+
+    expect(resultado.tipo === 'articulo' && resultado.articulo).toMatchObject({ idArticulo: FIAMBRERIA, codigoBarra: '7791234000001', importe: 99 })
+  })
+
+  it('un artículo común no cambia: ni importe ni tecla, y un prefijo ilegible sigue cayendo a cantidad 1', () => {
+    const conCantidad = resolverEscaneoOffline(instantaneaConImporte(), '3*A0001')
+    const ilegible = resolverEscaneoOffline(instantaneaConImporte(), 'abc*A0001')
+
+    expect(conCantidad.tipo === 'articulo' && conCantidad.articulo).toMatchObject({ idArticulo: 1, cantidad: 3 })
+    expect(conCantidad.tipo === 'articulo' && conCantidad.articulo).not.toHaveProperty('importe')
+    expect(ilegible.tipo === 'articulo' && ilegible.articulo.cantidad).toBe(1)
+  })
+
+  it('un código inexistente o vacío no se encuentra', () => {
+    expect(resolverEscaneoOffline(instantaneaConImporte(), '150*999')).toEqual({ tipo: 'noEncontrado' })
+    expect(resolverEscaneoOffline(instantaneaConImporte(), '')).toEqual({ tipo: 'noEncontrado' })
+  })
+
+  it('buscarArticuloOffline devuelve el artículo con importe y null ante un importe inválido', () => {
+    expect(buscarArticuloOffline(instantaneaConImporte(), '150*500')?.importe).toBe(150)
+    expect(buscarArticuloOffline(instantaneaConImporte(), 'abc*500')).toBeNull()
+  })
+})
+
+describe('atajosDeImporteOffline / articuloDeAtajoOffline', () => {
+  const instantanea = instantaneaConImporte({
+    articulos: [
+      articuloFixture({ idArticulo: 2, codigoInterno: 'A0002', teclaAtajo: 'F6' }),
+      articuloPorImporteFixture({ idArticulo: 502, codigoInterno: '502', nombre: 'Panadería', teclaAtajo: 'F7' }),
+      articuloPorImporteFixture({ idArticulo: 501, codigoInterno: '501', nombre: 'Verdulería', teclaAtajo: 'F5' }),
+      articuloPorImporteFixture({ idArticulo: 503, codigoInterno: '503', nombre: 'Sin tecla', teclaAtajo: null }),
+    ],
+  })
+
+  it('lista solo los artículos por importe con tecla, ordenados por tecla', () => {
+    expect(atajosDeImporteOffline(instantanea).map((a) => [a.teclaAtajo, a.nombre])).toEqual([
+      ['F5', 'Verdulería'],
+      ['F7', 'Panadería'],
+    ])
+  })
+
+  it('busca el artículo de una tecla y null si no hay ninguno', () => {
+    expect(articuloDeAtajoOffline(instantanea, 'F7')?.idArticulo).toBe(502)
+    expect(articuloDeAtajoOffline(instantanea, 'F8')).toBeNull()
+  })
+
+  it('un artículo que no es por importe no ocupa la tecla aunque la traiga', () => {
+    expect(articuloDeAtajoOffline(instantanea, 'F6')).toBeNull()
+  })
+
+  it('una instantánea guardada antes de las teclas no tiene atajos', () => {
+    expect(atajosDeImporteOffline(instantaneaFixture())).toEqual([])
+  })
+})
+
+describe('esInstantaneaValida — artículo por importe', () => {
+  it('acepta un artículo por importe sin precios y con tecla', () => {
+    expect(esInstantaneaValida(instantaneaConImporte())).toBe(true)
+  })
+
+  it('acepta una tecla nula', () => {
+    expect(esInstantaneaValida(instantaneaConImporte({ articulos: [articuloPorImporteFixture({ teclaAtajo: null })] }))).toBe(true)
+  })
+
+  it('rechaza una tecla que no es texto', () => {
+    const rota = instantaneaConImporte({ articulos: [articuloPorImporteFixture({ teclaAtajo: 5 as unknown as 'F5' })] })
+
+    expect(esInstantaneaValida(rota)).toBe(false)
+  })
+
+  it('la tecla sobrevive al guardado y a la lectura del almacén local', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, { instantanea: instantaneaConImporte(), etag: null, verificadaEn: '2026-10-12T12:00:00.000Z' })
+
+    expect(articuloDeAtajoOffline((await leerInstantaneaLocal(almacen))!.instantanea, 'F5')?.idArticulo).toBe(FIAMBRERIA)
+  })
+})
+
+describe('precio offline de una línea por importe', () => {
+  it('cotiza al importe, sin oferta, aunque el artículo no tenga precio en ninguna lista', () => {
+    const [precios] = preciosVigentesDeLasLineas([lineaPorImporte(150.5)], instantaneaConImporte(), LISTA)
+
+    expect(precios).toEqual({ precioOriginal: 150.5, precioFinal: 150.5, descuentoUnitario: 0, aplicadas: [] })
+  })
+
+  it('cotiza al importe aunque el artículo tenga un precio de lista (lo ignora)', () => {
+    const instantanea = instantaneaConImporte({ articulos: [articuloPorImporteFixture({ preciosPorLista: [precioFixture({ precioOriginal: 999, precioFinal: 999 })] })] })
+
+    expect(preciosVigentesDeLasLineas([lineaPorImporte(150)], instantanea, LISTA)[0]?.precioFinal).toBe(150)
+  })
+
+  it('no suma a la cantidad de familia de las demás líneas', () => {
+    const celda: EscalonDeFamilia = { cantidadDeFamiliaDesde: 3, cantidadDesde: 1, precioFinal: 50, descuentoUnitario: 50, aplicadas: [{ idOferta: 9, nombre: 'Familia 3', descuentoUnitario: 50 }] }
+    const instantanea = instantaneaConImporte({
+      articulos: [
+        articuloFixture({ idArticulo: 1, idFamilia: 77, preciosPorLista: [precioFixture({ escalonesDeFamilia: [celda] })] }),
+        articuloPorImporteFixture({ idFamilia: 77 }),
+      ],
+    })
+    const comun = lineaFixture({ idLinea: 'c', idArticulo: 1, cantidad: 2 })
+
+    const [precioComun] = preciosVigentesDeLasLineas([comun, lineaPorImporte(150)], instantanea, LISTA)
+
+    expect(precioComun?.descuentoUnitario).toBe(0)
+  })
+
+  it('resolverPreviaOffline indexa la línea por importe por su idLinea', () => {
+    const { precios } = resolverPreviaOffline([lineaPorImporte(150, 'f1')], instantaneaConImporte(), LISTA)
+
+    expect(precios.f1).toMatchObject({ idArticulo: FIAMBRERIA, precioFinal: 150, precioOriginal: 150, descuentoUnitario: 0 })
+    expect(calcularSubtotalPrevia([lineaPorImporte(150, 'f1')], precios)).toBe(150)
+  })
+
+  it('un combo no consume una línea por importe aunque su artículo sea por unidad en la instantánea', () => {
+    const articulos = [articuloDeCombosFixture(PANCHO, 3000), articuloDeCombosFixture(COCA, 2500)]
+    const lineas = [
+      lineaFixture({ idLinea: 'p', idArticulo: PANCHO, cantidad: 1 }),
+      lineaFixture({ idLinea: 'c', idArticulo: COCA, cantidad: 1, importe: 2500 }),
+    ]
+
+    expect(resolverDocumentoOffline(lineas, instantaneaConCombos([comboPanchoCoca], articulos), LISTA).combos).toEqual([])
+  })
+})
+
+describe('todasLasLineasTienenPrecioOffline — artículo por importe', () => {
+  it('una línea por importe no necesita precio de lista', () => {
+    expect(todasLasLineasTienenPrecioOffline([lineaPorImporte(150)], instantaneaConImporte(), LISTA)).toBe(true)
+  })
+
+  it('una venta mixta pasa si las demás líneas tienen precio', () => {
+    expect(todasLasLineasTienenPrecioOffline([lineaFixture(), lineaPorImporte(150)], instantaneaConImporte(), LISTA)).toBe(true)
+  })
+
+  it('una venta mixta no pasa si falta el precio de una línea común', () => {
+    expect(todasLasLineasTienenPrecioOffline([lineaFixture(), lineaPorImporte(150)], instantaneaConImporte(), OTRA_LISTA)).toBe(false)
+  })
+
+  it('una línea por importe de un artículo que la instantánea no tiene no pasa', () => {
+    expect(todasLasLineasTienenPrecioOffline([lineaPorImporte(150)], instantaneaFixture(), LISTA)).toBe(false)
+  })
+
+  it('un artículo por importe SIN importe en la línea no pasa: no tiene precio', () => {
+    const sinImporte = lineaFixture({ idArticulo: FIAMBRERIA })
+
+    expect(todasLasLineasTienenPrecioOffline([sinImporte], instantaneaConImporte(), LISTA)).toBe(false)
+  })
+})
+
+describe('resolverAtajoOffline', () => {
+  const instantanea = instantaneaConImporte()
+
+  it('arma el artículo de la tecla con cantidad 1 y el importe tipeado', () => {
+    const resultado = resolverAtajoOffline(instantanea, 'F5', '150')
+
+    expect(resultado).toEqual({
+      tipo: 'articulo',
+      articulo: {
+        idArticulo: FIAMBRERIA,
+        codigoInterno: '500',
+        nombre: 'Fiambrería',
+        codigoBarra: null,
+        cantidad: 1,
+        acumulaEnVenta: false,
+        unidadVenta: 'Importe',
+        teclaAtajo: 'F5',
+        importe: 150,
+      },
+    })
+  })
+
+  it('lee la coma decimal', () => {
+    const resultado = resolverAtajoOffline(instantanea, 'F5', '150,50')
+
+    expect(resultado.tipo === 'articulo' && resultado.articulo.importe).toBe(150.5)
+  })
+
+  it('una tecla sin artículo no tiene atajo, aunque el importe también sea inválido', () => {
+    expect(resolverAtajoOffline(instantanea, 'F8', '150')).toEqual({ tipo: 'sinArticulo' })
+    expect(resolverAtajoOffline(instantanea, 'F8', 'abc')).toEqual({ tipo: 'sinArticulo' })
+  })
+
+  it.each(['', '   ', 'abc', '0', '-1', '150.555'])('el importe "%s" es inválido', (texto) => {
+    expect(resolverAtajoOffline(instantanea, 'F5', texto)).toEqual({ tipo: 'importeInvalido' })
+  })
+
+  it('el código del artículo no interviene: se arma desde el registro, sin pasar por el parser de códigos', () => {
+    const largo = instantaneaConImporte({ articulos: [articuloPorImporteFixture({ codigoInterno: '7791234567890' })] })
+
+    const resultado = resolverAtajoOffline(largo, 'F5', '150')
+
+    expect(resultado.tipo === 'articulo' && resultado.articulo).toMatchObject({ idArticulo: FIAMBRERIA, codigoInterno: '7791234567890', importe: 150 })
   })
 })
