@@ -40,33 +40,6 @@ type Props = {
   alCerrarSesion: () => void
 }
 
-/**
- * Shell del POS de escritorio con sesión activa (stage-desktop-pos): header compacto (empresa, PV,
- * cajero, navegación) + las pantallas que reusa sin fork (`Pos`, `CajaZ`, `VentasDelTurno`).
- *
- * El punto de venta lo fija el dispositivo — `ProveedorDePuntoVentaFijo`, nunca el
- * `PuertaDePuntoVenta` de elección manual de la app completa. La sesión se expone por el mismo
- * `AuthContext` que ya consumen `CajaZ`/`Layout` sin fork: acá se provee un valor propio (login del
- * dispositivo en vez de mail/password) en lugar de montar el `AuthProvider` de la app completa, que
- * no conoce `POST /auth/login-dispositivo`.
- *
- * stage-pos-turno-y-foco: el header YA NO tiene su propio botón "Cerrar caja" — vivía acá porque
- * `Pos.tsx` no sabía nada del turno; ahora que la propia pantalla de venta (`/vender`, la ruta `*`
- * de fallback) muestra el estado del turno y ofrece "Cerrar caja" con el `idTurno` ya resuelto,
- * mantener el botón del header habría duplicado la misma consulta `GET …/abierto` en dos lugares —
- * exactamente el tipo de gemelo que la regla 10 de `react-async-state` pide mantener en
- * sincronía, evitado acá eliminando uno de los dos en vez de replicarlo.
- *
- * stage-pos-retiros-y-cierre-por-retiro (etapa 5): "Cerrar caja" del escritorio dejó de navegar a
- * `CierreDeCaja` (la ruta `/cerrar-caja` y su reporte Z auto-impreso se quitaron enteros — código
- * muerto una vez que `Pos.tsx` resuelve el cierre por retiro en la misma pantalla) — ahora se
- * resuelve íntegro dentro de `Pos.tsx` vía el seam `cajaDeEscritorio` (contexto de impresión +
- * `encolarImpresion`, la MISMA cola FIFO que ya usa el ticket de venta): confirmar apertura de
- * cajón, contar el efectivo y `POST cierre-por-retiro`, sin abandonar `/vender`. `CierreDeCaja`
- * sigue viva para la app web (ruta `/caja/cierre`, sin cambios) — este shell simplemente dejó de
- * montarla. `CajaZ` (`/caja/turnos/:id/z`) se mantiene montada por si hace falta más adelante,
- * aunque ningún control de este shell navega ahí hoy.
- */
 type PropsCabeceraPos = {
   dispositivo: DispositivoActual
   usuario: UsuarioAutenticado
@@ -88,7 +61,7 @@ function hayUnDialogoAbierto(): boolean {
  * caja y sincronización viven en `Pos.tsx`; acá se piden por `useAccionesDePos`.
  */
 function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSesion, refRanura }: PropsCabeceraPos) {
-  const { estado, solicitar } = useAccionesDePos()
+  const { estado, aviso, solicitar } = useAccionesDePos()
 
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
@@ -119,16 +92,23 @@ function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSes
   if (estado?.turnoAbierto) {
     itemsDeCaja.push({
       clave: 'cerrar-turno',
-      etiqueta: 'Cerrar turno',
+      etiqueta: estado.verificandoCierre ? 'Verificando…' : 'Cerrar turno',
       deshabilitado: !habilitadas?.cerrarTurno,
       alSeleccionar: () => solicitar('cerrarTurno'),
     })
-  } else {
+  } else if (estado?.turnoAbierto === false) {
     itemsDeCaja.push({
       clave: 'abrir-turno',
       etiqueta: 'Abrir turno',
       deshabilitado: !habilitadas?.abrirTurno,
       alSeleccionar: () => solicitar('abrirTurno'),
+    })
+  } else {
+    itemsDeCaja.push({
+      clave: 'turno-desconocido',
+      etiqueta: estado?.imposible ? 'Turno no disponible' : 'Consultando turno…',
+      deshabilitado: true,
+      alSeleccionar: () => {},
     })
   }
 
@@ -161,6 +141,11 @@ function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSes
         <MenuDeAcciones etiqueta="Caja" items={itemsDeCaja} />
         <MenuDeAcciones etiqueta="Sistema" items={itemsDeSistema} />
       </nav>
+      {aviso && (
+        <span role="status" className="small text-warning text-nowrap">
+          {aviso}
+        </span>
+      )}
       {/* Contenedor vacío: `Pos.tsx` portalea acá los chips de estado (ver `RanuraHeaderPosContext`).
           Nunca se renderiza nada directamente en este `div`. */}
       <div className="d-flex align-items-center gap-2 flex-wrap ms-auto" style={{ minWidth: 0 }} ref={refRanura} />
@@ -174,6 +159,26 @@ function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSes
   )
 }
 
+/**
+ * Shell del POS de escritorio con sesión activa (stage-desktop-pos): header compacto (empresa, PV,
+ * cajero, navegación) + las pantallas que reusa sin fork (`Pos`, `CajaZ`, `VentasDelTurno`).
+ *
+ * El punto de venta lo fija el dispositivo — `ProveedorDePuntoVentaFijo`, nunca el
+ * `PuertaDePuntoVenta` de elección manual de la app completa. La sesión se expone por el mismo
+ * `AuthContext` que ya consumen `CajaZ`/`Layout` sin fork: acá se provee un valor propio (login del
+ * dispositivo en vez de mail/password) en lugar de montar el `AuthProvider` de la app completa, que
+ * no conoce `POST /auth/login-dispositivo`.
+ *
+ * Las acciones de caja (abrir/cerrar turno, retirar efectivo) y la sincronización manual viven en
+ * `Pos.tsx`, que es la dueña de esos flujos: el header las ofrece en los menús "Caja" y "Sistema"
+ * y las pide por `ProveedorDeAccionesDePos`, que las ejecuta desde cualquier ruta del shell. El
+ * cierre de turno del escritorio se resuelve íntegro dentro de `Pos.tsx` vía el seam
+ * `cajaDeEscritorio` (contexto de impresión + `encolarImpresion`, la MISMA cola FIFO que usa el
+ * ticket de venta): confirmar apertura de cajón, contar el efectivo y `POST cierre-por-retiro`,
+ * sin abandonar `/vender`. `CierreDeCaja` sigue viva para la app web (ruta `/caja/cierre`); este
+ * shell no la monta. `CajaZ` (`/caja/turnos/:id/z`) se mantiene montada por si hace falta más
+ * adelante, aunque ningún control de este shell navega ahí hoy.
+ */
 export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: Props) {
   const [cerrandoSesion, setCerrandoSesion] = useState(false)
   // Si el cajero sale de "Vender" con ítems en el carrito, el último valor informado se mantiene:
@@ -356,67 +361,67 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
         <ProveedorDeBorradoresDeTicket>
         <ProveedorDeAccionesDePos>
-        <div className="d-flex flex-column min-vh-100">
-          <CabeceraPos
-            dispositivo={dispositivo}
-            usuario={usuario}
-            cerrandoSesion={cerrandoSesion}
-            inerte={instalandoActualizacion}
-            alCerrarSesion={() => void cerrarSesion()}
-            refRanura={setNodoRanuraHeader}
-          />
+          <div className="d-flex flex-column min-vh-100">
+            <CabeceraPos
+              dispositivo={dispositivo}
+              usuario={usuario}
+              cerrandoSesion={cerrandoSesion}
+              inerte={instalandoActualizacion}
+              alCerrarSesion={() => void cerrarSesion()}
+              refRanura={setNodoRanuraHeader}
+            />
 
-          <AvisoDeActualizacion
-            motivoDeBloqueo={
-              ventaEnCurso
-                ? 'Terminá la venta en curso para instalarla.'
-                : imprimiendo
-                  ? 'Esperá a que termine la impresión para instalarla.'
-                  : null
-            }
-            alCambiarInstalando={setInstalandoActualizacion}
-          />
+            <AvisoDeActualizacion
+              motivoDeBloqueo={
+                ventaEnCurso
+                  ? 'Terminá la venta en curso para instalarla.'
+                  : imprimiendo
+                    ? 'Esperá a que termine la impresión para instalarla.'
+                    : null
+              }
+              alCambiarInstalando={setInstalandoActualizacion}
+            />
 
-          {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
-              propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
-              a cualquier otra navegación del shell). Un aviso por trabajo fallido (regla 14): el
-              de un trabajo nunca lo pisa ni lo borra el de otro. */}
-          {avisosDeImpresion.map((aviso) => (
-            <div
-              key={aviso.id}
-              role="alert"
-              className="alert alert-warning py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
-            >
-              <span>
-                No se pudo imprimir {aviso.descripcion}: {aviso.mensaje}
-              </span>
-              <div className="d-flex gap-2">
-                <button
-                  type="button"
-                  className="btn btn-sm btn-outline-secondary"
-                  disabled={aviso.reintentando}
-                  onClick={() => reimprimir(aviso)}
-                >
-                  {aviso.reintentando ? 'Imprimiendo…' : 'Reimprimir'}
-                </button>
-                <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => cerrarAviso(aviso.id)}>
-                  Cerrar
-                </button>
+            {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
+                propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
+                a cualquier otra navegación del shell). Un aviso por trabajo fallido (regla 14): el
+                de un trabajo nunca lo pisa ni lo borra el de otro. */}
+            {avisosDeImpresion.map((aviso) => (
+              <div
+                key={aviso.id}
+                role="alert"
+                className="alert alert-warning py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
+              >
+                <span>
+                  No se pudo imprimir {aviso.descripcion}: {aviso.mensaje}
+                </span>
+                <div className="d-flex gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-secondary"
+                    disabled={aviso.reintentando}
+                    onClick={() => reimprimir(aviso)}
+                  >
+                    {aviso.reintentando ? 'Imprimiendo…' : 'Reimprimir'}
+                  </button>
+                  <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => cerrarAviso(aviso.id)}>
+                    Cerrar
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
 
-          <main className="flex-grow-1" inert={instalandoActualizacion}>
-            <Routes>
-              <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
-              <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
-              <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
-              <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
-              <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
-              <Route path="*" element={<Navigate to="/vender" replace />} />
-            </Routes>
-          </main>
-        </div>
+            <main className="flex-grow-1" inert={instalandoActualizacion}>
+              <Routes>
+                <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
+                <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
+                <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
+                <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
+                <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
+                <Route path="*" element={<Navigate to="/vender" replace />} />
+              </Routes>
+            </main>
+          </div>
         </ProveedorDeAccionesDePos>
         </ProveedorDeBorradoresDeTicket>
         </RanuraHeaderPosContext.Provider>

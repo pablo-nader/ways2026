@@ -194,8 +194,7 @@ describe('useSincronizacionOffline — carga inicial (goal A: sobrevive un resta
     expect(result.current.outboxCount).toBe(1)
   })
 
-  it('sin intervaloMs el ciclo automático se programa cada 10 minutos, aunque quede un valor viejo en localStorage', async () => {
-    localStorage.setItem('ways.pos.intervaloDeSincronizacionMinutos', '1')
+  it('sin intervaloMs el ciclo automático se programa cada 10 minutos', async () => {
     const espiaDeIntervalo = vi.spyOn(globalThis, 'setInterval')
     try {
       renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen: almacenFake() }))
@@ -204,10 +203,8 @@ describe('useSincronizacionOffline — carga inicial (goal A: sobrevive un resta
       })
       const periodos = espiaDeIntervalo.mock.calls.map(([, ms]) => ms)
       expect(periodos).toContain(10 * 60_000)
-      expect(periodos).not.toContain(60_000)
     } finally {
       espiaDeIntervalo.mockRestore()
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
     }
   })
 

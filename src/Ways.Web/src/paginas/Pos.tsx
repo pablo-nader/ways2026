@@ -3042,23 +3042,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // hay ningún modal abierto, así que `pantallaCobroInerte` por sí solo dejaría "Retirar" vivo.
   const controlesDeCajaInertes = verificandoCierre || pantallaCobroInerte
 
-  /**
-   * stage-pos-caja-en-cabecera: acción primaria de caja (badge + "Abrir caja"/"Cerrar caja",
-   * antes en "Datos de la venta") — decisión del dueño: se mueve a una posición prominente,
-   * portaleada al header de `ShellPos` cuando hay una ranura (`nodoRanuraHeader`, ver el contexto)
-   * o renderizada en una franja propia arriba del carrito en la app web. Un único JSX para ambos
-   * destinos: la lógica de turno hardened por varias rondas de judgment-day (`consultarTurno`,
-   * `reintentarTurno`, `irACerrarCaja`, `gateTurno`) no se toca, solo cambia dónde se monta.
-   * Mismas guardas que antes: nunca bajo `?idPresupuesto=`, "Verificando…" mientras
-   * `verificandoCierre`, inerte durante `pantallaCobroInerte`.
-   */
   const enHeader = nodoRanuraHeader !== null
 
-  const turnoResuelto = !modoPresupuesto && puntoVentaSeleccionada !== null && turnoConsultado && !cargandoTurno && !errorTurno
+  // Lo que el header del shell necesita para ofrecer las acciones de caja y de sincronización. El
+  // turno cuenta como resuelto cuando el servidor ya contestó o cuando rige el turno local, para
+  // coincidir con lo que muestra el chip "Caja abierta"/"Caja cerrada".
+  const turnoResuelto =
+    !modoPresupuesto && puntoVentaSeleccionada !== null && (turnoConsultado || usarTurnoLocal) && !cargandoTurno && !errorTurno
   const puedeSincronizar = !modoPresupuesto && puntoVentaSeleccionada !== null && sincronizacionOffline.instantanea !== null
   const estadoDeAcciones: EstadoDeAccionesDePos = {
     listo: turnoResuelto,
     turnoAbierto: turnoResuelto ? turno !== null : null,
+    imposible: modoPresupuesto || puntoVentaSeleccionada === null || errorTurno !== '',
+    verificandoCierre,
     retiroOfrecido: cajaDeEscritorio !== undefined,
     habilitadas: {
       abrirTurno: turnoResuelto && turno === null,
@@ -3080,6 +3076,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     },
   })
 
+  /**
+   * stage-pos-caja-en-cabecera: acción primaria de caja (badge + "Abrir caja"/"Cerrar caja",
+   * antes en "Datos de la venta") — decisión del dueño: se mueve a una posición prominente,
+   * portaleada al header de `ShellPos` cuando hay una ranura (`nodoRanuraHeader`, ver el contexto)
+   * o renderizada en una franja propia arriba del carrito en la app web. Un único JSX para ambos
+   * destinos: la lógica de turno hardened por varias rondas de judgment-day (`consultarTurno`,
+   * `reintentarTurno`, `irACerrarCaja`, `gateTurno`) no se toca, solo cambia dónde se monta.
+   * Mismas guardas que antes: nunca bajo `?idPresupuesto=`, "Verificando…" mientras
+   * `verificandoCierre`, inerte durante `pantallaCobroInerte`.
+   */
   const controlesTurno = (
     <>
       {!puntoVentaSeleccionada && (

@@ -199,6 +199,14 @@ body {
   opacity: 0.6;
 }
 
+/* Mismo acomodo que Bootstrap daba a `.btn-close` en el header: a la derecha, con el área de click
+   compensada por márgenes negativos para no agrandar el header. */
+.modal-header .boton-cerrar-modal {
+  padding: calc(var(--bs-modal-header-padding-y) * 0.5) calc(var(--bs-modal-header-padding-x) * 0.5);
+  margin: calc(-0.5 * var(--bs-modal-header-padding-y)) calc(-0.5 * var(--bs-modal-header-padding-x))
+    calc(-0.5 * var(--bs-modal-header-padding-y)) auto;
+}
+
 .boton-cerrar-modal:hover:not(:disabled) {
   opacity: 1;
 }

@@ -1,15 +1,17 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
-import { describe, expect, it, vi } from 'vitest'
-import { ProveedorDeAccionesDePos, useAccionesDePos, useRegistroDeAccionesDePos } from './AccionesDePosContext'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PLAZO_DEL_PEDIDO_PENDIENTE_MS, ProveedorDeAccionesDePos, useAccionesDePos, useRegistroDeAccionesDePos } from './AccionesDePosContext'
 import type { EjecutoresDePos, EstadoDeAccionesDePos } from './AccionesDePosContext'
 
 function estadoFixture(sobrescribir: Partial<EstadoDeAccionesDePos> = {}): EstadoDeAccionesDePos {
   return {
     listo: true,
     turnoAbierto: true,
+    imposible: false,
+    verificandoCierre: false,
     retiroOfrecido: true,
     puedeSincronizar: true,
     sincronizando: false,
@@ -19,6 +21,22 @@ function estadoFixture(sobrescribir: Partial<EstadoDeAccionesDePos> = {}): Estad
 }
 
 const ESTADO_SIN_CARGAR = { listo: false, turnoAbierto: null } as const
+const ESTADO_CON_ERROR = { listo: false, turnoAbierto: null, imposible: true } as const
+
+/** Pantalla de venta que atraviesa los estados dados, de a uno por cada `avanzar()`. */
+function pantallaPorFases(fases: EstadoDeAccionesDePos[], ejecutores: EjecutoresDePos) {
+  const control = { avanzar: () => {} }
+  function Pantalla() {
+    const [fase, setFase] = useState(0)
+    control.avanzar = () => setFase((f) => Math.min(f + 1, fases.length - 1))
+    return <PantallaDeVenta estado={fases[fase]} ejecutores={ejecutores} />
+  }
+  return { Pantalla, control }
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 function ejecutoresFixture() {
   return { abrirTurno: vi.fn(), cerrarTurno: vi.fn(), retirar: vi.fn(), sincronizar: vi.fn(), enfocarEscaneo: vi.fn() } satisfies EjecutoresDePos
@@ -32,16 +50,18 @@ function PantallaDeVenta({ estado, ejecutores }: { estado: EstadoDeAccionesDePos
 
 /** Hace de header: pide acciones y expone lo que el proveedor sabe. */
 function Pedidor() {
-  const { estado, solicitar } = useAccionesDePos()
+  const { estado, aviso, solicitar } = useAccionesDePos()
   const navegar = useNavigate()
   const { pathname } = useLocation()
   return (
     <div>
       <p data-testid="ruta">{pathname}</p>
+      <p data-testid="aviso">{aviso}</p>
       <p data-testid="listo">{String(estado?.listo)}</p>
       <p data-testid="cerrar-habilitada">{String(estado?.habilitadas.cerrarTurno)}</p>
       <button onClick={() => solicitar('cerrarTurno')}>pedir cierre</button>
       <button onClick={() => solicitar('abrirTurno')}>pedir apertura</button>
+      <button onClick={() => solicitar('sincronizar')}>pedir sincronizacion</button>
       <button onClick={() => solicitar('enfocarEscaneo')}>pedir foco</button>
       <button onClick={() => void navegar('/ventas-del-turno')}>ir a ventas</button>
       <button onClick={() => void navegar('/vender')}>volver a vender</button>
@@ -154,5 +174,95 @@ describe('ProveedorDeAccionesDePos', () => {
     await userEvent.click(screen.getByText('pedir foco'))
 
     expect(ejecutores.enfocarEscaneo).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ProveedorDeAccionesDePos — pedidos que no deben correr tarde', () => {
+  it('si la pantalla informa que no puede quedar lista, el pedido se descarta con un aviso y un reintento exitoso posterior no lo ejecuta', async () => {
+    const ejecutores = ejecutoresFixture()
+    const { Pantalla, control } = pantallaPorFases([estadoFixture(ESTADO_SIN_CARGAR), estadoFixture(ESTADO_CON_ERROR), estadoFixture()], ejecutores)
+    montar(<Pantalla />)
+
+    await userEvent.click(screen.getByText('pedir cierre'))
+    act(() => control.avanzar())
+
+    expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo cerrar el turno')
+    act(() => control.avanzar())
+    expect(screen.getByTestId('listo')).toHaveTextContent('true')
+    expect(ejecutores.cerrarTurno).not.toHaveBeenCalled()
+  })
+
+  it('si la pantalla ya informa que no puede quedar lista, el pedido no queda armado', async () => {
+    const ejecutores = ejecutoresFixture()
+    const { Pantalla, control } = pantallaPorFases([estadoFixture(ESTADO_CON_ERROR), estadoFixture()], ejecutores)
+    montar(<Pantalla />)
+
+    await userEvent.click(screen.getByText('pedir cierre'))
+    expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo cerrar el turno')
+    act(() => control.avanzar())
+
+    expect(ejecutores.cerrarTurno).not.toHaveBeenCalled()
+  })
+
+  it('un pedido que espera más del plazo se descarta con un aviso, y quedar lista después no lo ejecuta', () => {
+    vi.useFakeTimers()
+    const ejecutores = ejecutoresFixture()
+    const { Pantalla, control } = pantallaPorFases([estadoFixture(ESTADO_SIN_CARGAR), estadoFixture()], ejecutores)
+    montar(<Pantalla />)
+
+    fireEvent.click(screen.getByText('pedir cierre'))
+    act(() => {
+      vi.advanceTimersByTime(PLAZO_DEL_PEDIDO_PENDIENTE_MS - 1)
+    })
+    expect(screen.getByTestId('aviso')).toBeEmptyDOMElement()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo cerrar el turno')
+    act(() => control.avanzar())
+
+    expect(ejecutores.cerrarTurno).not.toHaveBeenCalled()
+  })
+
+  it('un pedido que se cumple dentro del plazo no deja un aviso de vencimiento después', () => {
+    vi.useFakeTimers()
+    const ejecutores = ejecutoresFixture()
+    const { Pantalla, control } = pantallaPorFases([estadoFixture(ESTADO_SIN_CARGAR), estadoFixture()], ejecutores)
+    montar(<Pantalla />)
+
+    fireEvent.click(screen.getByText('pedir cierre'))
+    act(() => control.avanzar())
+    act(() => {
+      vi.advanceTimersByTime(PLAZO_DEL_PEDIDO_PENDIENTE_MS * 2)
+    })
+
+    expect(ejecutores.cerrarTurno).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('aviso')).toBeEmptyDOMElement()
+  })
+
+  it('"Sincronizar" pedido desde otra pantalla, cuando la venta queda lista con su sincronización ya en curso, se da por cumplido: no la repite ni avisa error', async () => {
+    const ejecutores = ejecutoresFixture()
+    const enCurso = estadoFixture({ sincronizando: true, habilitadas: { abrirTurno: false, cerrarTurno: true, retirar: true, sincronizar: false } })
+    const { Pantalla, control } = pantallaPorFases([estadoFixture(ESTADO_SIN_CARGAR), enCurso], ejecutores)
+    montar(<Pantalla />)
+
+    await userEvent.click(screen.getByText('pedir sincronizacion'))
+    act(() => control.avanzar())
+
+    expect(screen.getByTestId('listo')).toHaveTextContent('true')
+    expect(ejecutores.sincronizar).not.toHaveBeenCalled()
+    expect(screen.getByTestId('aviso')).toBeEmptyDOMElement()
+  })
+
+  it('"Sincronizar" sin instantánea local posible avisa que no se pudo, en vez de perderse en silencio', async () => {
+    const ejecutores = ejecutoresFixture()
+    const sinInstantanea = estadoFixture({ puedeSincronizar: false, habilitadas: { abrirTurno: false, cerrarTurno: true, retirar: true, sincronizar: false } })
+    montar(<PantallaDeVenta estado={sinInstantanea} ejecutores={ejecutores} />)
+
+    await userEvent.click(screen.getByText('pedir sincronizacion'))
+
+    expect(ejecutores.sincronizar).not.toHaveBeenCalled()
+    expect(screen.getByTestId('aviso')).toHaveTextContent('No se pudo sincronizar')
   })
 })

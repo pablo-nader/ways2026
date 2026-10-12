@@ -14,6 +14,11 @@ export type EstadoDeAccionesDePos = {
    * ahí se puede ejecutar un pedido sin que la pantalla lo pise. */
   listo: boolean
   turnoAbierto: boolean | null
+  /** La pantalla no va a quedar lista por sí sola: la consulta del turno falló, no hay punto de
+   * venta o está en modo presupuesto. Un pedido pendiente no tiene nada que esperar. */
+  imposible: boolean
+  /** Está verificando el turno antes de cerrarlo (progreso de "Cerrar turno"). */
+  verificandoCierre: boolean
   /** El retiro de efectivo solo existe en el POS de escritorio. */
   retiroOfrecido: boolean
   /** Hay una instantánea local de este punto de venta: sincronizar tiene algo que hacer. */
@@ -33,13 +38,27 @@ type AccionesDePos = {
   /** Último estado informado por la pantalla de venta; se conserva (en reposo) al desmontarla para
    * que el header siga ofreciendo las acciones mientras el cajero está en otra pantalla. */
   estado: EstadoDeAccionesDePos | null
+  /** Por qué un pedido no se ejecutó, para que el cajero no se quede sin respuesta; se borra solo. */
+  aviso: string | null
   /** Ejecuta el pedido ya, si la pantalla de venta está montada y lista; si no, navega a la venta
-   * y lo ejecuta una sola vez cuando esa pantalla esté lista. */
+   * y lo ejecuta una sola vez cuando esa pantalla esté lista. Un pedido que no se puede cumplir
+   * pronto (la pantalla no puede quedar lista, o tarda más del plazo) se descarta con un aviso:
+   * una acción de caja nunca corre mucho después del click. */
   solicitar: (pedido: PedidoDePos) => void
 }
 
+export const PLAZO_DEL_PEDIDO_PENDIENTE_MS = 10_000
+const DURACION_DEL_AVISO_MS = 6_000
+
+const ETIQUETA_DEL_PEDIDO: Record<AccionDePos, string> = {
+  abrirTurno: 'abrir el turno',
+  cerrarTurno: 'cerrar el turno',
+  retirar: 'retirar efectivo',
+  sincronizar: 'sincronizar',
+}
+
 const RegistroContext = createContext<RegistroDeAcciones | null>(null)
-const AccionesContext = createContext<AccionesDePos>({ estado: null, solicitar: () => {} })
+const AccionesContext = createContext<AccionesDePos>({ estado: null, aviso: null, solicitar: () => {} })
 
 type Registro = { estado: EstadoDeAccionesDePos | null; montado: boolean }
 
@@ -50,6 +69,8 @@ function estadoEnReposo(estado: EstadoDeAccionesDePos): EstadoDeAccionesDePos {
   return {
     ...estado,
     listo: false,
+    imposible: false,
+    verificandoCierre: false,
     sincronizando: false,
     habilitadas: {
       abrirTurno: estado.turnoAbierto === false,
@@ -74,8 +95,19 @@ export function ProveedorDeAccionesDePos({ children }: { children: ReactNode }) 
   const { pathname } = useLocation()
   const navegar = useNavigate()
   const [registro, setRegistro] = useState<Registro>({ estado: null, montado: false })
+  const [aviso, setAviso] = useState<string | null>(null)
   const ejecutoresRef = useRef<EjecutoresDePos | null>(null)
   const pedidoPendienteRef = useRef<PedidoDePos | null>(null)
+  const plazoDelPedidoRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const plazoDelAvisoRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (plazoDelPedidoRef.current) clearTimeout(plazoDelPedidoRef.current)
+      if (plazoDelAvisoRef.current) clearTimeout(plazoDelAvisoRef.current)
+    },
+    [],
+  )
 
   const registrar = useCallback((estado: EstadoDeAccionesDePos, ejecutores: EjecutoresDePos) => {
     ejecutoresRef.current = ejecutores
@@ -89,44 +121,89 @@ export function ProveedorDeAccionesDePos({ children }: { children: ReactNode }) 
 
   const valorDeRegistro = useMemo(() => ({ registrar, desregistrar }), [registrar, desregistrar])
 
+  function avisar(texto: string | null) {
+    if (plazoDelAvisoRef.current) clearTimeout(plazoDelAvisoRef.current)
+    setAviso(texto)
+    if (texto === null) return
+    plazoDelAvisoRef.current = setTimeout(() => setAviso(null), DURACION_DEL_AVISO_MS)
+  }
+
+  function soltarPedido() {
+    pedidoPendienteRef.current = null
+    if (plazoDelPedidoRef.current) clearTimeout(plazoDelPedidoRef.current)
+    plazoDelPedidoRef.current = null
+  }
+
+  function descartarPedido(pedido: AccionDePos, motivo: string) {
+    soltarPedido()
+    avisar(`No se pudo ${ETIQUETA_DEL_PEDIDO[pedido]}: ${motivo}`)
+  }
+
   function puedeEjecutar(pedido: PedidoDePos, actual: Registro): actual is Registro & { estado: EstadoDeAccionesDePos } {
     if (!actual.montado || actual.estado === null) return false
     return pedido === 'enfocarEscaneo' || actual.estado.listo
   }
 
   function ejecutar(pedido: PedidoDePos, estado: EstadoDeAccionesDePos) {
-    if (pedido !== 'enfocarEscaneo' && !estado.habilitadas[pedido]) return
+    if (pedido === 'enfocarEscaneo') {
+      ejecutoresRef.current?.enfocarEscaneo()
+      return
+    }
+    // Una sincronización que ya está corriendo (por ejemplo la de arranque) cumple el pedido.
+    if (pedido === 'sincronizar' && estado.sincronizando) return
+    if (!estado.habilitadas[pedido]) {
+      avisar(`No se pudo ${ETIQUETA_DEL_PEDIDO[pedido]}: no está disponible ahora.`)
+      return
+    }
     ejecutoresRef.current?.[pedido]()
   }
 
   // Un pedido que quedó esperando a la pantalla de venta no sobrevive a que el cajero se vaya a otra.
   useEffect(() => {
-    if (pathname !== RUTA_DE_VENTA) pedidoPendienteRef.current = null
+    if (pathname !== RUTA_DE_VENTA) soltarPedido()
+    // `soltarPedido` solo toca refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
   useEffect(() => {
     const pedido = pedidoPendienteRef.current
-    if (pedido === null || !puedeEjecutar(pedido, registro)) return
-    pedidoPendienteRef.current = null
+    if (pedido === null) return
+    if (pedido !== 'enfocarEscaneo' && registro.montado && registro.estado?.imposible) {
+      descartarPedido(pedido, 'no se pudo consultar el turno.')
+      return
+    }
+    if (!puedeEjecutar(pedido, registro)) return
+    soltarPedido()
     ejecutar(pedido, registro.estado)
-    // `ejecutar` solo lee refs y el estado recibido.
+    // Estas funciones solo leen refs y el estado recibido.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registro])
 
   const solicitar = useCallback(
     (pedido: PedidoDePos) => {
+      avisar(null)
       if (puedeEjecutar(pedido, registro)) {
         ejecutar(pedido, registro.estado)
         return
       }
+      if (pedido !== 'enfocarEscaneo' && registro.montado && registro.estado?.imposible) {
+        descartarPedido(pedido, 'no se pudo consultar el turno.')
+        return
+      }
+      soltarPedido()
       pedidoPendienteRef.current = pedido
+      if (pedido !== 'enfocarEscaneo') {
+        plazoDelPedidoRef.current = setTimeout(() => {
+          if (pedidoPendienteRef.current === pedido) descartarPedido(pedido, 'la pantalla de venta tardó demasiado en estar lista.')
+        }, PLAZO_DEL_PEDIDO_PENDIENTE_MS)
+      }
       if (pathname !== RUTA_DE_VENTA) void navegar(RUTA_DE_VENTA)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [registro, pathname, navegar],
   )
 
-  const valorDeAcciones = useMemo(() => ({ estado: registro.estado, solicitar }), [registro.estado, solicitar])
+  const valorDeAcciones = useMemo(() => ({ estado: registro.estado, aviso, solicitar }), [registro.estado, aviso, solicitar])
 
   return (
     <RegistroContext.Provider value={valorDeRegistro}>

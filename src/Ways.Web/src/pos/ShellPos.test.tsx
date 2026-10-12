@@ -1147,7 +1147,7 @@ describe('ShellPos — header en una línea con menús Caja y Sistema', () => {
     expect(campo).not.toHaveFocus()
   })
 
-  it('"Cerrar turno" elegido desde otra pantalla vuelve a Vender y abre la confirmación de cierre una sola vez', async () => {
+  it('"Cerrar turno" elegido desde otra pantalla vuelve a Vender y abre la confirmación de cierre, que no reaparece al cerrarla', async () => {
     renderShell()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     mockearRutasDePos((ruta) => (ruta.startsWith('/ventas/por-turno/') ? Promise.resolve([]) : undefined))
@@ -1163,6 +1163,35 @@ describe('ShellPos — header en una línea con menús Caja y Sistema', () => {
       await Promise.resolve()
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('mientras el turno es desconocido, el menú Caja no ofrece "Abrir turno": muestra un ítem neutro deshabilitado', async () => {
+    mockearRutasDePos((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? new Promise<TurnoResumen | null>(() => {}) : undefined))
+    renderShell()
+    await screen.findByText('Almacén Demo')
+
+    const lista = await abrirMenu('Caja')
+
+    expect(within(lista).queryByText('Abrir turno')).not.toBeInTheDocument()
+    expect(within(lista).queryByText('Cerrar turno')).not.toBeInTheDocument()
+    expect(within(lista).getByText('Consultando turno…')).toBeDisabled()
+  })
+
+  it('mientras se verifica el turno para cerrarlo, el ítem muestra "Verificando…" deshabilitado', async () => {
+    let consultas = 0
+    mockearRutasDePos((ruta) => {
+      if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+      consultas += 1
+      return consultas === 1 ? Promise.resolve<TurnoResumen>(turnoAbiertoFixture()) : new Promise<TurnoResumen | null>(() => {})
+    })
+    renderShell()
+    await screen.findByText('Caja abierta')
+
+    await elegirDeMenu('Caja', 'Cerrar turno')
+    const lista = await abrirMenu('Caja')
+
+    expect(within(lista).getByText('Verificando…')).toBeDisabled()
+    expect(within(lista).queryByText('Cerrar turno')).not.toBeInTheDocument()
   })
 
   it('"Abrir turno" abre el gate de apertura del turno', async () => {
