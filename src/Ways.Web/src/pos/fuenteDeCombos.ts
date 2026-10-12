@@ -3,6 +3,7 @@
  * cuando la caja tiene una utilizable (también sin conexión) y, si no, de la API. Las dos fuentes entregan lo mismo, así
  * que ni el modal ni el código `C12` saben cuál están usando.
  */
+import { ErrorApi } from '../api/cliente'
 import { clienteDeCombos } from '../api/combos'
 import type {
   ArticuloDeInstantanea,
@@ -13,6 +14,10 @@ import type {
   InstantaneaDePos,
 } from '../api/tipos'
 import { motivoDeComboNoCargable, type ComboParaCargar, type ComponenteParaCargar } from './cargaDeCombos'
+import { conTiempoLimite, TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
+
+/** Tras no encontrar un combo con un código en la API, no se vuelve a preguntar por ese mismo código durante este lapso. */
+export const VENTANA_DE_COMBO_AUSENTE_MS = 60_000
 
 export type ComboDeLista = {
   idCombo: number
@@ -33,6 +38,13 @@ export type FuenteDeCombos = {
   buscarPorCodigo: (codigo: number) => Promise<ComboDeLista | null>
   /** El combo con sus candidatos; rechaza si ya no existe. */
   cargar: (idCombo: number) => Promise<ComboParaCargar>
+  /**
+   * Solo en la fuente con instantánea y conexión: lo que la instantánea sabe, sin ninguna llamada. Permite al llamador mirar
+   * sus artículos locales antes de preguntarle a la API (`buscarEnLaApi`). Ausente, `buscarPorCodigo` es el único paso.
+   */
+  buscarSinRed?: (codigo: number) => Promise<ComboDeLista | null>
+  /** Solo junto a `buscarSinRed`: el complemento por la API, con tiempo límite y sin repetir un código ausente en 60 s. */
+  buscarEnLaApi?: (codigo: number) => Promise<ComboDeLista | null>
 }
 
 function resumenDe(componentes: readonly Pick<ComponenteParaCargar, 'etiqueta' | 'cantidad'>[]): string {
@@ -92,10 +104,23 @@ function aComboParaCargarDesdeApi(combo: ComboCargableDeApi): ComboParaCargar {
 /** Combos de `GET /api/combos` (los activos, de todo el tenant o de la empresa del punto de venta) y candidatos de
  * `GET /api/combos/{id}/cargable`. El servidor no filtra el precio: igual que el escaneo, un artículo sin precio se
  * agrega y el carrito lo muestra sin precio. */
-export function fuenteDesdeApi(idEmpresa: number | null, cliente: ClienteDeCombos = clienteDeCombos): FuenteDeCombos {
+export type FuenteDeCombosDeApi = FuenteDeCombos & {
+  /** Como `buscarPorCodigo`, pero para sondear sin congelar la caja: vence a los `TIEMPO_LIMITE_DE_RED_MS` (cuenta como
+   * lectura fallida) y un código que la API no tiene no se vuelve a preguntar durante `VENTANA_DE_COMBO_AUSENTE_MS`. */
+  sondearPorCodigo: (codigo: number) => Promise<ComboDeLista | null>
+  /** Olvida los códigos ausentes: el siguiente sondeo vuelve a preguntar. */
+  olvidarAusentes: () => void
+}
+
+export function fuenteDesdeApi(
+  idEmpresa: number | null,
+  cliente: ClienteDeCombos = clienteDeCombos,
+  ahora: () => number = Date.now,
+): FuenteDeCombosDeApi {
   // La lista se guarda en memoria mientras viva la fuente (la vida de la pantalla): `listar` (el buscador al abrirse) siempre
   // la vuelve a pedir y `buscarPorCodigo` solo cuando el código no está en lo guardado, una vez, y recién entonces decide.
   let guardada: ComboDeLista[] | null = null
+  const ausentes = new Map<number, number>()
 
   const leer = async () => {
     const lista = (await cliente.listar())
@@ -106,15 +131,43 @@ export function fuenteDesdeApi(idEmpresa: number | null, cliente: ClienteDeCombo
     return lista
   }
 
+  const buscarPorCodigo = async (codigo: number) => {
+    const enGuardada = guardada?.find((c) => c.codigo === codigo)
+    if (enGuardada && enGuardada.motivoNoCargable === null) return enGuardada
+    if (enGuardada) {
+      // Lo guardado puede estar viejo: un combo que figura como no cargable se vuelve a leer una vez antes de rechazarlo, y
+      // si esa lectura falla se queda con lo que ya sabía.
+      try {
+        return (await leer()).find((c) => c.codigo === codigo) ?? null
+      } catch {
+        return enGuardada
+      }
+    }
+    return (await leer()).find((c) => c.codigo === codigo) ?? null
+  }
+
   return {
     origen: 'api',
     listar: leer,
-    buscarPorCodigo: async (codigo) => {
-      const enGuardada = guardada?.find((c) => c.codigo === codigo)
-      if (enGuardada) return enGuardada
-      return (await leer()).find((c) => c.codigo === codigo) ?? null
+    buscarPorCodigo,
+    cargar: async (idCombo) => {
+      try {
+        return aComboParaCargarDesdeApi(await cliente.cargable(idCombo, idEmpresa))
+      } catch (e) {
+        // Un 404 sobre un combo guardado: ya no existe, así que no puede seguir fallando desde la memoria.
+        if (e instanceof ErrorApi && e.estado === 404 && guardada) guardada = guardada.filter((c) => c.idCombo !== idCombo)
+        throw e
+      }
     },
-    cargar: async (idCombo) => aComboParaCargarDesdeApi(await cliente.cargable(idCombo, idEmpresa)),
+    sondearPorCodigo: async (codigo) => {
+      const desde = ausentes.get(codigo)
+      if (desde !== undefined && ahora() - desde < VENTANA_DE_COMBO_AUSENTE_MS) return null
+      const combo = await conTiempoLimite(() => buscarPorCodigo(codigo), TIEMPO_LIMITE_DE_RED_MS)
+      if (combo === null) ausentes.set(codigo, ahora())
+      else ausentes.delete(codigo)
+      return combo
+    },
+    olvidarAusentes: () => ausentes.clear(),
   }
 }
 
@@ -233,7 +286,7 @@ export function elegirFuenteDeCombos(params: {
   idEmpresa: number | null
   enLinea?: boolean
   /** La fuente de la API de la pantalla, para que conserve su lista entre una lectura y otra. */
-  api?: FuenteDeCombos
+  api?: FuenteDeCombosDeApi
 }): FuenteDeCombos {
   const api = params.api ?? fuenteDesdeApi(params.idEmpresa)
   if (!params.instantanea) return api
@@ -245,7 +298,9 @@ export function elegirFuenteDeCombos(params: {
   return {
     origen: local.origen,
     listar: params.instantanea.combos === undefined ? api.listar : local.listar,
-    buscarPorCodigo: async (codigo) => (await local.buscarPorCodigo(codigo)) ?? (await api.buscarPorCodigo(codigo)),
+    buscarPorCodigo: async (codigo) => (await local.buscarPorCodigo(codigo)) ?? (await api.sondearPorCodigo(codigo)),
+    buscarSinRed: local.buscarPorCodigo,
+    buscarEnLaApi: api.sondearPorCodigo,
     cargar: (idCombo) => (idsLocales.has(idCombo) ? local.cargar(idCombo) : api.cargar(idCombo)),
   }
 }

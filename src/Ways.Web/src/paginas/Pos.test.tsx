@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TIEMPO_LIMITE_DE_RED_MS } from '../pos/tiempoLimite'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -7682,6 +7683,17 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(await screen.findByRole('dialog', { name: 'Buscar combo' })).toBeInTheDocument()
     })
 
+    it.each(['altKey', 'ctrlKey', 'metaKey'])('F4 con %s apretada es del sistema: no se evita ni abre el buscador', async (modificador) => {
+      mockearCombos()
+      await montar()
+
+      expect(fireEvent.keyDown(document, { key: 'F4', [modificador]: true })).toBe(true)
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(fireEvent.keyDown(document, { key: 'F4' })).toBe(false)
+      expect(await screen.findByRole('dialog', { name: 'Buscar combo' })).toBeInTheDocument()
+    })
+
     it('F4 no abre el buscador mientras una lectura por código sigue en vuelo', async () => {
       let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
       mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
@@ -7975,6 +7987,78 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
       expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
       expect(filasDelCarrito()).toHaveLength(2)
+    })
+
+    it('si agregar las líneas del combo lanza una excepción, el escaneo termina limpio: aviso, input usable y sin buscar artículos', async () => {
+      const roto = candidato(PANCHO)
+      Object.defineProperty(roto, 'nombre', {
+        enumerable: true,
+        get() {
+          throw new Error('boom')
+        },
+      })
+      mockearCombos({
+        detalle: cargable({ componentes: [{ idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [roto] }] }),
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No se pudo cargar el combo C7.')).toBeInTheDocument()
+      expect(codigo).toBeEnabled()
+      expect(codigo).toHaveValue('C7')
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('un combo guardado como no cargable que ya se reparó se vuelve a leer antes de rechazarlo', async () => {
+      let lista = [
+        listado({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
+            { idArticulo: null, idFamilia: 9, nombre: null, cantidad: 1, disponible: false },
+          ],
+        }),
+      ]
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(lista)
+        if (ruta.startsWith('/combos/70/cargable')) return Promise.resolve(cargable())
+        return undefined
+      })
+      const codigo = await montar()
+      await tipearYAgregar('C7')
+      expect(await screen.findByText('Un componente del combo ya no está disponible.')).toBeInTheDocument()
+
+      lista = [listado()]
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      expect(await articuloEnElCarrito('Pancho')).toBeInTheDocument()
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(2)
+      await waitFor(() => expect(codigo).toHaveValue(''))
+    })
+
+    it('un 404 al leer el detalle de un combo guardado lo olvida y sigue como «no hay combo»: el artículo con el texto original', async () => {
+      let lecturas = 0
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(lecturas++ === 0 ? [listado()] : [])
+        if (ruta.startsWith('/combos/70/cargable')) return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe el combo 70.'))
+        if (ruta === '/articulos/escaneo?entrada=C7') return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable C7' }))
+        return undefined
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('Cable C7')).toBeInTheDocument()
+      expect(screen.queryByText('No existe el combo 70.')).not.toBeInTheDocument()
+      expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+      expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(2)
     })
 
     it('si el cobro empieza mientras se lee el combo, el combo no se agrega y se avisa', async () => {
@@ -8323,15 +8407,92 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(codigo).toHaveValue('')
     })
 
-    it('con conexión, un código que ni la instantánea ni la API tienen cae al artículo C12 de la instantánea, tras probar la API una vez', async () => {
+    const NO_EXISTE_EL_ARTICULO = 'No existe un artículo con ese código.'
+    const sinArticuloC13 = (ruta: string) =>
+      ruta === '/articulos/escaneo?entrada=C13' ? Promise.reject(new ErrorApi(404, 'no_encontrado', NO_EXISTE_EL_ARTICULO)) : undefined
+
+    it('con conexión, C12 que es un artículo de la instantánea (y no un combo) se agrega sin pedir combos ni artículos a la red', async () => {
       mockearCombos()
-      await montarConInstantanea([comboLocal()])
+      const codigo = await montarConInstantanea([comboLocal()])
 
       await tipearYAgregar('C12')
 
       expect(await screen.findByText('Cable C12')).toBeInTheDocument()
-      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+      expect(llamadasGet('/combos')).toEqual([])
       expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(codigo).toHaveValue('')
+    })
+
+    it('con conexión, un código que la instantánea no conoce prueba la API una vez y un segundo escaneo dentro de los 60 s no la vuelve a probar', async () => {
+      mockearCombos({ escaneo: sinArticuloC13 })
+      await montarConInstantanea([comboLocal()])
+
+      await tipearYAgregar('C13')
+      expect(await screen.findByText(NO_EXISTE_EL_ARTICULO)).toBeInTheDocument()
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+      expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+    })
+
+    it('abrir el buscador de combos olvida los códigos ausentes: el siguiente escaneo vuelve a probar la API', async () => {
+      mockearCombos({ escaneo: sinArticuloC13 })
+      await montarConInstantanea([comboLocal()])
+      await tipearYAgregar('C13')
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(1))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(2)
+    })
+
+    describe('si el sondeo de la API no responde', () => {
+      /** El tope de espera es un `setTimeout` real: se simula solo después de tipear, para no frenar a `userEvent`. */
+      async function agregarYVencerElTope() {
+        await userEvent.type(screen.getByLabelText('Código escaneado'), 'C13')
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        try {
+          fireEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DE_RED_MS)
+          })
+        } finally {
+          vi.useRealTimers()
+        }
+      }
+
+      it('vence el tope, el artículo se busca igual y, si aparece, no se avisa nada de los combos', async () => {
+        mockearApiGet((ruta) => {
+          if (ruta === '/combos') return new Promise(() => {})
+          if (ruta === '/articulos/escaneo?entrada=C13') return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable C13' }))
+          return undefined
+        })
+        await montarConInstantanea([comboLocal()])
+
+        await agregarYVencerElTope()
+
+        expect(await screen.findByText('Cable C13')).toBeInTheDocument()
+        expect(screen.queryByText(/No se pudieron leer los combos/)).not.toBeInTheDocument()
+      })
+
+      it('vence el tope y el artículo tampoco aparece: el aviso dice también que no se pudieron leer los combos', async () => {
+        mockearApiGet((ruta) => {
+          if (ruta === '/combos') return new Promise(() => {})
+          return sinArticuloC13(ruta)
+        })
+        await montarConInstantanea([comboLocal()])
+
+        await agregarYVencerElTope()
+
+        expect(await screen.findByText(`${NO_EXISTE_EL_ARTICULO} No se pudieron leer los combos.`)).toBeInTheDocument()
+      })
     })
 
     it('con conexión, un combo creado después de la última sincronización (la instantánea no lo tiene) se carga desde la API', async () => {

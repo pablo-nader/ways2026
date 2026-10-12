@@ -1222,11 +1222,21 @@ idénticas), y es el carrito el que después detecta el combo por sí mismo. Hay
   izquierda) toma este camino; cualquier otra (`C0`, `C012`, `C001`, `C1000000`, `C12X`, `3*C7`) va directo a la búsqueda de
   artículos y no hace ninguna lectura de combos: un artículo codificado con relleno de ceros no queda tapado por un combo.
   Se busca primero un combo activo con ese número (D7); si no hay, la búsqueda de artículos sigue con el texto ORIGINAL tal
-  como se tipeó, porque el `codigo_interno` de un artículo es libre y puede ser `C12`. Solo la búsqueda por código está
-  protegida así: si falla (red, 500) la búsqueda de artículos también sigue, pero si el artículo tampoco aparece el aviso
-  agrega «No se pudieron leer los combos.». Un combo que existe y no se puede leer o cargar (motivo propio, detalle que
-  falla, cobro que empezó mientras tanto) avisa el motivo y NO cae a artículos; cada camino en que el combo se descarta deja
-  un aviso, nunca un descarte silencioso.
+  como se tipeó, porque el `codigo_interno` de un artículo es libre y puede ser `C12`. La caja es local-first: un escaneo
+  nunca espera a la red si la instantánea puede responder. Con una instantánea utilizable y conexión el orden es (1) un
+  combo con ese número en la instantánea: se carga, sin ninguna llamada; (2) si no, un ARTÍCULO que la instantánea resuelve
+  con el texto tipeado (la misma búsqueda local de un escaneo común): se agrega, sin ninguna consulta de combos; (3) si la
+  instantánea no conoce ni uno ni otro, se le pregunta a la API por un combo con ese número y después sigue la búsqueda de
+  artículos de siempre. Ese sondeo está acotado: vence a los 5 s (`TIEMPO_LIMITE_DE_RED_MS`) y cuenta como lectura fallida, y
+  tras no encontrar un combo con un código no se vuelve a preguntar por ese mismo código durante 60 s (se olvida al abrir
+  "Buscar combo"). Sin conexión solo cuenta la instantánea y no hay ninguna llamada. Sin instantánea (web) el orden es la
+  lista de combos de la API (guardada en memoria) y después la búsqueda de artículos. Un combo guardado que figura como no
+  cargable se vuelve a leer una vez antes de rechazarlo, y un detalle que responde 404 (el combo se dio de baja) se olvida y
+  sigue como «no hay combo con ese número». Solo la búsqueda por código está protegida así: si falla (red, 500, tiempo
+  agotado) la búsqueda de artículos también sigue, pero si el artículo tampoco aparece el aviso agrega «No se pudieron leer
+  los combos.». Un combo que existe y no se puede leer o cargar (motivo propio, detalle que falla, cobro que empezó mientras
+  tanto) avisa el motivo y NO cae a artículos; cada camino en que el combo se descarta deja un aviso, nunca un descarte
+  silencioso. El atajo F4 se ignora con Alt, Ctrl o Meta apretadas (Alt+F4 cierra la ventana).
 
 Todo o nada: el combo entra entero o no entra. Una familia con un solo candidato se agrega directo; con varios, un único
 selector reparte la cantidad de cada componente de familia entre sus miembros y "Agregar combo" queda deshabilitado hasta

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloDeInstantanea, ComboCargableDeApi, ComboListado, InstantaneaDePos, UnidadVenta } from '../api/tipos'
 import { elegirFuenteDeCombos, fuenteDesdeApi, fuenteDesdeInstantanea } from './fuenteDeCombos'
+import { ErrorDeTiempoAgotado, TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
 
 const LISTA = 5
 
@@ -238,7 +239,7 @@ describe('fuenteDesdeApi: lista en memoria', () => {
 
     await fuente.buscarPorCodigo(1)
     await fuente.buscarPorCodigo(1)
-    await fuente.buscarPorCodigo(5)
+    await fuente.buscarPorCodigo(1)
 
     expect(c.listar).toHaveBeenCalledTimes(1)
   })
@@ -278,6 +279,126 @@ describe('fuenteDesdeApi: lista en memoria', () => {
   })
 })
 
+describe('fuenteDesdeApi: lo guardado que quedó viejo', () => {
+  const cliente = () => ({ listar: vi.fn().mockResolvedValue(LISTADO), cargable: vi.fn() })
+  const REPARADO = LISTADO.map((c) => (c.codigo === 5 ? { ...c, componentes: c.componentes.map((x) => ({ ...x, disponible: true })) } : c))
+
+  it('un combo guardado como no cargable se vuelve a leer una vez antes de rechazarlo, y si ya se reparó se carga', async () => {
+    const c = cliente()
+    const fuente = fuenteDesdeApi(4, c)
+    expect((await fuente.buscarPorCodigo(5))?.motivoNoCargable).not.toBeNull()
+    expect(c.listar).toHaveBeenCalledTimes(1)
+
+    c.listar.mockResolvedValue(REPARADO)
+    const reparado = await fuente.buscarPorCodigo(5)
+
+    expect(c.listar).toHaveBeenCalledTimes(2)
+    expect(reparado?.motivoNoCargable).toBeNull()
+  })
+
+  it('si la nueva lectura falla, se queda con el motivo que ya conocía en vez de caer a «no hay combo»', async () => {
+    const c = cliente()
+    const fuente = fuenteDesdeApi(4, c)
+    await fuente.buscarPorCodigo(5)
+    c.listar.mockRejectedValue(new ErrorApi(500, 'error', 'Falló.'))
+
+    expect((await fuente.buscarPorCodigo(5))?.motivoNoCargable).toBe('Un componente del combo ya no está disponible.')
+  })
+
+  it('un combo guardado y cargable no vuelve a leer la lista', async () => {
+    const c = cliente()
+    const fuente = fuenteDesdeApi(4, c)
+    await fuente.buscarPorCodigo(1)
+    await fuente.buscarPorCodigo(1)
+
+    expect(c.listar).toHaveBeenCalledTimes(1)
+  })
+
+  it('un 404 al cargar un combo guardado lo saca de lo guardado: el próximo código vuelve a la lista y ya no lo encuentra', async () => {
+    const c = cliente()
+    c.cargable.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el combo 1.'))
+    const fuente = fuenteDesdeApi(4, c)
+    await fuente.buscarPorCodigo(1)
+
+    await expect(fuente.cargar(1)).rejects.toBeInstanceOf(ErrorApi)
+    c.listar.mockResolvedValue(LISTADO.filter((x) => x.codigo !== 1))
+
+    expect(await fuente.buscarPorCodigo(1)).toBeNull()
+    expect(c.listar).toHaveBeenCalledTimes(2)
+  })
+
+  it('un error del detalle que no es 404 deja lo guardado como estaba', async () => {
+    const c = cliente()
+    c.cargable.mockRejectedValue(new ErrorApi(500, 'error', 'Falló.'))
+    const fuente = fuenteDesdeApi(4, c)
+    await fuente.buscarPorCodigo(1)
+
+    await expect(fuente.cargar(1)).rejects.toBeInstanceOf(ErrorApi)
+    await fuente.buscarPorCodigo(1)
+
+    expect(c.listar).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('fuenteDesdeApi: sondeo acotado', () => {
+  it('un código ausente no se vuelve a preguntar durante 60 s y después sí', async () => {
+    let reloj = 1_000
+    const c = { listar: vi.fn().mockResolvedValue(LISTADO), cargable: vi.fn() }
+    const fuente = fuenteDesdeApi(4, c, () => reloj)
+
+    expect(await fuente.sondearPorCodigo(77)).toBeNull()
+    reloj += 59_999
+    expect(await fuente.sondearPorCodigo(77)).toBeNull()
+    expect(c.listar).toHaveBeenCalledTimes(1)
+
+    reloj += 1
+    await fuente.sondearPorCodigo(77)
+    expect(c.listar).toHaveBeenCalledTimes(2)
+  })
+
+  it('la memoria de ausentes es por código: otro código sí pregunta', async () => {
+    const c = { listar: vi.fn().mockResolvedValue(LISTADO), cargable: vi.fn() }
+    const fuente = fuenteDesdeApi(4, c, () => 1_000)
+    await fuente.sondearPorCodigo(77)
+
+    expect((await fuente.sondearPorCodigo(1))?.idCombo).toBe(1)
+  })
+
+  it('olvidarAusentes hace que el próximo sondeo vuelva a preguntar', async () => {
+    const c = { listar: vi.fn().mockResolvedValue(LISTADO), cargable: vi.fn() }
+    const fuente = fuenteDesdeApi(4, c, () => 1_000)
+    await fuente.sondearPorCodigo(77)
+    fuente.olvidarAusentes()
+    await fuente.sondearPorCodigo(77)
+
+    expect(c.listar).toHaveBeenCalledTimes(2)
+  })
+
+  it('una lectura que falla no se recuerda como ausente', async () => {
+    const c = { listar: vi.fn().mockRejectedValueOnce(new ErrorApi(500, 'error', 'Falló.')).mockResolvedValue(LISTADO), cargable: vi.fn() }
+    const fuente = fuenteDesdeApi(4, c, () => 1_000)
+
+    await expect(fuente.sondearPorCodigo(1)).rejects.toBeInstanceOf(ErrorApi)
+
+    expect((await fuente.sondearPorCodigo(1))?.idCombo).toBe(1)
+  })
+
+  it('una lectura que no responde vence al tope de la red y cuenta como lectura fallida', async () => {
+    vi.useFakeTimers()
+    try {
+      const c = { listar: vi.fn().mockReturnValue(new Promise(() => {})), cargable: vi.fn() }
+      const fuente = fuenteDesdeApi(4, c)
+      const resultado = expect(fuente.sondearPorCodigo(1)).rejects.toBeInstanceOf(ErrorDeTiempoAgotado)
+
+      await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DE_RED_MS)
+
+      await resultado
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('elegirFuenteDeCombos: instantánea y API', () => {
   const COMBO_LOCAL = { idCombo: 20, codigo: 8, nombre: 'Local', precio: 900, componentes: [{ idArticulo: 1, cantidad: 2 }] }
   const armar = (combos: InstantaneaDePos['combos'], enLinea: boolean) => {
@@ -307,6 +428,17 @@ describe('elegirFuenteDeCombos: instantánea y API', () => {
 
     expect((await fuente.buscarPorCodigo(8))?.idCombo).toBe(20)
     expect(cliente.listar).not.toHaveBeenCalled()
+  })
+
+  it('con conexión separa lo local (sin red) de lo que pregunta a la API; sin conexión no ofrece el paso de la API', async () => {
+    const conRed = armar([COMBO_LOCAL], true)
+    const sinRed = armar([COMBO_LOCAL], false)
+
+    expect(await conRed.fuente.buscarSinRed?.(1)).toBeNull()
+    expect(conRed.cliente.listar).not.toHaveBeenCalled()
+    expect((await conRed.fuente.buscarEnLaApi?.(1))?.idCombo).toBe(1)
+    expect(sinRed.fuente.buscarEnLaApi).toBeUndefined()
+    expect(sinRed.fuente.buscarSinRed).toBeUndefined()
   })
 
   it('sin conexión responde solo con la instantánea: ni una llamada', async () => {

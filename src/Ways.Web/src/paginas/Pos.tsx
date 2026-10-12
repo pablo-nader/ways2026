@@ -101,7 +101,7 @@ import {
   type ComboParaCargar,
 } from '../pos/cargaDeCombos'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
-import { elegirFuenteDeCombos, fuenteDesdeApi } from '../pos/fuenteDeCombos'
+import { elegirFuenteDeCombos, fuenteDesdeApi, type ComboDeLista } from '../pos/fuenteDeCombos'
 import {
   aClienteListado,
   aMedioPagoListado,
@@ -1318,6 +1318,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // La fuente de la API vive aparte para conservar su lista de combos mientras la pantalla esté montada.
   const fuenteDeCombosDeLaApi = useMemo(() => fuenteDesdeApi(idEmpresaDeLaVenta), [idEmpresaDeLaVenta])
   const enLineaParaCombos = sincronizacionOffline.enLinea
+  // Abrir el buscador de combos olvida los códigos que la API no tenía: el cajero acaba de ver la lista y puede haber cambiado.
+  useEffect(() => {
+    if (buscadorDeCombosAbierto) fuenteDeCombosDeLaApi.olvidarAusentes()
+  }, [buscadorDeCombosAbierto, fuenteDeCombosDeLaApi])
   const fuenteDeCombos = useMemo(
     () =>
       elegirFuenteDeCombos({
@@ -2531,15 +2535,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * búsqueda de artículos con el texto original, porque el código interno de un artículo puede ser perfectamente `C12`.
    * Solo la búsqueda por código está en el `try`: un combo ENCONTRADO que no se puede leer ni cargar avisa el motivo y NO cae
    * a artículos, y `cargarCombo` corre fuera para que una excepción al agregar nunca desemboque en un escaneo de artículo.
+   * Un detalle que responde 404 (el combo se dio de baja después de leerlo) es «no hay un combo con ese número».
    * Solo se llama para entradas con forma de código de combo, así que el escaneo común no paga nada.
    */
   async function intentarCargarComboPorCodigo(
     codigo: number,
     token: number,
+    buscar: (codigo: number) => Promise<ComboDeLista | null>,
   ): Promise<'cargado' | 'rechazado' | 'sin_combo' | 'lectura_fallida' | 'obsoleto'> {
-    let encontrado: Awaited<ReturnType<typeof fuenteDeCombos.buscarPorCodigo>>
+    let encontrado: ComboDeLista | null
     try {
-      encontrado = await fuenteDeCombos.buscarPorCodigo(codigo)
+      encontrado = await buscar(codigo)
     } catch {
       return tokenEscaneoRef.current === token ? 'lectura_fallida' : 'obsoleto'
     }
@@ -2555,6 +2561,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       completo = await fuenteDeCombos.cargar(encontrado.idCombo)
     } catch (e) {
       if (tokenEscaneoRef.current !== token) return 'obsoleto'
+      if (e instanceof ErrorApi && e.estado === 404) return 'sin_combo'
       setErrorEscaneo(e instanceof ErrorApi ? e.message : `No se pudo leer el combo ${rotuloDeCodigoDeCombo(codigo)}.`)
       return 'rechazado'
     }
@@ -2658,7 +2665,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setErrorEscaneo('')
       let desenlace: Awaited<ReturnType<typeof intentarCargarComboPorCodigo>>
       try {
-        desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo)
+        const buscarSinRed = fuenteDeCombos.buscarSinRed
+        const buscarEnLaApi = fuenteDeCombos.buscarEnLaApi
+        if (buscarSinRed && buscarEnLaApi) {
+          // Con instantánea y conexión la caja no espera a la red si la copia local puede responder: primero los combos de la
+          // instantánea, después sus artículos, y solo si no conoce ninguno de los dos se le pregunta a la API.
+          desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarSinRed)
+          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && buscarArticuloOffline(instantaneaDelPuntoVenta, entrada))) {
+            desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarEnLaApi)
+          }
+        } else {
+          desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, fuenteDeCombos.buscarPorCodigo)
+        }
       } catch {
         // Una excepción al cargar un combo encontrado termina acá: nunca sigue con el escaneo de artículos.
         if (tokenEscaneoRef.current === tokenDeCombo) {
@@ -2856,7 +2874,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
-      if (evento.key !== 'F4') return
+      // Con Alt, Ctrl o Meta la tecla es del sistema (Alt+F4 cierra la ventana): ni se evita ni abre el buscador.
+      if (evento.key !== 'F4' || evento.altKey || evento.ctrlKey || evento.metaKey) return
       // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
       evento.preventDefault()
       if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
