@@ -148,12 +148,13 @@ public sealed record ResultadoDeResolucion(
     ComboDeLineaDto? Combo = null);
 
 /// <summary>Lo que los combos le hacen a una línea del documento, igual que lo grabará la venta online:
-/// <see cref="UnidadesConsumidas"/> de la línea entran a un combo (las demás conservan su oferta unitaria),
+/// <see cref="UnidadesConsumidas"/> de la línea entran a un combo (las demás conservan su oferta unitaria; es una
+/// cantidad en la unidad de venta del artículo, con hasta tres decimales si se vende por peso),
 /// <see cref="Ahorro"/> es la parte del combo como IMPORTE DE LÍNEA (no unitario) y <see cref="IdCombo"/> el combo que
 /// la venta guardará en la línea (el de menor id entre los que consumieron unidades). El neto de la línea es
 /// <c>round((cantidad − UnidadesConsumidas) × (precio − DescuentoUnitario)) + round(UnidadesConsumidas × precio − Ahorro)</c>
 /// y el descuento es <c>bruto − neto</c>, la misma fórmula del checkout (<c>CalculadorDeTotales.NetoDeLinea</c>).</summary>
-public sealed record ComboDeLineaDto(int UnidadesConsumidas, decimal Ahorro, int IdCombo);
+public sealed record ComboDeLineaDto(decimal UnidadesConsumidas, decimal Ahorro, int IdCombo);
 
 /// <summary>Un combo aplicado en el documento: <see cref="Veces"/> que se aplicó y <see cref="Ahorro"/> total (suma de lo
 /// repartido a las líneas por ese combo). <see cref="Codigo"/> es el número que se tipea tras la <c>C</c>.</summary>

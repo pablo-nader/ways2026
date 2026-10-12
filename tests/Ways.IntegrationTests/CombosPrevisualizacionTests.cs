@@ -155,7 +155,7 @@ public class CombosPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture
     /// el neto por línea y el total del documento que calcula la vista previa son los que la venta persiste, y el combo de
     /// cada línea es el mismo (incluida la regla del menor id cuando dos combos consumen la misma línea). Los carritos
     /// cubren: consumo parcial de una línea, competencia entre combos, familia, oferta en una línea que queda fuera del
-    /// combo, artículo pesable excluido y el carrito sin combos.</summary>
+    /// combo, artículo pesable sin combo, combo de dos artículos pesables con excedente y el carrito sin combos.</summary>
     [Fact]
     public async Task LaVistaPreviaCoincideConLoQueLaVentaOnlinePersisteEnVariosCarritos()
     {
@@ -167,6 +167,9 @@ public class CombosPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture
         var papas = await apoyo.ArticuloAsync(ctx, "papas", 1800m);
         var chicle = await apoyo.ArticuloAsync(ctx, "chicle", 100m);
         var queso = await apoyo.ArticuloAsync(ctx, "queso", 1000m, UnidadVenta.Peso);
+        var jamon = await apoyo.ArticuloAsync(ctx, "jamon", 10000m, UnidadVenta.Peso);
+        var salame = await apoyo.ArticuloAsync(ctx, "salame", 8000m, UnidadVenta.Peso);
+        await apoyo.ComboAsync(ctx, 3000m, [Art(jamon, 0.200m), Art(salame, 0.200m)]);
         await apoyo.OfertaDePrecioAsync(ctx, chicle, 80m);
         var comboPancho = await apoyo.ComboAsync(ctx, 5000m, [Art(pancho), Fam(gaseosas)]);
         var comboPapas = await apoyo.ComboAsync(ctx, 3600m, [Art(papas), Art(coca)]);
@@ -179,6 +182,7 @@ public class CombosPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture
             [(chicle, 3m), (pancho, 1m), (coca, 1m)],
             [(coca, 2m), (pancho, 1m), (papas, 1m)],
             [(pancho, 1m), (queso, 1m)],
+            [(jamon, 0.215m), (salame, 0.400m), (pancho, 1m)],
         ];
 
         foreach (var carrito in carritos)
@@ -216,16 +220,39 @@ public class CombosPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture
     // ---- Mismas exclusiones que la venta ----
 
     [Fact]
-    public async Task UnArticuloPesableNoCompletaUnCombo()
+    public async Task UnArticuloPesableCompletaUnComboYSuLineaInformaLosKilosConsumidos()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(UnArticuloPesableNoCompletaUnCombo), ModoPuntoVenta.Web);
+        var ctx = await apoyo.PrepararAsync(nameof(UnArticuloPesableCompletaUnComboYSuLineaInformaLosKilosConsumidos), ModoPuntoVenta.Web);
         var pancho = await apoyo.ArticuloAsync(ctx, "pancho", 3000m);
         var queso = await apoyo.ArticuloAsync(ctx, "queso", 1000m, UnidadVenta.Peso);
-        await apoyo.ComboAsync(ctx, 3500m, [Art(pancho), Art(queso)]);
+        var combo = await apoyo.ComboAsync(ctx, 3000m, [Art(pancho), Art(queso, 0.200m)]);
 
-        var respuesta = await PrevisualizarAsync(ctx, (pancho, 1m), (queso, 2m));
+        var respuesta = await PrevisualizarAsync(ctx, (pancho, 1m), (queso, 0.215m));
 
-        Assert.Equal(0, respuesta.GetProperty("combos").GetArrayLength());
+        var aplicado = Assert.Single(respuesta.GetProperty("combos").EnumerateArray());
+        Assert.Equal(combo, aplicado.GetProperty("idCombo").GetInt32());
+        Assert.Equal(1, aplicado.GetProperty("veces").GetInt32());
+        var delQueso = respuesta.GetProperty("lineas")[1].GetProperty("combo");
+        Assert.Equal(0.200m, delQueso.GetProperty("unidadesConsumidas").GetDecimal());
+        Assert.Equal(13m, delQueso.GetProperty("ahorro").GetDecimal());
+        Assert.Equal(1m, respuesta.GetProperty("lineas")[0].GetProperty("combo").GetProperty("unidadesConsumidas").GetDecimal());
+    }
+
+    /// <summary>Las unidades consumidas de un artículo por unidad siguen viajando como un entero sin decimales: un
+    /// cliente que las lee como entero no se rompe.</summary>
+    [Fact]
+    public async Task LasUnidadesConsumidasDeUnArticuloPorUnidadViajanComoUnEnteroSinDecimales()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(LasUnidadesConsumidasDeUnArticuloPorUnidadViajanComoUnEnteroSinDecimales), ModoPuntoVenta.Web);
+        var pancho = await apoyo.ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await apoyo.ArticuloAsync(ctx, "coca", 2500m);
+        await apoyo.ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        var respuesta = await PrevisualizarAsync(ctx, (pancho, 2m), (coca, 1m));
+
+        var unidades = respuesta.GetProperty("lineas")[0].GetProperty("combo").GetProperty("unidadesConsumidas");
+        Assert.Equal("1", unidades.GetRawText());
+        Assert.Equal(1, unidades.GetInt32());
     }
 
     [Fact]

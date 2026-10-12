@@ -452,8 +452,8 @@ public class ServicioDeOfertas(
     /// no las lee del cuerpo sino de su punto de venta y de su cliente, y una vista previa con otros valores no es el
     /// total de la venta.</para>
     ///
-    /// <para>Presupuesto: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite si el
-    /// documento suma menos de 2 unidades. No escribe nada.</para>
+    /// <para>Presupuesto: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite si todas
+    /// las líneas son de artículos por unidad y el documento suma menos de 2 unidades. No escribe nada.</para>
     /// </summary>
     public async Task<ResolucionConCombos> ResolverConCombosAsync(
         SolicitudDeResolucion solicitud, CancellationToken ct = default)

@@ -15,7 +15,8 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// <c>GET /api/combos/{id}/cargable</c> contra Postgres real: lo que el POS necesita para cargar un combo como líneas de
 /// artículo. Cubre los roles, el 404 antes de todo, el aislamiento entre tenants y de empresa, los miembros de una
-/// familia (excluye pesables, inactivos y dados de baja), el componente colgado con la lista vacía y el techo de consultas.
+/// familia (excluye inactivos, dados de baja y los de una unidad de venta que no admite la cantidad del componente), el
+/// componente colgado con la lista vacía y el techo de consultas.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CombosCargablesTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -99,9 +100,9 @@ public class CombosCargablesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     [Fact]
-    public async Task UnComponenteDeFamiliaDevuelveSoloSusMiembrosVivosActivosYPorUnidad()
+    public async Task UnComponenteDeFamiliaDevuelveSoloSusMiembrosVivosYActivos()
     {
-        using var e = await apoyo.PrepararAsync(nameof(UnComponenteDeFamiliaDevuelveSoloSusMiembrosVivosActivosYPorUnidad));
+        using var e = await apoyo.PrepararAsync(nameof(UnComponenteDeFamiliaDevuelveSoloSusMiembrosVivosYActivos));
         var familia = await apoyo.SembrarFamiliaAsync(e, "Gaseosas");
         var sprite = await ArticuloAsync(e, "sprite", idFamilia: familia);
         var coca = await ArticuloAsync(e, "coca", idFamilia: familia);
@@ -109,10 +110,8 @@ public class CombosCargablesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await ArticuloAsync(e, "caida", idFamilia: familia, dadoDeBaja: true);
         await ArticuloAsync(e, "ajena-a-la-familia");
         var pancho = await ArticuloAsync(e, "pancho");
+        var pesable = await ArticuloAsync(e, "pesable", UnidadVenta.Peso, familia);
         var id = await ComboAsync(e.Admin, [Art(pancho), Fam(familia, 2m)]);
-
-        // El ABM rechaza una familia con un pesable, pero nada impide sumarlo después: la lectura tiene que dejarlo afuera.
-        await ArticuloAsync(e, "pesable", UnidadVenta.Peso, familia);
 
         var combo = await LeerAsync(await CargableAsync(e.Admin, id, e.IdEmpresa));
 
@@ -120,7 +119,38 @@ public class CombosCargablesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(familia, deLaFamilia.IdFamilia);
         Assert.Equal("Gaseosas", deLaFamilia.Nombre);
         Assert.Equal(2m, deLaFamilia.Cantidad);
-        Assert.Equal([coca, sprite], deLaFamilia.Candidatos.Select(c => c.IdArticulo));
+        Assert.Equal([coca, pesable, sprite], deLaFamilia.Candidatos.Select(c => c.IdArticulo));
+    }
+
+    /// <summary>Cláusula: solo son candidatos los artículos cuya unidad de venta admite la cantidad del componente. El
+    /// ABM lo comprueba al guardar, pero después un artículo puede cambiar de unidad o sumarse a la familia: la lectura
+    /// los deja afuera.</summary>
+    [Fact]
+    public async Task UnComponenteDeCantidadFraccionariaSoloTieneDeCandidatosLosArticulosQueSeVendenPorPeso()
+    {
+        using var e = await apoyo.PrepararAsync(
+            nameof(UnComponenteDeCantidadFraccionariaSoloTieneDeCandidatosLosArticulosQueSeVendenPorPeso));
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Fiambres");
+        var jamon = await ArticuloAsync(e, "jamon", UnidadVenta.Peso, familia);
+        var queso = await ArticuloAsync(e, "queso", UnidadVenta.Peso);
+        var id = await ComboAsync(e.Admin, [Art(queso, 0.200m), Fam(familia, 0.250m)]);
+
+        var antes = await LeerAsync(await CargableAsync(e.Admin, id, e.IdEmpresa));
+        Assert.Equal([0.200m, 0.250m], antes.Componentes.Select(c => c.Cantidad));
+        Assert.Equal([queso], antes.Componentes[0].Candidatos.Select(c => c.IdArticulo));
+        Assert.Equal(UnidadVenta.Peso, antes.Componentes[0].Candidatos[0].UnidadVenta);
+        Assert.Equal([jamon], antes.Componentes[1].Candidatos.Select(c => c.IdArticulo));
+
+        await ArticuloAsync(e, "salamin-por-unidad", idFamilia: familia);
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            db.Articulos.Single(a => a.Id == queso).UnidadVenta = UnidadVenta.Unidad;
+            await db.SaveChangesAsync();
+        }
+
+        var despues = await LeerAsync(await CargableAsync(e.Admin, id, e.IdEmpresa));
+        Assert.Empty(despues.Componentes[0].Candidatos);
+        Assert.Equal([jamon], despues.Componentes[1].Candidatos.Select(c => c.IdArticulo));
     }
 
     [Fact]

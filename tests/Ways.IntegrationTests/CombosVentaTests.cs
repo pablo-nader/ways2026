@@ -490,23 +490,82 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.All(emitido.Items, i => Assert.Null(i.IdCombo));
     }
 
+    /// <summary>Cláusula: la unidad de venta del artículo decide en la venta, no la forma de la cantidad. El ABM valida
+    /// la cantidad del componente contra la unidad al guardar el combo, pero el artículo pudo pasar a venderse por
+    /// unidad después: una línea de ese artículo no completa un componente fraccionario.</summary>
     [Fact]
-    public async Task UnArticuloPesableConCantidadEnteraNoSeConsumeAunqueElComboLoNombre()
+    public async Task UnArticuloQuePasoAVendersePorUnidadNoCompletaUnComponenteFraccionario()
     {
-        var ctx = await PrepararAsync(nameof(UnArticuloPesableConCantidadEnteraNoSeConsumeAunqueElComboLoNombre));
+        var ctx = await PrepararAsync(nameof(UnArticuloQuePasoAVendersePorUnidadNoCompletaUnComponenteFraccionario));
         var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
-        var queso = await ArticuloAsync(ctx, "queso", 2500m);
-        await ComboAsync(ctx, 5000m, [Art(pancho), Art(queso)]);
+        var queso = await ArticuloAsync(ctx, "queso", 2500m, UnidadVenta.Peso);
+        await ComboAsync(ctx, 3500m, [Art(pancho), Art(queso, 0.500m)]);
 
-        // El ABM valida la unidad de venta al guardar el combo; el artículo pudo cambiar a pesable después.
         await using (var db = Db(ctx.IdTenant))
         {
-            await db.Articulos.Where(a => a.Id == queso).ExecuteUpdateAsync(s => s.SetProperty(a => a.UnidadVenta, UnidadVenta.Peso));
+            await db.Articulos.Where(a => a.Id == queso).ExecuteUpdateAsync(s => s.SetProperty(a => a.UnidadVenta, UnidadVenta.Unidad));
         }
 
         var emitido = await EmitirAsync(ctx, 5500m, (pancho, 1m), (queso, 1m));
 
         Assert.Equal(5500m, emitido.Total);
+        Assert.Equal(0m, emitido.DescuentoTotal);
+        Assert.All(emitido.Items, i => Assert.Null(i.IdCombo));
+    }
+
+    private async Task<(Contexto Ctx, int Jamon, int Queso, int Combo)> JamonYQuesoAsync(string nombre)
+    {
+        var ctx = await PrepararAsync(nombre);
+        var jamon = await ArticuloAsync(ctx, "jamon", 10000m, UnidadVenta.Peso);
+        var queso = await ArticuloAsync(ctx, "queso", 8000m, UnidadVenta.Peso);
+        var combo = await ComboAsync(ctx, 3000m, [Art(jamon, 0.200m), Art(queso, 0.200m)]);
+
+        return (ctx, jamon, queso, combo);
+    }
+
+    [Fact]
+    public async Task UnComboDeDosPesablesConsumeLaCantidadDelComponenteYElExcedenteQuedaAPrecioDeLista()
+    {
+        var (ctx, jamon, queso, combo) = await JamonYQuesoAsync(
+            nameof(UnComboDeDosPesablesConsumeLaCantidadDelComponenteYElExcedenteQuedaAPrecioDeLista));
+
+        // 215 g de jamón: 200 g entran al combo y 15 g (150) quedan a precio de lista.
+        var emitido = await EmitirAsync(ctx, 3150m, (jamon, 0.215m), (queso, 0.200m));
+
+        Assert.Equal(3150m, emitido.Total);
+        Assert.Equal(3750m, emitido.Subtotal);
+        Assert.Equal(600m, emitido.DescuentoTotal);
+        Assert.Equal([0.215m, 0.200m], emitido.Items.Select(i => i.Cantidad));
+        Assert.Equal([333m, 267m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([1817m, 1333m], emitido.Items.Select(i => i.Total));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+
+        var persistidos = await ItemsAsync(ctx, emitido.Id);
+        Assert.Equal([(jamon, 0.215m, 1817m), (queso, 0.200m, 1333m)], persistidos.Select(i => (i.IdArticulo!.Value, i.Cantidad, i.Total)));
+        Assert.All(persistidos, i => Assert.Equal(combo, i.IdCombo));
+    }
+
+    [Fact]
+    public async Task ElDobleDeCadaComponentePesableCobraDosVecesElCombo()
+    {
+        var (ctx, jamon, queso, combo) = await JamonYQuesoAsync(nameof(ElDobleDeCadaComponentePesableCobraDosVecesElCombo));
+
+        var emitido = await EmitirAsync(ctx, 6000m, (jamon, 0.400m), (queso, 0.400m));
+
+        Assert.Equal(6000m, emitido.Total);
+        Assert.Equal([666m, 534m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([3334m, 2666m], emitido.Items.Select(i => i.Total));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+    }
+
+    [Fact]
+    public async Task UnaLineaPesableQueNoLlegaALaCantidadDelComponenteNoAplicaElCombo()
+    {
+        var (ctx, jamon, queso, _) = await JamonYQuesoAsync(nameof(UnaLineaPesableQueNoLlegaALaCantidadDelComponenteNoAplicaElCombo));
+
+        var emitido = await EmitirAsync(ctx, 3100m, (jamon, 0.150m), (queso, 0.200m));
+
+        Assert.Equal(3100m, emitido.Total);
         Assert.Equal(0m, emitido.DescuentoTotal);
         Assert.All(emitido.Items, i => Assert.Null(i.IdCombo));
     }

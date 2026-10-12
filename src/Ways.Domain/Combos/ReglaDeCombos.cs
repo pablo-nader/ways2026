@@ -1,3 +1,4 @@
+using Ways.Domain.Articulos;
 using Ways.Domain.Common;
 
 namespace Ways.Domain.Combos;
@@ -7,14 +8,18 @@ namespace Ways.Domain.Combos;
 /// <see cref="Ofertas.ReglaDeOfertas"/>). Todo camino de escritura de combos debe pasar por
 /// <see cref="Validar"/> antes de tocar filas (lo hace <c>ServicioDeCombos</c>); las CHECKs <c>ck_combos_precio_positivo</c>,
 /// <c>ck_combos_componentes_cantidad_positiva</c> y <c>ck_combos_componentes_alcance_exclusivo</c>
-/// y los índices únicos de componente respaldan una parte de estas reglas en el esquema. La
-/// regla de al menos dos unidades en total no tiene respaldo de esquema.
+/// y los índices únicos de componente respaldan una parte de estas reglas en el esquema. El
+/// mínimo de un combo (<see cref="AlcanzaElMinimo"/>) no tiene respaldo de esquema. La cantidad de un componente
+/// admite hasta tres decimales porque el componente puede ser un artículo que se vende por peso; que la cantidad sea
+/// la que admite la unidad de venta de ese artículo (entera si se vende por unidad) no se decide acá, sino donde se
+/// conoce el artículo (<c>ServicioDeCombos</c>).
 /// </summary>
 public static class ReglaDeCombos
 {
-    public const int UnidadesMinimas = 2;
+    /// <summary>Cantidad mínima del componente de un combo que tiene uno solo.</summary>
+    public const decimal CantidadMinimaDeUnComponenteUnico = 2m;
 
-    /// <summary>Tope de cantidad por componente: mantiene la cantidad dentro de un entero y de la columna.</summary>
+    /// <summary>Tope de cantidad por componente, dentro de lo que admite la columna <c>numeric(12,3)</c>.</summary>
     public const decimal CantidadMaxima = 999_999m;
 
     /// <summary>Tope de precio: el máximo de <c>numeric(14,2)</c>.</summary>
@@ -59,8 +64,6 @@ public static class ReglaDeCombos
 
         var articulos = new HashSet<int>();
         var familias = new HashSet<int>();
-        decimal unidades = 0;
-
         foreach (var componente in componentes)
         {
             if ((componente.IdArticulo is null) == (componente.IdFamilia is null))
@@ -71,13 +74,12 @@ public static class ReglaDeCombos
                     400);
             }
 
-            if (componente.Cantidad <= 0
-                || componente.Cantidad > CantidadMaxima
-                || componente.Cantidad != decimal.Truncate(componente.Cantidad))
+            if (!EsCantidadDeComponenteValida(componente.Cantidad))
             {
                 throw new ErrorDominio(
                     "combo_cantidad_invalida",
-                    "La cantidad de cada componente del combo tiene que ser un entero entre 1 y 999999.",
+                    "La cantidad de cada componente del combo tiene que ser mayor a cero, tener hasta tres decimales " +
+                    "y no superar 999999.",
                     400);
             }
 
@@ -92,16 +94,28 @@ public static class ReglaDeCombos
                     "Un artículo o una familia puede figurar una sola vez en el combo.",
                     400);
             }
-
-            unidades += componente.Cantidad;
         }
 
-        if (unidades < UnidadesMinimas)
+        if (!AlcanzaElMinimo(componentes))
         {
             throw new ErrorDominio(
                 "combo_unidades_insuficientes",
-                "El combo tiene que sumar al menos dos unidades entre todos sus componentes.",
+                "El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.",
                 400);
         }
     }
+
+    /// <summary>Mayor a cero, hasta <see cref="CantidadMaxima"/> y con a lo sumo los decimales que admite una cantidad
+    /// por peso (<see cref="ReglaDeCantidadDeVenta.DecimalesMaximosDePeso"/>).</summary>
+    public static bool EsCantidadDeComponenteValida(decimal cantidad) =>
+        cantidad > 0
+        && cantidad <= CantidadMaxima
+        && ReglaDeCantidadDeVenta.EsCantidadAdmitida(UnidadVenta.Peso, cantidad);
+
+    /// <summary>Un combo es un conjunto: tiene al menos dos componentes, o uno solo con cantidad
+    /// <see cref="CantidadMinimaDeUnComponenteUnico"/> o más. No mira la suma de las cantidades: dos componentes de
+    /// 0,200 kg son un combo.</summary>
+    public static bool AlcanzaElMinimo(IReadOnlyCollection<ComponenteDeCombo> componentes) =>
+        componentes.Count >= 2
+        || (componentes.Count == 1 && componentes.First().Cantidad >= CantidadMinimaDeUnComponenteUnico);
 }
