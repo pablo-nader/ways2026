@@ -439,6 +439,28 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         return conexion;
     }
 
+    /// <summary>Conexión cruda como <c>ways_app</c> en el modo <c>publico</c>: el tenant viaja en
+    /// <c>app.tenant_publico</c> y <c>app.tenant_id</c> queda vacío, lo mismo que deja el interceptor.
+    /// <paramref name="modo"/> y <paramref name="idTenantEstandar"/> se pueden pisar para probar qué pasa
+    /// cuando el GUC público está puesto pero el modo no corresponde.</summary>
+    public async Task<NpgsqlConnection> AbrirConexionCrudaPublicaAsync(
+        int? idTenantPublico, string modo = "publico", int? idTenantEstandar = null)
+    {
+        var conexion = new NpgsqlConnection(AppConnectionString);
+        await conexion.OpenAsync();
+
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "SELECT set_config('app.acceso', $1, false), set_config('app.tenant_id', $2, false), " +
+            "set_config('app.tenant_publico', $3, false)";
+        comando.Parameters.Add(new NpgsqlParameter { Value = modo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenantEstandar?.ToString() ?? string.Empty });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenantPublico?.ToString() ?? string.Empty });
+        await comando.ExecuteNonQueryAsync();
+
+        return conexion;
+    }
+
     async Task IAsyncLifetime.DisposeAsync()
     {
         await _contenedor.DisposeAsync();

@@ -6,7 +6,7 @@ using Ways.Application.Abstracciones;
 namespace Ways.Infrastructure.Multitenancy;
 
 /// <summary>
-/// Setea los GUC de Postgres (<c>app.acceso</c>, <c>app.tenant_id</c>) que las policies
+/// Setea los GUC de Postgres (<c>app.acceso</c>, <c>app.tenant_id</c>, <c>app.tenant_publico</c>) que las policies
 /// de RLS leen, cada vez que EF abre una conexión física (ADR-3).
 ///
 /// <c>set_config(..., false)</c> es a nivel de sesión, no <c>SET LOCAL</c>: EF abre y
@@ -18,18 +18,20 @@ namespace Ways.Infrastructure.Multitenancy;
 public sealed class InterceptorDeContextoDeTenant(ITenantActual tenantActual) : DbConnectionInterceptor
 {
     private const string Sql =
-        "SELECT set_config('app.acceso', $1, false), set_config('app.tenant_id', $2, false)";
+        "SELECT set_config('app.acceso', $1, false), set_config('app.tenant_id', $2, false), " +
+        "set_config('app.tenant_publico', $3, false)";
 
     public override async Task ConnectionOpenedAsync(
         DbConnection connection,
         ConnectionEndEventData eventData,
         CancellationToken cancellationToken = default)
     {
-        var (modo, idTenant) = ObtenerContexto();
+        var (modo, idTenant, idTenantPublico) = tenantActual.ComoGucs();
 
         await using var comando = new NpgsqlCommand(Sql, (NpgsqlConnection)connection);
         comando.Parameters.Add(new NpgsqlParameter { Value = modo });
         comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenantPublico });
 
         await comando.ExecuteNonQueryAsync(cancellationToken);
         await base.ConnectionOpenedAsync(connection, eventData, cancellationToken);
@@ -39,16 +41,14 @@ public sealed class InterceptorDeContextoDeTenant(ITenantActual tenantActual) : 
     /// sobre la tarea async con <c>GetAwaiter().GetResult()</c>.</summary>
     public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
     {
-        var (modo, idTenant) = ObtenerContexto();
+        var (modo, idTenant, idTenantPublico) = tenantActual.ComoGucs();
 
         using var comando = new NpgsqlCommand(Sql, (NpgsqlConnection)connection);
         comando.Parameters.Add(new NpgsqlParameter { Value = modo });
         comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenantPublico });
 
         comando.ExecuteNonQuery();
         base.ConnectionOpened(connection, eventData);
     }
-
-    private (string Modo, string IdTenant) ObtenerContexto() =>
-        (tenantActual.Modo.ComoGuc(), tenantActual.Id?.ToString() ?? string.Empty);
 }

@@ -17,12 +17,15 @@ public sealed class DominioActual : IDominioActual
 
     public string? NombreComercio { get; private set; }
 
+    public bool TenantPuedeOperar { get; private set; }
+
     public void EstablecerPlataforma(string host)
     {
         EsPlataforma = true;
         Host = host;
         IdTenant = null;
         NombreComercio = null;
+        TenantPuedeOperar = false;
     }
 
     public void EstablecerDeTenant(string host, DominioResuelto resuelto)
@@ -31,5 +34,6 @@ public sealed class DominioActual : IDominioActual
         Host = host;
         IdTenant = resuelto.IdTenant;
         NombreComercio = resuelto.NombreComercio;
+        TenantPuedeOperar = resuelto.TenantPuedeOperar;
     }
 }
