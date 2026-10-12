@@ -1,8 +1,12 @@
+using Ways.Domain.Catalogos;
+
 namespace Ways.Domain.Caja;
 
 /// <summary>
 /// Una línea de <see cref="ResultadoDeCierrePorRetiro.VentasPorMedio"/> — ventas NETAS de vuelto
 /// (nunca de gastos: eso es un renglón aparte, <see cref="ResultadoDeCierrePorRetiro.GastosEnEfectivo"/>).
+/// Es plata COBRADA por medio (ventas y recibos de cuenta corriente); la cuenta corriente no es una
+/// línea, se informa aparte en <see cref="ResultadoDeCierrePorRetiro.VentasACuentaCorriente"/>.
 /// </summary>
 public sealed record LineaDeVentaPorMedio(int IdMedioPago, decimal Importe);
 
@@ -27,7 +31,8 @@ public sealed record ResultadoDeCierrePorRetiro(
     decimal VentasEnEfectivoNetas,
     decimal GastosEnEfectivo,
     decimal Refuerzos,
-    decimal TotalRetiros);
+    decimal TotalRetiros,
+    decimal VentasACuentaCorriente);
 
 /// <summary>
 /// Cierre por retiro (práctica del dueño: el cajero retira el efectivo contado y DEJA el fondo
@@ -71,10 +76,13 @@ public static class CalculadorDeCierrePorRetiro
         // ancla no haya quedado arqueable (sin fila en el arqueo persistido).
         var ventasEnEfectivoNetas = PagosDe(insumos, idMedioAncla) - vueltosTotales;
         var gastosEnEfectivo = GastosDe(insumos, idMedioAncla);
+        var ventasACuentaCorriente = insumos.Actividad
+            .Where(a => a.Comportamiento == ComportamientoMedioPago.CuentaCorriente)
+            .Sum(a => a.Pagos);
 
         return new ResultadoDeCierrePorRetiro(
             ventasPorMedio, totalVentas, ventasEnEfectivoNetas, gastosEnEfectivo, insumos.Refuerzos,
-            insumos.Retiros);
+            insumos.Retiros, ventasACuentaCorriente);
     }
 
     private static decimal PagosDe(InsumosDeArqueo insumos, int idMedioPago) =>

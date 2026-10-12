@@ -685,8 +685,11 @@ function resumenCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = 
     vendedor: 'jperez',
     empleadoCierre: 'jperez',
     fondoInicial: 500,
-    ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 8000 }],
+    ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 8000 }],
     totalVentas: 8000,
+    totalDigitales: 0,
+    totalEfectivo: 8000,
+    ventasACuentaCorriente: 0,
     retiros: [{ fecha: '2026-09-19T15:00:00-03:00', importe: 3000, motivo: 'Retiro de efectivo', empleado: 'jperez' }],
     totalRetiros: 3000,
     ventasEnEfectivoNetas: 8000,
@@ -746,21 +749,86 @@ describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () =>
     expect(texto).toContain('Cerrado por: mgomez')
   })
 
-  it('incluye cada medio de "ventas por medio de pago" y el total de ventas', () => {
+  it('incluye cada medio de "ventas por medio de pago" y el total general', () => {
     const resumen = resumenCierreFixture({
       ventasPorMedio: [
-        { idMedioPago: 1, nombre: 'Efectivo', importe: 5000 },
-        { idMedioPago: 2, nombre: 'Tarjeta', importe: 3000 },
+        { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 5000 },
+        { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 3000 },
       ],
       totalVentas: 8000,
+      totalDigitales: 3000,
+      totalEfectivo: 5000,
     })
     const texto = textoPlano(cierreDeTurno(resumen, CONTEXTO))
     expect(texto).toContain('Efectivo')
     expect(texto).toContain('5.000,00')
     expect(texto).toContain('Tarjeta')
     expect(texto).toContain('3.000,00')
-    expect(texto).toContain('Total ventas')
+    expect(texto).toContain('Total general')
     expect(texto).toContain('8.000,00')
+  })
+
+  describe('subtotales por clasificación', () => {
+    const resumenMixto = () =>
+      resumenCierreFixture({
+        ventasPorMedio: [
+          { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 5000 },
+          { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 3000 },
+        ],
+        totalVentas: 8000,
+        totalDigitales: 3000,
+        totalEfectivo: 5000,
+        ventasACuentaCorriente: 700,
+      })
+
+    it('imprime separador, digitales, efectivo y total general alineados, y el fiado aparte después del total', () => {
+      const lineas = lineasDeCierreDeTurno(resumenMixto(), CONTEXTO).map((l) => l.texto)
+      const iTarjeta = lineas.findIndex((l) => l.startsWith('Tarjeta'))
+      const iFiado = lineas.findIndex((l) => l.startsWith('Fiado en cuenta corriente'))
+      const bloque = lineas.slice(iTarjeta + 1, iFiado + 1).map((l) => l.replace(/\s+/g, ' '))
+
+      expect(bloque[0]).toMatch(/^-+$/)
+      expect(bloque.slice(1)).toEqual([
+        'Total digitales $ 3.000,00',
+        'Total efectivo $ 5.000,00',
+        'Total general $ 8.000,00',
+        '',
+        'Fiado en cuenta corriente $ 700,00',
+      ])
+      const anchos = lineas.filter((l) => /^(Total (digitales|efectivo|general)|Fiado)/.test(l)).map((l) => l.length)
+      expect(new Set(anchos).size).toBe(1)
+      expect(lineas.filter((l) => l.includes('Total general'))).toHaveLength(1)
+      expect(lineas.some((l) => l.startsWith('Total ventas'))).toBe(false)
+    })
+
+    it('omite el fiado en cuenta corriente cuando es cero', () => {
+      const texto = textoPlano(cierreDeTurno(resumenCierreFixture(), CONTEXTO))
+      expect(texto).toContain('Total digitales')
+      expect(texto).toContain('Total efectivo')
+      expect(texto).not.toContain('Fiado')
+    })
+
+    it.each([
+      ['payload anterior al desglose', {}],
+      ['payload parcial (falta un importe)', { totalEfectivo: undefined }],
+      ['payload con un importe que no es número', { totalDigitales: Number.NaN }],
+    ])('%s: no imprime subtotales ni fiado y conserva el total general', (_nombre, defecto) => {
+      const base: Partial<ResumenDeCierrePorRetiro> = resumenMixto()
+      if (Object.keys(defecto).length === 0) {
+        delete base.totalDigitales
+        delete base.totalEfectivo
+        delete base.ventasACuentaCorriente
+      } else {
+        Object.assign(base, defecto)
+      }
+      const texto = textoPlano(cierreDeTurno(base as ResumenDeCierrePorRetiro, CONTEXTO))
+      expect(texto).not.toContain('Total digitales')
+      expect(texto).not.toContain('Total efectivo')
+      expect(texto).not.toContain('Fiado')
+      expect(texto).not.toContain('undefined')
+      expect(texto).not.toContain('NaN')
+      expect(texto).toContain('Total general')
+    })
   })
 
   it('imprime cada retiro en UNA línea: hora, rótulo corto y importe, sin motivo largo ni empleado', () => {

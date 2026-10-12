@@ -374,6 +374,9 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(post.EmpleadoCierre, get.EmpleadoCierre);
         Assert.Equal(post.FondoInicial, get.FondoInicial);
         Assert.Equal(post.TotalVentas, get.TotalVentas);
+        Assert.Equal(post.TotalDigitales, get.TotalDigitales);
+        Assert.Equal(post.TotalEfectivo, get.TotalEfectivo);
+        Assert.Equal(post.VentasACuentaCorriente, get.VentasACuentaCorriente);
         Assert.Equal(post.TotalRetiros, get.TotalRetiros);
         Assert.Equal(post.VentasEnEfectivoNetas, get.VentasEnEfectivoNetas);
         Assert.Equal(post.GastosEnEfectivo, get.GastosEnEfectivo);
@@ -392,6 +395,66 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         foreach (var (esperado, obtenido) in post.Retiros.Zip(get.Retiros))
         {
             Assert.Equal(esperado, obtenido);
+        }
+    }
+
+    private async Task<int> SembrarMedioAsync(Contexto ctx, string nombre, ComportamientoMedioPago comportamiento)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var medio = new MedioPago
+        {
+            IdTenant = ctx.IdTenant, Nombre = nombre, Orden = 9, Comportamiento = comportamiento,
+            AdmiteVuelto = false, RequiereReferencia = false, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.MediosPago.Add(medio);
+        await db.SaveChangesAsync();
+
+        return medio.Id;
+    }
+
+    /// <summary>Con efectivo (con vuelto), tarjeta, cuenta corriente y un medio sin ventas, el
+    /// cierre por retiro y su reimpresión devuelven la clasificación de cada fila y los dos
+    /// subtotales, que suman <c>TotalVentas</c>; la cuenta corriente se informa aparte, fuera del
+    /// total, y el efectivo coincide con <c>VentasEnEfectivoNetas</c>.</summary>
+    [Fact]
+    public async Task ElResumenDeCierreClasificaCadaMedioYSusSubtotalesSumanElTotalDeVentas()
+    {
+        var ctx = await PrepararAsync(nameof(ElResumenDeCierreClasificaCadaMedioYSusSubtotalesSumanElTotalDeVentas));
+        var idMedioCc = await SembrarMedioAsync(ctx, "Cuenta corriente", ComportamientoMedioPago.CuentaCorriente);
+        var idMedioSinVentas = await SembrarMedioAsync(ctx, "QR", ComportamientoMedioPago.Electronico);
+        var turno = await AbrirTurnoAsync(ctx, fondoInicial: 100m);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 1000m, vuelto: 50m);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioTarjeta, importe: 300m);
+        await SembrarPagoAsync(ctx, turno.Id, idMedioCc, importe: 200m);
+
+        var respuestaPost = await ctx.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{turno.Id}/cierre-por-retiro", new SolicitudDeCierrePorRetiro(100m, null));
+        Assert.Equal(HttpStatusCode.OK, respuestaPost.StatusCode);
+        var respuestaGet = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/resumen-de-cierre");
+        Assert.Equal(HttpStatusCode.OK, respuestaGet.StatusCode);
+
+        foreach (var respuesta in new[] { respuestaPost, respuestaGet })
+        {
+            var resumen = JsonSerializer.Deserialize<ResumenDeCierrePorRetiro>(
+                await respuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+
+            Assert.Equal(
+                ComportamientoMedioPago.Efectivo,
+                resumen.VentasPorMedio.Single(v => v.IdMedioPago == ctx.IdMedioEfectivo).Comportamiento);
+            Assert.Equal(
+                ComportamientoMedioPago.Electronico,
+                resumen.VentasPorMedio.Single(v => v.IdMedioPago == ctx.IdMedioTarjeta).Comportamiento);
+            Assert.DoesNotContain(resumen.VentasPorMedio, v => v.IdMedioPago == idMedioSinVentas);
+            Assert.DoesNotContain(resumen.VentasPorMedio, v => v.IdMedioPago == idMedioCc);
+
+            Assert.Equal(950m, resumen.TotalEfectivo);
+            Assert.Equal(300m, resumen.TotalDigitales);
+            Assert.Equal(200m, resumen.VentasACuentaCorriente);
+            Assert.Equal(1250m, resumen.TotalVentas);
+            Assert.Equal(resumen.TotalVentas, resumen.TotalDigitales + resumen.TotalEfectivo);
+            Assert.Equal(resumen.VentasEnEfectivoNetas, resumen.TotalEfectivo);
         }
     }
 
