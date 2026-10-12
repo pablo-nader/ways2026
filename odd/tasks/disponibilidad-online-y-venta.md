@@ -61,8 +61,9 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
 
 ## Tasks
 
-- [ ] **T1 — Backend: flags, policies, POS and sale enforcement, public offers and combos.**
-  Delegated. PR 11.
+- [x] **T1 — Backend: flags, policies, POS and sale enforcement, public offers and combos.**
+  Delegated. PR 11. Commits `e0d784bc` (flags, migration, admin, policies), `39d26578` (sale enforcement),
+  `cb395b17` (public offers and combos); the doc commit that records this closes the task.
   - Migration `DisponibilidadOnlineYVenta` (rename, two new columns, backfills, policies).
   - Domain/DTOs: `Articulo.DisponibleOnline`/`DisponibleVenta`, `Oferta.DisponibleOnline`,
     `Combo.DisponibleOnline`; listing/grid/detail DTOs rename `publicadoWeb` → `disponibleOnline`
@@ -96,7 +97,128 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
 
 ## Verification evidence
 
-(recorded per task as commits land)
+### T1
+
+Route: delegated writer (one), no inline source edits by the parent.
+
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror`: 0 warnings, 0 errors.
+- `dotnet ef migrations has-pending-model-changes`: "No changes have been made to the model since the last migration."
+- `dotnet test tests/Ways.Domain.Tests`: 1352 passed. `dotnet test tests/Ways.Application.Tests` (full, holds the structural
+  guards `EscriturasSinReintentoEstructuralesTests`, `InventarioDeDependientesTests`, `BajasEstructuralesTests`,
+  `EscritoresDeFamiliasEstructuralesTests`): 841 passed.
+- Integration, development filter (SuperficieDeAutorizacion, AislamientoDeTenant, Vitrina, Catalogo, Publico, Pos, Ventas,
+  Ofertas, Combos): 494 of 495 on the first run; the single failure was an `EdicionOferta` fixture without the now
+  required `disponibleOnline` (fixed); re-run of Ofertas|Combos|EscriturasSinReintento: 355/355; new classes below green.
+- Full `dotnet test tests/Ways.IntegrationTests`: 3797 passed, 0 failed (see "Full integration run" below).
+- `dotnet format --verify-no-changes`: only the baseline noise recorded in the `dotnet-format-no-es-gate` memory
+  (ENDOFLINE / WHITESPACE / IDE0008 on every file, changed or not); nothing outside those categories.
+
+New or changed tests: `DisponibilidadAislamientoTests` (10), `DisponibilidadOnlineMigracionTests` (1),
+`CatalogoPublicoOfertasTests` (12), `CombosPublicosTests` (9), `ArticulosNoVendiblesTests` (9),
+`OfertasYCombosDisponibleOnlineTests` (7), `ReglaDeArticuloVendibleTests` (6, domain), plus the admin, isolation,
+catalog and family tests adapted to the rename.
+
+Mutation evidence (mutate, run the named class, revert; every row went red in the named test and green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| `articulos` policy without `disponible_venta` | `CatalogoOnlineAislamientoTests.LaPolicyDeArticulosDejaVerSoloLosDisponiblesOnlineYParaLaVentaActivosYVivosDelTenantDelGuc` |
+| `articulos` policy without `disponible_online` | same test |
+| `ofertas` policy without `disponible_online` / `activo` / `deleted_at IS NULL` (three runs) | `DisponibilidadAislamientoTests.LaPolicyDeOfertasDejaVerSoloLasDisponiblesOnlineActivasYVivasDelTenantDelGuc` |
+| `combos` policy without `activo` / `disponible_online` / `deleted_at IS NULL` (three runs) | `DisponibilidadAislamientoTests.LaPolicyDeCombosDejaVerSoloLosDisponiblesOnlineActivosYVivosDelTenantDelGuc` |
+| migration default of `articulos.disponible_online` or `disponible_venta` = false | `DisponibilidadOnlineMigracionTests.LasFilasExistentes...` |
+| catalog: resolver gets the base list instead of the vitrina's original list | `CatalogoPublicoOfertasTests.ConUnaListaDerivadaLasOfertasDirigidasAEllaAplicanSobreElPrecioDerivado` |
+| catalog: resolver quantity 3 instead of 1 | `...UnaOfertaConCantidadMinimaMayorQueUnoNoAplicaYUnaDeUnoSi` |
+| catalog: no empresa filter on offers | `...UnaOfertaDeOtraEmpresaNoAplica...` |
+| catalog: no target lists / no category ancestors | `...UnaOfertaDirigidaAOtraLista...` / `...UnaOfertaDeCategoriaAlcanzaALasSubcategorias...` |
+| catalog: offer name taken without checking it discounts | `...UnaOfertaQueNoRebajaElPrecioNoFiguraEnLaRespuesta` |
+| catalog: combos on page 2 / with `buscar` / with `idCategoria` (three runs) | `CombosPublicosTests.ElCatalogoLlevaLosCombosSoloEnLaPrimeraPaginaSinFiltros` |
+| public combos: no unit rule, no empresa availability of the article, no current price, no combo empresa filter, combos without components, price looked up in the default list, ordering (seven runs) | `CombosPublicosTests.SoloAparecenLosCombos...` / `ElPrecioDeLosComponentesSeBuscaEnLaListaDeLaVitrina` |
+| POS snapshot without `disponible_venta` filter | `ArticulosNoVendiblesTests.LaInstantaneaNoTrae...` and `ElFormatoOriginal...` |
+| `/escaneo` without the filter, by internal code and by barcode (two runs) | `ArticulosNoVendiblesTests.ElEscaneoNoResuelve...` |
+| `GET /api/articulos` ignoring `soloVendibles` | `ArticulosNoVendiblesTests.LaBusquedaDeLaCajaOmite...` |
+| combo candidates (`cargable`) without the filter | `ArticulosNoVendiblesTests.ElComboCargableNoOfrece...` |
+| `EmitirAsync` without the rule / with the rule also for offline sales | `EmitirUnaVentaConUnArticuloNoVendibleDa409...` / `LaVentaOfflineYaCobradaSeAcepta...` |
+| presupuesto / remito without the rule | `ArticulosNoVendiblesTests.UnPresupuestoYUnRemito...` |
+| disponibilidad: no row lock / validation before 404 / writes when unchanged / ignores either flag / retrying strategy | `CatalogoOnlineAdminTests` (`...PierdeContraLaBaja...`, `...Da404AntesQueLaValidacion...`, `PedirLaMismaDisponibilidad...`, `CambiarLaDisponibilidad...`, `UnaFallaTransitoria...`) |
+| article DTOs with the two flags swapped in the detail, the list and the grid (three runs) | `CatalogoOnlineAdminTests.CambiarLaDisponibilidad...` |
+| ofertas / combos: create ignores the flag, edit does not persist it, list does not report it, edit accepts a missing flag, 400 before 404 | `OfertasYCombosDisponibleOnlineTests` |
+
+Survivor, explained: `ServicioDeArticulos.ListarAsync(soloVendibles = true)` as the DEFAULT of the parameter. The only HTTP caller
+passes the query value explicitly (`soloVendibles ?? false`), so the mutant is unobservable through the API; the other caller
+(`ServicioDeEtiquetas`, named arguments) relies on the default `false` and has no test with an internal-use article.
+
+Dead clauses removed instead of shipped: two guards in the public queries were redundant with a neighbour (the
+`PrecioFinal < PrecioOriginal` test next to "first applied offer that discounts" and the `IdFamilia == null` test next to
+"the component has an article that is in the dictionary"); the mutation run showed the survivors and they were deleted.
+
+### Deviations from the brief
+
+1. **No backfill, so no `SET LOCAL` and no `ways_app` backfill test.** The brief asked for a rename plus a platform-GUC
+   backfill. The new columns are born `true` through a constant default, which already leaves every existing row (live or
+   soft-deleted, published or not) available, so the migration writes no data and `rls-migration-backfills` does not apply.
+   `publicado_web` is dropped instead of renamed because its old value (almost always `false`) is exactly what must not survive.
+   In its place `DisponibilidadOnlineMigracionTests` migrates an isolated database to the previous migration, seeds four
+   articles (one published, two with the old default, one soft-deleted), migrates to HEAD and asserts every row has both flags
+   `true`, the old column and index are gone, the four new policies exist, and `ways_app` in public mode now sees the three live
+   rows (it saw one before). Mutation-proven above.
+2. **`EdicionOferta.DisponibleOnline` and `EdicionCombo.DisponibleOnline` are `bool?`** (the precedent of `EdicionCombo.Activo`) so
+   a missing JSON key is a `400 disponible_online_requerido` raised after the 404, instead of silently reading as `false` and
+   taking the offer or combo off the storefront. Consequence: every client that PUTs an offer or a combo must send the field;
+   the web (T2) has to, and an old web talking to this backend gets 400 on offer/combo edits until T2 lands. The other
+   existing PUT-body tests were adapted.
+3. **The sale rule is shared by three documents, not only `EmitirAsync`.** They do not share a line-validation helper, so
+   `ReglaDeArticuloVendible.Exigir` (pure, `Ways.Domain.Articulos`) is called from `ServicioDeVentas.EmitirAsync`, from
+   `ServicioDePresupuestos.ResolverYMaterializarAsync` and from `ServicioDeRemitos.ResolverYMaterializarAsync` (create/edit of
+   the draft). In `EmitirAsync` it sits under the same condition as the unit-of-sale quantity rule: not for a sale a device
+   already charged offline (`NumeroPreasignado`), not for a conversion from a presupuesto, not for returns (negative sign).
+   Remito emission and invoicing a remito do not re-check (the lines were validated when the draft was saved).
+4. **The sale search is `GET /api/articulos?soloVendibles=true`** (new optional parameter of the generic listing, the one
+   `ModalDeBusquedaDeArticulos` uses for the POS). Until T2/T3 send it, the POS search still lists internal-use articles; the sale
+   itself is rejected by the 409 either way, the snapshot and `/escaneo` already exclude them.
+5. **Combo side kept minimal** (coordination note about the concurrent combos-pesables branch): the snapshot needed no combo
+   change at all (the existing rule filters combos against the articles of the snapshot, and the snapshot now excludes
+   non-sellable ones); the only combo-engine edits are the `DisponibleOnline` property/column/contracts and one extra predicate
+   in `ServicioDeCombos.CargarParaPosAsync` (`a.DisponibleVenta`). The public combos query lives in its own class
+   (`CatalogoOnline/ConsultaDeCombosPublicos`). **Weighable components in the storefront depend on the combos-pesables branch
+   landing first**: the public rule stays "all components `UnidadVenta.Unidad`" as written for this feature.
+6. **`ServicioDeOfertas.DescomponerHoraLocal` became `internal`** so the public query uses the same local date/hour/weekday as the
+   POS without instantiating the service.
+7. **Commits:** three work-unit commits plus this doc commit. Some files are mixed across units (the `soloVendibles` parameter
+   travels in the first commit, with the article service; the `ServicioDeCombos` candidate predicate too), so the first
+   commit alone is complete but the rule it describes for the POS arrives in the second.
+
+### Contract changes for the web (T2 / T3)
+
+Renamed or removed:
+- `PUT /api/articulos/{id}/web { publicado }` is GONE; use `PUT /api/articulos/{id}/disponibilidad { disponibleVenta, disponibleOnline }`
+  (both required, response `{ idArticulo, disponibleVenta, disponibleOnline }`; `400 disponible_venta_requerido` /
+  `400 disponible_online_requerido`).
+- Article DTOs (`ArticuloListado` in list, detail, create and edit responses; `ArticuloGrillaFila` in the grid): `publicadoWeb` is
+  now `disponibleOnline` (default `true`) and there is a new `disponibleVenta` (default `true`). The create (`AltaArticulo`) and
+  edit (`EdicionArticulo`) bodies do NOT carry them: they are written only by the `/disponibilidad` endpoint.
+- TS mirrors to update: `src/Ways.Web/src/api/tipos.ts` (`publicadoWeb` in the article listing and the grid row), `FormularioArticulo.tsx`,
+  `SeccionDeTiendaOnline.tsx`, `GrillaDeArticulos.tsx` and the fixtures that set `publicadoWeb`.
+
+Added:
+- `OfertaListado.disponibleOnline`, `AltaOferta.disponibleOnline` (optional, default `true`), `EdicionOferta.disponibleOnline`
+  (REQUIRED, `400 disponible_online_requerido`).
+- `ComboListado.disponibleOnline`, `AltaCombo.disponibleOnline` (optional, default `true`), `EdicionCombo.disponibleOnline`
+  (REQUIRED, `400 disponible_online_requerido`).
+- `GET /api/articulos?soloVendibles=true` (the POS search should send it; purchases and the back-office must not).
+- `409 articulo_no_vendible` from `POST /api/ventas`, `POST/PUT /api/presupuestos` and `POST/PUT /api/remitos`.
+- `GET /api/publico/catalogo`: articles gain optional `precioOriginal` (decimal) and `oferta` (string), both ABSENT (not `null`)
+  when no offer lowers the price; `precio` is the final price. The response gains `combos` (always present, `[]` unless the request is
+  `pagina = 1` with no `buscar` and no `idCategoria`).
+- `GET /api/publico/combos` (anonymous, `Cache-Control: public, max-age=60`, `404 vitrina_no_publicada`):
+  `[{ id, codigo, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. A combo has no
+  image of its own: use `GET /api/publico/articulos/{idArticulo}/imagen?v=<imagenVersion>` of its components.
+- The storefront never sees articles with `disponible_venta = false`, so a `combo` cart line must reference only listed combos;
+  the checkout (later) re-detects combos server-side.
+
+### Full integration run
+
+`dotnet test tests/Ways.IntegrationTests`, once and alone, on the final tree (before this doc commit): 3797 passed, 0 failed, 39 min 54 s.
 
 ## Delivery slices
 
@@ -104,4 +226,4 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
 
 ## Next step
 
-T1.
+T2 (web admin), stacked on T1. T1 is merged after the judgment-day round the owner's protocol requires.
