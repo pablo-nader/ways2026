@@ -92,7 +92,7 @@ T1 (commits `b97dc4ee`, `e02f9dac`), all observed:
 - `dotnet test tests/Ways.IntegrationTests` (alone, at the end): 3530 passed, 0 failed (31 m 52 s).
 - `dotnet format --verify-no-changes` over the changed `.cs`: only baseline noise (CRLF/`System`-last
   imports/`var` rules the repo does not follow); nothing else.
-- New tests: 40 Domain (image validator, `ImagenDeArticulo`, family classification), 3 integration
+- New tests: 23 Domain (image validator, `ImagenDeArticulo`, family classification), 3 integration
   classes: `CatalogoOnlineAislamientoTests` (13, raw `ways_app` connection, no EF filter),
   `CatalogoOnlineAdminTests` (29), `CatalogoPublicoTests` (21).
 
@@ -121,7 +121,7 @@ Mutation evidence (clause removed or inverted, test run, reverted; every row wen
 | DTO: `tieneImagen` / `publicadoWeb` hard-coded in grid, list, detail, projection, edit response | admin round-trip |
 | vitrina list: inactive, other tenant (platform actor), other empresa, not persisted, not validated, `FOR KEY SHARE` removed, read-back | `UnaListaInvalida…`, `…Plataforma…`, `UnaListaQueSeDaDeBaja…` |
 
-Not observable, so not tested: the  conjunct of the page price query (it only
+Not observable, so not tested: the `idsArticulo.Contains(...)` conjunct of the page price query (it only
 narrows rows already keyed by article id).
 
 Deviations and decisions (to confirm):
