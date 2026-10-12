@@ -165,6 +165,7 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
             IdFamilia = idFamilia,
             IdAlicuotaIva = tienda.IdAlicuotaIva,
             UnidadVenta = unidadVenta,
+            AcumulaEnVenta = unidadVenta != UnidadVenta.Importe,
             EsProducto = true,
             DisponibleOnline = disponibleOnline,
             DisponibleVenta = disponibleVenta,

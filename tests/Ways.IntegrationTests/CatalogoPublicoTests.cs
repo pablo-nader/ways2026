@@ -100,6 +100,22 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(5m, articulos[2].GetProperty("precio").GetDecimal());
     }
 
+    /// <summary>La tienda online no vende por importe: un artículo por importe publicado y con precio de lista
+    /// (por ejemplo, uno que cambió de unidad después de publicarse) no aparece, y el común vecino sí.</summary>
+    [Fact]
+    public async Task UnArticuloPorImportePublicadoNoApareceEnElCatalogo()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("pub-por-importe");
+        var comun = await apoyo.SembrarVendibleAsync(tienda, "Pan", 5m);
+        await apoyo.SembrarVendibleAsync(tienda, "Fiambrería", 99m, unidadVenta: UnidadVenta.Importe);
+
+        using var cliente = ClienteEn(tienda);
+        var catalogo = await ApoyoDeDominios.LeerJsonAsync(await cliente.GetAsync(ApoyoDeCatalogoOnline.RutaCatalogo));
+
+        Assert.Equal([comun], catalogo.GetProperty("articulos").EnumerateArray().Select(a => a.GetProperty("id").GetInt32()).ToList());
+        Assert.Equal(1, catalogo.GetProperty("total").GetInt32());
+    }
+
     // ---- qué artículos aparecen -------------------------------------------------------------------
 
     /// <summary>

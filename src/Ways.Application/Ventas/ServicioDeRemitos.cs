@@ -843,6 +843,7 @@ public class ServicioDeRemitos(
             .ToDictionaryAsync(a => a.Id, ct);
 
         ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
+        ArticulosPorImporte.RechazarEn(articuloPorId.Values, "un remito");
 
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();
         var porcentajePorAlicuota = await db.AlicuotasIva
