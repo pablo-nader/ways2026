@@ -86,6 +86,14 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   `tipo_movimiento_personal` = horas|pago|ajuste, un CHECK de forma por tipo, FK compuesta a
   personal, RLS). Desvío deliberado del libro de proveedores: sin `id_punto_venta`.
   Sin resolver: no se rechaza una carga con fecha futura (la zona horaria es por empresa).
+  Judgment-day: ronda 1 con un crítico reproducido (el enum nuevo faltaba en los fixtures
+  que arman su lista de enums: 4 tests rotos) y advertencias de calidad de tests. Corregido
+  en `85251b0a`, `75f3a8c1` y `3adcaf3c` (lección en el skill structural-guard-tests). La
+  re-evaluación encontró dos fixtures más con el mismo defecto (2 tests rotos), corregidos
+  en el commit siguiente. Verificación final: suite de integración completa 2522/2522.
+  Cambios aceptados en la revisión: la fecha del ajuste es obligatoria (el servidor no
+  adivina el día); la ventana por defecto del estado de cuenta no tiene tope superior; se
+  quitó del CHECK de horas la cláusula `importe >= 0`, implicada por las otras.
 - [ ] T3 — Pago de personal (backend). Ruta: delegada.
   Operación única con líneas de descuento de cuenta corriente y de medios de pago, origen de
   fondos por pago (tesorería o cajón del turno), gasto `sueldos` por línea de medio, valor
@@ -105,4 +113,4 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
 
 T1 cerrada (1.551 líneas de autoría sin contar el código generado de la migración).
 T1 mergeada en main (PR #402). T2 cerrada (1.712 líneas de autoría).
-Próximo paso: judgment-day y PR de T2, luego T3.
+Próximo paso: PR de T2, luego T3.
