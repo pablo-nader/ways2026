@@ -137,7 +137,8 @@ public class ServicioDeOfertas(
             ImporteFijo = datos.ImporteFijo,
             Prioridad = datos.Prioridad,
             Acumulable = datos.Acumulable,
-            Activo = datos.Activo
+            Activo = datos.Activo,
+            DisponibleOnline = datos.DisponibleOnline
         };
 
         var alcance = ValidarInvariantes(oferta);
@@ -198,6 +199,8 @@ public class ServicioDeOfertas(
             throw ErrorDominio.NoEncontrado($"No existe la oferta {id}.");
         }
 
+        var disponibleOnline = datos.DisponibleOnline
+            ?? throw new ErrorDominio("disponible_online_requerido", "El campo disponibleOnline es obligatorio.", 400);
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var diasSemana = ConvertirDiasSemana(datos.DiasSemana);
         var idsListas = datos.IdsListas?.Distinct().ToList();
@@ -228,7 +231,8 @@ public class ServicioDeOfertas(
             ImporteFijo = datos.ImporteFijo,
             Prioridad = datos.Prioridad,
             Acumulable = datos.Acumulable,
-            Activo = datos.Activo
+            Activo = datos.Activo,
+            DisponibleOnline = disponibleOnline
         };
 
         var alcance = ValidarInvariantes(candidato);
@@ -293,6 +297,7 @@ public class ServicioDeOfertas(
             oferta.Prioridad = candidato.Prioridad;
             oferta.Acumulable = candidato.Acumulable;
             oferta.Activo = candidato.Activo;
+            oferta.DisponibleOnline = candidato.DisponibleOnline;
             oferta.UpdatedAt = reloj.Ahora;
 
             // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar
@@ -809,7 +814,7 @@ public class ServicioDeOfertas(
     /// matching" — v1 usa <see cref="TimeZoneInfo.Local"/> (huso del servidor, no hay huso de
     /// tenant modelado todavía). Día de semana ISO-8601 (1 = lunes … 7 = domingo) — .NET expone
     /// <see cref="DayOfWeek"/> con domingo = 0, así que se remapea acá.</summary>
-    private static (DateOnly Fecha, TimeOnly Hora, int DiaSemana) DescomponerHoraLocal(DateTimeOffset momento)
+    internal static (DateOnly Fecha, TimeOnly Hora, int DiaSemana) DescomponerHoraLocal(DateTimeOffset momento)
     {
         var local = TimeZoneInfo.ConvertTime(momento, TimeZoneInfo.Local);
         var diaSemanaDotNet = (int)local.DayOfWeek;
@@ -1043,5 +1048,5 @@ public class ServicioDeOfertas(
         o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
         o.DiasSemana is null ? Array.Empty<int>() : o.DiasSemana.Select(d => (int)d).ToArray(),
         o.CantidadMinima, o.PrecioUnitario, o.Porcentaje, o.ImporteFijo,
-        o.Prioridad, o.Acumulable, o.Activo, idsListas, o.IdFamilia);
+        o.Prioridad, o.Acumulable, o.Activo, idsListas, o.IdFamilia, DisponibleOnline: o.DisponibleOnline);
 }

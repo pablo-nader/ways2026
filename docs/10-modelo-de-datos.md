@@ -420,12 +420,14 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
                                              -- cálculo; la compra lo pisa con el costo efectivo
     disponible_para_todas boolean NOT NULL DEFAULT true,
     activo,
-    publicado_web    boolean NOT NULL DEFAULT false, -- se ofrece en la tienda online (§3, "Tienda online");
+    disponible_online boolean NOT NULL DEFAULT true, -- se ofrece en la tienda online (§3, "Tienda online");
                                              -- por artículo: no es un campo compartido de la familia
+    disponible_venta boolean NOT NULL DEFAULT true,  -- false = de uso interno: se compra y se stockea, pero no se
+                                             -- vende (POS, tienda ni venta); tampoco es un campo de la familia
     id_familia       integer NULL            -- familia a la que pertenece (§3, "Familias de artículos");
                                              -- FK compuesta (id_familia, id_tenant), NULL = sin familia
 );
--- ix_articulos_publicado_web (id_tenant) WHERE publicado_web AND activo AND deleted_at IS NULL
+-- ix_articulos_disponible_online (id_tenant) WHERE disponible_online AND disponible_venta AND activo AND deleted_at IS NULL
 
 articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
     id_articulo, id_empresa, id_tenant,
@@ -463,11 +465,15 @@ El artículo **no tiene precio de venta**: el precio vive en las listas. Se acab
 
 ### Tienda online
 
-Qué artículos muestra la tienda del dominio de un comercio, con qué precio y con qué imagen. La publicación es una
-decisión por artículo (`articulos.publicado_web`, default `false`: ningún artículo existente se publica solo) y vale
-para todo el tenant; en qué empresa se ve lo decide la disponibilidad de siempre (`disponible_para_todas` +
-`articulos_empresas`). No es un campo compartido de la familia: publicar un miembro no publica a los demás, y editar
-a la familia no lo toca.
+Qué artículos y combos muestra la tienda del dominio de un comercio, con qué precio y con qué imagen. Todo está en la
+tienda salvo lo que se destilda: `articulos.disponible_online`, `ofertas.disponible_online` y `combos.disponible_online`
+nacen en `true` (la migración `DisponibilidadOnlineYVenta` reemplazó `publicado_web`, que nacía en `false`, y dejó
+todas las filas existentes en `true`: la columna nueva tiene un default constante, así que la migración no escribe
+datos). `articulos.disponible_venta` (default `true`) marca los artículos de uso interno: no se venden, ni en la
+tienda ni en la caja (ver "Disponible a la venta" abajo). La disponibilidad online vale para todo el tenant; en qué
+empresa se ve un artículo lo decide la disponibilidad de siempre (`disponible_para_todas` + `articulos_empresas`).
+Ninguna de las dos banderas es un campo compartido de la familia: apagarla en un miembro no la apaga en los demás, y
+editar a la familia no la toca.
 
 ```sql
 imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como el artículo del que cuelga
@@ -487,10 +493,12 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
 ```
 
 - **RLS**: `imagenes_articulo_tenant` (estándar, `HabilitarRlsDeTenant`) y, para el modo público, una policy
-  `{tabla}_publico_lectura` en seis tablas: `articulos` (`publicado_web AND activo AND deleted_at IS NULL`),
-  `articulos_empresas`, `listas_precio`, `precios`, `categorias` e `imagenes_articulo` (estas tres y la anterior
-  con `deleted_at IS NULL`). Todas `FOR SELECT` y con `id_tenant = app_tenant_publico()`; qué deja ver cada una y
-  qué decide la consulta en lugar de la policy, en doc 09 "Modo de acceso público".
+  `{tabla}_publico_lectura` en diez tablas: `articulos` (`disponible_online AND disponible_venta AND activo AND
+  deleted_at IS NULL`), `ofertas` y `combos` (`disponible_online AND activo AND deleted_at IS NULL`),
+  `articulos_empresas`, `ofertas_listas` y `combos_componentes` (solo el tenant: no tienen baja lógica) y `listas_precio`,
+  `precios`, `categorias` e `imagenes_articulo` (con `deleted_at IS NULL`). Todas `FOR SELECT` y con `id_tenant =
+  app_tenant_publico()`; qué deja ver cada una y qué decide la consulta en lugar de la policy, en doc 09 "Modo de
+  acceso público".
 - **Imagen**: una por artículo vivo. Subir reemplaza la fila viva (mismo `id`, nuevo `actualizado_en`); quitar **borra
   la fila** (`DELETE`, no baja lógica: es un derivado sin historia que valga la pena conservar y guardarla dejaría hasta
   1 MB por artículo sin uso) y una subida posterior inserta una fila nueva. Dar de baja el artículo
@@ -499,28 +507,45 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   inventario de dependientes la sigue marcando `marcado`. Las valida `ValidadorDeImagen`, la misma regla que el logo de la vitrina: `413 imagen_demasiado_grande`
   por encima de 1 MB y `415 imagen_no_admitida` para cualquier otra cosa o un tipo declarado que no coincide.
 - **Escritura** (`ServicioDeCatalogoWeb`, `GestionDeCatalogo` como editar el artículo, sin reintento): `PUT
-  /api/articulos/{id}/web` con `{ publicado }` (obligatorio: `400 publicado_requerido`; idempotente, pedir el estado
-  actual no escribe) y `PUT/DELETE /api/articulos/{id}/imagen` con la imagen como cuerpo crudo. Las tres toman
+  /api/articulos/{id}/disponibilidad` con `{ disponibleVenta, disponibleOnline }` (los dos obligatorios: `400
+  disponible_venta_requerido` / `400 disponible_online_requerido`; idempotente, pedir el estado actual no escribe) y `PUT/DELETE /api/articulos/{id}/imagen` con la imagen como cuerpo crudo. Las tres toman
   `FOR UPDATE` sobre la fila del artículo antes de leer lo que mutan y, ya bajo el lock, comprueban que sigue vivo
   (404 si la baja ganó): es el único lock que toman, no entran al protocolo de locks de familias. El 404 de un artículo
   que no se ve va primero, antes del cuerpo. `GET /api/articulos/{id}/imagen` es la vista previa del admin: `Cache-Control:
-  private, no-store`, ETag de `actualizado_en` y `304` sin leer `contenido`, aunque el artículo no esté publicado.
-  El listado, el detalle, el alta, la edición y la grilla del artículo informan `publicadoWeb` y `tieneImagen`.
+  private, no-store`, ETag de `actualizado_en` y `304` sin leer `contenido`, aunque el artículo no esté en la tienda.
+  El listado, el detalle, el alta, la edición y la grilla del artículo informan `disponibleOnline`, `disponibleVenta` y
+  `tieneImagen`. Las ofertas y los combos guardan su `disponibleOnline` por su POST y su PUT de siempre: el alta lo toma
+  como `true` si falta y la edición lo exige (`400 disponible_online_requerido`, después del 404).
 - **Backstops** (`ManejadorDeErrores`): `ux_imagenes_articulo_articulo` → `409 imagen_duplicada` (inalcanzable por
   la API: la subida lee la imagen bajo el lock del artículo); `ck_imagenes_articulo_contenido` → `400
   imagen_no_admitida`.
 - **Catálogo público** (`GET /api/publico/catalogo?buscar=&idCategoria=&pagina=1&tamano=24`, anónimo, tenant del
   host, `Cache-Control: public, max-age=60`; `404 vitrina_no_publicada` si el host no tiene vitrina publicada o el
-  tenant no puede operar). Un artículo aparece si está publicado, activo y vivo (la policy), disponible para la
+  tenant no puede operar). Un artículo aparece si está disponible online y a la venta, activo y vivo (la policy), disponible para la
   empresa de la vitrina (`disponible_para_todas` o una fila en `articulos_empresas` de esa empresa) y con un precio
   vigente en la lista de la tienda. La lista es la de la vitrina (`id_lista_precio`) o, si no tiene, la default
   compartida (`id_empresa IS NULL AND es_default`, la misma de la grilla del back-office); si no sirve (inactiva, de
   otra empresa, derivada sin porcentaje o sin base fija, o ninguna default) el catálogo sale vacío en vez de fallar.
   Precio vigente: la fila con `vigente_desde <= ahora` y `vigente_hasta` nulo o futuro; en una lista derivada, el de
   su base con `ResolvedorDePrecios.ResolverPrecioDerivado` (el redondeo del POS). **No se reusa el motor del POS**
-  (`ServicioDeInstantaneaDePos`/ofertas): resuelve clientes, escalones y ofertas y lee tablas que el modo público no
-  ve, y la tienda muestra el precio de lista; la existencia del precio se decide en SQL antes de paginar y el monto
-  se resuelve solo para la página. Las ofertas no se aplican todavía y el stock no se mira (es de los pedidos).
+  (`ServicioDeInstantaneaDePos`/`ServicioDeOfertas`): resuelven clientes y escalones y leen tablas que el modo público
+  no ve; la existencia del precio se decide en SQL antes de paginar y el monto se resuelve solo para la página. El stock
+  no se mira (es de los pedidos). **Ofertas**: sobre el precio de lista de cada artículo de la página corre el
+  resolvedor puro del dominio (`ResolvedorDeOfertas`) a cantidad 1, con las ofertas que la policy deja ver
+  (`disponible_online`, activas), sus listas objetivo (`ofertas_listas`), la cadena de categorías y la hora local del
+  servidor. La lista que se le pasa es la ORIGINAL de la vitrina, también si es derivada, así que una oferta dirigida a
+  una lista derivada aplica y una dirigida a su base no. Cada artículo lleva `precio` (el final) y, solo si una oferta
+  lo baja, `precioOriginal` y `oferta` (el nombre de la aplicada de mayor prioridad que descuenta); sin oferta las dos
+  claves faltan. Es una vista previa por artículo: una oferta con cantidad mínima mayor que 1 no aplica, y las
+  escalonadas y de familia a nivel carrito son del checkout. **Combos**: el catálogo suma `combos` solo en la primera
+  página sin `buscar` ni `idCategoria` (`pagina = 1` ya acotada), vacío en cualquier otra consulta;
+  `GET /api/publico/combos` (anónimo, mismo `Cache-Control` y mismo `404 vitrina_no_publicada`) los devuelve siempre:
+  `[{ id, codigo, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` ordenados por
+  nombre, con el precio fijo del combo y sin imagen propia. Un combo aparece si está disponible online, activo y vivo
+  (la policy), es de todo el tenant o de la empresa de la vitrina, y TODOS sus componentes son artículos (sin familia)
+  disponibles online y a la venta, activos, disponibles para esa empresa, con precio vigente en la lista de la tienda y
+  de `UnidadVenta.Unidad` (la única que el motor de combos de la venta online acepta; los componentes pesables dependen de
+  que aterrice el programa de combos pesables).
   `buscar` coincide solo con el nombre (el código interno no se publica en la respuesta, así que buscarlo sería un
   oráculo sobre un dato que la tienda no muestra), sin mayúsculas ni acentos (`BusquedaSinAcentos`); se le quitan los
   caracteres de control (un NUL llegaría a Postgres como error), se recorta y se acota a 100 caracteres, y un término que
@@ -532,7 +557,19 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   página sí lo aplican. Un artículo cuya categoría no es visible sale con `idCategoria` nulo y filtrar por una categoría
   invisible no encuentra nada (`dangling-fk-read-models`). `GET /api/publico/articulos/{id}/imagen`: `Cache-Control:
   public, max-age=3600`, ETag y `304` sin leer `contenido`, `404 imagen_no_encontrada` si el artículo no está
-  publicado, activo y disponible para la empresa de la vitrina o no tiene imagen.
+  disponible online y a la venta, activo y disponible para la empresa de la vitrina o no tiene imagen.
+- **Disponible a la venta** (`articulos.disponible_venta = false`, un artículo de uso interno): se compra, se stockea y
+  figura en los reportes, pero no se vende. Queda afuera de la instantánea del POS (web y escritorio la comparten), así
+  que un combo que lo lleva como componente tampoco viaja (la regla de "todos los componentes vendibles" ya miraba los
+  artículos de la instantánea; un componente familia sigue viajando mientras algún miembro se venda); de `GET
+  /api/articulos/escaneo`; de los candidatos de `GET /api/combos/{id}/cargable`; de la búsqueda de la caja
+  (`GET /api/articulos?soloVendibles=true`: el parámetro es opcional y su ausencia deja el listado de siempre, que
+  usan las compras y el back-office); y de la tienda (la policy de `articulos`). `ReglaDeArticuloVendible` rechaza con `409
+  articulo_no_vendible` una línea de venta (`ServicioDeVentas.EmitirAsync`), de presupuesto o de remito (cada uno resuelve
+  su propio documento de venta y llama a la misma regla). Quedan fuera de la regla, como ya lo hace la de cantidades
+  por unidad de venta, la venta que un dispositivo ya cobró offline (`NumeroPreasignado`), la que sale de un
+  presupuesto ya emitido y la devolución (signo negativo): cambiar la bandera no reescribe lo ya vendido. Compras,
+  stock y reportes no la miran.
 - **Baja de tenant**: `imagenes_articulo` entra al inventario de dependientes como `marcado` (un tenant con una
   imagen cargada no se puede dar de baja, igual que con vitrinas).
 
@@ -958,7 +995,8 @@ ofertas (                     -- [catálogo]
     importe_fijo    numeric(14,2) NULL,      -- "$X de descuento" / "3x2 a $X"
     prioridad       int NOT NULL DEFAULT 0,  -- ante solapamiento gana la mayor;
     acumulable      boolean NOT NULL DEFAULT false,  -- ¿se suma a otras o excluye?
-    activo
+    activo,
+    disponible_online boolean NOT NULL DEFAULT true  -- la tienda online la aplica a los precios que muestra (§3, "Tienda online")
 );
 CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1);
 CHECK (num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1);
@@ -1016,7 +1054,8 @@ combos (                      -- [catálogo]
     codigo     integer NOT NULL,             -- lo que se tipea tras la "C" en el POS
     nombre     citext,                       -- lo que imprime el ticket (no único)
     precio     numeric(14,2) NOT NULL,       -- precio fijo del conjunto, no depende de la lista de precios
-    activo
+    activo,
+    disponible_online boolean NOT NULL DEFAULT true  -- la tienda online lo ofrece (§3, "Tienda online")
 );
 CHECK (codigo > 0);                          -- ck_combos_codigo_positivo
 CHECK (precio > 0);                          -- ck_combos_precio_positivo

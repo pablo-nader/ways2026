@@ -138,7 +138,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             tienda.IdTenant, solapado, tienda.IdListaDefault, 2m, desde: ahora.AddDays(-2), hasta: ahora.AddDays(3));
 
         // Los que no.
-        await apoyo.SembrarVendibleAsync(tienda, "90 sin publicar", 1m, publicado: false);
+        await apoyo.SembrarVendibleAsync(tienda, "90 sin publicar", 1m, disponibleOnline: false);
         var inactivo = await apoyo.SembrarArticuloAsync(tienda, "91 inactivo", activo: false);
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, inactivo, tienda.IdListaDefault, 1m);
         var eliminado = await apoyo.SembrarArticuloAsync(tienda, "92 eliminado", eliminado: true);
@@ -357,7 +357,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await apoyo.SembrarVendibleAsync(tienda, "Café molido", 20m, codigoInterno: "CAF-777");
         await apoyo.SembrarVendibleAsync(tienda, "Descuento 50% especial", 30m, codigoInterno: "X-1");
         await apoyo.SembrarVendibleAsync(tienda, "Zapallo", 40m, codigoInterno: "ZAP-050");
-        await apoyo.SembrarVendibleAsync(tienda, "Sin publicar café", 50m, publicado: false);
+        await apoyo.SembrarVendibleAsync(tienda, "Sin publicar café", 50m, disponibleOnline: false);
         await apoyo.SembrarVendibleAsync(tienda, new string('a', 120), 60m);
 
         using var cliente = ClienteEn(tienda);
@@ -441,7 +441,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await apoyo.SembrarVendibleAsync(tienda, "Del chip de otra empresa", 7m, idCategoria: deOtraEmpresa);
         await apoyo.SembrarVendibleAsync(tienda, "Del chip eliminado", 8m, idCategoria: eliminada);
         await apoyo.SembrarVendibleAsync(tienda, "Sin categoría", 9m);
-        await apoyo.SembrarVendibleAsync(tienda, "Lácteo sin publicar", 10m, idCategoria: lacteos, publicado: false);
+        await apoyo.SembrarVendibleAsync(tienda, "Lácteo sin publicar", 10m, idCategoria: lacteos, disponibleOnline: false);
         await apoyo.ModificarCategoriaAsync(eliminada, c => c.DeletedAt = DateTimeOffset.UtcNow);
 
         using var cliente = ClienteEn(tienda);
@@ -733,7 +733,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var otraEmpresa = await apoyo.Vitrinas.SembrarEmpresaAsync(tienda.IdTenant, "Otra empresa SA");
         var bytes = ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoPng, relleno: 6);
 
-        var sinPublicar = await apoyo.SembrarArticuloAsync(tienda, "Sin publicar", publicado: false);
+        var sinPublicar = await apoyo.SembrarArticuloAsync(tienda, "Sin publicar", disponibleOnline: false);
         var inactivo = await apoyo.SembrarArticuloAsync(tienda, "Inactivo", activo: false);
         var eliminado = await apoyo.SembrarArticuloAsync(tienda, "Eliminado", eliminado: true);
         var deOtraEmpresa = await apoyo.SembrarArticuloAsync(tienda, "De otra empresa", idEmpresaDisponible: otraEmpresa);

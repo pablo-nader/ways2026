@@ -150,11 +150,23 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDefaultValue(0m)
                         .HasColumnName("descuento_proveedor");
 
+                    b.Property<bool>("DisponibleOnline")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("disponible_online");
+
                     b.Property<bool>("DisponibleParaTodas")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true)
                         .HasColumnName("disponible_para_todas");
+
+                    b.Property<bool>("DisponibleVenta")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("disponible_venta");
 
                     b.Property<bool>("EsProducto")
                         .HasColumnType("boolean")
@@ -197,12 +209,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasMaxLength(150)
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
-
-                    b.Property<bool>("PublicadoWeb")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("publicado_web");
 
                     b.Property<UnidadVenta>("UnidadVenta")
                         .HasColumnType("unidad_venta")
@@ -255,9 +261,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_articulos_controla_lote")
                         .HasFilter("controla_lote AND deleted_at IS NULL");
 
-                    b.HasIndex(new[] { "IdTenant" }, "ix_articulos_publicado_web")
-                        .HasDatabaseName("ix_articulos_publicado_web")
-                        .HasFilter("publicado_web AND activo AND deleted_at IS NULL");
+                    b.HasIndex(new[] { "IdTenant" }, "ix_articulos_disponible_online")
+                        .HasDatabaseName("ix_articulos_disponible_online")
+                        .HasFilter("disponible_online AND disponible_venta AND activo AND deleted_at IS NULL");
 
                     b.ToTable("articulos", null, t =>
                         {
@@ -1848,6 +1854,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
+                    b.Property<bool>("DisponibleOnline")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("disponible_online");
+
                     b.Property<int?>("IdEmpresa")
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
@@ -3102,6 +3114,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.PrimitiveCollection<short[]>("DiasSemana")
                         .HasColumnType("smallint[]")
                         .HasColumnName("dias_semana");
+
+                    b.Property<bool>("DisponibleOnline")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("disponible_online");
 
                     b.Property<DateOnly?>("FechaDesde")
                         .HasColumnType("date")

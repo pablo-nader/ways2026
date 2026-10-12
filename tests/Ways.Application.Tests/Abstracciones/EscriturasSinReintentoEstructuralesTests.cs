@@ -134,7 +134,7 @@ public class EscriturasSinReintentoEstructuralesTests
         // artículo y agregan la imagen si falta: un reintento sobre un commit ambiguo repetiría una escritura que
         // sí tuvo éxito (la subida volvería a leer una fila ya escrita o ya dada de baja), sin clave de
         // idempotencia que lo evite.
-        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "PublicarAsync" },
+        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "CambiarDisponibilidadAsync" },
         { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "GuardarImagenAsync" },
         { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "QuitarImagenAsync" },
     };

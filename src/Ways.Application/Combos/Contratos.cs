@@ -19,7 +19,8 @@ public sealed record ComboListado(
     decimal Precio,
     int? IdEmpresa,
     bool Activo,
-    IReadOnlyList<ComponenteDeComboListado> Componentes);
+    IReadOnlyList<ComponenteDeComboListado> Componentes,
+    bool DisponibleOnline = true);
 
 /// <summary>Un componente del pedido: exactamente uno entre <see cref="IdArticulo"/> e
 /// <see cref="IdFamilia"/>, con su <see cref="Cantidad"/>.</summary>
@@ -36,13 +37,15 @@ public sealed record AltaCombo(
     decimal Precio,
     int? IdEmpresa,
     IReadOnlyList<ComponenteDeSolicitudDeCombo>? Componentes,
-    bool Activo = true);
+    bool Activo = true,
+    bool DisponibleOnline = true);
 
 /// <summary>
 /// Edición completa de un combo: reemplaza nombre, precio, empresa, estado y el conjunto de componentes.
 /// <see cref="Codigo"/> omitido ⇒ conserva el actual; informado, aplica las mismas reglas que en el alta.
-/// <see cref="Activo"/> es obligatorio (<c>400 activo_requerido</c>): es nullable para que su ausencia en el JSON se
-/// rechace en vez de leerse como un valor por defecto y reactivar (o desactivar) el combo en silencio.
+/// <see cref="Activo"/> y <see cref="DisponibleOnline"/> son obligatorios (<c>400 activo_requerido</c> / <c>400
+/// disponible_online_requerido</c>): son nullable para que su ausencia en el JSON se rechace en vez de leerse como un
+/// valor por defecto y reactivar, desactivar o sacar de la tienda el combo en silencio.
 /// </summary>
 public sealed record EdicionCombo(
     int? Codigo,
@@ -50,7 +53,8 @@ public sealed record EdicionCombo(
     decimal Precio,
     int? IdEmpresa,
     IReadOnlyList<ComponenteDeSolicitudDeCombo>? Componentes,
-    bool? Activo);
+    bool? Activo,
+    bool? DisponibleOnline = null);
 
 /// <summary>
 /// Un componente de un combo listo para cargarse en el carrito del POS. <see cref="Candidatos"/> son los artículos con los

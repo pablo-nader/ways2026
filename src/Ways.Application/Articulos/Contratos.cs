@@ -18,9 +18,10 @@ namespace Ways.Application.Articulos;
 /// anulara y un escritor que la respetara discreparían sobre quién es miembro. Los costos —<see cref="CostoLista"/>,
 /// <see cref="CostoListaPor"/>, <see cref="CostoListaIncluyeIva"/>, <see cref="DescuentoProveedor"/> y
 /// <see cref="CostoNominal"/>— solo los reciben admin y supervisor; para el vendedor viajan <c>null</c>.
-/// <see cref="PublicadoWeb"/> es si el artículo se ofrece en la tienda online y <see cref="TieneImagen"/> si tiene
-/// una imagen cargada (los bytes viajan por <c>GET /api/articulos/{id}/imagen</c>); las dos salen de lo guardado
-/// en todo listado, detalle, alta y edición.</summary>
+/// <see cref="DisponibleOnline"/> es si el artículo se ofrece en la tienda online, <see cref="DisponibleVenta"/> si se
+/// puede vender (<c>false</c> es un artículo de uso interno) y <see cref="TieneImagen"/> si tiene una imagen cargada
+/// (los bytes viajan por <c>GET /api/articulos/{id}/imagen</c>); salen de lo guardado en todo listado, detalle, alta y
+/// edición.</summary>
 public record ArticuloListado(
     int Id,
     string CodigoInterno,
@@ -47,7 +48,8 @@ public record ArticuloListado(
     bool AcumulaEnVenta,
     int? IdFamilia = null,
     string? CodigoProveedor = null,
-    bool PublicadoWeb = false,
+    bool DisponibleOnline = true,
+    bool DisponibleVenta = true,
     bool TieneImagen = false);
 
 /// <summary><see cref="CodigoInterno"/> es opcional a propósito (spec: codigo_interno
@@ -191,8 +193,8 @@ public record SugerenciaDePrecio(decimal? PrecioSugerido);
 /// el <c>NombreFantasia</c> del proveedor habitual cuando no es nulo/blanco, si no su
 /// <c>RazonSocial</c>. <see cref="CostoNominal"/> es el costo real de reposición y solo lo reciben
 /// admin y supervisor; para el vendedor viaja <c>null</c>, igual que un artículo sin costo cargado.
-/// <see cref="PublicadoWeb"/> y <see cref="TieneImagen"/> son el estado del artículo en la tienda online: si se
-/// publica y si tiene una imagen viva.</summary>
+/// <see cref="DisponibleOnline"/>, <see cref="DisponibleVenta"/> y <see cref="TieneImagen"/> son el estado del
+/// artículo en la tienda online y en la venta: si se ofrece online, si se puede vender y si tiene una imagen viva.</summary>
 public record ArticuloGrillaFila(
     int Id,
     string CodigoInterno,
@@ -202,7 +204,8 @@ public record ArticuloGrillaFila(
     int? IdProveedorHabitual,
     string? Proveedor,
     bool Activo,
-    bool PublicadoWeb = false,
+    bool DisponibleOnline = true,
+    bool DisponibleVenta = true,
     bool TieneImagen = false);
 
 /// <summary>Respuesta de <c>GET /api/articulos/grilla</c> — mismo shape que

@@ -30,11 +30,15 @@ public static class ArticulosEndpoints
             // Con busqueda, suma (y lista primero) los artículos cuyo código de ESE proveedor
             // coincide exacto con el término; sin busqueda no tiene efecto.
             int? idProveedor,
+            // Búsqueda de la caja: deja afuera los artículos que no están disponibles a la venta.
+            bool? soloVendibles,
             CancellationToken ct) =>
             servicio.ListarAsync(
                 busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25,
-                idArea, idCategoria, idMarca, idProveedor, ct))
-        .WithSummary("Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado.");
+                idArea, idCategoria, idMarca, idProveedor, soloVendibles ?? false, ct))
+        .WithSummary(
+            "Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado. Con soloVendibles "
+            + "deja afuera los artículos no disponibles a la venta (la búsqueda de la caja).");
 
         // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
         // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Hereda
@@ -101,14 +105,15 @@ public static class ArticulosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Baja lógica del artículo.");
 
-        // Tienda online: publicar el artículo y su imagen. Mismo grupo y misma policy que editar el artículo.
-        grupo.MapPut("/{id:int}/web", (
-            ServicioDeCatalogoWeb servicio, int id, SolicitudDePublicacionWeb datos, CancellationToken ct) =>
-            servicio.PublicarAsync(id, datos, ct))
+        // Disponibilidad del artículo (online y a la venta) y su imagen. Mismo grupo y misma policy que editar el
+        // artículo.
+        grupo.MapPut("/{id:int}/disponibilidad", (
+            ServicioDeCatalogoWeb servicio, int id, SolicitudDeDisponibilidad datos, CancellationToken ct) =>
+            servicio.CambiarDisponibilidadAsync(id, datos, ct))
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
-            "Publica o despublica el artículo en la tienda online. Idempotente. Se publica por artículo: no es un "
-            + "campo de la familia.");
+            "Fija si el artículo está disponible online y a la venta (los dos son obligatorios). Idempotente. Es por "
+            + "artículo: no es un campo de la familia.");
 
         // El cuerpo es la imagen cruda y no JSON: el servicio lo lee acotado y valida el tipo por contenido.
         grupo.MapPut("/{id:int}/imagen", (

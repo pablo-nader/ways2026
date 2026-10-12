@@ -70,4 +70,7 @@ public class Oferta : EntidadTenant
     public bool Acumulable { get; set; }
 
     public bool Activo { get; set; } = true;
+
+    /// <summary><c>true</c> (default) ⇒ la tienda online aplica la oferta a los precios que muestra.</summary>
+    public bool DisponibleOnline { get; set; } = true;
 }
