@@ -105,6 +105,9 @@ function cierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = {}): Re
     fondoInicial: 500,
     ventasPorMedio: [],
     totalVentas: 0,
+    totalDigitales: 0,
+    totalEfectivo: 0,
+    totalCuentaCorriente: 0,
     retiros: [],
     totalRetiros: 0,
     ventasEnEfectivoNetas: 0,
@@ -167,6 +170,34 @@ describe('ModalDetalleDeTurno', () => {
 
     expect(within(dialogo).getByText('0007-00000001')).toBeInTheDocument()
     expect(within(dialogo).getByText('Sueldos')).toBeInTheDocument()
+  })
+
+  it('muestra las ventas por medio de pago con los subtotales y el total general del servidor', async () => {
+    const cierre = cierreFixture({
+      ventasPorMedio: [
+        { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 950 },
+        { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 300 },
+      ],
+      totalVentas: 1250,
+      totalDigitales: 300,
+      totalEfectivo: 950,
+    })
+    mockearRutas(rutasDe(501, { cierre }))
+    render(<ModalDetalleDeTurno idTurno={501} onCerrar={vi.fn()} />)
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Detalle del cierre #501' })
+    const tabla = await within(dialogo).findByTestId('ventas-por-medio')
+
+    const filas = Array.from(tabla.querySelectorAll('tr'))
+      .map((fila) => Array.from(fila.querySelectorAll('td')).map((c) => c.textContent))
+      .filter((celdas) => celdas.length > 0)
+    expect(filas).toEqual([
+      ['Efectivo', '$ 950,00'],
+      ['Tarjeta', '$ 300,00'],
+      ['Total digitales', '$ 300,00'],
+      ['Total efectivo', '$ 950,00'],
+      ['Total general', '$ 1.250,00'],
+    ])
   })
 
   it('mientras las lecturas siguen en vuelo muestra "Cargando detalle…" y ningún dato', async () => {

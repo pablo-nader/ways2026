@@ -393,8 +393,11 @@ function resumenDeCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> 
     vendedor: 'jperez',
     empleadoCierre: 'jperez',
     fondoInicial: 500,
-    ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 8000 }],
+    ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 8000 }],
     totalVentas: 8000,
+    totalDigitales: 0,
+    totalEfectivo: 8000,
+    totalCuentaCorriente: 0,
     retiros: [{ fecha: '2026-08-05T15:00:00Z', importe: 3000, motivo: 'Retiro de efectivo', empleado: 'jperez' }],
     totalRetiros: 3000,
     ventasEnEfectivoNetas: 8000,
@@ -482,7 +485,7 @@ describe('CajaZ — reimpresión del ticket de cierre', () => {
     expect(within(vista).getByText('Turno #412')).toBeInTheDocument()
     expect(within(vista).getByText('Empresa Demo')).toBeInTheDocument()
     expect(within(vista).getByText('PV 10 — Local Centro')).toBeInTheDocument()
-    expect(within(vista).getByText(/^Total ventas\s+\$ 8\.000,00$/)).toBeInTheDocument()
+    expect(within(vista).getByText(/^Total general\s+\$ 8\.000,00$/)).toBeInTheDocument()
     expect(imprimirMock).not.toHaveBeenCalled()
     expect(imprimirSpy).toHaveBeenCalledTimes(1)
     expect(document.body).toHaveClass('imprimiendo-ticket')

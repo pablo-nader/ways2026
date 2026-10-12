@@ -430,7 +430,15 @@ function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: Context
   if (resumen.ventasPorMedio.length === 0) {
     ticket.linea('Sin ventas en el turno.')
   }
-  ticket.negrita(true).lineaDeColumnas('Total ventas', formatearMoneda(resumen.totalVentas)).negrita(false)
+  // Un resumen anterior al desglose no trae los subtotales: se omiten antes que adivinarlos.
+  if (typeof resumen.totalDigitales === 'number') {
+    ticket.lineaDeColumnas('Total digitales', formatearMoneda(resumen.totalDigitales))
+    ticket.lineaDeColumnas('Total efectivo', formatearMoneda(resumen.totalEfectivo))
+    if (resumen.totalCuentaCorriente !== 0) {
+      ticket.lineaDeColumnas('Total cuenta corriente', formatearMoneda(resumen.totalCuentaCorriente))
+    }
+  }
+  ticket.negrita(true).lineaDeColumnas('Total general', formatearMoneda(resumen.totalVentas)).negrita(false)
 
   ticket.lineaDeGuiones()
 

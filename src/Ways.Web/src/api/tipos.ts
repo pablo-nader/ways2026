@@ -1483,8 +1483,15 @@ export type SolicitudDeCierrePorRetiro = {
 export type PuntoVentaDeCierre = { id: number; numero: number; nombre: string }
 
 /** Una fila de `ResumenDeCierrePorRetiro.ventasPorMedio` — ventas netas de vuelto por medio
- * (nunca de gastos), nombre ya resuelto. */
-export type VentaPorMedio = { idMedioPago: number; nombre: string; importe: number }
+ * (nunca de gastos), nombre ya resuelto. `comportamiento` es la clasificación con que la fila entra
+ * en los subtotales del resumen (el medio ancla del turno cuenta como efectivo aunque el catálogo
+ * lo haya cambiado después). */
+export type VentaPorMedio = {
+  idMedioPago: number
+  nombre: string
+  comportamiento: ComportamientoMedioPago
+  importe: number
+}
 
 /** Una fila de `ResumenDeCierrePorRetiro.retiros` — TODOS los retiros del turno, incluido el
  * de cierre, con el nombre del empleado ya resuelto. */
@@ -1511,7 +1518,11 @@ export type ResumenDeCierrePorRetiro = {
   empleadoCierre: string
   fondoInicial: number
   ventasPorMedio: VentaPorMedio[]
+  /** Total general de ventas; `totalDigitales + totalEfectivo + totalCuentaCorriente` lo suman. */
   totalVentas: number
+  totalDigitales: number
+  totalEfectivo: number
+  totalCuentaCorriente: number
   retiros: RetiroDeCierre[]
   totalRetiros: number
   ventasEnEfectivoNetas: number
