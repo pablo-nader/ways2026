@@ -58,7 +58,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
     setBuscando(true)
     setError('')
     try {
-      const pagina = await clienteDeArticulos.listar(termino, false)
+      const pagina = await clienteDeArticulos.listar(termino, false, undefined, { soloVendibles: true })
       if (generacionRef.current !== generacion) return
       const elegibles = pagina.items.filter(esArticuloElegibleParaCombo)
       setResultados(elegibles)

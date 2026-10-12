@@ -10,7 +10,7 @@ import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
-import { cierreDeTurno, pulsoDeCajon } from '../impresion/plantillas'
+import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta } from '../impresion/plantillas'
 import type {
   ArticuloDeInstantanea,
   ArticuloEscaneado,
@@ -218,7 +218,8 @@ function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {})
 
 function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 9,
     codigoInterno: 'A0009',
@@ -463,13 +464,17 @@ let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 /** Mock PARCIAL de `outboxOffline`: todo real salvo `leerOutbox`, que un test puede hacer fallar
  * (`controlDeOutbox.fallarLectura`) para simular un almacén caído a mitad de un drenado — el
  * almacén real (`almacenPos.ts`) nunca rechaza, así que no hay otra forma de llegar a ese camino. */
-const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false }))
+const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false }))
 vi.mock('../pos/outboxOffline', async (importarOriginal) => {
   const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
   return {
     ...real,
     leerOutbox: (almacen: Parameters<typeof real.leerOutbox>[0]) =>
-      controlDeOutbox.fallarLectura ? Promise.reject(new Error('almacén caído')) : real.leerOutbox(almacen),
+      controlDeOutbox.colgarLectura
+        ? new Promise<never>(() => {})
+        : controlDeOutbox.fallarLectura
+          ? Promise.reject(new Error('almacén caído'))
+          : real.leerOutbox(almacen),
   }
 })
 
@@ -566,6 +571,7 @@ beforeEach(async () => {
   await borrarAlmacenOffline()
   establecerTokenDeSesionBearer(null)
   controlDeOutbox.fallarLectura = false
+  controlDeOutbox.colgarLectura = false
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -2244,6 +2250,385 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
   })
 })
 
+describe('Pos — saldo confirmado de la venta a un cliente identificado', () => {
+  const juan = { ...otroCliente, saldo: 500, limiteCredito: 5000, creditoIlimitado: false }
+  const RECHAZO_DE_RED = () => Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+  function mockearJuan(lecturas: (() => Promise<unknown>)[] = [], sinConsumidorFinal = false) {
+    let n = 0
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2') return (lecturas[n++] ?? (() => Promise.resolve(juan)))()
+      if (sinConsumidorFinal && ruta === '/clientes') return Promise.resolve<PaginaDe<ClienteListado>>({ items: [], total: 0, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [juan], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+  }
+
+  const lecturasDeJuan = () => apiGetMock.mock.calls.filter((c) => c[0] === '/clientes/2')
+  const dejarCorrerLoPendiente = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
+
+  async function elegirAJuan() {
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await waitFor(() => expect(lecturasDeJuan()).toHaveLength(1))
+    await dejarCorrerLoPendiente()
+  }
+
+  async function armarLaVenta() {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  }
+
+  const cobrar = () => userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+  const saldoDeLaVenta = (alEmitir: ReturnType<typeof vi.fn>, n = 0) => ({
+    saldoEnPantalla: (alEmitir.mock.calls[n][1] as ClienteListado).saldo,
+    ...alEmitir.mock.calls[n][3],
+  })
+
+  it('un cliente leído del servidor, con la cola vacía, se informa confirmado', async () => {
+    mockearJuan()
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await armarLaVenta()
+
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: 0, saldoConfirmado: true })
+  })
+
+  describe('el drenado de la cola entre la lectura y el cobro', () => {
+    async function conUnaVentaDeJuanEnLaCola(lecturasPosteriores: (() => Promise<unknown>)[]) {
+      mockearJuan([() => Promise.resolve(juan), ...lecturasPosteriores])
+      await guardarLocal(crearAlmacenIndexedDb(), instantaneaFixture())
+      await agregarAOutbox(crearAlmacenIndexedDb(), {
+        idLocal: 'pendiente-de-juan',
+        numeroPreasignado: 400,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+        consumoCuentaCorriente: 100,
+      })
+      let liberarEnvio!: (c: ComprobanteEmitido) => void
+      const envio = new Promise<ComprobanteEmitido>((resolver) => (liberarEnvio = resolver))
+      const postBase = apiPostMock.getMockImplementation()!
+      let enviadas = 0
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' && enviadas++ === 0 ? envio : postBase(ruta, cuerpo)))
+      const alEmitir = vi.fn()
+      renderPos('/pos', { alEmitir })
+      await esperarAlConsumidorFinal()
+      await elegirAJuan()
+      await armarLaVenta()
+      liberarEnvio(comprobanteEmitidoFixture())
+      await waitFor(async () => expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([]))
+      await dejarCorrerLoPendiente()
+      return alEmitir
+    }
+
+    it('con señal vuelve a leer al cliente: el saldo del servidor ya incluye la venta enviada (600) y se informa confirmado', async () => {
+      const alEmitir = await conUnaVentaDeJuanEnLaCola([() => Promise.resolve({ ...juan, saldo: 600 })])
+      await waitFor(() => expect(lecturasDeJuan()).toHaveLength(2))
+      await dejarCorrerLoPendiente()
+      await cobrar()
+
+      await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+      expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 600, consumoPendiente: 0, saldoConfirmado: true })
+    })
+
+    it('si esa lectura nueva falla, el saldo de pantalla (500) ya no es dato: se informa no confirmado', async () => {
+      const alEmitir = await conUnaVentaDeJuanEnLaCola([RECHAZO_DE_RED])
+      await waitFor(() => expect(lecturasDeJuan()).toHaveLength(2))
+      await dejarCorrerLoPendiente()
+      await cobrar()
+
+      await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+      expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: 0, saldoConfirmado: false })
+    })
+  })
+
+  it('un cobro de resultado incierto (la venta pudo registrarse) quita la confirmación: la venta que sí sale después va no confirmada', async () => {
+    mockearJuan()
+    const postBase = apiPostMock.getMockImplementation()!
+    let ventas = 0
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' && ventas++ === 0 ? RECHAZO_DE_RED() : postBase(ruta, cuerpo)))
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await armarLaVenta()
+
+    await cobrar()
+    expect(await screen.findByText(TEXTO_DE_COBRO_INCIERTO)).toBeInTheDocument()
+    expect(alEmitir).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toMatchObject({ saldoConfirmado: false })
+  })
+
+  it('tras registrar un pago, si la lectura posterior falla, la venta siguiente va no confirmada', async () => {
+    const comprobante = comprobanteEmitidoFixture({
+      id: 900,
+      numeroVisible: '0007-00000900',
+      idCliente: 2,
+      items: [],
+      subtotal: 0,
+      total: 0,
+      pagos: [{ idMedioPago: medioEfectivo.id, importe: 300, referencia: null, vuelto: 0 }],
+    })
+    let lecturas = 0
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2') return lecturas++ === 0 ? Promise.resolve(juan) : RECHAZO_DE_RED()
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [juan], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    const postBase = apiPostMock.getMockImplementation()!
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) =>
+      ruta === '/clientes/2/cuenta-corriente/pagos' ? Promise.resolve(comprobante) : postBase(ruta, cuerpo),
+    )
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '300')
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    await waitFor(() => expect(lecturasDeJuan()).toHaveLength(2))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Cuenta corriente' })).not.toBeInTheDocument())
+    await armarLaVenta()
+
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toMatchObject({ saldoEnPantalla: 500, saldoConfirmado: false })
+  })
+
+  it('si el cliente sigue elegido después de una venta (sin Consumidor Final), la segunda va no confirmada', async () => {
+    mockearJuan([], true)
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toBeEnabled())
+    await elegirAJuan()
+    await armarLaVenta()
+    await cobrar()
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toMatchObject({ saldoConfirmado: true })
+    await userEvent.click(await screen.findByRole('button', { name: /Aceptar/ }))
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(/Importe de Efectivo/), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(2))
+    expect(saldoDeLaVenta(alEmitir, 1)).toMatchObject({ saldoConfirmado: false })
+    expect(lecturasDeJuan()).toHaveLength(1)
+  })
+
+  it('si la lectura de la cola no responde, la venta se completa y el ticket recibe la cola como desconocida al vencer el tope', async () => {
+    mockearJuan()
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await armarLaVenta()
+    controlDeOutbox.colgarLectura = true
+
+    await cobrar()
+
+    expect(await screen.findByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument()
+    expect(alEmitir).not.toHaveBeenCalled()
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: null, saldoConfirmado: true })
+  }, 15_000)
+})
+
+describe('Pos — recibo del pago a cuenta en el escritorio', () => {
+  const CONTEXTO = { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' }
+  const MEDIOS_DEL_POS = [medioEfectivo, medioTarjeta, medioCuentaCorriente]
+
+  /** Cliente de la venta con saldo 500; el servidor informa `saldoTrasElPago` en la segunda consulta
+   * (o rechaza esa consulta si es `null`). */
+  function prepararPago(saldoTrasElPago: number | null | Promise<number>, comprobante: ComprobanteEmitido) {
+    let llamadasEstado = 0
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2') return Promise.resolve({ ...otroCliente, saldo: 500 })
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        llamadasEstado += 1
+        if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
+        if (saldoTrasElPago === null) return Promise.reject(new Error('sin red'))
+        const aEstado = (saldo: number) =>
+          estadoDeCuentaFixture({ header: { saldo, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 5000 - saldo } })
+        return saldoTrasElPago instanceof Promise ? saldoTrasElPago.then(aEstado) : Promise.resolve<EstadoDeCuenta>(aEstado(saldoTrasElPago))
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/2/cuenta-corriente/pagos') return Promise.resolve<ComprobanteEmitido>(comprobante)
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  async function pagar(props: ComponentProps<typeof Pos> = {}) {
+    renderPos('/pos', props)
+    await esperarAlConsumidorFinal()
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '300')
+    await waitFor(() => expect(modalDePago.getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+  }
+
+  const comprobanteDePago = comprobanteEmitidoFixture({
+    id: 900,
+    numeroVisible: '0007-00000900',
+    idCliente: 2,
+    items: [],
+    subtotal: 0,
+    total: 0,
+    pagos: [{ idMedioPago: medioEfectivo.id, importe: 300, referencia: null, vuelto: 0 }],
+  })
+  const clienteDelRecibo = { numero: 2, nombre: 'Juan Pérez' }
+
+  it('encola un único recibo con el saldo posterior que informó el servidor y el anterior reconstruido, con el pulso del cajón', async () => {
+    prepararPago(150, comprobanteDePago)
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    const [descripcion, bytes] = vi.mocked(caja.encolarImpresion).mock.calls[0]
+    expect(descripcion).toBe('el recibo del pago a cuenta')
+    expect(bytes).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150 }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+    expect(Array.from(bytes.slice(-11, -6))).toEqual([0x1b, 0x70, 0x00, 25, 250])
+  })
+
+  it('si la consulta posterior falla, imprime con el saldo de la pantalla como anterior y le resta lo aplicado', async () => {
+    prepararPago(null, comprobanteDePago)
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 500, saldoNuevo: 200, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  })
+
+  it('con una venta del cliente (100) todavía en la cola, el recibo desplaza ambos saldos y los marca estimados: nuevo 250 = 150 + 100, anterior 550', async () => {
+    prepararPago(150, comprobanteDePago)
+    // El envío de la venta en cola queda colgado: sigue en el outbox mientras se imprime el recibo.
+    const postBase = apiPostMock.getMockImplementation()!
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' ? new Promise(() => {}) : postBase(ruta, cuerpo)))
+    await agregarAOutbox(crearAlmacenIndexedDb(), {
+      idLocal: 'pendiente-del-cliente',
+      numeroPreasignado: 400,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      consumoCuentaCorriente: 100,
+    })
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta(
+        { comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 550, saldoNuevo: 250, estimado: true },
+        CONTEXTO,
+        MEDIOS_DEL_POS,
+      ),
+    )
+  })
+
+  it('si el drenado saca una venta de la cola entre el pago y la lectura del saldo posterior, el recibo sale estimado: posterior 150, anterior 450', async () => {
+    let leerSaldoPosterior!: (saldo: number) => void
+    prepararPago(new Promise<number>((resolver) => (leerSaldoPosterior = resolver)), comprobanteDePago)
+    let liberarEnvio!: (c: ComprobanteEmitido) => void
+    const envio = new Promise<ComprobanteEmitido>((resolver) => (liberarEnvio = resolver))
+    const postBase = apiPostMock.getMockImplementation()!
+    let ventasEnviadas = 0
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' && ventasEnviadas++ === 0 ? envio : postBase(ruta, cuerpo)))
+    await guardarLocal(crearAlmacenIndexedDb(), instantaneaFixture())
+    await agregarAOutbox(crearAlmacenIndexedDb(), {
+      idLocal: 'pendiente-del-cliente',
+      numeroPreasignado: 400,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      consumoCuentaCorriente: 100,
+    })
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+    liberarEnvio(comprobanteEmitidoFixture())
+    await waitFor(async () => expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([]))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    leerSaldoPosterior(150)
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  })
+
+  it('si la lectura de la cola no responde, el recibo sale al vencer el tope con la cola como desconocida: 450 → 150, estimado', async () => {
+    prepararPago(150, comprobanteDePago)
+    controlDeOutbox.colgarLectura = true
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  }, 15_000)
+
+  it('fuera del escritorio registra el pago sin imprimir nada', async () => {
+    prepararPago(200, comprobanteDePago)
+
+    await pagar()
+
+    expect(await screen.findByText('Pago registrado: comprobante 0007-00000900.')).toBeInTheDocument()
+    expect(await screen.findByText('$ 200,00', { selector: '.fs-5' })).toBeInTheDocument()
+  })
+})
+
 describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', () => {
   it('un 409 turno_no_abierto reemplaza el panel de cobro por la oferta de abrir turno, y tras abrirlo la venta NO se reintenta sola', async () => {
     await armarVentaLista()
@@ -2333,6 +2718,21 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
     expect(await screen.findByText('No hay stock suficiente.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
+  })
+
+  it('un 409 articulo_no_vendible muestra el mensaje del servidor con qué hacer, sin activar el gate de turno', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'articulo_no_vendible', 'El artículo A0001 no está disponible a la venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('El artículo A0001 no está disponible a la venta. Sacalo para poder continuar.')).toBeInTheDocument()
     expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
   })
 
@@ -4573,8 +4973,11 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       vendedor: 'jperez',
       empleadoCierre: 'jperez',
       fondoInicial: 500,
-      ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 1000 }],
+      ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 1000 }],
       totalVentas: 1000,
+      totalDigitales: 0,
+      totalEfectivo: 1000,
+      ventasACuentaCorriente: 0,
       retiros: [],
       totalRetiros: 0,
       ventasEnEfectivoNetas: 1000,
@@ -6342,8 +6745,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   /** Monta `Pos` con la instantánea local ya cargada en el hook. El botón "Sincronizar ahora"
    * solo existe con una instantánea en memoria, así que es la señal de que el DATO llegó (no solo
    * la pantalla) — y el Consumidor Final ya quedó elegido. */
-  async function montarConInstantanea() {
-    renderPos()
+  async function montarConInstantanea(props: ComponentProps<typeof Pos> = {}) {
+    renderPos('/pos', props)
     await esperarAlConsumidorFinal()
     await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
   }
@@ -6888,7 +7291,15 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       idListaPrecio: 2, limiteCredito: 1000, creditoIlimitado: false, saldo: 0,
     })
 
-    async function armarVentaEnCuentaCorriente(params: { saldoEnInstantanea: number; saldoAlElegir?: number; consulta: () => Promise<unknown> }) {
+    async function armarVentaEnCuentaCorriente(params: {
+      saldoEnInstantanea: number
+      saldoAlElegir?: number
+      consulta: () => Promise<unknown>
+      /** La lectura al elegir el cliente falla: su saldo en pantalla es el de la copia local. */
+      fallaLaLecturaAlElegir?: boolean
+      ventasEnLaCola?: { idLocal: string; numeroPreasignado: number; idCliente: number; consumoCuentaCorriente: number }[]
+      props?: ComponentProps<typeof Pos>
+    }) {
       const articulo: ArticuloDeInstantanea = {
         ...articuloDeInstantaneaFixture(),
         preciosPorLista: [
@@ -6909,11 +7320,22 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         }),
         bloque: { desde: 500, hasta: 599, proximo: 500 },
       })
+      for (const v of params.ventasEnLaCola ?? []) {
+        await agregarAOutbox(crearAlmacenIndexedDb(), {
+          idLocal: v.idLocal,
+          numeroPreasignado: v.numeroPreasignado,
+          idPuntoVenta: 7,
+          creadoEn: '2026-09-20T09:00:00.000Z',
+          solicitud: { idPuntoVenta: 7, idCliente: v.idCliente, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+          consumoCuentaCorriente: v.consumoCuentaCorriente,
+        })
+      }
       let consultasDelCliente = 0
       mockearApiGet((ruta) => {
         if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [], total: 0, pagina: 1, tamanio: 25 })
         if (ruta === '/clientes/30') {
           consultasDelCliente += 1
+          if (consultasDelCliente === 1 && params.fallaLaLecturaAlElegir) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
           return consultasDelCliente === 1 ? Promise.resolve({ ...joseGomez, saldo: params.saldoAlElegir ?? 0 }) : params.consulta()
         }
         return undefined
@@ -6921,7 +7343,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       apiPostMock.mockImplementation((ruta: string) =>
         ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
       )
-      await montarConInstantanea()
+      await montarConInstantanea(params.props)
 
       await buscarYElegirCliente('gomez', '#30 — José Gómez')
       await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
@@ -6948,6 +7370,53 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 80 })
       expect(llamadasGet('/clientes/30')).toHaveLength(2)
       expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
+    })
+
+    describe('saldo para el ticket (alEmitir)', () => {
+      const consultaQueCabe = () => Promise.resolve({ ...joseGomez, saldo: 0 })
+      const emitidoA = (alEmitir: ReturnType<typeof vi.fn>) => {
+        expect(alEmitir).toHaveBeenCalledTimes(1)
+        return { cliente: alEmitir.mock.calls[0][1] as ClienteListado, saldo: alEmitir.mock.calls[0][3] }
+      }
+
+      it('con la cola vacía y el saldo leído del servidor, informa pendiente 0 y saldo confirmado', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: consultaQueCabe, props: { alEmitir } })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 0, saldoConfirmado: true })
+      })
+
+      it('con ventas del mismo cliente en la cola informa su suma (100) sin contar la que se emite ni las de otro cliente (900)', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({
+          saldoEnInstantanea: 0,
+          consulta: consultaQueCabe,
+          ventasEnLaCola: [
+            { idLocal: 'propia-previa', numeroPreasignado: 400, idCliente: 30, consumoCuentaCorriente: 100 },
+            { idLocal: 'de-otro', numeroPreasignado: 401, idCliente: 99, consumoCuentaCorriente: 900 },
+          ],
+          props: { alEmitir },
+        })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 100, saldoConfirmado: true })
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toHaveLength(3)
+      })
+
+      it('si la lectura del cliente al elegirlo falló, el saldo no está confirmado', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: consultaQueCabe, fallaLaLecturaAlElegir: true, props: { alEmitir } })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 0, saldoConfirmado: false })
+      })
     })
 
     it('con el servidor diciendo que supera el límite, informa el rechazo y no encola ni cobra online', async () => {
@@ -7768,6 +8237,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       precio: 5000,
       idEmpresa: null,
       activo: true,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
         { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1, disponible: true },

@@ -38,25 +38,28 @@ public record ArticuloEscaneado(
 /// catálogo ni ciclo de vida de escritura, solo una lectura identity-only. Parsea con
 /// <see cref="ParserDeEscaneo"/> (pure) y corre UNA query contra <c>articulos</c>/
 /// <c>codigos_barra</c>, ambas ya filtradas por tenant (EF query filter); el artículo además
-/// exige <c>activo = true</c> (spec: "Inactive articulo is not resolved") — el código de barra
+/// exige <c>activo = true</c> (spec: "Inactive articulo is not resolved") y <c>disponible_venta = true</c> (un
+/// artículo de uso interno no se escanea para vender) — el código de barra
 /// no tiene baja lógica propia, su ciclo de vida es el soft-delete global.
+/// Con <c>incluirNoVendibles</c> el artículo de uso interno también se resuelve: es la salida de la devolución, que
+/// <c>ServicioDeVentas.EmitirAsync</c> exime de la regla de venta y que el back-office necesita para una nota de crédito.
 /// </summary>
 public class ServicioDeEscaneo(IWaysDbContext db)
 {
-    public async Task<ArticuloEscaneado> ResolverAsync(string entrada, CancellationToken ct = default)
+    public async Task<ArticuloEscaneado> ResolverAsync(string entrada, bool incluirNoVendibles, CancellationToken ct = default)
     {
         var parseado = ParserDeEscaneo.Parsear(entrada);
 
         var articulo = parseado.Objetivo switch
         {
             ObjetivoDeEscaneo.CodigoInterno => await db.Articulos
-                .Where(a => a.Activo && a.CodigoInterno == parseado.Codigo)
+                .Where(a => a.Activo && (incluirNoVendibles || a.DisponibleVenta) && a.CodigoInterno == parseado.Codigo)
                 .FirstOrDefaultAsync(ct),
 
             ObjetivoDeEscaneo.CodigoBarra => await (
                 from a in db.Articulos
                 join c in db.CodigosBarra on a.Id equals c.IdArticulo
-                where a.Activo && c.Codigo == parseado.Codigo
+                where a.Activo && (incluirNoVendibles || a.DisponibleVenta) && c.Codigo == parseado.Codigo
                 select a).FirstOrDefaultAsync(ct),
 
             _ => null

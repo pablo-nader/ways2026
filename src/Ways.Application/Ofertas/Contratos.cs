@@ -32,7 +32,8 @@ public sealed record OfertaListado(
     bool Activo,
     IReadOnlyList<int> IdsListas,
     int? IdFamilia = null,
-    string? NombreArticulo = null);
+    string? NombreArticulo = null,
+    bool DisponibleOnline = true);
 
 /// <summary>Alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>/
 /// <see cref="IdFamilia"/>) y
@@ -61,9 +62,13 @@ public sealed record AltaOferta(
     bool Acumulable,
     IReadOnlyList<int>? IdsListas = null,
     bool Activo = true,
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    bool DisponibleOnline = true);
 
-/// <summary>Mismo shape que <see cref="AltaOferta"/> — a diferencia de
+/// <summary>Mismo shape que <see cref="AltaOferta"/> salvo <see cref="DisponibleOnline"/>, que acá es opcional y
+/// <c>null</c> significa "sin cambios": es nullable para que su ausencia en el JSON conserve el valor guardado en vez de
+/// leerse como <c>false</c> y sacar la oferta de la tienda en silencio (un cliente anterior al campo sigue editando).
+/// A diferencia de
 /// <c>EdicionArticulo</c>/<c>AltaArticulo</c>, acá no hay ninguna columna inmutable que excluir
 /// (<c>codigo_interno</c> no tiene equivalente en <c>ofertas</c>), así que los dos contratos
 /// llevan exactamente los mismos campos (task 2.3: contratos separados por nombre, sin
@@ -87,7 +92,8 @@ public sealed record EdicionOferta(
     bool Acumulable,
     IReadOnlyList<int>? IdsListas,
     bool Activo,
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    bool? DisponibleOnline = null);
 
 /// <summary>Una línea de entrada para <c>ServicioDeOfertas.ResolverAsync</c> (task 3.6, design:
 /// Resolution Contract) — a diferencia de <c>Ways.Domain.Ofertas.LineaAResolver</c> (pura,

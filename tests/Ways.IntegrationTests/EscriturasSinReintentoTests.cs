@@ -584,7 +584,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             IdCategoria: null, FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null,
             DiasSemana: null, CantidadMinima: null, PrecioUnitario: null, Porcentaje: 20m,
             ImporteFijo: null, Prioridad: 0, Acumulable: false, IdsListas: [idOtraLista],
-            Activo: true);
+            Activo: true, DisponibleOnline: true);
 
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("ofertas_listas", SqlStateTransitorio);
 

@@ -116,6 +116,20 @@ describe('clienteDeArticulos — códigos de proveedor', () => {
     expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=AB-12&idProveedor=7')
   })
 
+  it('listar con soloVendibles lo manda como parámetro, solo cuando se pide', () => {
+    clienteDeArticulos.listar('leche', false, undefined, { soloVendibles: true })
+    expect(apiGetMock).toHaveBeenLastCalledWith('/articulos?busqueda=leche&soloVendibles=true')
+
+    clienteDeArticulos.listar('leche', false, 7, { soloVendibles: true })
+    expect(apiGetMock).toHaveBeenLastCalledWith('/articulos?busqueda=leche&idProveedor=7&soloVendibles=true')
+
+    clienteDeArticulos.listar('leche', false, undefined, { soloVendibles: false })
+    expect(apiGetMock).toHaveBeenLastCalledWith('/articulos?busqueda=leche')
+
+    clienteDeArticulos.listar('leche', false, undefined, {})
+    expect(apiGetMock).toHaveBeenLastCalledWith('/articulos?busqueda=leche')
+  })
+
   it('asociarCodigoProveedor hace POST con idProveedor y codigo al artículo indicado', () => {
     clienteDeArticulos.asociarCodigoProveedor(20, { idProveedor: 7, codigo: 'AB-12' })
     expect(apiPostMock).toHaveBeenCalledWith('/articulos/20/codigos-proveedor', { idProveedor: 7, codigo: 'AB-12' })

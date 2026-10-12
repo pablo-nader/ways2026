@@ -199,6 +199,25 @@ export function ModalDeCombo({
             </div>
           </div>
 
+          <div className="col-md-3 d-flex align-items-end">
+            <div className="form-check">
+              <input
+                id="cb-disponible-online"
+                type="checkbox"
+                className="form-check-input"
+                checked={valor.disponibleOnline}
+                onChange={(e) => onCambio({ ...valor, disponibleOnline: e.target.checked })}
+                aria-describedby="cb-disponible-online-ayuda"
+              />
+              <label className="form-check-label" htmlFor="cb-disponible-online">
+                Disponible online
+              </label>
+              <div id="cb-disponible-online-ayuda" className="form-text">
+                Desmarcalo para que la tienda online no lo ofrezca.
+              </div>
+            </div>
+          </div>
+
           <div className="col-12">
             <EditorDeComponentes
               filas={valor.componentes}

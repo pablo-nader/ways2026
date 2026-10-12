@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Presupuesto } from './Presupuesto'
+import { ErrorApi } from '../api/cliente'
 import type { ClienteListado, PresupuestoDetalle, PuntoVentaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -362,5 +363,54 @@ describe('Presupuesto — cantidad según la unidad de venta', () => {
 
     expect(cantidad).toHaveAttribute('step', '0.001')
     expect(cantidad).not.toHaveClass('is-invalid')
+  })
+})
+
+describe('Presupuesto — artículos no disponibles a la venta', () => {
+  function renderNuevo() {
+    return render(
+      <MemoryRouter initialEntries={['/presupuestos/nuevo']}>
+        <Routes>
+          <Route path="/presupuestos/nuevo" element={<Presupuesto />} />
+          <Route path="/presupuestos/:id" element={<Presupuesto />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  async function elegirPuntoDeVenta(usuario: ReturnType<typeof userEvent.setup>) {
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await waitFor(() => expect(puntoVenta).toBeEnabled())
+    await usuario.selectOptions(puntoVenta, '9')
+  }
+
+  /**
+   * Cláusula bajo prueba: el buscador de líneas de un presupuesto pide `soloVendibles=true`. Mutación: llamar a
+   * `listar` sin la opción hace fallar esta aserción.
+   */
+  it('el buscador de la línea pide soloVendibles=true', async () => {
+    mockearReferencia((ruta) =>
+      ruta.startsWith('/articulos?busqueda=') ? Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 25 }) : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderNuevo()
+    await elegirPuntoDeVenta(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: /Agregar línea/ }))
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=yerba&soloVendibles=true'))
+  })
+
+  it('un 409 articulo_no_vendible al guardar se explica con el mensaje del servidor y qué hacer', async () => {
+    mockearReferencia()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'articulo_no_vendible', 'El artículo A0007 no está disponible a la venta.'))
+    const usuario = userEvent.setup()
+    renderNuevo()
+    await elegirPuntoDeVenta(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    expect(await screen.findByText('El artículo A0007 no está disponible a la venta. Sacalo para poder continuar.')).toBeInTheDocument()
   })
 })

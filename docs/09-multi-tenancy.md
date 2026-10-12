@@ -160,30 +160,36 @@ dominios (                    -- scoping de organización: id_tenant, como empre
 La landing y la tienda de un comercio las ve cualquiera, sin sesión. Lo que muestra la landing vive en
 `vitrinas` (doc 10), una tabla con scoping `id_tenant` + `id_empresa NOT NULL`: la misma desviación documentada
 de `certificados_fiscales` respecto de las tres categorías de la regla de scoping. Lo que muestra la tienda son
-artículos publicados con su precio, su categoría y su imagen (doc 10 §3, "Tienda online"). Para leerlos hay un
+artículos disponibles online con su precio (con la oferta online aplicada), su categoría y su imagen, y los combos
+(doc 10 §3, "Tienda online"). Para leerlos hay un
 cuarto modo de acceso, `publico` (`ModoDeAcceso.Publico`, GUC `app.acceso = 'publico'`), además de `tenant`,
 `plataforma` y `login`:
 
-- **Qué puede**: `SELECT`, nada más, sobre exactamente nueve tablas, y solo las filas del tenant del host. Las
+- **Qué puede**: `SELECT`, nada más, sobre exactamente trece tablas, y solo las filas del tenant del host. Las
   policies se llaman `{tabla}_publico_lectura`; ninguna otra tabla tiene una, y ninguna es de escritura (la prueba
-  `SoloLasNueveTablasDeLaLandingYLaTiendaTienenPolicyDeModoPublicoYSonDeSoloLectura` lista `pg_policies`). Cuánto
+  `SoloLasTreceTablasDeLaLandingYLaTiendaTienenPolicyDeModoPublicoYSonDeSoloLectura` lista `pg_policies`). Cuánto
   de cada tabla deja ver cada policy:
 
   | Tabla | Filas que ve el modo público | Para qué |
   |---|---|---|
   | `vitrinas` | la `publicada` y viva | la landing y la empresa de la tienda |
   | `empresas`, `puntos_venta` | todas las del tenant | la landing |
-  | `articulos` | `publicado_web AND activo AND deleted_at IS NULL` | el catálogo |
+  | `articulos` | `disponible_online AND disponible_venta AND activo AND deleted_at IS NULL` | el catálogo |
   | `articulos_empresas` | todas (la tabla no tiene baja lógica) | disponibilidad por empresa |
+  | `ofertas`, `combos` | `disponible_online AND activo AND deleted_at IS NULL` | el precio con oferta y los combos |
+  | `ofertas_listas`, `combos_componentes` | todas (no tienen baja lógica; el padre decide qué se ve) | las listas objetivo de la oferta y los componentes del combo |
   | `listas_precio`, `precios`, `categorias` | las vivas (`deleted_at IS NULL`) | precio y categoría |
   | `imagenes_articulo` | las vivas | la imagen del artículo |
 
   Las policies solo deciden lo que se puede ver a nivel de fila. Lo que NO deciden lo decide la consulta del
   catálogo (`ConsultaDeCatalogoPublico`): que el artículo esté disponible para la empresa de la vitrina, que tenga
   un precio vigente en la lista de la tienda, que la lista y la categoría estén activas y sean visibles para esa
-  empresa, y que la imagen sea de un artículo publicado (la policy de `imagenes_articulo` por sí sola deja ver la de
-  uno sin publicar). Un precio vencido, una lista inactiva o la imagen de un artículo sin publicar SON legibles
-  en este modo a nivel de SQL; por eso el código que lee en él proyecta y filtra.
+  empresa, y que la imagen sea de un artículo disponible (la policy de `imagenes_articulo` por sí sola deja ver la de
+  uno fuera de la tienda). Un precio vencido, una lista inactiva, la imagen de un artículo fuera de la tienda, la fila
+  de `ofertas_listas` de una oferta que no se ve o los componentes de un combo que no se ve SON legibles en este modo a
+  nivel de SQL; por eso el código que lee en él proyecta y filtra. Las ofertas y los combos los lee código propio
+  (`ConsultaDeCatalogoPublico`, `ConsultaDeCombosPublicos`) que reusa del dominio solo lo puro (`ResolvedorDeOfertas`,
+  `CadenaDeCategorias`) y nunca instancia `ServicioDeOfertas`, que necesita el usuario de la request.
 - **Dónde viaja el tenant**: en su propio GUC, `app.tenant_publico` (función `app_tenant_publico()`), y
   NO en `app.tenant_id`. Las policies estándar `{tabla}_tenant` de `HabilitarRlsDeTenant` comparan
   `id_tenant = app_tenant_actual()` sin mirar el modo: con el tenant del host en `app.tenant_id`, el modo
@@ -192,7 +198,7 @@ cuarto modo de acceso, `publico` (`ModoDeAcceso.Publico`, GUC `app.acceso = 'pub
   `InterceptorDeContextoDeTenant` y `ReaplicarSobreConexionAsync` ponen los tres GUC desde
   `ModoDeAccesoExtensions.ComoGucs`.
 - **Quién lo usa**: `LectorDeVitrinaPublica`, para `GET /api/publico/vitrina` y `/logo`, y
-  `LectorDeCatalogoPublico`, para `GET /api/publico/catalogo` y `/api/publico/articulos/{id}/imagen`. Cada lectura
+  `LectorDeCatalogoPublico`, para `GET /api/publico/catalogo`, `/api/publico/combos` y `/api/publico/articulos/{id}/imagen`. Cada lectura
   abre un alcance de DI propio y fija el modo ahí (`AlcanceEnModoPublico`, igual que `ResolvedorDeDominios` con el
   modo `login`): el `ITenantActual` de la request no se toca, así que el modo no llega a nada más de esa request
   (por ejemplo, a una cookie de sesión que viniera con ella). El tenant sale del host (`IDominioActual`), nunca

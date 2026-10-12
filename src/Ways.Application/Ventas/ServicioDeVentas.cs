@@ -199,6 +199,14 @@ public class ServicioDeVentas(
             ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
         }
 
+        // Un artículo de uso interno no se vende ni al convertir un presupuesto viejo (su precio queda congelado, pero
+        // la regla de venta es del artículo, no del precio). Quedan fuera lo ya cobrado offline y la devolución de lo
+        // que se vendió, que no se reescriben.
+        if (solicitud.NumeroPreasignado is null && tipo.Signo > 0)
+        {
+            ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
+        }
+
         // La conversión de un presupuesto trae sus líneas congeladas, sin importe: no se le exige uno de nuevo.
         if (presupuestoOrigen is null)
         {

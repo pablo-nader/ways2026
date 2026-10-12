@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   aAltaOferta,
   aValoresOferta,
+  copiaDeFalloAlGuardarOferta,
   formularioOfertaVacio,
   opcionesDeFamiliaDeOferta,
   opcionesDeLista,
   resumenDeBeneficio,
 } from './ofertas'
+import { ErrorApi } from './cliente'
 import type { FamiliaListado, ListaPrecioListado, OfertaListado } from './tipos'
 
 function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado {
@@ -30,6 +32,7 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
     prioridad: 0,
     acumulable: false,
     activo: true,
+    disponibleOnline: true,
     idsListas: [],
     ...sobrescribir,
   }
@@ -174,6 +177,56 @@ describe('aAltaOferta — coerción y strings vacíos', () => {
     expect(alta.acumulable).toBe(true)
     expect(alta.idsListas).toEqual([2, 4])
     expect(alta.activo).toBe(false)
+  })
+})
+
+describe('disponibleOnline de la oferta', () => {
+  it('el formulario vacío arranca disponible online', () => {
+    expect(formularioOfertaVacio().disponibleOnline).toBe(true)
+  })
+
+  it('aAltaOferta lo manda siempre, marcado o no, independiente de "activo"', () => {
+    const vacio = formularioOfertaVacio()
+
+    expect(aAltaOferta(vacio).disponibleOnline).toBe(true)
+    expect(aAltaOferta({ ...vacio, disponibleOnline: false }).disponibleOnline).toBe(false)
+    expect(aAltaOferta({ ...vacio, disponibleOnline: false, activo: true })).toMatchObject({
+      disponibleOnline: false,
+      activo: true,
+    })
+    expect(aAltaOferta({ ...vacio, disponibleOnline: true, activo: false })).toMatchObject({
+      disponibleOnline: true,
+      activo: false,
+    })
+  })
+
+  it('aValoresOferta lo copia de la oferta, también cuando está apagado', () => {
+    expect(aValoresOferta(ofertaFixture({ disponibleOnline: true })).disponibleOnline).toBe(true)
+    expect(aValoresOferta(ofertaFixture({ disponibleOnline: false })).disponibleOnline).toBe(false)
+  })
+
+  it('ida y vuelta: una oferta apagada se edita sin volver a prenderse', () => {
+    const alta = aAltaOferta(aValoresOferta(ofertaFixture({ idArticulo: 7, porcentaje: 10, disponibleOnline: false })))
+
+    expect(alta.disponibleOnline).toBe(false)
+  })
+})
+
+describe('copiaDeFalloAlGuardarOferta', () => {
+  it('el 400 disponible_online_requerido rinde su copia propia y no el texto del servidor', () => {
+    const copia = copiaDeFalloAlGuardarOferta(new ErrorApi(400, 'disponible_online_requerido', 'texto crudo'))
+
+    expect(copia).toBe('Falta indicar si la oferta está disponible online. Recargá la pantalla e intentá de nuevo.')
+  })
+
+  it('cualquier otro rechazo de la API rinde el mensaje del servidor', () => {
+    expect(copiaDeFalloAlGuardarOferta(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una oferta con ese nombre.'))).toBe(
+      'Ya existe una oferta con ese nombre.',
+    )
+  })
+
+  it('un error que no es de la API rinde el texto genérico', () => {
+    expect(copiaDeFalloAlGuardarOferta(new Error('boom'))).toBe('No se pudo guardar la oferta.')
   })
 })
 

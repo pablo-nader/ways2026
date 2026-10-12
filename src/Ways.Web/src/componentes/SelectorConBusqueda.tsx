@@ -67,6 +67,10 @@ type Props<T extends OpcionDeSelector> = {
   id?: string
   className?: string
   placeholder?: string
+  /** Marca la caja como inválida para tecnología asistiva; la clase visual va aparte, en `className`. */
+  'aria-invalid'?: boolean
+  /** Id del elemento que explica el error de la caja. */
+  'aria-describedby'?: string
 }
 
 type PosicionDeLista = { estilo: CSSProperties }
@@ -113,6 +117,8 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
   id,
   className,
   placeholder,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
 }: Props<T>) {
   const idLista = useId()
   const cajaRef = useRef<HTMLInputElement>(null)
@@ -263,7 +269,11 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
 
   const mensajeSinResultados = typeof textoSinResultados === 'function' ? textoSinResultados(buscado) : textoSinResultados
   const mensajeVacio = lista.length === 0 && !buscando ? (remotoVigente?.error ?? mensajeSinResultados) : null
-  const anuncio = lista.length > 0 ? `${lista.length} ${lista.length === 1 ? 'resultado' : 'resultados'}.` : ''
+  const anuncio = hayMas
+    ? `Se muestran las primeras ${MAXIMO_DE_OPCIONES_VISIBLES} coincidencias; hay más resultados.`
+    : lista.length > 0
+      ? `${lista.length} ${lista.length === 1 ? 'resultado' : 'resultados'}.`
+      : ''
 
   return (
     <div className="position-relative">
@@ -275,6 +285,8 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
         className={`form-select${className ? ` ${className}` : ''}`}
         aria-label={nombreAccesible}
         aria-autocomplete="list"
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
         aria-haspopup="listbox"
         aria-expanded={visible}
         aria-controls={visible ? idLista : undefined}
@@ -287,6 +299,8 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
         onFocus={(evento) => evento.currentTarget.select()}
         onClick={abrir}
         onChange={(evento) => {
+          // Con el texto vacío lo remoto ya no corresponde a nada: tipear lo mismo de nuevo no debe mostrarlo.
+          if (evento.target.value.trim() === '') setRemoto(null)
           setTexto(evento.target.value)
           setAbierta(true)
           setIdActivo(null)

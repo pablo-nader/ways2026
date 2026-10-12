@@ -15,7 +15,7 @@ namespace Ways.IntegrationTests;
 /// existiera.
 ///
 /// Cada test nombra la cláusula que mata: <c>id_tenant = app_tenant_publico()</c>, <c>app_modo() = 'publico'</c>,
-/// <c>publicado_web</c>, <c>activo</c> y <c>deleted_at IS NULL</c> en <c>articulos</c>, y <c>deleted_at IS NULL</c> en
+/// <c>disponible_online</c>, <c>disponible_venta</c>, <c>activo</c> y <c>deleted_at IS NULL</c> en <c>articulos</c>, y <c>deleted_at IS NULL</c> en
 /// las otras cuatro que lo llevan. Lo que las policies NO deciden (que un precio esté vigente, que una lista esté
 /// activa, que una imagen sea de un artículo publicado) queda fijado también, para que nadie asuma que lo hacen.
 /// </summary>
@@ -49,7 +49,8 @@ public class CatalogoOnlineAislamientoTests(WaysApiFixture fixture) : IClassFixt
         int CategoriaDeB,
         int[] ImagenesVisiblesDeA,
         int ImagenEliminadaDeA,
-        int ImagenDeB);
+        int ImagenDeB,
+        int ArticuloSinVenderDeA);
 
     private async Task<Escenario> SembrarEscenarioAsync(string prefijo)
     {
@@ -58,7 +59,8 @@ public class CatalogoOnlineAislamientoTests(WaysApiFixture fixture) : IClassFixt
 
         var visible = await apoyo.SembrarVendibleAsync(a, "Visible A", 4.5m);
         var restringido = await apoyo.SembrarArticuloAsync(a, "Restringido A", idEmpresaDisponible: a.IdEmpresa);
-        var sinPublicar = await apoyo.SembrarArticuloAsync(a, "Sin publicar A", publicado: false);
+        var sinPublicar = await apoyo.SembrarArticuloAsync(a, "Sin publicar A", disponibleOnline: false);
+        var sinVender = await apoyo.SembrarArticuloAsync(a, "Sin vender A", disponibleVenta: false);
         var inactivo = await apoyo.SembrarArticuloAsync(a, "Inactivo A", activo: false);
         var eliminado = await apoyo.SembrarArticuloAsync(a, "Eliminado A", eliminado: true);
         var deB = await apoyo.SembrarVendibleAsync(b, "Visible B", 8m);
@@ -98,7 +100,8 @@ public class CatalogoOnlineAislamientoTests(WaysApiFixture fixture) : IClassFixt
             categoriaDeB,
             ImagenesVisiblesDeA: [.. new[] { imagenVisible, imagenDeArticuloSinPublicar }.Order()],
             imagenEliminada,
-            imagenDeB);
+            imagenDeB,
+            sinVender);
     }
 
     private static int[] ArticulosVisiblesDeA(Escenario e) =>
@@ -141,11 +144,11 @@ public class CatalogoOnlineAislamientoTests(WaysApiFixture fixture) : IClassFixt
     // ---- qué se ve en modo publico ----------------------------------------------------------------
 
     /// <summary>La lista completa de artículos, sin WHERE: cada fila de más rompe la igualdad. El de B mata
-    /// <c>id_tenant = app_tenant_publico()</c>; el sin publicar, <c>publicado_web</c>; el inactivo, <c>activo</c>;
-    /// el dado de baja, <c>deleted_at IS NULL</c>. Un artículo restringido a otra empresa SÍ se ve a nivel de
+    /// <c>id_tenant = app_tenant_publico()</c>; el fuera de la tienda, <c>disponible_online</c>; el de uso interno,
+    /// <c>disponible_venta</c>; el inactivo, <c>activo</c>; el dado de baja, <c>deleted_at IS NULL</c>. Un artículo restringido a otra empresa SÍ se ve a nivel de
     /// policy: la disponibilidad por empresa la decide la consulta, no RLS.</summary>
     [Fact]
-    public async Task LaPolicyDeArticulosDejaVerSoloLosPublicadosActivosYVivosDelTenantDelGuc()
+    public async Task LaPolicyDeArticulosDejaVerSoloLosDisponiblesOnlineYParaLaVentaActivosYVivosDelTenantDelGuc()
     {
         var e = await SembrarEscenarioAsync("rls-articulos");
 
