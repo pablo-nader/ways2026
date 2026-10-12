@@ -498,3 +498,108 @@ describe('construirComprobanteOfflineSintetico', () => {
     expect(comprobante).toBeNull()
   })
 })
+
+describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
+  const PANCHO = 2
+  const COCA = 1
+  const combo = {
+    idCombo: 7,
+    codigo: 7,
+    nombre: 'Pancho + Coca',
+    precio: 5000,
+    componentes: [{ idArticulo: PANCHO, cantidad: 1 }, { idArticulo: COCA, cantidad: 1 }],
+  }
+  const instantaneaConCombo = (conCombos = true): InstantaneaDePos => ({
+    ...instantaneaFixture([
+      articuloFixture({ idArticulo: COCA, precioOriginal: 2500, precioFinal: 2500, unidadVenta: 'Unidad' }),
+      articuloFixture({ idArticulo: PANCHO, nombre: 'Pancho', codigosBarra: ['2'], precioOriginal: 3000, precioFinal: 3000, unidadVenta: 'Unidad' }),
+    ]),
+    ...(conCombos ? { combos: [combo] } : {}),
+  })
+  const base = {
+    numero: 20,
+    numeroVisible: '0007-00000020',
+    idPuntoVenta: 7,
+    idCliente: 1,
+    pagos: [{ idMedioPago: 1, importe: 5000, referencia: null, vuelto: 0 }],
+    ahora: new Date('2026-09-20T10:05:00.000Z'),
+  }
+  const lineas = [lineaFixture({ idArticulo: COCA, cantidad: 1 }), lineaFixture({ idArticulo: PANCHO, nombre: 'Pancho', cantidad: 1 })]
+
+  it('el descuento de cada línea es su parte del combo, el total del comprobante es el precio del combo y los items traen idCombo', () => {
+    const comprobante = construir({ ...base, lineas, instantanea: instantaneaConCombo() })
+
+    expect(comprobante?.items.map((i) => ({ precioUnitario: i.precioUnitario, descuento: i.descuento, total: i.total, idCombo: i.idCombo }))).toEqual([
+      { precioUnitario: 2500, descuento: 227.27, total: 2272.73, idCombo: 7 },
+      { precioUnitario: 3000, descuento: 272.73, total: 2727.27, idCombo: 7 },
+    ])
+    expect(comprobante).toMatchObject({ subtotal: 5500, descuentoTotal: 500, total: 5000 })
+  })
+
+  it('sin combos en la instantánea el comprobante es el de siempre: sin descuento y con idCombo nulo', () => {
+    const comprobante = construir({ ...base, lineas, instantanea: instantaneaConCombo(false) })
+
+    expect(comprobante?.items.map((i) => [i.descuento, i.idCombo])).toEqual([[0, null], [0, null]])
+    expect(comprobante).toMatchObject({ subtotal: 5500, descuentoTotal: 0, total: 5500 })
+  })
+
+  it('el ajuste manual de una línea consumida se aplica sobre el neto que ya incluye el combo', () => {
+    const conAjuste = [lineas[0], { ...lineas[1], ajusteManualPorcentaje: -10 }]
+    const comprobante = construir({ ...base, lineas: conAjuste, instantanea: instantaneaConCombo() })
+
+    // neto 3000 − 272,73 = 2727,27; 10 % = 272,727 → 272,73.
+    expect(comprobante?.items[1]).toMatchObject({ ajusteManual: -272.73, total: 2454.54 })
+    expect(comprobante).toMatchObject({ descuentoManualTotal: 272.73, total: 4727.27 })
+  })
+
+  describe('idOferta de un artículo con oferta cuando un combo consume sus unidades (el servidor la persiste igual)', () => {
+    const OFERTA = 91
+    const conOferta = (): InstantaneaDePos => ({
+      ...instantaneaConCombo(),
+      articulos: [
+        articuloFixture({ idArticulo: COCA, precioOriginal: 2500, precioFinal: 2500, unidadVenta: 'Unidad' }),
+        articuloFixture({
+          idArticulo: PANCHO,
+          nombre: 'Pancho',
+          codigosBarra: ['2'],
+          precioOriginal: 3000,
+          precioFinal: 2500,
+          descuentoUnitario: 500,
+          aplicadas: [{ idOferta: OFERTA, nombre: 'Oferta pancho', descuentoUnitario: 500 }],
+          unidadVenta: 'Unidad',
+        }),
+      ],
+      combos: [{ ...combo, precio: 4800 }],
+    })
+
+    it('si el combo consumió todas las unidades de la línea, el item no lleva idOferta', () => {
+      const comprobante = construir({ ...base, lineas, instantanea: conOferta() })
+
+      expect(comprobante?.items[1]).toMatchObject({ idCombo: 7, idOferta: null })
+    })
+
+    it('si le quedan unidades fuera del combo, esas unidades tuvieron su oferta y el item la conserva', () => {
+      const dosPanchos = [lineas[0], { ...lineas[1], cantidad: 2 }]
+      const comprobante = construir({ ...base, lineas: dosPanchos, instantanea: conOferta() })
+
+      expect(comprobante?.items[1]).toMatchObject({ idCombo: 7, idOferta: OFERTA })
+    })
+
+    it('sin combo la oferta viaja como siempre', () => {
+      const comprobante = construir({ ...base, lineas, instantanea: { ...conOferta(), combos: undefined } })
+
+      expect(comprobante?.items[1]).toMatchObject({ idCombo: null, idOferta: OFERTA })
+    })
+  })
+
+  it('un artículo pesable en el carrito deja el combo sin aplicar en el ticket', () => {
+    const instantanea: InstantaneaDePos = {
+      ...instantaneaConCombo(),
+      articulos: instantaneaConCombo().articulos.map((a) => (a.idArticulo === PANCHO ? { ...a, unidadVenta: 'Peso' as const } : a)),
+    }
+    const comprobante = construir({ ...base, lineas, instantanea })
+
+    expect(comprobante?.items.map((i) => i.idCombo)).toEqual([null, null])
+    expect(comprobante).toMatchObject({ descuentoTotal: 0, total: 5500 })
+  })
+})
