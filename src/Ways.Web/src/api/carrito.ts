@@ -58,6 +58,7 @@ export type AccionCarrito =
  * Línea sobre la que sumaría un escaneo de `articulo`, o `null` si el escaneo abre una línea
  * nueva. Solo acumula un artículo con `acumulaEnVenta`, y siempre sobre la ÚLTIMA línea de ese
  * artículo: es la que el cajero acaba de ver crecer, y con el flag activo normalmente es la única.
+ * Una línea con importe nunca recibe cantidad: su cantidad es 1 aunque el artículo haya cambiado de unidad de venta.
  * Decide por el flag del escaneo entrante (dato fresco del catálogo), no por el de la línea ya
  * cargada.
  */
@@ -68,7 +69,7 @@ export function idLineaDestinoDeEscaneo(
   // Un artículo por importe abre una línea por cada importe tipeado, sea cual sea su flag.
   if (!articulo.acumulaEnVenta || articulo.importe !== undefined) return null
   for (let i = lineas.length - 1; i >= 0; i--) {
-    if (lineas[i].idArticulo === articulo.idArticulo) return lineas[i].idLinea
+    if (lineas[i].idArticulo === articulo.idArticulo && lineas[i].importe === undefined) return lineas[i].idLinea
   }
   return null
 }

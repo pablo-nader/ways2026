@@ -102,6 +102,21 @@ authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
 
+- T4 — implemented in `100e96ec` on `pnader/importe-pos` (delegated writer). Not checked off yet.
+  - Observed: full Vitest suite 6066/6066, build and lint clean (writer); `tsc -b` and the
+    amount/cart/sale/offline-engine tests 301/301 (parent). RED observed per layer; 20 mutants
+    killed.
+  - The key→article mapping comes from the POS snapshot (`teclaAtajo`), which the browser POS
+    loads too. The web POS never builds a credit note.
+  - Judgment-day round 1 (both judges read the whole diff): no severe finding. Accepted
+    corrections, in progress: K1 an amount with more than 2 digits after the separator is
+    rejected on web and server, so `1.500*500` no longer charges $2 (both judges); K2 the empty
+    cart shows "—" again (both); K3 a line carrying an amount whose article stopped being
+    by-amount blocks charging and never receives a merge (both); K4 the F2 search must not add a
+    by-amount article without an amount (one judge); K5 the shortcut's busy gates get tests or
+    are removed (one judge).
+  - Follow-ups: the printed ticket does not mark by-amount lines.
+
 - T3 — implemented in `d7ae939a` on `pnader/importe-backoffice` (delegated writer; the combo
   error mapping in `api/combosAbm.ts` was added inline by the parent). Judgment-day round 1, both
   judges read the whole diff: no severe finding → APPROVED.

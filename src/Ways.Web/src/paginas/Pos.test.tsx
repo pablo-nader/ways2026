@@ -14,6 +14,7 @@ import {
   mensajeDeAtajoSinArticulo,
   mensajeDeAtajoSinImporte,
   mensajeDeImporteRequerido,
+  mensajeDeLineaPorImporteObsoleta,
 } from '../api/importeDeVenta'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
@@ -3901,6 +3902,30 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(await dialogo.findByText('Fanta 1.5L')).toBeInTheDocument()
+  })
+
+  it('un artículo por importe elegido en el buscador no agrega nada y pide tipear el importe antes del código', async () => {
+    const verduleria = articuloListadoFixture({ id: 501, codigoInterno: '501', nombre: 'Verdulería', unidadVenta: 'Importe' })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=ve')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [verduleria], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver' ? Promise.resolve<ResultadoDeResolucion[]>([]) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+    const dialogo = await abrirBuscador()
+    fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 've' } })
+    fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
+
+    fireEvent.click(await dialogo.findByRole('button', { name: 'Agregar' }))
+
+    expect(await screen.findByText(mensajeDeImporteRequerido('501'))).toBeInTheDocument()
+    expect(screen.queryByLabelText('Cantidad de Verdulería')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
   })
 
   it('sin resultados muestra "Sin resultados"', async () => {
@@ -8740,7 +8765,7 @@ describe('Pos — artículos por importe', () => {
       expect(campoDeCodigo()).toHaveValue('500')
     })
 
-    it.each(['abc*500', '0*500', '*500', '150.555*500'])('"%s" avisa que el importe es inválido y no agrega nada', async (entrada) => {
+    it.each(['abc*500', '0*500', '*500', '150.555*500', '1.500*500', '1,500*500'])('"%s" avisa que el importe es inválido y no agrega nada', async (entrada) => {
       await montarConInstantanea()
 
       await escanear(entrada)
@@ -8879,6 +8904,22 @@ describe('Pos — artículos por importe', () => {
       expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
       expect(entradas).toEqual(['150.555*500'])
     })
+
+    it('1,500: el servidor rechaza la coma y NO se reintenta como 1.5 (sería otro monto)', async () => {
+      const entradas: string[] = []
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/articulos/escaneo?entrada=')) return undefined
+        entradas.push(decodeURIComponent(ruta.split('entrada=')[1]))
+        return Promise.reject(new ErrorApi(400, 'importe_invalido', 'texto del servidor'))
+      })
+      await montarSinInstantanea()
+
+      await escanear('1,500*500')
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(entradas).toEqual(['1,500*500'])
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
   })
 
   describe('atajos F5 a F8', () => {
@@ -8950,7 +8991,7 @@ describe('Pos — artículos por importe', () => {
       expect(lineasDeFiambreria()).toHaveLength(0)
     })
 
-    it.each(['abc', '0', '150.555', '-5'])('F5 con "%s" en el campo avisa el importe inválido, no agrega y deja el texto', async (texto) => {
+    it.each(['abc', '0', '150.555', '-5', '1.500', '1,500'])('F5 con "%s" en el campo avisa el importe inválido, no agrega y deja el texto', async (texto) => {
       await montarConInstantanea()
       await userEvent.type(campoDeCodigo(), texto)
 
@@ -9067,6 +9108,103 @@ describe('Pos — artículos por importe', () => {
       expect(comun).toMatchObject({ idArticulo: 1, precioUnitario: 100, descuentoUnitario: 0 })
       expect(comun).not.toHaveProperty('importe')
       expect(porImporte).toEqual({ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150 })
+    })
+  })
+
+  describe('línea por importe cuyo artículo dejó de venderse por importe', () => {
+    it('al sincronizar, el cobro queda bloqueado y el aviso nombra el artículo y pide quitar la línea', async () => {
+      await montarConInstantanea()
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await esperarMediosDePago()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '150')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      const comoOrdinario = instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), fiambreriaDeInstantanea({ unidadVenta: 'Unidad' })] })
+      mockearApiGet((ruta) => (ruta === '/pos/instantanea' ? Promise.resolve(comoOrdinario) : undefined))
+      await userEvent.click(screen.getByRole('button', { name: 'Sincronizar ahora' }))
+
+      expect(await screen.findByText(mensajeDeLineaPorImporteObsoleta('Fiambrería'))).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+    })
+  })
+
+  describe('compuertas de F5 a F8', () => {
+    /** Con el campo de código vacío, un F5 que pasa las compuertas deja el aviso "tipeá el importe": que no aparezca ni se agregue
+     * una línea es lo que prueba que la compuerta de turno cortó antes. */
+    async function afirmarQueF5NoHaceNada() {
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+      await act(async () => {})
+
+      expect(noPrevenido).toBe(false)
+      expect(screen.queryByText(mensajeDeAtajoSinImporte('F5'))).not.toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    }
+
+    async function agregarGaseosa() {
+      await escanear('7790001234567')
+      await screen.findByText('Coca Cola 1L', { selector: 'td' })
+    }
+
+    async function cargarPagoEnEfectivo(importe: string) {
+      await esperarMediosDePago()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), importe)
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    }
+
+    it('con la caja cerrada no agrega ni avisa nada', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+      await montarConInstantanea()
+      await screen.findByText('Caja cerrada')
+
+      await afirmarQueF5NoHaceNada()
+    })
+
+    it('con un escaneo en vuelo no agrega la línea del atajo', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? new Promise(() => {}) : undefined))
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '999')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(campoDeCodigo()).toBeDisabled())
+
+      fireEvent.keyDown(document, { key: 'F5' })
+      await act(async () => {})
+
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+
+    it('con el cobro en curso no agrega ni avisa nada', async () => {
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+      await montarConInstantanea(undefined, false)
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1))
+
+      await afirmarQueF5NoHaceNada()
+    })
+
+    it('con la confirmación de cobro abierta no agrega ni avisa nada', async () => {
+      await montarConInstantanea()
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+      fireEvent.keyDown(document, { key: 'F9' })
+      await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+      await afirmarQueF5NoHaceNada()
+    })
+
+    it('con la venta ya finalizada no agrega ni avisa nada', async () => {
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+      await montarConInstantanea()
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+      await afirmarQueF5NoHaceNada()
     })
   })
 })

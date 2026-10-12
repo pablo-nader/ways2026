@@ -33,6 +33,7 @@ import {
   MENSAJE_DE_CANTIDAD_DE_IMPORTE,
   MENSAJE_DE_IMPORTE_INVALIDO,
   mensajeDeAtajoSinArticulo,
+  mensajeDeLineaPorImporteObsoleta,
   mensajeDeAtajoSinImporte,
   mensajeDeImporteRequerido,
 } from '../api/importeDeVenta'
@@ -119,6 +120,7 @@ import {
   atajosDeImporteOffline,
   buscarClientesOffline,
   formatearVejezDeInstantanea,
+  lineasConImporteDeArticuloOrdinario,
   resolverAtajoOffline,
   resolverEscaneoOffline,
   resolverPreviaOffline,
@@ -2857,6 +2859,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * tipo `escanear`): la resolución de precio/ofertas la sigue haciendo el efecto de `lineas` de
    * siempre, nunca este handler. */
   function agregarDesdeBusqueda(linea: ArticuloParaCarrito, cantidad: number) {
+    // Un artículo por importe no tiene precio sin el monto, y el buscador no lo pide: es la misma regla del escaneo a secas.
+    if (linea.unidadVenta === 'Importe' && linea.importe === undefined) {
+      setErrorEscaneo(mensajeDeImporteRequerido(linea.codigoInterno))
+      setBuscadorAbierto(false)
+      focoPendienteRef.current = true
+      return
+    }
     mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
     setBuscadorAbierto(false)
     focoPendienteRef.current = true
@@ -3091,6 +3100,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // precondición de "hay líneas" es "el presupuesto cargó Y es `Convertible`" (la misma fuente de
   // verdad server-side que oculta el botón "Convertir en venta" en Presupuesto.tsx).
   const hayAjusteSinConfirmar = Object.keys(ajustesEnEdicion).length > 0
+  const lineasPorImporteObsoletas = instantaneaDelPuntoVenta ? lineasConImporteDeArticuloOrdinario(lineas, instantaneaDelPuntoVenta) : []
   const precondicionesListas = modoPresupuesto
     ? presupuesto !== null &&
       presupuesto.convertible &&
@@ -3106,6 +3116,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // sin él. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón "Cobrar" y el atajo
       // quedan inertes hasta que se confirma o se descarta.
       !hayAjusteSinConfirmar &&
+      lineasPorImporteObsoletas.length === 0 &&
       lineas.length > 0 &&
       lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
       clienteSeleccionado !== null &&
@@ -4346,6 +4357,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </div>
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+
+            {lineasPorImporteObsoletas.length > 0 && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {mensajeDeLineaPorImporteObsoleta(lineasPorImporteObsoletas[0].nombre)}
+              </div>
+            )}
 
             {hayAjusteSinConfirmar && (
               <div className="alert alert-warning py-1 px-2 small" role="status">

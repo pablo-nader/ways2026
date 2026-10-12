@@ -1,7 +1,8 @@
 /**
  * Importe que el cajero tipea para un artículo que se vende por importe (`unidadVenta: 'Importe'`).
- * Espejo de `Ways.Domain.Ventas.ReglaDeImporteDeVenta`: mayor a cero, hasta dos decimales, dentro del rango de
- * `numeric(14,2)` y solo dígitos con punto decimal opcional. Un cambio en la regla del servidor se replica acá a mano.
+ * Espejo de `Ways.Domain.Ventas.ReglaDeImporteDeVenta` (`TryParsear`): mayor a cero, dentro del rango de `numeric(14,2)` y solo
+ * dígitos con separador decimal opcional y a lo sumo dos dígitos tras él, ceros incluidos: `1.500` es mil quinientos para quien
+ * lo tipea y nunca se lee como 1,5. Un cambio en la regla del servidor se replica acá a mano.
  *
  * La única diferencia es de entrada: el cajero puede tipear coma decimal, que se lee como punto. El servidor nunca
  * recibe la coma (la tomaría como separador de miles).
@@ -13,7 +14,7 @@ export const IMPORTE_DE_VENTA_MAXIMO = 999_999_999_999.99
 
 export const DECIMALES_DE_IMPORTE_DE_VENTA = 2
 
-const FORMA_DE_IMPORTE = /^(\d+\.?\d*|\.\d+)$/
+const FORMA_DE_IMPORTE = /^(\d+\.?\d{0,2}|\.\d{1,2})$/
 
 /** Un importe ya numérico cumple la regla del servidor. */
 export function esImporteDeVentaValido(importe: number): boolean {
@@ -51,7 +52,8 @@ export function entradaConPuntoDecimal(entrada: string): string | null {
 }
 
 /** Avisos del POS ante un artículo por importe; los tres caminos de resolución (instantánea, servidor y atajos) usan estos textos. */
-export const MENSAJE_DE_IMPORTE_INVALIDO = 'El importe tiene que ser mayor a cero y tener hasta 2 decimales (por ejemplo 150 o 150,50).'
+export const MENSAJE_DE_IMPORTE_INVALIDO =
+  'El importe tiene que ser mayor a cero y admite hasta 2 decimales (por ejemplo 150 o 150,50). Para mil quinientos pesos tipeá 1500, sin punto ni coma.'
 
 export const MENSAJE_DE_ATAJO_SIN_DATOS =
   'Los atajos de importe necesitan los datos del punto de venta y todavía no están disponibles. Tipeá el importe y el código (por ejemplo 150*500).'
@@ -66,6 +68,10 @@ export function mensajeDeAtajoSinImporte(tecla: string): string {
 
 export function mensajeDeAtajoSinArticulo(tecla: string): string {
   return `No hay un artículo por importe asignado a ${tecla}.`
+}
+
+export function mensajeDeLineaPorImporteObsoleta(nombre: string): string {
+  return `${nombre} ya no se vende por importe: quitá la línea y volvé a cargarla antes de cobrar.`
 }
 
 export const MENSAJE_DE_CANTIDAD_DE_IMPORTE =

@@ -216,6 +216,10 @@ describe('calcularSubtotalPrevia', () => {
     expect(calcularSubtotalPrevia([lineaFixture()], {})).toBeNull()
   })
 
+  it('null con el carrito vacío: no hay subtotal que mostrar, no un 0', () => {
+    expect(calcularSubtotalPrevia([], {})).toBeNull()
+  })
+
   it('suma el total previsualizado de cada línea resuelta', () => {
     const lineas = [lineaFixture({ idArticulo: 1, cantidad: 2 }), lineaFixture({ idArticulo: 2, cantidad: 1 })]
     const precios = {

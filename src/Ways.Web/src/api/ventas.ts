@@ -151,7 +151,8 @@ export function previaDeLinea(
  * ningún precio resuelto todavía (primera carga, o el lote de `/resolver` falló); una línea sin
  * precio propio dentro de un carrito parcialmente resuelto contribuye 0 y no rompe la suma. */
 export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: PreciosPorLinea): number | null {
-  if (Object.keys(precios).length === 0 && lineas.some((l) => l.importe === undefined)) return null
+  const soloLineasPorImporte = lineas.length > 0 && lineas.every((l) => l.importe !== undefined)
+  if (Object.keys(precios).length === 0 && !soloLineasPorImporte) return null
   return redondearAPeso(
     lineas.reduce((acumulado, l) => {
       const previa = previaDeLinea(l, precios[l.idLinea])

@@ -13,6 +13,7 @@ import {
   formatearVejezDeInstantanea,
   guardarInstantaneaLocal,
   leerInstantaneaLocal,
+  lineasConImporteDeArticuloOrdinario,
   parsearEntradaDeEscaneoOffline,
   precioEnLista,
   purgarInstantaneaLocal,
@@ -1354,5 +1355,31 @@ describe('resolverAtajoOffline', () => {
     const resultado = resolverAtajoOffline(largo, 'F5', '150')
 
     expect(resultado.tipo === 'articulo' && resultado.articulo).toMatchObject({ idArticulo: FIAMBRERIA, codigoInterno: '7791234567890', importe: 150 })
+  })
+})
+
+describe('lineasConImporteDeArticuloOrdinario', () => {
+  const ordinarioEn500 = () => articuloPorImporteFixture({ unidadVenta: 'Unidad' })
+
+  it('señala la línea con importe cuyo artículo la instantánea ya conoce como ordinario', () => {
+    const instantanea = instantaneaConImporte({ articulos: [articuloFixture(), ordinarioEn500()] })
+
+    expect(lineasConImporteDeArticuloOrdinario([lineaPorImporte(150, 'a')], instantanea).map((l) => l.idLinea)).toEqual(['a'])
+  })
+
+  it('no señala la línea cuyo artículo sigue siendo por importe', () => {
+    expect(lineasConImporteDeArticuloOrdinario([lineaPorImporte(150)], instantaneaConImporte())).toEqual([])
+  })
+
+  it('no señala la línea cuyo artículo la instantánea no conoce', () => {
+    const sinElArticulo = instantaneaConImporte({ articulos: [articuloFixture()] })
+
+    expect(lineasConImporteDeArticuloOrdinario([lineaPorImporte(150)], sinElArticulo)).toEqual([])
+  })
+
+  it('no señala una línea ordinaria, aunque el artículo sea ordinario', () => {
+    const instantanea = instantaneaConImporte({ articulos: [articuloFixture(), ordinarioEn500()] })
+
+    expect(lineasConImporteDeArticuloOrdinario([lineaFixture({ idArticulo: FIAMBRERIA })], instantanea)).toEqual([])
   })
 })

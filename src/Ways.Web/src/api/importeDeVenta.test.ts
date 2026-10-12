@@ -36,7 +36,6 @@ describe('leerImporteTipeado', () => {
 
   it('lee la coma del cajero como separador decimal', () => {
     expect(leerImporteTipeado('150,50')).toBe(150.5)
-    expect(leerImporteTipeado('1,500')).toBe(1.5)
   })
 
   it('ignora los espacios de los extremos', () => {
@@ -48,8 +47,16 @@ describe('leerImporteTipeado', () => {
     expect(leerImporteTipeado('.5')).toBe(0.5)
   })
 
-  it('acepta ceros de más a la derecha del segundo decimal', () => {
-    expect(leerImporteTipeado('150.500')).toBe(150.5)
+  it('rechaza un importe con más de dos dígitos tras el separador, ceros incluidos', () => {
+    for (const texto of ['1.500', '1,500', '150.000', '150,000', '0.100', '150.500']) {
+      expect(leerImporteTipeado(texto), texto).toBeNull()
+    }
+  })
+
+  it('acepta hasta dos dígitos tras el separador', () => {
+    expect(leerImporteTipeado('150.5')).toBe(150.5)
+    expect(leerImporteTipeado('150,50')).toBe(150.5)
+    expect(leerImporteTipeado('0.10')).toBe(0.1)
   })
 
   it('rechaza vacío, cero, negativo, signo y texto', () => {
@@ -90,6 +97,7 @@ describe('entradaConPuntoDecimal', () => {
   it('un prefijo con coma que igual no es un importe válido no se corrige', () => {
     expect(entradaConPuntoDecimal('1.234,50*500')).toBeNull()
     expect(entradaConPuntoDecimal('150,555*500')).toBeNull()
+    expect(entradaConPuntoDecimal('1,500*500')).toBeNull()
     expect(entradaConPuntoDecimal('0,00*500')).toBeNull()
     expect(entradaConPuntoDecimal('x,5*500')).toBeNull()
   })

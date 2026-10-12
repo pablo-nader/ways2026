@@ -547,6 +547,18 @@ export function todasLasLineasTienenPrecioOffline(
   )
 }
 
+/** Líneas que llevan un importe pero cuyo artículo la instantánea conoce hoy como NO por importe (un administrador lo cambió
+ * después de cargar la línea): el servidor rechazaría la venta con `importe_no_admitido`. Un artículo que la instantánea no
+ * conoce no se señala: no hay con qué contradecir la línea. */
+export function lineasConImporteDeArticuloOrdinario(lineas: readonly LineaCarrito[], instantanea: InstantaneaDePos): LineaCarrito[] {
+  const porId = indicePorArticulo(instantanea)
+  return lineas.filter((l) => {
+    if (l.importe === undefined) return false
+    const articulo = porId.get(l.idArticulo)
+    return articulo !== undefined && articulo.unidadVenta !== 'Importe'
+  })
+}
+
 // --- Clientes y medios de pago de la instantánea -------------------------------------------------
 
 /** Mismo tope que la primera página de `GET /api/clientes` (`ServicioDeClientes.ListarAsync`). */

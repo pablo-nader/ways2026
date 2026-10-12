@@ -557,3 +557,35 @@ describe('migrarLineasDeBorrador — importe', () => {
     expect(lineas[0]).not.toHaveProperty('importe')
   })
 })
+
+describe('reducirCarrito — nada se suma sobre una línea con importe', () => {
+  const lineaConImporte = lineaFixture({ idLinea: 'f1', idArticulo: 500, acumulaEnVenta: false, unidadVenta: 'Importe', importe: 150 })
+  const articuloOrdinario = {
+    idArticulo: 500,
+    codigoInterno: '500',
+    nombre: 'Fiambrería',
+    codigoBarra: null,
+    acumulaEnVenta: true,
+    unidadVenta: 'Unidad' as const,
+  }
+
+  it('el escaneo de un artículo que acumula, ahora ordinario, abre línea nueva y deja intacta la del importe', () => {
+    const resultado = reducirCarrito([lineaConImporte], { tipo: 'escanear', linea: articuloOrdinario, cantidad: 2, idLinea: 'nueva' })
+
+    expect(resultado).toHaveLength(2)
+    expect(resultado[0]).toEqual(lineaConImporte)
+    expect(resultado[1]).toMatchObject({ idLinea: 'nueva', cantidad: 2 })
+    expect(resultado[1]).not.toHaveProperty('importe')
+  })
+
+  it('con una línea con importe y otra ordinaria del mismo artículo, suma sobre la ordinaria', () => {
+    const ordinaria = lineaFixture({ idLinea: 'o1', idArticulo: 500, cantidad: 1 })
+
+    const resultado = reducirCarrito([ordinaria, lineaConImporte], { tipo: 'escanear', linea: articuloOrdinario, cantidad: 2, idLinea: 'nueva' })
+
+    expect(resultado.map((l) => [l.idLinea, l.cantidad])).toEqual([
+      ['o1', 3],
+      ['f1', 1],
+    ])
+  })
+})
