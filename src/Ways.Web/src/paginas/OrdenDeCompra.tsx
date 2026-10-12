@@ -33,9 +33,10 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearFechaHora(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('es-AR') : '—'
+  return iso ? fechaHoraATexto(iso) : '—'
 }
 
 /** `location.state` que llega desde `Reposicion.tsx` — un `Link`/`navigate` de entrada con datos

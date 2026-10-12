@@ -1,9 +1,7 @@
 import { useRef, useState } from 'react'
 
 import { CabeceraPublica } from '../publico/CabeceraPublica'
-import { PiePublico } from '../publico/PiePublico'
 import { PorEstadoDeVitrina } from '../publico/PorEstadoDeVitrina'
-import { temaDeVitrina } from '../publico/tema'
 import { useVitrinaPublica } from '../publico/useVitrinaPublica'
 import { BotonCarrito } from './BotonCarrito'
 import { CarritoProvider } from './CarritoProvider'
@@ -33,7 +31,6 @@ export function Tienda() {
               />
             </CabeceraPublica>
             <CatalogoDeLaTienda />
-            <PiePublico tema={temaDeVitrina(vitrina.tema)} />
             {carritoAbierto && <PanelCarrito alCerrar={cerrarCarrito} />}
           </div>
         )}

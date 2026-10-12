@@ -26,6 +26,7 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { fechaHoraATexto } from '../formato/fechas'
 
 type Formulario = {
   id: number | null
@@ -557,7 +558,7 @@ export function Usuarios() {
                       </td>
                       <td>
                         {u.ultimaConexion
-                          ? new Date(u.ultimaConexion).toLocaleString('es-AR')
+                          ? fechaHoraATexto(u.ultimaConexion)
                           : '—'}
                       </td>
                       <td className="text-end text-nowrap">

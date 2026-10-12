@@ -11,6 +11,7 @@ import type {
 } from '../api/tipos'
 import { formatearImporte, redondearImporte } from '../formato/importes'
 import { Cargando } from './Cargando'
+import { fechaHoraATexto } from '../formato/fechas'
 import { DetalleDeTurnoListas } from './DetalleDeTurnoListas'
 import { InsigniaDeRecalculo } from './InsigniaDeRecalculo'
 import { Modal } from './Modal'
@@ -22,7 +23,7 @@ function formatearMoneda(valor: number): string {
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 type DatosDelCierre = {

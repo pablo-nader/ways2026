@@ -4,6 +4,7 @@ import { Chevrones } from '../publico/Glifos'
 import { BarraDelCatalogo } from './BarraDelCatalogo'
 import { articuloParaElCarrito } from './carrito'
 import { useCarrito } from './CarritoContext'
+import { filtroInicialDeLaUrl } from './filtroInicial'
 import { TarjetaDeArticulo } from './TarjetaDeArticulo'
 import { useCatalogo } from './useCatalogo'
 
@@ -53,10 +54,12 @@ function EsqueletoDelCatalogo() {
  * respuesta, pedida sin filtros, no trae artículos (el comercio no publicó nada) se ve la pantalla
  * de "se está preparando". Si en cambio trajo artículos, la barra no se desmonta más: ni un
  * resultado vacío ni limpiar la búsqueda la reemplazan, así no se pierden el foco ni lo tipeado.
+ * Los filtros arrancan con lo que traiga la URL (`?categoria=<id>`, `?buscar=<texto>`); se leen una vez, al montar.
  */
 export function CatalogoDeLaTienda() {
-  const [buscar, setBuscar] = useState('')
-  const [idCategoria, setIdCategoria] = useState<number | null>(null)
+  const [filtroInicial] = useState(() => filtroInicialDeLaUrl(window.location.search))
+  const [buscar, setBuscar] = useState(filtroInicial.buscar)
+  const [idCategoria, setIdCategoria] = useState(filtroInicial.idCategoria)
   const catalogo = useCatalogo({ buscar, idCategoria })
   const { cantidades, sincronizar } = useCarrito()
 
@@ -87,6 +90,7 @@ export function CatalogoDeLaTienda() {
       <BarraDelCatalogo
         categorias={catalogo.categorias}
         idCategoria={idCategoria}
+        buscarInicial={filtroInicial.buscar}
         alBuscar={setBuscar}
         alElegirCategoria={setIdCategoria}
       />

@@ -23,9 +23,10 @@ import { Cargando } from '../componentes/Cargando'
 import { SelectorDeLote } from '../componentes/SelectorDeLote'
 import { formatearImporte } from '../formato/importes'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearFechaHora(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('es-AR') : '—'
+  return iso ? fechaHoraATexto(iso) : '—'
 }
 
 function formatearMoneda(valor: number): string {
