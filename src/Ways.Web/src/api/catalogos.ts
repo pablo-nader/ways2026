@@ -164,6 +164,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     { clave: 'admiteVuelto', etiqueta: 'Admite vuelto', tipo: 'booleano' },
     { clave: 'requiereReferencia', etiqueta: 'Requiere referencia', tipo: 'booleano' },
     { clave: 'recargoPorcentaje', etiqueta: 'Recargo (%)', tipo: 'numeroDecimal' },
+    { clave: 'porcentajeFacturacion', etiqueta: 'Porcentaje a facturar (%)', tipo: 'numeroDecimal' },
   ],
   valoresPorDefecto: {
     orden: '1',
@@ -171,6 +172,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     admiteVuelto: true,
     requiereReferencia: false,
     recargoPorcentaje: '',
+    porcentajeFacturacion: '0',
   },
   aValores: (item) => ({
     orden: String(item.orden),
@@ -178,6 +180,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     admiteVuelto: item.admiteVuelto,
     requiereReferencia: item.requiereReferencia,
     recargoPorcentaje: item.recargoPorcentaje === null ? '' : String(item.recargoPorcentaje),
+    porcentajeFacturacion: String(item.porcentajeFacturacion),
   }),
   aAlta: (nombre, activo, valores) => ({
     nombre,
@@ -188,6 +191,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     admiteVuelto: Boolean(valores.admiteVuelto),
     requiereReferencia: Boolean(valores.requiereReferencia),
     recargoPorcentaje: numeroOVacio(valores.recargoPorcentaje),
+    porcentajeFacturacion: numeroOVacio(valores.porcentajeFacturacion) ?? 0,
   }),
   sujetoDeBaja: 'el medio de pago',
 }

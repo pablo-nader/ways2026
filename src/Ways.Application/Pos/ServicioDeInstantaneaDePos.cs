@@ -184,7 +184,7 @@ public class ServicioDeInstantaneaDePos(
         var mediosDePago = await db.MediosPago.AsNoTracking()
             .Where(m => m.Activo)
             .OrderBy(m => m.Orden).ThenBy(m => m.Id)
-            .Select(m => new MedioPagoDeInstantanea(m.Id, m.Nombre, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia))
+            .Select(m => new MedioPagoDeInstantanea(m.Id, m.Nombre, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.PorcentajeFacturacion))
             .ToListAsync(ct);
 
         // Mismo criterio de resolución (ResolucionDeParametros.Resolver: punto de venta > empresa

@@ -322,6 +322,9 @@ medios_pago (                 -- [catálogo]
     admite_vuelto   boolean,                 -- default según comportamiento, editable
     requiere_referencia boolean,             -- nro de cupón / operación
     recargo_porcentaje  numeric(5,2) NULL,   -- p.ej. crédito +10%
+    porcentaje_facturacion numeric(5,2) NOT NULL DEFAULT 0,
+                    -- parte (0..100) de lo vendido con este medio que debe facturarse
+                    -- fiscalmente; CHECK ck_medios_pago_porcentaje_facturacion
     orden, activo
 )
 ```
@@ -329,6 +332,9 @@ medios_pago (                 -- [catálogo]
 Mata las columnas fijas `efectivo/tarjetas/c_corriente` del legacy. Un pago es una fila
 (ver `pagos_comprobante`), la caja totaliza por medio, y agregar "QR" es un INSERT del
 tenant, no una migración.
+
+`porcentaje_facturacion` solo se guarda y se expone (ABM y copia offline del POS); la
+decisión de qué tickets se facturan es de una etapa posterior.
 
 ---
 

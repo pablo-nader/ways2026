@@ -187,10 +187,12 @@ public sealed record SolicitudDeRendicionDeCola(string CodigoTipoComprobante, lo
 /// <summary>Recorte de <c>MedioPagoListado</c> (catálogo genérico) a lo que el checkout offline
 /// necesita para armar <c>PagoDeVenta</c> y decidir vuelto/referencia sin ida y vuelta — mismo
 /// criterio que <c>ComprobanteListado</c> vs. el detalle completo: nunca <c>IdEmpresa</c>/
-/// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee.</summary>
+/// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee. <c>PorcentajeFacturacion</c> sí viaja, para que
+/// la copia local del dispositivo lo conserve; hoy ningún consumidor lo lee.</summary>
 public sealed record MedioPagoDeInstantanea(
     int IdMedioPago,
     string Nombre,
     ComportamientoMedioPago Comportamiento,
     bool AdmiteVuelto,
-    bool RequiereReferencia);
+    bool RequiereReferencia,
+    decimal PorcentajeFacturacion);

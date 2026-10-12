@@ -35,6 +35,7 @@ public sealed record MedioPagoAlta(
     bool AdmiteVuelto,
     bool RequiereReferencia,
     decimal? RecargoPorcentaje,
+    decimal PorcentajeFacturacion = 0m,
     bool Activo = true) : AltaDeCatalogo(Nombre, IdEmpresa, Activo);
 
 public sealed record MedioPagoListado(
@@ -46,7 +47,8 @@ public sealed record MedioPagoListado(
     ComportamientoMedioPago Comportamiento,
     bool AdmiteVuelto,
     bool RequiereReferencia,
-    decimal? RecargoPorcentaje) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
+    decimal? RecargoPorcentaje,
+    decimal PorcentajeFacturacion) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
 
 public sealed record CategoriaAlta(
     string Nombre, int? IdEmpresa, int Orden, int? IdCategoriaPadre, bool Activo = true)

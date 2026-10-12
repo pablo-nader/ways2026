@@ -25,6 +25,16 @@ public class MedioPagoConfiguration : ConfiguracionDeCatalogo<MedioPago>
             .HasColumnName("recargo_porcentaje")
             .HasColumnType("numeric(5,2)");
 
+        builder.Property(m => m.PorcentajeFacturacion)
+            .HasColumnName("porcentaje_facturacion")
+            .HasColumnType("numeric(5,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
+        builder.ToTable(t => t.HasCheckConstraint(
+            "ck_medios_pago_porcentaje_facturacion",
+            "porcentaje_facturacion >= 0 AND porcentaje_facturacion <= 100"));
+
         // stage-5-pos-ventas (Slice 3, design: Table Shapes — write path A): clave alterna
         // (Id, IdTenant) para que fk_pagos_comprobante_medio_pago pueda ser compuesta — mismo
         // patrón que AreaConfiguration/ListaPrecioConfiguration.
