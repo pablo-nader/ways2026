@@ -11,8 +11,8 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// Constraints de <c>combos</c> y <c>combos_componentes</c> (migración <c>Combos</c>) contra
 /// Postgres real: SQL crudo que no pasa por <c>ReglaDeCombos</c>, asertando SQLSTATE y
-/// <c>ConstraintName</c> exactos (skill db-error-backstops). Todavía no hay endpoint ni servicio
-/// de escritura de combos, así que estas pruebas cubren el esquema y no una traducción a HTTP.
+/// <c>ConstraintName</c> exactos (skill db-error-backstops). Cubren el esquema y no la traducción a
+/// HTTP, que están en <see cref="CombosRespaldosTests"/> y <c>ManejadorDeErroresCombosTests</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CombosEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>

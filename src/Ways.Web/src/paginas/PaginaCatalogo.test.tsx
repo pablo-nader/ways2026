@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PaginaCatalogo } from './PaginaCatalogo'
@@ -559,5 +559,72 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
 
     await screen.findByText('Se dio de baja "Nike".')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('PaginaCatalogo — error y foco del modal', () => {
+  it('un guardado rechazado expone el error como alerta adentro del diálogo', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await within(screen.getByRole('dialog')).findByRole('alert')
+    expect(alerta).toHaveTextContent('Ya existe una marca con ese nombre.')
+  })
+
+  it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByLabelText('Nombre')).toHaveFocus())
+  })
+
+  it('con el refresco en vuelo tras guardar, el foco queda en el contenedor de la pantalla y no en <body>', async () => {
+    const usuario = userEvent.setup()
+    let liberarRefresco: (filas: MarcaListado[]) => void = () => {}
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return cargas === 1
+        ? Promise.resolve([marcaFixture()])
+        : new Promise<MarcaListado[]>((resolver) => {
+            liberarRefresco = resolver
+          })
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    const { container } = render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Puma".')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBe(container.firstElementChild)
+
+    await act(async () => liberarRefresco([marcaFixture()]))
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
+    expect(document.activeElement).toBe(container.firstElementChild)
+  })
+
+  it('cancelar devuelve el foco al botón que abrió el modal', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    const abrir = await screen.findByRole('button', { name: 'Agregar' })
+    await usuario.click(abrir)
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(abrir).toHaveFocus()
   })
 })

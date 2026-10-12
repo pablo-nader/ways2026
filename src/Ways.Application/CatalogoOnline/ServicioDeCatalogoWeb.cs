@@ -118,7 +118,11 @@ public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, Gu
         });
     }
 
-    /// <summary>Quita la imagen (baja lógica). Idempotente: sin imagen no hay nada que hacer.</summary>
+    /// <summary>
+    /// Quita la imagen borrando la fila: no tiene historia que conservar y guardarla dada de baja dejaría hasta
+    /// 1 MB por artículo sin que nada la use. Una subida posterior inserta una fila nueva. Idempotente: sin
+    /// imagen no hay nada que hacer.
+    /// </summary>
     public async Task QuitarImagenAsync(int idArticulo, CancellationToken ct = default)
     {
         await ObtenerTenantDelArticuloAsync(idArticulo, ct);
@@ -131,13 +135,11 @@ public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, Gu
 
             await BloquearArticuloVivoAsync(idArticulo, ct);
 
-            var imagen = await db.ImagenesArticulo.FirstOrDefaultAsync(i => i.IdArticulo == idArticulo, ct);
+            var imagenes = await db.ImagenesArticulo.Where(i => i.IdArticulo == idArticulo).ToListAsync(ct);
 
-            if (imagen is not null)
+            if (imagenes.Count > 0)
             {
-                var ahora = reloj.Ahora;
-                imagen.DeletedAt = ahora;
-                imagen.UpdatedAt = ahora;
+                db.ImagenesArticulo.RemoveRange(imagenes);
 
                 await db.SaveChangesAsync(ct);
             }

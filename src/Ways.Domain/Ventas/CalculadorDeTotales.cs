@@ -6,9 +6,18 @@ namespace Ways.Domain.Ventas;
 /// llega con signo (negativa en NCX, design decisión 4) — la aritmética es uniforme para ambos
 /// signos, sin rama especial. <see cref="AjusteManualPorcentaje"/> es el porcentaje que el operador
 /// aplicó a mano sobre el neto de la línea (negativo = descuento, positivo = recargo); <c>null</c>
-/// es "sin ajuste" y deja el cálculo idéntico al previo a esa columna.</summary>
+/// es "sin ajuste" y deja el cálculo idéntico al previo a esa columna.
+/// <see cref="UnidadesConsumidasPorCombo"/> son las unidades de la línea que un combo ya consumió
+/// (mismo signo que <see cref="Cantidad"/>) y <see cref="AhorroDeCombo"/> es el importe de LÍNEA que
+/// el combo les repartió: positivo en una venta. En una devolución de combo (cantidad negativa) lleva el
+/// signo de la cantidad, igual que cualquier descuento de línea de una nota de crédito, y expresa la
+/// diferencia entre el bruto de la línea y lo que se devuelve. El descuento de la línea es
+/// <c>round(DescuentoUnitario × (Cantidad − UnidadesConsumidasPorCombo)) + AhorroDeCombo</c>: la
+/// oferta unitaria solo alcanza a las unidades que el combo no consumió. Con ambos en cero el
+/// cálculo es el de siempre.</summary>
 public readonly record struct LineaParaCalcular(
-    decimal Cantidad, decimal PrecioUnitario, decimal DescuentoUnitario, decimal? AjusteManualPorcentaje = null);
+    decimal Cantidad, decimal PrecioUnitario, decimal DescuentoUnitario, decimal? AjusteManualPorcentaje = null,
+    decimal UnidadesConsumidasPorCombo = 0m, decimal AhorroDeCombo = 0m);
 
 /// <summary>Una línea ya calculada — lista para materializar en
 /// <see cref="ItemComprobanteVenta"/> (más los campos de snapshot que Slice 4 completa).
@@ -45,7 +54,7 @@ public static class CalculadorDeTotales
         foreach (var linea in lineas)
         {
             var brutoDeLinea = Math.Round(linea.Cantidad * linea.PrecioUnitario, 2, MidpointRounding.AwayFromZero);
-            var descuento = Math.Round(linea.DescuentoUnitario * linea.Cantidad, 2, MidpointRounding.AwayFromZero);
+            var descuento = DescuentoDeLinea(linea);
             var netoDeLinea = brutoDeLinea - descuento;
             var ajusteManual = AjusteManualSobre(netoDeLinea, linea.AjusteManualPorcentaje);
             var totalDeLinea = netoDeLinea + ajusteManual;
@@ -78,6 +87,14 @@ public static class CalculadorDeTotales
         }
 
         return new TotalesCalculados(items, subtotal, descuentoTotal, total, descuentoManualTotal, recargoManualTotal);
+    }
+
+    private static decimal DescuentoDeLinea(LineaParaCalcular linea)
+    {
+        var unidadesConOferta = linea.Cantidad - linea.UnidadesConsumidasPorCombo;
+
+        return Math.Round(linea.DescuentoUnitario * unidadesConOferta, 2, MidpointRounding.AwayFromZero)
+            + linea.AhorroDeCombo;
     }
 
     /// <summary>Monto del ajuste manual sobre el neto de la línea (bruto − descuento de oferta), con

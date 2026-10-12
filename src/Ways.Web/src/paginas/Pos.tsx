@@ -57,6 +57,7 @@ import type {
   ClienteListado,
   ComprobanteEmitido,
   EstadoDeCuenta,
+  ComboAplicadoEnPrevia,
   InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
@@ -67,6 +68,7 @@ import type {
   SolicitudDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
+import { comboVigenteDeLinea, rotuloDeComboAplicado } from '../api/combos'
 import {
   aLineaDeCarritoDesdeEscaneo,
   aLineasDeResolucion,
@@ -95,7 +97,7 @@ import {
   buscarArticuloOffline,
   buscarClientesOffline,
   formatearVejezDeInstantanea,
-  resolverPreciosOffline,
+  resolverPreviaOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, LIMITE_DE_ESPERA_DEL_TURNO_MS } from '../pos/turnoConfirmadoLocal'
@@ -994,6 +996,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     lineasRef.current = lineas
   }, [lineas])
   const [precios, setPrecios] = useState<PreciosPorLinea>(() => borradorInicial?.precios ?? {})
+  // Combos que la vista previa aplicó al carrito (nombre, veces y ahorro): viaja siempre junto a `precios`, de
+  // la misma resolución y bajo la misma guarda de generación.
+  const [combosAplicados, setCombosAplicados] = useState<ComboAplicadoEnPrevia[]>([])
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
   const [reintentoPrecios, setReintentoPrecios] = useState(0)
@@ -1812,15 +1817,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
-  /** Cancelar el monto — el cajón ya está abierto (spec del dueño: eso ya quedó auditado), así que
-   * cancelar acá es seguro: solo descarta el monto sin registrar ningún `Retiro`. */
-  function cancelarMontoRetiro() {
-    if (registrandoRetiroRef.current) return
-    cambiarPasoRetiro(null)
-    setMontoRetiro(null)
-    setErrorRetiro('')
-  }
-
   /** Confirmar el monto — registra el `Retiro` real y encola su ticket. NUNCA vuelve a pulsar el
    * cajón (ya se pulsó en `confirmarAperturaParaRetiro`). */
   async function confirmarMontoRetiro() {
@@ -2155,6 +2151,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // bumpea arriba para huerfanar cualquier resolución en vuelo de una corrida anterior).
     if (modoPresupuesto) {
       setPrecios({})
+      setCombosAplicados([])
       setAvisoPrecios('')
       setResolviendo(false)
       congelarInstantaneaDeLaPrevia(null)
@@ -2172,6 +2169,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
     if (lineas.length === 0 || !clienteSeleccionado || !puntoVentaSeleccionada) {
       setPrecios({})
+      setCombosAplicados([])
       setAvisoPrecios('')
       // Este efecto bumpea su propia generación en cada corrida (línea de arriba): eso huerfana
       // cualquier fetch en vuelo de una corrida anterior (su `finally` se salta porque la
@@ -2197,7 +2195,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       clienteAdmitidoOffline(clienteSeleccionado, instantaneaLocal) &&
       todasLasLineasTienenPrecioOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
     ) {
-      setPrecios(resolverPreciosOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio))
+      const previaDeLaInstantanea = resolverPreviaOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
+      setPrecios(previaDeLaInstantanea.precios)
+      setCombosAplicados(previaDeLaInstantanea.combos)
       setAvisoPrecios('')
       setResolviendo(false)
       congelarInstantaneaDeLaPrevia(instantaneaLocal)
@@ -2210,10 +2210,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
     const idTimeout = setTimeout(() => {
       clienteDeOfertas
-        .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
-        .then((resultados) => {
+        .resolverConCombos(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
+        .then((resolucion) => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
-          setPrecios(indexarResolucionPorLinea(lineas, resultados))
+          setPrecios(indexarResolucionPorLinea(lineas, resolucion.lineas))
+          setCombosAplicados(resolucion.combos)
           // Vista previa ONLINE: ninguna instantánea queda congelada, así que `cobrar()` va por
           // el camino online.
           congelarInstantaneaDeLaPrevia(null)
@@ -2227,7 +2228,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // cliente elegido; el cobro local igual rechaza a un cliente que no esté en la
           // instantánea (`admisibilidadDeVentaOffline`).
           if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea && clienteSeleccionado) {
-            setPrecios(resolverPreciosOffline(lineas, sincronizacionOffline.instantanea, clienteSeleccionado.idListaPrecio))
+            const previaSinRed = resolverPreviaOffline(lineas, sincronizacionOffline.instantanea, clienteSeleccionado.idListaPrecio)
+            setPrecios(previaSinRed.precios)
+            setCombosAplicados(previaSinRed.combos)
             setAvisoPrecios('')
             // judgment-day ronda 1 (WARNING): congela ACÁ la instantánea exacta que resolvió
             // esta vista previa — "Cobrar" (más abajo) y el ticket sintético tienen que usar
@@ -2245,6 +2248,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // línea con precio viejo, otra en 0) en vez de entrar en modo vista previa fallida —
           // un subtotal a medias es peor que ninguno (judgment-day R3, falso negativo de Judge B).
           setPrecios({})
+          setCombosAplicados([])
           setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
           congelarInstantaneaDeLaPrevia(null)
         })
@@ -3206,6 +3210,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
       setLineas([])
       setPrecios({})
+      setCombosAplicados([])
       setCantidadesEnEdicion({})
       setAjustesEnEdicion({})
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
@@ -3639,6 +3644,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         const resultado = precios[l.idLinea]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
+                        const comboDeLinea = comboVigenteDeLinea(l.cantidad, resultado?.combo)
+                        // La línea solo conoce el combo de menor id entre los que la consumieron, pero su ahorro suma
+                        // todos: el nombre solo se muestra cuando el carrito aplicó UN combo (no puede ser otro).
+                        const nombreDelCombo =
+                          comboDeLinea && combosAplicados.length === 1 && combosAplicados[0].idCombo === comboDeLinea.idCombo
+                            ? combosAplicados[0].nombre
+                            : 'Combos'
                         const ajusteDeLinea = l.ajusteManualPorcentaje ?? null
                         const mensajeDeAjuste = mensajeDeAjusteInvalido(l.idLinea)
                         const lineaInerte = pantallaCobroInerte || bloqueadoPorTurno
@@ -3656,6 +3668,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             <td>{l.codigoBarra ?? l.codigoInterno}</td>
                             <td>
                               {l.nombre}
+                              {comboDeLinea && (
+                                <div>
+                                  <span className="badge text-bg-success" title="Combo aplicado a esta línea">
+                                    {[nombreDelCombo, formatearImporteConSigno(-comboDeLinea.ahorro, { simbolo: true })].join(' ')}
+                                  </span>
+                                </div>
+                              )}
                               {ajusteDeLinea !== null && (
                                 <div>
                                   <span className={`badge ${ajusteDeLinea < 0 ? 'text-bg-warning' : 'text-bg-info'}`}>{textoDelAjuste}</span>
@@ -3825,6 +3844,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
             <hr />
 
+            {combosAplicados.map((c) => (
+              <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
+                <span>Combo {rotuloDeComboAplicado(c)}</span>
+                <span>{formatearMoneda(-c.ahorro)}</span>
+              </div>
+            ))}
             {ajustesManuales.descuentoManualTotal !== 0 && (
               <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
                 <span>Desc. manual</span>
@@ -4070,12 +4095,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         <Modal
           titulo="Monto retirado"
           ocupado={registrandoRetiro}
-          onCerrar={cancelarMontoRetiro}
+          noDescartable
           pie={
             <>
-              <button type="button" className="btn btn-outline-secondary" disabled={registrandoRetiro} onClick={cancelarMontoRetiro}>
-                Cancelar
-              </button>
               <button
                 type="button"
                 className="btn btn-primary"

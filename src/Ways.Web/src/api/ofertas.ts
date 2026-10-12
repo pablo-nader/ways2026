@@ -6,7 +6,7 @@
  * `web-descriptor-tests` siga aplicando (el criterio de la skill es el helper, no el
  * descriptor literal).
  */
-import { api } from './cliente'
+import { api, ErrorApi } from './cliente'
 import type {
   AltaOferta,
   EdicionOferta,
@@ -15,6 +15,7 @@ import type {
   ListaPrecioListado,
   OfertaListado,
   ResultadoDeResolucion,
+  ResolucionConCombos,
   AgregacionDeResolucion,
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
@@ -34,6 +35,24 @@ export const clienteDeOfertas = {
    * `agregacion` dice si el lote es un documento (el carrito, por omisión) o consultas sueltas. */
   resolver: (lineas: LineaDeResolucion[], agregacion: AgregacionDeResolucion = 'Documento') =>
     api.post<ResultadoDeResolucion[]>('/ofertas/resolver', { lineas, agregacion }),
+  /** `POST /api/ofertas/resolver-con-combos`: el carrito del POS (documento completo). Mismo cuerpo que
+   * `resolver`, pero responde `{ lineas, combos }`: cada línea que un combo consumió trae `combo`. Toda
+   * línea tiene que mandar el `idEmpresa` del punto de venta y la lista del cliente (valores mezclados →
+   * 400). Las búsquedas y consultas de precio siguen en `resolver`: muestran un precio unitario por línea.
+   * Un `combos` ausente en la respuesta es una lista vacía. Un servidor que todavía no tiene la ruta (404 o
+   * 405, la ventana de un despliegue) cae al `resolver` de siempre como documento y sin combos: el carrito
+   * conserva su vista previa. Cualquier otro error (400, 500, red) se propaga tal cual. */
+  resolverConCombos: async (lineas: LineaDeResolucion[]): Promise<ResolucionConCombos> => {
+    try {
+      const respuesta = await api.post<ResolucionConCombos>('/ofertas/resolver-con-combos', { lineas, agregacion: 'Documento' })
+      return { ...respuesta, combos: respuesta.combos ?? [] }
+    } catch (e) {
+      if (e instanceof ErrorApi && (e.estado === 404 || e.estado === 405)) {
+        return { lineas: await clienteDeOfertas.resolver(lineas, 'Documento'), combos: [] }
+      }
+      throw e
+    }
+  },
 }
 
 export type AlcanceOferta = 'Articulo' | 'Grupo' | 'Categoria' | 'Familia'

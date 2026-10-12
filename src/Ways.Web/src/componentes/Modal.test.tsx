@@ -411,6 +411,67 @@ describe('Modal — inerte mientras ocupado', () => {
 })
 
 /**
+ * Cláusulas bajo prueba (mutation-proof-tests): la × del header condicionada a `!noDescartable`,
+ * la rama `noDescartable` del handler de Escape y la del click en el fondo.
+ */
+describe('Modal — no descartable', () => {
+  it('no renderiza la × de cerrar', () => {
+    render(
+      <Modal titulo="Monto retirado" noDescartable>
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
+  })
+
+  it('Escape se consume (preventDefault) y el modal sigue montado', () => {
+    render(
+      <Modal titulo="Monto retirado" noDescartable>
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    const evento = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true })
+    document.dispatchEvent(evento)
+
+    expect(evento.defaultPrevented).toBe(true)
+    expect(screen.getByRole('dialog', { name: 'Monto retirado' })).toBeInTheDocument()
+  })
+
+  it('con un descartable debajo, Escape no cierra al de abajo: lo consume el tope no descartable', () => {
+    const alCerrarDeAbajo = vi.fn()
+    render(
+      <>
+        <Modal titulo="Abajo" onCerrar={alCerrarDeAbajo}>
+          <p>abajo</p>
+        </Modal>
+        <Modal titulo="Arriba" noDescartable>
+          <p>arriba</p>
+        </Modal>
+      </>,
+    )
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(alCerrarDeAbajo).not.toHaveBeenCalled()
+  })
+
+  it('un modal descartable sigue mostrando la × y cerrando con Escape', () => {
+    const onCerrar = vi.fn()
+    render(
+      <Modal titulo="Nueva marca" onCerrar={onCerrar}>
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCerrar).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
  * Cláusula bajo prueba: `desplazable` agrega `modal-dialog-scrollable` — sin el prop (o con la
  * clase hardcodeada afuera de la condición) el body largo del modal no queda scrolleable con el
  * header fijo. Mutation-proof-tests: sacar `desplazable ? 'modal-dialog-scrollable' : ''` (dejar
