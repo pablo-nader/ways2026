@@ -44,6 +44,15 @@ public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, Gu
             var articulo = await db.Articulos.FirstOrDefaultAsync(a => a.Id == idArticulo, ct)
                 ?? throw SinArticulo(idArticulo);
 
+            // La tienda online no vende por importe: el cliente no tiene dónde tipear el monto.
+            if (publicado && articulo.UnidadVenta == UnidadVenta.Importe)
+            {
+                throw new ErrorDominio(
+                    "articulo_por_importe_no_publicable",
+                    $"El artículo {articulo.CodigoInterno} se vende por importe: no se puede publicar en la tienda online.",
+                    400);
+            }
+
             if (articulo.PublicadoWeb != publicado)
             {
                 articulo.PublicadoWeb = publicado;

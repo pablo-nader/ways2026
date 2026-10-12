@@ -210,4 +210,34 @@ public class ResolucionPorFamiliaTests
 
         Assert.Equal([PrecioConOferta, PrecioConOferta], precios);
     }
+
+    /// <summary>Una línea por importe no suma a la cantidad de su familia: la oferta de familia de mínimo 2 no se completa
+    /// con un artículo común y otro por importe de la misma familia (un cambio de unidad de un solo artículo la deja
+    /// ahí).</summary>
+    [Fact]
+    public async Task UnaLineaPorImporteNoSumaALaCantidadDeLaFamilia()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idLista = await SembrarListaAsync(nombreDeBase);
+        var comun = await SembrarArticuloAsync(nombreDeBase, idLista, idFamilia: 7);
+        var porImporte = await SembrarArticuloAsync(nombreDeBase, idLista, idFamilia: 7);
+        await SembrarOfertaAsync(nombreDeBase, idFamilia: 7);
+
+        await using (var edicion = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma))
+        {
+            var articulo = await edicion.Articulos.SingleAsync(a => a.Id == porImporte);
+            articulo.UnidadVenta = UnidadVenta.Importe;
+            articulo.AcumulaEnVenta = false;
+            await edicion.SaveChangesAsync();
+        }
+
+        var resultado = await CrearServicio(nombreDeBase).ResolverDocumentoAsync(
+            [
+                new LineaDeResolucion(comun, null, idLista, 1m),
+                new LineaDeResolucion(porImporte, null, idLista, 1m, Importe: 150m)
+            ],
+            momento: null);
+
+        Assert.Equal([Lista, 150m], resultado.Select(r => r.PrecioFinal));
+    }
 }

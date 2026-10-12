@@ -87,6 +87,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
 
         var publicados = db.Articulos
             .AsNoTracking()
+            .Where(a => a.UnidadVenta != UnidadVenta.Importe)
             .Where(a => a.DisponibleParaTodas
                 || db.ArticulosEmpresas.Any(ae => ae.IdArticulo == a.Id && ae.IdEmpresa == idEmpresa))
             .Where(a => db.Precios.Where(PrecioVigenteEn(ahora)).Any(p => p.IdArticulo == a.Id && p.IdListaPrecio == idLista));
