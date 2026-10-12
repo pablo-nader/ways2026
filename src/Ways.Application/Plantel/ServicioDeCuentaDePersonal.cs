@@ -108,6 +108,15 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
                 m.Id, m.Fecha, m.Tipo, m.Horas, m.ValorHora, m.Importe, m.SaldoResultante, m.Detalle, m.CreatedAt))
             .ToListAsync(ct);
 
+        var idsDePagos = items.Where(i => i.Tipo == TipoMovimientoPersonal.Pago).Select(i => i.IdMovimiento).ToList();
+        if (idsDePagos.Count > 0)
+        {
+            var desgloses = await LectorDeDesgloseDePagos.LeerAsync(db, idsDePagos, ct);
+            items = items
+                .Select(i => desgloses.TryGetValue(i.IdMovimiento, out var desglose) ? i with { Desglose = desglose } : i)
+                .ToList();
+        }
+
         return new PaginaDeCuentaDePersonal(
             new EncabezadoDeCuentaDePersonal(idPersonal, personal.Nombre, personal.Saldo),
             items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);

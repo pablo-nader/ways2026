@@ -61,20 +61,40 @@ public static class EscriturasDeCuentaCorriente
     /// nuevo (Slice 3): <c>NULL</c> para <see cref="TipoMovimientoCc.Consumo"/>/<see cref="TipoMovimientoCc.Pago"/>,
     /// el JSON auditable para <see cref="TipoMovimientoCc.ActualizacionPrecios"/> (design: Table
     /// Shapes A — columna <c>text</c>, doc-10 §8).</summary>
-    public static async Task<int> InsertarMovimientoCcAsync(
+    public static Task<int> InsertarMovimientoCcAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
         int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante,
-        decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct)
+        decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct) =>
+        InsertarAsync(
+            conexion, transaccion, idTenant, idCliente, fecha, idPuntoVenta, idEmpleado, tipo, idComprobanteVenta,
+            idPagoComprobante, idMovimientoPersonal: null, importe, saldoResultante, detalle, ct);
+
+    /// <summary>La parte de un pago de personal que baja la deuda del cliente vinculado al empleado. Tiene su
+    /// propio método porque su forma es única: siempre apunta al movimiento <c>pago</c> del libro de personal,
+    /// nunca lleva comprobante y el importe es negativo.</summary>
+    public static Task<int> InsertarDescuentoDePersonalAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
+        int idPuntoVenta, int idEmpleado, int idMovimientoPersonal, decimal importe, decimal saldoResultante,
+        string? detalle, CancellationToken ct) =>
+        InsertarAsync(
+            conexion, transaccion, idTenant, idCliente, fecha, idPuntoVenta, idEmpleado,
+            TipoMovimientoCc.DescuentoPersonal, idComprobanteVenta: null, idPagoComprobante: null,
+            idMovimientoPersonal, importe, saldoResultante, detalle, ct);
+
+    private static async Task<int> InsertarAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
+        int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante,
+        int? idMovimientoPersonal, decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct)
     {
-        ValidarFormaPorTipo(tipo, idComprobanteVenta, idPagoComprobante);
+        ValidarFormaPorTipo(tipo, idComprobanteVenta, idPagoComprobante, idMovimientoPersonal, importe);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente " +
             "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_venta, " +
-            " id_pago_comprobante, importe, saldo_resultante, detalle) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
+            " id_pago_comprobante, importe, saldo_resultante, detalle, id_movimiento_personal) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) " +
             "RETURNING id_movimiento";
 
         ParametrosDeComando.Agregar(comando, idTenant);
@@ -88,6 +108,7 @@ public static class EscriturasDeCuentaCorriente
         ParametrosDeComando.Agregar(comando, importe);
         ParametrosDeComando.Agregar(comando, saldoResultante);
         ParametrosDeComando.AgregarNulo(comando, detalle);
+        ParametrosDeComando.AgregarNulo(comando, idMovimientoPersonal);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("No se pudo insertar el movimiento de cuenta corriente.");
@@ -100,8 +121,17 @@ public static class EscriturasDeCuentaCorriente
     /// <see cref="TipoMovimientoCc.Pago"/> y (Slice 3) <see cref="TipoMovimientoCc.ActualizacionPrecios"/>
     /// tienen una forma única y fija (el resto — un <c>Ajuste</c> puede ser un contramovimiento de
     /// anulación o un ajuste manual — es estructuralmente dual, no viola nada acá).</summary>
-    private static void ValidarFormaPorTipo(TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante)
+    private static void ValidarFormaPorTipo(
+        TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante, int? idMovimientoPersonal,
+        decimal importe)
     {
+        if (tipo == TipoMovimientoCc.DescuentoPersonal && (idMovimientoPersonal is null || importe >= 0m))
+        {
+            throw new InvalidOperationException(
+                "Un movimiento de tipo DescuentoPersonal se escribe con InsertarDescuentoDePersonalAsync, apunta a un " +
+                "movimiento de personal y su importe es negativo — invariante de escritura violado.");
+        }
+
         if (tipo == TipoMovimientoCc.Consumo && idPagoComprobante is null)
         {
             throw new InvalidOperationException(
