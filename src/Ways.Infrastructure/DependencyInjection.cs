@@ -16,6 +16,7 @@ using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Application.Articulos;
+using Ways.Application.CatalogoOnline;
 using Ways.Application.Dominios;
 using Ways.Application.Exportacion;
 using Ways.Application.Fiscal;
@@ -59,6 +60,7 @@ public static class DependencyInjection
 
         // Singleton sin estado: cada lectura abre un alcance propio en modo de acceso publico.
         services.AddSingleton<ILectorDeVitrinaPublica, LectorDeVitrinaPublica>();
+        services.AddSingleton<ILectorDeCatalogoPublico, LectorDeCatalogoPublico>();
 
         services.AddDbContext<WaysDbContext>((sp, options) =>
         {

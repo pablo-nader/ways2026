@@ -38,6 +38,10 @@ namespace Ways.Application.Catalogos;
 public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
     : ServicioDeCatalogo<ListaPrecio, ListaPrecioListado, ListaPrecioAlta>(db, reloj, guarda)
 {
+    // Copia del parámetro en un campo (no una captura): evita CS9107, que avisa cuando el mismo parámetro
+    // se captura y además se pasa al constructor base.
+    private readonly GuardaDeReferencias guardaDeLaLista = guarda;
+
     protected override DbSet<ListaPrecio> Conjunto => Db.ListasPrecio;
 
     protected override string CodigoEnUso => "lista_precio_en_uso";
@@ -139,30 +143,52 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj, G
                 "No se puede quitar el estado default sin asignarlo a otra lista en el mismo alcance primero.");
         }
 
-        if (!actual.EsDefault && datos.EsDefault)
+        var promueveADefault = !actual.EsDefault && datos.EsDefault;
+
+        // Desactivar la lista o cambiarle el alcance le quita la lista a la tienda online que la usa (ver
+        // ExigirSinVitrinaQueLaUseAsync). Es la única edición que pide el lock de la fila.
+        var quitaLaListaALaTienda = (actual.Activo && !datos.Activo) || datos.IdEmpresa != actual.IdEmpresa;
+
+        if (!promueveADefault && !quitaLaListaALaTienda)
         {
-            // El INTERCAMBIO se dispara al PROMOVER a default una fila que hoy no lo es —
-            // esto cubre tanto la promoción simple (mismo alcance) como la promoción
-            // combinada con un cambio de alcance (compartida -> empresa, empresa ->
-            // compartida, empresa A -> empresa B), porque la guarda de arriba ya rechazó
-            // cualquier cambio de alcance de una fila que HOY es default: si se llegó
-            // hasta acá con datos.IdEmpresa != actual.IdEmpresa, es porque actual.EsDefault
-            // era false. El alcance a desmarcar es siempre el DESTINO (datos.IdEmpresa,
-            // el alcance donde la fila va a terminar), nunca el de origen.
-            var estrategia = Db.Database.CreateExecutionStrategy();
-            return await estrategia.ExecuteAsync(async () =>
-            {
-                await using var transaccion = await Db.Database.BeginTransactionAsync(ct);
-
-                await DesmarcarDefaultActualAsync(datos.IdEmpresa, excluirId: id, ct);
-                var actualizada = await base.ActualizarAsync(id, datos, ct);
-
-                await transaccion.CommitAsync(ct);
-                return actualizada;
-            });
+            return await base.ActualizarAsync(id, datos, ct);
         }
 
-        return await base.ActualizarAsync(id, datos, ct);
+        // Cuando la edición PROMUEVE a default, el INTERCAMBIO se dispara al promover una fila que hoy no lo
+        // es — esto cubre tanto la promoción simple (mismo alcance) como la promoción combinada con un cambio
+        // de alcance (compartida -> empresa, empresa -> compartida, empresa A -> empresa B), porque la guarda
+        // de arriba ya rechazó cualquier cambio de alcance de una fila que HOY es default: si se llegó hasta
+        // acá con datos.IdEmpresa != actual.IdEmpresa, es porque actual.EsDefault era false. El alcance a
+        // desmarcar es siempre el DESTINO (datos.IdEmpresa, el alcance donde la fila va a terminar), nunca el
+        // de origen.
+        //
+        // Sin reintento cuando hay que bloquear: el lock y la lectura de las vitrinas tienen que correr una
+        // sola vez por intento, y un reintento tras un commit ambiguo repetiría la edición sobre un estado ya
+        // cambiado. La promoción sola conserva su estrategia.
+        var estrategia = quitaLaListaALaTienda
+            ? FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(Db)
+            : Db.Database.CreateExecutionStrategy();
+
+        return await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await Db.Database.BeginTransactionAsync(ct);
+
+            if (quitaLaListaALaTienda)
+            {
+                await guardaDeLaLista.BloquearFilaAsync<ListaPrecio>(id, ct);
+                await ExigirSinVitrinaQueLaUseAsync(id, ct);
+            }
+
+            if (promueveADefault)
+            {
+                await DesmarcarDefaultActualAsync(datos.IdEmpresa, excluirId: id, ct);
+            }
+
+            var actualizada = await base.ActualizarAsync(id, datos, ct);
+
+            await transaccion.CommitAsync(ct);
+            return actualizada;
+        });
     }
 
     /// <summary>Baja lógica: además de la guarda heredada de dependientes activos (misma que
@@ -277,6 +303,29 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj, G
             throw ErrorDominio.Conflicto(
                 "lista_modo_bloqueado_por_historial",
                 "No se puede cambiar el modo de una lista que ya tiene precios registrados.");
+        }
+    }
+
+    /// <summary>Una lista que usa la vitrina de una empresa (<c>vitrinas.id_lista_precio</c>, vitrina no dada de
+    /// baja, publicada o no) no se puede desactivar ni mover de alcance: la tienda online pasaría a mostrar un
+    /// catálogo vacío sin que nadie lo haya decidido. Va BAJO el <c>FOR UPDATE</c> de la lista, que choca con el
+    /// <c>FOR KEY SHARE</c> que toma <c>ServicioDeVitrinas.GuardarAsync</c> al asignarla: o esa vitrina ya está
+    /// comiteada y se ve acá, o espera y ve la lista ya inactiva (<c>400 lista_invalida</c>). La baja de la lista
+    /// ya estaba cubierta por <see cref="GuardaDeReferencias"/>. Hay que sacarla de la tienda (otra lista) antes.</summary>
+    private async Task ExigirSinVitrinaQueLaUseAsync(int id, CancellationToken ct)
+    {
+        var empresa = await Db.Vitrinas
+            .Where(v => v.IdListaPrecio == id)
+            .OrderBy(v => v.IdEmpresa)
+            .Join(Db.Empresas, v => v.IdEmpresa, e => e.Id, (_, e) => e.NombreFantasia ?? e.RazonSocial)
+            .FirstOrDefaultAsync(ct);
+
+        if (empresa is not null)
+        {
+            throw ErrorDominio.Conflicto(
+                "lista_en_uso_por_vitrina",
+                $"No se puede desactivar ni cambiar de alcance una lista que usa la tienda online de {empresa}; "
+                + "elegí otra lista para esa tienda primero.");
         }
     }
 
