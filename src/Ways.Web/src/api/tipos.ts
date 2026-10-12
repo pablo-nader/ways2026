@@ -3294,6 +3294,89 @@ export type PersonalListado = {
   nombreCliente: string | null
 }
 
+/** Espejo del enum `TipoMovimientoPersonal`: viaja como texto PascalCase. */
+export type TipoMovimientoPersonal = 'Horas' | 'Pago' | 'Ajuste'
+
+/** Espejo de `LineaDeDesglose`: una entrega de dinero de un pago. `nombreMedioPago` llega en `null`
+ * si el medio se dio de baja; `referencia` es la que se cargó en la línea. */
+export type LineaDeDesgloseDePago = {
+  idGasto: number
+  idMedioPago: number
+  nombreMedioPago: string | null
+  importe: number
+  origenFondos: OrigenFondosGasto
+  referencia: string | null
+}
+
+/** Espejo de `DesgloseDePago`: cómo se compuso un pago. */
+export type DesgloseDePago = {
+  descuentoDeCuentaCorriente: number | null
+  lineas: LineaDeDesgloseDePago[]
+}
+
+/** Espejo de `MovimientoDePersonal`. `importe` lleva signo (el pago es negativo); `desglose` solo viene
+ * en los pagos. */
+export type MovimientoDePersonal = {
+  idMovimiento: number
+  fecha: string
+  tipo: TipoMovimientoPersonal
+  horas: number | null
+  valorHora: number | null
+  importe: number
+  saldoResultante: number
+  detalle: string | null
+  creadoEn: string
+  desglose?: DesgloseDePago | null
+}
+
+/** Espejo de `PaginaDeCuentaDePersonal`. `encabezado.saldo` sale del saldo del empleado, nunca de la
+ * suma de la página. */
+export type PaginaDeCuentaDePersonal = {
+  encabezado: { idPersonal: number; nombre: string; saldo: number }
+  items: MovimientoDePersonal[]
+  total: number
+  pagina: number
+  tamanio: number
+  historico: boolean
+  desde: string | null
+  hasta: string | null
+}
+
+/** Espejo de `SolicitudDeCargaDeHoras`. */
+export type SolicitudDeCargaDeHoras = {
+  fecha: string
+  horas: number
+  valorHora: number
+  detalle?: string
+}
+
+/** Espejo de `SolicitudDeAjusteDePersonal`: `importe` con signo, distinto de cero. */
+export type SolicitudDeAjusteDePersonal = {
+  fecha: string
+  importe: number
+  detalle: string
+}
+
+/** Espejo de `LineaDeSolicitudDePago`. */
+export type LineaDeSolicitudDePagoDePersonal = {
+  idMedioPago: number
+  importe: number
+  referencia?: string
+}
+
+/** Espejo de `SolicitudDePagoDePersonal`. Cada campo opcional se omite cuando no aplica:
+ * `origenFondos` solo con líneas, `idEmpresa` solo con tesorería, `idPuntoVenta` solo con el cajón o
+ * con descuento. */
+export type SolicitudDePagoDePersonal = {
+  fecha: string
+  idEmpresa?: number
+  idPuntoVenta?: number
+  origenFondos?: OrigenFondosGasto
+  descuentoDeCuentaCorriente?: number
+  lineas?: LineaDeSolicitudDePagoDePersonal[]
+  detalle?: string
+}
+
 /** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */
 export type DatosDePersonal = {
   nombre: string

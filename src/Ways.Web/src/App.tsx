@@ -39,6 +39,7 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
+import { CuentaDePersonal } from './paginas/CuentaDePersonal'
 import { Personal } from './paginas/Personal'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
@@ -299,6 +300,18 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Personal />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Cuenta del empleado: se llega desde el enlace "Cuenta" del listado, sin entrada de menú propia.
+                Lectura y escrituras de Admin y Supervisor (Politicas.LecturaDePersonal y
+                GestionDeCuentaDePersonal); pagar de la tesorería es solo del Admin. */}
+            <Route
+              path="/personal/:id/cuenta"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <CuentaDePersonal />
                 </RutaProtegida>
               }
             />

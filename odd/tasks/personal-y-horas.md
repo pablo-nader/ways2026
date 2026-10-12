@@ -150,9 +150,29 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   Seguimientos: el mismo defecto de "Cargando" existe en Proveedores (tarea sugerida aparte);
   el término de búsqueda vigente se anota al iniciar la lectura y no al aplicarla.
   El enlace "Cuenta" apunta a una ruta que se registra en T5.
-- [ ] T5 — Cuenta de personal (web). Ruta: delegada.
+- [x] T5 — Cuenta de personal (web). Ruta: delegada.
   Estado de cuenta, carga de horas, ajuste y pago con líneas.
   Checks: tests de componente y del cálculo de totales del pago.
+  Evidencia: commits `f6665ab9` y `a9b16dfb`. Web completa 6347/6347, lint y build sin
+  errores; verificación del padre: tests de la pantalla y sus helpers 164/164. RED observado
+  en los helpers; los tests de pantalla se probaron por mutación.
+  Ruta `/personal/:id/cuenta` para Admin y Supervisor. El punto de venta sale de la sesión,
+  la empresa de `/empresas` (solo Admin), la deuda del cliente de `/clientes/{id}`.
+  Judgment-day: ronda 1 con un crítico confirmado por los dos jueces: tras un resultado
+  incierto (red o 5xx) el formulario quedaba abierto y un reintento podía duplicar un pago,
+  que no tiene clave de idempotencia. Corregido en `8c0b86ee`: el resultado incierto cierra
+  y descarta el formulario, relee y deja una advertencia. Misma ronda: horas con punto o
+  coma, rango ampliado para mostrar un movimiento retroactivo, fecha por defecto al abrir,
+  ajuste sin dirección preseleccionada, etiquetas de origen iguales a las de Gastos, rango
+  efectivo del servidor a la vista. Ronda 2 (`af1b95b6`): advertencias como lista con
+  descarte por entrada; rechazo cierto solo con código emitido por la API y nunca 408 ni
+  429; descuento que quedaba trabado tras releer la deuda; horas estrictas. La segunda
+  re-evaluación dio todo por resuelto, sin críticos. Web completa 6442/6442.
+  Limitación conocida (advertencia de ambos jueces, sin corregir): un 403 sin cuerpo de la
+  política de autorización se trata como incierto. Falla del lado seguro; el 403 de
+  tesorería trae código `prohibido` y se muestra bien.
+  Seguimientos: foco al descartar una advertencia; la copia "cajón del turno" en un mensaje
+  de error; carga de horas con fecha futura.
 
 ## Progreso
 
@@ -160,4 +180,5 @@ T1 cerrada (1.551 líneas de autoría sin contar el código generado de la migra
 T1 mergeada en main (PR #402). T2 cerrada (1.712 líneas de autoría).
 T2 mergeada en main (PR #407). T3 cerrada (2.492 líneas de autoría).
 T3 mergeada en main (PR #415). T4 cerrada (unas 2.500 líneas, más de la mitad tests).
-Próximo paso: PR de T4, luego T5.
+T4 mergeada en main (PR #420). T5 cerrada (unas 4.700 líneas, más de la mitad tests).
+Próximo paso: PR de T5. Después, los seguimientos anotados en cada tarea.
