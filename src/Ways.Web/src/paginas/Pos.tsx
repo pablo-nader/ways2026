@@ -81,6 +81,7 @@ import {
   type PreciosPorLinea,
 } from '../api/ventas'
 import { useAuth } from '../auth/useAuth'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
@@ -1104,6 +1105,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // abrió la puerta, para poder devolverle el foco si el cajero cancela.
   const [confirmandoCobro, setConfirmandoCobro] = useState(false)
   const disparadorConfirmacionRef = useRef<HTMLElement | null>(null)
+
+  // Confirmación de "Vaciar carrito" (clic o F10). Escape lo cancela el propio `Modal`; F10 y F9
+  // los resuelve el único listener de teclado de la pantalla.
+  const [vaciandoCarrito, setVaciandoCarrito] = useState(false)
 
   // stage-6-turnos-caja (Slice 7): gate seam del checkout — un 409 turno_no_abierto reemplaza el
   // panel de cobro por la oferta de abrir turno en vez de un error crudo (design: Web
@@ -2849,7 +2854,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito) return
       // stage-pos-retiros-y-cierre-por-retiro (etapa 5): tampoco con un modal de "Retirar"/"Cerrar
       // caja" por retiro abierto.
       if (cajaDeEscritorioOcupada) return
@@ -2858,7 +2863,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
 
   // F4 abre el buscador de combos, con las mismas compuertas que el botón (que se deshabilita con un escaneo en vuelo) y que
   // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
@@ -2869,12 +2874,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
       evento.preventDefault()
       if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
-      if (gateTurno || ventaFinalizada || confirmandoCobro || cajaDeEscritorioOcupada) return
+      if (gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito || cajaDeEscritorioOcupada) return
       setBuscadorDeCombosAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -2927,6 +2932,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // `subtotalPrevia` es lo que hay que cobrar, ya con los ajustes manuales de cada línea; de ahí
   // salen `totalActual`, `validarPagosLocal` y el vuelto. `ajustesManuales` solo los separa para
   // mostrarlos en "Datos de la venta".
+  /** Orden de pantalla: la línea agregada más recientemente va primera. El estado, el borrador, el pedido al
+   * servidor y el ticket conservan el orden de agregado. */
+  const lineasEnPantalla = [...lineas].reverse()
+
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   const ajustesManuales = calcularAjustesManualesPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -3558,6 +3567,46 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     confirmandoCobroPrevioRef.current = confirmandoCobro
   }, [confirmandoCobro])
 
+  /** Quitar o vaciar saca del documento el control que tenía el foco: lo pide para el input de
+   * código por el mismo camino que el resto de las acciones del cajero (queda pendiente si el
+   * input está momentáneamente deshabilitado). */
+  function pedirFocoEnElCodigo() {
+    focoPendienteRef.current = true
+    setPedidosDeFoco((n) => n + 1)
+  }
+
+  function quitarLinea(idLinea: string) {
+    mutarCarrito({ tipo: 'quitarLinea', idLinea })
+    pedirFocoEnElCodigo()
+  }
+
+  const puedeVaciar = !modoPresupuesto && lineas.length > 0 && !escaneando && !pantallaCobroInerte && !bloqueadoPorTurno
+
+  function pedirConfirmacionDeVaciado() {
+    setVaciandoCarrito(true)
+  }
+
+  function cancelarVaciado() {
+    setVaciandoCarrito(false)
+    pedirFocoEnElCodigo()
+  }
+
+  // Si el carrito deja de poder vaciarse con la confirmación abierta (turno cerrado, cobro en curso),
+  // el diálogo no puede seguir prometiendo que lo vacía.
+  useEffect(() => {
+    if (vaciandoCarrito && !puedeVaciar) {
+      setVaciandoCarrito(false)
+      focoPendienteRef.current = true
+      setPedidosDeFoco((n) => n + 1)
+    }
+  }, [vaciandoCarrito, puedeVaciar])
+
+  function confirmarVaciado() {
+    setVaciandoCarrito(false)
+    mutarCarrito({ tipo: 'vaciar' })
+    pedirFocoEnElCodigo()
+  }
+
   /** Devuelve el foco al input de código cuando el modal "Venta finalizada" TERMINA de cerrarse
    * (clic en "Aceptar" o F9) — mismo criterio que `confirmandoCobroPrevioRef` de arriba, pero acá
    * siempre va al input de código (nunca hay un control disparador que restaurar: el modal
@@ -3602,6 +3651,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     precondicionesListas: boolean
     pagosCubrenElTotal: boolean
     puedeCobrar: boolean
+    vaciandoCarrito: boolean
+    puedeVaciar: boolean
+    pedirConfirmacionDeVaciado: () => void
+    cancelarVaciado: () => void
     confirmarYcobrar: () => void
     cancelarConfirmacionDeCobro: () => void
     enfocarPrimeraFilaDePagoPendiente: () => void
@@ -3620,6 +3673,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       precondicionesListas,
       pagosCubrenElTotal,
       puedeCobrar,
+      vaciandoCarrito,
+      puedeVaciar,
+      pedirConfirmacionDeVaciado,
+      cancelarVaciado,
       confirmarYcobrar,
       cancelarConfirmacionDeCobro,
       enfocarPrimeraFilaDePagoPendiente,
@@ -3631,6 +3688,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     function alTeclado(evento: KeyboardEvent) {
       const m = f9Ref.current
       if (!m) return
+
+      // F10 abre la barra de menú del navegador: en esta pantalla nunca debe llegar a hacerlo.
+      if (evento.key === 'F10') evento.preventDefault()
 
       // stage-pos-modales-de-cobro: respaldo del cierre por F9 del modal "Venta finalizada" — el
       // dueño real es el propio `manejarTeclado` de `VentaFinalizada` (con su buffer de escaneo y
@@ -3664,6 +3724,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           evento.preventDefault()
           m.cancelarConfirmacionDeCobro()
         }
+        return
+      }
+
+      if (m.vaciandoCarrito) {
+        if (evento.key === 'F10' && evento.repeat) return
+        if (evento.key === 'F10') {
+          evento.preventDefault()
+          m.cancelarVaciado()
+        } else if (evento.key === 'F9') {
+          evento.preventDefault()
+        }
+        return
+      }
+
+      if (evento.key === 'F10') {
+        if (evento.repeat) return
+        if (!m.puedeVaciar || m.buscadorAbierto || m.gateTurno) return
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+        m.pedirConfirmacionDeVaciado()
         return
       }
 
@@ -3881,7 +3960,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                           <td className="text-end">—</td>
                         </tr>
                       ))
-                    : lineas.map((l) => {
+                    : lineasEnPantalla.map((l) => {
                         const resultado = precios[l.idLinea]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
@@ -3982,14 +4061,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             </td>
                             <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
                             <td className="text-end text-nowrap">
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-outline-danger"
+                              <BotonIcono
+                                icono="eliminar"
+                                etiqueta="Quitar"
+                                title="Quitar"
                                 disabled={lineaInerte}
-                                onClick={() => mutarCarrito({ tipo: 'quitarLinea', idLinea: l.idLinea })}
-                              >
-                                Quitar
-                              </button>
+                                onClick={() => quitarLinea(l.idLinea)}
+                              />
                             </td>
                           </tr>
                         )
@@ -4008,11 +4086,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {!modoPresupuesto && lineas.length > 0 && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm"
-                disabled={pantallaCobroInerte || bloqueadoPorTurno}
-                onClick={() => mutarCarrito({ tipo: 'vaciar' })}
+                className="btn btn-outline-danger btn-sm"
+                disabled={!puedeVaciar}
+                aria-keyshortcuts="F10"
+                onClick={pedirConfirmacionDeVaciado}
               >
-                Vaciar carrito
+                Vaciar carrito <sup aria-hidden="true">(F10)</sup>
               </button>
             )}
           </Box>
@@ -4266,6 +4345,26 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           onFinalizar={confirmarYcobrar}
           onCancelar={cancelarConfirmacionDeCobro}
         />
+      )}
+
+      {vaciandoCarrito && (
+        <Modal
+          titulo="Vaciar carrito"
+          restaurarFoco={false}
+          onCerrar={cancelarVaciado}
+          pie={
+            <>
+              <button type="button" className="btn btn-outline-secondary" autoFocus onClick={cancelarVaciado}>
+                No
+              </button>
+              <button type="button" className="btn btn-danger" onClick={confirmarVaciado}>
+                Sí
+              </button>
+            </>
+          }
+        >
+          <p className="mb-0">¿Está seguro que quiere vaciar el carrito?</p>
+        </Modal>
       )}
 
       {ventaFinalizada && (
