@@ -62,7 +62,7 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
 
 ## Tasks
 
-- [ ] **C1 — Schema** (delegated): entities, configurations, enum, migration, RLS,
+- [x] **C1 — Schema** (delegated): entities, configurations, enum, migration, RLS,
   CHECKs, docs/10. Tests: migration and RLS under `ways_app`, structural guards, CHECKs.
 - [ ] **C2 — Accounts ABM** (delegated): service, endpoints, delete only without
   references, web screen/descriptor.
@@ -80,7 +80,8 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
 
 | Task | Route | Commit | PR | Checks |
 |------|-------|--------|----|--------|
+| C1 | delegated (writer trigger: schema + tests, 35 files) | 8a145b66, 6dc997cb | this PR | build 0 errors; Domain.Tests 1514; Application.Tests 896; full integration suite 4017 passed on 8a145b66; after the fix: new classes + AislamientoDeTenant + Schema/Migracion classes 329 passed (full suite left to CI); has-pending-model-changes clean. judgment-day: round 1 no severe (implicit IX_ index, over-broad closing unique index, saldo_inicial semantics fixed in 6dc997cb), scoped re-judgment no severe |
 
 ## Next step
 
-C1.
+C2 (accounts ABM). Rules for C2: saldo_inicial immutable once the account has movements; baja only without references; 23505 on ux_cuentas_tesoreria_nombre_empresa → 409.
