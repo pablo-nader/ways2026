@@ -56,8 +56,9 @@ public static class DependencyInjection
         // Vitrina pública de cada empresa: la administra el admin del tenant.
         services.AddScoped<ServicioDeVitrinas>();
 
-        // Tienda online: publicación e imagen de cada artículo.
+        // Tienda online: publicación e imagen de cada artículo (admin) y consulta del catálogo público.
         services.AddScoped<ServicioDeCatalogoWeb>();
+        services.AddScoped<ConsultaDeCatalogoPublico>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();

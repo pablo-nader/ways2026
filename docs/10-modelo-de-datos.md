@@ -495,6 +495,26 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
 - **Backstops** (`ManejadorDeErrores`): `ux_imagenes_articulo_articulo` → `409 imagen_duplicada` (inalcanzable por
   la API: la subida lee la imagen bajo el lock del artículo); `ck_imagenes_articulo_contenido` → `400
   imagen_no_admitida`.
+- **Catálogo público** (`GET /api/publico/catalogo?buscar=&idCategoria=&pagina=1&tamano=24`, anónimo, tenant del
+  host, `Cache-Control: public, max-age=60`; `404 vitrina_no_publicada` si el host no tiene vitrina publicada o el
+  tenant no puede operar). Un artículo aparece si está publicado, activo y vivo (la policy), disponible para la
+  empresa de la vitrina (`disponible_para_todas` o una fila en `articulos_empresas` de esa empresa) y con un precio
+  vigente en la lista de la tienda. La lista es la de la vitrina (`id_lista_precio`) o, si no tiene, la default
+  compartida (`id_empresa IS NULL AND es_default`, la misma de la grilla del back-office); si no sirve (inactiva, de
+  otra empresa, derivada sin porcentaje o sin base fija, o ninguna default) el catálogo sale vacío en vez de fallar.
+  Precio vigente: la fila con `vigente_desde <= ahora` y `vigente_hasta` nulo o futuro; en una lista derivada, el de
+  su base con `ResolvedorDePrecios.ResolverPrecioDerivado` (el redondeo del POS). **No se reusa el motor del POS**
+  (`ServicioDeInstantaneaDePos`/ofertas): resuelve clientes, escalones y ofertas y lee tablas que el modo público no
+  ve, y la tienda muestra el precio de lista; la existencia del precio se decide en SQL antes de paginar y el monto
+  se resuelve solo para la página. Las ofertas no se aplican todavía y el stock no se mira (es de los pedidos).
+  `buscar` coincide con el nombre o el código interno, sin mayúsculas ni acentos (`BusquedaSinAcentos`), acotado a
+  100 caracteres; `tamano` se acota a 1..60; el orden es por nombre. `categorias` son las categorías visibles
+  (activas, vivas, compartidas o de la empresa de la vitrina) de los artículos que coinciden con la búsqueda, con su
+  cuenta, **ignorando** `idCategoria` para que los chips conserven sus cuentas con uno seleccionado; el `total` y la
+  página sí lo aplican. Un artículo cuya categoría no es visible sale con `idCategoria` nulo y filtrar por una categoría
+  invisible no encuentra nada (`dangling-fk-read-models`). `GET /api/publico/articulos/{id}/imagen`: `Cache-Control:
+  public, max-age=3600`, ETag y `304` sin leer `contenido`, `404 imagen_no_encontrada` si el artículo no está
+  publicado, activo y disponible para la empresa de la vitrina o no tiene imagen.
 - **Baja de tenant**: `imagenes_articulo` entra al inventario de dependientes como `marcado` (un tenant con una
   imagen cargada no se puede dar de baja, igual que con vitrinas).
 

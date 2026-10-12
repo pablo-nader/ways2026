@@ -9,9 +9,10 @@ namespace Ways.Api.Endpoints;
 /// <summary>
 /// Lo que se puede saber del sitio sin sesión. Solo expone lo que el middleware de dominio ya
 /// resolvió —si es la plataforma o el nombre del comercio de un dominio verificado— y la vitrina
-/// publicada de ese tenant, leída en el modo de acceso <c>publico</c> (solo <c>SELECT</c> sobre tres
-/// tablas, ver <see cref="ILectorDeVitrinaPublica"/>): ningún otro dato de tenant. La vitrina de un tenant
-/// que no puede operar (suspendido) no se sirve: contesta lo mismo que un comercio sin vitrina publicada.
+/// publicada de ese tenant y su catálogo de artículos publicados, leídos en el modo de acceso <c>publico</c>
+/// (solo <c>SELECT</c> sobre las tablas de <see cref="ILectorDeVitrinaPublica"/> y
+/// <see cref="ILectorDeCatalogoPublico"/>): ningún otro dato de tenant. La vitrina y el catálogo de un tenant
+/// que no puede operar (suspendido) no se sirven: contestan lo mismo que un comercio sin vitrina publicada.
 /// </summary>
 public static class PublicoEndpoints
 {
@@ -55,6 +56,45 @@ public static class PublicoEndpoints
                 () => idTenant is { } id ? lector.ObtenerLogoAsync(id, ct) : Task.FromResult<LogoPublico?>(null));
         })
         .WithSummary("El logo de la vitrina publicada, con ETag y caché de una hora.");
+
+        grupo.MapGet("/catalogo", async (
+            IDominioActual dominio,
+            ILectorDeCatalogoPublico lector,
+            HttpContext contexto,
+            string? buscar,
+            int? idCategoria,
+            int? pagina,
+            int? tamano,
+            CancellationToken ct) =>
+        {
+            var consulta = new ConsultaDeCatalogo(
+                buscar, idCategoria, pagina ?? 1, tamano ?? ConsultaDeCatalogoPublico.TamanoPorDefecto);
+
+            var catalogo = (TenantQueSirve(dominio) is { } idTenant ? await lector.ObtenerAsync(idTenant, consulta, ct) : null)
+                ?? throw new ErrorDominio(
+                    "vitrina_no_publicada", "Este comercio todavía no publicó su página.", StatusCodes.Status404NotFound);
+
+            contexto.Response.Headers.CacheControl = "public, max-age=60";
+
+            return Results.Ok(catalogo);
+        })
+        .WithSummary(
+            "El catálogo de la tienda del dominio: artículos publicados, disponibles para la empresa de la vitrina y con "
+            + "precio en su lista, buscables y paginados, más las categorías con su cuenta.");
+
+        grupo.MapGet("/articulos/{id:int}/imagen", (
+            IDominioActual dominio, ILectorDeCatalogoPublico lector, HttpContext contexto, int id, CancellationToken ct) =>
+        {
+            var idTenant = TenantQueSirve(dominio);
+
+            return ServirImagenAsync(
+                contexto,
+                "public, max-age=3600",
+                () => SinImagen("Este artículo no tiene una imagen publicada."),
+                () => idTenant is { } t ? lector.ObtenerVersionDeImagenAsync(t, id, ct) : Task.FromResult<VersionDeImagen?>(null),
+                () => idTenant is { } t ? lector.ObtenerImagenAsync(t, id, ct) : Task.FromResult<ImagenServida?>(null));
+        })
+        .WithSummary("La imagen de un artículo publicado, con ETag y caché de una hora.");
 
         return app;
     }
