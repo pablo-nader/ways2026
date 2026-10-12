@@ -398,6 +398,97 @@ describe('Gastos (administración) — alta', () => {
   })
 })
 
+describe('Gastos (administración) — área del alta', () => {
+  const general = areaFixture({ id: 10, nombre: 'General', orden: 1 })
+  const cocina = areaFixture({ id: 11, nombre: 'Cocina', orden: 2 })
+
+  async function abrirFormulario() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await screen.findByLabelText('Concepto')
+  }
+
+  async function completarYRegistrar() {
+    await userEvent.type(screen.getByLabelText('Concepto'), 'Alquiler de septiembre')
+    await userEvent.type(screen.getByLabelText('Importe'), '1500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+  }
+
+  it('el select del alta arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderGastos()
+    await abrirFormulario()
+    await screen.findByRole('option', { name: 'General' })
+
+    const select = screen.getByLabelText('Área')
+    expect(select).toHaveValue('10')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['General', 'Cocina'])
+
+    await completarYRegistrar()
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 10 })))
+  })
+
+  it('el área elegida a mano es la que viaja, y al reabrir el formulario vuelve a la primera activa', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValue({ id: 1 })
+    renderGastos()
+    await abrirFormulario()
+    await screen.findByRole('option', { name: 'Cocina' })
+
+    await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
+    await completarYRegistrar()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 11 })))
+
+    await screen.findByText('Gasto registrado.')
+    await abrirFormulario()
+    expect(screen.getByLabelText('Área')).toHaveValue('10')
+
+    // El select puede mostrar la primera opción aunque el estado esté vacío: lo que cuenta es lo que viaja.
+    await completarYRegistrar()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
+    expect(apiPostMock).toHaveBeenLastCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 10 }))
+  })
+
+  it('si las áreas llegan con el formulario ya abierto, el default se completa cuando aterrizan', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    let entregarAreas: (lista: AreaListado[]) => void = () => undefined
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas'
+        ? new Promise<AreaListado[]>((resolve) => {
+            entregarAreas = resolve
+          })
+        : baseline(ruta),
+    )
+    renderGastos()
+    await abrirFormulario()
+    expect(screen.getByLabelText('Área')).toHaveValue('')
+
+    await act(async () => entregarAreas([general, cocina]))
+
+    expect(screen.getByLabelText('Área')).toHaveValue('10')
+  })
+
+  it('sin áreas el select muestra una única opción vacía deshabilitada y el alta manda idArea null', async () => {
+    mockearRutas({ areas: [] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderGastos()
+    await abrirFormulario()
+    await screen.findAllByRole('option', { name: 'Empresa Demo SA' })
+
+    const select = screen.getByLabelText('Área')
+    const opciones = within(select).getAllByRole('option')
+    expect(opciones).toHaveLength(1)
+    expect(opciones[0]).toBeDisabled()
+    expect(select).toHaveValue('')
+
+    await completarYRegistrar()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: null })))
+  })
+})
+
 describe('Gastos (administración) — listado y filtros', () => {
   it('lista los gastos con empresa, categoría, proveedor/área resueltos y origen', async () => {
     mockearRutas({

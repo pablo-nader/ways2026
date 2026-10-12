@@ -42,6 +42,7 @@ import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
+import { areaPorDefecto } from './utilidadesGastosDelTurno'
 import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
@@ -208,6 +209,7 @@ export function Gastos() {
         setMedios(mediosCargados)
         setAreas(areasCargadas)
         setProveedores(proveedoresCargados)
+        setFormulario((prev) => (prev.idArea === '' ? { ...prev, idArea: areaPorDefecto(areasCargadas) } : prev))
         // Empresa única: se preselecciona tanto el filtro como el formulario de alta.
         if (empresasCargadas.length === 1) {
           const unica = empresasCargadas[0].id
@@ -276,7 +278,10 @@ export function Gastos() {
   }
 
   function limpiarFormulario() {
-    setFormulario((prev) => formularioDeGastoDeAdministracionVacio(fechaDeHoy(), prev.idEmpresa))
+    setFormulario((prev) => ({
+      ...formularioDeGastoDeAdministracionVacio(fechaDeHoy(), prev.idEmpresa),
+      idArea: areaPorDefecto(areas ?? []),
+    }))
   }
 
   async function registrarGasto() {
@@ -570,15 +575,19 @@ export function Gastos() {
 
             <div className="col-md-2">
               <label className="form-label" htmlFor="gasto-admin-area">
-                Área (opcional)
+                Área
               </label>
               <select
                 id="gasto-admin-area"
                 className="form-select"
                 value={formulario.idArea}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, idArea: e.target.value === '' ? '' : Number(e.target.value) }))}
+                onChange={(e) => setFormulario((prev) => ({ ...prev, idArea: Number(e.target.value) }))}
               >
-                <option value="">Sin área</option>
+                {(areas ?? []).length === 0 && (
+                  <option value="" disabled>
+                    Sin áreas
+                  </option>
+                )}
                 {(areas ?? []).map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.nombre}

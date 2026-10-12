@@ -1165,19 +1165,39 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         // que lo sacó de este camino) resuelven en UNA query batcheada (`WHERE clave IN (...)`)
         // en vez de las dos separadas de antes de esta etapa — el conteo de round trips no
         // depende de cuántas claves entren en esa única query.
-        Assert.Equal(16, consultasConPocasLineas);
+        //
+        // SUBE a 17 con los combos (feature combos, T3): la query nueva es
+        // ServicioDeCombos.CargarCandidatosParaVentaAsync, UNA sola (combos vivos y activos de la empresa del
+        // punto de venta, con algún componente que el carrito pueda satisfacer, unidos con sus componentes) que corre en toda venta online con signo positivo que
+        // sume al menos 2 unidades, haya o no combos en el tenant, porque la venta no puede saberlo sin
+        // preguntar. No escala con las líneas ni con la cantidad de combos. Las ventas de 1 unidad no la
+        // pagan (ver ElCheckoutDeUnaSolaUnidadNoPagaLaConsultaDeCombos), tampoco la conversión de un
+        // presupuesto, la venta offline con número pre-asignado ni la devolución.
+        Assert.Equal(17, consultasConPocasLineas);
+    }
+
+    /// <summary>La consulta de combos se salta cuando la venta suma menos unidades que el mínimo de un combo
+    /// (2): con una sola unidad ningún combo puede completarse. Es lo que mantiene las ventas de una unidad en
+    /// las 16 consultas de siempre y le da sentido al 17 de arriba (la diferencia es esa consulta y no otra).</summary>
+    [Fact]
+    public async Task ElCheckoutDeUnaSolaUnidadNoPagaLaConsultaDeCombos()
+    {
+        var ctx = await PrepararAsync(nameof(ElCheckoutDeUnaSolaUnidadNoPagaLaConsultaDeCombos));
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Una Unidad", limiteCredito: 1_000_000m);
+
+        Assert.Equal(16, await EmitirYContarConsultasAsync(ctx, idCliente, cantidadDeLineas: 1));
     }
 
     /// <summary>El ajuste manual no suma ninguna consulta: se calcula en memoria sobre lo que ya se
-    /// leyó. Mismo techo (16) que el checkout sin ajuste, con pocas y con muchas líneas — el valor
-    /// pineado de <c>ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas</c>
-    /// no se toca. Además de contar, verifica que el camino con ajuste corrió de verdad: cada línea
-    /// emitida lleva su porcentaje y su monto, y el total y los totales manuales del comprobante los
-    /// suman (un conteo de 16 también saldría si el porcentaje se descartara antes de calcular).</summary>
+    /// leyó. Mismo techo (17) que el checkout sin ajuste, con pocas y con muchas líneas — el valor pineado de
+    /// <c>ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas</c>. Además de contar,
+    /// verifica que el camino con ajuste corrió de verdad: cada línea emitida lleva su porcentaje y su monto, y
+    /// el total y los totales manuales del comprobante los suman (un conteo de 17 también saldría si el
+    /// porcentaje se descartara antes de calcular).</summary>
     [Fact]
-    public async Task ElCheckoutConAjusteManualEmiteLasMismasDieciseisConsultas()
+    public async Task ElCheckoutConAjusteManualEmiteLasMismasDiecisieteConsultas()
     {
-        var ctx = await PrepararAsync(nameof(ElCheckoutConAjusteManualEmiteLasMismasDieciseisConsultas));
+        var ctx = await PrepararAsync(nameof(ElCheckoutConAjusteManualEmiteLasMismasDiecisieteConsultas));
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Presupuesto Ajuste", limiteCredito: 1_000_000m);
 
         var (consultasConPocasLineas, conDescuento) =
@@ -1185,8 +1205,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var (consultasConMuchasLineas, conRecargo) =
             await EmitirYContarConsultasConResultadoAsync(ctx, idCliente, 20, ajusteManualPorcentaje: 25m);
 
-        Assert.Equal(16, consultasConPocasLineas);
-        Assert.Equal(16, consultasConMuchasLineas);
+        Assert.Equal(17, consultasConPocasLineas);
+        Assert.Equal(17, consultasConMuchasLineas);
 
         // 2 líneas de 10 con -10 %: cada una -1 ⇒ 9; subtotal 20, descuento manual 2, total 18.
         Assert.Equal(2, conDescuento.Items.Count);

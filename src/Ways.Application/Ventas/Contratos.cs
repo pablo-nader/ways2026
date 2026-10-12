@@ -93,10 +93,21 @@ public sealed record SolicitudDeVenta(
 /// precio que cobró el dispositivo y este porcentaje. <c>null</c> = sin ajuste; cero, fuera de
 /// ±100 o con más de dos decimales ⇒ 400 <c>ajuste_manual_invalido</c>
 /// (<see cref="ReglaDeAjusteManual"/>). Con <see cref="SolicitudDeVenta.IdPresupuestoOrigen"/> las
-/// líneas no se admiten, así que el porcentaje tampoco llega nunca por esa conversión.</summary>
+/// líneas no se admiten, así que el porcentaje tampoco llega nunca por esa conversión.
+///
+/// <see cref="UnidadesConsumidasPorCombo"/>, <see cref="AhorroDeCombo"/> e <see cref="IdCombo"/> (feature combos)
+/// son lo que el dispositivo offline calculó con su motor de combos para la línea, junto a su
+/// <see cref="PrecioUnitario"/>: las unidades de la línea que un combo consumió (entero entre 1 y la cantidad), la
+/// parte del combo como IMPORTE DE LÍNEA (no unitario; entre 0 y el bruto de esas unidades) y el combo. Van los tres
+/// o ninguno, y solo con el precio offline (400 <c>combo_offline_no_admitido</c> sin él, <c>combo_offline_incompleto</c>
+/// si falta alguno, <c>combo_offline_invalido</c> fuera de rango). El servidor los graba tal cual —el descuento de la
+/// línea es <c>round(DescuentoUnitario × (Cantidad − UnidadesConsumidasPorCombo)) + AhorroDeCombo</c> y el combo
+/// queda en <c>items_comprobante_venta.id_combo</c>— y solo audita la diferencia contra su propia detección. El
+/// camino online no los admite nunca (el servidor detecta los combos).</summary>
 public sealed record LineaDeVenta(
     int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null,
-    decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null, decimal? AjusteManualPorcentaje = null);
+    decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null, decimal? AjusteManualPorcentaje = null,
+    int? UnidadesConsumidasPorCombo = null, decimal? AhorroDeCombo = null, int? IdCombo = null);
 
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de
 /// <see cref="LineaDeVenta"/>, SÍ lleva dinero: <see cref="Importe"/>/<see cref="Vuelto"/> son lo
@@ -125,7 +136,14 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// (<c>items_comprobante_venta.ajuste_manual_porcentaje</c>/<c>ajuste_manual</c>), así que una
 /// relectura devuelve lo mismo que el checkout fresco: porcentaje con signo (<c>null</c> = sin
 /// ajuste) y monto con signo ya incluido en <see cref="Total"/> (<c>0</c> sin ajuste). Un item de
-/// un <c>TXR</c> (que viene de <c>items_remito</c>) siempre los lleva en <c>null</c>/<c>0</c>.</summary>
+/// un <c>TXR</c> (que viene de <c>items_remito</c>) siempre los lleva en <c>null</c>/<c>0</c>.
+///
+/// <see cref="IdCombo"/> sí se persiste (<c>items_comprobante_venta.id_combo</c>) y una relectura devuelve
+/// lo mismo que el checkout fresco: el combo (el de menor id si varios consumieron la línea) cuyo descuento
+/// está incluido en <see cref="Descuento"/>; <c>null</c> si ninguno. En un item de nota de crédito asociada a
+/// una venta con combo es el <c>id_combo</c> del item original cuyas unidades devuelve. Solo el id, igual que
+/// <see cref="IdOferta"/>: el nombre no viaja en la venta emitida y un combo dado de baja después no la
+/// afecta. Un item de un <c>TXR</c> siempre lo lleva en <c>null</c>.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
@@ -145,7 +163,8 @@ public sealed record ItemEmitido(
     int? IdLote = null,
     string? CodigoLote = null,
     bool LoteVencido = false,
-    bool PrecioDiscrepante = false);
+    bool PrecioDiscrepante = false,
+    int? IdCombo = null);
 
 /// <summary>Un pago ya emitido.</summary>
 public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);

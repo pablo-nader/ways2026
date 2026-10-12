@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Combos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
@@ -66,6 +67,7 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         builder.Property(i => i.IdArea).HasColumnName("id_area").IsRequired();
         builder.Property(i => i.IdListaPrecio).HasColumnName("id_lista_precio").IsRequired();
         builder.Property(i => i.IdOferta).HasColumnName("id_oferta");
+        builder.Property(i => i.IdCombo).HasColumnName("id_combo");
 
         builder.Property(i => i.IdAlicuotaIva).HasColumnName("id_alicuota_iva").IsRequired();
         builder.Property(i => i.PorcentajeIva).HasColumnName("porcentaje_iva").HasColumnType("numeric(5,2)").IsRequired();
@@ -120,6 +122,7 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         builder.HasIndex(i => new { i.IdArea, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_area");
         builder.HasIndex(i => new { i.IdListaPrecio, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_lista_precio");
         builder.HasIndex(i => new { i.IdOferta, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_oferta");
+        builder.HasIndex(i => new { i.IdCombo, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_combo");
         builder.HasIndex(i => i.IdAlicuotaIva).HasDatabaseName("ix_items_comprobante_venta_alicuota_iva");
 
         // Etapa 12 (proposal decisión 8, gate §F): soporte de fk_items_comprobante_venta_lote.
@@ -164,6 +167,13 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             .HasForeignKey(i => new { i.IdOferta, i.IdTenant })
             .HasPrincipalKey(o => new { o.Id, o.IdTenant })
             .HasConstraintName("fk_items_comprobante_venta_oferta")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Combo>()
+            .WithMany()
+            .HasForeignKey(i => new { i.IdCombo, i.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_items_comprobante_venta_combo")
             .OnDelete(DeleteBehavior.Restrict);
 
         // alicuotas_iva es global (ADR-11) — FK simple, sin id_tenant.

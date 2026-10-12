@@ -26,6 +26,7 @@ import type {
   ParametroResuelto,
   PresupuestoParaVenta,
   PuntoVentaListado,
+  ResolucionConCombos,
   ResultadoDeResolucion,
   ResumenDeCierrePorRetiro,
   TurnoResumen,
@@ -70,6 +71,13 @@ function renderPos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+
+/** El carrito pide los precios a la ruta con combos; las búsquedas de artículo siguen en `/ofertas/resolver`. */
+const RUTA_RESOLVER_DEL_CARRITO = '/ofertas/resolver-con-combos'
+
+function resolucion(lineas: ResultadoDeResolucion[], combos: ResolucionConCombos['combos'] = []): ResolucionConCombos {
+  return { lineas, combos }
+}
 
 vi.mock('../api/cliente', () => ({
   api: {
@@ -514,11 +522,11 @@ beforeEach(async () => {
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
   mockearApiGet()
   apiPostMock.mockImplementation((ruta: string) => {
-    if (ruta === '/ofertas/resolver') {
+    if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
       const resultados: ResultadoDeResolucion[] = [
         { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
       ]
-      return Promise.resolve(resultados)
+      return Promise.resolve(resolucion(resultados))
     }
     if (ruta === '/ventas') {
       return Promise.resolve(comprobanteEmitidoFixture())
@@ -562,11 +570,11 @@ async function armarCarritoConUnaLinea() {
 describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde slice 6)', () => {
   it('un total negativo en el ticket antepone el signo al símbolo ($): "-$ 50,00", nunca "$ -50,00"', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') {
         return Promise.resolve(
@@ -706,7 +714,7 @@ describe('Pos — escaneo', () => {
       ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloEscaneadoFixture({ acumulaEnVenta: false })) : undefined,
     )
     apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; cantidad: number }[] }) => {
-      if (ruta !== '/ofertas/resolver') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      if (ruta !== RUTA_RESOLVER_DEL_CARRITO) return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
       const resultados: ResultadoDeResolucion[] = cuerpo.lineas.map((l) => ({
         idArticulo: l.idArticulo,
         idListaPrecio: 1,
@@ -715,7 +723,7 @@ describe('Pos — escaneo', () => {
         descuentoUnitario: l.cantidad >= 3 ? 20 : 0,
         aplicadas: [],
       }))
-      return Promise.resolve(resultados)
+      return Promise.resolve(resolucion(resultados))
     })
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
@@ -848,7 +856,7 @@ describe('Pos — regresión: carga inicial de clientes vs. selección del usuar
 describe('Pos — vista previa de precios', () => {
   it('una resolución exitosa muestra el precio unitario, el original tachado, el total de línea y el subtotal previo', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           {
             idArticulo: 1,
@@ -859,7 +867,7 @@ describe('Pos — vista previa de precios', () => {
             aplicadas: [{ idOferta: 9, nombre: '2x1 Gaseosas', descuentoUnitario: 20 }],
           },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -888,7 +896,7 @@ describe('Pos — vista previa de precios', () => {
   it('una resolución rechazada muestra el aviso no bloqueante y el carrito sigue usable', async () => {
     let cantidadDeResoluciones = 0
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         cantidadDeResoluciones += 1
         return Promise.reject(new Error('falló la resolución'))
       }
@@ -923,7 +931,7 @@ describe('Pos — vista previa de precios', () => {
 
   it('con la vista previa fallida, Cobrar envía el importe tipeado y vuelto 0 (nunca el importe tendido, judgment-day R3 CRITICAL)', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) return Promise.reject(new Error('falló la resolución'))
       if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture())
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -957,13 +965,13 @@ describe('Pos — vista previa de precios', () => {
   it('regresión: una resolución exitosa seguida de una que rechaza no deja precios stale en el subtotal (judgment-day R4, purga de `precios` en el catch)', async () => {
     let cantidadDeResoluciones = 0
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         cantidadDeResoluciones += 1
         if (cantidadDeResoluciones === 1) {
           const resultados: ResultadoDeResolucion[] = [
             { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
           ]
-          return Promise.resolve(resultados)
+          return Promise.resolve(resolucion(resultados))
         }
         return Promise.reject(new Error('falló la resolución'))
       }
@@ -999,19 +1007,19 @@ describe('Pos — vista previa de precios', () => {
 
   it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
     let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
-    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
-      resolverPrimera = resolve
+    const primeraPendiente = new Promise<ResolucionConCombos>((resolve) => {
+      resolverPrimera = (resultados) => resolve(resolucion(resultados))
     })
 
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta !== '/ofertas/resolver') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-      if (apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ofertas/resolver').length === 1) {
+      if (ruta !== RUTA_RESOLVER_DEL_CARRITO) return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      if (apiPostMock.mock.calls.filter((llamada) => llamada[0] === RUTA_RESOLVER_DEL_CARRITO).length === 1) {
         return primeraPendiente
       }
       const resultados: ResultadoDeResolucion[] = [
         { idArticulo: 1, idListaPrecio: 1, precioOriginal: 90, precioFinal: 90, descuentoUnitario: 0, aplicadas: [] },
       ]
-      return Promise.resolve(resultados)
+      return Promise.resolve(resolucion(resultados))
     })
 
     renderPos()
@@ -1077,11 +1085,11 @@ describe('Pos — panel de pagos: precondiciones', () => {
 
   it('Cobrar permanece deshabilitado mientras la primera resolución de precios está pendiente, aunque el resto de las precondiciones ya esté listo', async () => {
     let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
-    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
-      resolverPrimera = resolve
+    const primeraPendiente = new Promise<ResolucionConCombos>((resolve) => {
+      resolverPrimera = (resultados) => resolve(resolucion(resultados))
     })
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') return primeraPendiente
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) return primeraPendiente
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
@@ -1111,11 +1119,11 @@ describe('Pos — panel de pagos: precondiciones', () => {
 describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () => {
   it('vaciar el carrito mientras una resolución de precios está en vuelo no deja "Calculando…" para siempre, ni aunque la fetch huérfana se asiente después', async () => {
     let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
-    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
-      resolverPrimera = resolve
+    const primeraPendiente = new Promise<ResolucionConCombos>((resolve) => {
+      resolverPrimera = (resultados) => resolve(resolucion(resultados))
     })
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') return primeraPendiente
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) return primeraPendiente
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
@@ -1274,11 +1282,11 @@ describe('Pos — checkout', () => {
 
   it('el modal "Venta finalizada" muestra cada medio de pago aplicado con su importe y el vuelto a entregar — desde la respuesta del servidor, nunca de lo que el cajero tipeó localmente', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') {
         // A propósito, distinto de lo que arma `armarVentaLista()` en el panel de pagos local
@@ -1841,7 +1849,7 @@ describe('Pos — el borrador sobrevive a un restart entero (stage-pos-borrador-
     // La línea restaurada aparece SIN que el cajero vuelva a escanear nada.
     expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', expect.anything()))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith(RUTA_RESOLVER_DEL_CARRITO, expect.anything()))
     await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
   })
 
@@ -2009,11 +2017,11 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
       return undefined
     })
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/clientes/2/cuenta-corriente/pagos') {
         return Promise.resolve<ComprobanteEmitido>(comprobanteEmitidoFixture({ id: 901, numeroVisible: '0007-00000901', idCliente: 2 }))
@@ -2875,7 +2883,7 @@ describe('Pos — CampoImporte en el panel de pagos: separador de miles y decima
 describe('Pos — badge de ofertas apiladas', () => {
   it('con dos ofertas aplicadas muestra el primer nombre y un contador de las restantes', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           {
             idArticulo: 1,
@@ -2889,7 +2897,7 @@ describe('Pos — badge de ofertas apiladas', () => {
             ],
           },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -3302,11 +3310,11 @@ describe('Pos — modal "Venta finalizada": aviso de lote vencido (design decisi
    */
   it('un item emitido con loteVencido: true muestra el aviso "⚠ Se vendió un lote vencido" en el modal "Venta finalizada", con la descripción y el código de lote', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') {
         return Promise.resolve(
@@ -3430,7 +3438,7 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(screen.getByText('$ 200,00', { selector: 'strong' })).toBeInTheDocument()
 
     // Regla central de la tarea: ninguna resolución de precio bajo este modo.
-    expect(apiPostMock).not.toHaveBeenCalledWith('/ofertas/resolver', expect.anything())
+    expect(apiPostMock).not.toHaveBeenCalledWith(RUTA_RESOLVER_DEL_CARRITO, expect.anything())
   })
 
   it('bajo ?idPresupuesto= las filas del presupuesto no ofrecen el control de ajuste manual', async () => {
@@ -3624,11 +3632,11 @@ describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
   it('un checkout que falla no invoca alEmitir', async () => {
     mockearApiGet()
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') return Promise.reject(new ErrorApi(400, 'error', 'No se pudo registrar la venta.'))
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -3692,11 +3700,11 @@ describe('Pos — foco del input de código (stage-pos-buscador-articulos)', () 
       return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') return ventaPendiente
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -3757,11 +3765,11 @@ describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-art
    */
   it('F2 no abre el modal mientras el checkout está en vuelo', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') return new Promise(() => {})
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -4326,7 +4334,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   it('K4: con la vista previa de precios fallida, el diálogo no inventa "$ 0,00" — muestra el aviso de total no disponible', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) return Promise.reject(new Error('falló la resolución'))
       if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture())
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -4518,26 +4526,81 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 
-    it('cancelar el modal de monto: el cajón ya quedó abierto (auditado) pero NO se registra ningún Retiro', async () => {
-      const cajaDeEscritorio = cajaDeEscritorioFixture()
-      apiPostMock.mockImplementation((ruta: string) =>
-        ruta === RUTA_MOVIMIENTOS
-          ? Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, tipo: 'AperturaCajon', importe: 0, motivo: 'x', idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
-          : Promise.reject(new Error(`ruta no mockeada en el test: ${RUTA_MOVIMIENTOS}`)),
-      )
+    describe('modal de monto (cajón ya abierto): no descartable', () => {
+      function aperturaOk(extra?: (ruta: string, cuerpo: unknown) => Promise<unknown> | undefined) {
+        apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+          if (ruta === RUTA_MOVIMIENTOS) {
+            const propio = extra?.(ruta, cuerpo)
+            if (propio) return propio
+            return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+          }
+          return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+        })
+      }
 
-      await entrarConTurnoAbierto(cajaDeEscritorio)
-      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
-      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
-      await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+      async function abrirModalDeMonto(cajaDeEscritorio: CajaDeEscritorio) {
+        await entrarConTurnoAbierto(cajaDeEscritorio)
+        await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+        const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+        await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+        return within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
+      }
 
-      const modalMonto = within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
-      await userEvent.click(modalMonto.getByRole('button', { name: 'Cancelar' }))
+      it('no tiene × ni "Cancelar"; Escape y el click en el fondo no lo cierran y no se registra ningún Retiro', async () => {
+        const cajaDeEscritorio = cajaDeEscritorioFixture()
+        aperturaOk()
 
-      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-      // Un solo POST (la apertura) — cancelar el monto nunca dispara el POST de Retiro.
-      expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(1)
-      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+        const modalMonto = await abrirModalDeMonto(cajaDeEscritorio)
+
+        expect(modalMonto.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
+        expect(modalMonto.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
+
+        fireEvent.keyDown(document, { key: 'Escape' })
+        fireEvent.click(screen.getByRole('dialog', { name: 'Monto retirado' }))
+
+        expect(screen.getByRole('dialog', { name: 'Monto retirado' })).toBeInTheDocument()
+        expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(1)
+        expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+      })
+
+      it('se cierra recién cuando el Retiro se registra con éxito', async () => {
+        const cajaDeEscritorio = cajaDeEscritorioFixture()
+        aperturaOk()
+
+        const modalMonto = await abrirModalDeMonto(cajaDeEscritorio)
+        await userEvent.type(modalMonto.getByLabelText('Monto'), '1500')
+        await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+        await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(2)
+      })
+
+      it('si el POST del Retiro falla, el modal sigue abierto con el error, sigue sin poder descartarse y permite reintentar', async () => {
+        const cajaDeEscritorio = cajaDeEscritorioFixture()
+        let intentosDeRetiro = 0
+        aperturaOk((_ruta, cuerpo) => {
+          if ((cuerpo as { tipo: string }).tipo !== 'Retiro') return undefined
+          intentosDeRetiro += 1
+          return intentosDeRetiro === 1
+            ? Promise.reject(new ErrorApi(500, 'error', 'No se pudo registrar el retiro.'))
+            : undefined
+        })
+
+        const modalMonto = await abrirModalDeMonto(cajaDeEscritorio)
+        await userEvent.type(modalMonto.getByLabelText('Monto'), '1500')
+        await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+        await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+        expect(await modalMonto.findByText('No se pudo registrar el retiro.')).toBeInTheDocument()
+        fireEvent.keyDown(document, { key: 'Escape' })
+        expect(screen.getByRole('dialog', { name: 'Monto retirado' })).toBeInTheDocument()
+        expect(modalMonto.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
+
+        await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        expect(intentosDeRetiro).toBe(2)
+      })
     })
 
     it('validación: "Confirmar" queda deshabilitado con el monto vacío o en 0', async () => {
@@ -5403,7 +5466,7 @@ function panelDatosDeLaVenta(): HTMLElement {
 }
 
 function llamadasAResolver() {
-  return apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ofertas/resolver')
+  return apiPostMock.mock.calls.filter((llamada) => llamada[0] === RUTA_RESOLVER_DEL_CARRITO)
 }
 
 describe('Pos — ajuste manual por línea', () => {
@@ -5747,11 +5810,11 @@ describe('Pos — ajuste manual por línea', () => {
 
   it('un rechazo 400 ajuste_manual_invalido del servidor se muestra con el mensaje del ajuste, no con el texto crudo', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
         const resultados: ResultadoDeResolucion[] = [
           { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
         ]
-        return Promise.resolve(resultados)
+        return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/ventas') return Promise.reject(new ErrorApi(400, 'ajuste_manual_invalido', 'detalle técnico del servidor'))
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -5775,6 +5838,316 @@ describe('Pos — ajuste manual por línea', () => {
 
 const TEXTO_DE_COBRO_INCIERTO =
   'No se pudo confirmar si la venta se registró: el servidor no respondió. Revisá las ventas del turno antes de volver a cobrar.'
+
+/** Combos en el carrito (T5a): el cajero carga los artículos como siempre y, cuando el carrito completa un
+ * combo, la vista previa lo muestra y el total es el que el servidor va a cobrar. */
+describe('Pos — combos en el carrito (vista previa online)', () => {
+  const CODIGO_PANCHO = '7790002222222'
+
+  const coca = (extra: Partial<ResultadoDeResolucion> = {}): ResultadoDeResolucion => ({
+    idArticulo: 1,
+    idListaPrecio: 1,
+    precioOriginal: 2500,
+    precioFinal: 2500,
+    descuentoUnitario: 0,
+    aplicadas: [],
+    ...extra,
+  })
+  const pancho = (extra: Partial<ResultadoDeResolucion> = {}): ResultadoDeResolucion => ({
+    idArticulo: 2,
+    idListaPrecio: 1,
+    precioOriginal: 3000,
+    precioFinal: 3000,
+    descuentoUnitario: 0,
+    aplicadas: [],
+    ...extra,
+  })
+  const respuestaConCombo = (): ResolucionConCombos => ({
+    lineas: [
+      coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }),
+      pancho({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 7 } }),
+    ],
+    combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }],
+  })
+
+  function mockearEscaneoDeDosArticulos() {
+    mockearApiGet((ruta) =>
+      ruta.startsWith(`/articulos/escaneo?entrada=${CODIGO_PANCHO}`)
+        ? Promise.resolve(articuloEscaneadoFixture({ idArticulo: 2, codigoInterno: 'A0002', nombre: 'Pancho', codigoBarra: CODIGO_PANCHO }))
+        : undefined,
+    )
+  }
+
+  function mockearResolverConCombos(respuesta: () => Promise<ResolucionConCombos>) {
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_RESOLVER_DEL_CARRITO ? respuesta() : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+  }
+
+  async function agregarPorCodigo(codigo: string, nombre: string) {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), codigo)
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText(nombre)
+  }
+
+  async function armarCarritoConPanchoYCoca() {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await agregarPorCodigo('7790001234567', 'Coca Cola 1L')
+    await agregarPorCodigo(CODIGO_PANCHO, 'Pancho')
+  }
+
+  it('pide los precios a la ruta con combos, con el idEmpresa del punto de venta y la lista del cliente en cada línea', async () => {
+    mockearEscaneoDeDosArticulos()
+    mockearResolverConCombos(() => Promise.resolve(respuestaConCombo()))
+
+    await armarCarritoConPanchoYCoca()
+    await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+
+    const ultima = apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).at(-1)
+    expect(ultima?.[1]).toEqual({
+      agregacion: 'Documento',
+      lineas: [
+        { idArticulo: 1, idEmpresa: puntoVentaCentro.idEmpresa, idListaPrecio: 1, cantidad: 1 },
+        { idArticulo: 2, idEmpresa: puntoVentaCentro.idEmpresa, idListaPrecio: 1, cantidad: 1 },
+      ],
+    })
+    expect(apiPostMock.mock.calls.some((c) => c[0] === '/ofertas/resolver')).toBe(false)
+  })
+
+  it('muestra el combo en las líneas que consumió y en el panel, y el total es el del combo', async () => {
+    mockearEscaneoDeDosArticulos()
+    mockearResolverConCombos(() => Promise.resolve(respuestaConCombo()))
+
+    await armarCarritoConPanchoYCoca()
+    await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+
+    const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+    expect(within(filaPancho).getByText('Pancho + Coca -$ 272,73')).toBeInTheDocument()
+    expect(within(filaPancho).getByText('$ 2.727,27', { selector: 'td' })).toBeInTheDocument()
+    const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    expect(within(filaCoca).getByText('$ 2.272,73', { selector: 'td' })).toBeInTheDocument()
+
+    const panel = within(panelDatosDeLaVenta())
+    expect(panel.getByText('Combo Pancho + Coca')).toBeInTheDocument()
+    expect(panel.getByText('-$ 500,00')).toBeInTheDocument()
+  })
+
+  it('el combo aplicado más de una vez lleva el sufijo × veces', async () => {
+    mockearEscaneoDeDosArticulos()
+    mockearResolverConCombos(() =>
+      Promise.resolve({
+        lineas: respuestaConCombo().lineas,
+        combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 2, ahorro: 1000 }],
+      }),
+    )
+
+    await armarCarritoConPanchoYCoca()
+
+    expect(await within(panelDatosDeLaVenta()).findByText('Combo Pancho + Coca × 2')).toBeInTheDocument()
+  })
+
+  it('el ajuste manual de una línea consumida se aplica sobre el neto que ya incluye el combo', async () => {
+    mockearEscaneoDeDosArticulos()
+    mockearResolverConCombos(() => Promise.resolve(respuestaConCombo()))
+
+    await armarCarritoConPanchoYCoca()
+    await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ajuste % de Pancho' }), '-10')
+    await userEvent.tab()
+
+    // Neto de la línea 3000 − 272,73 = 2727,27; el 10 % es 272,727 → 272,73; total de línea 2454,54.
+    const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+    await waitFor(() => expect(within(filaPancho).getByText('$ 2.454,54', { selector: 'td' })).toBeInTheDocument())
+    expect(screen.getByText('$ 4.727,27', { selector: 'strong' })).toBeInTheDocument()
+  })
+
+  it('una respuesta vieja con combos no pisa la más reciente sin combos (guarda de generación)', async () => {
+    mockearEscaneoDeDosArticulos()
+    let resolverPrimera: (r: ResolucionConCombos) => void = () => {}
+    const primeraPendiente = new Promise<ResolucionConCombos>((resolve) => {
+      resolverPrimera = resolve
+    })
+    mockearResolverConCombos(() =>
+      apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).length === 1
+        ? primeraPendiente
+        : Promise.resolve(resolucion([coca(), pancho()])),
+    )
+
+    await armarCarritoConPanchoYCoca()
+    await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await act(async () => {
+      resolverPrimera(respuestaConCombo())
+    })
+
+    expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument()
+    expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
+  })
+
+  it('sin combos en la respuesta el carrito no muestra nada de combos', async () => {
+    mockearEscaneoDeDosArticulos()
+    mockearResolverConCombos(() => Promise.resolve(resolucion([coca(), pancho()])))
+
+    await armarCarritoConPanchoYCoca()
+
+    await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
+  })
+
+  describe('rótulo de combo en la línea cuando la consume más de un combo', () => {
+    // Pancho lo consumen dos combos (3 y 5): la línea solo conoce el de menor id pero su ahorro suma los dos.
+    const dosCombos = (): ResolucionConCombos => ({
+      lineas: [
+        coca({ combo: { unidadesConsumidas: 1, ahorro: 200, idCombo: 5 } }),
+        pancho({ combo: { unidadesConsumidas: 1, ahorro: 600, idCombo: 3 } }),
+      ],
+      combos: [
+        { idCombo: 3, codigo: 3, nombre: 'Pancho solo', veces: 1, ahorro: 400 },
+        { idCombo: 5, codigo: 5, nombre: 'Pancho + Coca', veces: 1, ahorro: 400 },
+      ],
+    })
+
+    it('con más de un combo aplicado la línea muestra el rótulo genérico con su ahorro, nunca el nombre de uno solo', async () => {
+      mockearEscaneoDeDosArticulos()
+      mockearResolverConCombos(() => Promise.resolve(dosCombos()))
+
+      await armarCarritoConPanchoYCoca()
+
+      const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+      expect(await within(filaPancho).findByText('Combos -$ 600,00')).toBeInTheDocument()
+      expect(within(filaPancho).queryByText(/Pancho solo/)).not.toBeInTheDocument()
+      const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+      expect(within(filaCoca).getByText('Combos -$ 200,00')).toBeInTheDocument()
+      const panel = within(panelDatosDeLaVenta())
+      expect(panel.getByText('Combo Pancho solo')).toBeInTheDocument()
+      expect(panel.getByText('Combo Pancho + Coca')).toBeInTheDocument()
+    })
+
+    it('con UN combo aplicado, la línea que lo trae por id muestra su nombre; si el id no coincide, el genérico', async () => {
+      mockearEscaneoDeDosArticulos()
+      mockearResolverConCombos(() =>
+        Promise.resolve({
+          lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 99 } })],
+          combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }],
+        }),
+      )
+
+      await armarCarritoConPanchoYCoca()
+
+      const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+      expect(await within(filaCoca).findByText('Pancho + Coca -$ 227,27')).toBeInTheDocument()
+      const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+      expect(within(filaPancho).getByText('Combos -$ 272,73')).toBeInTheDocument()
+    })
+  })
+
+  it('una respuesta sin `combos` no rompe el render: el carrito se ve con los precios de las líneas', async () => {
+    mockearEscaneoDeDosArticulos()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_RESOLVER_DEL_CARRITO ? Promise.resolve({ lineas: [coca(), pancho()] }) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+
+    await armarCarritoConPanchoYCoca()
+
+    await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
+  })
+
+  describe('un servidor que todavía no tiene la ruta con combos', () => {
+    function mockearRutas(combos: () => Promise<ResolucionConCombos>, resolver: () => Promise<ResultadoDeResolucion[]>) {
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) return combos()
+        if (ruta === '/ofertas/resolver') return resolver()
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+    }
+    const llamadasAlResolverDeSiempre = () => apiPostMock.mock.calls.filter((c) => c[0] === '/ofertas/resolver')
+
+    it.each([404, 405])('con un %s la vista previa sigue con el resolver de siempre, como documento y sin combos', async (estado) => {
+      mockearEscaneoDeDosArticulos()
+      mockearRutas(
+        () => Promise.reject(new ErrorApi(estado, 'no_encontrado', 'x')),
+        () => Promise.resolve([coca(), pancho()]),
+      )
+
+      await armarCarritoConPanchoYCoca()
+
+      await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(screen.queryByText(/No se pudo calcular la vista previa/)).not.toBeInTheDocument()
+      expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
+      expect(llamadasAlResolverDeSiempre().at(-1)?.[1]).toMatchObject({ agregacion: 'Documento' })
+    })
+
+    it.each([400, 500])('con un %s NO cae al resolver de siempre: avisa que no se pudo calcular la vista previa', async (estado) => {
+      mockearEscaneoDeDosArticulos()
+      mockearRutas(
+        () => Promise.reject(new ErrorApi(estado, 'error', 'x')),
+        () => Promise.resolve([coca(), pancho()]),
+      )
+
+      await armarCarritoConPanchoYCoca()
+
+      expect(await screen.findByText(/No se pudo calcular la vista previa/)).toBeInTheDocument()
+      expect(llamadasAlResolverDeSiempre()).toHaveLength(0)
+    })
+
+    it('la respuesta tardía del respaldo de una corrida anterior no pisa la más reciente (guarda de generación)', async () => {
+      mockearEscaneoDeDosArticulos()
+      let resolverRespaldoViejo: (r: ResultadoDeResolucion[]) => void = () => {}
+      const respaldoViejo = new Promise<ResultadoDeResolucion[]>((resolve) => {
+        resolverRespaldoViejo = resolve
+      })
+      mockearRutas(
+        () =>
+          apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).length === 1
+            ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'x'))
+            : Promise.resolve(resolucion([coca(), pancho()])),
+        () => respaldoViejo,
+      )
+
+      await armarCarritoConPanchoYCoca()
+      await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+
+      await act(async () => {
+        resolverRespaldoViejo([coca({ precioOriginal: 1, precioFinal: 1 })])
+      })
+
+      expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument()
+    })
+  })
+
+  it('con la cantidad reducida y la resolución sin refrescar, la línea se totaliza sin el combo viejo (nunca con unidades negativas)', async () => {
+    mockearEscaneoDeDosArticulos()
+    let resoluciones = 0
+    mockearResolverConCombos(() => {
+      resoluciones += 1
+      // La primera resolución trae el combo; las siguientes quedan colgadas para observar el estado intermedio.
+      return resoluciones <= 2
+        ? Promise.resolve({
+            lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 2, ahorro: 600, idCombo: 7 } })],
+            combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 827.27 }],
+          })
+        : new Promise<ResolucionConCombos>(() => {})
+    })
+    await armarCarritoConPanchoYCoca()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), CODIGO_PANCHO)
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue(2))
+    const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+    await waitFor(() => expect(within(filaPancho).getByText('$ 5.400,00', { selector: 'td' })).toBeInTheDocument())
+
+    const cantidad = screen.getByLabelText('Cantidad de Pancho')
+    await userEvent.clear(cantidad)
+    await userEvent.type(cantidad, '1')
+    await userEvent.tab()
+
+    // El combo viejo consumía 2 unidades y ahora hay 1: con la fórmula a ciegas daría 3000 − 600 = 2400.
+    await waitFor(() => expect(within(filaPancho).getByText('$ 3.000,00', { selector: 'td' })).toBeInTheDocument())
+    expect(within(filaPancho).queryByText(/-\$ 600,00/)).not.toBeInTheDocument()
+  })
+})
 
 describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   /** Cash-only por defecto en todos estos tests: alcanza para no chocar con el filtro de
@@ -5898,7 +6271,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       // $ 90 solo puede salir de la instantánea: el mock de /ofertas/resolver devuelve $ 100.
       await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
-      expect(llamadasPost('/ofertas/resolver')).toEqual([])
+      expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
     })
 
     /** Otro cliente con la lista 2: el artículo vale 100 en la lista 1 (Consumidor Final) y 70 en la
@@ -5939,8 +6312,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     it('para un cliente que no está en la instantánea la vista previa va online aunque la línea sí esté', async () => {
       await elegirOtroClienteConLista(2)
 
-      await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
-      expect(llamadasPost('/ofertas/resolver')[0][1]).toMatchObject({ lineas: [expect.objectContaining({ idListaPrecio: 2 })] })
+      await waitFor(() => expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toHaveLength(1))
+      expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)[0][1]).toMatchObject({ lineas: [expect.objectContaining({ idListaPrecio: 2 })] })
       await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
       expect(screen.queryByText('$ 70,00', { selector: 'strong' })).not.toBeInTheDocument()
     })
@@ -5949,7 +6322,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await elegirOtroClienteConLista(2, true)
 
       await waitFor(() => expect(screen.getByText('$ 70,00', { selector: 'strong' })).toBeInTheDocument())
-      expect(llamadasPost('/ofertas/resolver')).toEqual([])
+      expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
     })
 
     it('una instantánea de OTRO punto de venta nunca se usa: escaneo y vista previa van online', async () => {
@@ -5961,7 +6334,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('Coca Cola 1L')
 
       expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
-      await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
+      await waitFor(() => expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toHaveLength(1))
     })
 
     it('con una línea fuera de la instantánea, la vista previa va online', async () => {
@@ -5976,7 +6349,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Sprite 1L')
 
-      await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
+      await waitFor(() => expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toHaveLength(1))
     })
   })
 
@@ -6334,7 +6707,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(venta.solicitud).toMatchObject({ idCliente: 30, numeroPreasignado: 500, limiteDeCreditoNoValidado: false })
       expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 80 })
       expect(llamadasGet('/clientes/30')).toHaveLength(2)
-      expect(llamadasPost('/ofertas/resolver')).toEqual([])
+      expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
     })
 
     it('con el servidor diciendo que supera el límite, informa el rechazo y no encola ni cobra online', async () => {
@@ -6538,7 +6911,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         return undefined
       })
       apiPostMock.mockImplementation((ruta: string) =>
-        ruta === '/ofertas/resolver' || ruta === '/ventas'
+        ruta === RUTA_RESOLVER_DEL_CARRITO || ruta === '/ventas'
           ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
           : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
       )
@@ -6579,6 +6952,119 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       const outbox = await leerOutbox(almacen)
       expect(outbox).toHaveLength(1)
       expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: precioViejo })
+    })
+  })
+
+  describe('combos (T5a): la vista previa, el payload encolado y el comprobante comparten la misma regla', () => {
+    const CODIGO_PANCHO = '7790002222222'
+    const combo7 = {
+      idCombo: 7,
+      codigo: 7,
+      nombre: 'Pancho + Coca',
+      precio: 5000,
+      componentes: [
+        { idArticulo: 1, cantidad: 1 },
+        { idArticulo: 2, cantidad: 1 },
+      ],
+    }
+
+    const instantaneaConCombo = (unidadPancho: 'Unidad' | 'Peso' = 'Unidad') =>
+      instantaneaFixture({
+        articulos: [
+          articuloDeInstantaneaFixture({ precioOriginal: 2500, precioFinal: 2500, unidadVenta: 'Unidad' }),
+          articuloDeInstantaneaFixture({
+            idArticulo: 2,
+            codigoInterno: 'A0002',
+            nombre: 'Pancho',
+            codigosBarra: [CODIGO_PANCHO],
+            precioOriginal: 3000,
+            precioFinal: 3000,
+            unidadVenta: unidadPancho,
+          }),
+        ],
+        combos: [combo7],
+      })
+
+    async function cargarPanchoYCoca() {
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await userEvent.type(screen.getByLabelText('Código escaneado'), CODIGO_PANCHO)
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Pancho')
+    }
+
+    function mockearEnvioColgado() {
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+    }
+
+    it('la vista previa sale de la copia local con el combo aplicado, sin llamar al servidor', async () => {
+      await prepararAlmacenOffline({ instantanea: instantaneaConCombo() })
+      await montarConInstantanea()
+
+      await cargarPanchoYCoca()
+
+      await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
+      const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+      expect(within(filaPancho).getByText('Pancho + Coca -$ 272,73')).toBeInTheDocument()
+      expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument()
+    })
+
+    it('encola cada línea consumida con sus tres campos de combo y el comprobante sintético trae el mismo importe', async () => {
+      await prepararAlmacenOffline({ instantanea: instantaneaConCombo(), bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      mockearEnvioColgado()
+      const alEmitir = vi.fn()
+      renderPos('/pos', { alEmitir })
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+      await cargarPanchoYCoca()
+      await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('5000')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect(screen.getByText('Total: $ 5.000,00')).toBeInTheDocument()
+
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].solicitud.lineas).toEqual([
+        expect.objectContaining({ idArticulo: 1, precioUnitario: 2500, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227.27, idCombo: 7 }),
+        expect.objectContaining({ idArticulo: 2, precioUnitario: 3000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 272.73, idCombo: 7 }),
+      ])
+
+      const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
+      expect(comprobante.total).toBe(5000)
+      expect(comprobante.descuentoTotal).toBe(500)
+      expect(comprobante.items.map((i) => [i.descuento, i.total, i.idCombo])).toEqual([
+        [227.27, 2272.73, 7],
+        [272.73, 2727.27, 7],
+      ])
+    })
+
+    it('un artículo pesable no entra al combo: ni se descuenta ni viajan campos de combo', async () => {
+      await prepararAlmacenOffline({ instantanea: instantaneaConCombo('Peso'), bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      mockearEnvioColgado()
+      await montarConInstantanea()
+      await cargarPanchoYCoca()
+      await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('5500')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox[0].solicitud.lineas).toHaveLength(2)
+      for (const linea of outbox[0].solicitud.lineas ?? []) {
+        expect(linea).not.toHaveProperty('idCombo')
+        expect(linea).not.toHaveProperty('ahorroDeCombo')
+        expect(linea).not.toHaveProperty('unidadesConsumidasPorCombo')
+      }
     })
   })
 
