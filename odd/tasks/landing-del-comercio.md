@@ -96,6 +96,18 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
   - `online.html` entry: header (logo, name, cart button with count 0), empty state "El
     catálogo se está preparando", footer. Cart state is a typed context with no items yet.
   - Tests for the mapping helpers and the two pages' states (published, unpublished, error).
+- [x] **T4 — Landing enriquecida.** Delegated bounded writer. Branch `pnader/landing-enriquecida` on `pnader/sin-pie-publico`
+  (`24598517`). Commits `a61ba967` (la tienda honra `?categoria` y `?buscar`; imagen del artículo a `publico/`), `c17e9c06`
+  (landing), plus the final commit with this document. Owner feedback: "Es re triste esa landing". Web only, no backend change.
+  - Sections, in order, each hiding when its data is missing: cabecera; portada (tagline h1, chevrons, bar, two CTAs, info pills
+    horario / domicilio / "WhatsApp" from the first branch, and on desktop a two-column hero with an accent "sello"
+    showing the horario); destacados ("Lo que vas a encontrar": up to 8 articles from `GET /api/publico/catalogo?tamano=8`, plain
+    links to `/online?buscar=<nombre>`, "Ver toda la tienda"); categorías (chips linking `/online?categoria=<id>`); "Quiénes somos";
+    "Cómo comprar" (01/02/03, copy that only promises what exists: browse, WhatsApp or ask the commerce, pickup at the local);
+    "Dónde estamos" (branch cards with a lazy, sandboxed Google Maps embed and an "Abrir en Google Maps" fallback link); cierre
+    ("¿Listo para pedir?" band when a WhatsApp number exists, "¿Querés saber más?" otherwise).
+  - `/online` now starts with `?categoria=<id>` and `?buscar=<texto>` as the initial filters (`online/filtroInicial.ts`, read once
+    on mount; the search box starts filled without re-sending the search).
 
 ## Verification evidence
 
@@ -295,9 +307,74 @@ mock of the API at 1280 px and 375 px: on-brand, no horizontal overflow, cart pa
 Follow-ups: the commerce logo `<img>` has no width hint (small shift on load); the dark skeleton
 before data on a light-theme commerce; render-blocking Google Fonts; no per-branch opt-out.
 
+### T4 (commits `a61ba967` filtros de la URL, `c17e9c06` landing)
+
+Route/topology: delegated bounded writer (trigger: 2+ non-trivial files).
+
+Decisions:
+- The "24" stamp rule (superseded by judgment-day L1, see below) was first a pattern search for `24 hs` minus closing-time ranges; it missed
+  `9 hs a 24 hs`, `8hs-24hs` and mixed schedules, so it is now a full-text allow-list.
+- The stamp is `aria-hidden`: the pill already carries the full horario, so assistive tech would read it twice. It clamps to 3 lines in CSS.
+- Pills use the first branch for horario/domicilio; the WhatsApp pill uses the first branch with a usable number, the same rule as the CTA (see L5 below for the
+  branch-name prefix and the screen-reader labels).
+- Catalog read: `useCatalogoDeLaLanding` (own per-effect-pass gate: unmount and the StrictMode second pass invalidate the one in flight); failure,
+  404 or an empty catalog render nothing and no alert. It runs in parallel with the vitrina read and is not retried by "Reintentar".
+- Accent surfaces (sello, cierre) use `--pub-tinta-sobre-acento` for text, inverted `publico-boton-tinta` and `publico-boton-contorno-tinta` buttons, and a
+  focus ring in that same ink. Step numerals use the text color (the accent is only a decorative top border) so contrast does not depend on the accent.
+- `ImagenDelArticulo` moved from `online/TarjetaDeArticulo.tsx` to `publico/ImagenDelArticulo.tsx` and is shared with the landing cards. Cierre adds a third
+  "Comprar online" link, so the older landing tests were adapted (3 links; WhatsApp CTA scoped to the portada; lists scoped to the "Dónde estamos"
+  region; "Sucursales" heading and "Sobre el comercio" region became "Dónde estamos" and "Quiénes somos"). Fixtures moved to `landing/datosDePrueba.ts`.
+- Google Maps is the keyless `https://www.google.com/maps?q=<domicilio>&output=embed`; it loads Google resources from the visitor's browser (owner
+  may want to know). Checked in the browser pane against a local mock at 375 px (no horizontal scroll, map renders) and at 1200 px (two-column hero).
+
+Verification (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` exit 0, only the pre-existing `only-export-components` warnings, none in landing/publico/online;
+`npx vite build` ok; `npx vitest run src/landing src/online src/publico` 16 files, 341 tests passed; `npx vitest run` 209 files, 5846 tests passed.
+New tests: `landing/Landing.secciones.test.tsx` (34), `landing/horario.test.ts`, `online/filtroInicial.test.ts`, 5 in `online/CatalogoDeLaTienda.test.tsx`.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `Destacados` without the empty guard | the four hide cases (404, 500, red, empty) and `un comercio con poco cargado...` |
+| M1b | the catalog read's `catch` rethrows | 3 unhandled rejections fail the run (no test asserts, vitest exits non-zero) |
+| M2 | stale gate removed (`if (vigente)`) | `una respuesta vieja del catálogo que llega tarde no pisa a la más nueva` |
+| M3 | stamp rule `horario.includes("24")` | `Hasta las 24 hs`, `Hasta 24 hs`, `8 a 24 hs`, `10:24 hs`, `124 hs`, `Abierto 24` (unit) and `un horario que solo llega hasta las 24...` |
+| M4 | step 2 always says WhatsApp | `sin número de WhatsApp el segundo paso es con el comercio` |
+| M5 | map without the domicilio predicate | `una sucursal sin domicilio no tiene mapa`, `un domicilio en blanco no genera mapa` |
+| M6 | `idCategoria` always null in `filtroInicialDeLaUrl` | `?categoria=<id> fija la categoría`, `los dos juntos`, and the two catalog tests `?categoria=3...` |
+
+#### Judgment-day round 1 fixes (branch `pnader/landing-enriquecida-ajustes`)
+
+- **L1 (HIGH)** `landing/horario.ts`: "Abierto 24 hs" only when the whole horario (trimmed, lower-cased, trailing punctuation dropped) is one of the
+  allow-listed forms (`24 hs`, `24 horas`, `abierto las 24 horas`, `24/7`, `24x7`, optional "todos los días" prefix or suffix). Anything else shows the text as given.
+- **L2** `online/filtroInicial.ts`: `?categoria` above 2147483647 is ignored (full catalog). **L3** copy: pill "WhatsApp", steps "Mirá lo que hay en la tienda
+  online" / "Escribinos por WhatsApp con lo que necesitás" or "Consultá al comercio por lo que necesitás" / "Coordiná con el comercio el retiro en el local";
+  closing title "¿Listo para pedir?" only with a WhatsApp number, else "¿Querés saber más?". **L4** `.publico-sello-texto`: `line-height: 1.05` plus
+  `padding-top: 0.06em`. **L5** with more than one branch each pill is prefixed with its branch name; the WhatsApp pill comes from the first branch with a
+  usable number; each pill has a screen-reader-only label ("Horario:", "Dirección:", "WhatsApp:"). **L6** map `sandbox` + default referrer policy + "Abrir en
+  Google Maps" fallback link. **L7** destacados link to `/online?buscar=<nombre>`; `BarraDelCatalogo` tests prove `buscarInicial` is not re-sent.
+- Verification after the fixes (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` exit 0, no finding in landing/publico/online; `npx vite build` ok;
+  `npx vitest run src/landing src/online src/publico` 16 files, 383 tests passed; `npx vitest run` 209 files, 5888 tests passed.
+- Mutations (all red, then reverted): M7 `includes('24')` in `atiendeLasVeinticuatroHoras` (19 unit cases); M8 no int32 range check (3 cases); M9 `line-height: 0.95`
+  and M9b without `padding-top` (the sello style test); M10 `useRef('')` in `BarraDelCatalogo` (2 cases); M11 WhatsApp pill from the first branch instead of the
+  one with a number (3 cases); M12 branch prefix also on single-branch commerces (3 cases); M13 map without `sandbox` (the sandbox test).
+
+### Judgment-day of T4 (target 779da54d, rounds 0 and 1, 2026-10-12)
+
+Round 0: both judges confirmed one HIGH (the hero stamp printed "Abierto 24 hs" for closing-time
+phrasings such as "9 hs a 24 hs" and mixed schedules) plus coincident warnings (`?categoria`
+above int32 → permanent 400, copy promising orders and delivery that do not exist, stamp clipping
+accented capitals, hero pills mixing branches, map hardening). Correction round 1 on
+`pnader/landing-enriquecida-ajustes` (`2fd4605a`, `9cf09bbd`, `7383323b`): full-text allow-list for
+the 24-hour stamp, int32 range check, honest "Cómo comprar"/pill/closing copy, stamp line-height
+and padding, branch prefixes and screen-reader labels, `sandbox` + "Abrir en Google Maps" link,
+destacados → `/online?buscar=`, `buscarInicial` no-resend test. Scoped re-judgment: no severe
+finding → `JUDGMENT: APPROVED`; one coincident suggestion (the sr-only label lost `nowrap` to a
+more specific rule and the WhatsApp pill read "WhatsApp: WhatsApp") fixed in `5b3b1c5d`
+("Contacto:" label, selector specificity). Follow-ups: the stamp still shows the first branch's
+horario without its name; the map loads Google content without a consent notice.
+
 ## Delivery slices
 
-- PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3.
+- PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3. T4 stacks on the no-footer branch `pnader/sin-pie-publico`.
 
 ## Next step
 

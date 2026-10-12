@@ -14,13 +14,14 @@ import type {
   SolicitudDeGasto,
 } from '../api/tipos'
 import { formatearImporte, redondearImporte } from '../formato/importes'
+import { fechaHoraATexto } from '../formato/fechas'
 
 export function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
 export function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 export function etiquetaDeCategoriaGasto(categoria: CategoriaGasto): string {

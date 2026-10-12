@@ -14,6 +14,7 @@ import { formatearImporte } from '../formato/importes'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { leerOutbox, leerRechazadas } from '../pos/outboxOffline'
 import { olvidarTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -27,7 +28,7 @@ function formatearMoneda(valor: number): string {
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /**

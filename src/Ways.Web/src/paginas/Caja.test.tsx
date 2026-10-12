@@ -6,6 +6,7 @@ import { Caja } from './Caja'
 import { ErrorApi } from '../api/cliente'
 import type { MedioPagoListado, MovimientoRegistrado, PuntoVentaListado, ResumenDeTurno, TurnoResumen } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -582,8 +583,8 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
     expect(screen.getByText('3')).toBeInTheDocument()
     // mezcla de series independientes por tipo (design decisión 7): el código deja "TX #1001" y
     // "RC #3" inequívocos, aunque una RC pudiera numerar por debajo del último ticket TX.
-    expect(screen.getByText('TX #1001 · ' + new Date('2026-08-04T12:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
-    expect(screen.getByText('RC #3 · ' + new Date('2026-08-04T14:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
+    expect(screen.getByText('TX #1001 · ' + fechaHoraATexto('2026-08-04T12:00:00Z'))).toBeInTheDocument()
+    expect(screen.getByText('RC #3 · ' + fechaHoraATexto('2026-08-04T14:00:00Z'))).toBeInTheDocument()
 
     expect(screen.getByText('Almacén')).toBeInTheDocument()
     expect(screen.getByText('$ 150,00')).toBeInTheDocument()

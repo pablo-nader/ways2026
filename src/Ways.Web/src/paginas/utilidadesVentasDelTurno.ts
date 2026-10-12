@@ -8,13 +8,14 @@ import { ROL } from '../api/tipos'
 import type { EstadoComprobante, MedioPagoListado, VentaDeTurnoListado } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 import { contieneSinAcentos } from '../formato/texto'
+import { fechaHoraATexto } from '../formato/fechas'
 
 export function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
 export function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 export function etiquetaDeEstadoVenta(estado: EstadoComprobante): string {
