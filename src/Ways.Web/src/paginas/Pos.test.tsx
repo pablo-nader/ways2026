@@ -194,6 +194,8 @@ function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {})
 
 function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 9,
     codigoInterno: 'A0009',
     nombre: 'Fanta 1.5L',

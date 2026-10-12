@@ -5,6 +5,8 @@ import type { ArticuloListado } from '../../api/tipos'
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
     nombre: 'Articulo Uno',

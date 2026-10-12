@@ -216,6 +216,29 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
   })
 
   /**
+   * Cláusula bajo prueba: la captura + el corte de propagación del listener de `Escape`. La puerta puede
+   * vivir dentro de un `Modal`, cuyo listener de burbujeo cerraría el editor con la misma tecla: ningún
+   * listener de burbujeo de `document` debe ver el Escape que la puerta atendió. El Escape sale desde un
+   * elemento (como el de un teclado real); disparado sobre `document` no habría fase de captura previa.
+   */
+  it('el Escape que atiende no llega a los listeners de burbujeo de document', async () => {
+    const usuario = userEvent.setup()
+    const deBurbujeo = vi.fn()
+    render(<Anfitrion />)
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    document.addEventListener('keydown', deBurbujeo)
+
+    try {
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Cancelar' }), { key: 'Escape' })
+    } finally {
+      document.removeEventListener('keydown', deBurbujeo)
+    }
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(deBurbujeo).not.toHaveBeenCalled()
+  })
+
+  /**
    * Cláusula bajo prueba: el `|| ocupado` del listener de `Escape`. Con la escritura en vuelo los
    * dos botones están inertes; que el teclado siga cerrando la puerta la sacaría de la pantalla
    * mientras el DELETE sigue viajando, y el operador perdería de vista qué se está borrando.
