@@ -7,6 +7,7 @@ import {
   puedeGestionarUsuarios,
   puedeOperarPos,
   puedeVerAuditoria,
+  puedeVerPersonal,
   puedeVerReportes,
 } from '../api/tipos'
 
@@ -116,6 +117,9 @@ const MODELO: EntradaDelModelo[] = [
         enlaces: [
           enlace(puedeGestionarCatalogos, 'Clientes', '/clientes'),
           enlace(puedeGestionarCatalogos, 'Proveedores', '/proveedores'),
+          // Lectura de Admin y Supervisor (Politicas.LecturaDePersonal): el Supervisor ve la pantalla
+          // en solo lectura, sin el resto de Administración.
+          enlace(puedeVerPersonal, 'Personal', '/personal'),
         ],
       },
       {

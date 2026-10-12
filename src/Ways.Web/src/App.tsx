@@ -39,6 +39,7 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
+import { Personal } from './paginas/Personal'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
@@ -287,6 +288,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Proveedores />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Personal (back office): lectura para Admin y Supervisor (Politicas.LecturaDePersonal);
+                las acciones de escritura de la pantalla son solo del Admin. */}
+            <Route
+              path="/personal"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Personal />
                 </RutaProtegida>
               }
             />
