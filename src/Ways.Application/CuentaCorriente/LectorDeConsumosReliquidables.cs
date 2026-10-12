@@ -51,19 +51,15 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
 
         var idsComprobante = elegibles.Select(e => e.IdComprobanteVenta).Distinct().ToList();
 
-        // El artículo se une con la baja lógica ignorada: una baja posterior no cambia cómo se vendió la línea. Un
-        // artículo por importe cobra el monto que se tipeó y no se re-precifica; la unión no suma una consulta.
-        var items = await (
-                from i in db.ItemsComprobanteVenta
-                where idsComprobante.Contains(i.IdComprobanteVenta)
-                join a in db.Articulos.IgnoreQueryFilters(["BajaLogica"]) on i.IdArticulo equals (int?)a.Id into articulos
-                from articulo in articulos.DefaultIfEmpty()
-                select new
-                {
-                    i.IdComprobanteVenta, i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
-                    i.AjusteManualPorcentaje,
-                    PorImporte = articulo != null && articulo.UnidadVenta == UnidadVenta.Importe
-                })
+        // Una línea vendida por importe cobró el monto que se tipeó y no se re-precifica: lo dice la propia línea
+        // (por_importe), no la unidad que tenga hoy el artículo, que pudo cambiar después de la venta.
+        var items = await db.ItemsComprobanteVenta
+            .Where(i => idsComprobante.Contains(i.IdComprobanteVenta))
+            .Select(i => new
+            {
+                i.IdComprobanteVenta, i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
+                i.AjusteManualPorcentaje, i.PorImporte
+            })
             .ToListAsync(ct);
 
         var itemsPorComprobante = items.ToLookup(i => i.IdComprobanteVenta);

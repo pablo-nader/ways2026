@@ -1560,8 +1560,11 @@ movimientos, y los movimientos no se editan.
 > offline. Sin tablas nuevas: ambas columnas viven en tablas operativas que ya tienen
 > `id_tenant` y RLS.
 
-> **Estado (artículos por importe — venta): implementada**, sin cambio de esquema: la línea ya guarda
-> `precio_unitario`. Un artículo `unidad_venta = 'importe'` se vende por el monto que escribe el cajero. La línea del
+> **Estado (artículos por importe — venta): implementada.** El único cambio de esquema es
+> `items_comprobante_venta.por_importe boolean NOT NULL DEFAULT false` (sin backfill: ninguna fila anterior se vendió por
+> importe): el snapshot de cómo se vendió la línea. La línea ya guarda `precio_unitario`; el artículo puede cambiar de
+> unidad después de la venta, así que la reliquidación y la devolución asociada deciden por esta columna y no por la
+> `unidad_venta` de hoy. Un artículo `unidad_venta = 'importe'` se vende por el monto que escribe el cajero. La línea del
 > request (`LineaDeVenta`) y la de la vista previa (`LineaDeResolucion`, `POST /api/ofertas/resolver` y
 > `resolver-con-combos`) suman `importe` (`decimal?`): **obligatorio** en un artículo por importe (`400
 > importe_requerido`) y **rechazado** en cualquier otro (`400 importe_no_admitido`, en vez de ignorarse); mayor a cero,
@@ -1579,7 +1582,9 @@ movimientos, y los movimientos no se editan.
 >   una discrepancia de precio. Una línea que el dispositivo ya cobró con precio de lista para un artículo que hoy es por
 >   importe se honra (no se le exige `importe`).
 > - **Devolución (NCX).** Cada línea por importe lleva el importe devuelto; con comprobante asociado tiene que existir en él
->   una línea de ese artículo (cantidad positiva) con ese precio unitario (`400 importe_devolucion_inexistente`). No se lleva
+>   una línea por importe (`por_importe`, cantidad positiva) de ese artículo con ese precio unitario y ese mismo
+>   `ajuste_manual_porcentaje` (`400 importe_devolucion_inexistente`): el neto reembolsado no puede superar el cobrado por la
+>   línea vendida. No se lleva
 >   la cuenta de lo ya devuelto, igual que las cantidades de una devolución común. Una devolución offline (con número
 >   pre-asignado) no se compara.
 > - **Escaneo.** `GET /api/articulos/escaneo?entrada=150*500` sobre un artículo por importe responde `cantidad` 1 e
@@ -1588,7 +1593,10 @@ movimientos, y los movimientos no se editan.
 >   decimales o fuera de rango es `400 importe_invalido`, en vez de caer a "cantidad 1" como en los demás artículos.
 > - **Instantánea del POS.** El artículo por importe viaja siempre con `preciosPorLista` vacío (aunque conserve un precio de
 >   lista, que el dispositivo no debe usar).
-> - **Reliquidación de cuenta corriente.** La línea por importe conserva el monto tipeado: no se reprecifica, el detalle la
+> - **Reenvío con número pre-asignado.** El importe de una línea por importe entra en la identidad del contenido: otro
+>   importe bajo el mismo número es `409 numero_preasignado_con_otro_contenido`.
+> - **Ofertas por familia.** Una línea por importe no suma a la cantidad agregada de su familia.
+> - **Reliquidación de cuenta corriente.** La línea vendida por importe (`por_importe`) conserva el monto tipeado: no se reprecifica, el detalle la
 >   marca como omitida con su motivo y el delta es cero.
 > - **Presupuestos y remitos** rechazan un artículo por importe (`400 articulo_por_importe_no_admitido`). **Tienda online:**
 >   no se puede publicar (`400 articulo_por_importe_no_publicable`) y el catálogo público no lo lista.

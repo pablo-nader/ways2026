@@ -785,7 +785,7 @@ public class ServicioDeOfertas(
         return (lineaAResolver, candidatas);
     }
 
-    /// <summary>Suma de cantidades por familia sobre TODAS las líneas del lote (las líneas sin
+    /// <summary>Suma de cantidades por familia sobre las líneas del lote que no son por importe (las líneas sin
     /// familia no se suman entre sí). Es el dato que las ofertas de alcance familia comparan contra
     /// <c>cantidad_minima</c>. <c>ResolverConEscalonesAsync</c> no lo usa: su lote es el catálogo
     /// entero a cantidad 1, no un documento.</summary>
@@ -796,7 +796,7 @@ public class ServicioDeOfertas(
 
         foreach (var linea in lineas)
         {
-            if (contexto.AlcancePorArticulo[linea.IdArticulo].IdFamilia is { } idFamilia)
+            if (linea.Importe is null && contexto.AlcancePorArticulo[linea.IdArticulo].IdFamilia is { } idFamilia)
             {
                 cantidadPorFamilia[idFamilia] = cantidadPorFamilia.GetValueOrDefault(idFamilia) + linea.Cantidad;
             }

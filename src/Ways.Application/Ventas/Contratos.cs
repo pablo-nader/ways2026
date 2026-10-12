@@ -152,7 +152,10 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// está incluido en <see cref="Descuento"/>; <c>null</c> si ninguno. En un item de nota de crédito asociada a
 /// una venta con combo es el <c>id_combo</c> del item original cuyas unidades devuelve. Solo el id, igual que
 /// <see cref="IdOferta"/>: el nombre no viaja en la venta emitida y un combo dado de baja después no la
-/// afecta. Un item de un <c>TXR</c> siempre lo lleva en <c>null</c>.</summary>
+/// afecta. Un item de un <c>TXR</c> siempre lo lleva en <c>null</c>.
+///
+/// <see cref="PorImporte"/> sí se persiste (<c>items_comprobante_venta.por_importe</c>): la línea se vendió por el importe que tipeó el
+/// cajero, y <see cref="PrecioUnitario"/> es ese importe. Un item de un <c>TXR</c> siempre lo lleva en <c>false</c>.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
@@ -173,7 +176,8 @@ public sealed record ItemEmitido(
     string? CodigoLote = null,
     bool LoteVencido = false,
     bool PrecioDiscrepante = false,
-    int? IdCombo = null);
+    int? IdCombo = null,
+    bool PorImporte = false);
 
 /// <summary>Un pago ya emitido.</summary>
 public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);

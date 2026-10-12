@@ -650,27 +650,30 @@ public class ServicioDeVentas(
     /// NumeroPreasignado — sin esto, un reenvío bajo el mismo número pre-asignado con un carrito,
     /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
     /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero derivado: el conjunto
-    /// (idArticulo, cantidad, ajusteManualPorcentaje) de líneas, idCliente, idComprobanteAsociado y
+    /// (idArticulo, cantidad, ajusteManualPorcentaje, importe si es por importe) de líneas, idCliente, idComprobanteAsociado y
     /// la composición de pagos (idMedioPago, importe, referencia) — nunca el total ni el precio de
     /// ningún item (ver el comentario dentro del método), y tampoco <c>Observaciones</c> (idem, ver
     /// el comentario dentro del método: es metadata, no identidad). El porcentaje de ajuste manual
     /// SÍ entra: lo tipeó el operador, no lo deriva el servidor, y dos envíos con porcentajes
-    /// distintos son dos ventas distintas. Sin columna nueva: compara contra los propios
+    /// distintos son dos ventas distintas; lo mismo el importe de una línea por importe, que también lo tipeó el
+    /// operador (el precio de una línea de lista, en cambio, se deriva y no entra). Compara contra los propios
     /// items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
     {
         var lineasExistentes = existente.Items
-            .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje))
+            .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, ImporteTipeado: i.PorImporte ? i.PrecioUnitario : (decimal?)null))
             .OrderBy(l => l.IdArticulo)
             .ThenBy(l => l.Cantidad)
             .ThenBy(l => l.AjusteManualPorcentaje)
+            .ThenBy(l => l.ImporteTipeado)
             .ToList();
 
         var lineasSolicitadas = plan.Items
-            .Select(i => ((int?)i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje))
+            .Select(i => ((int?)i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, i.PorImporte ? i.PrecioUnitario : (decimal?)null))
             .OrderBy(l => l.Item1)
             .ThenBy(l => l.Item2)
             .ThenBy(l => l.Item3)
+            .ThenBy(l => l.Item4)
             .ToList();
 
         // La referencia entra en la identidad y observaciones no, aunque las dos sean texto:
@@ -1509,6 +1512,7 @@ public class ServicioDeVentas(
                 // bajo "Snapshot Immutability of Items" porque se agrega AL snapshot y no existe
                 // endpoint de edición.
                 IdLote = i.IdLote,
+                PorImporte = i.PorImporte,
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -2184,7 +2188,8 @@ public class ServicioDeVentas(
                     : null,
                 ComboEsperado: (discrepante || comboInexistente) && tieneComboDetectado
                     ? new ComboDeAuditoria(detectado.UnidadesConsumidas, detectado.Ahorro, detectado.IdCombo, false)
-                    : null));
+                    : null,
+                PorImporte: linea.Importe is not null));
         }
 
         return (items, totales, [.. origenes.Select(o => o.Linea)]);
@@ -2380,9 +2385,11 @@ public class ServicioDeVentas(
     }
 
     /// <summary>Una nota de crédito asociada devuelve una línea por importe por el monto con que se vendió: la venta
-    /// asociada tiene que tener una línea de ese artículo (cantidad positiva) con ese precio unitario, si no 400
-    /// <c>importe_devolucion_inexistente</c>. Cuesta UNA consulta y solo si alguna línea trae importe. No lleva la cuenta de
-    /// lo ya devuelto: igual que las cantidades de una devolución común, no se compara contra devoluciones anteriores.</summary>
+    /// asociada tiene que tener una línea por importe de ese artículo (cantidad positiva) con ese precio unitario Y ese
+    /// porcentaje de ajuste manual, si no 400 <c>importe_devolucion_inexistente</c>. El ajuste entra porque el neto que se
+    /// reembolsa es el importe con el ajuste aplicado: devolver 150 sin el −50 % que la venta aplicó devolvería más de lo
+    /// cobrado. Cuesta UNA consulta y solo si alguna línea trae importe. No lleva la cuenta de lo ya devuelto: igual que las
+    /// cantidades de una devolución común, no se compara contra devoluciones anteriores.</summary>
     private async Task ExigirImportesDeLaVentaAsociadaAsync(
         int idComprobanteAsociado, IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
     {
@@ -2396,18 +2403,22 @@ public class ServicioDeVentas(
         var vendidos = await db.ItemsComprobanteVenta
             .Where(i => i.IdComprobanteVenta == idComprobanteAsociado
                 && i.Cantidad > 0m
+                && i.PorImporte
                 && i.IdArticulo != null
                 && idsArticulo.Contains(i.IdArticulo.Value))
-            .Select(i => new { IdArticulo = i.IdArticulo!.Value, i.PrecioUnitario })
+            .Select(i => new { IdArticulo = i.IdArticulo!.Value, i.PrecioUnitario, i.AjusteManualPorcentaje })
             .ToListAsync(ct);
 
         foreach (var linea in devueltas)
         {
-            if (!vendidos.Any(v => v.IdArticulo == linea.IdArticulo && v.PrecioUnitario == linea.Importe))
+            if (!vendidos.Any(v => v.IdArticulo == linea.IdArticulo
+                && v.PrecioUnitario == linea.Importe
+                && v.AjusteManualPorcentaje == linea.AjusteManualPorcentaje))
             {
                 throw new ErrorDominio(
                     "importe_devolucion_inexistente",
-                    $"El comprobante asociado no tiene una línea del artículo {linea.IdArticulo} vendida por {linea.Importe}.",
+                    $"El comprobante asociado no tiene una línea del artículo {linea.IdArticulo} vendida por {linea.Importe} " +
+                    $"con el mismo ajuste manual ({linea.AjusteManualPorcentaje?.ToString() ?? "ninguno"}).",
                     400);
             }
         }
@@ -2615,7 +2626,7 @@ public class ServicioDeVentas(
                     i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento,
                     i.AjusteManualPorcentaje, i.AjusteManual, i.Total,
                     planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false,
-                    planItem?.PrecioDiscrepante ?? false, i.IdCombo);
+                    planItem?.PrecioDiscrepante ?? false, i.IdCombo, i.PorImporte);
             })
             .ToList();
 
@@ -2662,7 +2673,8 @@ public class ServicioDeVentas(
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
         bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
         decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null,
-        ComboDeAuditoria? ComboDelDispositivo = null, ComboDeAuditoria? ComboEsperado = null);
+        ComboDeAuditoria? ComboDelDispositivo = null, ComboDeAuditoria? ComboEsperado = null,
+        bool PorImporte = false);
 
     /// <summary>Datos de combo de una línea offline para el rastro de auditoría: lo que trajo el dispositivo
     /// (<see cref="LineaDelPlan.ComboDelDispositivo"/>) y lo que el servidor detectó

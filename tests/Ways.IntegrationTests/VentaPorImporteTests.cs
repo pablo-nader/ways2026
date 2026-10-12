@@ -816,4 +816,83 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("articulo_por_importe_no_admitido", await CodigoDeRechazoAsync(presupuesto));
         Assert.Equal("articulo_por_importe_no_admitido", await CodigoDeRechazoAsync(remito));
     }
+
+    // ---- identidad del reenvío y devolución con ajuste -----------------------------------------
+
+    /// <summary>El importe tipeado es la identidad de una línea por importe: el reenvío bajo el mismo número pre-asignado con
+    /// otro importe es otra venta (409); con el mismo, el mismo comprobante. El pago se mantiene igual (200, con otro vuelto)
+    /// para que el importe sea lo único que distingue los dos pedidos.</summary>
+    [Fact]
+    public async Task ElReenvioBajoElMismoNumeroConOtroImporteEsOtraVentaYConElMismoEsElMismoComprobante()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(ElReenvioBajoElMismoNumeroConOtroImporteEsOtraVentaYConElMismoEsElMismoComprobante));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+
+        SolicitudDeVenta Reenvio(decimal importe) => new(
+            ctx.IdPuntoVenta, null, "TX", null, [new LineaDeVenta(fiambreria, 1m, null, Importe: importe)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 200m, null, 200m - importe)], null, null,
+            IdPresupuestoOrigen: null, NumeroPreasignado: 1);
+
+        var primera = await EmitirOkAsync(ctx.Cliente, Reenvio(150m));
+
+        var otroImporte = await ctx.Cliente.PostAsJsonAsync("/api/ventas", Reenvio(100m));
+        Assert.Equal(HttpStatusCode.Conflict, otroImporte.StatusCode);
+        var problema = await otroImporte.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("numero_preasignado_con_otro_contenido", problema.GetProperty("codigo").GetString());
+
+        var mismoImporte = await EmitirOkAsync(ctx.Cliente, Reenvio(150m));
+        Assert.Equal(primera.Id, mismoImporte.Id);
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+    }
+
+    /// <summary>Una venta de 150 con −50 % cobró 75: devolver 150 sin el ajuste reembolsaría más de lo cobrado, así que la
+    /// línea devuelta tiene que coincidir con la vendida en artículo, importe Y porcentaje de ajuste manual.</summary>
+    [Fact]
+    public async Task LaDevolucionPorImporteTieneQueCoincidirTambienEnElAjusteManualDeLaVenta()
+    {
+        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionPorImporteTieneQueCoincidirTambienEnElAjusteManualDeLaVenta));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var venta = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOnline(ctx, 75m, new LineaDeVenta(fiambreria, 1m, null, AjusteManualPorcentaje: -50m, Importe: 150m)));
+        Assert.Equal(75m, venta.Total);
+
+        Assert.Equal(
+            "importe_devolucion_inexistente",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente, Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 150m))));
+        Assert.Equal(
+            "importe_devolucion_inexistente",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente,
+                Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, AjusteManualPorcentaje: -25m, Importe: 150m))));
+
+        var nota = await EmitirOkAsync(
+            ctx.Cliente,
+            Devolucion(ctx, venta.Id, new LineaDeVenta(fiambreria, 1m, null, AjusteManualPorcentaje: -50m, Importe: 150m)));
+        Assert.Equal(-75m, nota.Total);
+    }
+
+    /// <summary>Lo que cuenta es cómo se vendió la línea, no el monto: una línea de lista de un artículo que después pasó a
+    /// venderse por importe no es una línea por importe que devolver, aunque su precio coincida.</summary>
+    [Fact]
+    public async Task LaDevolucionPorImporteNoSeApoyaEnUnaLineaVendidaDeLista()
+    {
+        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionPorImporteNoSeApoyaEnUnaLineaVendidaDeLista));
+        var (articulo, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Unidad, precio: 150m);
+        var venta = await EmitirOkAsync(ctx.Cliente, VentaOnline(ctx, 150m, new LineaDeVenta(articulo, 1m, null)));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var entidad = await db.Articulos.SingleAsync(a => a.Id == articulo);
+            entidad.UnidadVenta = UnidadVenta.Importe;
+            entidad.AcumulaEnVenta = false;
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(
+            "importe_devolucion_inexistente",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente, Devolucion(ctx, venta.Id, new LineaDeVenta(articulo, 1m, null, Importe: 150m))));
+    }
 }
