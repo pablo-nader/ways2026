@@ -357,6 +357,21 @@ New tests: `landing/Landing.secciones.test.tsx` (34), `landing/horario.test.ts`,
   and M9b without `padding-top` (the sello style test); M10 `useRef('')` in `BarraDelCatalogo` (2 cases); M11 WhatsApp pill from the first branch instead of the
   one with a number (3 cases); M12 branch prefix also on single-branch commerces (3 cases); M13 map without `sandbox` (the sandbox test).
 
+### Judgment-day of T4 (target 779da54d, rounds 0 and 1, 2026-10-12)
+
+Round 0: both judges confirmed one HIGH (the hero stamp printed "Abierto 24 hs" for closing-time
+phrasings such as "9 hs a 24 hs" and mixed schedules) plus coincident warnings (`?categoria`
+above int32 → permanent 400, copy promising orders and delivery that do not exist, stamp clipping
+accented capitals, hero pills mixing branches, map hardening). Correction round 1 on
+`pnader/landing-enriquecida-ajustes` (`2fd4605a`, `9cf09bbd`, `7383323b`): full-text allow-list for
+the 24-hour stamp, int32 range check, honest "Cómo comprar"/pill/closing copy, stamp line-height
+and padding, branch prefixes and screen-reader labels, `sandbox` + "Abrir en Google Maps" link,
+destacados → `/online?buscar=`, `buscarInicial` no-resend test. Scoped re-judgment: no severe
+finding → `JUDGMENT: APPROVED`; one coincident suggestion (the sr-only label lost `nowrap` to a
+more specific rule and the WhatsApp pill read "WhatsApp: WhatsApp") fixed in `5b3b1c5d`
+("Contacto:" label, selector specificity). Follow-ups: the stamp still shows the first branch's
+horario without its name; the map loads Google content without a consent notice.
+
 ## Delivery slices
 
 - PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3. T4 stacks on the no-footer branch `pnader/sin-pie-publico`.
