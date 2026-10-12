@@ -19,16 +19,16 @@ describe('calcularTotalesDeLineaConCombo', () => {
   })
 
   it('el ahorro del combo se suma al descuento de oferta de las unidades NO consumidas', () => {
-    // 2 panchos a 3000 con oferta de 500 por unidad; uno lo consume el combo (381,82).
+    // 2 panchos a 3000 con oferta de 500 por unidad; uno lo consume el combo (382).
     const totales = calcularTotalesDeLineaConCombo({
       cantidad: 2,
       precioOriginal: 3000,
       descuentoUnitario: 500,
       porcentaje: null,
-      combo: { unidadesConsumidas: 1, ahorro: 381.82 },
+      combo: { unidadesConsumidas: 1, ahorro: 382 },
     })
 
-    expect(totales).toEqual({ bruto: 6000, descuento: 881.82, neto: 5118.18, ajuste: 0, total: 5118.18 })
+    expect(totales).toEqual({ bruto: 6000, descuento: 882, neto: 5118, ajuste: 0, total: 5118 })
   })
 
   it('con todas las unidades consumidas la oferta no cuenta: solo el ahorro del combo', () => {
@@ -37,10 +37,10 @@ describe('calcularTotalesDeLineaConCombo', () => {
       precioOriginal: 3000,
       descuentoUnitario: 500,
       porcentaje: null,
-      combo: { unidadesConsumidas: 2, ahorro: 545.46 },
+      combo: { unidadesConsumidas: 2, ahorro: 546 },
     })
 
-    expect(totales).toMatchObject({ descuento: 545.46, total: 5454.54 })
+    expect(totales).toMatchObject({ descuento: 546, total: 5454 })
   })
 
   it('el ajuste manual se calcula sobre el neto que ya incluye el combo, con redondeo decimal exacto', () => {
@@ -49,10 +49,10 @@ describe('calcularTotalesDeLineaConCombo', () => {
       precioOriginal: 3000,
       descuentoUnitario: 0,
       porcentaje: -10,
-      combo: { unidadesConsumidas: 1, ahorro: 272.73 },
+      combo: { unidadesConsumidas: 1, ahorro: 273 },
     })
 
-    expect(totales).toMatchObject({ neto: 2727.27, ajuste: -272.73, total: 2454.54 })
+    expect(totales).toMatchObject({ neto: 2727, ajuste: -273, total: 2454 })
   })
 })
 
@@ -78,9 +78,9 @@ describe('combo viejo sobre una cantidad ya reducida (borrador restaurado o edic
   })
 
   it('con unidades iguales a la cantidad el combo sigue valiendo (el borde)', () => {
-    const totales = calcularTotalesDeLineaConCombo({ ...base, cantidad: 2, combo: { unidadesConsumidas: 2, ahorro: 545.46 } })
+    const totales = calcularTotalesDeLineaConCombo({ ...base, cantidad: 2, combo: { unidadesConsumidas: 2, ahorro: 546 } })
 
-    expect(totales).toMatchObject({ descuento: 545.46, total: 5454.54 })
+    expect(totales).toMatchObject({ descuento: 546, total: 5454 })
   })
 
   it('previaDeLinea totaliza una línea con combo viejo sin él', () => {
@@ -119,9 +119,9 @@ describe('previaDeLinea — combo', () => {
   })
 
   it('la línea consumida por un combo totaliza bruto menos su parte, y reporta el ahorro', () => {
-    const previa = previaDeLinea(linea, resultado({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 7 } }))
+    const previa = previaDeLinea(linea, resultado({ combo: { unidadesConsumidas: 1, ahorro: 273, idCombo: 7 } }))
 
-    expect(previa).toMatchObject({ total: 2727.27, ahorroDeCombo: 272.73, ajusteManual: 0 })
+    expect(previa).toMatchObject({ total: 2727, ahorroDeCombo: 273, ajusteManual: 0 })
   })
 
   it('sin combo el total y el ahorro son los de siempre', () => {
@@ -129,9 +129,9 @@ describe('previaDeLinea — combo', () => {
   })
 
   it('el ajuste manual de la línea se aplica sobre el neto con combo', () => {
-    const previa = previaDeLinea({ ...linea, ajusteManualPorcentaje: -10 }, resultado({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 7 } }))
+    const previa = previaDeLinea({ ...linea, ajusteManualPorcentaje: -10 }, resultado({ combo: { unidadesConsumidas: 1, ahorro: 273, idCombo: 7 } }))
 
-    expect(previa).toMatchObject({ total: 2454.54, ajusteManual: -272.73 })
+    expect(previa).toMatchObject({ total: 2454, ajusteManual: -273 })
   })
 
   it('sin resultado no hay precio ni ahorro', () => {

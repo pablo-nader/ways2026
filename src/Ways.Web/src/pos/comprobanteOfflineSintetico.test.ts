@@ -576,8 +576,8 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     const comprobante = construir({ ...base, lineas, instantanea: instantaneaConCombo() })
 
     expect(comprobante?.items.map((i) => ({ precioUnitario: i.precioUnitario, descuento: i.descuento, total: i.total, idCombo: i.idCombo }))).toEqual([
-      { precioUnitario: 2500, descuento: 227.27, total: 2272.73, idCombo: 7 },
-      { precioUnitario: 3000, descuento: 272.73, total: 2727.27, idCombo: 7 },
+      { precioUnitario: 2500, descuento: 227, total: 2273, idCombo: 7 },
+      { precioUnitario: 3000, descuento: 273, total: 2727, idCombo: 7 },
     ])
     expect(comprobante).toMatchObject({ subtotal: 5500, descuentoTotal: 500, total: 5000 })
   })
@@ -593,9 +593,9 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     const conAjuste = [lineas[0], { ...lineas[1], ajusteManualPorcentaje: -10 }]
     const comprobante = construir({ ...base, lineas: conAjuste, instantanea: instantaneaConCombo() })
 
-    // neto 3000 − 272,73 = 2727,27; 10 % = 272,727 → 272,73.
-    expect(comprobante?.items[1]).toMatchObject({ ajusteManual: -272.73, total: 2454.54 })
-    expect(comprobante).toMatchObject({ descuentoManualTotal: 272.73, total: 4727.27 })
+    // neto 3000 − 273 = 2727; 10 % = 272,7 → 273 al peso.
+    expect(comprobante?.items[1]).toMatchObject({ ajusteManual: -273, total: 2454 })
+    expect(comprobante).toMatchObject({ descuentoManualTotal: 273, total: 4727 })
   })
 
   describe('idOferta de un artículo con oferta cuando un combo consume sus unidades (el servidor la persiste igual)', () => {

@@ -5867,8 +5867,8 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
   })
   const respuestaConCombo = (): ResolucionConCombos => ({
     lineas: [
-      coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }),
-      pancho({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 7 } }),
+      coca({ combo: { unidadesConsumidas: 1, ahorro: 227, idCombo: 7 } }),
+      pancho({ combo: { unidadesConsumidas: 1, ahorro: 273, idCombo: 7 } }),
     ],
     combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }],
   })
@@ -5926,10 +5926,10 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
     await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
 
     const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
-    expect(within(filaPancho).getByText('Pancho + Coca -$ 272,73')).toBeInTheDocument()
-    expect(within(filaPancho).getByText('$ 2.727,27', { selector: 'td' })).toBeInTheDocument()
+    expect(within(filaPancho).getByText('Pancho + Coca -$ 273,00')).toBeInTheDocument()
+    expect(within(filaPancho).getByText('$ 2.727,00', { selector: 'td' })).toBeInTheDocument()
     const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
-    expect(within(filaCoca).getByText('$ 2.272,73', { selector: 'td' })).toBeInTheDocument()
+    expect(within(filaCoca).getByText('$ 2.273,00', { selector: 'td' })).toBeInTheDocument()
 
     const panel = within(panelDatosDeLaVenta())
     expect(panel.getByText('Combo Pancho + Coca')).toBeInTheDocument()
@@ -5960,10 +5960,10 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Ajuste % de Pancho' }), '-10')
     await userEvent.tab()
 
-    // Neto de la línea 3000 − 272,73 = 2727,27; el 10 % es 272,727 → 272,73; total de línea 2454,54.
+    // Neto de la línea 3000 − 273 = 2727; el 10 % es 272,7 → 273; total de línea 2454.
     const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
-    await waitFor(() => expect(within(filaPancho).getByText('$ 2.454,54', { selector: 'td' })).toBeInTheDocument())
-    expect(screen.getByText('$ 4.727,27', { selector: 'strong' })).toBeInTheDocument()
+    await waitFor(() => expect(within(filaPancho).getByText('$ 2.454,00', { selector: 'td' })).toBeInTheDocument())
+    expect(screen.getByText('$ 4.727,00', { selector: 'strong' })).toBeInTheDocument()
   })
 
   it('una respuesta vieja con combos no pisa la más reciente sin combos (guarda de generación)', async () => {
@@ -6032,7 +6032,7 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
       mockearEscaneoDeDosArticulos()
       mockearResolverConCombos(() =>
         Promise.resolve({
-          lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 99 } })],
+          lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 1, ahorro: 273, idCombo: 99 } })],
           combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }],
         }),
       )
@@ -6040,9 +6040,9 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
       await armarCarritoConPanchoYCoca()
 
       const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
-      expect(await within(filaCoca).findByText('Pancho + Coca -$ 227,27')).toBeInTheDocument()
+      expect(await within(filaCoca).findByText('Pancho + Coca -$ 227,00')).toBeInTheDocument()
       const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
-      expect(within(filaPancho).getByText('Combos -$ 272,73')).toBeInTheDocument()
+      expect(within(filaPancho).getByText('Combos -$ 273,00')).toBeInTheDocument()
     })
   })
 
@@ -6129,8 +6129,8 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
       // La primera resolución trae el combo; las siguientes quedan colgadas para observar el estado intermedio.
       return resoluciones <= 2
         ? Promise.resolve({
-            lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 2, ahorro: 600, idCombo: 7 } })],
-            combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 827.27 }],
+            lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 2, ahorro: 600, idCombo: 7 } })],
+            combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 827 }],
           })
         : new Promise<ResolucionConCombos>(() => {})
     })
@@ -7012,7 +7012,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
       expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
       const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
-      expect(within(filaPancho).getByText('Pancho + Coca -$ 272,73')).toBeInTheDocument()
+      expect(within(filaPancho).getByText('Pancho + Coca -$ 273,00')).toBeInTheDocument()
       expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument()
     })
 
@@ -7036,16 +7036,16 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       const outbox = await leerOutbox(crearAlmacenIndexedDb())
       expect(outbox).toHaveLength(1)
       expect(outbox[0].solicitud.lineas).toEqual([
-        expect.objectContaining({ idArticulo: 1, precioUnitario: 2500, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227.27, idCombo: 7 }),
-        expect.objectContaining({ idArticulo: 2, precioUnitario: 3000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 272.73, idCombo: 7 }),
+        expect.objectContaining({ idArticulo: 1, precioUnitario: 2500, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227, idCombo: 7 }),
+        expect.objectContaining({ idArticulo: 2, precioUnitario: 3000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 273, idCombo: 7 }),
       ])
 
       const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
       expect(comprobante.total).toBe(5000)
       expect(comprobante.descuentoTotal).toBe(500)
       expect(comprobante.items.map((i) => [i.descuento, i.total, i.idCombo])).toEqual([
-        [227.27, 2272.73, 7],
-        [272.73, 2727.27, 7],
+        [227, 2273, 7],
+        [273, 2727, 7],
       ])
     })
 
@@ -7569,7 +7569,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
             descuentoUnitario: 0,
             aplicadas: [],
             ...(conCombo && (l.idArticulo === PANCHO || l.idArticulo === COCA)
-              ? { combo: { unidadesConsumidas: 1, ahorro: l.idArticulo === PANCHO ? 272.73 : 227.27, idCombo: 70 } }
+              ? { combo: { unidadesConsumidas: 1, ahorro: l.idArticulo === PANCHO ? 273 : 227, idCombo: 70 } }
               : {}),
           })),
           conCombo ? [{ idCombo: 70, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }] : [],

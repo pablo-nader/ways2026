@@ -60,9 +60,9 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
     const pancho = deLinea(r, 0)
     const coca = deLinea(r, 1)
     expect(pancho.unidadesConsumidas).toBe(1)
-    expect(pancho.ahorroDeCombo).toBe(272.73)
+    expect(pancho.ahorroDeCombo).toBe(273)
     expect(coca.unidadesConsumidas).toBe(1)
-    expect(coca.ahorroDeCombo).toBe(227.27)
+    expect(coca.ahorroDeCombo).toBe(227)
     expect(suma([3000 - pancho.ahorroDeCombo, 2500 - coca.ahorroDeCombo])).toBe(5000)
     expect(pancho.idsDeCombo).toEqual([7])
     expect(r.combos).toEqual([{ idCombo: 7, nombre: 'combo 7', veces: 1, ahorro: 500 }])
@@ -86,8 +86,8 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
       [combo(1, 4000, fam(FAMILIA_SNACKS), fam(FAMILIA_BEBIDAS))],
     )
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(277.78)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(222.22)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(278)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(222)
   })
 
   it('un combo de tres componentes reparte por proporción del importe de lista', () => {
@@ -96,8 +96,8 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
       [combo(1, 5000, art(PANCHO), art(COCA), art(SPRITE))],
     )
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(166.67)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(333.33)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(167)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(333)
     expect(deLinea(r, 2).ahorroDeCombo).toBe(500)
   })
 
@@ -107,9 +107,9 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
       [combo(1, 200, art(PANCHO), art(COCA), art(SPRITE))],
     )
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(33.33)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(33.33)
-    expect(deLinea(r, 2).ahorroDeCombo).toBe(33.34)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(33)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(33)
+    expect(deLinea(r, 2).ahorroDeCombo).toBe(34)
     expect(300 - ahorroTotal(r)).toBe(200)
   })
 
@@ -134,9 +134,9 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
     const pancho = deLinea(r, 0)
     const coca = deLinea(r, 1)
     expect(pancho.unidadesConsumidas).toBe(2)
-    expect(pancho.ahorroDeCombo).toBe(545.46)
+    expect(pancho.ahorroDeCombo).toBe(546)
     expect(coca.unidadesConsumidas).toBe(2)
-    expect(coca.ahorroDeCombo).toBe(454.54)
+    expect(coca.ahorroDeCombo).toBe(454)
     expect(r.combos).toHaveLength(1)
     expect(r.combos[0].veces).toBe(2)
     expect(r.combos[0].ahorro).toBe(1000)
@@ -150,7 +150,7 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
 
     const pancho = deLinea(r, 0)
     expect(pancho.unidadesConsumidas).toBe(1)
-    expect(pancho.ahorroDeCombo).toBe(272.73)
+    expect(pancho.ahorroDeCombo).toBe(273)
     expect(r.combos).toHaveLength(1)
     expect(r.combos[0].veces).toBe(1)
   })
@@ -202,16 +202,20 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
     expect(r.lineas.some((l) => l.indice === 1)).toBe(false)
   })
 
-  it('el combo que no es más barato que la oferta no se aplica y si lo es por un centavo sí (compuerta D1)', () => {
+  it('el combo que no es más barato que la oferta no se aplica y si lo es por un peso sí (compuerta D1)', () => {
     const lineas = [linea(0, PANCHO, 3000, { descuentoDeOferta: 1000 }), linea(1, COCA, 2500)]
 
     const empate = resolverCombos(lineas, [combo(1, 4500, art(PANCHO), art(COCA))])
     expect(empate.lineas).toEqual([])
     expect(empate.combos).toEqual([])
 
-    const masBarato = resolverCombos(lineas, [combo(1, 4499.99, art(PANCHO), art(COCA))])
+    const masBarato = resolverCombos(lineas, [combo(1, 4499, art(PANCHO), art(COCA))])
     expect(masBarato.lineas).toHaveLength(2)
-    expect(ahorroTotal(masBarato)).toBe(1000.01)
+    expect(ahorroTotal(masBarato)).toBe(1001)
+
+    const conCentavos = resolverCombos(lineas, [combo(1, 4499.99, art(PANCHO), art(COCA))])
+    expect(conCentavos.lineas).toEqual([])
+    expect(conCentavos.combos).toEqual([])
   })
 
   it('las unidades de la línea fuera del combo conservan su oferta porque solo se consume lo necesario', () => {
@@ -223,12 +227,12 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
     const pancho = deLinea(r, 0)
     const coca = deLinea(r, 1)
     expect(pancho.unidadesConsumidas).toBe(1)
-    expect(pancho.ahorroDeCombo).toBe(381.82)
-    expect(coca.ahorroDeCombo).toBe(318.18)
+    expect(pancho.ahorroDeCombo).toBe(382)
+    expect(coca.ahorroDeCombo).toBe(318)
 
     const descuentoPancho = suma([500 * (2 - pancho.unidadesConsumidas), pancho.ahorroDeCombo])
     const descuentoCoca = coca.ahorroDeCombo
-    expect(descuentoPancho).toBe(881.82)
+    expect(descuentoPancho).toBe(882)
     expect(suma([3000 * 2 - descuentoPancho, 2500 - descuentoCoca])).toBe(4800 + 2500)
   })
 
@@ -281,19 +285,19 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
     expect(r.combos).toHaveLength(1)
     expect(r.combos[0].veces).toBe(conjuntos)
     expect(r.combos[0].ahorro).toBe(250_000_000)
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(136_365_000)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(113_635_000)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(136_500_000)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(113_500_000)
     expect(ahorroTotal(r)).toBe(r.combos[0].ahorro)
   })
 
   it('una línea de precio cero no recibe una parte negativa del redondeo', () => {
     const r = resolverCombos(
       [linea(0, PANCHO, 10), linea(1, COCA, 10), linea(2, SPRITE, 0)],
-      [combo(1, 19.99, art(PANCHO), art(COCA), art(SPRITE))],
+      [combo(1, 19, art(PANCHO), art(COCA), art(SPRITE))],
     )
 
     expect(r.lineas.every((l) => l.ahorroDeCombo >= 0 && l.ahorroDeCombo <= 10)).toBe(true)
-    expect(ahorroTotal(r)).toBe(0.01)
+    expect(ahorroTotal(r)).toBe(1)
     expect(r.lineas.find((l) => l.indice === 2)?.ahorroDeCombo ?? 0).toBe(0)
   })
 
@@ -307,9 +311,10 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
       expect(consumo.ahorroDeCombo).toBeGreaterThanOrEqual(0)
       expect(consumo.ahorroDeCombo).toBeLessThanOrEqual(lineas[consumo.indice].precioLista)
     }
-    // Igualdad exacta como la de C# (decimal): en centavos enteros, sin tolerancia de punto flotante.
+    // Lista 10,01 y combo 0,06: el conjunto cobra 0 y el ahorro es toda la lista. Igualdad exacta como la de C#
+    // (decimal): en centavos enteros, sin tolerancia de punto flotante.
     const centavos = (importe: number) => Math.round(importe * 100)
-    expect(lineas.reduce((a, l) => a + centavos(l.precioLista), 0) - r.lineas.reduce((a, l) => a + centavos(l.ahorroDeCombo), 0)).toBe(6)
+    expect(r.lineas.reduce((a, l) => a + centavos(l.ahorroDeCombo), 0)).toBe(1001)
     for (const consumo of r.lineas) expect(consumo.ahorroDeCombo).toBe(centavos(consumo.ahorroDeCombo) / 100)
   })
 
@@ -406,40 +411,38 @@ describe('motorDeCombos — más allá de los casos de C#', () => {
     expect(resolverCombos(lineas, [combo(2, 5000, ninguno, art(COCA))]).combos).toEqual([])
   })
 
-  it('el redondeo del reparto es exacto en el empate: un medio centavo sube (mitad lejos de cero)', () => {
-    // ahorro 0,03 repartido 50/50 → 0,015 cada uno, que en decimal exacto redondea a 0,02 y deja 0,01 negativo
-    // de resto; el resto se devuelve a la última línea.
-    const r = resolverCombos([linea(0, PANCHO, 1), linea(1, COCA, 1)], [combo(1, 1.97, art(PANCHO), art(COCA))])
+  it('el empate exacto del reparto sube (mitad lejos de cero) y el resto vuelve a la última línea', () => {
+    // cobro 5 sobre 3 + 3 → 2,5 cada una: mitad lejos de cero da 3 a la primera y el resto (−1) deja 2 en la última;
+    // mitad al par daría 2 y 2 con el resto sumado a la última (3).
+    const r = resolverCombos([linea(0, PANCHO, 3), linea(1, COCA, 3)], [combo(1, 5, art(PANCHO), art(COCA))])
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(0.02)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(0.01)
-    expect(ahorroTotal(r)).toBe(0.03)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(0)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(1)
+    expect(ahorroTotal(r)).toBe(1)
   })
 
-  it('con un importe de lista de más de dos decimales la parte redondeada a centavos nunca supera el tope de la línea', () => {
-    // Sin el tope, 0,0150985 redondea a 0,02 y la línea de 0,0151 recibiría más que su importe de lista.
-    const r = resolverCombos([linea(0, PANCHO, 0.0151), linea(1, COCA, 100)], [combo(1, 0.01, art(PANCHO), art(COCA))])
+  it('el precio del combo en medio peso exacto sube al peso (mitad lejos de cero)', () => {
+    const r = resolverCombos([linea(0, PANCHO, 3), linea(1, COCA, 3)], [combo(1, 4.5, art(PANCHO), art(COCA))])
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBeLessThanOrEqual(0.0151)
-    expect(deLinea(r, 1).ahorroDeCombo).toBeLessThanOrEqual(100)
-    expect(redondearImporte(deLinea(r, 0).ahorroDeCombo + deLinea(r, 1).ahorroDeCombo, 4)).toBe(100.0051)
+    expect(ahorroTotal(r)).toBe(1)
+    expect(r.combos[0].ahorro).toBe(1)
   })
 
-  it('el empate exacto del reparto redondea mitad lejos de cero, no mitad al par (0,025 → 0,03)', () => {
-    // ahorro 0,05 repartido 50/50 → 0,025 cada una: mitad lejos de cero da 0,03 a la primera y el resto
-    // (−0,01) deja 0,02 en la última; mitad al par daría 0,02 y 0,03.
-    const r = resolverCombos([linea(0, PANCHO, 1), linea(1, COCA, 1)], [combo(1, 1.95, art(PANCHO), art(COCA))])
+  it('la parte proporcional se recorta al importe de lista hacia abajo al peso de la línea', () => {
+    // 8 sobre 0,9 + 2,2 + 6,9: la proporcional de la primera (0,72) redondea a 1, pero su tope es 0; la partes cobradas son 0, 2 y 6.
+    const r = resolverCombos([linea(0, PANCHO, 0.9), linea(1, COCA, 2.2), linea(2, SPRITE, 6.9)], [combo(1, 8, art(PANCHO), art(COCA), art(SPRITE))])
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(0.03)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(0.02)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(0.9)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(0.2)
+    expect(deLinea(r, 2).ahorroDeCombo).toBe(0.9)
   })
 
   it('un importe en notación exponencial (muy chico) se opera exacto: 1e-7 y 3e-7 con el combo a 2e-7', () => {
     const r = resolverCombos([linea(0, PANCHO, 1e-7), linea(1, COCA, 3e-7)], [combo(1, 2e-7, art(PANCHO), art(COCA))])
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(0)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(2e-7)
-    expect(r.combos[0].ahorro).toBe(2e-7)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(1e-7)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(3e-7)
+    expect(r.combos[0].ahorro).toBe(4e-7)
   })
 
   it('un importe en notación exponencial (muy grande) se opera exacto: 1e21 y 1e21 con el combo a 1,5e21', () => {
@@ -450,14 +453,13 @@ describe('motorDeCombos — más allá de los casos de C#', () => {
     expect(r.combos[0].ahorro).toBe(5e20)
   })
 
-  it('con importes de cuatro decimales el reparto va a centavos y el resto de fracción cae en la última línea', () => {
-    // lista 10,1234 + 20,5678 = 30,6912; combo 25,5 → ahorro 5,1912. Proporcional: 1,7123… → 1,71 y 3,4789… → 3,48;
-    // faltan 0,0012 para sumar el ahorro exacto y los absorbe la última (tope 20,5678).
+  it('con importes de cuatro decimales el cobro se reparte en pesos y el ahorro lleva las fracciones de lista', () => {
+    // lista 10,1234 + 20,5678 = 30,6912; combo 25,5 → cobra 26. Proporcional: 8,5757… → 9 y 17,4242… → 17.
     const r = resolverCombos([linea(0, PANCHO, 10.1234), linea(1, COCA, 20.5678)], [combo(1, 25.5, art(PANCHO), art(COCA))])
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(1.71)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(3.4812)
-    expect(r.combos[0].ahorro).toBe(5.1912)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(1.1234)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(3.5678)
+    expect(r.combos[0].ahorro).toBe(4.6912)
   })
 
   it('una cantidad de línea sobre 2^31−1 queda fuera de la detección y 2^31−1 exacto entra (el límite de int de C#)', () => {
@@ -470,8 +472,9 @@ describe('motorDeCombos — más allá de los casos de C#', () => {
   it('el motor no corta una parte de fracción de centavo: esa guarda vive en quien llama (resolverDocumentoOffline)', () => {
     const r = resolverCombos([linea(0, PANCHO, 0.005), linea(1, COCA, 2)], [combo(1, 1, art(PANCHO), art(COCA))])
 
-    expect(deLinea(r, 0).ahorroDeCombo).toBe(0)
-    expect(deLinea(r, 1).ahorroDeCombo).toBe(1.005)
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(0.005)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(1)
+    expect(r.combos[0].ahorro).toBe(1.005)
   })
 
   it('una cantidad de millones de conjuntos se resuelve en un solo paso, no uno por conjunto', () => {

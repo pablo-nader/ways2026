@@ -4,9 +4,8 @@
  * offline) y el comprobante sintético de una venta offline, para que lo mostrado, lo encolado y lo
  * impreso no puedan diverger; el servidor (`CalculadorDeTotales`) recalcula en decimal y es quien manda.
  */
-import { calcularAjusteManual, calcularTotalesDeLinea, type TotalesDeLinea } from './ajusteManual'
+import { calcularTotalesDeLinea, type TotalesDeLinea } from './ajusteManual'
 import { api } from './cliente'
-import { productoRedondeado, redondearImporte } from '../formato/importes'
 import type { ComboAplicadoEnPrevia, ComboCargableDeApi, ComboDeLinea, ComboListado } from './tipos'
 
 /**
@@ -22,10 +21,9 @@ export function comboVigenteDeLinea<T extends Pick<ComboDeLinea, 'unidadesConsum
 }
 
 /**
- * Totales de una línea con el combo que la consumió, si lo hay: bruto = `cantidad × precioOriginal`;
- * descuento = descuento por oferta de las unidades NO consumidas (`descuentoUnitario × (cantidad −
- * unidadesConsumidas)`, redondeado) más `ahorro` del combo, que ya es un importe de línea; el ajuste manual
- * se aplica sobre el neto que ya incluye el combo. Sin combo es exactamente `calcularTotalesDeLinea`.
+ * Totales de una línea con el combo que la consumió, si lo hay. No tiene fórmula propia: descarta el combo
+ * que ya no vale (`comboVigenteDeLinea`) y delega en `calcularTotalesDeLinea`, que es la única fórmula de
+ * línea (neto en dos términos al peso entero, ajuste manual sobre ese neto).
  */
 export function calcularTotalesDeLineaConCombo(params: {
   cantidad: number
@@ -36,14 +34,7 @@ export function calcularTotalesDeLineaConCombo(params: {
 }): TotalesDeLinea {
   const { combo: comboCrudo, ...resto } = params
   const combo = comboVigenteDeLinea(params.cantidad, comboCrudo)
-  if (!combo) return calcularTotalesDeLinea(resto)
-
-  const bruto = productoRedondeado([params.cantidad, params.precioOriginal])
-  const descuentoDeOferta = productoRedondeado([params.descuentoUnitario, params.cantidad - combo.unidadesConsumidas])
-  const descuento = redondearImporte(descuentoDeOferta + combo.ahorro)
-  const neto = redondearImporte(bruto - descuento)
-  const ajuste = calcularAjusteManual(neto, params.porcentaje)
-  return { bruto, descuento, neto, ajuste, total: redondearImporte(neto + ajuste) }
+  return calcularTotalesDeLinea({ ...resto, unidadesConsumidasPorCombo: combo?.unidadesConsumidas, ahorroDeCombo: combo?.ahorro })
 }
 
 /** Rótulo de un combo aplicado: `Pancho + Coca × 2`; sin el sufijo cuando se aplicó una sola vez. */
