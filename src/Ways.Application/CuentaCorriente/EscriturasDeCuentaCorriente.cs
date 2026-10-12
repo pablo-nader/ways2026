@@ -28,21 +28,37 @@ public static class EscriturasDeCuentaCorriente
     /// barata (mismo criterio que el resto del proyecto), no la única defensa.</summary>
     public static async Task<decimal> ActualizarSaldoClienteAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, decimal importe,
-        CancellationToken ct)
+        CancellationToken ct) =>
+        await ActualizarSaldoAsync(conexion, transaccion, idTenant, idCliente, importe, exigirVivo: false, ct)
+            ?? throw new InvalidOperationException($"No se pudo actualizar el saldo del cliente {idCliente}.");
+
+    /// <summary>Mismo <c>UPDATE</c> que <see cref="ActualizarSaldoClienteAsync"/> con un conjunto más en el
+    /// <c>WHERE</c>: el cliente tiene que seguir vivo (<c>deleted_at IS NULL</c>). Devuelve <c>null</c> si no hay
+    /// fila viva, sin tocar nada. Lo usa el descuento de un pago de personal, que no debe acreditar a un cliente
+    /// dado de baja aunque la baja ocurra entre que se resolvió el vínculo y este statement: la baja de un cliente
+    /// es un <c>UPDATE</c> común de <c>deleted_at</c>, así que este statement la espera y la reevalúa.</summary>
+    public static Task<decimal?> ActualizarSaldoDeClienteVivoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, decimal importe,
+        CancellationToken ct) =>
+        ActualizarSaldoAsync(conexion, transaccion, idTenant, idCliente, importe, exigirVivo: true, ct);
+
+    private static async Task<decimal?> ActualizarSaldoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, decimal importe,
+        bool exigirVivo, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
-            "UPDATE clientes SET saldo = saldo + $1 WHERE id_cliente = $2 AND id_tenant = $3 RETURNING saldo";
+            "UPDATE clientes SET saldo = saldo + $1 WHERE id_cliente = $2 AND id_tenant = $3" +
+            (exigirVivo ? " AND deleted_at IS NULL" : string.Empty) +
+            " RETURNING saldo";
 
         ParametrosDeComando.Agregar(comando, importe);
         ParametrosDeComando.Agregar(comando, idCliente);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException($"No se pudo actualizar el saldo del cliente {idCliente}.");
-
-        return Convert.ToDecimal(resultado);
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null ? null : Convert.ToDecimal(resultado);
     }
 
     /// <summary><c>id_comprobante_venta</c>/<c>id_pago_comprobante</c> nullable per-tipo (design

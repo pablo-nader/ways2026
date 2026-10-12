@@ -212,7 +212,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var idCliente = await CrearClienteConDeudaAsync(ctx, 4000m);
         var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 10000m);
 
-        var respuesta = await PagarAsync(ctx.Supervisor, idPersonal, Cuerpo(
+        var respuesta = await PagarAsync(ctx.Admin, idPersonal, Cuerpo(
             Dia(10), idEmpresa: ctx.IdEmpresa, idPuntoVenta: ctx.IdPuntoVenta, origen: "Tesoreria", descuento: 1500m,
             lineas: [Linea(ctx.IdMedioEfectivo, 2000m), Linea(ctx.IdMedioTarjeta, 500m, "  cup-77 ")],
             detalle: "  adelanto de octubre "));
@@ -320,9 +320,9 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaNoToleraDescuentoYDejaElGastoSinPuntoDeVenta()
+    public async Task UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaDejaElGastoYSuEgresoSinPuntoDeVenta()
     {
-        var ctx = await PrepararAsync(nameof(UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaNoToleraDescuentoYDejaElGastoSinPuntoDeVenta));
+        var ctx = await PrepararAsync(nameof(UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaDejaElGastoYSuEgresoSinPuntoDeVenta));
         var idPersonal = await CrearPersonalAsync(ctx.Admin);
 
         var pago = await CuerpoAsync(
@@ -340,6 +340,23 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var egreso = await abierto.MovimientosTesoreria.SingleAsync();
         Assert.Null(egreso.IdPuntoVenta);
         Assert.Equal(-300m, egreso.Final);
+    }
+
+    [Fact]
+    public async Task UnDescuentoSinPuntoDeVentaSeRechazaConSu400AunConOrigenTesoreriaYNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnDescuentoSinPuntoDeVentaSeRechazaConSu400AunConOrigenTesoreriaYNoEscribeNada));
+        var idCliente = await CrearClienteConDeudaAsync(ctx, 500m);
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 1000m);
+        var antes = await FotoAsync(ctx, idPersonal, idCliente);
+
+        var soloDescuento = await PagarAsync(ctx.Admin, idPersonal, Cuerpo(Dia(), descuento: 100m));
+        var conTesoreria = await PagarAsync(ctx.Admin, idPersonal, Cuerpo(
+            Dia(), idEmpresa: ctx.IdEmpresa, origen: "Tesoreria", descuento: 100m, lineas: [Linea(ctx.IdMedioEfectivo, 50m)]));
+
+        Assert.Equal("pago_personal_punto_venta_requerido", await CodigoAsync(soloDescuento, HttpStatusCode.BadRequest));
+        Assert.Equal("pago_personal_punto_venta_requerido", await CodigoAsync(conTesoreria, HttpStatusCode.BadRequest));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal, idCliente));
     }
 
     [Fact]
@@ -442,18 +459,34 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var ctx = await PrepararAsync(nameof(UnClienteVinculadoDadoDeBajaCuentaComoSinVinculo));
         var idCliente = await CrearClienteConDeudaAsync(ctx, 500m);
         var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 1000m);
-
-        await using (var conexion = new NpgsqlConnection(fixture.OwnerConnectionString))
-        {
-            await conexion.OpenAsync();
-            await using var baja = new NpgsqlCommand("UPDATE clientes SET deleted_at = now() WHERE id_cliente = $1", conexion);
-            baja.Parameters.Add(new NpgsqlParameter { Value = idCliente });
-            Assert.Equal(1, await baja.ExecuteNonQueryAsync());
-        }
+        await DarDeBajaElClienteAsync(idCliente);
+        var antes = await FotoAsync(ctx, idPersonal);
+        var saldoDelClienteAntes = await SaldoDeClienteCrudoAsync(idCliente);
 
         var respuesta = await PagarAsync(ctx.Admin, idPersonal, Cuerpo(Dia(), idPuntoVenta: ctx.IdPuntoVenta, descuento: 100m));
 
         Assert.Equal("personal_sin_cliente_vinculado", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+        Assert.Equal(saldoDelClienteAntes, await SaldoDeClienteCrudoAsync(idCliente));
+    }
+
+    private async Task DarDeBajaElClienteAsync(int idCliente)
+    {
+        await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await conexion.OpenAsync();
+        await using var baja = new NpgsqlCommand("UPDATE clientes SET deleted_at = now() WHERE id_cliente = $1", conexion);
+        baja.Parameters.Add(new NpgsqlParameter { Value = idCliente });
+        Assert.Equal(1, await baja.ExecuteNonQueryAsync());
+    }
+
+    /// <summary>El saldo leído por fuera del filtro de baja lógica: un cliente dado de baja ya no aparece por EF.</summary>
+    private async Task<decimal> SaldoDeClienteCrudoAsync(int idCliente)
+    {
+        await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await conexion.OpenAsync();
+        await using var consulta = new NpgsqlCommand("SELECT saldo FROM clientes WHERE id_cliente = $1", conexion);
+        consulta.Parameters.Add(new NpgsqlParameter { Value = idCliente });
+        return (decimal)(await consulta.ExecuteScalarAsync())!;
     }
 
     [Fact]
@@ -584,6 +617,72 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
     }
 
+    [Fact]
+    public async Task UnaLineaNulaSeRechazaConSu400YNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaLineaNulaSeRechazaConSu400YNoEscribeNada));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
+        var antes = await FotoAsync(ctx, idPersonal);
+
+        var respuesta = await PagarAsync(ctx.Admin, idPersonal, Cuerpo(
+            Dia(), idEmpresa: ctx.IdEmpresa, origen: "Tesoreria", lineas: [null!]));
+
+        Assert.Equal("pago_personal_importe_invalido", await CodigoAsync(respuesta, HttpStatusCode.BadRequest));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+    }
+
+    [Fact]
+    public async Task UnOrigenNumericoFueraDelEnumSeRechazaConSu400YNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnOrigenNumericoFueraDelEnumSeRechazaConSu400YNoEscribeNada));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
+        var antes = await FotoAsync(ctx, idPersonal);
+
+        var respuesta = await PagarAsync(ctx.Admin, idPersonal, new
+        {
+            fecha = Dia(), idEmpresa = ctx.IdEmpresa, idPuntoVenta = ctx.IdPuntoVenta, origenFondos = 7,
+            lineas = new[] { Linea(ctx.IdMedioEfectivo, 10m) }
+        });
+
+        Assert.Equal("pago_personal_origen_invalido", await CodigoAsync(respuesta, HttpStatusCode.BadRequest));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+    }
+
+    /// <summary>Ids REALES de otro tenant (no inventados): el filtro de tenant de cada lookup tiene que
+    /// responder 404 para ellos, igual que para uno inexistente, y el otro tenant no recibe nada.</summary>
+    [Fact]
+    public async Task LaEmpresaElPuntoDeVentaYElMedioDeOtroTenantRespondenSu404YNoEscribenNada()
+    {
+        var ctx = await PrepararAsync(nameof(LaEmpresaElPuntoDeVentaYElMedioDeOtroTenantRespondenSu404YNoEscribenNada));
+        var otro = await PrepararAsync(nameof(LaEmpresaElPuntoDeVentaYElMedioDeOtroTenantRespondenSu404YNoEscribenNada) + "otro");
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
+        await AbrirTurnoAsync(ctx);
+        var antes = await FotoAsync(ctx, idPersonal);
+        var personalDelOtro = await CrearPersonalAsync(otro.Admin, saldoInicial: 700m);
+        var antesDelOtro = await FotoAsync(otro, personalDelOtro);
+        var efectivo = Linea(ctx.IdMedioEfectivo, 10m);
+
+        var casos = new (string Nombre, object Cuerpo)[]
+        {
+            ("empresa ajena", Cuerpo(Dia(), idEmpresa: otro.IdEmpresa, origen: "Tesoreria", lineas: [efectivo])),
+            ("punto de venta ajeno con tesorería", Cuerpo(
+                Dia(), idEmpresa: ctx.IdEmpresa, idPuntoVenta: otro.IdPuntoVenta, origen: "Tesoreria", lineas: [efectivo])),
+            ("punto de venta ajeno con el cajón", Cuerpo(
+                Dia(), idPuntoVenta: otro.IdPuntoVenta, origen: "CajaTurno", lineas: [efectivo])),
+            ("medio de pago ajeno", Cuerpo(
+                Dia(), idEmpresa: ctx.IdEmpresa, origen: "Tesoreria", lineas: [Linea(otro.IdMedioEfectivo, 10m)]))
+        };
+
+        foreach (var (nombre, cuerpo) in casos)
+        {
+            var respuesta = await PagarAsync(ctx.Admin, idPersonal, cuerpo);
+            Assert.True(respuesta.StatusCode == HttpStatusCode.NotFound, $"{nombre}: {respuesta.StatusCode}");
+        }
+
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+        Assert.Equal(antesDelOtro, await FotoAsync(otro, personalDelOtro));
+    }
+
     // ---- autorización y 404 primero ----------------------------------------------------------------
 
     [Fact]
@@ -591,14 +690,58 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     {
         var ctx = await PrepararAsync(nameof(AdminYSupervisorPaganPeroElVendedorYElAnonimoQuedanAfuera));
         var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
-        var cuerpo = Cuerpo(Dia(), idEmpresa: ctx.IdEmpresa, origen: "Tesoreria", lineas: [Linea(ctx.IdMedioEfectivo, 10m)]);
+        await AbrirTurnoAsync(ctx, fondoInicial: 100m);
+        var cuerpo = Cuerpo(Dia(), idPuntoVenta: ctx.IdPuntoVenta, origen: "CajaTurno", lineas: [Linea(ctx.IdMedioEfectivo, 10m)]);
 
         await CuerpoAsync(await PagarAsync(ctx.Admin, idPersonal, cuerpo), HttpStatusCode.Created);
-        await CuerpoAsync(await PagarAsync(ctx.Supervisor, idPersonal, cuerpo), HttpStatusCode.Created);
+        var delSupervisor = await CuerpoAsync(await PagarAsync(ctx.Supervisor, idPersonal, cuerpo), HttpStatusCode.Created);
+        Assert.Equal(980m, delSupervisor.GetProperty("saldoResultante").GetDecimal());
         Assert.Equal(HttpStatusCode.Forbidden, (await PagarAsync(ctx.Vendedor, idPersonal, cuerpo)).StatusCode);
 
         using var anonimo = fixture.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await PagarAsync(anonimo, idPersonal, cuerpo)).StatusCode);
+    }
+
+    /// <summary>Pagar de la tesorería es de Admin, igual que <c>/api/gastos/administracion</c>: el Supervisor
+    /// paga del cajón o descuenta de la cuenta corriente, pero no del fondo de la empresa. Los dos Supervisor
+    /// de tesorería van con un cuerpo que además es inválido (sin fecha / sin empresa) para fijar que el 403 se
+    /// decide antes que cualquier 400 que dependa del cuerpo.</summary>
+    [Fact]
+    public async Task ElSupervisorNoPagaDeLaTesoreriaPeroElAdminSiYElSupervisorSiDescuentaYPagaDelCajon()
+    {
+        var ctx = await PrepararAsync(nameof(ElSupervisorNoPagaDeLaTesoreriaPeroElAdminSiYElSupervisorSiDescuentaYPagaDelCajon));
+        var idCliente = await CrearClienteConDeudaAsync(ctx, 1000m);
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 5000m);
+        await AbrirTurnoAsync(ctx, fondoInicial: 100m);
+        var antes = await FotoAsync(ctx, idPersonal, idCliente);
+        var tesoreria = Cuerpo(
+            Dia(), idEmpresa: ctx.IdEmpresa, origen: "Tesoreria", descuento: 100m, idPuntoVenta: ctx.IdPuntoVenta,
+            lineas: [Linea(ctx.IdMedioEfectivo, 10m)]);
+
+        foreach (var cuerpo in new[]
+        {
+            tesoreria,
+            Cuerpo(null, origen: "Tesoreria", lineas: [Linea(ctx.IdMedioEfectivo, 10m)]),
+            Cuerpo(Dia(), origen: "Tesoreria", lineas: [Linea(ctx.IdMedioEfectivo, 10m)])
+        })
+        {
+            Assert.Equal("prohibido", await CodigoAsync(await PagarAsync(ctx.Supervisor, idPersonal, cuerpo), HttpStatusCode.Forbidden));
+        }
+
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal, idCliente));
+
+        await CuerpoAsync(await PagarAsync(ctx.Admin, idPersonal, tesoreria), HttpStatusCode.Created);
+
+        var soloDescuento = await CuerpoAsync(
+            await PagarAsync(ctx.Supervisor, idPersonal, Cuerpo(Dia(), idPuntoVenta: ctx.IdPuntoVenta, descuento: 200m)),
+            HttpStatusCode.Created);
+        Assert.Equal(4690m, soloDescuento.GetProperty("saldoResultante").GetDecimal());
+
+        var delCajon = await CuerpoAsync(
+            await PagarAsync(ctx.Supervisor, idPersonal, Cuerpo(
+                Dia(), idPuntoVenta: ctx.IdPuntoVenta, origen: "CajaTurno", lineas: [Linea(ctx.IdMedioEfectivo, 30m)])),
+            HttpStatusCode.Created);
+        Assert.Equal(4660m, delCajon.GetProperty("saldoResultante").GetDecimal());
     }
 
     [Fact]
@@ -815,6 +958,47 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(antes with { SaldoDelCliente = 200m }, despues);
     }
 
+    /// <summary>Cláusula bajo prueba: el <c>deleted_at IS NULL</c> del <c>UPDATE</c> atómico del cliente. Una baja
+    /// lógica del cliente vinculado sin comitear hace esperar al pago en esa fila; cuando la baja comitea, el
+    /// <c>UPDATE</c> se reevalúa y no encuentra fila viva. Cualquier lectura previa vería al cliente vivo (la baja
+    /// todavía no comiteó), así que solo el predicado del <c>UPDATE</c> puede rechazar el pago.</summary>
+    [Fact]
+    public async Task UnClienteQueSeDaDeBajaMientrasElPagoEsperaSuFilaNoRecibeElDescuentoYTodoRevierte()
+    {
+        var ctx = await PrepararAsync(nameof(UnClienteQueSeDaDeBajaMientrasElPagoEsperaSuFilaNoRecibeElDescuentoYTodoRevierte));
+        var idCliente = await CrearClienteConDeudaAsync(ctx, 1000m);
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 3000m);
+        var antes = await FotoAsync(ctx, idPersonal);
+        var saldoDelClienteAntes = await SaldoDeClienteCrudoAsync(idCliente);
+        Assert.Equal(1000m, saldoDelClienteAntes);
+
+        await using var conexionEscritor = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var pidEscritor = await BackendPidAsync(conexionEscritor);
+        await using var transaccionEscritor = await conexionEscritor.BeginTransactionAsync();
+        await using (var darDeBaja = new NpgsqlCommand(
+            "UPDATE clientes SET deleted_at = now() WHERE id_cliente = $1", conexionEscritor, transaccionEscritor))
+        {
+            darDeBaja.Parameters.AddWithValue(idCliente);
+            Assert.Equal(1, await darDeBaja.ExecuteNonQueryAsync());
+        }
+
+        var pagoTask = PagarAsync(ctx.Admin, idPersonal, Cuerpo(
+            Dia(), idEmpresa: ctx.IdEmpresa, idPuntoVenta: ctx.IdPuntoVenta, origen: "Tesoreria", descuento: 500m,
+            lineas: [Linea(ctx.IdMedioEfectivo, 100m)]));
+
+        await using var conexionPoll = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var pidPoll = await BackendPidAsync(conexionPoll);
+        Assert.True(
+            await EsperarBackendBloqueadoAsync(conexionPoll, pidEscritor, pidPoll),
+            "El pago nunca se observó esperando un lock: la prueba no está probando la carrera.");
+
+        await transaccionEscritor.CommitAsync();
+
+        Assert.Equal("personal_sin_cliente_vinculado", await CodigoAsync(await pagoTask, HttpStatusCode.Conflict));
+        Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
+        Assert.Equal(saldoDelClienteAntes, await SaldoDeClienteCrudoAsync(idCliente));
+    }
+
     [Fact]
     public async Task PagosConcurrentesDelMismoPersonalDejanLosSaldosExactosYLasCadenasConsistentes()
     {
@@ -989,9 +1173,14 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(baja, HttpStatusCode.Conflict));
         }
 
-        // La edición del POS exige el turno abierto: el gasto del cajón lo cumple y aun así se rechaza por su vínculo.
-        var edicionPos = await ctx.Admin.PutAsJsonAsync($"/api/gastos/{idDelCajon}", EdicionValida(ctx));
-        Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(edicionPos, HttpStatusCode.Conflict));
+        // La edición del POS exige el turno abierto: el gasto del cajón lo cumple y aun así se rechaza por su vínculo;
+        // el de tesorería no tiene turno, y el código tiene que seguir siendo el del vínculo y no gasto_turno_cerrado
+        // (la guarda va antes de la comprobación del turno).
+        foreach (var id in new[] { idDelCajon, idDeTesoreria })
+        {
+            var edicionPos = await ctx.Admin.PutAsJsonAsync($"/api/gastos/{id}", EdicionValida(ctx));
+            Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(edicionPos, HttpStatusCode.Conflict));
+        }
 
         Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
         await using (var abierto = Abrir(ctx))
@@ -1012,6 +1201,60 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(
             HttpStatusCode.OK, (await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{idComun}", EdicionValida(ctx))).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idComun}")).StatusCode);
+    }
+
+    /// <summary>El cliente no puede adivinar qué gastos van a responder 409 <c>gasto_de_pago_de_personal</c>: los
+    /// listados del POS y de administración, y el detalle administrativo, traen <c>idMovimientoPersonal</c>. Un
+    /// gasto común lo trae en <c>null</c>.</summary>
+    [Fact]
+    public async Task LosListadosDeGastosExponenElVinculoConElPagoYUnGastoComunLoTraeNulo()
+    {
+        var ctx = await PrepararAsync(nameof(LosListadosDeGastosExponenElVinculoConElPagoYUnGastoComunLoTraeNulo));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
+        var (idDeTesoreria, idDelCajon) = await PagarYObtenerGastosAsync(ctx, idPersonal);
+
+        var comunDeAdministracion = await CuerpoAsync(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/gastos/administracion",
+                new SolicitudDeGastoDeAdministracion(
+                    FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaGasto.Otros, null, null, "Gasto común", null,
+                    ctx.IdMedioEfectivo, null, 20m)),
+            HttpStatusCode.Created);
+        var idComunDeAdministracion = comunDeAdministracion.GetProperty("id").GetInt32();
+        var comunDelPos = await CuerpoAsync(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/gastos",
+                new SolicitudDeGasto(
+                    ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto común del POS", null, ctx.IdMedioEfectivo, null, 15m)),
+            HttpStatusCode.Created);
+        var idComunDelPos = comunDelPos.GetProperty("id").GetInt32();
+
+        int idAsientoDeTesoreria;
+        int idAsientoDelCajon;
+        await using (var abierto = Abrir(ctx))
+        {
+            idAsientoDeTesoreria = await abierto.Gastos.Where(g => g.Id == idDeTesoreria).Select(g => g.IdMovimientoPersonal!.Value).SingleAsync();
+            idAsientoDelCajon = await abierto.Gastos.Where(g => g.Id == idDelCajon).Select(g => g.IdMovimientoPersonal!.Value).SingleAsync();
+        }
+
+        Assert.NotEqual(idAsientoDeTesoreria, idAsientoDelCajon);
+
+        var administracion = await CuerpoAsync(
+            await ctx.Admin.GetAsync($"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}&tamanio=50"), HttpStatusCode.OK);
+        var filas = administracion.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("id").GetInt32());
+        Assert.Equal(idAsientoDeTesoreria, filas[idDeTesoreria].GetProperty("idMovimientoPersonal").GetInt32());
+        Assert.Equal(idAsientoDelCajon, filas[idDelCajon].GetProperty("idMovimientoPersonal").GetInt32());
+        Assert.Equal(JsonValueKind.Null, filas[idComunDeAdministracion].GetProperty("idMovimientoPersonal").ValueKind);
+
+        var detalle = await CuerpoAsync(
+            await ctx.Admin.GetAsync($"/api/gastos/administracion/{idDeTesoreria}"), HttpStatusCode.OK);
+        Assert.Equal(idAsientoDeTesoreria, detalle.GetProperty("idMovimientoPersonal").GetInt32());
+
+        var delPos = await CuerpoAsync(
+            await ctx.Admin.GetAsync($"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}&tamanio=50"), HttpStatusCode.OK);
+        var filasDelPos = delPos.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("id").GetInt32());
+        Assert.Equal(idAsientoDelCajon, filasDelPos[idDelCajon].GetProperty("idMovimientoPersonal").GetInt32());
+        Assert.Equal(JsonValueKind.Null, filasDelPos[idComunDelPos].GetProperty("idMovimientoPersonal").ValueKind);
     }
 
     [Fact]

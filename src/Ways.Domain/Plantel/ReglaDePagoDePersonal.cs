@@ -27,8 +27,15 @@ public static class ReglaDePagoDePersonal
     public const int LongitudMaximaDeReferencia = 100;
 
     public static PlanDePagoDePersonal Planificar(
-        decimal? descuento, IReadOnlyList<LineaDePagoDePersonal>? lineas, OrigenFondosGasto? origenFondos, string? detalle)
+        decimal? descuento, IReadOnlyList<LineaDePagoDePersonal?>? lineas, OrigenFondosGasto? origenFondos, string? detalle)
     {
+        // El binder acepta cualquier entero para un enum: un valor sin nombre se rechaza antes que nada, porque
+        // ninguna otra regla ni el servicio saben qué hacer con él.
+        if (origenFondos is { } origenPedido && !Enum.IsDefined(origenPedido))
+        {
+            throw new ErrorDominio("pago_personal_origen_invalido", "El origen de los fondos indicado no existe.", 400);
+        }
+
         lineas ??= [];
 
         if (descuento is null && lineas.Count == 0)

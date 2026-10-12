@@ -50,6 +50,7 @@ public class EscriturasDeCuentaCorrienteTests
 
         Assert.Contains("ActualizacionPrecios", excepcion.Message);
     }
+
     [Fact]
     public async Task UnDescuentoDePersonalSoloSeEscribePorSuPropioMetodo()
     {

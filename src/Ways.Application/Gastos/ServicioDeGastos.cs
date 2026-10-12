@@ -948,7 +948,8 @@ public class ServicioDeGastos(
             g.Importe,
             g.OrigenFondos,
             g.IdComprobanteCompra,
-            g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto));
+            g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto),
+            g.IdMovimientoPersonal);
 
     // ---- validación de dominio -------------------------------------------------------------
 

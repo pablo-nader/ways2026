@@ -7,7 +7,9 @@ using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Gastos;
 using Ways.Domain.Common;
+using Ways.Domain.Gastos;
 using Ways.Domain.Plantel;
+using Ways.Domain.Usuarios;
 
 namespace Ways.Application.Plantel;
 
@@ -15,8 +17,9 @@ namespace Ways.Application.Plantel;
 /// Pago a un empleado en una sola transacción: un asiento <c>pago</c> en el libro del personal (la cabecera),
 /// el descuento opcional de la cuenta corriente del cliente vinculado, y un gasto de sueldos por cada línea de
 /// dinero, con su egreso de tesorería o su impacto en el arqueo del turno según el origen elegido en cada pago.
-/// La autorización (<c>GestionDeCuentaDePersonal</c>) se aplica en la capa de API. Un personal inexistente, dado
-/// de baja o de otro tenant responde 404 antes de validar el cuerpo.
+/// La autorización (<c>GestionDeCuentaDePersonal</c>: Admin y Supervisor) se aplica en la capa de API; además,
+/// el origen tesorería es solo de Admin y se rechaza acá con 403. Un personal inexistente, dado de baja o de
+/// otro tenant responde 404 antes de validar el cuerpo.
 ///
 /// Forma (b) de ef-retry-safe-writes: <see cref="FabricaDeEstrategiaSinReintento"/>, porque el pago no tiene
 /// clave de idempotencia y un reintento sobre un commit ambiguo pagaría dos veces.
@@ -24,7 +27,8 @@ namespace Ways.Application.Plantel;
 /// Orden de locks, en este orden y sin excepciones:
 /// 1) turno <c>FOR SHARE</c> (solo origen cajón; mismo primer statement que el alta de gasto del POS) →
 /// 2) fila del personal (<c>UPDATE ... RETURNING</c>, que también lee el cliente vinculado bajo el lock) →
-/// 3) fila del cliente (<c>UPDATE ... RETURNING</c>, solo con descuento) →
+/// 3) fila del cliente (<c>UPDATE ... RETURNING</c> que además exige <c>deleted_at IS NULL</c>, solo con descuento;
+///    sin fila viva responde 409 <c>personal_sin_cliente_vinculado</c> y todo el pago se revierte) →
 /// 4) inserts sin lock explícito: asiento del personal, asiento de cuenta corriente y gastos →
 /// 5) advisory de tesorería de la empresa, ÚLTIMO (solo origen tesorería).
 /// Sin ciclo con los escritores existentes: el alta de gasto, el pago de una compra y el cierre de turno usan
@@ -32,8 +36,11 @@ namespace Ways.Application.Plantel;
 /// turno, gasto, proveedor y advisory, y nunca lockean un gasto de este pago porque lo rechazan antes de los
 /// locks; las ventas y los pagos a cuenta toman turno y después el cliente, que acá viene después del turno;
 /// la carga de horas, el ajuste y la baja del personal solo lockean la fila del personal, que acá es el primer
-/// lock de fila; y ningún escritor toma la fila del cliente y después la del personal (la baja de un cliente
-/// lockea el cliente y consulta sus referencias sin lockear el personal). Dos pagos al mismo personal se
+/// lock de fila; y ningún escritor toma la fila del cliente y después la del personal (la baja de un cliente,
+/// <c>ServicioDeClientes.EliminarAsync</c>, es una baja lógica común: no toma lock explícito ni consulta
+/// referencias, y solo escribe la fila del cliente). Como esa baja no está serializada con el pago por ningún lock
+/// propio, el pago no confía en una lectura previa del cliente: el predicado <c>deleted_at IS NULL</c> del
+/// <c>UPDATE</c> atómico espera la baja en curso y la reevalúa. Dos pagos al mismo personal se
 /// serializan en el paso 2; dos pagos de personales distintos no comparten filas y solo se cruzan en el
 /// advisory, que ambos toman al final.
 /// </summary>
@@ -51,6 +58,14 @@ public sealed class ServicioDePagoDePersonal(
             .FirstOrDefaultAsync(ct)
             ?? throw SinPersonal(idPersonal);
 
+        // Pagar de la tesorería es de Admin, igual que el alta administrativa de gastos
+        // (GestionDeCatalogo): el Supervisor de GestionDeCuentaDePersonal paga del cajón o descuenta de la cuenta
+        // corriente. Se decide con el origen pedido y antes de cualquier 400 que dependa del resto del cuerpo.
+        if (solicitud.OrigenFondos == OrigenFondosGasto.Tesoreria && contexto.Rol != RolConocido.Admin)
+        {
+            throw ErrorDominio.Prohibido("Pagar de la tesorería requiere un administrador.");
+        }
+
         if (solicitud.Fecha is not { } fecha || fecha == default)
         {
             throw new ErrorDominio("fecha_requerida", "La fecha del pago es obligatoria.", 400);
@@ -58,7 +73,7 @@ public sealed class ServicioDePagoDePersonal(
 
         var plan = ReglaDePagoDePersonal.Planificar(
             solicitud.DescuentoDeCuentaCorriente,
-            solicitud.Lineas?.Select(l => new LineaDePagoDePersonal(l.IdMedioPago, l.Importe, l.Referencia)).ToList(),
+            solicitud.Lineas?.Select(l => l is null ? null : new LineaDePagoDePersonal(l.IdMedioPago, l.Importe, l.Referencia)).ToList(),
             solicitud.OrigenFondos,
             solicitud.Detalle);
         ReglaDePagoDePersonal.ExigirUbicacion(plan, solicitud.IdEmpresa, solicitud.IdPuntoVenta);
@@ -97,11 +112,13 @@ public sealed class ServicioDePagoDePersonal(
         var saldoDelCliente = 0m;
         if (plan.DescuentoDeCuentaCorriente is { } descuento)
         {
-            idCliente = await ExigirClienteVinculadoVivoAsync(personal.IdCliente, ct);
-
-            // La deuda se decide sobre el saldo que devuelve el UPDATE atómico, nunca sobre una lectura previa.
-            saldoDelCliente = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
-                conexion, transaccionCruda, idTenant, idCliente, -descuento, ct);
+            // El vínculo se leyó bajo el lock del personal; que el cliente siga vivo y la deuda alcance se deciden
+            // sobre lo que devuelve el UPDATE atómico, nunca sobre una lectura previa. Sin fila viva, el pago
+            // entero se revierte.
+            idCliente = personal.IdCliente ?? throw SinClienteVinculado();
+            saldoDelCliente = await EscriturasDeCuentaCorriente.ActualizarSaldoDeClienteVivoAsync(
+                conexion, transaccionCruda, idTenant, idCliente, -descuento, ct)
+                ?? throw SinClienteVinculado();
 
             if (saldoDelCliente < 0m)
             {
@@ -139,19 +156,11 @@ public sealed class ServicioDePagoDePersonal(
             plan.Detalle, momento, new DesgloseDePago(plan.DescuentoDeCuentaCorriente, lineas));
     }
 
-    /// <summary>El vínculo se lee bajo el lock de la fila del personal (paso 2), así que no cambia hasta el
-    /// commit. Un cliente dado de baja se trata como sin vincular.</summary>
-    private async Task<int> ExigirClienteVinculadoVivoAsync(int? idCliente, CancellationToken ct)
-    {
-        if (idCliente is { } id && await db.Clientes.AnyAsync(c => c.Id == id, ct))
-        {
-            return id;
-        }
-
-        throw ErrorDominio.Conflicto(
+    /// <summary>Un cliente dado de baja se trata como sin vincular.</summary>
+    private static ErrorDominio SinClienteVinculado() =>
+        ErrorDominio.Conflicto(
             "personal_sin_cliente_vinculado",
             "El personal no tiene un cliente vinculado para descontar de su cuenta corriente.");
-    }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {

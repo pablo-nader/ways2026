@@ -187,6 +187,18 @@ public class ReglaDePagoDePersonalTests
         Assert.Equal("pago_personal_importe_invalido", error.Codigo);
     }
 
+    [Theory]
+    [InlineData(7, true)]
+    [InlineData(-1, true)]
+    [InlineData(2, false)]
+    public void UnOrigenFueraDelEnumSeRechazaConSuPropioCodigoAntesQueCualquierOtraRegla(int valor, bool conLineas)
+    {
+        var error = Rechazo(null, conLineas ? [Linea(10m)] : [], (OrigenFondosGasto)valor);
+
+        Assert.Equal("pago_personal_origen_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
     private static PlanDePagoDePersonal Plan(decimal? descuento, OrigenFondosGasto? origen) =>
         ReglaDePagoDePersonal.Planificar(descuento, origen is null ? [] : [Linea(10m)], origen, null);
 

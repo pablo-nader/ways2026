@@ -2408,7 +2408,9 @@ que hoy, pero auditable.
 > y los CHECK que lo nombran están en dos migraciones (`PagoDePersonal` y `ChecksDelDescuentoDePersonal`):
 > Postgres no deja usar un valor de enum en la transacción que lo agregó. `EscriturasDeCuentaCorriente`
 > lo escribe con su propio método (`InsertarDescuentoDePersonalAsync`); el estado de cuenta del cliente lo
-> devuelve como un movimiento más (`tipo = DescuentoPersonal`, `etiqueta` nula), sin cambios de contrato.
+> devuelve como un movimiento más (`tipo = DescuentoPersonal`, `etiqueta` nula). El contrato sí cambia: `tipo`
+> gana ese valor, así que el web lo declara en `TipoMovimientoCc` y lo etiqueta "Descuento de personal"
+> (`etiquetaDeMovimiento`); un cliente que no conozca el valor mostraría el tipo vacío.
 >
 > **Deviación declarada — fracción financiada:** la reliquidación re-precifica solo la porción
 > del comprobante que quedó fiada (`factor = min(1, importeFinanciado / totalComprobante)`), no
@@ -2558,12 +2560,19 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > `ak_movimientos_personal_id_movimiento_id_tenant`, destino de las FKs compuestas que siguen.
 >
 > **Pago de personal** (`POST /api/personal/{id}/pagos`, `GestionDeCuentaDePersonal`: Admin y Supervisor).
-> El asiento `pago` es la cabecera: no hay tabla de cabecera aparte. En UNA transacción sin reintento
+> **Pagar de la tesorería es solo de Admin**, como el alta administrativa de gastos (`/api/gastos/administracion`,
+> `GestionDeCatalogo`): un Supervisor que manda `origenFondos = Tesoreria` recibe 403 `prohibido`, decidido
+> después del 404 del personal y antes de cualquier otro 400 del cuerpo y de cualquier escritura. El Supervisor
+> sí paga del cajón (`CajaTurno`) y descuenta de la cuenta corriente. El asiento `pago` es la cabecera: no hay tabla de cabecera aparte. En UNA transacción sin reintento
 > (`ServicioDePagoDePersonal`) escribe: el asiento `pago` con `importe = −(descuento + suma de líneas)`
 > (el saldo puede quedar negativo: es un adelanto); a lo sumo un movimiento `descuento_personal` en la cuenta
 > corriente del cliente vinculado al personal (§8), que baja su deuda y se rechaza si el personal no tiene
 > un cliente vivo vinculado (409 `personal_sin_cliente_vinculado`) o si el saldo que devuelve el `UPDATE`
-> atómico del cliente queda negativo (409 `descuento_supera_la_deuda`); y un gasto de categoría `sueldos`
+> atómico del cliente queda negativo (409 `descuento_supera_la_deuda`). Ese `UPDATE` exige además
+> `deleted_at IS NULL`: la baja de un cliente (`ServicioDeClientes.EliminarAsync`) es una baja lógica común, sin
+> lock explícito ni chequeo de referencias, así que no está serializada con el pago; si el cliente se da de baja
+> mientras el pago espera su fila, el `UPDATE` reevalúa y no devuelve fila, y el pago responde 409
+> `personal_sin_cliente_vinculado` y se revierte entero. Además del descuento, el pago escribe un gasto de categoría `sueldos`
 > por cada línea de dinero (`{ idMedioPago, importe, referencia? }`, la referencia queda en `gastos.detalle`).
 > El origen de los fondos se elige en cada pago (`origenFondos`, obligatorio con líneas y rechazado sin
 > ellas): `Tesoreria` no usa turno, admite fecha retroactiva (nunca futura, en la zona de la empresa), pide
@@ -2580,7 +2589,10 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > escribe solo al insertar. **Un gasto con `id_movimiento_personal` es inmutable:** la edición del POS,
 > la edición y la baja administrativas y la vinculación posterior a una compra lo rechazan con 409
 > `gasto_de_pago_de_personal`, después del 404, porque tocarlo desalinearía los cuatro libros del pago.
-> Anular o revertir un pago todavía no existe. El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
+> Para que un cliente sepa de antemano qué gastos responderán así, los listados del POS (`GET /api/gastos`, el
+> detalle del turno) y de administración (`GET /api/gastos/administracion` y su detalle) traen
+> `idMovimientoPersonal` (nulo en un gasto común) y el web deshabilita en esos gastos la edición, la baja y la
+> vinculación a una compra. Anular o revertir un pago todavía no existe. El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
 > en cada movimiento `pago` su `desglose`: el descuento y una línea por gasto (medio, importe, origen,
 > referencia).
 >
