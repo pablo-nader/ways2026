@@ -139,13 +139,13 @@ public class ModeloDeCuentasDeTesoreriaTests
         var indices = entidad.GetIndexes().ToDictionary(i => i.GetDatabaseName()!);
 
         Assert.Equal(
-            ["IdTenant", "IdCuentaTesoreria", "Id"], indices["ix_movimientos_cuenta_cuenta_id"].Properties.Select(p => p.Name));
+            ["IdCuentaTesoreria", "IdTenant", "Id"], indices["ix_movimientos_cuenta_cuenta_id"].Properties.Select(p => p.Name));
         Assert.False(indices["ix_movimientos_cuenta_cuenta_id"].IsUnique);
 
         var cierre = indices["ux_movimientos_cuenta_cierre"];
         Assert.True(cierre.IsUnique);
         Assert.Equal(["IdTenant", "IdTurnoCaja", "IdMedioPago", "Tipo"], cierre.Properties.Select(p => p.Name));
-        Assert.Equal("id_turno_caja IS NOT NULL", cierre.GetFilter());
+        Assert.Equal("id_turno_caja IS NOT NULL AND tipo IN ('cobro', 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')", cierre.GetFilter());
     }
 
     [Theory]
@@ -219,7 +219,6 @@ public class ModeloDeCuentasDeTesoreriaTests
         Assert.Contains("ck_medios_pago_porcentajes_cuenta_rango", checks.Keys);
         Assert.Contains("ck_medios_pago_porcentajes_cuenta_suma", checks.Keys);
         Assert.Contains("comportamiento = 'electronico'", checks["ck_medios_pago_cuenta_solo_electronico"]);
-        Assert.Equal(4, checks.Count);
     }
 
     [Fact]

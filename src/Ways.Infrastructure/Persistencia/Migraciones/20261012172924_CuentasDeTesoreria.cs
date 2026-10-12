@@ -235,17 +235,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             migrationBuilder.CreateIndex(
                 name: "ix_movimientos_cuenta_cuenta_id",
                 table: "movimientos_cuenta",
-                columns: new[] { "id_tenant", "id_cuenta_tesoreria", "id_movimiento_cuenta" });
+                columns: new[] { "id_cuenta_tesoreria", "id_tenant", "id_movimiento_cuenta" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_movimientos_cuenta_empleado",
                 table: "movimientos_cuenta",
                 column: "id_empleado");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_movimientos_cuenta_id_cuenta_tesoreria_id_tenant",
-                table: "movimientos_cuenta",
-                columns: new[] { "id_cuenta_tesoreria", "id_tenant" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_movimientos_cuenta_medio_pago",
@@ -267,7 +262,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 table: "movimientos_cuenta",
                 columns: new[] { "id_tenant", "id_turno_caja", "id_medio_pago", "tipo" },
                 unique: true,
-                filter: "id_turno_caja IS NOT NULL");
+                filter: "id_turno_caja IS NOT NULL AND tipo IN ('cobro', 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')");
 
             migrationBuilder.AddForeignKey(
                 name: "fk_medios_pago_cuenta_tesoreria",

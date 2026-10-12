@@ -15,8 +15,10 @@ public class CuentaTesoreria : EntidadTenant
 
     public required string Nombre { get; set; }
 
-    /// <summary>Saldo con el que la cuenta entra al sistema; el saldo actual es este valor más lo
-    /// que acumulan sus <see cref="MovimientoCuenta"/>.</summary>
+    /// <summary>Punto de partida de la cadena: el <c>Inicio</c> del primer <see cref="MovimientoCuenta"/>
+    /// es igual a este valor. El saldo actual es el <c>Final</c> del último movimiento, o este valor si
+    /// la cuenta no tiene movimientos; nunca se suma a los movimientos. No se modifica una vez que la
+    /// cuenta tiene movimientos (lo exige el servicio de cuentas).</summary>
     public decimal SaldoInicial { get; set; }
 
     public bool Activo { get; set; } = true;

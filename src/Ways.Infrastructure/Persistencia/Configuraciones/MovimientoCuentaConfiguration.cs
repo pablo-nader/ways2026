@@ -54,8 +54,9 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
 
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_cuenta_tenant");
 
-        // Soporta la lectura de la cola de la cadena (último id por cuenta) y el libro de la cuenta.
-        builder.HasIndex(m => new { m.IdTenant, m.IdCuentaTesoreria, m.Id })
+        // Índice de soporte de la FK compuesta a la cuenta (columnas de la FK primero, como
+        // ix_movimientos_tesoreria_empresa_id) y de la lectura de la cola de la cadena y del libro.
+        builder.HasIndex(m => new { m.IdCuentaTesoreria, m.IdTenant, m.Id })
             .HasDatabaseName("ix_movimientos_cuenta_cuenta_id");
 
         // Índices de soporte de FK (evitan el índice implícito PascalCase de EF).
@@ -63,11 +64,12 @@ public class MovimientoCuentaConfiguration : IEntityTypeConfiguration<Movimiento
         builder.HasIndex(m => new { m.IdMedioPago, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_medio_pago");
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_cuenta_empleado");
 
-        // Respaldo de idempotencia de las filas del cierre de turno: un turno no puede escribir dos
-        // veces el mismo tipo para el mismo medio de pago.
+        // Respaldo de idempotencia de las filas que escribe el cierre de turno (cobro, comisión y
+        // retenciones): un turno no puede escribir dos veces el mismo tipo para el mismo medio de pago.
+        // Un ajuste o una transferencia con turno queda fuera del índice.
         builder.HasIndex(m => new { m.IdTenant, m.IdTurnoCaja, m.IdMedioPago, m.Tipo })
             .HasDatabaseName("ux_movimientos_cuenta_cierre")
-            .HasFilter("id_turno_caja IS NOT NULL")
+            .HasFilter("id_turno_caja IS NOT NULL AND tipo IN ('cobro', 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')")
             .IsUnique();
 
         builder.HasOne<Tenant>()

@@ -91,8 +91,9 @@ internal static class SiembraDeCuentasHelper
             turnoA.Id, turnoA2.Id, turnoB.Id, medioA.Id, medioA2.Id, medioB.Id);
     }
 
-    /// <summary>Comando como <c>ways_app</c> (NOBYPASSRLS) con el GUC de tenant puesto a mano.</summary>
-    public static async Task<NpgsqlCommand> ComandoAsync(
+    /// <summary>Comando como <c>ways_app</c> (NOBYPASSRLS) con el GUC de tenant puesto a mano; al
+    /// liberarlo se cierra también la conexión que abrió.</summary>
+    public static async Task<ComandoDeSiembra> ComandoAsync(
         WaysApiFixture fixture, int idTenant, string sql, params object[] parametros)
     {
         var conexion = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
@@ -102,7 +103,22 @@ internal static class SiembraDeCuentasHelper
         {
             comando.Parameters.Add(new NpgsqlParameter { Value = valor });
         }
-        return comando;
+        return new ComandoDeSiembra(conexion, comando);
+    }
+}
+
+internal sealed class ComandoDeSiembra(NpgsqlConnection conexion, NpgsqlCommand comando) : IAsyncDisposable
+{
+    public NpgsqlParameterCollection Parameters => comando.Parameters;
+
+    public Task<int> ExecuteNonQueryAsync() => comando.ExecuteNonQueryAsync();
+
+    public Task<object?> ExecuteScalarAsync() => comando.ExecuteScalarAsync();
+
+    public async ValueTask DisposeAsync()
+    {
+        await comando.DisposeAsync();
+        await conexion.DisposeAsync();
     }
 }
 
@@ -117,10 +133,10 @@ public class CuentasTesoreriaEsquemaTests(WaysApiFixture fixture) : IClassFixtur
 {
     private Task<SiembraDeCuentas> SembrarAsync(string nombre) => SiembraDeCuentasHelper.SembrarAsync(fixture, nombre);
 
-    private Task<NpgsqlCommand> ComandoAsync(int idTenant, string sql, params object[] parametros) =>
+    private Task<ComandoDeSiembra> ComandoAsync(int idTenant, string sql, params object[] parametros) =>
         SiembraDeCuentasHelper.ComandoAsync(fixture, idTenant, sql, parametros);
 
-    private Task<NpgsqlCommand> InsertarCuentaAsync(int idTenant, int idEmpresa, string nombre, string eliminada = "NULL") =>
+    private Task<ComandoDeSiembra> InsertarCuentaAsync(int idTenant, int idEmpresa, string nombre, string eliminada = "NULL") =>
         ComandoAsync(
             idTenant,
             "INSERT INTO cuentas_tesoreria (id_tenant, id_empresa, nombre, created_at, updated_at, deleted_at) " +
@@ -239,6 +255,18 @@ public class CuentasTesoreriaEsquemaTests(WaysApiFixture fixture) : IClassFixtur
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => cruzada.ExecuteNonQueryAsync());
         Assert.Equal("23503", excepcion.SqlState);
         Assert.Equal("fk_cuentas_tesoreria_empresa", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task NingunIndiceDeCuentasTesoreriaTieneNombreImplicitoDeEf()
+    {
+        var s = await SembrarAsync(nameof(NingunIndiceDeCuentasTesoreriaTieneNombreImplicitoDeEf));
+
+        await using var comando = await ComandoAsync(
+            s.IdTenantA,
+            "SELECT count(*) FROM pg_indexes WHERE tablename = 'cuentas_tesoreria' AND indexname LIKE 'IX_%'");
+
+        Assert.Equal(0L, await comando.ExecuteScalarAsync());
     }
 
     [Fact]

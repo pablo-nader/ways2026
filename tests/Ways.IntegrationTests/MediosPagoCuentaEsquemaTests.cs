@@ -14,10 +14,10 @@ public class MediosPagoCuentaEsquemaTests(WaysApiFixture fixture) : IClassFixtur
 {
     private Task<SiembraDeCuentas> SembrarAsync(string nombre) => SiembraDeCuentasHelper.SembrarAsync(fixture, nombre);
 
-    private Task<NpgsqlCommand> ComandoAsync(int idTenant, string sql, params object[] parametros) =>
+    private Task<ComandoDeSiembra> ComandoAsync(int idTenant, string sql, params object[] parametros) =>
         SiembraDeCuentasHelper.ComandoAsync(fixture, idTenant, sql, parametros);
 
-    private Task<NpgsqlCommand> InsertarMedioAsync(
+    private Task<ComandoDeSiembra> InsertarMedioAsync(
         int idTenant, string comportamiento, string comision = "0", string iibb = "0", string iva = "0",
         string ganancias = "0", int? idCuenta = null) =>
         ComandoAsync(
@@ -132,6 +132,18 @@ public class MediosPagoCuentaEsquemaTests(WaysApiFixture fixture) : IClassFixtur
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => cambiar.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
         Assert.Equal("ck_medios_pago_cuenta_solo_electronico", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task NingunIndiceNuevoDeMediosPagoTieneNombreImplicitoDeEf()
+    {
+        var s = await SembrarAsync(nameof(NingunIndiceNuevoDeMediosPagoTieneNombreImplicitoDeEf));
+
+        await using var comando = await ComandoAsync(
+            s.IdTenantA,
+            "SELECT count(*) FROM pg_indexes WHERE tablename = 'medios_pago' AND indexname LIKE 'IX_%'");
+
+        Assert.Equal(0L, await comando.ExecuteScalarAsync());
     }
 
     [Fact]

@@ -18,12 +18,12 @@ public class MovimientosCuentaEsquemaTests(WaysApiFixture fixture) : IClassFixtu
 {
     private Task<SiembraDeCuentas> SembrarAsync(string nombre) => SiembraDeCuentasHelper.SembrarAsync(fixture, nombre);
 
-    private Task<NpgsqlCommand> ComandoAsync(int idTenant, string sql, params object[] parametros) =>
+    private Task<ComandoDeSiembra> ComandoAsync(int idTenant, string sql, params object[] parametros) =>
         SiembraDeCuentasHelper.ComandoAsync(fixture, idTenant, sql, parametros);
 
     private static string Id(int? valor) => valor?.ToString() ?? "NULL";
 
-    private Task<NpgsqlCommand> InsertarAsync(
+    private Task<ComandoDeSiembra> InsertarAsync(
         int idTenant, int idCuenta, int idUsuario, string tipo, string inicio, string ingreso, string egreso, string final,
         int? idTurno = null, int? idMedio = null, string baseBruta = "NULL", string porcentaje = "NULL") =>
         ComandoAsync(
@@ -123,6 +123,50 @@ public class MovimientosCuentaEsquemaTests(WaysApiFixture fixture) : IClassFixtu
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => duplicada.ExecuteNonQueryAsync());
         Assert.Equal("23505", excepcion.SqlState);
         Assert.Equal("ux_movimientos_cuenta_cierre", excepcion.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData("cobro")]
+    [InlineData("comision")]
+    [InlineData("retencion_iibb")]
+    [InlineData("retencion_iva")]
+    [InlineData("retencion_ganancias")]
+    public async Task CadaTipoDelCierreViolaElUnicoSiSeRepiteParaElMismoTurnoYMedio(string tipo)
+    {
+        var s = await SembrarAsync(nameof(CadaTipoDelCierreViolaElUnicoSiSeRepiteParaElMismoTurnoYMedio) + tipo);
+        await InsertarOkAsync(s, tipo, "0", "10", "0", "10", s.IdTurnoA, s.IdMedioA);
+
+        await using var duplicada = await InsertarAsync(
+            s.IdTenantA, s.IdCuentaA, s.IdUsuarioA, tipo, "10", "10", "0", "20", s.IdTurnoA, s.IdMedioA);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => duplicada.ExecuteNonQueryAsync());
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("ux_movimientos_cuenta_cierre", excepcion.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData("ajuste")]
+    [InlineData("transferencia")]
+    [InlineData("deposito")]
+    [InlineData("retiro")]
+    public async Task LosTiposQueNoEscribeElCierrePuedenRepetirseConTurnoYMedio(string tipo)
+    {
+        var s = await SembrarAsync(nameof(LosTiposQueNoEscribeElCierrePuedenRepetirseConTurnoYMedio) + tipo);
+
+        await InsertarOkAsync(s, tipo, "0", "10", "0", "10", s.IdTurnoA, s.IdMedioA);
+        await InsertarOkAsync(s, tipo, "10", "10", "0", "20", s.IdTurnoA, s.IdMedioA);
+    }
+
+    [Fact]
+    public async Task NingunIndiceDeMovimientosCuentaTieneNombreImplicitoDeEf()
+    {
+        var s = await SembrarAsync(nameof(NingunIndiceDeMovimientosCuentaTieneNombreImplicitoDeEf));
+
+        await using var comando = await ComandoAsync(
+            s.IdTenantA,
+            "SELECT count(*) FROM pg_indexes WHERE tablename = 'movimientos_cuenta' AND indexname LIKE 'IX_%'");
+
+        Assert.Equal(0L, await comando.ExecuteScalarAsync());
     }
 
     [Fact]

@@ -2535,12 +2535,31 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > `ck_movimientos_cuenta_un_solo_lado` (`ingreso = 0 OR egreso = 0`; una fila con los dos lados en
 > cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
 > `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
-> es simple a `usuarios`, como en la tesorería de efectivo. Índices: `ix_movimientos_cuenta_cuenta_id`
-> `(id_tenant, id_cuenta_tesoreria, id_movimiento_cuenta)` para la cola de la cadena y el libro, más los de
-> soporte de FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant, id_turno_caja,
-> id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL`: respaldo de idempotencia de las filas que
-> escribe el cierre de turno; como `id_medio_pago` admite `NULL`, no cubre una fila de turno sin
-> medio. RLS estándar.
+> es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
+> `ix_movimientos_cuenta_cuenta_id` `(id_cuenta_tesoreria, id_tenant, id_movimiento_cuenta)`, que
+> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro;
+> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
+> como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
+> id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',
+> 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')`: respaldo de idempotencia de las
+> filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
+> `id_medio_pago` admite `NULL`, no cubre una fila de turno sin medio. RLS estándar.
+>
+> **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento es
+> igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no hay
+> movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene movimientos:
+> lo exige el servicio de cuentas (sin trigger en la base).
+>
+> **Lo que la base NO exige y debe exigir un servicio:**
+> - La cuenta de un medio de pago pertenece a la empresa del medio; un medio de todo el tenant
+>   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa.
+> - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta.
+> - La baja lógica de una cuenta solo se permite sin referencias (medios o movimientos): la baja lógica
+>   esquiva RESTRICT.
+> - Cambiar `comportamiento` de un medio con cuenta o porcentajes distintos de cero a algo que no es
+>   `electronico` falla con 23514: el servicio de medios de pago debe limpiarlos antes.
+> - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
+> - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
 
 ## 8. Cuenta corriente de clientes
 

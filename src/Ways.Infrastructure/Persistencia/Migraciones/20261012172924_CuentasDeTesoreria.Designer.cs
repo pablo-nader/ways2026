@@ -897,21 +897,19 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_tenant");
 
-                    b.HasIndex("IdCuentaTesoreria", "IdTenant");
-
                     b.HasIndex("IdMedioPago", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_medio_pago");
 
                     b.HasIndex("IdTurnoCaja", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_turno");
 
-                    b.HasIndex("IdTenant", "IdCuentaTesoreria", "Id")
+                    b.HasIndex("IdCuentaTesoreria", "IdTenant", "Id")
                         .HasDatabaseName("ix_movimientos_cuenta_cuenta_id");
 
                     b.HasIndex("IdTenant", "IdTurnoCaja", "IdMedioPago", "Tipo")
                         .IsUnique()
                         .HasDatabaseName("ux_movimientos_cuenta_cierre")
-                        .HasFilter("id_turno_caja IS NOT NULL");
+                        .HasFilter("id_turno_caja IS NOT NULL AND tipo IN ('cobro', 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')");
 
                     b.ToTable("movimientos_cuenta", null, t =>
                         {
