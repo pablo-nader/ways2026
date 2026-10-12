@@ -177,7 +177,6 @@ export function Personal() {
     setGuardando(true)
     setError('')
     setErrorFormulario(null)
-    setAviso('')
     try {
       try {
         const cuerpo = aDatos(datos)
@@ -277,7 +276,6 @@ export function Personal() {
     ocupadoRef.current = true
     setOcupadoBaja(p.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDePersonal.eliminar(p.id)
