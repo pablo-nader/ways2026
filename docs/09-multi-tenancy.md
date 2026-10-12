@@ -155,19 +155,35 @@ dominios (                    -- scoping de organización: id_tenant, como empre
   alguna vez tuvo un dominio cargado no se puede dar de baja, incluso si el dominio ya fue dado
   de baja.
 
-## Modo de acceso público (vitrinas)
+## Modo de acceso público (vitrinas y tienda)
 
-La landing de un comercio la ve cualquiera, sin sesión. Lo que muestra vive en `vitrinas` (doc 10), una
-tabla con scoping `id_tenant` + `id_empresa NOT NULL`: la misma desviación documentada de
-`certificados_fiscales` respecto de las tres categorías de la regla de scoping. Para leerla hay un cuarto
-modo de acceso,
-`publico` (`ModoDeAcceso.Publico`, GUC `app.acceso = 'publico'`), además de `tenant`, `plataforma` y
-`login`:
+La landing y la tienda de un comercio las ve cualquiera, sin sesión. Lo que muestra la landing vive en
+`vitrinas` (doc 10), una tabla con scoping `id_tenant` + `id_empresa NOT NULL`: la misma desviación documentada
+de `certificados_fiscales` respecto de las tres categorías de la regla de scoping. Lo que muestra la tienda son
+artículos publicados con su precio, su categoría y su imagen (doc 10 §3, "Tienda online"). Para leerlos hay un
+cuarto modo de acceso, `publico` (`ModoDeAcceso.Publico`, GUC `app.acceso = 'publico'`), además de `tenant`,
+`plataforma` y `login`:
 
-- **Qué puede**: `SELECT`, nada más, sobre exactamente tres tablas — `vitrinas` (solo la `publicada`
-  y viva), `empresas` y `puntos_venta` — y solo las filas del tenant del host. Las tres policies se
-  llaman `{tabla}_publico_lectura`; ninguna otra tabla tiene una, y ninguna es de escritura (la prueba
-  `SoloVitrinasEmpresasYPuntosVentaTienenPolicyDeModoPublicoYSonDeSoloLectura` lista `pg_policies`).
+- **Qué puede**: `SELECT`, nada más, sobre exactamente nueve tablas, y solo las filas del tenant del host. Las
+  policies se llaman `{tabla}_publico_lectura`; ninguna otra tabla tiene una, y ninguna es de escritura (la prueba
+  `SoloLasNueveTablasDeLaLandingYLaTiendaTienenPolicyDeModoPublicoYSonDeSoloLectura` lista `pg_policies`). Cuánto
+  de cada tabla deja ver cada policy:
+
+  | Tabla | Filas que ve el modo público | Para qué |
+  |---|---|---|
+  | `vitrinas` | la `publicada` y viva | la landing y la empresa de la tienda |
+  | `empresas`, `puntos_venta` | todas las del tenant | la landing |
+  | `articulos` | `publicado_web AND activo AND deleted_at IS NULL` | el catálogo |
+  | `articulos_empresas` | todas (la tabla no tiene baja lógica) | disponibilidad por empresa |
+  | `listas_precio`, `precios`, `categorias` | las vivas (`deleted_at IS NULL`) | precio y categoría |
+  | `imagenes_articulo` | las vivas | la imagen del artículo |
+
+  Las policies solo deciden lo que se puede ver a nivel de fila. Lo que NO deciden lo decide la consulta del
+  catálogo (`ConsultaDeCatalogoPublico`): que el artículo esté disponible para la empresa de la vitrina, que tenga
+  un precio vigente en la lista de la tienda, que la lista y la categoría estén activas y sean visibles para esa
+  empresa, y que la imagen sea de un artículo publicado (la policy de `imagenes_articulo` por sí sola deja ver la de
+  uno sin publicar). Un precio vencido, una lista inactiva o la imagen de un artículo sin publicar SON legibles
+  en este modo a nivel de SQL; por eso el código que lee en él proyecta y filtra.
 - **Dónde viaja el tenant**: en su propio GUC, `app.tenant_publico` (función `app_tenant_publico()`), y
   NO en `app.tenant_id`. Las policies estándar `{tabla}_tenant` de `HabilitarRlsDeTenant` comparan
   `id_tenant = app_tenant_actual()` sin mirar el modo: con el tenant del host en `app.tenant_id`, el modo
@@ -175,20 +191,23 @@ modo de acceso,
   separado, `app_tenant_actual()` es `NULL` en este modo y las policies estándar no ven nada;
   `InterceptorDeContextoDeTenant` y `ReaplicarSobreConexionAsync` ponen los tres GUC desde
   `ModoDeAccesoExtensions.ComoGucs`.
-- **Quién lo usa**: `LectorDeVitrinaPublica`, para `GET /api/publico/vitrina` y `/logo`. Abre un
-  alcance de DI propio y fija el modo ahí (igual que `ResolvedorDeDominios` con el modo `login`): el
-  `ITenantActual` de la request no se toca, así que el modo no llega a nada más de esa request (por
-  ejemplo, a una cookie de sesión que viniera con ella). El tenant sale del host (`IDominioActual`), nunca
+- **Quién lo usa**: `LectorDeVitrinaPublica`, para `GET /api/publico/vitrina` y `/logo`, y
+  `LectorDeCatalogoPublico`, para `GET /api/publico/catalogo` y `/api/publico/articulos/{id}/imagen`. Cada lectura
+  abre un alcance de DI propio y fija el modo ahí (`AlcanceEnModoPublico`, igual que `ResolvedorDeDominios` con el
+  modo `login`): el `ITenantActual` de la request no se toca, así que el modo no llega a nada más de esa request
+  (por ejemplo, a una cookie de sesión que viniera con ella). El tenant sale del host (`IDominioActual`), nunca
   de un parámetro del cliente.
 - **Tenant suspendido**: el dominio sigue resolviendo (el login ya rechaza la suspensión), pero la vitrina
   no se sirve: `ResolvedorDeDominios` lee el tenant con el contexto de plataforma, como ya hacía para el
   nombre, y deja `TenantPuedeOperar` (`Tenant.PuedeOperar`) en `IDominioActual`; los endpoints públicos de
-  la vitrina contestan `404 vitrina_no_publicada` / `logo_no_encontrado` si es `false`. Ninguna policy de
+  la vitrina y del catálogo contestan `404 vitrina_no_publicada` / `logo_no_encontrado` / `imagen_no_encontrada` si
+  es `false`. Ninguna policy de
   `tenants` se abre al modo público. El dato vive en la caché de resolución del host (60 s): suspender o
   reactivar un tenant tarda hasta ese lapso en verse en el dominio.
 - **Lo que RLS no hace**: la policy es por fila, no por columna. `empresas` y `puntos_venta` se leen
-  enteras en este modo (CUIT, alícuotas, modo), así que el lector proyecta solo los campos del contrato
-  público. Todo código nuevo que lea en este modo tiene que hacer lo mismo.
+  enteras en este modo (CUIT, alícuotas, modo), y lo mismo `articulos` (costos, proveedor habitual, lote),
+  así que los lectores proyectan solo los campos del contrato público. Todo código nuevo que lea en este modo tiene
+  que hacer lo mismo.
 
 ## Regla de scoping por tipo de tabla
 
@@ -198,7 +217,7 @@ lo primero es decidir en cuál está:
 | Categoría | Scope | Tablas |
 |---|---|---|
 | **Catálogo** | `id_tenant` + `id_empresa NULL` | `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `ofertas`, `combos`, `combos_componentes` |
-| **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios`, `familias` |
+| **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios`, `familias`, `imagenes_articulo` |
 | **Operativa** | `id_tenant` + `id_punto_venta` | `ventas`, `items_venta`, `gastos`, `stock`, `movimientos_stock`, `turnos_caja`, `movimientos_tesoreria`, `arqueos_recargas`, `numeraciones_comprobante`, `reservas_numeracion` |
 | **Global** | sin tenant | `roles`, `permisos`, planes/facturación del SaaS |
 

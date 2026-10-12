@@ -463,6 +463,16 @@ public class ManejadorDeErrores(
                     "La empresa ya tiene una vitrina. Reintentá la operación.",
                     "vitrina_duplicada"),
 
+            // Imagen del artículo (db-error-backstops): ux_imagenes_articulo_articulo — una imagen viva por
+            // artículo. ServicioDeCatalogoWeb toma FOR UPDATE sobre el artículo y lee la imagen bajo ese lock, así
+            // que bajo operación normal esta rama es inalcanzable: queda como backstop de esquema ante una
+            // escritura fuera de banda. Exact-match ANTES del brazo genérico.
+            { SqlState: "23505", ConstraintName: string uxImagenArticulo }
+                when string.Equals(uxImagenArticulo, "ux_imagenes_articulo_articulo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "El artículo ya tiene una imagen. Reintentá la operación.",
+                    "imagen_duplicada"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -536,6 +546,21 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "El logo tiene que ser una imagen PNG, JPEG o WebP de hasta 1 MB.",
                     "logo_no_admitido"),
+
+            // Imagen del artículo: ImagenDeArticulo.Validar contesta 413 imagen_demasiado_grande y 415
+            // imagen_no_admitida antes de escribir; este backstop contesta 400 imagen_no_admitida para cualquier
+            // imagen fuera del CHECK que llegue por una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_imagenes_articulo_contenido" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La imagen tiene que ser PNG, JPEG o WebP de hasta 1 MB.",
+                    "imagen_no_admitida"),
+
+            // La lista de la tienda de una vitrina: ServicioDeVitrinas la valida y la bloquea antes de escribir
+            // (lista_invalida); una lista que desaparece igual llega acá y contesta el mismo código.
+            { SqlState: "23503", ConstraintName: "fk_vitrinas_lista_precio" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La lista de precios no existe, está inactiva o no corresponde a esta empresa.",
+                    "lista_invalida"),
 
             // stage-pos-reserva-de-numeracion (db-error-backstops, DB CHANGE GATE aprobado):
             // ck_reservas_numeracion_rango ("hasta >= desde"). AsignadorDeNumeroComprobante.

@@ -81,11 +81,13 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
   - Tests: unit for validation (color, tema, logo type sniffing); integration for Publico mode
     reading only the published vitrina of the host's tenant and nothing from another tenant
     (mutation evidence on the policy predicate), admin round-trip, 404s.
-- [ ] **T2 — Web admin: "Vitrina" page.** Delegated. PR 5.
+- [x] **T2 — Web admin: "Vitrina" page.** Delegated. PR 5. Commits `3505e91e` (client and helpers), `5d185496` (page, route, menu).
   - Under the empresa configuration: form (tagline, descripción, color de acento, tema), logo
     upload with preview, "Publicar"/"Despublicar", link to open the landing.
   - react-async-state gating, descriptor tests, data gates.
-- [ ] **T3 — Web public: landing at `/` and storefront shell at `/online`.** Delegated. PR 6.
+  - Done as `/organizacion/vitrina` (Root and Admin), menu entry "Vitrina" under Organización. Publicar/Despublicar is
+    the "Publicada" switch inside the single Guardar write. The empresa selection lives in component state (not the URL).
+- [x] **T3 — Web public: landing at `/` and storefront shell at `/online`.** Delegated. PR 6. Commits `1220557a` (landing and shared `src/publico/`), `2499126f` (storefront shell), plus the final commit with the test tightening and this document.
   - `index.html` entry renders the landing from `/api/publico/vitrina`: hero (logo, name,
     tagline, chevrons, CTA "Comprar online" → `/online`, CTA WhatsApp), description block,
     branches grid (address, hours, WhatsApp button, Instagram/Facebook links), footer with
@@ -183,12 +185,125 @@ mutants M18–M22; no new judge round. Follow-ups: no server-side cache on the p
 (negative caching), the empresa/tenant baja guard ignores `deleted_at` so a deleted vitrina
 still counts, no per-branch opt-out of the public listing, PUT loads the logo bytea.
 
+### T2 (commits `3505e91e` client and helpers, `5d185496` page, route and menu)
+
+Route/topology: delegated bounded writer (trigger: 2+ non-trivial files). Branch `pnader/vitrina-web`, based on
+`pnader/vitrina-backend` (`233f9456`), because the checkout the writer started in did not yet contain `f87efc49`.
+
+- `api/cliente.ts`: `api.putBinario(ruta, archivo)` sends the raw `File`/`Blob` with its own `Content-Type`
+  (`application/octet-stream` when it has none); `pedir` already let caller headers win over the JSON default.
+- `api/vitrinas.ts`: `obtenerVitrina`, `guardarVitrina`, `eliminarVitrina`, `subirLogo`, `quitarLogo`, `urlDelLogoAdmin`
+  (`?v=logoVersion`) and the pure helpers `esColorHex`, `colorParaElSelector`, `tiposDeLogoAdmitidos`, `validarLogo`
+  (type first, then size, same order as the server), `aBorrador`/`aEdicion`, `opcionesDeEmpresaParaVitrina`,
+  `copiaDeFalloDeVitrina` (the seven codes, plus 413/415 without a code), `debeReleerTrasFallo`. Types `VitrinaAdmin`,
+  `VitrinaEdicion`, `TemaDeVitrina` in `api/tipos.ts`.
+- `paginas/Vitrina.tsx`: three generation-gated reads (empresas, sitio, vitrina); every write behind a synchronous ref
+  and a full-window inert state; the saved vitrina and the editable draft are separate states, so a logo upload or removal
+  never overwrites unsaved form text. `PUT vitrina` and `PUT vitrina/logo` apply the `VitrinaAdmin` the server returns
+  (the surface is inert for the whole write); the two `DELETE`s re-read, with the "se guardó, pero no se pudo actualizar la
+  vista" notice when only the re-read fails; a 404 or an uncertain failure re-reads and keeps the message. "Ver la
+  página" (`/`, new tab) only when `GET /api/publico/sitio` says tenant domain and the saved vitrina is published.
+- Client-side rejections that send nothing: logo type, logo over 1 MB, color not `#rrggbb` (Guardar is disabled and the
+  copy says so).
+
+Verification (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` exit 0, 16 warnings, all pre-existing
+(`only-export-components`), none in the new files; `npx vitest run` 183 files, 4724 tests passed; `npx vite build` ok.
+New tests: 55 in `paginas/Vitrina.test.tsx`, 51 in `api/vitrinas.test.ts`, 4 for `api.putBinario` in `api/cliente.test.ts`,
+two lines in `componentes/menu.test.ts`.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `validarLogo` without the size check | `validarLogo > un byte más de 1 MB...`, `un archivo de más de 1 MB se rechaza sin salir a la red`, `elegir un archivo inválido borra el rechazo...` |
+| M1b | size check `>=` instead of `>` | `un PNG de 1 MB justo se acepta`, `un archivo de exactamente 1 MB se sube` |
+| M2 | `putBinario` without the `Content-Type` header | `manda el archivo tal cual con su propio Content-Type...`, `un archivo sin tipo conocido sale como application/octet-stream...` |
+| M3 | vitrina read without the generation check | `una vitrina vieja que llega tarde no pisa la de la empresa elegida después` |
+| M4 | ref guard removed from `guardar` | `dos envíos del mismo tick salen como una sola request` |
+| M5 | ref guard removed from `elegirLogo` | `dos cambios del mismo tick salen como una sola subida` |
+| M6 | `editar` keeps the rejection | `editar el formulario borra el rechazo...` |
+| M7 | logo upload also resets the draft | `un archivo válido se sube crudo y la vista previa pasa a la versión nueva sin tocar el borrador` |
+| M8 | link shown on the platform host | `bajo la plataforma no hay enlace...` |
+| M9 | `guardar` does not clear previous messages | `guardar borra el aviso de éxito de una subida anterior` |
+| M10 | link driven by the draft instead of the saved vitrina | the two `enlace a la página` tests about publishing |
+| M11 | no re-read after a 404 / uncertain `guardar` failure | `un fallo incierto relee...`, `un 404 relee...` |
+| M12 | Guardar enabled with an invalid color | `un color mal escrito se explica junto al campo y deshabilita Guardar` |
+| M13 | upload without the client-side validation | the three client-rejection tests |
+
+### T3 (commits `1220557a` landing and shared, `2499126f` storefront shell)
+
+Route/topology: delegated bounded writer (trigger: 2+ non-trivial files), branch `pnader/landing-web` on `pnader/vitrina-web`.
+
+- Shared `src/publico/`: `useVitrinaPublica` (generation-gated read; states `cargando`, `publicada`, `sin_publicar` on 404,
+  `error` otherwise; `recargar`; applies theme, `--vitrina-acento`, title and meta description), `PorEstadoDeVitrina`
+  (skeleton, calm screens), `CabeceraPublica`, `PiePublico`, `MarcaWays`, `Glifos` (triple chevron and social glyphs),
+  `enlaces.ts` (pure link builders, only http(s) and `wa.me` ever reach an `href`), `tema.ts`, `publico.css`.
+  `api/publico.ts` gained `obtenerVitrina` and `urlDelLogoPublico`; Ways wordmarks in `public/marca/`.
+- Landing: `Portada` (tagline or name as h1, CTAs), `Descripcion` (`white-space: pre-line`, plain text), `Sucursales`.
+  Tienda: `BotonCarrito`, `PanelCarrito` (non-modal dialog, Escape and Cerrar, focus returns to the button),
+  `CarritoContext` (`items: never[]`, `cantidad: 0`, no operations yet) and `CarritoProvider`.
+- Decisions: an unpublished or failed vitrina on `/online` shows the same calm screen as the landing; the error screen
+  carries a "Reintentar" button (it is what exercises the stale-response gate); a Facebook page name with spaces cannot
+  be linked and shows no button; the stored admin theme preference (`ways.tema`) is no longer read by these entries,
+  the commerce's `tema` rules.
+
+Verification (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` 16 warnings, all pre-existing, none in the new files;
+`npx vite build` ok (four entries, `dist/index.html` has `lang="es"` and the Bricolage Grotesque link, wordmarks copied
+to `dist/marca/`); `npx vitest run` 186 files, 4803 tests passed. New tests: 83 across `publico/enlaces.test.ts`,
+`publico/tema.test.ts`, `publico/useVitrinaPublica.test.tsx`, `landing/Landing.test.tsx`, `online/Tienda.test.tsx`.
+Looked at in the browser pane against a local mock of the API at phone width: no horizontal scroll, cards and cart panel
+render.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `Portada` shows the WhatsApp CTA unconditionally | survived at first (an `<a>` without `href` is not a link role); test tightened with `queryByText`, then `sin ningún número de WhatsApp no hay CTA de WhatsApp` |
+| M1b | minimum WhatsApp digits 8 → 0 | the six "no es un número usable" cases and both `enlaceWhatsappDelComercio` tests |
+| M2 | success path without the generation check | `una respuesta vieja que llega tarde no pisa a la de la recarga más nueva` |
+| M2b | failure path without the generation check | `un fallo viejo que llega tarde tampoco pisa a la recarga más nueva` |
+| M3 | accent fallback removed (`colorAcento ?? ''`) | 3 in `tema.test.ts` and `sin color de acento rige el naranja de Ways` |
+
+### Judgment-day of T2 (target 1c866621, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident items fixed in
+`9f58884b` (branch `pnader/vitrina-web-ajustes`, PR #385): a stale read error is cleared by a
+successful write; the "verificá el listado" copy replaced by vitrina-specific copy and honest
+"…, pero no se pudo actualizar la vista" notices; the sitio read distinguishes pending, failed
+and platform; switching empresa with unsaved changes asks (Descartar / Seguir editando); the
+draft-preservation test now discriminates; options memoized; `role="status"`/`role="alert"`,
+new-tab hint on the link, `onError` fallback on the preview. One judge-B claim was wrong: `/`
+is already the landing (router basename `/admin`), so "Ver la página" points at the right place.
+Verified with `tsc`, `oxlint` and the full `vitest run` (183 files, 4750 tests) plus mutation
+evidence; no new judge round. Follow-ups: `logoVersion` in unix seconds; `aria-invalid` on the
+Host field for non-host errors.
+
+### Judgment-day of T3 (target f8d4b5bd → fix delta 16ca1a85, rounds 0 and 1, 2026-10-11)
+
+Round 0: both judges confirmed one severe finding (HIGH): `enlaceWhatsapp` turned local-format
+numbers into invalid or foreign `wa.me` links. Coincident warnings: text on a dark accent
+illegible, header logo overlapping the action at 375 px, free text without `overflow-wrap`,
+cart panel not modal, theme applied after paint, loading state unkillable; suggestions: title
+and meta overwritten, bare domains treated as handles, any 404 read as unpublished. Correction
+round 1 (`173ee3e0`, `3e2c9168`, `16ca1a85`): WhatsApp rule (`+`/`00` international 10–15
+digits; `54…` of 12–13 digits accepted; one leading `0` stripped then exactly 10 digits →
+`549`; else no CTA), `tintaSobreAcento` by WCAG luminance, logo fits its flex item, `overflow-wrap:
+anywhere` on free text, real modal (aria-modal, document Escape, Tab trap, scroll lock, veil
+click), `useLayoutEffect`, loading test, title/meta only with data and `Tienda online · nombre`,
+domain-shaped values through the URL branch, only `vitrina_no_publicada` is "sin publicar".
+Scoped re-judgment: no severe finding → `JUDGMENT: APPROVED`. Two informational coincidences
+fixed in `07b950c7` without a new round: no `overflow: hidden` on the header brand (it clipped
+accents of the uppercase name), `@` escape for dotted Facebook page names, plus the calm-message
+wrap test and the Shift+Tab-from-outside trap test. Visual check by the orchestrator against a
+mock of the API at 1280 px and 375 px: on-brand, no horizontal overflow, cart panel opens.
+Follow-ups: the commerce logo `<img>` has no width hint (small shift on load); the dark skeleton
+before data on a light-theme commerce; render-blocking Google Fonts; no per-branch opt-out.
+
 ## Delivery slices
 
 - PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3.
 
 ## Next step
 
-T2 — web admin "Vitrina" page, on top of the endpoints of T1 (`GET/PUT/DELETE /api/empresas/{id}/vitrina`,
-`GET/PUT/DELETE .../vitrina/logo` with the raw image as the request body for PUT, `Content-Type: image/png|jpeg|webp`;
-`GET .../vitrina/logo` is the preview, `private, no-store` with ETag, 404 `logo_no_encontrado` when there is none).
+Feature complete once PR 6 merges. Next: article publication for the storefront (owner decision).
+
+<!-- previous: -->
+
+Feature complete; next: article publication (owner decision). Open for the owner: the Vitrina page is wired as `Root`
+and `Admin`; the "Ver la página" link assumes the landing is served at `/` of the tenant domain.

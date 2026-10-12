@@ -5,6 +5,8 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
+using Ways.Application.Organizacion;
 using Ways.Application.Vitrinas;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
@@ -792,7 +794,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             ajeno.IdTenant, ajeno.IdEmpresa, publicada: true, logo: ApoyoDeVitrinas.Imagen(Vitrina.TipoPng));
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, propio.IdTenant));
-        var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+        var servicio = new ServicioDeVitrinas(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
         foreach (var idEmpresa in new[] { ajeno.IdEmpresa, 987_654_321 })
         {
@@ -867,7 +869,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
         {
-            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.GuardarAsync(
                 comercio.IdEmpresa,
@@ -883,7 +885,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         // La misma operación, sin la falla inyectada, escribe exactamente una fila.
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma))
         {
-            await new ServicioDeVitrinas(db, new RelojDelSistema()).GuardarAsync(
+            await new ServicioDeVitrinas(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db))).GuardarAsync(
                 comercio.IdEmpresa,
                 new SolicitudDeVitrina(Publicada: true, Tagline: "Hola", Descripcion: null, ColorAcento: null, Tema: "oscuro"));
         }
@@ -899,7 +901,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
         {
-            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
             await using var cuerpo = new MemoryStream(ApoyoDeVitrinas.Imagen(Vitrina.TipoPng));
 
             var error = await Assert.ThrowsAnyAsync<Exception>(
@@ -923,7 +925,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
         {
-            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.QuitarLogoAsync(comercio.IdEmpresa));
 
@@ -944,7 +946,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
         {
-            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.EliminarAsync(comercio.IdEmpresa));
 

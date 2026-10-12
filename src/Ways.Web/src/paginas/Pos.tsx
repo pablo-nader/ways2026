@@ -57,6 +57,7 @@ import type {
   ClienteListado,
   ComprobanteEmitido,
   EstadoDeCuenta,
+  ComboAplicadoEnPrevia,
   InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
@@ -67,6 +68,7 @@ import type {
   SolicitudDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
+import { comboVigenteDeLinea, rotuloDeComboAplicado } from '../api/combos'
 import {
   aLineaDeCarritoDesdeEscaneo,
   aLineasDeResolucion,
@@ -84,18 +86,29 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
+import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
 import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
+import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
+import {
+  componentesAElegir,
+  motivoDeComboNoCargable,
+  parsearCodigoDeCombo,
+  resolverLineasDeCombo,
+  rotuloDeCodigoDeCombo,
+  type ComboParaCargar,
+} from '../pos/cargaDeCombos'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
+import { elegirFuenteDeCombos, fuenteDesdeApi, type ComboDeLista } from '../pos/fuenteDeCombos'
 import {
   aClienteListado,
   aMedioPagoListado,
   buscarArticuloOffline,
   buscarClientesOffline,
   formatearVejezDeInstantanea,
-  resolverPreciosOffline,
+  resolverPreviaOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, LIMITE_DE_ESPERA_DEL_TURNO_MS } from '../pos/turnoConfirmadoLocal'
@@ -116,6 +129,11 @@ import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+
+/** Un combo que llegó al carrito cuando el cobro ya había empezado no se agrega: se avisa en vez de descartarlo en silencio. */
+const MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO = 'No se agregó el combo: hay un cobro en curso.'
+/** Se agrega al aviso de un artículo que no apareció cuando tampoco se pudieron leer los combos con ese código. */
+const MENSAJE_DE_COMBOS_SIN_LEER = 'No se pudieron leer los combos.'
 
 function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: ClienteListado | null): ClienteListado[] {
   if (!seleccionado) return opciones
@@ -994,6 +1012,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     lineasRef.current = lineas
   }, [lineas])
   const [precios, setPrecios] = useState<PreciosPorLinea>(() => borradorInicial?.precios ?? {})
+  // Combos que la vista previa aplicó al carrito (nombre, veces y ahorro): viaja siempre junto a `precios`, de
+  // la misma resolución y bajo la misma guarda de generación.
+  const [combosAplicados, setCombosAplicados] = useState<ComboAplicadoEnPrevia[]>([])
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
   const [reintentoPrecios, setReintentoPrecios] = useState(0)
@@ -1034,6 +1055,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // código) — se abre solo con la venta libre operable (nunca bajo `?idPresupuesto=`, ni con el
   // checkout en vuelo, ni con el gate de turno o el ticket ya emitido en pantalla).
   const [buscadorAbierto, setBuscadorAbierto] = useState(false)
+  const [buscadorDeCombosAbierto, setBuscadorDeCombosAbierto] = useState(false)
+  // Combo con familias que esperan que el cajero reparta las unidades. `desdeCodigo`: vino de `C12` en el input de código,
+  // que se vacía recién al agregarlo (cancelar deja el texto tipeado).
+  const [comboPorElegir, setComboPorElegir] = useState<{ combo: ComboParaCargar; desdeCodigo: boolean } | null>(null)
+  const modalDeCombosAbierto = buscadorDeCombosAbierto || comboPorElegir !== null
+  // Guarda de reentrancia de primera línea de la carga por código `C12`: un segundo Enter o el atajo en el mismo tick le
+  // ganan al re-render que refleja `escaneando`.
+  const cargaDeComboEnCursoRef = useRef(false)
 
   // Lo que respondió el servidor. En el POS de escritorio, mientras no hay respuesta o si falló por
   // falta de red, la pantalla usa los de la instantánea local (`medios`/`errorMedios`, derivados
@@ -1282,6 +1311,28 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizacionOffline.instantanea.idPuntoVenta === puntoVentaSeleccionada?.id
       ? sincronizacionOffline.instantanea
       : null
+
+  // Los combos salen de la instantánea cuando hay una utilizable (también sin red) y, si no, de la API.
+  const idListaDeLaVenta = clienteSeleccionado?.idListaPrecio ?? null
+  const idEmpresaDeLaVenta = puntoVentaSeleccionada?.idEmpresa ?? null
+  // La fuente de la API vive aparte para conservar su lista de combos mientras la pantalla esté montada.
+  const fuenteDeCombosDeLaApi = useMemo(() => fuenteDesdeApi(idEmpresaDeLaVenta), [idEmpresaDeLaVenta])
+  const enLineaParaCombos = sincronizacionOffline.enLinea
+  // Abrir el buscador de combos olvida los códigos que la API no tenía: el cajero acaba de ver la lista y puede haber cambiado.
+  useEffect(() => {
+    if (buscadorDeCombosAbierto) fuenteDeCombosDeLaApi.olvidarAusentes()
+  }, [buscadorDeCombosAbierto, fuenteDeCombosDeLaApi])
+  const fuenteDeCombos = useMemo(
+    () =>
+      elegirFuenteDeCombos({
+        instantanea: instantaneaDelPuntoVenta,
+        idListaPrecio: idListaDeLaVenta,
+        idEmpresa: idEmpresaDeLaVenta,
+        enLinea: enLineaParaCombos,
+        api: fuenteDeCombosDeLaApi,
+      }),
+    [instantaneaDelPuntoVenta, idListaDeLaVenta, idEmpresaDeLaVenta, enLineaParaCombos, fuenteDeCombosDeLaApi],
+  )
 
   // Datos locales para el POS de escritorio (decisiones 6 y 7 del dueño): medios de pago y
   // tolerancia salen de la instantánea mientras el servidor no respondió o si falló por falta de
@@ -2146,6 +2197,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // bumpea arriba para huerfanar cualquier resolución en vuelo de una corrida anterior).
     if (modoPresupuesto) {
       setPrecios({})
+      setCombosAplicados([])
       setAvisoPrecios('')
       setResolviendo(false)
       congelarInstantaneaDeLaPrevia(null)
@@ -2163,6 +2215,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
     if (lineas.length === 0 || !clienteSeleccionado || !puntoVentaSeleccionada) {
       setPrecios({})
+      setCombosAplicados([])
       setAvisoPrecios('')
       // Este efecto bumpea su propia generación en cada corrida (línea de arriba): eso huerfana
       // cualquier fetch en vuelo de una corrida anterior (su `finally` se salta porque la
@@ -2188,7 +2241,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       clienteAdmitidoOffline(clienteSeleccionado, instantaneaLocal) &&
       todasLasLineasTienenPrecioOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
     ) {
-      setPrecios(resolverPreciosOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio))
+      const previaDeLaInstantanea = resolverPreviaOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
+      setPrecios(previaDeLaInstantanea.precios)
+      setCombosAplicados(previaDeLaInstantanea.combos)
       setAvisoPrecios('')
       setResolviendo(false)
       congelarInstantaneaDeLaPrevia(instantaneaLocal)
@@ -2201,10 +2256,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
     const idTimeout = setTimeout(() => {
       clienteDeOfertas
-        .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
-        .then((resultados) => {
+        .resolverConCombos(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
+        .then((resolucion) => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
-          setPrecios(indexarResolucionPorLinea(lineas, resultados))
+          setPrecios(indexarResolucionPorLinea(lineas, resolucion.lineas))
+          setCombosAplicados(resolucion.combos)
           // Vista previa ONLINE: ninguna instantánea queda congelada, así que `cobrar()` va por
           // el camino online.
           congelarInstantaneaDeLaPrevia(null)
@@ -2218,7 +2274,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // cliente elegido; el cobro local igual rechaza a un cliente que no esté en la
           // instantánea (`admisibilidadDeVentaOffline`).
           if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea && clienteSeleccionado) {
-            setPrecios(resolverPreciosOffline(lineas, sincronizacionOffline.instantanea, clienteSeleccionado.idListaPrecio))
+            const previaSinRed = resolverPreviaOffline(lineas, sincronizacionOffline.instantanea, clienteSeleccionado.idListaPrecio)
+            setPrecios(previaSinRed.precios)
+            setCombosAplicados(previaSinRed.combos)
             setAvisoPrecios('')
             // judgment-day ronda 1 (WARNING): congela ACÁ la instantánea exacta que resolvió
             // esta vista previa — "Cobrar" (más abajo) y el ticket sintético tienen que usar
@@ -2236,6 +2294,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // línea con precio viejo, otra en 0) en vez de entrar en modo vista previa fallida —
           // un subtotal a medias es peor que ninguno (judgment-day R3, falso negativo de Judge B).
           setPrecios({})
+          setCombosAplicados([])
           setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
           congelarInstantaneaDeLaPrevia(null)
         })
@@ -2399,6 +2458,117 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     return true
   }
 
+  /**
+   * Agrega las líneas de un combo por el mismo camino que un código escaneado (`agregarEscaneado`): `acumulaEnVenta`, las
+   * reglas de cantidad y la resolución de precios se comportan igual que cargando los artículos de a uno, y es el carrito el
+   * que después detecta el combo. Todo o nada: se comprueba todo antes de la primera línea, y las líneas se despachan juntas,
+   * en el orden de los componentes.
+   */
+  function agregarLineasDeCombo(lineas: ArticuloEscaneado[]): boolean {
+    if (cobrandoRef.current) {
+      setErrorEscaneo(MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO)
+      return false
+    }
+    if (lineas.some((l) => fraccionaUnaUnidad(l.unidadVenta, l.cantidad))) {
+      setErrorEscaneo(MENSAJE_DE_CANTIDAD_ENTERA)
+      return false
+    }
+    for (const articulo of lineas) agregarEscaneado(articulo)
+    return true
+  }
+
+  /** Entrega un combo ya leído (con sus candidatos) al carrito: lo agrega directo si no hay nada que elegir y, si una familia
+   * tiene varios miembros, abre el selector. Devuelve `false` si no se pudo cargar, con el motivo en el aviso del escaneo. */
+  function cargarCombo(combo: ComboParaCargar, desdeCodigo: boolean): boolean {
+    const motivo = motivoDeComboNoCargable(combo)
+    if (motivo !== null) {
+      setErrorEscaneo(motivo)
+      return false
+    }
+    if (componentesAElegir(combo).length > 0) {
+      // El selector no se abre con un cobro en curso ni encima del buscador de combos.
+      if (cobrandoRef.current) {
+        setErrorEscaneo(MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO)
+        return false
+      }
+      setBuscadorDeCombosAbierto(false)
+      setComboPorElegir({ combo, desdeCodigo })
+      return true
+    }
+    const resolucion = resolverLineasDeCombo(combo)
+    if (!resolucion.ok) {
+      setErrorEscaneo(resolucion.motivo)
+      return false
+    }
+    if (!agregarLineasDeCombo(resolucion.lineas)) return false
+    if (desdeCodigo) setEntradaEscaneo('')
+    return true
+  }
+
+  function cargarComboDesdeBuscador(combo: ComboParaCargar) {
+    setBuscadorDeCombosAbierto(false)
+    setErrorEscaneo('')
+    cargarCombo(combo, false)
+    focoPendienteRef.current = true
+  }
+
+  function cerrarBuscadorDeCombos() {
+    setBuscadorDeCombosAbierto(false)
+    focoPendienteRef.current = true
+  }
+
+  function confirmarMiembrosDeCombo(lineas: ArticuloEscaneado[]) {
+    const pendiente = comboPorElegir
+    setComboPorElegir(null)
+    if (agregarLineasDeCombo(lineas) && pendiente?.desdeCodigo) setEntradaEscaneo('')
+    focoPendienteRef.current = true
+  }
+
+  function cancelarMiembrosDeCombo() {
+    setComboPorElegir(null)
+    focoPendienteRef.current = true
+  }
+
+  /**
+   * `C12` en el input de código: busca un combo activo con ese número en la misma fuente que el buscador. `'sin_combo'` ⇒ no
+   * hay un combo con ese número y `'lectura_fallida'` ⇒ no se pudo averiguar: en los dos casos el llamador sigue con la
+   * búsqueda de artículos con el texto original, porque el código interno de un artículo puede ser perfectamente `C12`.
+   * Solo la búsqueda por código está en el `try`: un combo ENCONTRADO que no se puede leer ni cargar avisa el motivo y NO cae
+   * a artículos, y `cargarCombo` corre fuera para que una excepción al agregar nunca desemboque en un escaneo de artículo.
+   * Un detalle que responde 404 (el combo se dio de baja después de leerlo) es «no hay un combo con ese número».
+   * Solo se llama para entradas con forma de código de combo, así que el escaneo común no paga nada.
+   */
+  async function intentarCargarComboPorCodigo(
+    codigo: number,
+    token: number,
+    buscar: (codigo: number) => Promise<ComboDeLista | null>,
+  ): Promise<'cargado' | 'rechazado' | 'sin_combo' | 'lectura_fallida' | 'obsoleto'> {
+    let encontrado: ComboDeLista | null
+    try {
+      encontrado = await buscar(codigo)
+    } catch {
+      return tokenEscaneoRef.current === token ? 'lectura_fallida' : 'obsoleto'
+    }
+    if (tokenEscaneoRef.current !== token) return 'obsoleto'
+    if (encontrado === null) return 'sin_combo'
+    if (encontrado.motivoNoCargable !== null) {
+      setErrorEscaneo(encontrado.motivoNoCargable)
+      return 'rechazado'
+    }
+
+    let completo: ComboParaCargar
+    try {
+      completo = await fuenteDeCombos.cargar(encontrado.idCombo)
+    } catch (e) {
+      if (tokenEscaneoRef.current !== token) return 'obsoleto'
+      if (e instanceof ErrorApi && e.estado === 404) return 'sin_combo'
+      setErrorEscaneo(e instanceof ErrorApi ? e.message : `No se pudo leer el combo ${rotuloDeCodigoDeCombo(codigo)}.`)
+      return 'rechazado'
+    }
+    if (tokenEscaneoRef.current !== token) return 'obsoleto'
+    return cargarCombo(completo, true) ? 'cargado' : 'rechazado'
+  }
+
   function confirmarCantidad(idLinea: string) {
     if (cobrandoRef.current) return
     setCantidadesEnEdicion((prev) => {
@@ -2478,9 +2648,54 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
    * `entradaEscaneo`, el camino del input de código + Enter/"Agregar"). */
   async function escanear(codigoForzado?: string) {
-    if (escaneando || cobrandoRef.current || cajaDeEscritorioOcupada) return
+    if (escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || cajaDeEscritorioOcupada) return
     const entrada = (codigoForzado ?? entradaEscaneo).trim()
     if (!entrada) return
+
+    // `C` + dígitos se prueba primero como combo; si no hay un combo con ese número sigue la búsqueda de artículos con el
+    // texto original (D7). Solo las entradas con esa forma pasan por acá: el resto no paga ninguna lectura de más.
+    const codigoDeCombo = modoPresupuesto ? null : parsearCodigoDeCombo(entrada)
+    // Si la lectura de combos falló y el artículo tampoco aparece, el aviso tiene que decir también que no se pudo mirar combos.
+    let combosSinLeer = false
+    const conAvisoDeCombos = (mensaje: string) => (combosSinLeer ? `${mensaje} ${MENSAJE_DE_COMBOS_SIN_LEER}` : mensaje)
+    if (codigoDeCombo !== null) {
+      const tokenDeCombo = (tokenEscaneoRef.current += 1)
+      cargaDeComboEnCursoRef.current = true
+      setEscaneando(true)
+      setErrorEscaneo('')
+      let desenlace: Awaited<ReturnType<typeof intentarCargarComboPorCodigo>>
+      try {
+        const buscarSinRed = fuenteDeCombos.buscarSinRed
+        const buscarEnLaApi = fuenteDeCombos.buscarEnLaApi
+        if (buscarSinRed && buscarEnLaApi) {
+          // Con instantánea y conexión la caja no espera a la red si la copia local puede responder: primero los combos de la
+          // instantánea, después sus artículos, y solo si no conoce ninguno de los dos se le pregunta a la API.
+          desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarSinRed)
+          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && buscarArticuloOffline(instantaneaDelPuntoVenta, entrada))) {
+            desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarEnLaApi)
+          }
+        } else {
+          desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, fuenteDeCombos.buscarPorCodigo)
+        }
+      } catch {
+        // Una excepción al cargar un combo encontrado termina acá: nunca sigue con el escaneo de artículos.
+        if (tokenEscaneoRef.current === tokenDeCombo) {
+          setEscaneando(false)
+          setErrorEscaneo(`No se pudo cargar el combo ${rotuloDeCodigoDeCombo(codigoDeCombo)}.`)
+          focoPendienteRef.current = true
+        }
+        return
+      } finally {
+        cargaDeComboEnCursoRef.current = false
+      }
+      if (desenlace === 'obsoleto') return
+      setEscaneando(false)
+      if (desenlace !== 'sin_combo' && desenlace !== 'lectura_fallida') {
+        focoPendienteRef.current = true
+        return
+      }
+      combosSinLeer = desenlace === 'lectura_fallida'
+    }
 
     // Venta local primero: un código que está en la instantánea se agrega sin tocar la red. Solo
     // un código que no está (un artículo nuevo que todavía no sincronizó) va a buscarse online.
@@ -2519,11 +2734,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           focoPendienteRef.current = true
           return
         }
-        setErrorEscaneo('Sin conexión: no se encontró ese código en la última instantánea local.')
+        setErrorEscaneo(conAvisoDeCombos('Sin conexión: no se encontró ese código en la última instantánea local.'))
         return
       }
 
-      setErrorEscaneo(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.')
+      setErrorEscaneo(conAvisoDeCombos(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.'))
     } finally {
       if (tokenEscaneoRef.current === token) setEscaneando(false)
     }
@@ -2644,7 +2859,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
       // stage-pos-retiros-y-cierre-por-retiro (etapa 5): tampoco con un modal de "Retirar"/"Cerrar
       // caja" por retiro abierto.
       if (cajaDeEscritorioOcupada) return
@@ -2653,7 +2868,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+
+  // F4 abre el buscador de combos, con las mismas compuertas que el botón (que se deshabilita con un escaneo en vuelo) y que
+  // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      // Con Alt, Ctrl o Meta la tecla es del sistema (Alt+F4 cierra la ventana): ni se evita ni abre el buscador.
+      if (evento.key !== 'F4' || evento.altKey || evento.ctrlKey || evento.metaKey) return
+      // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
+      evento.preventDefault()
+      if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
+      if (gateTurno || ventaFinalizada || confirmandoCobro || cajaDeEscritorioOcupada) return
+      setBuscadorDeCombosAbierto(true)
+    }
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -2670,11 +2901,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
   useEffect(() => {
     if (!focoPendienteRef.current) return
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada || cajaDeEscritorioOcupada)
+    if (escaneando || cobrando || buscadorAbierto || modalDeCombosAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada || cajaDeEscritorioOcupada)
       return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
+  }, [escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
   /**
    * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
@@ -2696,12 +2927,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * extendida de "restaurar foco" a "adquirir foco por primera vez").
    */
   useEffect(() => {
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada || cajaDeEscritorioOcupada)
+    if (escaneando || cobrando || buscadorAbierto || modalDeCombosAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada || cajaDeEscritorioOcupada)
       return
     const activo = document.activeElement
     if (activo !== document.body && activo !== null && activo !== inputEscaneoRef.current) return
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
+  }, [escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
   // `subtotalPrevia` es lo que hay que cobrar, ya con los ajustes manuales de cada línea; de ahí
   // salen `totalActual`, `validarPagosLocal` y el vuelto. `ajustesManuales` solo los separa para
@@ -3197,6 +3428,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
       setLineas([])
       setPrecios({})
+      setCombosAplicados([])
       setCantidadesEnEdicion({})
       setAjustesEnEdicion({})
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
@@ -3368,7 +3600,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     f9Ref.current = {
       confirmandoCobro,
       ventaFinalizada: ventaFinalizada !== null,
-      buscadorAbierto,
+      buscadorAbierto: buscadorAbierto || modalDeCombosAbierto,
       gateTurno,
       cajaDeEscritorioOcupada,
       modoPresupuesto,
@@ -3592,6 +3824,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   Buscar artículo <sup aria-hidden="true">(F2)</sup>
                 </button>
+                {/* F4: F1, F2, F3 (dirección de entrega), F9, F10 y F12 son atajos del legacy a preservar (docs/05); F4 es la
+                    primera tecla de función que no usa el legacy ni esta pantalla. */}
+                <button
+                  type="button"
+                  className="btn btn-outline-primary"
+                  disabled={escaneando || pantallaCobroInerte}
+                  aria-keyshortcuts="F4"
+                  onClick={() => setBuscadorDeCombosAbierto(true)}
+                >
+                  Buscar combo <sup aria-hidden="true">(F4)</sup>
+                </button>
               </div>
             )}
 
@@ -3630,6 +3873,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         const resultado = precios[l.idLinea]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
+                        const comboDeLinea = comboVigenteDeLinea(l.cantidad, resultado?.combo)
+                        // La línea solo conoce el combo de menor id entre los que la consumieron, pero su ahorro suma
+                        // todos: el nombre solo se muestra cuando el carrito aplicó UN combo (no puede ser otro).
+                        const nombreDelCombo =
+                          comboDeLinea && combosAplicados.length === 1 && combosAplicados[0].idCombo === comboDeLinea.idCombo
+                            ? combosAplicados[0].nombre
+                            : 'Combos'
                         const ajusteDeLinea = l.ajusteManualPorcentaje ?? null
                         const mensajeDeAjuste = mensajeDeAjusteInvalido(l.idLinea)
                         const lineaInerte = pantallaCobroInerte || bloqueadoPorTurno
@@ -3647,6 +3897,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             <td>{l.codigoBarra ?? l.codigoInterno}</td>
                             <td>
                               {l.nombre}
+                              {comboDeLinea && (
+                                <div>
+                                  <span className="badge text-bg-success" title="Combo aplicado a esta línea">
+                                    {[nombreDelCombo, formatearImporteConSigno(-comboDeLinea.ahorro, { simbolo: true })].join(' ')}
+                                  </span>
+                                </div>
+                              )}
                               {ajusteDeLinea !== null && (
                                 <div>
                                   <span className={`badge ${ajusteDeLinea < 0 ? 'text-bg-warning' : 'text-bg-info'}`}>{textoDelAjuste}</span>
@@ -3816,6 +4073,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
             <hr />
 
+            {combosAplicados.map((c) => (
+              <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
+                <span>Combo {rotuloDeComboAplicado(c)}</span>
+                <span>{formatearMoneda(-c.ahorro)}</span>
+              </div>
+            ))}
             {ajustesManuales.descuentoManualTotal !== 0 && (
               <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
                 <span>Desc. manual</span>
@@ -4017,6 +4280,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           onAgregar={agregarDesdeBusqueda}
           onCerrar={cerrarBuscador}
         />
+      )}
+
+      {buscadorDeCombosAbierto && !modoPresupuesto && (
+        <ModalDeBusquedaDeCombos
+          fuente={fuenteDeCombos}
+          motivoSinAgregar={motivoSinAgregarEnBuscador}
+          onCargar={cargarComboDesdeBuscador}
+          onCerrar={cerrarBuscadorDeCombos}
+        />
+      )}
+
+      {comboPorElegir && !modoPresupuesto && (
+        <SelectorDeMiembrosDeCombo combo={comboPorElegir.combo} onConfirmar={confirmarMiembrosDeCombo} onCancelar={cancelarMiembrosDeCombo} />
       )}
 
       {modalCuentaCorrienteAbierto && !modoPresupuesto && puntoVentaSeleccionada && medios && (

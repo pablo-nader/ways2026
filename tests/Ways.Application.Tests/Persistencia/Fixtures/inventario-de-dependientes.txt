@@ -52,6 +52,7 @@ ListaPrecio | items_remito | id_lista_precio,id_tenant | marcado
 ListaPrecio | listas_precio | id_lista_base | marcado
 ListaPrecio | ofertas_listas | id_lista_precio,id_tenant | sinmarca
 ListaPrecio | precios | id_lista_precio,id_tenant | marcado
+ListaPrecio | vitrinas | id_lista_precio,id_tenant | marcado
 Marca | articulos | id_marca,id_tenant | marcado
 MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
 MedioPago | gastos | id_medio_pago,id_tenant | marcado
@@ -104,6 +105,7 @@ Tenant | empresas | id_tenant | marcado
 Tenant | familias | id_tenant | marcado
 Tenant | gastos | id_tenant | marcado
 Tenant | grupos | id_tenant | marcado
+Tenant | imagenes_articulo | id_tenant | marcado
 Tenant | items_comprobante_compra | id_tenant | marcado
 Tenant | items_comprobante_venta | id_tenant | marcado
 Tenant | items_orden_compra | id_tenant | marcado

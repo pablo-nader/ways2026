@@ -105,14 +105,5 @@ public sealed class LectorDeVitrinaPublica(IServiceScopeFactory alcances) : ILec
             : null;
     }
 
-    private AsyncServiceScope EnModoPublico(int idTenant)
-    {
-        var alcance = alcances.CreateAsyncScope();
-
-        alcance.ServiceProvider
-            .GetRequiredService<TenantActualDeSesion>()
-            .Establecer(ModoDeAcceso.Publico, idTenant);
-
-        return alcance;
-    }
+    private AsyncServiceScope EnModoPublico(int idTenant) => AlcanceEnModoPublico.Abrir(alcances, idTenant);
 }

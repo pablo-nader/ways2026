@@ -18,7 +18,8 @@ import {
   esInstantaneaValida,
   guardarInstantaneaLocal,
   leerInstantaneaLocal,
-  preciosVigentesDeLasLineas,
+  resolverDocumentoOffline,
+  sanearCombosDeInstantanea,
   todasLasLineasTienenPrecioOffline,
   type InstantaneaLocal,
 } from './instantaneaOffline'
@@ -211,12 +212,14 @@ export type ResultadoDeSincronizacionOffline = {
 
 /** Enriquece cada línea con el precio congelado de la instantánea en la lista de la venta, en el
  * tramo que corresponde a SU cantidad y a la de su familia en el carrito
- * (`preciosVigentesDeLasLineas` — la misma función que resuelve la vista previa en pantalla, para
- * que lo mostrado y lo cobrado no puedan diferir: este payload es el que el servidor cobra literal). `null` si CUALQUIER línea no tiene precio en esa lista. Defensa
+ * (`resolverDocumentoOffline` — la misma función que resuelve la vista previa en pantalla, para
+ * que lo mostrado y lo cobrado no puedan diferir: este payload es el que el servidor cobra literal).
+ * Una línea que un combo consumió suma `unidadesConsumidasPorCombo`, `ahorroDeCombo` e `idCombo`, las tres
+ * o ninguna, junto al `precioUnitario` bruto y el `descuentoUnitario` de oferta de siempre. `null` si CUALQUIER línea no tiene precio en esa lista. Defensa
  * en profundidad únicamente: el gate real (todas o ninguna) es
  * `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar esto. */
 function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: InstantaneaDePos, idListaPrecio: number): LineaDeVenta[] | null {
-  const vigentes = preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio)
+  const vigentes = resolverDocumentoOffline(lineas, instantanea, idListaPrecio).lineas
   const enriquecidas: LineaDeVenta[] = []
   for (const [indice, linea] of lineas.entries()) {
     const precios = vigentes[indice]
@@ -227,7 +230,14 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
     // (ya neto) restaba el descuento DOS VECES y sub-registraba toda venta offline con oferta.
     // Por eso el tramo solo aporta `descuentoUnitario`: `precioOriginal` es el bruto y no varía
     // con la cantidad.
-    enriquecidas.push({ ...linea, precioUnitario: precios.precioOriginal, descuentoUnitario: precios.descuentoUnitario })
+    enriquecidas.push({
+      ...linea,
+      precioUnitario: precios.precioOriginal,
+      descuentoUnitario: precios.descuentoUnitario,
+      ...(precios.combo
+        ? { unidadesConsumidasPorCombo: precios.combo.unidadesConsumidas, ahorroDeCombo: precios.combo.ahorro, idCombo: precios.combo.idCombo }
+        : {}),
+    })
   }
   return enriquecidas
 }
@@ -416,7 +426,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       // Un servidor anterior a los precios por lista ignora `?version=2` y responde la forma vieja:
       // se conserva la copia local en vez de cotizar con algo que no se puede leer.
       if (!esInstantaneaValida(respuesta.cuerpo)) return true
-      await adoptarInstantaneaLocal({ instantanea: respuesta.cuerpo, etag: respuesta.etag, verificadaEn: ahora }, epocaAlPedir)
+      await adoptarInstantaneaLocal({ instantanea: sanearCombosDeInstantanea(respuesta.cuerpo), etag: respuesta.etag, verificadaEn: ahora }, epocaAlPedir)
       return true
     } catch (e) {
       // Sin conexión, o el servidor rechazó — la instantánea local (potencialmente vieja) se

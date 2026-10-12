@@ -1,4 +1,5 @@
 using Microsoft.Net.Http.Headers;
+using Ways.Application.CatalogoOnline;
 using Ways.Application.Dominios;
 using Ways.Application.Vitrinas;
 using Ways.Domain.Common;
@@ -8,9 +9,10 @@ namespace Ways.Api.Endpoints;
 /// <summary>
 /// Lo que se puede saber del sitio sin sesión. Solo expone lo que el middleware de dominio ya
 /// resolvió —si es la plataforma o el nombre del comercio de un dominio verificado— y la vitrina
-/// publicada de ese tenant, leída en el modo de acceso <c>publico</c> (solo <c>SELECT</c> sobre tres
-/// tablas, ver <see cref="ILectorDeVitrinaPublica"/>): ningún otro dato de tenant. La vitrina de un tenant
-/// que no puede operar (suspendido) no se sirve: contesta lo mismo que un comercio sin vitrina publicada.
+/// publicada de ese tenant y su catálogo de artículos publicados, leídos en el modo de acceso <c>publico</c>
+/// (solo <c>SELECT</c> sobre las tablas de <see cref="ILectorDeVitrinaPublica"/> y
+/// <see cref="ILectorDeCatalogoPublico"/>): ningún otro dato de tenant. La vitrina y el catálogo de un tenant
+/// que no puede operar (suspendido) no se sirven: contestan lo mismo que un comercio sin vitrina publicada.
 /// </summary>
 public static class PublicoEndpoints
 {
@@ -55,6 +57,45 @@ public static class PublicoEndpoints
         })
         .WithSummary("El logo de la vitrina publicada, con ETag y caché de una hora.");
 
+        grupo.MapGet("/catalogo", async (
+            IDominioActual dominio,
+            ILectorDeCatalogoPublico lector,
+            HttpContext contexto,
+            string? buscar,
+            int? idCategoria,
+            int? pagina,
+            int? tamano,
+            CancellationToken ct) =>
+        {
+            var consulta = new ConsultaDeCatalogo(
+                buscar, idCategoria, pagina ?? 1, tamano ?? ConsultaDeCatalogoPublico.TamanoPorDefecto);
+
+            var catalogo = (TenantQueSirve(dominio) is { } idTenant ? await lector.ObtenerAsync(idTenant, consulta, ct) : null)
+                ?? throw new ErrorDominio(
+                    "vitrina_no_publicada", "Este comercio todavía no publicó su página.", StatusCodes.Status404NotFound);
+
+            contexto.Response.Headers.CacheControl = "public, max-age=60";
+
+            return Results.Ok(catalogo);
+        })
+        .WithSummary(
+            "El catálogo de la tienda del dominio: artículos publicados, disponibles para la empresa de la vitrina y con "
+            + "precio en su lista, buscables y paginados, más las categorías con su cuenta.");
+
+        grupo.MapGet("/articulos/{id:int}/imagen", (
+            IDominioActual dominio, ILectorDeCatalogoPublico lector, HttpContext contexto, int id, CancellationToken ct) =>
+        {
+            var idTenant = TenantQueSirve(dominio);
+
+            return ServirImagenAsync(
+                contexto,
+                "public, max-age=3600",
+                () => SinImagen("Este artículo no tiene una imagen publicada."),
+                () => idTenant is { } t ? lector.ObtenerVersionDeImagenAsync(t, id, ct) : Task.FromResult<VersionDeImagen?>(null),
+                () => idTenant is { } t ? lector.ObtenerImagenAsync(t, id, ct) : Task.FromResult<ImagenServida?>(null));
+        })
+        .WithSummary("La imagen de un artículo publicado, con ETag y caché de una hora.");
+
         return app;
     }
 
@@ -65,31 +106,52 @@ public static class PublicoEndpoints
     /// un logo reemplazado entre las dos consultas se sirve con su propio ETag. Los encabezados de caché se
     /// ponen recién cuando hay algo que servir: un 404 nunca queda cacheable.
     /// </summary>
-    internal static async Task<IResult> ServirLogoAsync(
+    internal static Task<IResult> ServirLogoAsync(
         HttpContext contexto,
         string cacheControl,
         string mensajeSinLogo,
         Func<Task<VersionDeLogo?>> obtenerVersion,
-        Func<Task<LogoPublico?>> obtenerLogo)
+        Func<Task<LogoPublico?>> obtenerLogo) =>
+        ServirImagenAsync(
+            contexto,
+            cacheControl,
+            () => SinLogo(mensajeSinLogo),
+            async () => await obtenerVersion() is { } version ? new VersionDeImagen(version.ContentType, version.ActualizadoEn) : null,
+            async () => await obtenerLogo() is { } logo ? new ImagenServida(logo.Contenido, logo.ContentType, logo.ActualizadoEn) : null);
+
+    /// <summary>
+    /// Sirve una imagen con ETag (el del logo y el de la imagen de un artículo se arman igual: ver
+    /// <see cref="EtagDelLogo"/>). Primero pregunta solo por su versión (tipo y marca de carga, sin los bytes): si
+    /// <c>If-None-Match</c> coincide contesta 304 sin llamar a <paramref name="obtenerImagen"/>, que es lo único
+    /// que lee la columna bytea. Si no coincide, trae los bytes y el ETag sale de ESA lectura, así que una imagen
+    /// reemplazada entre las dos consultas se sirve con su propio ETag. Los encabezados de caché se ponen recién
+    /// cuando hay algo que servir: un 404 nunca queda cacheable.
+    /// </summary>
+    internal static async Task<IResult> ServirImagenAsync(
+        HttpContext contexto,
+        string cacheControl,
+        Func<ErrorDominio> sinImagen,
+        Func<Task<VersionDeImagen?>> obtenerVersion,
+        Func<Task<ImagenServida?>> obtenerImagen)
     {
-        var version = await obtenerVersion() ?? throw SinLogo(mensajeSinLogo);
+        var version = await obtenerVersion() ?? throw sinImagen();
         var etag = new EntityTagHeaderValue(EtagDelLogo.De(version.ActualizadoEn));
 
         if (CoincideConLaCondicional(contexto.Request, etag))
         {
-            PonerEncabezadosDelLogo(contexto, cacheControl);
+            PonerEncabezadosDeLaImagen(contexto, cacheControl);
             contexto.Response.Headers.ETag = etag.ToString();
 
             return Results.StatusCode(StatusCodes.Status304NotModified);
         }
 
-        var logo = await obtenerLogo() ?? throw SinLogo(mensajeSinLogo);
-        PonerEncabezadosDelLogo(contexto, cacheControl);
+        var imagen = await obtenerImagen() ?? throw sinImagen();
+        PonerEncabezadosDeLaImagen(contexto, cacheControl);
 
         return Results.File(
-            logo.Contenido,
-            logo.ContentType,
-            entityTag: new EntityTagHeaderValue(EtagDelLogo.De(logo.ActualizadoEn)));
+            imagen.Contenido,
+            imagen.ContentType,
+            entityTag: new EntityTagHeaderValue(EtagDelLogo.De(imagen.ActualizadoEn)));
     }
 
     /// <summary>El tenant del dominio solo si puede servir su vitrina: el host tiene un tenant (en el de la
@@ -100,10 +162,13 @@ public static class PublicoEndpoints
     private static ErrorDominio SinLogo(string mensaje) =>
         new("logo_no_encontrado", mensaje, StatusCodes.Status404NotFound);
 
-    private static void PonerEncabezadosDelLogo(HttpContext contexto, string cacheControl)
+    internal static ErrorDominio SinImagen(string mensaje) =>
+        new("imagen_no_encontrada", mensaje, StatusCodes.Status404NotFound);
+
+    private static void PonerEncabezadosDeLaImagen(HttpContext contexto, string cacheControl)
     {
         contexto.Response.Headers.CacheControl = cacheControl;
-        // El tipo lo decidió el contenido al subirlo; que el navegador no lo reinterprete.
+        // El tipo lo decidió el contenido al subirla; que el navegador no lo reinterprete.
         contexto.Response.Headers.XContentTypeOptions = "nosniff";
     }
 

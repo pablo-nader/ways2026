@@ -357,6 +357,30 @@ export type SitioPublico = {
   admiteUsuario: boolean
 }
 
+/** Un punto de venta activo tal como lo muestra la landing (`GET /api/publico/vitrina`). */
+export type SucursalPublica = {
+  nombre: string
+  domicilio: string | null
+  horario: string | null
+  whatsapp: string | null
+  instagram: string | null
+  facebook: string | null
+  web: string | null
+}
+
+/** La vitrina publicada de un comercio, sin sesión. `tema` llega como texto y la landing lo reduce
+ * a `claro`/`oscuro`; `logoVersion` solo rompe la caché del `<img>` cuando se sube otro logo. */
+export type VitrinaPublica = {
+  nombre: string
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: string
+  tieneLogo: boolean
+  logoVersion: number | null
+  sucursales: SucursalPublica[]
+}
+
 /** Dominio propio de un tenant (`GET /api/plataforma/tenants/{id}/dominios`). `verificadoEn` es
  * `null` hasta que la plataforma lo marca: un dominio sin verificar todavía no resuelve. */
 export type DominioListado = {
@@ -369,6 +393,34 @@ export type DominioListado = {
 }
 
 export type DominioAlta = { host: string; esPrincipal: boolean }
+
+export type TemaDeVitrina = 'claro' | 'oscuro'
+
+/** `GET /api/empresas/{id}/vitrina` y lo que devuelven los `PUT`. `existe: false` es la forma por
+ * defecto de una empresa sin vitrina guardada (sin publicar, tema oscuro). `tema` llega como texto
+ * y el cliente lo reduce a `TemaDeVitrina`. `logoVersion` es la marca de la última carga del logo
+ * (cambia con cada subida) y se usa solo para refrescar la vista previa. */
+export type VitrinaAdmin = {
+  existe: boolean
+  idEmpresa: number
+  publicada: boolean
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: string
+  tieneLogo: boolean
+  logoVersion: number | null
+}
+
+/** Cuerpo de `PUT /api/empresas/{id}/vitrina` (espejo de `SolicitudDeVitrina`): los cinco campos
+ * se guardan, ninguno se descarta. El logo viaja aparte. */
+export type VitrinaEdicion = {
+  publicada: boolean
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: TemaDeVitrina
+}
 
 /** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la
  * empresa se sigue listando con el nombre en `null` y se muestra como anomalía en vez de
@@ -1035,7 +1087,20 @@ export type ResultadoDeResolucion = {
   precioFinal: number | null
   descuentoUnitario: number
   aplicadas: OfertaAplicada[]
+  /** Solo en `POST /api/ofertas/resolver-con-combos` y en la vista previa offline, y solo en la línea que
+   * un combo consumió (clave ausente en el resto). */
+  combo?: ComboDeLinea
 }
+
+/** Lo que un combo le hizo a una línea (espejo de `ComboEnLineaResuelta`): `ahorro` es un importe DE LÍNEA
+ * (no por unidad) que se suma al descuento por oferta de las unidades no consumidas. */
+export type ComboDeLinea = { unidadesConsumidas: number; ahorro: number; idCombo: number }
+
+/** Un combo aplicado a un documento, con las veces y el ahorro total (espejo de `ComboAplicadoResuelto`). */
+export type ComboAplicadoEnPrevia = { idCombo: number; codigo: number; nombre: string; veces: number; ahorro: number }
+
+/** Respuesta de `POST /api/ofertas/resolver-con-combos`: las líneas en el orden pedido y los combos aplicados. */
+export type ResolucionConCombos = { lineas: ResultadoDeResolucion[]; combos: ComboAplicadoEnPrevia[] }
 
 // --- POS: instantánea offline (stage-pos-venta-offline-web) ---
 // Espejo de `Ways.Application.Pos.Contratos` — catálogo con precio ya resuelto y congelado en cada
@@ -1132,6 +1197,61 @@ export type ClienteDeInstantanea = {
   creditoIlimitado: boolean
 }
 
+/** Componente de un combo de la instantánea: exactamente uno entre `idArticulo` e `idFamilia`. */
+export type ComponenteDeComboDeInstantanea = { idArticulo?: number | null; idFamilia?: number | null; cantidad: number }
+
+/** Combo de la instantánea (espejo de `ComboDeInstantanea`): `precio` es el del conjunto completo. El servidor
+ * lo manda entero o no lo manda, y ordenado por id ascendente. */
+export type ComboDeInstantanea = {
+  idCombo: number
+  codigo: number
+  nombre: string
+  precio: number
+  componentes: ComponenteDeComboDeInstantanea[]
+}
+
+/** Componente de `GET /api/combos` (espejo de `ComponenteDeComboListado`): exactamente uno entre `idArticulo` e
+ * `idFamilia`. `nombre` es el del artículo o de la familia; `null` con `disponible = false` cuando esa fila fue dada
+ * de baja. */
+export type ComponenteDeComboListado = {
+  idArticulo: number | null
+  idFamilia: number | null
+  nombre: string | null
+  cantidad: number
+  disponible: boolean
+}
+
+/** Combo de `GET /api/combos` (espejo de `ComboListado`). El listado trae también los inactivos: el POS filtra. */
+export type ComboListado = {
+  id: number
+  codigo: number
+  nombre: string
+  precio: number
+  idEmpresa: number | null
+  activo: boolean
+  componentes: ComponenteDeComboListado[]
+}
+
+/** Componente de `GET /api/combos/{id}/cargable` (espejo de `ComponenteCargable`). `candidatos` son los artículos con
+ * los que se completa, con la forma del escaneo (`cantidad = 1`): vacía cuando el componente no se puede vender. */
+export type ComponenteDeComboCargable = {
+  idArticulo: number | null
+  idFamilia: number | null
+  nombre: string | null
+  cantidad: number
+  candidatos: ArticuloEscaneado[]
+}
+
+/** Respuesta de `GET /api/combos/{id}/cargable` (espejo de `ComboCargable`): los componentes en el orden en que se armó
+ * el combo. */
+export type ComboCargableDeApi = {
+  id: number
+  codigo: number
+  nombre: string
+  precio: number
+  componentes: ComponenteDeComboCargable[]
+}
+
 /** Recorte de `MedioPagoListado` para el checkout offline — espejo de `MedioPagoDeInstantanea`. */
 export type MedioPagoDeInstantanea = {
   idMedioPago: number
@@ -1151,6 +1271,8 @@ export type InstantaneaDePos = {
   clientes: ClienteDeInstantanea[]
   mediosDePago: MedioPagoDeInstantanea[]
   toleranciaPago: number
+  /** Ausente cuando no hay combos y en una instantánea guardada antes de que existieran: se cotiza como siempre. */
+  combos?: ComboDeInstantanea[]
 }
 
 // --- Caja: turnos, movimientos y resumen (stage-6-turnos-caja, Slice 6) ---
@@ -1711,6 +1833,11 @@ export type LineaDeVenta = {
    * (ausente = sin ajuste, el payload queda idéntico al de antes): el servidor recalcula el monto
    * sobre el neto posterior a las ofertas y es la única autoridad del importe. */
   ajusteManualPorcentaje?: number | null
+  /** Combos de una venta offline (espejo de `LineaDeVenta`): las TRES viajan juntas o ninguna, solo con
+   * `precioUnitario`, en la línea que un combo consumió. `ahorroDeCombo` es un importe de línea. */
+  unidadesConsumidasPorCombo?: number
+  ahorroDeCombo?: number
+  idCombo?: number
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
@@ -1777,6 +1904,8 @@ export type ItemEmitido = {
   idArea: number
   idListaPrecio: number
   idOferta: number | null
+  /** Combo que consumió unidades de la línea (el de menor id si fueron varios); `null`/ausente sin combo. */
+  idCombo?: number | null
   idAlicuotaIva: number
   porcentajeIva: number
   cantidad: number

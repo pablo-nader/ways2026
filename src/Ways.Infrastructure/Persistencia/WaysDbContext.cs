@@ -85,6 +85,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<CodigoBarra> CodigosBarra => Set<CodigoBarra>();
     public DbSet<CodigoProveedor> CodigosProveedor => Set<CodigoProveedor>();
     public DbSet<ArticuloEmpresa> ArticulosEmpresas => Set<ArticuloEmpresa>();
+
+    // Imagen del artículo en el catálogo público: la escribe ServicioDeCatalogoWeb y la lee el catálogo
+    // público en modo de acceso publico.
+    public DbSet<ImagenDeArticulo> ImagenesArticulo => Set<ImagenDeArticulo>();
     public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
     public DbSet<Precio> Precios => Set<Precio>();
 
