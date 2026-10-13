@@ -28,8 +28,13 @@ comprobantes_venta (          -- [operativa]
     observaciones_fiscales jsonb       NULL,        -- [{ "codigo": int, "mensaje": string }]
     -- Facturación por medio de pago: espejo fiscal y bandera del cajero
     id_venta_origen        integer     NULL,        -- espejo fiscal → la venta (TX) que factura
-    factura_forzada        boolean     NOT NULL DEFAULT false  -- el cajero pidió facturar este ticket
+    factura_forzada        boolean     NOT NULL DEFAULT false, -- el cajero pidió facturar este ticket
+    facturacion_decidida_en timestamptz NULL,      -- NULL = la decisión está debida; con valor = ya decidida (marca de idempotencia)
+    facturacion_intentos    integer     NOT NULL DEFAULT 0, -- intentos fallidos de decidir esta venta (solo crece)
+    facturacion_proximo_intento_en timestamptz NULL         -- el barrido no la reintenta antes de este instante
 );
+-- INDEX  (id_punto_venta, id_comprobante_venta) WHERE facturacion_decidida_en IS NULL AND id_venta_origen IS NULL
+--                                                                            ix_comprobantes_venta_decision_debida
 -- UNIQUE (id_punto_venta, id_tipo_comprobante, numero)
 -- FK (id_venta_origen, id_tenant) → comprobantes_venta ON DELETE RESTRICT
 -- UNIQUE (id_venta_origen, id_tenant) WHERE id_venta_origen IS NOT NULL  ⇒ a lo sumo un espejo por venta
@@ -330,7 +335,7 @@ así que en un tenant con muchos comprobantes conviene aplicarla en una ventana 
   (`numeric(5,2)`), o sea hasta 6 decimales exactos; `numeric(18,6)` los guarda sin redondear y deja 12 dígitos enteros.
 - **Único escritor del acumulado.** Como `numeraciones_fiscales`, no hereda de `EntidadTenant`, necesita el filtro de tenant
   escrito a mano (`AplicarFiltroDeTenantEnAcumuladoDeFacturacion`) y `SaveChangesAsync` rechaza escribirla: el saldo solo se
-  mueve con un `INSERT … ON CONFLICT DO UPDATE` crudo que suma el aporte en la base, para que dos ventas concurrentes no se pisen (ese escritor llega con la decisión de facturar al ingerir la venta).
+  mueve con SQL crudo (`INSERT … ON CONFLICT DO NOTHING`, `SELECT … FOR UPDATE` y un `UPDATE` que suma), bajo el lock de la fila, para que dos ventas concurrentes no se pisen (`ServicioDeDecisionDeFacturacion`, ver "Decisión al ingerir la venta").
 - **Enums nativos nuevos** (`motivo_facturacion`, `estado_facturacion_venta`), creados por `CREATE TYPE`; el orden de los
   valores es el del ciclo de vida. `motivo_facturacion` conserva `no_requerida` (valor 0 del enum de dominio) para que el mapeo
   sea 1:1, y un CHECK impide usarlo: una venta que no se factura no tiene fila.
@@ -340,6 +345,103 @@ así que en un tenant con muchos comprobantes conviene aplicarla en una ventana 
 - **Respaldos de error.** Los tres índices únicos se traducen a `409` (`venta_ya_facturada`, `facturacion_de_venta_duplicada`,
   `factura_ya_asignada`); los CHECK no se traducen a propósito: los valores los deriva el servidor y una violación es un
   defecto del servidor, no un error del cliente.
+
+**Decisión al ingerir la venta (T4): implementada**, migración `FacturacionDecididaEnVenta` (tres columnas en
+`comprobantes_venta` más un índice parcial). `ServicioDeDecisionDeFacturacion` no emite la factura: decide, deja la fila de
+decisión en `pendiente` y mueve el acumulado.
+
+- **Qué significa `NULL`.** Una sola cosa: la decisión de esa venta está debida. Toda venta que la decisión examina queda marcada
+  (`facturacion_decidida_en` con la hora del servidor), se facture o no: no es un ticket, está anulada, la empresa no tiene un
+  certificado activo del ambiente configurado, no cobró nada. Solo los espejos fiscales (`id_venta_origen` no nulo) quedan en `NULL` para siempre, porque nunca
+  se deciden, y por eso el índice y el barrido los excluyen. Los comprobantes que nunca son un ticket y que crean otros escritores
+  nacen ya marcados, con la hora que ese escritor ya tiene: la consolidación de remitos (TXR), los recibos de cuenta corriente (RC)
+  y la emisión fiscal directa (`ServicioDeFacturacionFiscal`); no compiten por los lugares del barrido. El resto de las filas nace en
+  `NULL` y las decide el endpoint de ventas (`POST /api/ventas`: TX y NCX).
+- **Intentos fallidos.** `facturacion_intentos integer NOT NULL DEFAULT 0` cuenta los intentos de decidir esa venta que fallaron y
+  `facturacion_proximo_intento_en timestamptz NULL` es el instante antes del cual el barrido no la reintenta. Cada fallo (el de la
+  venta recién emitida o el de una candidata del barrido) se anota con un `UPDATE` crudo aparte, fuera de la transacción que falló:
+  suma uno al contador y fija la espera `1 min × 2^(intentos−1)` con tope de 4 horas (1, 2, 4, 8, 16, 32, 64,
+  128 y luego 240 minutos), contada desde el reloj del servicio. Anotar el fallo nunca lanza y tiene su propio presupuesto de 1 s: si otra
+  sesión tiene tomada la fila de la venta la anotación se omite y la venta sigue debida, sin espera creciente. Una decisión lograda no
+  limpia nada: basta la marca y el contador queda como historia. La espera solo restringe al barrido; la decisión de la venta recién
+  emitida y la llamada directa a `DecidirAsync` no la miran.
+- **Migración.** `ADD COLUMN facturacion_decidida_en timestamptz NULL DEFAULT now()` seguido de `ALTER COLUMN … DROP DEFAULT`, ambos con
+  `Sql()`; luego `facturacion_intentos integer NOT NULL DEFAULT 0` y `facturacion_proximo_intento_en timestamptz NULL`. Las tres son solo
+  metadata: `now()` es `STABLE`, así que PostgreSQL lo evalúa una sola vez en el `ALTER` y lo guarda como valor "faltante" de la
+  columna (no reescribe la tabla y toda venta que existe al migrar se lee como ya decidida, con la hora de la migración), y el entero con
+  valor por defecto constante y el nullable tampoco la reescriben. Al quitar el valor por defecto de la marca las filas nuevas nacen en
+  `NULL`. El modelo de EF describe la marca nullable sin valor por defecto. EF corre la migración en una sola transacción, así que el
+  lock `ACCESS EXCLUSIVE` que toma `ADD COLUMN` se mantiene hasta que la transacción termina, incluido el `CREATE INDEX` del índice parcial
+  `ix_comprobantes_venta_decision_debida`, que recorre la tabla una vez: durante todo ese tiempo se bloquean lecturas y escrituras de
+  `comprobantes_venta`. En un tenant con muchos comprobantes conviene aplicar la migración en una ventana de bajo tráfico. Como todas las
+  filas existentes ya están marcadas, el índice nace vacío. Lo prueba `FacturacionDecididaEnVentaMigracionTests` (mismo archivo de la tabla
+  antes y después, `atthasmissing`, marca de las filas viejas, `NULL` en las nuevas y las dos columnas de intentos).
+- **Cuándo corre.** `POST /api/ventas` la llama después del commit de la venta, en una transacción propia, de modo que el lock del
+  acumulado nunca entra en el conjunto de locks del checkout, y sin el token de la solicitud: un corte del cliente no deja la decisión a
+  medias. La decisión de la venta recién emitida tiene su propio presupuesto total de 3 segundos (`PresupuestoDeDecision`), que se pasa
+  como token de cancelación a la estrategia de ejecución y a cada comando; si vence, o si la decisión falla, la transacción se deshace,
+  el fallo se anota, la venta responde `sin_decidir` y el barrido no corre en esa solicitud: se omite siempre que la decisión de la venta
+  actual termina en `sin_decidir`, sea cual sea la causa. Un test
+  prueba el caso de una fila de la venta tomada por otra sesión (responde `sin_decidir` dentro del tope y la misma conexión sigue sana);
+  que el token corte también los reintentos transitorios de la estrategia no tiene un test. El reenvío de una venta con número pre-asignado pasa por el mismo endpoint y vuelve a llamarla. La respuesta
+  (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar), `no_corresponde` o `sin_decidir`. Una lectura por id no
+  consulta el estado fiscal (`fiscal` viene `null`).
+- **Autocuración (barrido).** Si la decisión falla, el error se registra, la venta responde igual con `sin_decidir`, la marca queda en
+  `NULL` y el fallo se anota (ver "Intentos fallidos"). Si la decisión de la venta actual terminó bien, el endpoint llama a
+  `SanearDecisionesDebidasAsync`: toma las ventas del mismo punto de venta con la marca en `NULL`, `id_venta_origen` nulo y la espera
+  vencida (`facturacion_proximo_intento_en IS NULL OR <= ahora`), las más viejas primero (por id), como máximo 5 por llamada
+  (`LimiteDeBarrido`) y con un presupuesto total de 3 segundos, y decide cada una en su propia transacción con el mismo código que la
+  venta recién emitida. Una venta que falla se anota con su espera y el barrido sigue con la siguiente; cada candidata se intenta una sola
+  vez por llamada y la venta recién decidida se excluye. Una venta que falla siempre sale de los candidatos hasta que vence su espera
+  (y la espera crece hasta 4 horas), de modo que no desplaza a las posteriores. Si el propio presupuesto de 3 segundos del barrido vence
+  mientras decide una candidata, esa interrupción no es un fallo de la venta: no se anota (ni intento ni espera), el barrido termina y
+  deja una sola línea de nivel debug; la candidata sigue debida y la decide una llamada posterior. Se distingue por el token del
+  presupuesto del barrido: cualquier falla de una candidata con ese token ya cancelado cuenta como corte, y toda otra falla se anota
+  como siempre. Limitación: una candidata que consume el presupuesto entero en cada barrido (por ejemplo, esperando una fila del acumulado retenida por otra sesión) no se anota ni se posterga, sigue primera por id y demora hasta 3 segundos cada venta de ese punto de venta mientras dure la causa, sin que el barrido llegue a las que la siguen. El presupuesto de la decisión de la venta actual no se comporta así: su vencimiento sí se anota como fallo. El índice `ix_comprobantes_venta_decision_debida
+  (id_punto_venta, id_comprobante_venta) WHERE facturacion_decidida_en IS NULL AND id_venta_origen IS NULL` entrega esas filas ya
+  ordenadas; la condición de la espera se evalúa sobre sus filas, así que las ventas que esperan se recorren (sin transacción) hasta
+  reunir los candidatos. El punto de venta pertenece a un solo tenant (RLS agrega el filtro de tenant) y la lista que el barrido pide es
+  la de su caja. Registro: advertencia en los primeros fallos de una venta y error con su id y la cantidad de intentos desde el quinto
+  (`IntentosParaRegistrarComoError`); una candidata que todavía espera no se registra. Limitación: una venta cuya fila sigue tomada por
+  otra sesión no puede anotar su fallo.
+- **A qué ventas aplica.** Solo un ticket emitido (clase venta, no fiscal, signo positivo, que mueve stock: el TX) se decide. Una
+  devolución, una venta anulada antes de decidirse y un comprobante que no es ticket se marcan sin fila ni acumulado. Una empresa sin
+  un certificado fiscal activo del ambiente configurado (`OpcionesFiscales.ResolverAmbiente`) también, sin fila de decisión, sin
+  movimiento del acumulado, sin intento fallido anotado y sin excepción: la venta se decide como no aplicable (`no_corresponde`) y se
+  marca para siempre, tenga o no certificados activos de otro ambiente. Una venta hecha mientras la empresa no podía facturar en este
+  despliegue nunca se factura retroactivamente, ni cuando después se activa un certificado del ambiente configurado: las ventas nuevas se
+  deciden con normalidad y las anteriores quedan marcadas. Si además la empresa tiene un certificado activo de OTRO ambiente (p. ej.
+  `ResolverAmbiente` cae a homologación con cualquier texto desconocido, así que un `produccion` mal escrito lo provocaría), el servicio
+  deja un aviso en el log, con nivel de advertencia, que nombra la empresa y el ambiente configurado, para que se note un ambiente mal
+  configurado; la venta se marca igual. El aviso se limita a uno por empresa y por hora y por proceso (un mapa en memoria, con
+  candado, medido con el reloj del servicio; se avisa de nuevo al cumplirse la hora). Una venta sin pagos
+  (o con importe neto cero) no tiene medio al que imputar: se marca y no mueve nada. Un pago con monto neto cero o negativo
+  (`importe − vuelto ≤ 0`) no cuenta. Varios pagos del mismo medio suman en una sola fila del acumulado, y un medio de cuenta corriente
+  acumula como cualquier otro según su `porcentaje_facturacion`: la decisión no mira el comportamiento del medio.
+- **`ForzarFactura`.** Viaja en la solicitud, se guarda en `comprobantes_venta.factura_forzada` y entra en la identidad del reenvío
+  (otro valor con el mismo número pre-asignado es `409 numero_preasignado_con_otro_contenido`). En una nota de crédito se rechaza
+  (`400 forzar_factura_no_admitido`), no se ignora. Se acepta pero no tiene efecto cuando la empresa no tiene certificado activo del ambiente configurado y
+  cuando el monto neto cobrado del ticket es cero; en ambos casos la respuesta es `no_corresponde` sin avisar que no se pudo forzar.
+- **Idempotencia.** `comprobantes_venta.facturacion_decidida_en` es la marca de "ya decidida". Existe porque una venta que no se
+  factura no tiene fila en `facturaciones_de_venta` (el CHECK prohíbe `no_requerida`) y sin marca decidirla otra vez la sumaría otra
+  vez al acumulado. La decisión toma `FOR UPDATE` sobre la fila del comprobante, y bajo ese lock: si ya hay fila de decisión la
+  devuelve, si hay marca devuelve `no_corresponde`, y si no decide. La fila de decisión y la marca se escriben en la misma transacción
+  que el movimiento del acumulado, así que un reintento tras un commit ambiguo encuentra la marca y no cuenta dos veces. El lock de la
+  venta serializa a todos los que la deciden, por eso el `INSERT` de la fila de decisión es simple: el UNIQUE de `id_comprobante_venta`
+  es un respaldo y una violación es un defecto que sale como excepción (la venta queda `sin_decidir` y el barrido encuentra la fila
+  existente y marca la venta).
+- **Monto de cada pago.** `importe − vuelto`: lo que ese medio realmente cobró. Es la convención del arqueo (el vuelto sale del
+  efectivo) y hace que los montos de los medios sumen el total del ticket. El porcentaje es el actual de `medios_pago` al decidir.
+- **Período.** Primer día del mes de la fecha del comprobante en la `zona_horaria` del punto de venta (la misma que usan los reportes
+  de ventas), no del día UTC. Un medio sin fila ese mes parte de saldo cero. La fecha del comprobante es el reloj del servidor al
+  ingerir la venta: una venta offline hecha el último día de un mes y sincronizada días después cuenta para el mes en que se ingirió.
+- **Locks y escrituras.** Orden: fila del comprobante, y luego las filas del acumulado por `id_medio_pago` ascendente. Para cada
+  medio del ticket: `INSERT … ON CONFLICT DO NOTHING` de la fila del mes, un único `SELECT … FOR UPDATE ORDER BY id_medio_pago` que
+  lee los saldos una vez bajo el lock, `PoliticaDeFacturacionPorMedio.Decidir`, y un `UPDATE` que suma `saldo_a_facturar` (el aporte),
+  `total_vendido` (el monto) y `total_facturado` (el monto si se factura). Todo con SQL crudo.
+- **Limitación conocida (fuera de T4).** Anular una venta ya decidida todavía no devuelve su aporte al acumulado ni cancela su fila
+  `pendiente` (planificado para T8). Hasta entonces la emisión (T5) tiene que saltear y cancelar las decisiones `pendiente` cuya venta
+  esté anulada; no hay una garantía de que eso ocurra antes de T8.
 
 ### Presupuestos (Etapa 17)
 

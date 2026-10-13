@@ -508,6 +508,29 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Empty(espiaWsfe.Operaciones);
     }
 
+    /// <summary>La emisión fiscal directa no es un espejo ni un ticket: nace con <c>facturacion_decidida_en</c> fijada para
+    /// no figurar entre las ventas con la decisión de facturación debida.</summary>
+    [Fact]
+    public async Task UnaEmisionFiscalDirectaNaceConLaDecisionDeFacturacionMarcadaYNoFiguraComoDebida()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe { Solicitar = _ => RespuestaXml(FecaeAprobado(1)) };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(UnaEmisionFiscalDirectaNaceConLaDecisionDeFacturacionMarcadaYNoFiguraComoDebida), espiaWsaa, espiaWsfe);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.NotNull(await db.ComprobantesVenta.Where(c => c.Id == emitido.Id).Select(c => c.FacturacionDecididaEn).SingleAsync());
+        Assert.Equal(
+            0,
+            await db.Database.SqlQuery<int>(
+                $"SELECT count(*)::int AS \"Value\" FROM comprobantes_venta WHERE id_comprobante_venta = {emitido.Id} AND facturacion_decidida_en IS NULL AND id_venta_origen IS NULL")
+                .SingleAsync());
+    }
+
     [Fact]
     public async Task UnRechazoDeArcaPersisteRechazadoSinCaeYElNumeroQuedaLigado()
     {

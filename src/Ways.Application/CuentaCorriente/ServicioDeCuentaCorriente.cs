@@ -312,6 +312,7 @@ public class ServicioDeCuentaCorriente(
             Total = importeAplicado,
             Observaciones = observaciones,
             Estado = EstadoComprobante.Emitido,
+            FacturacionDecididaEn = momento,
             CreatedAt = momento,
             UpdatedAt = momento
         };

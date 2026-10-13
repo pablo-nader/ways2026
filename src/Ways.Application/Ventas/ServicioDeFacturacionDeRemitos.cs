@@ -224,6 +224,7 @@ public class ServicioDeFacturacionDeRemitos(
             Total = total,
             Observaciones = observaciones,
             Estado = EstadoComprobante.Emitido,
+            FacturacionDecididaEn = momento,
             CreatedAt = momento,
             UpdatedAt = momento
         };

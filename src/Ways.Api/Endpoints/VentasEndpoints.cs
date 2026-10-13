@@ -3,6 +3,7 @@ using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
+using Ways.Application.Fiscal;
 using Ways.Application.Parametros;
 using Ways.Application.Ventas;
 using Ways.Domain.Ventas;
@@ -20,10 +21,19 @@ public static class VentasEndpoints
         // stage-5-pos-ventas (Slice 4, task 4.6, design: API Surface): checkout — sin
         // GestionDeCatalogo apilado (design: Authorization Surface, "/api/ventas... solo
         // GestionDeCatalogo en POST /api/stock/ajustes"). Un Vendedor tiene que poder vender.
-        grupo.MapPost("/", async (ServicioDeVentas servicio, SolicitudDeVenta solicitud, CancellationToken ct) =>
+        //
+        // Facturación por medio de pago: con la venta ya comiteada, el servidor decide en una transacción propia si el
+        // ticket se factura. La decisión nunca hace fallar la venta (DecidirTrasLaVentaAsync no lanza) y no recibe el token
+        // de la solicitud: la venta ya está comiteada y un corte del cliente no debe dejarla sin decidir. Después
+        // decide las ventas debidas del mismo punto de venta que una falla anterior dejó sin decidir, salvo que la
+        // decisión de esta venta haya terminado en sin_decidir (DecidirYSanearAsync).
+        grupo.MapPost("/", async (
+            ServicioDeVentas servicio, ServicioDeDecisionDeFacturacion decision, SolicitudDeVenta solicitud,
+            CancellationToken ct) =>
         {
             var emitido = await servicio.EmitirAsync(solicitud, ct);
-            return Results.Created($"/api/ventas/{emitido.Id}", emitido);
+            var fiscal = await decision.DecidirYSanearAsync(emitido.Id, emitido.IdPuntoVenta);
+            return Results.Created($"/api/ventas/{emitido.Id}", emitido with { Fiscal = fiscal });
         })
         .WithSummary("Emite un comprobante de venta (checkout). Todo el dinero se recalcula server-side.");
 

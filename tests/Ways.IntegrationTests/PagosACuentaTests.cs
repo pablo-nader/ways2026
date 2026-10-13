@@ -196,6 +196,29 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Null(ivaTotal);
     }
 
+    /// <summary>El recibo nunca es un ticket: nace con <c>facturacion_decidida_en</c> fijada para no figurar entre las
+    /// ventas con la decisión de facturación debida (ni competir por los lugares del barrido).</summary>
+    [Fact]
+    public async Task UnReciboNaceConLaDecisionDeFacturacionMarcadaYNoFiguraComoDebido()
+    {
+        var ctx = await PrepararAsync(nameof(UnReciboNaceConLaDecisionDeFacturacionMarcadaYNoFiguraComoDebido));
+        await AbrirTurnoAsync(ctx);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente RC marca");
+
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, SolicitudSimple(ctx, 100m));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.NotNull(await db.ComprobantesVenta.Where(c => c.Id == emitido.Id).Select(c => c.FacturacionDecididaEn).SingleAsync());
+        Assert.Equal(
+            0,
+            await db.Database.SqlQuery<int>(
+                $"SELECT count(*)::int AS \"Value\" FROM comprobantes_venta WHERE facturacion_decidida_en IS NULL AND id_venta_origen IS NULL")
+                .SingleAsync());
+    }
+
     [Fact]
     public async Task RcConObservacionesEnBlancoLasPersisteComoNull()
     {

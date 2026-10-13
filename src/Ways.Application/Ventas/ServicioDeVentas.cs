@@ -117,6 +117,16 @@ public class ServicioDeVentas(
                 400);
         }
 
+        // dto-contract-honesty: el pedido de facturar un ticket no tiene destino en una devolución; se rechaza en vez de
+        // aceptarlo y perderlo.
+        if (solicitud.ForzarFactura && tipo.Signo <= 0)
+        {
+            throw new ErrorDominio(
+                "forzar_factura_no_admitido",
+                "Solo una venta puede marcarse para facturar; una nota de crédito no.",
+                400);
+        }
+
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
         // design decisión 11 (Slice 5): turno SIEMPRE resuelto server-side, inmediatamente
@@ -448,7 +458,7 @@ public class ServicioDeVentas(
             totales.DescuentoManualTotal, totales.RecargoManualTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
             NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones),
-            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado);
+            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado, solicitud.ForzarFactura);
 
         // Corrección de esta slice al decisión 2 original (ver el doc-comment de
         // VentasAtomicidadYConcurrenciaTests): la numeración se reserva y COMITEA en su PROPIA
@@ -733,8 +743,11 @@ public class ServicioDeVentas(
         // y el outbox reenvía siempre la misma solicitud guardada, así que un reenvío legítimo trae
         // el mismo valor. El reenvío tampoco depende del límite: EmitirAsync saltea la regla 6 para
         // un número que ya tiene comprobante.
+        // ForzarFactura SÍ entra: lo tipeó el cajero y decide si el ticket sale facturado, así que reenviar el mismo
+        // número con otro valor no es un reenvío del mismo pedido.
         if (existente.IdCliente != plan.IdCliente
             || existente.IdComprobanteAsociado != plan.IdComprobanteAsociado
+            || existente.FacturaForzada != plan.ForzarFactura
             || !lineasExistentes.SequenceEqual(lineasSolicitadas)
             || !pagosExistentes.SequenceEqual(pagosSolicitados))
         {
@@ -1485,6 +1498,7 @@ public class ServicioDeVentas(
             Total = plan.Total,
             DireccionEntrega = plan.DireccionEntrega,
             Observaciones = plan.Observaciones,
+            FacturaForzada = plan.ForzarFactura,
             Estado = EstadoComprobante.Emitido,
             CreatedAt = plan.Momento,
             UpdatedAt = plan.Momento
@@ -2669,7 +2683,7 @@ public class ServicioDeVentas(
         pagos
             .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
             .ToList(),
-        comprobante.IdPresupuestoOrigen);
+        comprobante.IdPresupuestoOrigen, comprobante.FacturaForzada);
 
     // ---- El plan inmutable (design: "PlanDeVenta(immutable)") --------------------------------
 
@@ -2725,5 +2739,6 @@ public class ServicioDeVentas(
         // decide, nunca vuelto a calcular dentro de la transacción reintentable.
         int? IdPresupuestoOrigen = null,
         DateOnly? HoyDelPuntoVenta = null,
-        bool LimiteDeCreditoNoValidado = false);
+        bool LimiteDeCreditoNoValidado = false,
+        bool ForzarFactura = false);
 }

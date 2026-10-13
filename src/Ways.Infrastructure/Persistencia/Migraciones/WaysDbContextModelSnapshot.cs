@@ -4877,6 +4877,20 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDefaultValue(false)
                         .HasColumnName("factura_forzada");
 
+                    b.Property<DateTimeOffset?>("FacturacionDecididaEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("facturacion_decidida_en");
+
+                    b.Property<int>("FacturacionIntentos")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("facturacion_intentos");
+
+                    b.Property<DateTimeOffset?>("FacturacionProximoIntentoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("facturacion_proximo_intento_en");
+
                     b.Property<DateTimeOffset>("Fecha")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha");
@@ -4984,6 +4998,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .IsUnique()
                         .HasDatabaseName("ux_comprobantes_venta_presupuesto_origen")
                         .HasFilter("id_presupuesto_origen IS NOT NULL");
+
+                    b.HasIndex("IdPuntoVenta", "Id")
+                        .HasDatabaseName("ix_comprobantes_venta_decision_debida")
+                        .HasFilter("facturacion_decidida_en IS NULL AND id_venta_origen IS NULL");
 
                     b.HasIndex("IdPuntoVenta", "IdTenant")
                         .HasDatabaseName("ix_comprobantes_venta_fiscal_pendientes")

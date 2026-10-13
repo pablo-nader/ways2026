@@ -95,6 +95,17 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasDefaultValue(false)
             .IsRequired();
 
+        // Sin valor por defecto en el modelo: la migración dejó las filas anteriores como ya decididas y las nuevas nacen
+        // en NULL (decisión debida).
+        builder.Property(c => c.FacturacionDecididaEn).HasColumnName("facturacion_decidida_en");
+
+        // Contabilidad de los intentos fallidos de decidir la venta: el contador arranca en 0 y la fecha en NULL.
+        builder.Property(c => c.FacturacionIntentos)
+            .HasColumnName("facturacion_intentos")
+            .HasDefaultValue(0)
+            .IsRequired();
+        builder.Property(c => c.FacturacionProximoIntentoEn).HasColumnName("facturacion_proximo_intento_en");
+
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
 
@@ -192,6 +203,14 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         builder.HasIndex(c => new { c.IdPuntoVenta, c.IdTenant })
             .HasDatabaseName("ix_comprobantes_venta_fiscal_pendientes")
             .HasFilter("resultado_fiscal = 'pendiente'::resultado_fiscal");
+
+        // PARCIAL sobre las ventas con la decisión de facturación debida: el barrido de ServicioDeDecisionDeFacturacion
+        // pide las más viejas de un punto de venta (un punto de venta pertenece a un solo tenant, RLS agrega el filtro de
+        // tenant) y este orden entrega las primeras filas sin ordenar. Los espejos fiscales quedan afuera porque nunca se
+        // deciden.
+        builder.HasIndex(c => new { c.IdPuntoVenta, c.Id })
+            .HasDatabaseName("ix_comprobantes_venta_decision_debida")
+            .HasFilter("facturacion_decidida_en IS NULL AND id_venta_origen IS NULL");
 
         builder.HasOne<Tenant>()
             .WithMany()

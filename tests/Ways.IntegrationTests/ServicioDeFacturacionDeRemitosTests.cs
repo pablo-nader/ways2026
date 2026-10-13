@@ -270,6 +270,31 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         Assert.Equal(remito.Total, fila.Total);
     }
 
+    /// <summary>El TXR nunca es un ticket: nace con <c>facturacion_decidida_en</c> fijada para no figurar entre las ventas
+    /// con la decisión de facturación debida (ni competir por los lugares del barrido).</summary>
+    [Fact]
+    public async Task UnTxrNaceConLaDecisionDeFacturacionMarcadaYNoFiguraComoDebido()
+    {
+        var ctx = await PrepararAsync(nameof(UnTxrNaceConLaDecisionDeFacturacionMarcadaYNoFiguraComoDebido));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Marca", 120m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.NotNull(await db.ComprobantesVenta.Where(c => c.Id == txr.Id).Select(c => c.FacturacionDecididaEn).SingleAsync());
+        Assert.Equal(
+            0,
+            await db.Database.SqlQuery<int>(
+                $"SELECT count(*)::int AS \"Value\" FROM comprobantes_venta WHERE id_comprobante_venta = {txr.Id} AND facturacion_decidida_en IS NULL AND id_venta_origen IS NULL")
+                .SingleAsync());
+    }
+
     // =============================================================================================
     // task 6.13: consolidación básica — itemless, total == Σ headers, cero movimientos_stock
     // =============================================================================================
