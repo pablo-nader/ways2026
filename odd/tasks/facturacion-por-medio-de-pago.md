@@ -67,9 +67,16 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   guardas estructurales, prueba de mutación del predicado. Ruta: delegada.
 - [x] **T4 — Decisión al ingerir.** Servicio de decisión, `ForzarFactura` en la solicitud y en
   `ExigirMismoContenido`, estado fiscal en la respuesta. Depende de T1–T3.
-- [ ] **T5 — Emisión del espejo y procesador.** `EmitirDesdeVentaAsync` en dos transacciones,
-  endpoint `procesar`, intento en línea. Antes: confirmar con un test que hoy un timeout de
-  ARCA revierte la fila pendiente. Depende de T4.
+- [x] **T5a — Emisión del espejo (núcleo).** Test que fija el comportamiento actual (un fallo
+  de ARCA revierte fila y número), `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync` en
+  dos transacciones, liberación del número ante rechazo, reversión del acumulado, anulación
+  bloqueada para ventas facturadas, endpoint de una decisión. Ver "Diseño de T5". Depende de T4.
+- [ ] **T5b — Procesador por lote.** `POST /api/fiscal/facturaciones/procesar`, espera entre
+  intentos, orden por serie, concurrencia. Incluye lo que T5a dejó anotado: tope de tiempo de
+  las llamadas a WSFE y que invalidar el ticket de acceso solo descarte el ticket que falló
+  (hoy descarta el que esté guardado, y dos llamadas simultáneas pueden pisarse). Depende de T5a.
+- [ ] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
+  comprobante en la respuesta de la venta. Depende de T5b.
 - [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
   respuesta del drenaje. Depende de T4 y T5.
 - [ ] **T7 — Impresión.** Factura con CAE y QR en `VistaDeTicket` y en el POS de escritorio,
@@ -77,6 +84,100 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 - [ ] **T8 — Anulación y nota de crédito de una venta facturada.** `CbtesAsoc`, espejo de NC,
   reversión del acumulado. Depende de T5.
 - [ ] **T9 — Back office.** Pendientes y rechazadas, reporte vendido vs. facturado por medio.
+
+## Diseño de T5 (2026-10-13)
+
+`SFF` = `src/Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs`.
+
+### Reglas del dueño
+
+1. Si ARCA rechaza, no queda comprobante fiscal: el pedido se borra y su número vuelve a la
+   serie. El ticket interno (la venta) no se toca nunca. El motivo queda en la decisión.
+2. La fecha de la factura es el día de emisión, no el de la venta.
+3. Un rechazo devuelve el cupo: el ticket no cuenta como facturado.
+4. Una decisión `rechazada` no se reintenta sola; se reintenta a mano (T9).
+5. Una venta facturada no se anula: se corrige con nota de crédito (T8). La anulación se
+   rechaza si la venta tiene espejo, aprobado o en trámite. Con decisión `pendiente` y sin
+   espejo sí se puede anular: la decisión pasa a `cancelada` y devuelve el cupo.
+6. Al cobrar se admiten hasta 4 s más de espera en el servidor para intentar la factura; el
+   tope total tras confirmar la venta es 8 s (T5c).
+
+### Hechos verificados en el código
+
+- `EmitirAsync` numera, inserta y llama a ARCA en una sola transacción sin `catch`
+  (SFF:181-268): cualquier excepción revierte la fila, los ítems y `proximo_numero`.
+- Resultado definitivo de WSFE: una `RespuestaCae` devuelta (aprobado, aprobado con
+  observaciones, rechazado) y el error `arca_rechazo`. Todo lo demás es no definitivo
+  (`arca_no_definitivo`, `wsfe_fault_soap`, ticket de acceso inválido,
+  `numeracion_fiscal_desincronizada`, errores de lectura, cancelación): usar lista blanca.
+- Un `rechazado` persistido conserva el número N con el contador en N+1, y ARCA sigue
+  esperando N: la serie queda trabada.
+- No hay timeout HTTP configurado para WSFE, y el cortacircuitos de `ClienteWsfe` no sobrevive
+  entre solicitudes.
+- `ReintentarAsync` (SFF:287) aceptaría un espejo.
+
+### Forma
+
+Servicio nuevo `ServicioDeFacturacionDeVentas` (scoped). En SFF solo cambia la visibilidad de
+los auxiliares que se reutilizan (`private` → `internal`, sin tocar cuerpos) y la búsqueda de
+`ReintentarAsync` excluye espejos.
+
+`ProcesarDecisionAsync(idFacturacion)`:
+
+1. Lecturas sin lock ni red: decisión, venta, espejo por `id_venta_origen`. Si la decisión no
+   está `pendiente`, devuelve su estado.
+2. Venta no emitida y sin espejo: cancela la decisión y revierte el acumulado.
+3. Compuertas sin red. Si alguna falla, la decisión sigue `pendiente` con `ultimo_error`,
+   `intentos + 1` y espera; no hay espejo ni número. Compuertas: `empresa_sin_condicion_fiscal`,
+   `punto_venta_sin_numero_fiscal`, `empresa_sin_cuit_valido`, `certificado_fiscal_ausente`,
+   `condicion_fiscal_receptor_no_mapeada`, `receptor_sin_cuit`, `alicuota_sin_mapeo_afip`,
+   `total_fiscal_no_coincide`, `tipo_fiscal_invalido`.
+4. Receptor: el cliente de la venta; Consumidor Final va como documento 99/0. La letra sale de
+   `ResolvedorDeLetraComprobante` y el tipo es el fiscal activo de esa letra.
+5. Líneas y totales desde los ítems guardados de la venta, no desde el catálogo.
+6. Ticket de acceso WSAA antes de tomar número: una falla de WSAA no consume número.
+7. Transacción A (sin reintento): lock de la serie en `numeraciones_fiscales` con
+   `FOR UPDATE SKIP LOCKED` (ocupada → `serie_ocupada`, sin penalidad); si la serie tiene un
+   espejo `pendiente` → `serie_bloqueada`; si no, lock de la venta, se verifica que siga
+   emitida, se asigna el número y se inserta el espejo (`id_venta_origen`, resultado
+   `pendiente`, sin turno, fecha de ahora, ítems copiados sin lote ni costo). Commit.
+8. Transacción B: se retoma el lock de la serie. Espejo creado por esta llamada: se solicita
+   el CAE. Espejo preexistente: se consulta primero (encontrado → se adopta; no encontrado →
+   se refresca la fecha y se solicita con el mismo número). Se aplica el resultado y la
+   decisión se actualiza con guarda `estado = 'pendiente'`.
+
+Orden de locks: `numeraciones_fiscales` → `comprobantes_venta` → `facturaciones_de_venta` →
+`acumulados_de_facturacion` (medio ascendente).
+
+### Estados
+
+| Evento | Espejo | Decisión |
+|---|---|---|
+| Aprobado, aprobado con observaciones, o la consulta lo encuentra | aprobado con CAE | `emitida`, con `id_comprobante_fiscal` |
+| Rechazo definitivo | liberado (borrado, número devuelto) | `rechazada`, `ultimo_error` con los errores de ARCA, débito revertido |
+| Sin respuesta definitiva | sigue `pendiente` con su número | `pendiente`, `intentos + 1`, espera de 30 s que se duplica, tope 10 min |
+| Compuerta falla | no existe | `pendiente`, error, espera de 5 min que se duplica, tope 4 h |
+| Venta anulada, sin espejo | no existe | `cancelada`, acumulado revertido |
+
+Liberar un espejo: dentro de la transacción B y bajo el lock de la serie, se borran sus ítems
+y su fila y se devuelve el número con guarda (`proximo_numero = N` solo si vale `N + 1`). Si
+la guarda no afecta filas, no se borra: el espejo queda `rechazado` con su número y se
+registra un error.
+
+Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total_vendido`,
+`total_facturado`); `rechazada` deshace solo el débito (`saldo += vendido`,
+`total_facturado −= vendido`), así el cupo pasa a tickets posteriores.
+
+### Procesador (T5b) y emisión en línea (T5c)
+
+- `POST /api/fiscal/facturaciones/procesar`, política `OperacionDePos`, cuerpo
+  `{ idPuntoVenta, maximo? }` (10 por defecto, tope 25). Presupuesto de 20 s en total y 8 s
+  por ida y vuelta, con token propio; un corte por presupuesto no cuenta como fallo.
+- `POST /api/fiscal/facturaciones/{id}/procesar` procesa una decisión e ignora la espera.
+- La cabeza `pendiente` de una serie se procesa primero, salvo que esté en espera.
+- En línea: tras decidir `pendiente`, la venta intenta emitir con 4 s de presupuesto antes
+  del barrido. `EstadoFiscalDeVenta` suma `Error` y los datos del comprobante (tipo, letra,
+  punto de venta fiscal, número, fecha, CAE, vencimiento, QR, observaciones).
 
 ## Supuestos pendientes de confirmación del dueño
 
@@ -189,6 +290,36 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   Para T5: no emitir si la venta está anulada (cancelar la decisión); el estado fiscal en la
   respuesta ya prevé `aprobado`/`rechazado`.
 
+- 2026-10-14 — T5a hecha. Ruta: delegada (un escritor y dos rondas de corrección).
+  `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync` y
+  `POST /api/fiscal/facturaciones/{id}/procesar`. Pasos A (reserva la serie, bloquea la venta
+  y la decisión, relee bajo lock, numera e inserta el espejo), C (consulta un espejo
+  preexistente; si ARCA no lo tiene y las compuertas pasan, guarda la fecha nueva) y S
+  (solicita el CAE), con una guarda de época (`xmin` del espejo) entre pasos.
+  Rechazo definitivo: espejo borrado, número devuelto, decisión `rechazada`, débito revertido;
+  la venta no se toca. Sin respuesta definitiva: espejo en trámite, intento y espera
+  anotados (todavía nadie respeta la espera). Solo el código 602 de la consulta significa
+  comprobante inexistente; un error de llamada se consulta antes de liberar; un 600 en la
+  consulta renueva el ticket una vez. Anulación: 409
+  `venta_facturada_requiere_nota_de_credito` si la venta tiene espejo aprobado o en trámite.
+  Cambio fuera de la feature: `ReintentarAsync` (19a) excluye espejos y, ante un error de la
+  consulta que no sea 602, corta con 503 en vez de pedir un CAE nuevo.
+  Checks sobre el código final: `dotnet build` sin errores; dominio 1691/1691; aplicación
+  963/963; integración completa 4390/4390. Sin test-first estricto: la evidencia por cláusula
+  son las mutaciones de las tres rondas, todas en rojo y sin sobrevivientes.
+  Judgment-day: ronda 1, un crítico confirmado (crear el espejo confiaba en lecturas sin
+  lock) y dos advertencias (qué es "no encontrado", qué es rechazo definitivo), corregidos;
+  re-juicio 1, dos advertencias nuevas confirmadas (ticket sin renovar en la consulta, 500
+  por una carrera benigna), corregidas; re-juicio 2: todo resuelto, sin críticos.
+  JUDGMENT: APPROVED. Queda una advertencia confirmada por los dos jueces, de un patrón
+  que ya existía en 19a y que T5a usa en más lugares: invalidar el ticket descarta el que
+  esté guardado, no el que falló; pasa a T5b.
+  Limitaciones aceptadas: todo probado contra simuladores (602 y fecha de la consulta sin
+  verificar contra ARCA real); sin tope de tiempo en WSFE, la serie queda retenida mientras
+  dura una llamada; cualquier usuario de POS del tenant puede procesar cualquier decisión;
+  un espejo `rechazado` por la guarda del número ocupa el lugar del espejo de la venta; una
+  compuerta que lanza tras "no encontrado" da 500 sin anotar intento.
+
 ## Próximo paso
 
-T5.
+T5b.

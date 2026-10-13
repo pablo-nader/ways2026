@@ -285,6 +285,7 @@ public class ServicioDeFacturacionFiscal(
         var ambiente = ResolverAmbiente();
 
         var comprobante = await db.ComprobantesVenta
+            .SinEspejosFiscales()
             .FirstOrDefaultAsync(c => c.Id == idComprobante && c.ResultadoFiscal == ResultadoFiscal.Pendiente, ct)
             ?? throw ErrorDominio.NoEncontrado(
                 $"No existe un comprobante fiscal pendiente con id {idComprobante} — un comprobante terminal " +
@@ -333,7 +334,8 @@ public class ServicioDeFacturacionFiscal(
             }
 
             var ticket = await ObtenerTicketAsync(empresa, ambiente, ct);
-            var consulta = await clienteWsfe.ConsultarAsync(ticket, cuitEmisor, claveDeSerie, comprobante.Numero, ct);
+            var (consulta, _) = await ConsultarConReintentoDeTicketAsync(
+                empresa, ambiente, cuitEmisor, claveDeSerie, comprobante.Numero, ticket, ct);
 
             RespuestaCae respuesta;
             if (consulta.Encontrado)
@@ -401,7 +403,29 @@ public class ServicioDeFacturacionFiscal(
 
     // --- El "600 ⇒ invalidar + reintentar UNA vez, el segundo es definitivo" (nota vinculante) ---
 
-    private async Task<RespuestaCae> SolicitarCaeConReintentoDeTicketAsync(
+    /// <summary>La consulta con el mismo tratamiento del 600 que la solicitud: ante <c>ticket_de_acceso_invalido</c> invalida el
+    /// ticket cacheado, obtiene uno fresco y consulta UNA vez más; un segundo 600 se propaga. Devuelve también el ticket con el
+    /// que respondió ARCA, para que lo siguiente que haga la misma llamada no reutilice uno invalidado.</summary>
+    internal async Task<(ConsultaDeComprobante Consulta, TicketDeAcceso Ticket)> ConsultarConReintentoDeTicketAsync(
+        Empresa empresa, AmbienteFiscal ambiente, string cuitEmisor, ClaveDeSerie serie, long numero,
+        TicketDeAcceso ticket, CancellationToken ct)
+    {
+        try
+        {
+            return (await clienteWsfe.ConsultarAsync(ticket, cuitEmisor, serie, numero, ct), ticket);
+        }
+        catch (ErrorDominio primerIntento) when (primerIntento.Codigo == "ticket_de_acceso_invalido")
+        {
+            var claveDeTicket = new ClaveDeTicket(empresa.Id, ambiente, ServicioWsfe);
+            await repositorioDeTicket.InvalidarAsync(claveDeTicket, ct);
+            var ticketFresco = await repositorioDeTicket.ObtenerOFirmarAsync(
+                claveDeTicket, token => FirmarTicketNuevoAsync(empresa, ambiente, token), ct);
+
+            return (await clienteWsfe.ConsultarAsync(ticketFresco, cuitEmisor, serie, numero, ct), ticketFresco);
+        }
+    }
+
+    internal async Task<RespuestaCae> SolicitarCaeConReintentoDeTicketAsync(
         Empresa empresa, AmbienteFiscal ambiente, string cuitEmisor, int idComprobante, long numero,
         SolicitudDeCae solicitudDeCae, CancellationToken ct)
     {
@@ -454,7 +478,7 @@ public class ServicioDeFacturacionFiscal(
         }
     }
 
-    private async Task<TicketDeAcceso> ObtenerTicketAsync(Empresa empresa, AmbienteFiscal ambiente, CancellationToken ct)
+    internal async Task<TicketDeAcceso> ObtenerTicketAsync(Empresa empresa, AmbienteFiscal ambiente, CancellationToken ct)
     {
         var claveDeTicket = new ClaveDeTicket(empresa.Id, ambiente, ServicioWsfe);
         return await repositorioDeTicket.ObtenerOFirmarAsync(
@@ -473,7 +497,7 @@ public class ServicioDeFacturacionFiscal(
     // --- U2: UPDATE comprobantes_venta SET cae…, resultado_fiscal… WHERE id = $ AND id_tenant = $
     //     AND resultado_fiscal = 'pendiente' (mutation-proof-tests regla 3 v1.1, conjuncts (a)(b)(c)) ---
 
-    private async Task<int> AplicarResultadoGuardadoAsync(
+    internal async Task<int> AplicarResultadoGuardadoAsync(
         int idTenant, int idComprobante, RespuestaCae respuesta, CancellationToken ct)
     {
         var conexion = db.Database.GetDbConnection();
@@ -526,7 +550,7 @@ public class ServicioDeFacturacionFiscal(
         return tipo;
     }
 
-    private static CondicionFiscalCodigo MapearCondicionFiscal(string codigo) => codigo switch
+    internal static CondicionFiscalCodigo MapearCondicionFiscal(string codigo) => codigo switch
     {
         "RI" => CondicionFiscalCodigo.ResponsableInscripto,
         "MONOTRIBUTO" => CondicionFiscalCodigo.Monotributo,
@@ -543,7 +567,7 @@ public class ServicioDeFacturacionFiscal(
     /// QR (RG 4291). DECISIÓN REGISTRADA: 80=CUIT, 86=CUIL, 96=DNI, 94=Pasaporte (códigos AFIP
     /// estándar); Consumidor Final / sin documento cargado / <c>Otro</c> ⇒ 99 con DocNro 0 (la
     /// convención ARCA para receptor sin identificar).</summary>
-    private static (short TipoDoc, long NroDoc) MapearDocumentoArca(Cliente cliente)
+    internal static (short TipoDoc, long NroDoc) MapearDocumentoArca(Cliente cliente)
     {
         if (cliente.EsConsumidorFinal || cliente.TipoDocumento is null || string.IsNullOrWhiteSpace(cliente.NumeroDocumento))
         {
@@ -567,16 +591,18 @@ public class ServicioDeFacturacionFiscal(
         return (tipoDoc, numeroDoc);
     }
 
-    private AmbienteFiscal ResolverAmbiente() => opciones.Value.ResolverAmbiente();
+    internal AmbienteFiscal ResolverAmbiente() => opciones.Value.ResolverAmbiente();
 
-    private async Task<DateOnly> ResolverFechaFiscalAsync(int idEmpresa, DateTimeOffset instante, CancellationToken ct)
+    internal async Task<DateOnly> ResolverFechaFiscalAsync(int idEmpresa, DateTimeOffset instante, CancellationToken ct) =>
+        FechaFiscal.DeInstante(instante, await ResolverZonaFiscalAsync(idEmpresa, ct));
+
+    internal async Task<TimeZoneInfo> ResolverZonaFiscalAsync(int idEmpresa, CancellationToken ct)
     {
         var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, null, ct);
-        var zona = TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
-        return FechaFiscal.DeInstante(instante, zona);
+        return TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
     }
 
-    private static string ExigirCuitNumerico(Empresa empresa)
+    internal static string ExigirCuitNumerico(Empresa empresa)
     {
         if (string.IsNullOrWhiteSpace(empresa.Cuit) || !long.TryParse(empresa.Cuit, NumberStyles.None, CultureInfo.InvariantCulture, out _))
         {
@@ -587,7 +613,7 @@ public class ServicioDeFacturacionFiscal(
         return empresa.Cuit;
     }
 
-    private static string? ConstruirQrSiCorresponde(
+    internal static string? ConstruirQrSiCorresponde(
         RespuestaCae respuesta, DateOnly fecha, string cuitEmisor, int ptoVta, short tipoCmp, long nroCmp,
         decimal importe, short tipoDocRec, long nroDocRec)
     {
@@ -688,7 +714,7 @@ public class ServicioDeFacturacionFiscal(
     /// <see cref="ItemComprobanteVenta.PorcentajeIva"/>/<see cref="ItemComprobanteVenta.Total"/> son
     /// el snapshot congelado de la línea — SOLO <see cref="AlicuotaIva.Nombre"/>/
     /// <see cref="AlicuotaIva.CodigoAfip"/> vienen del catálogo (el ítem no los snapshotea).</summary>
-    private async Task<IReadOnlyList<LineaFiscal>> ComponerLineasFiscalesDesdeItemsAsync(
+    internal async Task<IReadOnlyList<LineaFiscal>> ComponerLineasFiscalesDesdeItemsAsync(
         int idComprobante, CancellationToken ct)
     {
         var items = await db.ItemsComprobanteVenta.AsNoTracking()

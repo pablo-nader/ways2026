@@ -235,6 +235,56 @@ public class ClienteWsfeTests
         Assert.Equal("70123456789012", consulta.Cae);
         Assert.Equal(new DateOnly(2026, 1, 25), consulta.CaeVencimiento);
         Assert.Equal(ResultadoFiscal.Aprobado, consulta.Resultado);
+        Assert.Equal(new DateOnly(2026, 1, 15), consulta.Fecha); // CbteFch: el día que ARCA registró
+    }
+
+    private static string ConsultarConErrores(params (int Codigo, string Mensaje)[] errores) =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+        "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+        "<ResultGet />" +
+        "<Errors>" + string.Concat(errores.Select(e => $"<Err><Code>{e.Codigo}</Code><Msg>{e.Mensaje}</Msg></Err>")) + "</Errors>" +
+        "</FECompConsultarResult></FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
+
+    /// <summary>"No encontrado" es SOLO la respuesta explícita de comprobante inexistente (602). Cualquier otro error de la consulta
+    /// no dice si ARCA tiene el número: se lanza como no definitivo, nunca como "no encontrado".</summary>
+    [Theory]
+    [InlineData(10000, "arca_no_definitivo")]
+    [InlineData(500, "arca_no_definitivo")]
+    [InlineData(600, "ticket_de_acceso_invalido")]
+    public async Task FeCompConsultarConUnErrorQueNoEsComprobanteInexistenteNoEsNoEncontrado(int codigo, string codigoDeDominio)
+    {
+        var cliente = Construir(new HttpMessageHandlerFalso(_ => RespuestaXml(ConsultarConErrores((codigo, "Falla de ARCA.")))));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.ConsultarAsync(Ticket, Cuit, Serie, 999, CancellationToken.None));
+
+        Assert.Equal(codigoDeDominio, error.Codigo);
+    }
+
+    [Fact]
+    public async Task FeCompConsultarConElErrorDeInexistenteMasOtroNoEsNoEncontrado()
+    {
+        var cliente = Construir(new HttpMessageHandlerFalso(_ => RespuestaXml(
+            ConsultarConErrores((602, "No existen datos."), (10000, "Otra falla.")))));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.ConsultarAsync(Ticket, Cuit, Serie, 999, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
+    }
+
+    [Fact]
+    public async Task FeCompConsultarSinErroresNiDatosNoEsNoEncontrado()
+    {
+        var cliente = Construir(new HttpMessageHandlerFalso(_ => RespuestaXml(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+            "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+            "</FECompConsultarResult></FECompConsultarResponse></soapenv:Body></soapenv:Envelope>")));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.ConsultarAsync(Ticket, Cuit, Serie, 999, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
     }
 
     [Fact]

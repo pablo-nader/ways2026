@@ -33,6 +33,11 @@ public sealed class ClienteWsfe : IClienteWsfe
     private const int CodigoWsfeTicketInvalido = 600;
     private const int CodigoWsfeNumeroNoCorrelativo = 10016;
 
+    /// <summary>Los códigos de <c>FECompConsultar</c> que significan "ARCA no tiene ese comprobante": 602 ("No existen datos en
+    /// nuestros registros para los parámetros ingresados"), el mismo que usan el fixture y los espías de 19a. Es el único lugar
+    /// donde se decide qué es "no encontrado"; sin verificar contra el ARCA real.</summary>
+    private static readonly int[] CodigosDeComprobanteInexistente = [602];
+
     private readonly HttpClient _http;
     private readonly IRelojDelSistema _reloj;
     private readonly IEsperador _esperador;
@@ -86,23 +91,43 @@ public sealed class ClienteWsfe : IClienteWsfe
 
         if (errores.Count > 0)
         {
-            return new ConsultaDeComprobante(false, null, null, null);
+            // "No encontrado" es SOLO la respuesta explícita de ARCA de comprobante inexistente. Cualquier otro error
+            // (ticket vencido, falla interna, validación) no dice nada sobre si ARCA tiene el número: es no definitivo.
+            if (errores.All(e => CodigosDeComprobanteInexistente.Contains(e.Codigo)))
+            {
+                return new ConsultaDeComprobante(false, null, null, null);
+            }
+
+            var errorDeTicket = errores.FirstOrDefault(e => e.Codigo == CodigoWsfeTicketInvalido);
+            if (errorDeTicket is not null)
+            {
+                throw new ErrorDominio("ticket_de_acceso_invalido", errorDeTicket.Mensaje, 503);
+            }
+
+            throw new ErrorDominio(
+                "arca_no_definitivo",
+                "FECompConsultar respondió con errores que no indican un comprobante inexistente: " +
+                string.Join("; ", errores.Select(e => $"{e.Codigo}: {e.Mensaje}")),
+                503);
         }
 
         var resultGet = resultado.Elements().FirstOrDefault(e => e.Name.LocalName == "ResultGet");
-        if (resultGet is null)
+        var resultadoTexto = resultGet is null ? null : LeerCampo(resultGet, "Resultado");
+        if (resultGet is null || string.IsNullOrEmpty(resultadoTexto))
         {
-            return new ConsultaDeComprobante(false, null, null, null);
+            throw new ErrorDominio(
+                "arca_no_definitivo", "FECompConsultar respondió sin errores y sin datos del comprobante.", 503);
         }
 
         var cae = LeerCampo(resultGet, "CodAutorizacion");
         var vencimientoTexto = LeerCampo(resultGet, "FchVto");
-        var resultadoArca = LeerCampo(resultGet, "Resultado")!.Single();
+        var fechaTexto = LeerCampo(resultGet, "CbteFch");
         var observaciones = LeerLista(resultGet, "Observaciones", "Obs");
-        var estado = MaquinaDeEstadosCae.Mapear(resultadoArca, observaciones.Count > 0);
+        var estado = MaquinaDeEstadosCae.Mapear(resultadoTexto.Single(), observaciones.Count > 0);
 
         return new ConsultaDeComprobante(
-            true, cae, vencimientoTexto is null ? null : LeerFecha(vencimientoTexto), estado);
+            true, cae, vencimientoTexto is null ? null : LeerFecha(vencimientoTexto), estado,
+            string.IsNullOrEmpty(fechaTexto) ? null : LeerFecha(fechaTexto));
     }
 
     public async Task<long> UltimoAutorizadoAsync(

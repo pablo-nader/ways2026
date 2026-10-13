@@ -1169,6 +1169,12 @@ public class ServicioDeVentas(
 
         var (idPuntoVentaAnulacion, codigoTipoAnulado) = resultadoAnulacion.Value;
 
+        // Una venta facturada no se anula. La pregunta se hace ACÁ, bajo el lock de la fila de la venta que tomó el UPDATE
+        // de arriba, y no en la pre-lectura: la emisión del espejo bloquea esa misma fila y verifica que siga emitida antes
+        // de insertarlo, así que o el espejo ya está comiteado y se ve, o esta anulación gana y no se crea ninguno.
+        ReglaDeComprobantes.ValidarAnulacionDeVentaFacturada(
+            await TieneFacturaVigenteAsync(conexion, transaccionCruda, id, ct));
+
         // stage-17-presupuestos-y-remitos, Slice 6 (design: Transactions — "ANULAR VENTA", decisión
         // 4/7, mutation targets 55/56/58): POSICIÓN 1.6 — inmediatamente DESPUÉS de MarcarAnuladoAsync
         // (paso 1) y ANTES de la auditoría (paso 1.5, preexistente) — nunca después del loop de stock
@@ -1336,6 +1342,21 @@ public class ServicioDeVentas(
         {
             throw new ErrorDominio("turno_cerrado", "El turno de este comprobante está cerrado.", 409);
         }
+    }
+
+    /// <summary>¿La venta tiene una factura espejo aprobada o en trámite? Un espejo rechazado que quedó en pie no cuenta.</summary>
+    private static async Task<bool> TieneFacturaVigenteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta " +
+            "WHERE id_venta_origen = $1 AND resultado_fiscal <> 'rechazado')";
+
+        ParametrosDeComando.Agregar(comando, idVenta);
+
+        return (bool)(await comando.ExecuteScalarAsync(ct))!;
     }
 
     /// <summary>task 3.13: lock del cliente ANTES de re-chequear el marcador de reliquidación de

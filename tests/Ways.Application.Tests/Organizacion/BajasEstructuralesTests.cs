@@ -58,9 +58,17 @@ public class BajasEstructuralesTests
     /// de configuración obsoletas (<c>vuelto_maximo</c> dejó de ser un parámetro conocido), nunca
     /// filas de <c>tenants</c>/<c>empresas</c>/<c>puntos_venta</c>/<c>usuarios</c> — verificado
     /// abajo, no solo declarado.
+    ///
+    /// <c>ServicioDeFacturacionDeVentas</c> (facturación por medio de pago, T5a) borra el comprobante fiscal espejo que ARCA
+    /// rechazó (o que no tiene y cuya decisión ya no está pendiente) y sus ítems, para que no quede un comprobante fiscal sin
+    /// CAE (decisión del dueño, 2026-10-13). Es un detalle operativo de <c>comprobantes_venta</c>/<c>items_comprobante_venta</c>
+    /// —tablas de ventas, no de organización—, acotado a UN espejo pendiente (el creado por la misma llamada o uno que dejó una
+    /// llamada anterior), identificado por su id, bloqueado y releído como pendiente, y bajo el lock de su serie fiscal. No es la
+    /// baja de una entidad ni de una venta.
     /// </summary>
     private static readonly string[] DeleteFromPermitidos =
     [
+        Path.Combine("Ways.Application", "Fiscal", "ServicioDeFacturacionDeVentas.cs"),
         Path.Combine("Ways.Infrastructure", "Persistencia", "Migraciones", "20260917025328_QuitarVueltoMaximo.cs"),
     ];
 

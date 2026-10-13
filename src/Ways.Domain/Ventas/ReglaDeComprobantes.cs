@@ -94,6 +94,20 @@ public static class ReglaDeComprobantes
         }
     }
 
+    /// <summary>Una venta cuya factura espejo está aprobada, o en trámite y por lo tanto puede quedar aprobada, no se anula:
+    /// el ticket y la factura son el mismo hecho económico y la única reversa fiscal es una nota de crédito. Una venta sin
+    /// espejo (aunque su decisión de facturar esté pendiente) o con un espejo rechazado sí se anula.</summary>
+    public static void ValidarAnulacionDeVentaFacturada(bool tieneFacturaVigente)
+    {
+        if (tieneFacturaVigente)
+        {
+            throw new ErrorDominio(
+                "venta_facturada_requiere_nota_de_credito",
+                "La venta tiene una factura emitida o en trámite ante ARCA y no se puede anular: para corregirla hay que emitir una nota de crédito.",
+                409);
+        }
+    }
+
     /// <summary><c>id_comprobante_asociado</c> (spec: Devoluciones As NCX Comprobantes) —
     /// siempre opcional; cuando está poblado, exige NCX (nunca un TX asociado a otro) y que el
     /// comprobante referenciado esté <see cref="EstadoComprobante.Emitido"/>, del mismo punto de

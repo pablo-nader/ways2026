@@ -175,6 +175,12 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         "<ResultGet /><Errors><Err><Code>602</Code><Msg>No encontrado.</Msg></Err></Errors></FECompConsultarResult>" +
         "</FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
 
+    private static string FecompConsultarTicketInvalido() =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+        "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+        "<ResultGet /><Errors><Err><Code>600</Code><Msg>El TokenSign no se corresponde a la solicitud dada.</Msg></Err></Errors>" +
+        "</FECompConsultarResult></FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
+
     // --- Setup: tenant + empresa (condición fiscal + CUIT) + PV (número fiscal) + certificado ---
 
     private sealed record Contexto(
@@ -192,13 +198,19 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
     }
 
     private async Task<(Contexto Ctx, HttpClient Admin, HttpClient Vendedor, HttpClient Root)> PrepararAsync(
-        string nombre, EspiaWsaa espiaWsaa, EspiaWsfe espiaWsfe, IRelojDelSistema? reloj = null)
+        string nombre, EspiaWsaa espiaWsaa, EspiaWsfe espiaWsfe, IRelojDelSistema? reloj = null,
+        IEsperador? esperador = null)
     {
         var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
         {
             if (reloj is not null)
             {
                 services.AddSingleton(reloj);
+            }
+
+            if (esperador is not null)
+            {
+                services.AddSingleton(esperador);
             }
 
             // Sobre-registro DELIBERADO (mismo trámite que WaysApiFixture.ConfigureWebHost con el
@@ -675,6 +687,100 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(["FECompConsultar", "FECAESolicitar"], espiaWsfe.Operaciones);
     }
 
+    /// <summary>Cambio de comportamiento de la consulta: "no encontrado" es solo el 602 explícito. Cualquier otro error de
+    /// <c>FECompConsultar</c> es no definitivo también acá: el reintento se corta (503), no pide un CAE nuevo y el comprobante queda
+    /// pendiente.</summary>
+    [Fact]
+    public async Task ElReintentoNoPideUnCaeSiLaConsultaFallaConUnErrorQueNoEsComprobanteInexistente()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+                "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+                "<ResultGet /><Errors><Err><Code>10000</Code><Msg>Falla interna de ARCA.</Msg></Err></Errors></FECompConsultarResult>" +
+                "</FECompConsultarResponse></soapenv:Body></soapenv:Envelope>"),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(57))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoNoPideUnCaeSiLaConsultaFallaConUnErrorQueNoEsComprobanteInexistente), espiaWsaa, espiaWsfe);
+
+        var idComprobante = await SembrarPendienteAsync(ctx, 57);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+        Assert.Equal(["FECompConsultar"], espiaWsfe.Operaciones);
+    }
+
+    /// <summary>Un 600 en la consulta tiene el mismo tratamiento que en la solicitud: se invalida el ticket, se firma uno nuevo y se
+    /// consulta una vez más. Con el comprobante encontrado el reintento sigue como si la primera consulta hubiera andado.</summary>
+    [Fact]
+    public async Task ElReintentoRefrescaElTicketSiLaConsultaDa600YAdoptaElCae()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var consultas = 0;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(
+                ++consultas == 1 ? FecompConsultarTicketInvalido() : FecompConsultarEncontrado(58, "70585858585858")),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(58))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoRefrescaElTicketSiLaConsultaDa600YAdoptaElCae), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(ctx, 58);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal("70585858585858", emitido.Cae);
+        Assert.Equal(["FECompConsultar", "FECompConsultar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
+    [Fact]
+    public async Task ElReintentoRefrescaElTicketSiLaConsultaDa600YSiNoEncuentraNadaPideConElTicketFresco()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var consultas = 0;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(++consultas == 1 ? FecompConsultarTicketInvalido() : FecompConsultarNoEncontrado()),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(59))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoRefrescaElTicketSiLaConsultaDa600YSiNoEncuentraNadaPideConElTicketFresco), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(ctx, 59);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(["FECompConsultar", "FECompConsultar", "FECAESolicitar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
+    [Fact]
+    public async Task ElReintentoConDosSeiscientosEnLaConsultaEsNoDefinitivoConUnaSolaInvalidacionYNoPide()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(FecompConsultarTicketInvalido()),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(60))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoConDosSeiscientosEnLaConsultaEsNoDefinitivoConUnaSolaInvalidacionYNoPide), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(ctx, 60);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.ServiceUnavailable, "ticket_de_acceso_invalido");
+        Assert.Equal(["FECompConsultar", "FECompConsultar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
     // --- El CRITICAL de judgment 19a-slice-5 ronda 2 juez A: la re-emisión (rama no-adoptada de
     //     ReintentarAsync) tenía que recomponer el desglose fiscal COMPLETO desde el snapshot
     //     congelado de items_comprobante_venta, nunca fabricar ImpOpEx=0/Iva[]=[] — el invariante
@@ -909,6 +1015,57 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         // extra que reintentaría el segundo 600 también).
         Assert.Equal(["FECAESolicitar", "FECAESolicitar"], espiaWsfe.Operaciones);
         Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
+    private sealed class EsperadorInstantaneo : IEsperador
+    {
+        public Task EsperarAsync(TimeSpan duracion, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>Fija el comportamiento de HOY de la emisión directa (facturación por medio de pago, T5a, paso 0): si WSFE no da una
+    /// respuesta definitiva, la emisión numera, inserta y llama en UNA sola transacción sin captura, así que el fallo
+    /// deshace la fila, los ítems y el contador. Por eso la emisión del espejo necesita dos transacciones: el número
+    /// tiene que sobrevivir a la falta de respuesta, porque ARCA pudo haber autorizado.</summary>
+    [Fact]
+    public async Task UnaRespuestaNoDefinitivaDeWsfeDeshaceLaFilaYElNumeroYLaSiguienteEmisionReusaElMismoNumero()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe { Solicitar = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(UnaRespuestaNoDefinitivaDeWsfeDeshaceLaFilaYElNumeroYLaSiguienteEmisionReusaElMismoNumero),
+            espiaWsaa, espiaWsfe, esperador: new EsperadorInstantaneo());
+
+        var fallida = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        await AssertCodigoAsync(fallida, HttpStatusCode.ServiceUnavailable, "arca_no_definitivo");
+        Assert.Contains("FECAESolicitar", espiaWsfe.Operaciones);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            Assert.False(await db.ComprobantesVenta.AnyAsync(c => c.IdPuntoVenta == ctx.IdPuntoVenta));
+            Assert.False(await db.ItemsComprobanteVenta.AnyAsync(i => i.IdTenant == ctx.IdTenant));
+        }
+
+        // El contador ni siquiera existe: el INSERT del contador viajó en la misma transacción.
+        Assert.Null(await LeerProximoNumeroAsync(ctx, 1));
+
+        espiaWsfe.Solicitar = _ => RespuestaXml(FecaeAprobado(1));
+        var exitosa = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        Assert.Equal(HttpStatusCode.Created, exitosa.StatusCode);
+        var emitido = (await exitosa.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal(1, emitido.Numero);
+        Assert.Equal(2, await LeerProximoNumeroAsync(ctx, 1));
+    }
+
+    private async Task<long?> LeerProximoNumeroAsync(Contexto ctx, short codigoAfip)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "SELECT proximo_numero FROM numeraciones_fiscales WHERE id_punto_venta = $1 AND codigo_afip = $2";
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = codigoAfip });
+        var valor = await comando.ExecuteScalarAsync();
+        return valor is null or DBNull ? null : Convert.ToInt64(valor);
     }
 
     // --- U2 conjuncts (target 68) ---

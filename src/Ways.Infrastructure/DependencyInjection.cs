@@ -147,6 +147,7 @@ public static class DependencyInjection
         services.Configure<OpcionesFiscales>(configuration.GetSection(OpcionesFiscales.Seccion));
         services.AddScoped<ServicioDeFacturacionFiscal>();
         services.AddScoped<ServicioDeDecisionDeFacturacion>();
+        services.AddScoped<ServicioDeFacturacionDeVentas>();
 
         return services;
     }
