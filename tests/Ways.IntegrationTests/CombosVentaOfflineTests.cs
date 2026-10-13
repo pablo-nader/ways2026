@@ -451,12 +451,12 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Empty(await DiscrepanciasAuditadasAsync(ctx));
     }
 
-    /// <summary>Cláusula: un artículo pesable admite hasta tres decimales en las unidades de combo; con cuatro se
+    /// <summary>Cláusula: las unidades de combo llevan a lo sumo tres decimales; con cuatro la venta se
     /// rechaza aunque estén dentro de la cantidad de la línea.</summary>
     [Fact]
-    public async Task LasUnidadesDeComboDeUnArticuloPesableAdmitenHastaTresDecimales()
+    public async Task LasUnidadesDeComboConMasDeTresDecimalesSeRechazan()
     {
-        var (ctx, jamon, _, combo) = await JamonYQuesoAsync(nameof(LasUnidadesDeComboDeUnArticuloPesableAdmitenHastaTresDecimales));
+        var (ctx, jamon, _, combo) = await JamonYQuesoAsync(nameof(LasUnidadesDeComboConMasDeTresDecimalesSeRechazan));
 
         var linea = Offline(jamon, 0.215m, 10000m, unidades: 0.2001m, ahorro: 333m, idCombo: combo);
 
