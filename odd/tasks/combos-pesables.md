@@ -44,7 +44,7 @@ Out: scale-label barcodes with embedded weight, POS desktop release (separate bu
   fractional quantities mirrored in C#. Checks: `vitest run` for pos/api/componentes + C# parity test.
 - [x] **T3 — Back-office editor.** Route: delegated writer. `combosAbm.ts`, `EditorDeComponentes.tsx`,
   `SelectorDeArticuloDeCombo.tsx`, copy and error messages; descriptor tests. Checks: `vitest run` + `tsc`.
-- [ ] **T4 — Delivery.** judgment-day until a clean round, PR with auto-merge and Auto-fix; amend D5 in
+- [x] **T4 — Delivery.** judgment-day until a clean round, PR with auto-merge and Auto-fix; amend D5 in
   `odd/tasks/combos.md`.
 
 ## Acceptance criteria
@@ -184,3 +184,5 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
 - Second merge with main `1d64bff7`: the 13 doc 10 hunks were ported to the split files (`03-articulos--combos.md`, `03-articulos--tienda-online.md`).
 
 Next step: T4.
+
+- T4: judgment-day aprobado (dos rondas de correcciones, una sobre el merge con la venta por importe), PR #436 con auto-merge y Auto-fix. Entrega en un solo PR: las correcciones cruzan servidor y POS. Pendiente fuera del PR: release del POS de escritorio.
