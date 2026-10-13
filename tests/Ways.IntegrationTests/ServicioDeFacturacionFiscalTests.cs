@@ -192,13 +192,19 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
     }
 
     private async Task<(Contexto Ctx, HttpClient Admin, HttpClient Vendedor, HttpClient Root)> PrepararAsync(
-        string nombre, EspiaWsaa espiaWsaa, EspiaWsfe espiaWsfe, IRelojDelSistema? reloj = null)
+        string nombre, EspiaWsaa espiaWsaa, EspiaWsfe espiaWsfe, IRelojDelSistema? reloj = null,
+        IEsperador? esperador = null)
     {
         var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
         {
             if (reloj is not null)
             {
                 services.AddSingleton(reloj);
+            }
+
+            if (esperador is not null)
+            {
+                services.AddSingleton(esperador);
             }
 
             // Sobre-registro DELIBERADO (mismo trámite que WaysApiFixture.ConfigureWebHost con el
@@ -909,6 +915,57 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         // extra que reintentaría el segundo 600 también).
         Assert.Equal(["FECAESolicitar", "FECAESolicitar"], espiaWsfe.Operaciones);
         Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
+    private sealed class EsperadorInstantaneo : IEsperador
+    {
+        public Task EsperarAsync(TimeSpan duracion, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>Fija el comportamiento de HOY de la emisión directa (facturación por medio de pago, T5a, paso 0): si WSFE no da una
+    /// respuesta definitiva, la emisión numera, inserta y llama en UNA sola transacción sin captura, así que el fallo
+    /// deshace la fila, los ítems y el contador. Por eso la emisión del espejo necesita dos transacciones: el número
+    /// tiene que sobrevivir a la falta de respuesta, porque ARCA pudo haber autorizado.</summary>
+    [Fact]
+    public async Task UnaRespuestaNoDefinitivaDeWsfeDeshaceLaFilaYElNumeroYLaSiguienteEmisionReusaElMismoNumero()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe { Solicitar = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(UnaRespuestaNoDefinitivaDeWsfeDeshaceLaFilaYElNumeroYLaSiguienteEmisionReusaElMismoNumero),
+            espiaWsaa, espiaWsfe, esperador: new EsperadorInstantaneo());
+
+        var fallida = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        await AssertCodigoAsync(fallida, HttpStatusCode.ServiceUnavailable, "arca_no_definitivo");
+        Assert.Contains("FECAESolicitar", espiaWsfe.Operaciones);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            Assert.False(await db.ComprobantesVenta.AnyAsync(c => c.IdPuntoVenta == ctx.IdPuntoVenta));
+            Assert.False(await db.ItemsComprobanteVenta.AnyAsync(i => i.IdTenant == ctx.IdTenant));
+        }
+
+        // El contador ni siquiera existe: el INSERT del contador viajó en la misma transacción.
+        Assert.Null(await LeerProximoNumeroAsync(ctx, 1));
+
+        espiaWsfe.Solicitar = _ => RespuestaXml(FecaeAprobado(1));
+        var exitosa = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        Assert.Equal(HttpStatusCode.Created, exitosa.StatusCode);
+        var emitido = (await exitosa.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal(1, emitido.Numero);
+        Assert.Equal(2, await LeerProximoNumeroAsync(ctx, 1));
+    }
+
+    private async Task<long?> LeerProximoNumeroAsync(Contexto ctx, short codigoAfip)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "SELECT proximo_numero FROM numeraciones_fiscales WHERE id_punto_venta = $1 AND codigo_afip = $2";
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = codigoAfip });
+        var valor = await comando.ExecuteScalarAsync();
+        return valor is null or DBNull ? null : Convert.ToInt64(valor);
     }
 
     // --- U2 conjuncts (target 68) ---

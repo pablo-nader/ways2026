@@ -82,6 +82,19 @@ public static class FiscalEndpoints
             "Reintenta un comprobante fiscal 'pendiente' — FECompConsultar primero (I2), adopta el " +
             "CAE si ARCA ya lo autorizó.");
 
+        // Facturación por medio de pago: emite la factura espejo de UNA venta ya decidida. Mismo grupo de política que
+        // la emisión directa (OperacionDePos): el servidor decide letra, totales y CAE; el cuerpo no lleva nada.
+        var facturaciones = app.MapGroup("/api/fiscal/facturaciones")
+            .WithTags("Fiscal")
+            .RequireAuthorization(Politicas.OperacionDePos);
+
+        facturaciones.MapPost("/{id:int}/procesar", async (
+            ServicioDeFacturacionDeVentas servicio, int id, CancellationToken ct) =>
+            Results.Ok(await servicio.ProcesarDecisionAsync(id, ct)))
+        .WithSummary(
+            "Procesa la decisión de facturar una venta: emite su factura espejo contra ARCA. Idempotente: una decisión " +
+            "ya resuelta devuelve su estado sin llamar a ARCA.");
+
         return app;
     }
 }

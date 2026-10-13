@@ -229,4 +229,20 @@ public class ReglaDeComprobantesTests
     {
         ReglaDeComprobantes.ValidarAnulacionDeVenta(CrearComprobante());
     }
+
+    // ---- ValidarAnulacionDeVentaFacturada: una venta con factura vigente se corrige con nota de crédito ----------
+
+    [Fact]
+    public void UnaVentaConFacturaVigenteNoSeAnula()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => ReglaDeComprobantes.ValidarAnulacionDeVentaFacturada(true));
+        Assert.Equal("venta_facturada_requiere_nota_de_credito", excepcion.Codigo);
+        Assert.Equal(409, excepcion.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnaVentaSinFacturaVigenteSeAnula()
+    {
+        ReglaDeComprobantes.ValidarAnulacionDeVentaFacturada(false);
+    }
 }

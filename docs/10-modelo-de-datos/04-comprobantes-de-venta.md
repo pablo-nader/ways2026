@@ -439,9 +439,77 @@ decisión en `pendiente` y mueve el acumulado.
   medio del ticket: `INSERT … ON CONFLICT DO NOTHING` de la fila del mes, un único `SELECT … FOR UPDATE ORDER BY id_medio_pago` que
   lee los saldos una vez bajo el lock, `PoliticaDeFacturacionPorMedio.Decidir`, y un `UPDATE` que suma `saldo_a_facturar` (el aporte),
   `total_vendido` (el monto) y `total_facturado` (el monto si se factura). Todo con SQL crudo.
-- **Limitación conocida (fuera de T4).** Anular una venta ya decidida todavía no devuelve su aporte al acumulado ni cancela su fila
-  `pendiente` (planificado para T8). Hasta entonces la emisión (T5) tiene que saltear y cancelar las decisiones `pendiente` cuya venta
-  esté anulada; no hay una garantía de que eso ocurra antes de T8.
+- **Anular una venta ya decidida.** La anulación no toca la decisión ni el acumulado: la decisión `pendiente` de una venta anulada sin
+  espejo se cancela de forma diferida cuando se procesa (ver "Emisión del espejo"), y ahí se devuelve el acumulado. Hasta que alguien
+  procese esa decisión, el cupo sigue contado.
+
+**Emisión del espejo (T5a): implementada.** `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync(idFacturacion)`, expuesto como
+`POST /api/fiscal/facturaciones/{id}/procesar` (política `OperacionDePos`, sin cuerpo; una decisión inexistente o de otro tenant
+es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador por lote, la espera entre intentos y la emisión
+en línea desde la venta son T5b y T5c.
+
+- **Qué escribe el espejo.** Una fila de `comprobantes_venta` con `id_venta_origen` = la venta, `resultado_fiscal` `pendiente`
+  al nacer, sin turno, `fecha` = el instante de emisión (no el de la venta), empleado, cliente y subtotales de la venta, totales
+  fiscales compuestos desde los ítems guardados de la venta (no del catálogo), `facturacion_decidida_en` en `NULL` (los espejos
+  nunca se marcan) e ítems copiados de la venta SIN lote y SIN costo. No escribe pagos, movimientos de stock ni de cuenta
+  corriente. El tipo es la factura de la letra que resulta del cruce de condiciones (`FA`, `FB` o `FC`; las notas de débito
+  comparten letra y signo, por eso se elige por código) y el receptor es el cliente de la venta: Consumidor Final o sin documento
+  va como documento 99/0, y una factura A exige CUIT.
+- **Dos transacciones, sin reintento automático.** ARCA puede autorizar un número aunque la respuesta nunca llegue, así que el
+  número tiene que sobrevivir a esa falta de respuesta; la emisión directa (`POST /api/fiscal/comprobantes`) en cambio numera,
+  inserta y llama en una sola transacción y deshace todo (lo fija un test). **A**: toma la fila de la serie en
+  `numeraciones_fiscales` con `SELECT … FOR UPDATE SKIP LOCKED` (si otra llamada la tiene, responde `serie_ocupada` sin
+  esperar y sin penalidad), comprueba que ningún otro espejo `pendiente` de la serie la detenga (`serie_bloqueada`, también sin
+  penalidad), bloquea la fila de la venta con `FOR UPDATE` y verifica que siga emitida, toma el número
+  (`proximo_numero + 1`) e inserta el espejo; commit. **B**: retoma el lock de la serie (la sostiene durante la llamada a ARCA),
+  relee la decisión (si otra llamada ya la resolvió devuelve su estado sin llamar a ARCA), y pide el CAE. Un espejo creado por esa
+  misma llamada pide el CAE directo; uno que ya existía de una llamada anterior (`I2`) consulta primero con `FECompConsultar`:
+  si ARCA lo tiene, lo adopta sin ningún `FECAESolicitar`; si no, refresca la fecha del espejo al día de hoy y pide el CAE con el
+  mismo número. Aplica el resultado y actualiza la decisión con la guarda `estado = 'pendiente'`: si la decisión cambió mientras
+  tanto, la transacción B se deshace entera y el espejo sigue pendiente. El ticket de acceso de WSAA se obtiene antes de A, así que
+  una falla de WSAA no consume número. Orden de locks: `numeraciones_fiscales` → `comprobantes_venta` → `facturaciones_de_venta` →
+  `acumulados_de_facturacion` (por `id_medio_pago` ascendente).
+- **Estados.**
+
+  | Evento | Espejo | Decisión |
+  |---|---|---|
+  | Aprobado, aprobado con observaciones, o la consulta lo encuentra | `aprobado` / `aprobado_con_observaciones`, con CAE | `emitida`, con `id_comprobante_fiscal` |
+  | Rechazo definitivo | borrado (ítems y fila) y número devuelto | `rechazada`, `ultimo_error` con los errores de ARCA, débito revertido |
+  | Sin respuesta definitiva | sigue `pendiente` con su número | `pendiente`, `intentos + 1`, `ultimo_error`, espera de 30 s que se duplica, tope 10 min |
+  | Una compuerta falla | no existe | `pendiente`, `intentos + 1`, `ultimo_error`, espera de 5 min que se duplica, tope 4 h |
+  | Venta anulada y sin espejo | no existe | `cancelada`, acumulado revertido |
+
+  Es definitivo solo lo que está en la lista blanca: una respuesta de `FECAESolicitar` (aprobado, aprobado con observaciones o
+  rechazado), un `FECompConsultar` que encuentra el número, o el error `arca_rechazo`. Todo lo demás (transporte, falla SOAP,
+  ticket de acceso, numeración desincronizada) es no definitivo. Las compuertas, que se evalúan sin red, son
+  `empresa_sin_condicion_fiscal`, `punto_venta_sin_numero_fiscal`, `condicion_fiscal_receptor_no_mapeada`,
+  `certificado_fiscal_ausente`, `empresa_sin_cuit_valido`, `tipo_fiscal_invalido`, `receptor_sin_cuit`,
+  `alicuota_sin_mapeo_afip` y `total_fiscal_no_coincide`. La respuesta trae `estado` (`aprobado`, `rechazado`, `pendiente`,
+  `cancelado`), `error` y, si está aprobada, `comprobante` (tipo, letra, punto de venta fiscal, número, fecha, CAE, vencimiento,
+  QR y observaciones). Procesar una decisión que ya no está pendiente devuelve ese estado sin ninguna llamada a ARCA.
+- **Rechazo (reglas 1 y 3).** Dentro de B y bajo el lock de la serie: `UPDATE numeraciones_fiscales SET proximo_numero = N WHERE
+  id_punto_venta = … AND codigo_afip = … AND proximo_numero = N + 1` devuelve el número solo si nadie tomó otro después; si afecta
+  una fila se borran los ítems y la fila del espejo (`DELETE FROM items_comprobante_venta` y `DELETE FROM comprobantes_venta`,
+  acotados a ese espejo). Si no afecta ninguna fila, no se borra nada: el espejo queda `rechazado` con su número, la serie queda
+  desincronizada con ARCA y se registra un error en el log. En los dos casos la decisión pasa a `rechazada` y se devuelve solo el
+  débito: `saldo_a_facturar += vendido`, `total_facturado −= vendido` por medio (lo cobrado, `importe − vuelto`), de modo que el
+  cupo pasa a los tickets siguientes. El ticket no se modifica nunca.
+- **Cancelación.** Cuando la venta está anulada y no hay espejo, la decisión pasa a `cancelada` y se deshace TODO lo que ella
+  aplicó sobre su `periodo`: `saldo_a_facturar −= aporte` (el guardado en la decisión), `total_vendido −= vendido` y
+  `total_facturado −= vendido`. Una `rechazada` no se reintenta sola.
+- **Anulación de una venta facturada (regla 5).** `POST /api/ventas/{id}/anulacion` responde
+  `409 venta_facturada_requiere_nota_de_credito` si la venta tiene un espejo aprobado o en trámite (`pendiente`). La pregunta se
+  hace bajo el lock de la fila de la venta que toma el `UPDATE` de la anulación, y la creación del espejo bloquea esa misma fila y
+  verifica que la venta siga emitida antes de insertarlo, así que o el espejo ya está comiteado y se ve, o la anulación gana y no se
+  crea ninguno. Un espejo `rechazado` que quedó en pie no cuenta, y una venta con la decisión `pendiente` y sin espejo se anula
+  como siempre. La nota de crédito es T8.
+- **Qué se registra pero todavía no se aplica.** `proximo_intento_en` se escribe (30 s duplicándose hasta 10 min; 5 min hasta
+  4 h para una compuerta) pero nada lo lee: este servicio procesa la decisión que se le pide aunque la espera no haya vencido, y
+  el procesador por lote (T5b) es el que la va a respetar. Tampoco hay todavía quién llame a este endpoint por sí solo.
+- **Limitaciones aceptadas.** No hay timeout HTTP configurado para WSFE: una llamada colgada sostiene el lock de la serie
+  mientras dure. Un espejo `rechazado` que quedó por la guarda del contador detiene la numeración con el error `10016` de ARCA
+  hasta que alguien la reconcilie (no bloquea la serie por sí mismo). El orden ascendente de los locks del acumulado y el
+  alcance de los borrados están cubiertos por tests de integración (lock observado desde otra sesión y espejos vecinos intactos).
 
 ### Presupuestos (Etapa 17)
 

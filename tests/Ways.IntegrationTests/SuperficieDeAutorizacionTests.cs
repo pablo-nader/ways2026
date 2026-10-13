@@ -155,6 +155,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // botón (target 5.24, task 5.24).
         ("POST", "/api/fiscal/comprobantes/"),
         ("POST", "/api/fiscal/comprobantes/{id:int}/reintentar"),
+        ("POST", "/api/fiscal/facturaciones/{id:int}/procesar"),
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
         ("POST", "/api/plataforma/tenants/"),

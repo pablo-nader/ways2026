@@ -88,9 +88,33 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Fiscal/ServicioDeDecisionDeFacturacion.cs",
                 "\"FROM pagos_comprobante p \" +")] =
                 (1, "Pagos de UNA venta, ya bloqueada por id y que no es un espejo: de ahí sale lo cobrado por medio."),
-            [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
-                "var comprobante = await db.ComprobantesVenta")] =
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "var venta = await db.ComprobantesVenta.AsNoTracking()")] =
                 (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "var espejo = await db.ComprobantesVenta.AsNoTracking()")] =
+                (1, "Busca el espejo de UNA venta por id_venta_origen: tiene que verlo para saber si la venta ya está facturada."),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "var itemsDeLaVenta = await db.ItemsComprobanteVenta.AsNoTracking()")] =
+                (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "var espejo = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idEspejo, ct);")] =
+                (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta c \" +")] =
+                (1, "Busca espejos pendientes de la serie fiscal: tiene que verlos, un espejo pendiente detiene la serie."),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"SELECT resultado_fiscal::text, fecha FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
+                (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"DELETE FROM items_comprobante_venta WHERE id_comprobante_venta = $1\", ct, idEspejo))")] =
+                (1, "Borra los ítems de UN espejo fiscal rechazado por ARCA, por id."),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"DELETE FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
+                (1, "Borra UN espejo fiscal rechazado por ARCA, por id."),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"FROM pagos_comprobante p \" +")] =
+                (1, "Pagos de UNA venta ya decidida, por id: de ahí sale lo cobrado por medio que la decisión llevó al acumulado."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
                 "var actual = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idComprobante, ct);")] =
                 (1, PorId),
@@ -142,6 +166,9 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == id, ct)")] =
                 (1, PorId),
+            [("Ways.Application/Ventas/ServicioDeVentas.cs",
+                "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta \" +")] =
+                (1, "Pregunta por el espejo de UNA venta por id_venta_origen: tiene que verlo para rechazar la anulación."),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "\"JOIN comprobantes_venta c ON c.id_turno_caja = t.id_turno_caja AND c.id_tenant = t.id_tenant \" +")] =
                 (1, "Resuelve el turno de UN comprobante por id."),
