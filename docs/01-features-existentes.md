@@ -130,6 +130,11 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 | 5 | `c_corriente > 0 && vuelto > 0` | no se da vuelto si pagó con cuenta corriente |
 | 6 | `c_corriente + saldo_cliente > acuerdo_cliente` (y `acuerdo != -1`) | excede el crédito. `acuerdo = -1` = crédito ilimitado |
 
+> **Regla nueva (nota de crédito sin pagos):** en el legacy una devolución pura (`total <= 0`) deja los campos de pago en solo
+> lectura. La app nueva lo hace cumplir en el servidor: un comprobante de total negativo (NCX) con algún pago de importe o vuelto
+> positivo se rechaza con 400 `pago_en_comprobante_negativo` (`ValidadorDePagos`, regla 0c, después de los importes negativos y
+> antes de la fila 1). Las filas en cero no se rechazan; sin pagos se acepta.
+>
 > **Desviación deliberada (decisión del dueño, 2026-09-16):** la fila 3 de arriba (`vuelto
 > máximo`, $20 en el legacy, `vuelto_maximo` parametrizado en la app nueva hasta esta fecha)
 > impedía ventas legítimas — p. ej. un ticket de $5.500 pagado con un billete de $10.000 requiere

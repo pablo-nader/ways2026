@@ -66,6 +66,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");
                 // stage-16-ordenes-de-compra, Slice 1: mismo gap que la desviación de la etapa 15
                 // documentada en las otras fixtures manualmente curadas de este archivo.
                 npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");

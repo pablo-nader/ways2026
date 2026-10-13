@@ -216,6 +216,10 @@ describe('calcularSubtotalPrevia', () => {
     expect(calcularSubtotalPrevia([lineaFixture()], {})).toBeNull()
   })
 
+  it('null con el carrito vacío: no hay subtotal que mostrar, no un 0', () => {
+    expect(calcularSubtotalPrevia([], {})).toBeNull()
+  })
+
   it('suma el total previsualizado de cada línea resuelta', () => {
     const lineas = [lineaFixture({ idArticulo: 1, cantidad: 2 }), lineaFixture({ idArticulo: 2, cantidad: 1 })]
     const precios = {
@@ -474,5 +478,112 @@ describe('opcionDeLote', () => {
   it('el lote sin identificar muestra su propio texto en vez del código reservado', () => {
     const opcion = opcionDeLote(loteFixture({ esSinIdentificar: true, codigo: 'SIN-IDENTIFICAR', fechaVencimiento: null }))
     expect(opcion.etiqueta).toBe('Sin identificar — vigente — saldo 12')
+  })
+})
+
+describe('artículo por importe', () => {
+  const porImporte = (sobrescribir: Partial<LineaCarrito> = {}) =>
+    lineaFixture({ idLinea: 'f1', idArticulo: 500, cantidad: 1, acumulaEnVenta: false, unidadVenta: 'Importe', importe: 150.5, ...sobrescribir })
+
+  describe('aLineaDeCarritoDesdeEscaneo', () => {
+    it('lleva el importe a la línea, con cantidad 1 y sin acumular aunque el escaneo diga que acumula', () => {
+      const resultado = aLineaDeCarritoDesdeEscaneo(
+        articuloEscaneadoFixture({ idArticulo: 500, unidadVenta: 'Importe', importe: 150, cantidad: 1, acumulaEnVenta: true }),
+      )
+
+      expect(resultado.cantidad).toBe(1)
+      expect(resultado.linea).toMatchObject({ idArticulo: 500, unidadVenta: 'Importe', importe: 150, acumulaEnVenta: false })
+    })
+
+    it('un artículo común nunca lleva importe, aunque el escaneo traiga uno', () => {
+      const { linea } = aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ unidadVenta: 'Unidad', importe: 150 }))
+
+      expect(linea).not.toHaveProperty('importe')
+    })
+
+    it('un importe nulo del servidor no se convierte en importe de la línea', () => {
+      const { linea } = aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ unidadVenta: 'Importe', importe: null }))
+
+      expect(linea).not.toHaveProperty('importe')
+    })
+  })
+
+  describe('aLineasDeResolucion', () => {
+    it('manda el importe solo en la línea por importe', () => {
+      const resultado = aLineasDeResolucion([lineaFixture({ idArticulo: 1, cantidad: 2 }), porImporte()], 3, 9)
+
+      expect(resultado[0]).not.toHaveProperty('importe')
+      expect(resultado[1]).toEqual({ idArticulo: 500, idEmpresa: 9, idListaPrecio: 3, cantidad: 1, importe: 150.5 })
+    })
+  })
+
+  describe('previaDeLinea', () => {
+    it('el total es el importe al peso entero, sin necesitar precio de lista (150,50 cobra 151)', () => {
+      const previa = previaDeLinea(porImporte(), undefined)
+
+      expect(previa).toEqual({ precioUnitario: 150.5, descuentoUnitario: 0, total: 151, ajusteManual: 0, ahorroDeCombo: 0 })
+    })
+
+    it('ignora cualquier precio resuelto por una lista', () => {
+      const previa = previaDeLinea(porImporte({ importe: 150 }), resultadoFixture({ idArticulo: 500, precioOriginal: 999, precioFinal: 999, descuentoUnitario: 0 }))
+
+      expect(previa.precioUnitario).toBe(150)
+      expect(previa.total).toBe(150)
+    })
+
+    it('el ajuste manual se aplica sobre el importe', () => {
+      const previa = previaDeLinea(porImporte({ importe: 150, ajusteManualPorcentaje: -10 }), undefined)
+
+      expect(previa).toMatchObject({ total: 135, ajusteManual: -15 })
+    })
+
+    it('el subtotal suma la línea por importe junto con las de lista', () => {
+      const lineas = [lineaFixture({ idArticulo: 1, cantidad: 2 }), porImporte({ importe: 150 })]
+
+      expect(calcularSubtotalPrevia(lineas, { 1: resultadoFixture() })).toBe(2 * 90 + 150)
+    })
+  })
+
+  describe('aSolicitudDeVenta', () => {
+    const armar = (lineas: LineaCarrito[]) =>
+      aSolicitudDeVenta({
+        idPuntoVenta: 7,
+        idCliente: 1,
+        codigoTipoComprobante: 'TX',
+        idComprobanteAsociado: null,
+        lineas,
+        lotesSeleccionados: {},
+        pagos: [],
+        direccionEntrega: null,
+        observaciones: null,
+      }).lineas
+
+    it('manda el importe solo en la línea por importe y nunca precios', () => {
+      const [comun, importe] = armar([lineaFixture({ idArticulo: 1, cantidad: 2 }), porImporte({ importe: 150.5 })])
+
+      expect(comun).not.toHaveProperty('importe')
+      expect(importe).toEqual({ idArticulo: 500, cantidad: 1, codigoBarra: '7790001234567', idLote: null, importe: 150.5 })
+      expect(importe).not.toHaveProperty('precioUnitario')
+    })
+
+    it('el ajuste manual viaja junto al importe', () => {
+      const [importe] = armar([porImporte({ importe: 150, ajusteManualPorcentaje: -10 })])
+
+      expect(importe).toMatchObject({ importe: 150, ajusteManualPorcentaje: -10 })
+    })
+  })
+})
+
+describe('calcularSubtotalPrevia — solo líneas por importe', () => {
+  it('un carrito de líneas por importe tiene subtotal sin esperar ningún precio resuelto', () => {
+    const lineas = [lineaFixture({ idLinea: 'f1', idArticulo: 500, cantidad: 1, importe: 150 }), lineaFixture({ idLinea: 'f2', idArticulo: 500, cantidad: 1, importe: 80 })]
+
+    expect(calcularSubtotalPrevia(lineas, {})).toBe(230)
+  })
+
+  it('con una línea de lista sin resolver sigue sin haber subtotal', () => {
+    const lineas = [lineaFixture({ idArticulo: 1 }), lineaFixture({ idLinea: 'f1', idArticulo: 500, cantidad: 1, importe: 150 })]
+
+    expect(calcularSubtotalPrevia(lineas, {})).toBeNull()
   })
 })

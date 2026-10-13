@@ -10,6 +10,7 @@ import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { SeccionDeCuentas } from './tesoreria/SeccionDeCuentas'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -355,6 +356,12 @@ export function Tesoreria() {
           </>
         )}
       </Box>
+
+      {empresas !== null && empresas.length > 0 && (
+        <div className="mt-4">
+          <SeccionDeCuentas idEmpresa={filtros?.idEmpresa ?? null} />
+        </div>
+      )}
     </div>
   )
 }

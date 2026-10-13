@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Ways.Api.ConectorMcp;
 using Ways.Api.Dominios;
 using Ways.Api.Endpoints;
+using Ways.Api.OpenApi;
 using Ways.Api.Seguridad;
 using Ways.Api.Spa;
 using Ways.Application;
@@ -209,7 +210,7 @@ builder.Services.Configure<RouteHandlerOptions>(opciones => opciones.ThrowOnBadR
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ManejadorDeErrores>();
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(opciones => opciones.DocumentarCamposOpcionales());
 
 // Conector MCP (experimental, ver ConectorMcp/): con Mcp:Habilitado apagado no registra, mapea ni
 // loguea nada; con una configuración inválida queda deshabilitado sin impedir el arranque.
@@ -295,6 +296,7 @@ app.MapearDispositivos();
 app.MapearClientes();
 app.MapearProveedores();
 app.MapearPersonal();
+app.MapearCuentasTesoreria();
 app.MapearCuentaDePersonal();
 app.MapearArticulos();
 // Familias de artículos (doc 10 §3): gestión, solo admin.

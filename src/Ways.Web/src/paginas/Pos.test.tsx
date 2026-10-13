@@ -8,9 +8,17 @@ import { TIEMPO_LIMITE_DE_RED_MS } from '../pos/tiempoLimite'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
+import {
+  MENSAJE_DE_ATAJO_SIN_DATOS,
+  MENSAJE_DE_IMPORTE_INVALIDO,
+  mensajeDeAtajoSinArticulo,
+  mensajeDeAtajoSinImporte,
+  mensajeDeImporteRequerido,
+  mensajeDeLineaPorImporteObsoleta,
+} from '../api/importeDeVenta'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
-import { cierreDeTurno, pulsoDeCajon } from '../impresion/plantillas'
+import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta } from '../impresion/plantillas'
 import type {
   ArticuloDeInstantanea,
   ArticuloEscaneado,
@@ -464,13 +472,17 @@ let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 /** Mock PARCIAL de `outboxOffline`: todo real salvo `leerOutbox`, que un test puede hacer fallar
  * (`controlDeOutbox.fallarLectura`) para simular un almacén caído a mitad de un drenado — el
  * almacén real (`almacenPos.ts`) nunca rechaza, así que no hay otra forma de llegar a ese camino. */
-const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false }))
+const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false }))
 vi.mock('../pos/outboxOffline', async (importarOriginal) => {
   const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
   return {
     ...real,
     leerOutbox: (almacen: Parameters<typeof real.leerOutbox>[0]) =>
-      controlDeOutbox.fallarLectura ? Promise.reject(new Error('almacén caído')) : real.leerOutbox(almacen),
+      controlDeOutbox.colgarLectura
+        ? new Promise<never>(() => {})
+        : controlDeOutbox.fallarLectura
+          ? Promise.reject(new Error('almacén caído'))
+          : real.leerOutbox(almacen),
   }
 })
 
@@ -567,6 +579,7 @@ beforeEach(async () => {
   await borrarAlmacenOffline()
   establecerTokenDeSesionBearer(null)
   controlDeOutbox.fallarLectura = false
+  controlDeOutbox.colgarLectura = false
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -2242,6 +2255,385 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
     // El nuevo saldo (200) deja lugar bajo el límite (400) para la fila de $100 ya cargada.
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
     expect(screen.queryByText('El pago supera el límite de crédito del cliente.')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — saldo confirmado de la venta a un cliente identificado', () => {
+  const juan = { ...otroCliente, saldo: 500, limiteCredito: 5000, creditoIlimitado: false }
+  const RECHAZO_DE_RED = () => Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+  function mockearJuan(lecturas: (() => Promise<unknown>)[] = [], sinConsumidorFinal = false) {
+    let n = 0
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2') return (lecturas[n++] ?? (() => Promise.resolve(juan)))()
+      if (sinConsumidorFinal && ruta === '/clientes') return Promise.resolve<PaginaDe<ClienteListado>>({ items: [], total: 0, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [juan], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+  }
+
+  const lecturasDeJuan = () => apiGetMock.mock.calls.filter((c) => c[0] === '/clientes/2')
+  const dejarCorrerLoPendiente = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
+
+  async function elegirAJuan() {
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await waitFor(() => expect(lecturasDeJuan()).toHaveLength(1))
+    await dejarCorrerLoPendiente()
+  }
+
+  async function armarLaVenta() {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  }
+
+  const cobrar = () => userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+  const saldoDeLaVenta = (alEmitir: ReturnType<typeof vi.fn>, n = 0) => ({
+    saldoEnPantalla: (alEmitir.mock.calls[n][1] as ClienteListado).saldo,
+    ...alEmitir.mock.calls[n][3],
+  })
+
+  it('un cliente leído del servidor, con la cola vacía, se informa confirmado', async () => {
+    mockearJuan()
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await armarLaVenta()
+
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: 0, saldoConfirmado: true })
+  })
+
+  describe('el drenado de la cola entre la lectura y el cobro', () => {
+    async function conUnaVentaDeJuanEnLaCola(lecturasPosteriores: (() => Promise<unknown>)[]) {
+      mockearJuan([() => Promise.resolve(juan), ...lecturasPosteriores])
+      await guardarLocal(crearAlmacenIndexedDb(), instantaneaFixture())
+      await agregarAOutbox(crearAlmacenIndexedDb(), {
+        idLocal: 'pendiente-de-juan',
+        numeroPreasignado: 400,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+        consumoCuentaCorriente: 100,
+      })
+      let liberarEnvio!: (c: ComprobanteEmitido) => void
+      const envio = new Promise<ComprobanteEmitido>((resolver) => (liberarEnvio = resolver))
+      const postBase = apiPostMock.getMockImplementation()!
+      let enviadas = 0
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' && enviadas++ === 0 ? envio : postBase(ruta, cuerpo)))
+      const alEmitir = vi.fn()
+      renderPos('/pos', { alEmitir })
+      await esperarAlConsumidorFinal()
+      await elegirAJuan()
+      await armarLaVenta()
+      liberarEnvio(comprobanteEmitidoFixture())
+      await waitFor(async () => expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([]))
+      await dejarCorrerLoPendiente()
+      return alEmitir
+    }
+
+    it('con señal vuelve a leer al cliente: el saldo del servidor ya incluye la venta enviada (600) y se informa confirmado', async () => {
+      const alEmitir = await conUnaVentaDeJuanEnLaCola([() => Promise.resolve({ ...juan, saldo: 600 })])
+      await waitFor(() => expect(lecturasDeJuan()).toHaveLength(2))
+      await dejarCorrerLoPendiente()
+      await cobrar()
+
+      await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+      expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 600, consumoPendiente: 0, saldoConfirmado: true })
+    })
+
+    it('si esa lectura nueva falla, el saldo de pantalla (500) ya no es dato: se informa no confirmado', async () => {
+      const alEmitir = await conUnaVentaDeJuanEnLaCola([RECHAZO_DE_RED])
+      await waitFor(() => expect(lecturasDeJuan()).toHaveLength(2))
+      await dejarCorrerLoPendiente()
+      await cobrar()
+
+      await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+      expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: 0, saldoConfirmado: false })
+    })
+  })
+
+  it('un cobro de resultado incierto (la venta pudo registrarse) quita la confirmación: la venta que sí sale después va no confirmada', async () => {
+    mockearJuan()
+    const postBase = apiPostMock.getMockImplementation()!
+    let ventas = 0
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' && ventas++ === 0 ? RECHAZO_DE_RED() : postBase(ruta, cuerpo)))
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await armarLaVenta()
+
+    await cobrar()
+    expect(await screen.findByText(TEXTO_DE_COBRO_INCIERTO)).toBeInTheDocument()
+    expect(alEmitir).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toMatchObject({ saldoConfirmado: false })
+  })
+
+  it('tras registrar un pago, si la lectura posterior falla, la venta siguiente va no confirmada', async () => {
+    const comprobante = comprobanteEmitidoFixture({
+      id: 900,
+      numeroVisible: '0007-00000900',
+      idCliente: 2,
+      items: [],
+      subtotal: 0,
+      total: 0,
+      pagos: [{ idMedioPago: medioEfectivo.id, importe: 300, referencia: null, vuelto: 0 }],
+    })
+    let lecturas = 0
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2') return lecturas++ === 0 ? Promise.resolve(juan) : RECHAZO_DE_RED()
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [juan], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    const postBase = apiPostMock.getMockImplementation()!
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) =>
+      ruta === '/clientes/2/cuenta-corriente/pagos' ? Promise.resolve(comprobante) : postBase(ruta, cuerpo),
+    )
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '300')
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    await waitFor(() => expect(lecturasDeJuan()).toHaveLength(2))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Cuenta corriente' })).not.toBeInTheDocument())
+    await armarLaVenta()
+
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toMatchObject({ saldoEnPantalla: 500, saldoConfirmado: false })
+  })
+
+  it('si el cliente sigue elegido después de una venta (sin Consumidor Final), la segunda va no confirmada', async () => {
+    mockearJuan([], true)
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toBeEnabled())
+    await elegirAJuan()
+    await armarLaVenta()
+    await cobrar()
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1))
+    expect(saldoDeLaVenta(alEmitir)).toMatchObject({ saldoConfirmado: true })
+    await userEvent.click(await screen.findByRole('button', { name: /Aceptar/ }))
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(/Importe de Efectivo/), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await cobrar()
+
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(2))
+    expect(saldoDeLaVenta(alEmitir, 1)).toMatchObject({ saldoConfirmado: false })
+    expect(lecturasDeJuan()).toHaveLength(1)
+  })
+
+  it('si la lectura de la cola no responde, la venta se completa y el ticket recibe la cola como desconocida al vencer el tope', async () => {
+    mockearJuan()
+    const alEmitir = vi.fn()
+    renderPos('/pos', { alEmitir })
+    await esperarAlConsumidorFinal()
+    await elegirAJuan()
+    await armarLaVenta()
+    controlDeOutbox.colgarLectura = true
+
+    await cobrar()
+
+    expect(await screen.findByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument()
+    expect(alEmitir).not.toHaveBeenCalled()
+    await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: null, saldoConfirmado: true })
+  }, 15_000)
+})
+
+describe('Pos — recibo del pago a cuenta en el escritorio', () => {
+  const CONTEXTO = { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' }
+  const MEDIOS_DEL_POS = [medioEfectivo, medioTarjeta, medioCuentaCorriente]
+
+  /** Cliente de la venta con saldo 500; el servidor informa `saldoTrasElPago` en la segunda consulta
+   * (o rechaza esa consulta si es `null`). */
+  function prepararPago(saldoTrasElPago: number | null | Promise<number>, comprobante: ComprobanteEmitido) {
+    let llamadasEstado = 0
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2') return Promise.resolve({ ...otroCliente, saldo: 500 })
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        llamadasEstado += 1
+        if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
+        if (saldoTrasElPago === null) return Promise.reject(new Error('sin red'))
+        const aEstado = (saldo: number) =>
+          estadoDeCuentaFixture({ header: { saldo, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 5000 - saldo } })
+        return saldoTrasElPago instanceof Promise ? saldoTrasElPago.then(aEstado) : Promise.resolve<EstadoDeCuenta>(aEstado(saldoTrasElPago))
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/2/cuenta-corriente/pagos') return Promise.resolve<ComprobanteEmitido>(comprobante)
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  async function pagar(props: ComponentProps<typeof Pos> = {}) {
+    renderPos('/pos', props)
+    await esperarAlConsumidorFinal()
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '300')
+    await waitFor(() => expect(modalDePago.getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+  }
+
+  const comprobanteDePago = comprobanteEmitidoFixture({
+    id: 900,
+    numeroVisible: '0007-00000900',
+    idCliente: 2,
+    items: [],
+    subtotal: 0,
+    total: 0,
+    pagos: [{ idMedioPago: medioEfectivo.id, importe: 300, referencia: null, vuelto: 0 }],
+  })
+  const clienteDelRecibo = { numero: 2, nombre: 'Juan Pérez' }
+
+  it('encola un único recibo con el saldo posterior que informó el servidor y el anterior reconstruido, con el pulso del cajón', async () => {
+    prepararPago(150, comprobanteDePago)
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    const [descripcion, bytes] = vi.mocked(caja.encolarImpresion).mock.calls[0]
+    expect(descripcion).toBe('el recibo del pago a cuenta')
+    expect(bytes).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150 }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+    expect(Array.from(bytes.slice(-11, -6))).toEqual([0x1b, 0x70, 0x00, 25, 250])
+  })
+
+  it('si la consulta posterior falla, imprime con el saldo de la pantalla como anterior y le resta lo aplicado', async () => {
+    prepararPago(null, comprobanteDePago)
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 500, saldoNuevo: 200, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  })
+
+  it('con una venta del cliente (100) todavía en la cola, el recibo desplaza ambos saldos y los marca estimados: nuevo 250 = 150 + 100, anterior 550', async () => {
+    prepararPago(150, comprobanteDePago)
+    // El envío de la venta en cola queda colgado: sigue en el outbox mientras se imprime el recibo.
+    const postBase = apiPostMock.getMockImplementation()!
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' ? new Promise(() => {}) : postBase(ruta, cuerpo)))
+    await agregarAOutbox(crearAlmacenIndexedDb(), {
+      idLocal: 'pendiente-del-cliente',
+      numeroPreasignado: 400,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      consumoCuentaCorriente: 100,
+    })
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta(
+        { comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 550, saldoNuevo: 250, estimado: true },
+        CONTEXTO,
+        MEDIOS_DEL_POS,
+      ),
+    )
+  })
+
+  it('si el drenado saca una venta de la cola entre el pago y la lectura del saldo posterior, el recibo sale estimado: posterior 150, anterior 450', async () => {
+    let leerSaldoPosterior!: (saldo: number) => void
+    prepararPago(new Promise<number>((resolver) => (leerSaldoPosterior = resolver)), comprobanteDePago)
+    let liberarEnvio!: (c: ComprobanteEmitido) => void
+    const envio = new Promise<ComprobanteEmitido>((resolver) => (liberarEnvio = resolver))
+    const postBase = apiPostMock.getMockImplementation()!
+    let ventasEnviadas = 0
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' && ventasEnviadas++ === 0 ? envio : postBase(ruta, cuerpo)))
+    await guardarLocal(crearAlmacenIndexedDb(), instantaneaFixture())
+    await agregarAOutbox(crearAlmacenIndexedDb(), {
+      idLocal: 'pendiente-del-cliente',
+      numeroPreasignado: 400,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      consumoCuentaCorriente: 100,
+    })
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+    liberarEnvio(comprobanteEmitidoFixture())
+    await waitFor(async () => expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([]))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    leerSaldoPosterior(150)
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  })
+
+  it('si la lectura de la cola no responde, el recibo sale al vencer el tope con la cola como desconocida: 450 → 150, estimado', async () => {
+    prepararPago(150, comprobanteDePago)
+    controlDeOutbox.colgarLectura = true
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar({ cajaDeEscritorio: caja })
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  }, 15_000)
+
+  it('fuera del escritorio registra el pago sin imprimir nada', async () => {
+    prepararPago(200, comprobanteDePago)
+
+    await pagar()
+
+    expect(await screen.findByText('Pago registrado: comprobante 0007-00000900.')).toBeInTheDocument()
+    expect(await screen.findByText('$ 200,00', { selector: '.fs-5' })).toBeInTheDocument()
   })
 })
 
@@ -4078,6 +4470,30 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
     expect(await dialogo.findByText('Fanta 1.5L')).toBeInTheDocument()
   })
 
+  it('un artículo por importe elegido en el buscador no agrega nada y pide tipear el importe antes del código', async () => {
+    const verduleria = articuloListadoFixture({ id: 501, codigoInterno: '501', nombre: 'Verdulería', unidadVenta: 'Importe' })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=ve')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [verduleria], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver' ? Promise.resolve<ResultadoDeResolucion[]>([]) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+    const dialogo = await abrirBuscador()
+    fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 've' } })
+    fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
+
+    fireEvent.click(await dialogo.findByRole('button', { name: 'Agregar' }))
+
+    expect(await screen.findByText(mensajeDeImporteRequerido('501'))).toBeInTheDocument()
+    expect(screen.queryByLabelText('Cantidad de Verdulería')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
   it('sin resultados muestra "Sin resultados"', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta.startsWith('/articulos?busqueda=')) {
@@ -4589,8 +5005,11 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       vendedor: 'jperez',
       empleadoCierre: 'jperez',
       fondoInicial: 500,
-      ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 1000 }],
+      ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 1000 }],
       totalVentas: 1000,
+      totalDigitales: 0,
+      totalEfectivo: 1000,
+      ventasACuentaCorriente: 0,
       retiros: [],
       totalRetiros: 0,
       ventasEnEfectivoNetas: 1000,
@@ -6358,8 +6777,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   /** Monta `Pos` con la instantánea local ya cargada en el hook. El botón "Sincronizar ahora"
    * solo existe con una instantánea en memoria, así que es la señal de que el DATO llegó (no solo
    * la pantalla) — y el Consumidor Final ya quedó elegido. */
-  async function montarConInstantanea() {
-    renderPos()
+  async function montarConInstantanea(props: ComponentProps<typeof Pos> = {}) {
+    renderPos('/pos', props)
     await esperarAlConsumidorFinal()
     await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
   }
@@ -6904,7 +7323,15 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       idListaPrecio: 2, limiteCredito: 1000, creditoIlimitado: false, saldo: 0,
     })
 
-    async function armarVentaEnCuentaCorriente(params: { saldoEnInstantanea: number; saldoAlElegir?: number; consulta: () => Promise<unknown> }) {
+    async function armarVentaEnCuentaCorriente(params: {
+      saldoEnInstantanea: number
+      saldoAlElegir?: number
+      consulta: () => Promise<unknown>
+      /** La lectura al elegir el cliente falla: su saldo en pantalla es el de la copia local. */
+      fallaLaLecturaAlElegir?: boolean
+      ventasEnLaCola?: { idLocal: string; numeroPreasignado: number; idCliente: number; consumoCuentaCorriente: number }[]
+      props?: ComponentProps<typeof Pos>
+    }) {
       const articulo: ArticuloDeInstantanea = {
         ...articuloDeInstantaneaFixture(),
         preciosPorLista: [
@@ -6925,11 +7352,22 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         }),
         bloque: { desde: 500, hasta: 599, proximo: 500 },
       })
+      for (const v of params.ventasEnLaCola ?? []) {
+        await agregarAOutbox(crearAlmacenIndexedDb(), {
+          idLocal: v.idLocal,
+          numeroPreasignado: v.numeroPreasignado,
+          idPuntoVenta: 7,
+          creadoEn: '2026-09-20T09:00:00.000Z',
+          solicitud: { idPuntoVenta: 7, idCliente: v.idCliente, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+          consumoCuentaCorriente: v.consumoCuentaCorriente,
+        })
+      }
       let consultasDelCliente = 0
       mockearApiGet((ruta) => {
         if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [], total: 0, pagina: 1, tamanio: 25 })
         if (ruta === '/clientes/30') {
           consultasDelCliente += 1
+          if (consultasDelCliente === 1 && params.fallaLaLecturaAlElegir) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
           return consultasDelCliente === 1 ? Promise.resolve({ ...joseGomez, saldo: params.saldoAlElegir ?? 0 }) : params.consulta()
         }
         return undefined
@@ -6937,7 +7375,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       apiPostMock.mockImplementation((ruta: string) =>
         ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
       )
-      await montarConInstantanea()
+      await montarConInstantanea(params.props)
 
       await buscarYElegirCliente('gomez', '#30 — José Gómez')
       await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
@@ -6964,6 +7402,53 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 80 })
       expect(llamadasGet('/clientes/30')).toHaveLength(2)
       expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
+    })
+
+    describe('saldo para el ticket (alEmitir)', () => {
+      const consultaQueCabe = () => Promise.resolve({ ...joseGomez, saldo: 0 })
+      const emitidoA = (alEmitir: ReturnType<typeof vi.fn>) => {
+        expect(alEmitir).toHaveBeenCalledTimes(1)
+        return { cliente: alEmitir.mock.calls[0][1] as ClienteListado, saldo: alEmitir.mock.calls[0][3] }
+      }
+
+      it('con la cola vacía y el saldo leído del servidor, informa pendiente 0 y saldo confirmado', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: consultaQueCabe, props: { alEmitir } })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 0, saldoConfirmado: true })
+      })
+
+      it('con ventas del mismo cliente en la cola informa su suma (100) sin contar la que se emite ni las de otro cliente (900)', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({
+          saldoEnInstantanea: 0,
+          consulta: consultaQueCabe,
+          ventasEnLaCola: [
+            { idLocal: 'propia-previa', numeroPreasignado: 400, idCliente: 30, consumoCuentaCorriente: 100 },
+            { idLocal: 'de-otro', numeroPreasignado: 401, idCliente: 99, consumoCuentaCorriente: 900 },
+          ],
+          props: { alEmitir },
+        })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 100, saldoConfirmado: true })
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toHaveLength(3)
+      })
+
+      it('si la lectura del cliente al elegirlo falló, el saldo no está confirmado', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: consultaQueCabe, fallaLaLecturaAlElegir: true, props: { alEmitir } })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 0, saldoConfirmado: false })
+      })
     })
 
     it('con el servidor diciendo que supera el límite, informa el rechazo y no encola ni cobra online', async () => {
@@ -8875,6 +9360,557 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
 
       await articuloEnElCarrito('Pancho')
       expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('Pos — artículos por importe', () => {
+  const FIAMBRERIA = 500
+
+  function fiambreriaDeInstantanea(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+    return {
+      idArticulo: FIAMBRERIA,
+      codigoInterno: '500',
+      nombre: 'Fiambrería',
+      codigosBarra: [],
+      idAlicuotaIva: 1,
+      porcentajeIva: 21,
+      unidadVenta: 'Importe',
+      preciosPorLista: [],
+      acumulaEnVenta: false,
+      teclaAtajo: 'F5',
+      ...sobrescribir,
+    }
+  }
+
+  const verduleriaDeInstantanea = () => fiambreriaDeInstantanea({ idArticulo: 501, codigoInterno: '501', nombre: 'Verdulería', teclaAtajo: 'F6' })
+
+  /** Monta `Pos` con la instantánea del almacén ya cargada: el botón "Sincronizar ahora" solo existe con la instantánea en
+   * memoria, así que esperarlo es esperar el DATO (los atajos y el escaneo local salen de ella). */
+  async function montarConInstantanea(articulos: ArticuloDeInstantanea[] = [fiambreriaDeInstantanea(), verduleriaDeInstantanea()], bloque = true) {
+    await prepararAlmacenOffline({
+      instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), ...articulos] }),
+      ...(bloque ? { bloque: { desde: 500, hasta: 599, proximo: 500 } } : {}),
+    })
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+  }
+
+  const campoDeCodigo = () => screen.getByLabelText('Código escaneado')
+  const lineasDeFiambreria = () => screen.queryAllByLabelText('Cantidad de Fiambrería')
+
+  async function escanear(entrada: string) {
+    await userEvent.clear(campoDeCodigo())
+    await userEvent.type(campoDeCodigo(), entrada)
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+  }
+
+  describe('entrada por código con importe (instantánea local)', () => {
+    it('"150*500" agrega UNA línea de cantidad 1 con el importe como precio y total', async () => {
+      await montarConInstantanea()
+
+      await escanear('150*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(lineasDeFiambreria()).toHaveLength(1)
+      expect(screen.getByLabelText('Cantidad de Fiambrería')).toHaveValue(1)
+      expect(within(screen.getByRole('table')).getAllByText('$ 150,00')).toHaveLength(2)
+      expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('la cantidad de una línea por importe no se edita', async () => {
+      await montarConInstantanea()
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+
+      expect(screen.getByLabelText('Cantidad de Fiambrería')).toBeDisabled()
+    })
+
+    it('el mismo artículo dos veces deja dos líneas, aunque el artículo diga que acumula', async () => {
+      await montarConInstantanea([fiambreriaDeInstantanea({ acumulaEnVenta: true })])
+
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await escanear('80*500')
+
+      await waitFor(() => expect(lineasDeFiambreria()).toHaveLength(2))
+      await waitFor(() => expect(screen.getByText('$ 230,00', { selector: 'strong' })).toBeInTheDocument())
+    })
+
+    it('150,50 (coma) cobra 151 en la línea: el total es de pesos enteros, el precio unitario conserva los centavos', async () => {
+      await montarConInstantanea()
+
+      await escanear('150,50*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 151,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(within(screen.getByRole('table')).getByText('$ 150,50')).toBeInTheDocument()
+    })
+
+    it('el ajuste manual funciona sobre la línea por importe', async () => {
+      await montarConInstantanea()
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+
+      const campo = screen.getByRole('textbox', { name: 'Ajuste % de Fiambrería' })
+      await userEvent.type(campo, '-10')
+      await userEvent.tab()
+
+      await waitFor(() => expect(screen.getByText('$ 135,00', { selector: 'strong' })).toBeInTheDocument())
+    })
+
+    it('el código a secas pide el importe y no agrega nada', async () => {
+      await montarConInstantanea()
+
+      await escanear('500')
+
+      expect(await screen.findByText(mensajeDeImporteRequerido('500'))).toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+      expect(campoDeCodigo()).toHaveValue('500')
+    })
+
+    it.each(['abc*500', '0*500', '*500', '150.555*500', '1.500*500', '1,500*500'])('"%s" avisa que el importe es inválido y no agrega nada', async (entrada) => {
+      await montarConInstantanea()
+
+      await escanear(entrada)
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+      expect(campoDeCodigo()).toHaveValue(entrada)
+    })
+
+    it('un artículo común sigue sumando cantidad con N*código', async () => {
+      await montarConInstantanea()
+
+      await escanear('3*7790001234567')
+
+      expect(await screen.findByDisplayValue('3')).toBeInTheDocument()
+    })
+  })
+
+  describe('entrada por código con importe (escaneo en el servidor)', () => {
+    const articuloDelServidor = (sobrescribir: Partial<ArticuloEscaneado> = {}) =>
+      articuloEscaneadoFixture({ idArticulo: FIAMBRERIA, codigoInterno: '500', nombre: 'Fiambrería', codigoBarra: null, acumulaEnVenta: false, unidadVenta: 'Importe', ...sobrescribir })
+
+    function resolverPorImporte() {
+      apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; cantidad: number; importe?: number }[] }) => {
+        if (ruta !== RUTA_RESOLVER_DEL_CARRITO) return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+        return Promise.resolve(
+          resolucion(
+            cuerpo.lineas.map((l) => ({
+              idArticulo: l.idArticulo,
+              idListaPrecio: 1,
+              precioOriginal: l.importe ?? 100,
+              precioFinal: l.importe ?? 100,
+              descuentoUnitario: 0,
+              aplicadas: [],
+            })),
+          ),
+        )
+      })
+    }
+
+    async function montarSinInstantanea() {
+      renderPos()
+      await esperarAlConsumidorFinal()
+    }
+
+    it('agrega la línea con el importe de la respuesta y manda el importe a la vista previa', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloDelServidor({ importe: 150 })) : undefined))
+      resolverPorImporte()
+      await montarSinInstantanea()
+
+      await escanear('150*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+      const cuerpo = apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).at(-1)?.[1] as { lineas: object[] }
+      expect(cuerpo.lineas).toEqual([expect.objectContaining({ idArticulo: FIAMBRERIA, cantidad: 1, importe: 150 })])
+    })
+
+    it('el cobro online manda el importe en la línea por importe y ningún precio', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloDelServidor({ importe: 150 })) : undefined))
+      resolverPorImporte()
+      const original = apiPostMock.getMockImplementation()!
+      apiPostMock.mockImplementation((ruta: string, cuerpo: unknown) =>
+        ruta === '/ventas' ? new Promise(() => {}) : original(ruta, cuerpo),
+      )
+      await montarSinInstantanea()
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+      await esperarMediosDePago()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '150')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      await waitFor(() => expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1))
+      const solicitud = apiPostMock.mock.calls.find((c) => c[0] === '/ventas')![1] as { lineas: object[] }
+      expect(solicitud.lineas).toEqual([{ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150 }])
+    })
+
+    it('el código a secas (importe ausente) pide el importe y no agrega nada', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloDelServidor()) : undefined))
+      await montarSinInstantanea()
+
+      await escanear('500')
+
+      expect(await screen.findByText(mensajeDeImporteRequerido('500'))).toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+
+    it('un 400 importe_invalido del servidor avisa con el mensaje del POS y no agrega nada', async () => {
+      mockearApiGet((ruta) =>
+        ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.reject(new ErrorApi(400, 'importe_invalido', 'texto del servidor')) : undefined,
+      )
+      await montarSinInstantanea()
+
+      await escanear('abc*500')
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+
+    it('150,50: el servidor rechaza la coma y se reintenta UNA vez con el punto', async () => {
+      const entradas: string[] = []
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/articulos/escaneo?entrada=')) return undefined
+        const entrada = decodeURIComponent(ruta.split('entrada=')[1])
+        entradas.push(entrada)
+        return entrada.includes(',')
+          ? Promise.reject(new ErrorApi(400, 'importe_invalido', 'texto del servidor'))
+          : Promise.resolve(articuloDelServidor({ importe: 150.5 }))
+      })
+      resolverPorImporte()
+      await montarSinInstantanea()
+
+      await escanear('150,50*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(entradas).toEqual(['150,50*500', '150.5*500'])
+      await waitFor(() => expect(screen.getByText('$ 151,00', { selector: 'strong' })).toBeInTheDocument())
+    })
+
+    it('un importe inválido sin coma que se puede corregir NO se reintenta', async () => {
+      const entradas: string[] = []
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/articulos/escaneo?entrada=')) return undefined
+        entradas.push(decodeURIComponent(ruta.split('entrada=')[1]))
+        return Promise.reject(new ErrorApi(400, 'importe_invalido', 'texto del servidor'))
+      })
+      await montarSinInstantanea()
+
+      await escanear('150.555*500')
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(entradas).toEqual(['150.555*500'])
+    })
+
+    it('1,500: el servidor rechaza la coma y NO se reintenta como 1.5 (sería otro monto)', async () => {
+      const entradas: string[] = []
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/articulos/escaneo?entrada=')) return undefined
+        entradas.push(decodeURIComponent(ruta.split('entrada=')[1]))
+        return Promise.reject(new ErrorApi(400, 'importe_invalido', 'texto del servidor'))
+      })
+      await montarSinInstantanea()
+
+      await escanear('1,500*500')
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(entradas).toEqual(['1,500*500'])
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+  })
+
+  describe('atajos F5 a F8', () => {
+    it('el encabezado de la venta ofrece un botón por cada artículo con tecla, en orden de tecla', async () => {
+      await montarConInstantanea()
+
+      const botones = screen.getAllByRole('button', { name: /^(Fiambrería|Verdulería)/ })
+      expect(botones.map((b) => b.textContent)).toEqual(['Fiambrería (F5)', 'Verdulería (F6)'])
+      expect(botones[0]).toHaveAttribute('aria-keyshortcuts', 'F5')
+    })
+
+    it('sin artículos con tecla no se muestra ningún botón de atajo', async () => {
+      await montarConInstantanea([fiambreriaDeInstantanea({ teclaAtajo: null })])
+
+      expect(screen.queryByRole('button', { name: /^Fiambrería/ })).not.toBeInTheDocument()
+    })
+
+    it('F5 con el importe en el campo agrega la línea del artículo asignado y limpia el campo', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(noPrevenido).toBe(false)
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('F6 usa su propio artículo y acepta coma decimal', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '99,50')
+
+      fireEvent.keyDown(document, { key: 'F6' })
+
+      await screen.findByText('Verdulería', { selector: 'td' })
+      expect(within(screen.getByRole('table')).getByText('$ 99,50')).toBeInTheDocument()
+    })
+
+    it('el botón del atajo hace lo mismo que la tecla', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+
+      await userEvent.click(screen.getByRole('button', { name: /^Fiambrería/ }))
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('F5 dos veces seguidas con el campo vuelto a llenar deja dos líneas', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+      fireEvent.keyDown(document, { key: 'F5' })
+      await screen.findByText('Fiambrería', { selector: 'td' })
+
+      await userEvent.type(campoDeCodigo(), '80')
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      await waitFor(() => expect(lineasDeFiambreria()).toHaveLength(2))
+    })
+
+    it('F5 con el campo vacío avisa y no agrega nada', async () => {
+      await montarConInstantanea()
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(noPrevenido).toBe(false)
+      expect(await screen.findByText(mensajeDeAtajoSinImporte('F5'))).toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+
+    it.each(['abc', '0', '150.555', '-5', '1.500', '1,500'])('F5 con "%s" en el campo avisa el importe inválido, no agrega y deja el texto', async (texto) => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), texto)
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+      expect(campoDeCodigo()).toHaveValue(texto)
+    })
+
+    it('una tecla sin artículo asignado avisa, no agrega nada y tampoco recarga la página', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F8' })
+
+      expect(noPrevenido).toBe(false)
+      expect(await screen.findByText(mensajeDeAtajoSinArticulo('F8'))).toBeInTheDocument()
+      expect(campoDeCodigo()).toHaveValue('150')
+    })
+
+    it('sin instantánea cargada avisa que faltan los datos y tampoco recarga la página', async () => {
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await userEvent.type(campoDeCodigo(), '150')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(noPrevenido).toBe(false)
+      expect(await screen.findByText(MENSAJE_DE_ATAJO_SIN_DATOS)).toBeInTheDocument()
+    })
+
+    it('con un modal abierto F5 no agrega nada detrás, pero igual evita la recarga', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+      fireEvent.keyDown(document, { key: 'F2' })
+      await screen.findByRole('dialog', { name: 'Buscar artículo' })
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(noPrevenido).toBe(false)
+      expect(lineasDeFiambreria()).toHaveLength(0)
+      expect(campoDeCodigo()).toHaveValue('150')
+    })
+
+    it.each(['altKey', 'ctrlKey', 'metaKey', 'shiftKey'])('F5 con %s evita la recarga forzada del navegador y no agrega nada', async (modificador) => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5', [modificador]: true })
+
+      expect(noPrevenido).toBe(false)
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+
+    it('mantener F5 apretada (repeat) no agrega líneas de más', async () => {
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '150')
+      fireEvent.keyDown(document, { key: 'F5' })
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await userEvent.type(campoDeCodigo(), '80')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5', repeat: true })
+
+      expect(noPrevenido).toBe(false)
+      expect(lineasDeFiambreria()).toHaveLength(1)
+    })
+
+    it('F3 (dirección de entrega del legacy) no es un atajo de importe y no se evita', async () => {
+      await montarConInstantanea()
+
+      expect(fireEvent.keyDown(document, { key: 'F3' })).toBe(true)
+    })
+  })
+
+  describe('cobro sin red', () => {
+    async function cobrarConEfectivo(importe: string) {
+      await esperarMediosDePago()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), importe)
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    }
+
+    it('una venta solo por importe se encola con el importe, sin precios, y el ticket muestra la línea', async () => {
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+      await montarConInstantanea()
+      await escanear('150,50*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 151,00', { selector: 'strong' })).toBeInTheDocument())
+
+      await cobrarConEfectivo('151')
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].solicitud.lineas).toEqual([{ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150.5 }])
+      expect(screen.getByText('Total: $ 151,00')).toBeInTheDocument()
+    })
+
+    it('una venta mixta encola precio de lista en la línea común y solo importe en la otra', async () => {
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+      await montarConInstantanea()
+      await escanear('7790001234567')
+      await screen.findByText('Coca Cola 1L', { selector: 'td' })
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 250,00', { selector: 'strong' })).toBeInTheDocument())
+
+      await cobrarConEfectivo('250')
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const [comun, porImporte] = (await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.lineas ?? []
+      expect(comun).toMatchObject({ idArticulo: 1, precioUnitario: 100, descuentoUnitario: 0 })
+      expect(comun).not.toHaveProperty('importe')
+      expect(porImporte).toEqual({ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150 })
+    })
+  })
+
+  describe('línea por importe cuyo artículo dejó de venderse por importe', () => {
+    it('al sincronizar, el cobro queda bloqueado y el aviso nombra el artículo y pide quitar la línea', async () => {
+      await montarConInstantanea()
+      await escanear('150*500')
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await esperarMediosDePago()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '150')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      const comoOrdinario = instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), fiambreriaDeInstantanea({ unidadVenta: 'Unidad' })] })
+      mockearApiGet((ruta) => (ruta === '/pos/instantanea' ? Promise.resolve(comoOrdinario) : undefined))
+      await userEvent.click(screen.getByRole('button', { name: 'Sincronizar ahora' }))
+
+      expect(await screen.findByText(mensajeDeLineaPorImporteObsoleta('Fiambrería'))).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+    })
+  })
+
+  describe('compuertas de F5 a F8', () => {
+    /** Con el campo de código vacío, un F5 que pasa las compuertas deja el aviso "tipeá el importe": que no aparezca ni se agregue
+     * una línea es lo que prueba que la compuerta de turno cortó antes. */
+    async function afirmarQueF5NoHaceNada() {
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+      await act(async () => {})
+
+      expect(noPrevenido).toBe(false)
+      expect(screen.queryByText(mensajeDeAtajoSinImporte('F5'))).not.toBeInTheDocument()
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    }
+
+    async function agregarGaseosa() {
+      await escanear('7790001234567')
+      await screen.findByText('Coca Cola 1L', { selector: 'td' })
+    }
+
+    async function cargarPagoEnEfectivo(importe: string) {
+      await esperarMediosDePago()
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), importe)
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    }
+
+    it('con la caja cerrada no agrega ni avisa nada', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+      await montarConInstantanea()
+      await screen.findByText('Caja cerrada')
+
+      await afirmarQueF5NoHaceNada()
+    })
+
+    it('con un escaneo en vuelo no agrega la línea del atajo', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? new Promise(() => {}) : undefined))
+      await montarConInstantanea()
+      await userEvent.type(campoDeCodigo(), '999')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(campoDeCodigo()).toBeDisabled())
+
+      fireEvent.keyDown(document, { key: 'F5' })
+      await act(async () => {})
+
+      expect(lineasDeFiambreria()).toHaveLength(0)
+    })
+
+    it('con el cobro en curso no agrega ni avisa nada', async () => {
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+      await montarConInstantanea(undefined, false)
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1))
+
+      await afirmarQueF5NoHaceNada()
+    })
+
+    it('con la confirmación de cobro abierta no agrega ni avisa nada', async () => {
+      await montarConInstantanea()
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+      fireEvent.keyDown(document, { key: 'F9' })
+      await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+      await afirmarQueF5NoHaceNada()
+    })
+
+    it('con la venta ya finalizada no agrega ni avisa nada', async () => {
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+      await montarConInstantanea()
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+      await afirmarQueF5NoHaceNada()
     })
   })
 })

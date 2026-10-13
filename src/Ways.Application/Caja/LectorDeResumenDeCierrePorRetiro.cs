@@ -113,9 +113,15 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
             .Select(m => new { m.Id, m.Nombre })
             .ToDictionaryAsync(m => m.Id, m => m.Nombre, ct);
 
-        var ventasPorMedio = resultado.VentasPorMedio
+        var comportamientos = insumos.Actividad.ToDictionary(a => a.IdMedioPago, a => a.Comportamiento);
+        var clasificadas = ClasificadorDeVentasPorMedio.Clasificar(resultado.VentasPorMedio, comportamientos, idAncla);
+
+        var ventasPorMedio = clasificadas.Lineas
             .Select(v => new VentaPorMedio(
-                v.IdMedioPago, nombresDeMedios.GetValueOrDefault(v.IdMedioPago, $"Medio #{v.IdMedioPago}"), v.Importe))
+                v.IdMedioPago,
+                nombresDeMedios.GetValueOrDefault(v.IdMedioPago, $"Medio #{v.IdMedioPago}"),
+                v.Comportamiento,
+                v.Importe))
             .ToList();
 
         var puntoVenta = await db.PuntosVenta
@@ -133,6 +139,9 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
             turno.FondoInicial,
             ventasPorMedio,
             resultado.TotalVentas,
+            clasificadas.TotalDigitales,
+            clasificadas.TotalEfectivo,
+            resultado.VentasACuentaCorriente,
             retiros,
             resultado.TotalRetiros,
             resultado.VentasEnEfectivoNetas,

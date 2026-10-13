@@ -24,7 +24,7 @@ import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { calcularTotalesDeLinea } from '../api/ajusteManual'
 import { previaDeLinea } from '../api/ventas'
-import type { ArticuloDeInstantanea, ClienteDeInstantanea, EscalonDeCantidad, EscalonDeFamilia, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
+import type { ArticuloDeInstantanea, ClienteDeInstantanea, EscalonDeCantidad, EscalonDeFamilia, InstantaneaDePos, LineaDeVenta, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
 
 const emitirMock = vi.fn()
 const reservarNumeracionMock = vi.fn()
@@ -2305,6 +2305,25 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     expect(resultado).toMatchObject({ ok: true, limiteDeCreditoNoValidado: false })
   })
 
+  it('consumoPendienteDeCuentaCorriente suma solo lo de ese cliente (100 + 40 de él, 900 de otro) y da 0 si no tiene nada en la cola', async () => {
+    const { almacen, result } = await montar()
+    const venta = (idLocal: string, numeroPreasignado: number, idCliente: number, consumoCuentaCorriente: number) =>
+      agregarAOutbox(almacen, {
+        idLocal,
+        numeroPreasignado,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: solicitudFixture({ idCliente }),
+        consumoCuentaCorriente,
+      })
+    await venta('a', 120, 5, 100)
+    await venta('b', 121, 5, 40)
+    await venta('c', 122, 99, 900)
+
+    expect(await result.current.consumoPendienteDeCuentaCorriente(5)).toBe(140)
+    expect(await result.current.consumoPendienteDeCuentaCorriente(6)).toBe(0)
+  })
+
   it('una venta rechazada que se reintenta vuelve a la cola con su cuenta corriente, y vuelve a contar', async () => {
     const { result } = await montar()
     obtenerClienteMock.mockResolvedValue({ saldo: 0, limiteCredito: 1000, creditoIlimitado: false })
@@ -2516,5 +2535,90 @@ describe('useSincronizacionOffline — venta offline con combos', () => {
       expect(l).not.toHaveProperty('ahorroDeCombo')
       expect(l).not.toHaveProperty('unidadesConsumidasPorCombo')
     }
+  })
+})
+
+describe('useSincronizacionOffline — encolarVentaOffline con artículo por importe', () => {
+  const FIAMBRERIA = 500
+
+  function articuloPorImporte(): ArticuloDeInstantanea {
+    return {
+      idArticulo: FIAMBRERIA,
+      codigoInterno: '500',
+      nombre: 'Fiambrería',
+      codigosBarra: [],
+      idAlicuotaIva: 1,
+      porcentajeIva: 21,
+      unidadVenta: 'Importe',
+      preciosPorLista: [],
+      acumulaEnVenta: false,
+      teclaAtajo: 'F5',
+    }
+  }
+
+  async function encolar(solicitudBase: SolicitudDeVenta) {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 100, precioFinal: 90, descuentoUnitario: 10 }), articuloPorImporte()] }))
+    await guardarBloque(almacen, bloqueFixture())
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase,
+        esConsumidorFinal: true,
+        idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+      })
+    })
+    return { resultado, outbox: await leerOutbox(almacen) }
+  }
+
+  const lineaImporte = (importe: number, extra: Partial<LineaDeVenta> = {}): LineaDeVenta => ({
+    idArticulo: FIAMBRERIA,
+    cantidad: 1,
+    codigoBarra: null,
+    idLote: null,
+    importe,
+    ...extra,
+  })
+
+  it('una venta solo de líneas por importe se encola con el importe y sin precios', async () => {
+    const { resultado, outbox } = await encolar(solicitudFixture({ lineas: [lineaImporte(150.5), lineaImporte(80)] }))
+
+    expect(resultado).toMatchObject({ ok: true })
+    expect(outbox[0].solicitud.lineas).toEqual([lineaImporte(150.5), lineaImporte(80)])
+    for (const linea of outbox[0].solicitud.lineas ?? []) {
+      expect(linea).not.toHaveProperty('precioUnitario')
+      expect(linea).not.toHaveProperty('descuentoUnitario')
+    }
+  })
+
+  it('una venta mixta lleva precio de lista en las comunes y solo importe en la línea por importe', async () => {
+    const { resultado, outbox } = await encolar(
+      solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null }, lineaImporte(150, { ajusteManualPorcentaje: -10 })] }),
+    )
+
+    expect(resultado).toMatchObject({ ok: true })
+    const [comun, porImporte] = outbox[0].solicitud.lineas ?? []
+    expect(comun).toMatchObject({ idArticulo: 1, precioUnitario: 100, descuentoUnitario: 10 })
+    expect(comun).not.toHaveProperty('importe')
+    expect(porImporte).toEqual(lineaImporte(150, { ajusteManualPorcentaje: -10 }))
+  })
+
+  it('el importe encolado es el mismo que se reenvía al sincronizar', async () => {
+    const { outbox } = await encolar(solicitudFixture({ lineas: [lineaImporte(150.5)] }))
+
+    expect(outbox[0].solicitud.lineas?.[0].importe).toBe(150.5)
+  })
+
+  it('una venta con una línea común sin precio en la lista se rechaza aunque la otra sea por importe', async () => {
+    const { resultado, outbox } = await encolar(
+      solicitudFixture({ lineas: [{ idArticulo: 2, cantidad: 1, codigoBarra: null, idLote: null }, lineaImporte(150)] }),
+    )
+
+    expect(resultado).toEqual({ ok: false, motivo: 'linea_sin_precio' })
+    expect(outbox).toEqual([])
   })
 })

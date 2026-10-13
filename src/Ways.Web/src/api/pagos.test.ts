@@ -322,6 +322,19 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     expect(validarPagosLocal({ ...base, pagos })?.codigo).toBe('vuelto_negativo')
   })
 
+  it('regla 0c: un comprobante de total negativo con un pago o un vuelto positivo se rechaza', () => {
+    const conPago = calcularPagosConVuelto([pagoFixture({ importe: 100 })], 100)
+    expect(validarPagosLocal({ ...base, total: -100, pagos: conPago })?.codigo).toBe('pago_en_comprobante_negativo')
+    const conVuelto = [{ ...pagoFixture({ importe: 0 }), vuelto: 5 }]
+    expect(validarPagosLocal({ ...base, total: -100, pagos: conVuelto })?.codigo).toBe('pago_en_comprobante_negativo')
+  })
+
+  it('regla 0c: con total negativo, sin pagos o con filas en cero se acepta', () => {
+    expect(validarPagosLocal({ ...base, total: -100, pagos: [] })).toBeNull()
+    const enCero = [{ ...pagoFixture({ importe: 0 }), vuelto: 0 }]
+    expect(validarPagosLocal({ ...base, total: -100, pagos: enCero })).toBeNull()
+  })
+
   it('regla 1: ningún pago ingresado con total > 0', () => {
     expect(validarPagosLocal({ ...base, pagos: [] })?.codigo).toBe('pago_no_ingresado')
   })

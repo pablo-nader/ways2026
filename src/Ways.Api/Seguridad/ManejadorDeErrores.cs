@@ -176,6 +176,20 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_personal_usuario" } =>
                 (StatusCodes.Status409Conflict, "Ese usuario ya está vinculado a otro personal.", "usuario_ya_vinculado"),
 
+            // Backstop del pre-chequeo de nombre de `ServicioDeCuentasDeTesoreria`: dos altas o ediciones
+            // concurrentes pueden pasar el chequeo y chocar recién en el índice parcial. Por nombre exacto,
+            // antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cuentas_tesoreria_nombre_empresa" } =>
+                (StatusCodes.Status409Conflict, "Ya existe una cuenta de tesorería con ese nombre en esta empresa.", "cuenta_tesoreria_duplicada"),
+
+            // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
+            // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
+            // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas
+            // cubiertas por este índice (cobro, comisión y retenciones con turno): un escritor futuro de esos tipos con turno que choque
+            // acá recibiría este mensaje equivocado y tendría que tener su propio caso. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_movimientos_cuenta_cierre" } =>
+                (StatusCodes.Status409Conflict, "El turno ya está cerrado.", "turno_ya_cerrado"),
+
             { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
                 (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
 
@@ -525,6 +539,18 @@ public class ManejadorDeErrores(
             // (porcentaje_facturacion_invalido) lo que se sale de 0..100; esto atrapa una escritura cruda.
             { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentaje_facturacion" } =>
                 (StatusCodes.Status400BadRequest, "El porcentaje a facturar tiene que estar entre 0 y 100.", "porcentaje_facturacion_invalido"),
+
+            // Backstops de la cuenta de tesorería del medio de pago: ServicioDeMediosPago aplica antes las mismas
+            // reglas (ReglasDeCuentaDeMedioPago) con los mismos códigos; esto atrapa una escritura cruda. La FK
+            // fk_medios_pago_cuenta_tesoreria sale como referencia_invalida por el backstop genérico de las fk_*.
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentajes_cuenta_rango" } =>
+                (StatusCodes.Status400BadRequest, "La comisión y las retenciones tienen que estar entre 0 y 100.", "porcentaje_cuenta_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentajes_cuenta_suma" } =>
+                (StatusCodes.Status400BadRequest, "La comisión y las retenciones, sumadas, no pueden superar el 100%.", "porcentajes_cuenta_suma_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_cuenta_solo_electronico" } =>
+                (StatusCodes.Status400BadRequest, "La cuenta de tesorería, la comisión y las retenciones solo se admiten en medios de pago electrónicos.", "cuenta_solo_electronico"),
 
             // Backstop de la base del costo de lista del artículo: ServicioDeArticulos rechaza antes
             // (costo_lista_por_invalido) cualquier valor fuera de Unidad/Bulto; esto atrapa una escritura cruda.

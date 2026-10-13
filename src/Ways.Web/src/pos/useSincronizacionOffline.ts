@@ -193,6 +193,8 @@ export type ResultadoDeSincronizacionOffline = {
      * previa propia que congelar (p. ej. los tests de este mismo hook). */
     instantaneaCongelada?: InstantaneaDePos | null
   }) => Promise<EncoladoOffline>
+  /** Cuenta corriente de las ventas de este cliente que siguen en el outbox: el saldo del servidor todavía no la incluye. */
+  consumoPendienteDeCuentaCorriente: (idCliente: number) => Promise<number>
   /** judgment-day ronda 2 (WARNING): la salida real que `ventasConError` prometía y no tenía —
    * re-encola la venta rechazada AL FINAL del outbox para que el próximo drenado la reintente. Es
    * seguro incluso si el rechazo original fue real y persiste (el servidor la va a rechazar otra
@@ -224,6 +226,11 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
   for (const [indice, linea] of lineas.entries()) {
     const precios = vigentes[indice]
     if (!precios) return null
+    // La línea por importe viaja con su importe y nunca con precio de lista ni descuento (el servidor rechaza la mezcla).
+    if (linea.importe !== undefined) {
+      enriquecidas.push(linea)
+      continue
+    }
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
     // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`
@@ -916,6 +923,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizarAhora,
     drenarAhora,
     encolarVentaOffline,
+    consumoPendienteDeCuentaCorriente,
     reintentarVentaConError,
     descartarVentaConError,
   }

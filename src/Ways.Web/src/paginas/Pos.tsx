@@ -26,10 +26,21 @@ import {
   type LineaCarrito,
 } from '../api/carrito'
 import { clienteDeCatalogo } from '../api/catalogos'
+import {
+  entradaConPuntoDecimal,
+  esTeclaDeAtajo,
+  MENSAJE_DE_ATAJO_SIN_DATOS,
+  MENSAJE_DE_CANTIDAD_DE_IMPORTE,
+  MENSAJE_DE_IMPORTE_INVALIDO,
+  mensajeDeAtajoSinArticulo,
+  mensajeDeLineaPorImporteObsoleta,
+  mensajeDeAtajoSinImporte,
+  mensajeDeImporteRequerido,
+} from '../api/importeDeVenta'
 import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
-import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
+import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
 import { clienteDeOfertas } from '../api/ofertas'
@@ -57,16 +68,15 @@ import type {
   ArticuloEscaneado,
   ClienteListado,
   ComprobanteEmitido,
-  EstadoDeCuenta,
   ComboAplicadoEnPrevia,
   InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
   PresupuestoParaVenta,
-  PuntoVentaListado,
   ResumenDeCierrePorRetiro,
   SolicitudDeCierrePorRetiro,
+  TeclaAtajo,
   TurnoResumen,
 } from '../api/tipos'
 import { comboVigenteDeLinea, rotuloDeComboAplicado } from '../api/combos'
@@ -85,16 +95,18 @@ import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { conTiempoLimite } from '../pos/tiempoLimite'
 import { Cargando } from '../componentes/Cargando'
 import { ChipDeSaldo } from '../componentes/ChipDeSaldo'
-import { BotonCerrarModal, Modal } from '../componentes/Modal'
+import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
-import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
+import { ModalCuentaCorrientePos } from '../componentes/ModalCuentaCorrientePos'
+import type { PagoACuentaRegistrado } from '../componentes/ModalCuentaCorrientePos'
 import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
-import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
+import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import {
   componentesAElegir,
@@ -109,9 +121,12 @@ import { elegirFuenteDeCombos, fuenteDesdeApi, type ComboDeLista } from '../pos/
 import {
   aClienteListado,
   aMedioPagoListado,
-  buscarArticuloOffline,
+  atajosDeImporteOffline,
   buscarClientesOffline,
   formatearVejezDeInstantanea,
+  lineasConImporteDeArticuloOrdinario,
+  resolverAtajoOffline,
+  resolverEscaneoOffline,
   resolverPreviaOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
@@ -125,7 +140,6 @@ import type { EstadoDeAccionesDePos } from '../pos/AccionesDePosContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
-import { fechaHoraATexto } from '../formato/fechas'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -133,6 +147,18 @@ const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('me
 const MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO = 'No se agregó el combo: hay un cobro en curso.'
 /** Se agrega al aviso de un artículo que no apareció cuando tampoco se pudieron leer los combos con ese código. */
 const MENSAJE_DE_COMBOS_SIN_LEER = 'No se pudieron leer los combos.'
+
+/** Escaneo en el servidor. Un importe con coma (`150,50*500`) que el servidor rechaza se reintenta UNA vez con punto: para un
+ * artículo común el servidor lee la coma como separador de miles, así que la corrección solo se prueba después de su rechazo. */
+async function escanearEnElServidor(entrada: string): Promise<ArticuloEscaneado> {
+  try {
+    return await clienteDeArticulos.escanear(entrada)
+  } catch (e) {
+    const conPunto = e instanceof ErrorApi && e.codigo === 'importe_invalido' ? entradaConPuntoDecimal(entrada) : null
+    if (conPunto === null) throw e
+    return clienteDeArticulos.escanear(conPunto)
+  }
+}
 
 function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: ClienteListado | null): ClienteListado[] {
   if (!seleccionado) return opciones
@@ -632,9 +658,28 @@ function VentaFinalizada({
  * impresoras — `medios` viaja junto porque es lo único que le falta al llamador para resolver el
  * nombre/comportamiento de cada pago del comprobante (`ComprobanteEmitido.pagos` solo trae
  * `idMedioPago`). En la app web normal el prop queda `undefined` y no cambia nada. */
+/** Lo que la pantalla sabe del saldo de un cliente identificado al emitir su venta, para que el ticket
+ * lo muestre como dato o como estimación. */
+export type SaldoParaTicket = {
+  /** Cuenta corriente de sus ventas en la cola sin enviar, sin contar la que se emite; `null` si no se pudo leer. */
+  consumoPendiente: number | null
+  /** El saldo en pantalla vino de una lectura del servidor posterior a la selección, el último pago o la última venta. */
+  saldoConfirmado: boolean
+}
+
+export type AlEmitirVenta = (
+  comprobante: ComprobanteEmitido,
+  cliente: ClienteListado,
+  medios: MedioPagoListado[],
+  saldo?: SaldoParaTicket,
+) => void
+
+/** Espera máxima por la lectura de la cola para el ticket: sin respuesta, el saldo se imprime como estimado. */
+const ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS = 2_000
+
 type PropsPantallaPos = {
   idPresupuesto: number | null
-  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alEmitir?: AlEmitirVenta
   /** stage-pos-turno-y-foco: seam de navegación de "Cerrar caja" — la app web navega a la ruta
    * libre `/caja/cierre` con `useNavigate` (comportamiento sin cambios, "camino viejo"). El shell
    * de escritorio dejó de pasar esto (stage-pos-retiros-y-cierre-por-retiro, etapa 5): con
@@ -676,261 +721,6 @@ export type CajaDeEscritorio = {
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
-
-function formatearFechaHoraCortaDeMovimiento(iso: string): string {
-  return fechaHoraATexto(iso)
-}
-
-type PropsModalCuentaCorrientePos = {
-  clienteInicial: ClienteListado | null
-  puntoVenta: PuntoVentaListado
-  medios: MedioPagoListado[]
-  onCerrar: () => void
-  onPagoRegistrado: (idCliente: number) => void
-}
-
-/**
- * stage-pos-adjustments: consulta rápida de saldo + pago a cuenta desde el POS, sin salir de la
- * venta en curso. Cliente por defecto: el ya elegido en la venta, salvo que sea Consumidor Final
- * (sin cuenta corriente real) — ahí arranca en el buscador, igual que si el cajero lo cambiara a
- * mano. El punto de venta lo fija el turno de la sesión (`puntoVentaFijo` de `ModalPagoACuenta`),
- * nunca un selector — acá no hay ninguna elección manual de PV que replicar.
- */
-function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar, onPagoRegistrado }: PropsModalCuentaCorrientePos) {
-  const [clienteElegido, setClienteElegido] = useState<ClienteListado | null>(
-    clienteInicial && !clienteInicial.esConsumidorFinal ? clienteInicial : null,
-  )
-
-  const [terminoBusqueda, setTerminoBusqueda] = useState('')
-  const [opcionesBusqueda, setOpcionesBusqueda] = useState<ClienteListado[]>([])
-  const [buscando, setBuscando] = useState(false)
-  const [errorBusqueda, setErrorBusqueda] = useState('')
-  const generacionBusquedaRef = useRef(0)
-
-  const [estado, setEstado] = useState<EstadoDeCuenta | null>(null)
-  const [cargandoEstado, setCargandoEstado] = useState(false)
-  const [errorEstado, setErrorEstado] = useState('')
-  const generacionEstadoRef = useRef(0)
-
-  const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
-  const [aviso, setAviso] = useState('')
-
-  // react-async-state regla 2: cada cambio de cliente elegido dispara su propia consulta — una
-  // respuesta desactualizada (ej. el cajero cambió de cliente mientras la anterior seguía en
-  // vuelo) nunca puede pisar la más reciente.
-  const cargarEstado = useCallback(() => {
-    if (!clienteElegido) return
-    const miGeneracion = (generacionEstadoRef.current += 1)
-    setCargandoEstado(true)
-    setErrorEstado('')
-    const ventana = rangoUltimoMes()
-
-    clienteDeCuentaCorriente
-      .obtenerEstado(clienteElegido.id, ventana.desde, ventana.hasta, false)
-      .then((datos) => {
-        if (generacionEstadoRef.current !== miGeneracion) return
-        setEstado(datos)
-      })
-      .catch((e) => {
-        if (generacionEstadoRef.current !== miGeneracion) return
-        setEstado(null)
-        setErrorEstado(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
-      })
-      .finally(() => {
-        if (generacionEstadoRef.current !== miGeneracion) return
-        setCargandoEstado(false)
-      })
-  }, [clienteElegido])
-
-  useEffect(() => {
-    cargarEstado()
-  }, [cargarEstado])
-
-  async function buscar() {
-    if (buscando) return
-    const miGeneracion = (generacionBusquedaRef.current += 1)
-    setBuscando(true)
-    setErrorBusqueda('')
-    try {
-      const pagina = await clienteDeClientes.listar(terminoBusqueda, false)
-      if (generacionBusquedaRef.current !== miGeneracion) return
-      // El Consumidor Final no tiene cuenta corriente real — nunca aparece como resultado acá,
-      // aunque el término de búsqueda lo matchee.
-      setOpcionesBusqueda(pagina.items.filter((c) => !c.esConsumidorFinal))
-    } catch (e) {
-      if (generacionBusquedaRef.current !== miGeneracion) return
-      setErrorBusqueda(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
-    } finally {
-      if (generacionBusquedaRef.current === miGeneracion) setBuscando(false)
-    }
-  }
-
-  function elegirCliente(id: number) {
-    const encontrado = opcionesBusqueda.find((c) => c.id === id)
-    if (!encontrado) return
-    setAviso('')
-    setClienteElegido(encontrado)
-  }
-
-  const disponibilidad = estado ? disponibilidadPrevia(estado.header.saldo, estado.header.limiteCredito, estado.header.creditoIlimitado) : null
-
-  if (modalPagoAbierto && estado) {
-    return (
-      <ModalPagoACuenta
-        idCliente={clienteElegido!.id}
-        puntosVenta={[puntoVenta]}
-        puntoVentaFijo={puntoVenta.id}
-        medios={medios}
-        header={estado.header}
-        onCerrar={() => setModalPagoAbierto(false)}
-        onAntesDeEscribir={() => {
-          // regla 3: bumpear la generación ANTES de la escritura — un refetch en vuelo de un
-          // cliente ya abandonado no puede pisar el que dispara `onRegistrado` más abajo.
-          generacionEstadoRef.current += 1
-        }}
-        onRegistrado={(comprobante) => {
-          setModalPagoAbierto(false)
-          setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
-          // regla 6: el refetch queda aislado del try/catch de la escritura del modal de pago.
-          cargarEstado()
-          // JD-1: si el cliente pagado es el mismo de la venta en curso, `PantallaPos` refresca su
-          // `clienteSeleccionado` — su copia cacheada del saldo quedó vieja apenas se registra el pago.
-          onPagoRegistrado(clienteElegido!.id)
-        }}
-      />
-    )
-  }
-
-  return (
-    <>
-      <div className="modal d-block" tabIndex={-1} role="dialog">
-        <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">Cuenta corriente</h5>
-              <BotonCerrarModal onClick={onCerrar} />
-            </div>
-            <div className="modal-body">
-              {!clienteElegido ? (
-                <>
-                  <div className="input-group input-group-sm mb-3">
-                    <input
-                      type="search"
-                      className="form-control"
-                      placeholder="Buscar cliente…"
-                      aria-label="Buscar cliente de cuenta corriente"
-                      value={terminoBusqueda}
-                      disabled={buscando}
-                      onChange={(e) => setTerminoBusqueda(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscar())}
-                    />
-                    <button type="button" className="btn btn-outline-primary" disabled={buscando} onClick={buscar}>
-                      {buscando ? 'Buscando…' : 'Buscar'}
-                    </button>
-                  </div>
-                  {errorBusqueda && <div className="alert alert-danger py-1 px-2 small">{errorBusqueda}</div>}
-                  {opcionesBusqueda.length > 0 && (
-                    <select
-                      className="form-select"
-                      aria-label="Resultados de la búsqueda"
-                      size={Math.min(opcionesBusqueda.length, 6)}
-                      value=""
-                      onChange={(e) => elegirCliente(Number(e.target.value))}
-                    >
-                      <option value="" disabled>
-                        Elegir…
-                      </option>
-                      {opcionesBusqueda.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {etiquetaDeCliente(c)}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="d-flex justify-content-between align-items-center mb-3">
-                    <strong>{etiquetaDeCliente(clienteElegido)}</strong>
-                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setClienteElegido(null)}>
-                      Cambiar cliente
-                    </button>
-                  </div>
-
-                  {aviso && <div className="alert alert-success py-1 px-2 small">{aviso}</div>}
-                  {errorEstado && <div className="alert alert-danger py-1 px-2 small">{errorEstado}</div>}
-
-                  {cargandoEstado && <Cargando texto="Cargando estado de cuenta…" />}
-
-                  {!cargandoEstado && estado && (
-                    <>
-                      <div className="row g-3 mb-3">
-                        <div className="col-4">
-                          <div className="small text-muted">Saldo</div>
-                          <div className="fs-5">{formatearMoneda(estado.header.saldo)}</div>
-                        </div>
-                        <div className="col-4">
-                          <div className="small text-muted">Límite</div>
-                          <div>{estado.header.creditoIlimitado ? 'Ilimitado' : formatearMoneda(estado.header.limiteCredito)}</div>
-                        </div>
-                        <div className="col-4">
-                          <div className="small text-muted">Disponible</div>
-                          <div>{disponibilidad === null ? 'Ilimitado' : formatearMoneda(disponibilidad)}</div>
-                        </div>
-                      </div>
-
-                      <h6>Movimientos recientes</h6>
-                      {estado.movimientos.length === 0 ? (
-                        <p className="text-muted small">Sin movimientos en el último mes.</p>
-                      ) : (
-                        <div className="table-responsive">
-                          <table className="table table-sm">
-                            <thead>
-                              <tr>
-                                <th>Fecha</th>
-                                <th>Tipo</th>
-                                <th className="text-end">Importe</th>
-                                <th className="text-end">Saldo</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {estado.movimientos.map((m) => (
-                                <tr key={m.id}>
-                                  <td>{formatearFechaHoraCortaDeMovimiento(m.fecha)}</td>
-                                  <td>{etiquetaDeMovimiento(m)}</td>
-                                  <td className="text-end">{formatearMoneda(m.importe)}</td>
-                                  <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-outline-secondary" onClick={onCerrar}>
-                Cerrar
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!clienteElegido || cargandoEstado || estado === null}
-                onClick={() => setModalPagoAbierto(true)}
-              >
-                Registrar pago
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="modal-backdrop show" />
-    </>
-  )
-}
 
 function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio, alCambiarVentaEnCurso }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
@@ -988,6 +778,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // generación propia + chequeo del id vigente vía updater funcional — si el cajero cambió de
   // cliente mientras el refetch estaba en vuelo, la respuesta desactualizada se descarta.
   const generacionClienteSeleccionadoRef = useRef(0)
+  // El `ClienteListado` que una lectura del servidor dejó como cliente de la venta. Cualquier otro objeto (de la
+  // lista, de la copia local, de un borrador, o el mismo tras un pago o una venta que cambió su saldo) es no confirmado.
+  const saldoConfirmadoRef = useRef<ClienteListado | null>(null)
   const refrescarClienteSeleccionado = useCallback((idCliente: number) => {
     const miGeneracion = (generacionClienteSeleccionadoRef.current += 1)
     clienteDeClientes
@@ -995,6 +788,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .then((actualizado) => {
         if (generacionClienteSeleccionadoRef.current !== miGeneracion) return
         setClienteSeleccionado((prev) => (prev && prev.id === idCliente ? actualizado : prev))
+        // Solo este objeto, el que quedó en pantalla, cuenta como saldo confirmado por el servidor.
+        saldoConfirmadoRef.current = actualizado
       })
       .catch(() => {
         // silencioso: si falla el refetch, se conserva el cliente en pantalla con el saldo que
@@ -1296,6 +1091,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
 
+  // Cada vez que el drenado saca ventas de la cola, lo que el servidor sabe del saldo cambió: el que está en
+  // pantalla deja de estar confirmado (y los recibos y tickets en vuelo que lo leyeron antes lo saben por el
+  // contador) hasta que, con señal, una lectura nueva lo reemplace.
+  const descensosDeLaColaRef = useRef(0)
+  // Descensos de la cola al registrarse el último pago: si cambió al imprimir su recibo, el saldo posterior leído puede no incluir lo que se drenó.
+  const descensosAlPagarRef = useRef(0)
+  const largoPrevioDeLaColaRef = useRef(sincronizacionOffline.outboxCount)
+  useEffect(() => {
+    const previo = largoPrevioDeLaColaRef.current
+    largoPrevioDeLaColaRef.current = sincronizacionOffline.outboxCount
+    if (sincronizacionOffline.outboxCount >= previo) return
+    descensosDeLaColaRef.current += 1
+    saldoConfirmadoRef.current = null
+    if (sincronizacionOffline.enLinea && clienteSeleccionado && !clienteSeleccionado.esConsumidorFinal) {
+      refrescarClienteSeleccionado(clienteSeleccionado.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sincronizacionOffline.outboxCount])
+
   // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo se resuelve contra
   // la instantánea sin esperar la red (decisión del dueño: un precio algo viejo es aceptable, una
   // caja lenta no). La vista previa y el cobro locales son del Consumidor Final y de los clientes
@@ -1307,6 +1121,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       ? sincronizacionOffline.instantanea
       : null
 
+  // Los atajos F5 a F8 salen de la misma instantánea: es lo único que trae la tecla de cada artículo por importe.
+  const atajosDeImporte = useMemo(() => (instantaneaDelPuntoVenta ? atajosDeImporteOffline(instantaneaDelPuntoVenta) : []), [instantaneaDelPuntoVenta])
   // Opciones del selector de cliente y su búsqueda en la copia local: estables entre renders para que la
   // lista no recalcule el filtro de todos los clientes en cada cambio de la pantalla.
   const opcionesDeCliente = useMemo(
@@ -2451,6 +2267,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   /** Suma al carrito lo que resolvió un escaneo. Una fracción de un artículo que se vende por
    * unidad no entra: se avisa donde se avisan los demás errores de escaneo. */
   function agregarEscaneado(articulo: ArticuloEscaneado): boolean {
+    // Un artículo por importe sin el monto (se escaneó su código a secas) no tiene precio: se pide el importe.
+    if (articulo.unidadVenta === 'Importe' && articulo.importe == null) {
+      setErrorEscaneo(mensajeDeImporteRequerido(articulo.codigoInterno))
+      return false
+    }
     const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
     if (fraccionaUnaUnidad(linea.unidadVenta, cantidad)) {
       setErrorEscaneo(MENSAJE_DE_CANTIDAD_ENTERA)
@@ -2645,6 +2466,50 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     else evento.currentTarget.blur()
   }
 
+  /** Agrega lo que la instantánea local resuelve para `entrada`. `noEncontrado` es que no la conoce y sigue la búsqueda en el
+   * servidor; `rechazado` es que la conoce pero no se pudo agregar (el motivo ya quedó en el aviso del escaneo). */
+  function agregarDesdeInstantanea(instantanea: InstantaneaDePos, entrada: string): 'agregado' | 'rechazado' | 'noEncontrado' {
+    const resultado = resolverEscaneoOffline(instantanea, entrada)
+    if (resultado.tipo === 'noEncontrado') return 'noEncontrado'
+    if (resultado.tipo === 'importeInvalido') {
+      setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+      return 'rechazado'
+    }
+    return agregarEscaneado(resultado.articulo) ? 'agregado' : 'rechazado'
+  }
+
+  /** F5 a F8 (o el botón de la tecla): agrega el artículo por importe de la tecla con el importe que hay en el campo de código,
+   * con el mismo resultado que tipear `importe*código`. Sin datos, sin importe o con una tecla sin artículo avisa y no agrega. */
+  function agregarPorAtajo(tecla: TeclaAtajo) {
+    // Mismas compuertas que F2 y F4: nada se agrega detrás de un modal ni durante un cobro o una lectura en vuelo.
+    if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || bloqueadoPorTurno) return
+    if (buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada !== null || confirmandoCobro || cajaDeEscritorioOcupada) return
+
+    if (!instantaneaDelPuntoVenta) {
+      setErrorEscaneo(MENSAJE_DE_ATAJO_SIN_DATOS)
+      return
+    }
+    const texto = entradaEscaneo.trim()
+    const resultado = resolverAtajoOffline(instantaneaDelPuntoVenta, tecla, texto)
+    if (resultado.tipo === 'sinArticulo') {
+      setErrorEscaneo(mensajeDeAtajoSinArticulo(tecla))
+      return
+    }
+    if (texto === '') {
+      setErrorEscaneo(mensajeDeAtajoSinImporte(tecla))
+      return
+    }
+    if (resultado.tipo === 'importeInvalido') {
+      setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+      return
+    }
+    if (agregarEscaneado(resultado.articulo)) {
+      setEntradaEscaneo('')
+      setErrorEscaneo('')
+    }
+    focoPendienteRef.current = true
+  }
+
   /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
    * con un código que nunca pasó por `entradaEscaneo` — el buffer de teclado del modal "Venta
    * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
@@ -2673,7 +2538,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // Con instantánea y conexión la caja no espera a la red si la copia local puede responder: primero los combos de la
           // instantánea, después sus artículos, y solo si no conoce ninguno de los dos se le pregunta a la API.
           desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarSinRed)
-          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && buscarArticuloOffline(instantaneaDelPuntoVenta, entrada))) {
+          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && resolverEscaneoOffline(instantaneaDelPuntoVenta, entrada).tipo !== 'noEncontrado')) {
             desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarEnLaApi)
           }
         } else {
@@ -2702,9 +2567,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // Venta local primero: un código que está en la instantánea se agrega sin tocar la red. Solo
     // un código que no está (un artículo nuevo que todavía no sincronizó) va a buscarse online.
     if (instantaneaDelPuntoVenta) {
-      const desdeInstantanea = buscarArticuloOffline(instantaneaDelPuntoVenta, entrada)
-      if (desdeInstantanea) {
-        if (agregarEscaneado(desdeInstantanea)) {
+      const desenlace = agregarDesdeInstantanea(instantaneaDelPuntoVenta, entrada)
+      if (desenlace !== 'noEncontrado') {
+        if (desenlace === 'agregado') {
           setEntradaEscaneo('')
           setErrorEscaneo('')
         }
@@ -2717,7 +2582,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setEscaneando(true)
     setErrorEscaneo('')
     try {
-      const articulo = await clienteDeArticulos.escanear(entrada)
+      const articulo = await escanearEnElServidor(entrada)
       if (tokenEscaneoRef.current !== token) return
       if (agregarEscaneado(articulo)) setEntradaEscaneo('')
       focoPendienteRef.current = true
@@ -2730,13 +2595,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // para otro cliente este es su único fallback. Mismo mapeo `ArticuloEscaneado` que la
       // respuesta online, así `aLineaDeCarritoDesdeEscaneo` no necesita saber de dónde vino.
       if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea) {
-        const desdeInstantanea = buscarArticuloOffline(sincronizacionOffline.instantanea, entrada)
-        if (desdeInstantanea) {
-          if (agregarEscaneado(desdeInstantanea)) setEntradaEscaneo('')
+        const desenlace = agregarDesdeInstantanea(sincronizacionOffline.instantanea, entrada)
+        if (desenlace === 'agregado') setEntradaEscaneo('')
+        if (desenlace !== 'noEncontrado') {
           focoPendienteRef.current = true
           return
         }
         setErrorEscaneo(conAvisoDeCombos('Sin conexión: no se encontró ese código en la última instantánea local.'))
+        return
+      }
+
+      // El importe que tipeó el cajero no es válido: el texto del servidor habla de punto decimal y acá la coma también vale.
+      if (e instanceof ErrorApi && e.codigo === 'importe_invalido') {
+        setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
         return
       }
 
@@ -2761,6 +2632,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * tipo `escanear`): la resolución de precio/ofertas la sigue haciendo el efecto de `lineas` de
    * siempre, nunca este handler. */
   function agregarDesdeBusqueda(linea: ArticuloParaCarrito, cantidad: number) {
+    // Un artículo por importe no tiene precio sin el monto, y el buscador no lo pide: es la misma regla del escaneo a secas.
+    if (linea.unidadVenta === 'Importe' && linea.importe === undefined) {
+      setErrorEscaneo(mensajeDeImporteRequerido(linea.codigoInterno))
+      setBuscadorAbierto(false)
+      focoPendienteRef.current = true
+      return
+    }
     mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
     setBuscadorAbierto(false)
     focoPendienteRef.current = true
@@ -2827,6 +2705,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     setVentaFinalizada(null)
   }
+
+  // F5 a F8 son los atajos de los artículos por importe. El comportamiento del navegador se evita SIEMPRE, mientras esta pantalla
+  // esté montada y haya o no artículo, modal abierto o modificadores: F5 (también con Ctrl o Shift) recarga la página y con ella se
+  // pierde el estado del POS, y F6/F7 mueven el foco o piden el modo cursor. Solo la tecla sola, sin repetición, agrega una línea.
+  // El listener se registra una vez y llama a la versión del render actual por un ref, para no depender de las compuertas.
+  const alAtajoDeImporteRef = useRef(agregarPorAtajo)
+  useEffect(() => {
+    alAtajoDeImporteRef.current = agregarPorAtajo
+  })
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      if (!esTeclaDeAtajo(evento.key)) return
+      evento.preventDefault()
+      if (evento.repeat || evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return
+      alAtajoDeImporteRef.current(evento.key)
+    }
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+  }, [])
 
   // F2 abre el buscador de artículos (spec pos-buscador-articulos) — solo con la venta libre
   // operable: nunca bajo `?idPresupuesto=` (carrito congelado, sin escaneo), nunca con el
@@ -2981,6 +2878,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // precondición de "hay líneas" es "el presupuesto cargó Y es `Convertible`" (la misma fuente de
   // verdad server-side que oculta el botón "Convertir en venta" en Presupuesto.tsx).
   const hayAjusteSinConfirmar = Object.keys(ajustesEnEdicion).length > 0
+  const lineasPorImporteObsoletas = instantaneaDelPuntoVenta ? lineasConImporteDeArticuloOrdinario(lineas, instantaneaDelPuntoVenta) : []
   const precondicionesListas = modoPresupuesto
     ? presupuesto !== null &&
       presupuesto.convertible &&
@@ -2996,6 +2894,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // sin él. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón "Cobrar" y el atajo
       // quedan inertes hasta que se confirma o se descarta.
       !hayAjusteSinConfirmar &&
+      lineasPorImporteObsoletas.length === 0 &&
       lineas.length > 0 &&
       lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
       clienteSeleccionado !== null &&
@@ -3399,6 +3298,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // encolarlo ahora con otro número pre-asignado duplicaría la venta. Se informa como
           // resultado incierto, igual que un 503 `resultado_incierto`.
           if (e instanceof ErrorDeRed) {
+            // La venta pudo registrarse: el saldo de pantalla ya no es el del servidor.
+            saldoConfirmadoRef.current = null
             setErrorCobro(MENSAJE_DE_COBRO_INCIERTO)
             return null
           }
@@ -3406,6 +3307,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         }
       }
 
+      // La lectura de la cola se pide antes de emitir: la cola atiende en orden, así que no incluye la venta que
+      // se está encolando ahora (ni se la cuenta dos veces si es online).
+      const marcaDeLaCola = descensosDeLaColaRef.current
+      const lecturaDeLaCola = clienteSeleccionado.esConsumidorFinal
+        ? null
+        : conTiempoLimite(() => sincronizacionOffline.consumoPendienteDeCuentaCorriente(clienteSeleccionado.id), ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS).catch(() => null)
       const resultado = await emitirOEncolar()
       if (resultado === null) return
       const { emitido, pendienteDeSincronizar, avisoLimiteDeCredito } = resultado
@@ -3429,7 +3336,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
-      alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
+      // Confirmado solo si la lectura del servidor es la que está en pantalla y ninguna venta salió de la cola desde que se empezó a cobrar.
+      const saldoConfirmadoAlCobrar = saldoConfirmadoRef.current === clienteSeleccionado && descensosDeLaColaRef.current === marcaDeLaCola
+      saldoConfirmadoRef.current = null
+      if (lecturaDeLaCola === null) {
+        alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
+      } else {
+        const clienteDeLaVenta = clienteSeleccionado
+        void lecturaDeLaCola.then((consumoPendiente) =>
+          alEmitir?.(emitido, clienteDeLaVenta, medios ?? [], { consumoPendiente, saldoConfirmado: saldoConfirmadoAlCobrar }),
+        )
+      }
       setLineas([])
       setPrecios({})
       setCombosAplicados([])
@@ -3456,6 +3373,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       }
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
+      // Un cobro que falló sin respuesta definitiva (por ejemplo un 503 `resultado_incierto`) pudo registrarse igual.
+      saldoConfirmadoRef.current = null
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
       // — reintentar el checkout sin turno abierto solo repetiría el mismo 409.
       if (e instanceof ErrorApi && e.codigo === 'turno_no_abierto') {
@@ -3569,6 +3488,37 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   function pedirConfirmacionDeVaciado() {
     setVaciandoCarrito(true)
+  }
+
+  /** Recibo del pago a cuenta por la misma cola que el resto de los tickets. El pago ya está
+   * registrado: si la impresión falla, lo informa el aviso con "Reimprimir" de la cola. */
+  async function imprimirReciboDePago(pago: PagoACuentaRegistrado) {
+    if (!cajaDeEscritorio) return
+    const consumoPendiente = await conTiempoLimite(
+      () => sincronizacionOffline.consumoPendienteDeCuentaCorriente(pago.cliente.id),
+      ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS,
+    ).catch(() => null)
+    const saldos = saldosDeUnPagoACuenta({
+      pagos: pago.comprobante.pagos,
+      saldoEnPantalla: pago.saldoEnPantalla,
+      saldoPosterior: pago.saldoPosterior,
+      consumoPendiente: consumoPendiente ?? 0,
+    })
+    const colaSinCambios = descensosDeLaColaRef.current === descensosAlPagarRef.current
+    cajaDeEscritorio.encolarImpresion(
+      'el recibo del pago a cuenta',
+      ticketDePagoACuenta(
+        {
+          comprobante: pago.comprobante,
+          cliente: { numero: pago.cliente.numero, nombre: nombreCompletoDeCliente(pago.cliente) },
+          saldoAnterior: saldos.anterior,
+          saldoNuevo: saldos.nuevo,
+          estimado: esSaldoEstimado({ confirmado: pago.saldoPosterior !== null && colaSinCambios, consumoPendiente }),
+        },
+        cajaDeEscritorio.contexto,
+        medios ?? [],
+      ),
+    )
   }
 
   function cancelarVaciado() {
@@ -3905,7 +3855,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )}
 
             {!modoPresupuesto && (
-              <div className="input-group mb-3">
+              <div className={`input-group ${atajosDeImporte.length > 0 ? 'mb-2' : 'mb-3'}`}>
                 <input
                   ref={inputEscaneoRef}
                   type="text"
@@ -3950,6 +3900,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   Buscar combo <sup aria-hidden="true">(F4)</sup>
                 </button>
+              </div>
+            )}
+            {/* Atajos de los artículos por importe: la tecla toma el importe tipeado en el campo de código (F5 a F8). */}
+            {!modoPresupuesto && atajosDeImporte.length > 0 && (
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                {atajosDeImporte.map((atajo) => (
+                  <button
+                    key={atajo.teclaAtajo}
+                    type="button"
+                    className="btn btn-outline-primary btn-sm"
+                    disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
+                    aria-keyshortcuts={atajo.teclaAtajo}
+                    onClick={() => agregarPorAtajo(atajo.teclaAtajo)}
+                  >
+                    {atajo.nombre} <sup aria-hidden="true">({atajo.teclaAtajo})</sup>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -4033,9 +4000,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 className={`form-control form-control-sm${cantidadInvalida(l) ? ' is-invalid' : ''}`}
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 aria-invalid={cantidadInvalida(l) || undefined}
-                                title={fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l))) ? MENSAJE_DE_CANTIDAD_ENTERA : undefined}
+                                title={
+                                  l.importe !== undefined
+                                    ? MENSAJE_DE_CANTIDAD_DE_IMPORTE
+                                    : fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l)))
+                                      ? MENSAJE_DE_CANTIDAD_ENTERA
+                                      : undefined
+                                }
                                 value={textoCantidad(l)}
-                                disabled={pantallaCobroInerte || bloqueadoPorTurno}
+                                disabled={pantallaCobroInerte || bloqueadoPorTurno || l.importe !== undefined}
                                 onChange={(e) => cambiarCantidad(l.idLinea, e.target.value)}
                                 onBlur={() => confirmarCantidad(l.idLinea)}
                               />
@@ -4267,6 +4240,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
+            {lineasPorImporteObsoletas.length > 0 && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {mensajeDeLineaPorImporteObsoleta(lineasPorImporteObsoletas[0].nombre)}
+              </div>
+            )}
+
             {hayAjusteSinConfirmar && (
               <div className="alert alert-warning py-1 px-2 small" role="status">
                 Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.
@@ -4377,8 +4356,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           clienteInicial={clienteSeleccionado}
           puntoVenta={puntoVentaSeleccionada}
           medios={medios}
-          onCerrar={() => setModalCuentaCorrienteAbierto(false)}
-          onPagoRegistrado={refrescarClienteSeleccionado}
+          onCerrar={() => {
+            setModalCuentaCorrienteAbierto(false)
+            pedirFocoEnElCodigo()
+          }}
+          onPagoRegistrado={(idCliente) => {
+            // El saldo en pantalla quedó viejo: deja de ser confirmado hasta que la lectura nueva lo reemplace.
+            saldoConfirmadoRef.current = null
+            descensosAlPagarRef.current = descensosDeLaColaRef.current
+            refrescarClienteSeleccionado(idCliente)
+          }}
+          onReciboListo={cajaDeEscritorio ? imprimirReciboDePago : undefined}
         />
       )}
 
@@ -4590,7 +4578,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
  * siendo el POS de siempre).
  */
 type PropsPos = {
-  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alEmitir?: AlEmitirVenta
   alIrACerrarCaja?: (idTurno: number) => void
   cajaDeEscritorio?: CajaDeEscritorio
   alCambiarVentaEnCurso?: (enCurso: boolean) => void

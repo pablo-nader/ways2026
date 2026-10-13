@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -167,6 +167,211 @@ describe('ticketDeVenta', () => {
   it('la línea de REIMPRESION aparece ANTES del aviso de "no válido como factura"', () => {
     const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
     expect(reimpreso.indexOf('REIMPRESION')).toBeLessThan(reimpreso.indexOf('COMPROBANTE NO VALIDO COMO FACTURA'))
+  })
+})
+
+/** Decodifica las líneas imprimibles saltando los comandos ESC/GS completos (con sus parámetros), a
+ * diferencia de `textoPlano`, que deja sus parámetros imprimibles pegados al texto. Solo ASCII. */
+function lineasDe(bytes: Uint8Array): string[] {
+  const largoDelComando = (b: number, siguiente: number): number => {
+    if (b === 0x1b) return siguiente === 0x40 ? 2 : siguiente === 0x70 ? 5 : 3
+    return siguiente === 0x56 ? 4 : 3
+  }
+  const lineas: string[] = []
+  let actual = ''
+  for (let i = 0; i < bytes.length; ) {
+    const b = bytes[i]
+    if (b === 0x1b || b === 0x1d) {
+      i += largoDelComando(b, bytes[i + 1])
+    } else if (b === 0x0a) {
+      lineas.push(actual)
+      actual = ''
+      i += 1
+    } else {
+      if (b >= 0x20 && b < 0x7f) actual += String.fromCharCode(b)
+      i += 1
+    }
+  }
+  return lineas
+}
+
+describe('ticketDeVenta — cliente identificado con su saldo', () => {
+  const CLIENTE = { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 1200 }
+  const MEDIOS = [medioFixture({ id: 1, comportamiento: 'Efectivo' })]
+
+  it('imprime el cliente y el saldo anterior y actual de la cuenta', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE }))
+    expect(lineas).toContain('Cliente: #2 - Juan Perez')
+    expect(lineas).toContain(dosColumnas('Saldo anterior', '$ 500,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual', '$ 1.200,00'))
+  })
+
+  it('el cliente va debajo del cajero y los saldos debajo de los pagos', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE }))
+    expect(lineas.indexOf('Cliente: #2 - Juan Perez')).toBe(lineas.indexOf('Cajero: jperez') + 1)
+    expect(lineas.indexOf(dosColumnas('Saldo anterior', '$ 500,00'))).toBeGreaterThan(lineas.indexOf('Pagos:'))
+  })
+
+  it('sin cliente (Consumidor Final) no imprime ni cliente ni saldos', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS))
+    expect(texto).not.toContain('Cliente:')
+    expect(texto).not.toContain('Saldo')
+  })
+
+  it('una reimpresión nunca imprime saldos aunque se le pase el cliente: los históricos no se conocen', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { reimpresion: true, cliente: CLIENTE }))
+    expect(texto).not.toContain('Saldo')
+    expect(texto).not.toContain('Cliente:')
+  })
+
+  it('un saldo no confirmado se rotula "(estimado)" en las dos líneas', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, estimado: true } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior (estimado)', '$ 500,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual (estimado)', '$ 1.200,00'))
+  })
+
+  it('un saldo confirmado no lleva la marca de estimado', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, estimado: false } }))
+    expect(texto).not.toContain('estimado')
+  })
+
+  it('un saldo negativo se imprime "a favor" con su valor absoluto, nunca con signo', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, saldoAntes: -80, saldoDespues: -30 } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior a favor', '$ 80,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual a favor', '$ 30,00'))
+    expect(lineas.filter((l) => l.includes('-$'))).toEqual([])
+  })
+
+  it('un saldo que pasa de a favor a deuda rotula cada línea por su signo', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, saldoAntes: -30, saldoDespues: 70 } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior a favor', '$ 30,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual', '$ 70,00'))
+  })
+
+  it('con un importe de 9 dígitos la marca "(estimado)" sobrevive: se abrevia la base del rótulo', () => {
+    const cliente = { ...CLIENTE, saldoAntes: -123456789, saldoDespues: -123456739, estimado: true }
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente }))
+    expect(lineas).toContain(dosColumnas('Saldo ant. a fav. (estimado)', '$ 123.456.789,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual a favor (estimado)', '$ 123.456.739,00'))
+    expect(lineas.filter((l) => l.startsWith('Saldo') && !l.includes('(estimado)'))).toEqual([])
+  })
+
+  it('con importes que entran, los rótulos no se abrevian', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, saldoAntes: -1234, saldoDespues: -1000, estimado: true } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior a favor (estimado)', '$ 1.234,00'))
+  })
+
+  it('un nombre largo se recorta al ancho del ticket en vez de partir la línea', () => {
+    const nombre = 'Distribuidora Mayorista de Productos Regionales Sociedad Anonima'
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, nombre } }))
+    const linea = lineas.find((l) => l.startsWith('Cliente:'))!
+    expect(linea.length).toBeLessThanOrEqual(48)
+    expect(linea).toBe(`Cliente: #2 - ${nombre}`.slice(0, 47))
+  })
+
+  it('conserva el pulso del cajón y el corte al final', () => {
+    const bytes = ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE })
+    expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+})
+
+describe('ticketDePagoACuenta', () => {
+  const MEDIOS = [
+    medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo' }),
+    medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', admiteVuelto: false }),
+  ]
+  const RECIBO = comprobanteFixture({
+    numeroVisible: '0007-00000900',
+    fecha: '2026-09-16T15:30:00-03:00',
+    items: [],
+    total: 0,
+    subtotal: 0,
+    pagos: [
+      { idMedioPago: 1, importe: 500, referencia: null, vuelto: 50 },
+      { idMedioPago: 2, importe: 200, referencia: 'AUT1', vuelto: 0 },
+    ],
+  })
+  const DATOS = { comprobante: RECIBO, cliente: { numero: 2, nombre: 'Juan Perez' }, saldoAnterior: 1000, saldoNuevo: 350 }
+
+  it('arma el encabezado, el tipo y número del comprobante, la fecha, el cajero y el cliente', () => {
+    const lineas = lineasDe(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS))
+    expect(lineas.some((l) => l.includes('Demo'))).toBe(true)
+    expect(lineas).toContain('Local Centro')
+    expect(lineas).toContain('RECIBO DE PAGO A CUENTA')
+    expect(lineas).toContain('Comprobante: RC 0007-00000900')
+    expect(lineas).toContain(`Fecha: ${fechaHoraATexto('2026-09-16T15:30:00-03:00')}`)
+    expect(lineas).toContain('Cajero: jperez')
+    expect(lineas).toContain('Cliente: #2 - Juan Perez')
+  })
+
+  it('lista cada medio con su importe, el vuelto entregado y el total pagado (importes menos vueltos)', () => {
+    const lineas = lineasDe(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS))
+    const desde = lineas.indexOf('Pagos:')
+    expect(lineas.slice(desde, desde + 5)).toEqual([
+      'Pagos:',
+      dosColumnas('Efectivo', '$ 500,00'),
+      dosColumnas('  Vuelto', '$ 50,00'),
+      dosColumnas('Tarjeta', '$ 200,00'),
+      dosColumnas('Total pagado', '$ 650,00'),
+    ])
+  })
+
+  it('termina con saldo anterior, total pagado y saldo nuevo, en ese orden', () => {
+    const lineas = lineasDe(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS))
+    const anterior = lineas.indexOf(dosColumnas('Saldo anterior', '$ 1.000,00'))
+    const nuevo = lineas.indexOf(dosColumnas('Saldo nuevo', '$ 350,00'))
+    expect(anterior).toBeGreaterThan(-1)
+    expect(nuevo).toBeGreaterThan(anterior)
+  })
+
+  it('un saldo estimado (consulta posterior fallida o ventas en cola) se rotula "(estimado)"', () => {
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, estimado: true }, CONTEXTO, MEDIOS))
+    expect(lineas).toContain(dosColumnas('Saldo anterior (estimado)', '$ 1.000,00'))
+    expect(lineas).toContain(dosColumnas('Saldo nuevo (estimado)', '$ 350,00'))
+  })
+
+  it('un saldo confirmado no lleva la marca de estimado', () => {
+    expect(textoPlano(ticketDePagoACuenta({ ...DATOS, estimado: false }, CONTEXTO, MEDIOS))).not.toContain('estimado')
+  })
+
+  it('un saldo nuevo negativo se imprime "a favor" con el valor absoluto', () => {
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, saldoAnterior: 100, saldoNuevo: -550 }, CONTEXTO, MEDIOS))
+    expect(lineas).toContain(dosColumnas('Saldo anterior', '$ 100,00'))
+    expect(lineas).toContain(dosColumnas('Saldo nuevo a favor', '$ 550,00'))
+    expect(lineas.filter((l) => l.includes('-$'))).toEqual([])
+  })
+
+  it('con un importe de 9 dígitos la marca "(estimado)" del recibo sobrevive', () => {
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, saldoAnterior: 123456789, saldoNuevo: -1234567890, estimado: true }, CONTEXTO, MEDIOS))
+    expect(lineas).toContain(dosColumnas('Saldo anterior (estimado)', '$ 123.456.789,00'))
+    expect(lineas).toContain(dosColumnas('Saldo nvo. a fav. (estimado)', '$ 1.234.567.890,00'))
+  })
+
+  it('un nombre largo se recorta al ancho del ticket', () => {
+    const nombre = 'Distribuidora Mayorista de Productos Regionales Sociedad Anonima'
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, cliente: { numero: 2, nombre } }, CONTEXTO, MEDIOS))
+    expect(lineas.find((l) => l.startsWith('Cliente:'))).toBe(`Cliente: #2 - ${nombre}`.slice(0, 47))
+  })
+
+  it('un medio que no está en la lista se rotula por su número', () => {
+    const datos = { ...DATOS, comprobante: { ...RECIBO, pagos: [{ idMedioPago: 99, importe: 100, referencia: null, vuelto: 0 }] } }
+    expect(lineasDe(ticketDePagoACuenta(datos, CONTEXTO, MEDIOS))).toContain(dosColumnas('Medio #99', '$ 100,00'))
+  })
+
+  it('con algún pago en efectivo pulsa el cajón en el mismo trabajo, antes del corte', () => {
+    const bytes = ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS)
+    expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+
+  it('sin pagos en efectivo nunca pulsa el cajón', () => {
+    const datos = { ...DATOS, comprobante: { ...RECIBO, pagos: [{ idMedioPago: 2, importe: 200, referencia: 'AUT1', vuelto: 0 }] } }
+    const bytes = ticketDePagoACuenta(datos, CONTEXTO, MEDIOS)
+    expect(contieneComandoDeCajon(bytes)).toBe(false)
+    expect(Array.from(bytes.slice(-6))).toEqual([0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+
+  it('empieza con ESC @ y la página CP858, como el resto de los tickets', () => {
+    expect(Array.from(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS).slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x74, 19])
   })
 })
 
@@ -480,8 +685,11 @@ function resumenCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = 
     vendedor: 'jperez',
     empleadoCierre: 'jperez',
     fondoInicial: 500,
-    ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 8000 }],
+    ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 8000 }],
     totalVentas: 8000,
+    totalDigitales: 0,
+    totalEfectivo: 8000,
+    ventasACuentaCorriente: 0,
     retiros: [{ fecha: '2026-09-19T15:00:00-03:00', importe: 3000, motivo: 'Retiro de efectivo', empleado: 'jperez' }],
     totalRetiros: 3000,
     ventasEnEfectivoNetas: 8000,
@@ -541,21 +749,86 @@ describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () =>
     expect(texto).toContain('Cerrado por: mgomez')
   })
 
-  it('incluye cada medio de "ventas por medio de pago" y el total de ventas', () => {
+  it('incluye cada medio de "ventas por medio de pago" y el total general', () => {
     const resumen = resumenCierreFixture({
       ventasPorMedio: [
-        { idMedioPago: 1, nombre: 'Efectivo', importe: 5000 },
-        { idMedioPago: 2, nombre: 'Tarjeta', importe: 3000 },
+        { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 5000 },
+        { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 3000 },
       ],
       totalVentas: 8000,
+      totalDigitales: 3000,
+      totalEfectivo: 5000,
     })
     const texto = textoPlano(cierreDeTurno(resumen, CONTEXTO))
     expect(texto).toContain('Efectivo')
     expect(texto).toContain('5.000,00')
     expect(texto).toContain('Tarjeta')
     expect(texto).toContain('3.000,00')
-    expect(texto).toContain('Total ventas')
+    expect(texto).toContain('Total general')
     expect(texto).toContain('8.000,00')
+  })
+
+  describe('subtotales por clasificación', () => {
+    const resumenMixto = () =>
+      resumenCierreFixture({
+        ventasPorMedio: [
+          { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 5000 },
+          { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 3000 },
+        ],
+        totalVentas: 8000,
+        totalDigitales: 3000,
+        totalEfectivo: 5000,
+        ventasACuentaCorriente: 700,
+      })
+
+    it('imprime separador, digitales, efectivo y total general alineados, y el fiado aparte después del total', () => {
+      const lineas = lineasDeCierreDeTurno(resumenMixto(), CONTEXTO).map((l) => l.texto)
+      const iTarjeta = lineas.findIndex((l) => l.startsWith('Tarjeta'))
+      const iFiado = lineas.findIndex((l) => l.startsWith('Fiado en cuenta corriente'))
+      const bloque = lineas.slice(iTarjeta + 1, iFiado + 1).map((l) => l.replace(/\s+/g, ' '))
+
+      expect(bloque[0]).toMatch(/^-+$/)
+      expect(bloque.slice(1)).toEqual([
+        'Total digitales $ 3.000,00',
+        'Total efectivo $ 5.000,00',
+        'Total general $ 8.000,00',
+        '',
+        'Fiado en cuenta corriente $ 700,00',
+      ])
+      const anchos = lineas.filter((l) => /^(Total (digitales|efectivo|general)|Fiado)/.test(l)).map((l) => l.length)
+      expect(new Set(anchos).size).toBe(1)
+      expect(lineas.filter((l) => l.includes('Total general'))).toHaveLength(1)
+      expect(lineas.some((l) => l.startsWith('Total ventas'))).toBe(false)
+    })
+
+    it('omite el fiado en cuenta corriente cuando es cero', () => {
+      const texto = textoPlano(cierreDeTurno(resumenCierreFixture(), CONTEXTO))
+      expect(texto).toContain('Total digitales')
+      expect(texto).toContain('Total efectivo')
+      expect(texto).not.toContain('Fiado')
+    })
+
+    it.each([
+      ['payload anterior al desglose', {}],
+      ['payload parcial (falta un importe)', { totalEfectivo: undefined }],
+      ['payload con un importe que no es número', { totalDigitales: Number.NaN }],
+    ])('%s: no imprime subtotales ni fiado y conserva el total general', (_nombre, defecto) => {
+      const base: Partial<ResumenDeCierrePorRetiro> = resumenMixto()
+      if (Object.keys(defecto).length === 0) {
+        delete base.totalDigitales
+        delete base.totalEfectivo
+        delete base.ventasACuentaCorriente
+      } else {
+        Object.assign(base, defecto)
+      }
+      const texto = textoPlano(cierreDeTurno(base as ResumenDeCierrePorRetiro, CONTEXTO))
+      expect(texto).not.toContain('Total digitales')
+      expect(texto).not.toContain('Total efectivo')
+      expect(texto).not.toContain('Fiado')
+      expect(texto).not.toContain('undefined')
+      expect(texto).not.toContain('NaN')
+      expect(texto).toContain('Total general')
+    })
   })
 
   it('imprime cada retiro en UNA línea: hora, rótulo corto y importe, sin motivo largo ni empleado', () => {

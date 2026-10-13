@@ -22,6 +22,7 @@ const {
   construirQueryDeBreakdown,
   construirQueryDeBreakdownConPv,
   construirQueryDeHistoricoDeCajas,
+  construirQueryDeLibroDeCuenta,
   construirQueryDeLibroIva,
   construirQueryDeReporte,
   construirQueryDeReporteDeArticulos,
@@ -469,5 +470,33 @@ describe('rangoDelMesActual', () => {
 
   it('usa la fecha local, no UTC: el 1 de enero a las 00:30 sigue siendo enero', () => {
     expect(rangoDelMesActual(new Date(2026, 0, 1, 0, 30))).toEqual({ desde: '2026-01-01', hasta: '2026-01-31' })
+  })
+})
+
+describe('libro de una cuenta de tesorería', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('el query lleva el rango con el día completo (offset local), la página y el tamaño, sin idEmpresa', () => {
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(180)
+
+    const query = decodeURIComponent(construirQueryDeLibroDeCuenta({ desde: '2026-08-05', hasta: '2026-08-11', pagina: 2, tamanio: 25 }))
+
+    expect(query).toBe('?desde=2026-08-05T00:00:00-03:00&hasta=2026-08-11T23:59:59.999-03:00&pagina=2&tamanio=25')
+  })
+
+  it('un rango vacío omite desde y hasta', () => {
+    expect(construirQueryDeLibroDeCuenta({ desde: '', hasta: '', pagina: 1, tamanio: 25 })).toBe('?pagina=1&tamanio=25')
+  })
+
+  it('las cuentas de la empresa y el libro de una cuenta pegan a las rutas de reportes', async () => {
+    apiGetMock.mockClear()
+
+    await clienteDeReportes.cuentasDeTesoreria(7)
+    await clienteDeReportes.libroDeCuenta(12, { desde: '', hasta: '', pagina: 1, tamanio: 25 })
+
+    expect(apiGetMock).toHaveBeenNthCalledWith(1, '/reportes/tesoreria/cuentas?idEmpresa=7')
+    expect(apiGetMock).toHaveBeenNthCalledWith(2, '/reportes/tesoreria/cuentas/12/libro?pagina=1&tamanio=25')
   })
 })

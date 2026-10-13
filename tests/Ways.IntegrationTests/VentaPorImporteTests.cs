@@ -744,6 +744,8 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     [InlineData("")]
     [InlineData("150,50")]
     [InlineData("150.505")]
+    [InlineData("1.500")]
+    [InlineData("1000.500")]
     public async Task UnPrefijoQueNoEsUnImporteValidoSeRechazaEnUnArticuloPorImporte(string prefijo)
     {
         var ctx = await PrepararOnlineAsync(
