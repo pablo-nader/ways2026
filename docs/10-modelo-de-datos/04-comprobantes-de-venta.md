@@ -618,9 +618,16 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
 - **Falla del propio lote.** Una falla fuera de toda decisión (las lecturas de cabezas y candidatas, la carga de las series) se
   registra y se PROPAGA: el endpoint responde `500 error_interno` por el manejador estándar, y quien llama sabe que no hubo intento
   (antes se tragaba y respondía `200` con todo vacío, indistinguible de "no había nada"). Lo que las decisiones anteriores de la
-  misma llamada ya comitearon (espejos, CAE) queda comiteado; la llamada siguiente lo retoma.
-- **Presupuesto.** 20 s en total (`Ways:Fiscal:PresupuestoDeLoteSegundos`, valor ausente, no positivo o NaN = 20; tope 300 s), con
-  un `CancellationTokenSource` propio creado desde el `TimeProvider` inyectado (`TimeProvider.System` en producción): no usa el
+  misma llamada ya comitearon (espejos, CAE) queda comiteado; la llamada siguiente lo retoma. Esos resultados NO están en ninguna
+  respuesta: la llamada siguiente no los informa porque ya no están pendientes. Quien llama puede leerlos con el endpoint de una
+  decisión suelta (`/{id}/procesar`), que devuelve el estado actual de forma idempotente.
+- **Presupuesto.** 20 s por defecto (`Ways:Fiscal:PresupuestoDeLoteSegundos`, valor ausente, no positivo o NaN = 20; un valor
+  positivo menor que 1 s se sube a 1 s; tope 300 s). El presupuesto acota cuándo EMPIEZA el trabajo, no cuándo termina el pedido:
+  no se arranca otra decisión con el presupuesto agotado (la que no se intentó no se posterga ni se anota), pero una llamada en
+  vuelo no se interrumpe a mitad de una firma de WSAA, así que un pedido puede pasarse del presupuesto hasta el timeout de WSAA
+  (con los valores por defecto, hasta unos 35 s si la firma arranca sobre el final del presupuesto; 15 s si arranca al
+  principio). Una llamada colgada a WSFE termina en su timeout (8 s). El token del presupuesto es un `CancellationTokenSource`
+  propio creado desde el `TimeProvider` inyectado (`TimeProvider.System` en producción): no usa el
   token de la solicitud, así que un cliente que corta la conexión no deja el lote a medias. Un corte detiene el lote
   (`cortadoPorPresupuesto: true`) y NO es un fallo de la decisión que se estaba procesando: el servicio solo anota un intento cuando
   su token sigue vivo, y todas las transacciones del paso en curso se deshacen (un espejo ya creado queda `pendiente` con su
@@ -629,10 +636,14 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
   `proximo_intento_en = reloj + 1 min` con un token corto propio (el del lote ya está cancelado) y no toca `intentos` ni
   `ultimo_error`; nunca lanza. Así la llamada siguiente llega a las demás decisiones en vez de volver a cortar siempre en la más
   vieja; si la postergada es la cabeza de su serie, esa serie se saltea (`cabeza_en_espera`) hasta que venza. La decisión cortada
-  no aparece en `resultados`. Limitación que queda: una decisión que ya no está `pendiente` (solo conserva un espejo pendiente) no
-  se puede postergar; si su llamada a ARCA siempre agotara el presupuesto, seguiría siendo la primera cabeza de cada llamada.
-  Un timeout de la llamada a ARCA (8 s) es menor que el presupuesto (20 s), así que una llamada colgada se anota como intento
-  fallido con su espera en lugar de cortar el lote.
+  no aparece en `resultados`. Excepción: si lo que lanzó pasado el presupuesto es un error de dominio (una falla real que terminó
+  tarde, como una firma de WSAA que venció con `arca_no_definitivo`), no es una cancelación: se anota como intento fallido con su
+  código y su espera creciente, aparece en `resultados` como `pendiente` con ese error, y el lote se corta igual
+  (`cortadoPorPresupuesto: true`). Limitaciones que quedan: una decisión que ya no está `pendiente` (solo conserva un espejo
+  pendiente) no se puede postergar NI se le puede anotar un intento fallido; si su llamada a ARCA siempre agotara el
+  presupuesto, seguiría siendo la primera cabeza de cada llamada. Además, cortes repetidos postergan la decisión un minuto cada
+  vez, sin espera creciente. Los timeouts (WSFE 8 s, WSAA 15 s) son menores que el presupuesto (20 s), así que una llamada colgada
+  que arranca al principio se anota como intento fallido con su espera en lugar de cortar el lote.
 - **Respuesta.** `{ emitidas, rechazadas, canceladas, pendientesRestantes, cortadoPorPresupuesto, seriesBloqueadas[],
   resultados[] }`. `resultados` trae, en el orden en que se procesaron, `{ idFacturacion, idComprobanteVenta, fiscal }` con el
   mismo `EstadoFiscalDeVenta` de la venta (también para lo que quedó `pendiente` con su error, p. ej. `serie_ocupada`); los tres
@@ -647,12 +658,18 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
   consulta ni pide nada; si llega cuando la decisión ya se resolvió, devuelve su estado sin llamar a ARCA.
 - **Timeout de las llamadas a ARCA.** `Ways:Fiscal:TimeoutDeLlamadaSegundos` (por defecto 8; tope 120; valor ausente, no positivo
   o NaN = 8; un valor positivo menor que 1 ms se sube a 1 ms) es el `Timeout` del `HttpClient` de WSFE: vale por cada ida y vuelta.
-  WSAA tiene el suyo, `Ways:Fiscal:TimeoutDeWsaaSegundos` (por defecto 30, mismas reglas y tope), más largo a propósito: WSAA no
+  WSAA tiene el suyo, `Ways:Fiscal:TimeoutDeWsaaSegundos` (por defecto 15, mismas reglas y tope), más largo que el de WSFE a
+  propósito pero menor que el presupuesto del lote (para que una firma colgada que arranca al principio venza dentro del
+  presupuesto y se anote como intento fallido): WSAA no
   emite un ticket nuevo mientras hay uno vigente (`coe.alreadyAuthenticated`), así que abandonar una firma cuya respuesta se
   perdió bloquea todo el facturado de ese emisor hasta que el ticket vence. Un timeout NO es un rechazo ni una cancelación del
-  llamador. `ClienteWsfe` NO reintenta un timeout: es de inmediato `arca_no_definitivo` (503) con UN solo pedido enviado, porque
-  después de un timeout ARCA pudo haber procesado el pedido y reenviar el mismo `FECAESolicitar` puede devolver un error de
-  numeración en lugar del CAE; lo resuelve el "consultar primero" del intento siguiente. Los demás fallos transitorios (error de
+  llamador. `ClienteWsfe` NO reintenta un timeout, en NINGUNA operación: es de inmediato `arca_no_definitivo` (503) con UN solo pedido
+  enviado. Por dos razones: para `FECAESolicitar`, la seguridad del reenvío (ARCA pudo haber procesado el pedido y reenviarlo
+  puede devolver un error de numeración en lugar del CAE; lo resuelve el "consultar primero" del intento siguiente); y para todas
+  las operaciones, incluidas las lecturas (consulta, último autorizado, parámetros), que sí se podrían reenviar, que un solo
+  intento acotado por el timeout es lo que deja que una llamada colgada termine dentro del presupuesto del lote y se anote. El
+  costo: una lectura lenta ahora falla donde antes tres intentos la resolvían, y un CAE que ARCA ya emitió se adopta un retroceso
+  más tarde. Los demás fallos transitorios (error de
   conexión, HTTP 5xx) conservan el reintento acotado de 3 intentos con retroceso. Para el circuito un timeout cuenta como una
   llamada fallida más. `ClienteWsaa` lo traduce al mismo código `arca_no_definitivo`. El resultado es no definitivo: el espejo
   sigue `pendiente` con su número y se anota el intento (con su espera). Con el token cancelado (el presupuesto del lote) la

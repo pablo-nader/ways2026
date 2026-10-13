@@ -31,10 +31,13 @@ namespace Ways.IntegrationTests;
 /// aislamiento de una decisión que falla (anotada como intento con un código estable y postergada), el corte por presupuesto que
 /// no es un fallo y posterga la decisión sin tocar sus intentos, el filtro de punto de venta (candidatas, cabezas y pendientes
 /// restantes), el paginado de las candidatas, la falla del propio lote que se propaga, el timeout aplicado a los clientes de WSFE
-/// y WSAA, que una firma de WSAA en vuelo no se abandona con el corte y la comparación del ticket al invalidarlo. Ningún test
-/// espera por tiempo para que algo ocurra: las carreras se resuelven pausando el espía y el presupuesto del lote nace de un
-/// <see cref="FakeTimeProvider"/> que el test avanza recién cuando el espía confirma que el pedido llegó; el único tiempo real es
-/// el timeout del HttpClient, que solo puede vencer una llamada que se cuelga a propósito.
+/// y WSAA, que una firma de WSAA en vuelo no se abandona con el corte, que una falla real de esa firma que llega pasado el
+/// presupuesto se anota como intento, que no se arranca una decisión con el presupuesto agotado y la comparación del ticket al
+/// invalidarlo. El presupuesto del lote se maneja con un <see cref="FakeTimeProvider"/> que el test avanza recién cuando el espía
+/// o la lectura confirman que se llegó al punto buscado, y las carreras se resuelven pausando el espía: esos tests no esperan
+/// tiempo. Los tests de pedidos colgados (<c>UnPedidoQueSupera…</c> y <c>UnPedidoColgado…</c>) SÍ esperan tiempo real, a
+/// propósito: el timeout del HttpClient (<c>TimeoutDeWsfeDeLosTests</c>, 3 s) es lo que se está probando y solo vence una
+/// llamada que se cuelga.
 /// </summary>
 public partial class FacturacionDeVentasEmisionTests
 {
@@ -268,9 +271,32 @@ public partial class FacturacionDeVentasEmisionTests
         END $$;
         """);
 
+    /// <summary>Cuenta las lecturas de candidatas del lote (una por página).</summary>
+    private sealed class InterceptorQueCuentaLasLecturasDeCandidatas : DbCommandInterceptor
+    {
+        private int _lecturas;
+
+        public int Lecturas => Volatile.Read(ref _lecturas);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("NOT EXISTS (SELECT 1 FROM comprobantes_venta e", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _lecturas);
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     /// <summary>Las candidatas de una serie detenida se saltean sin gastar cupo, así que se leen de a páginas de 100: más de una
-    /// página de ésas seguida de una elegible tiene que llegar a la elegible (el cursor avanza y la lectura no para en la primera
-    /// página).</summary>
+    /// página de ésas seguida de una elegible tiene que llegar a la elegible, y la cantidad de lecturas (3: dos páginas con filas
+    /// y una vacía que termina) es la que implica el tamaño de página de 100. Prueba que la lectura no para en la primera
+    /// página y que el tamaño de página no crece sin que el test lo note. NO distingue el cursor <c>&gt;</c> del <c>&gt;=</c>:
+    /// una fila repetida al principio de la página siguiente ya no es elegible (si se procesó, deja de estar pendiente o en
+    /// espera; si está bloqueada, se saltea de nuevo), así que no cambia ningún resultado observable.</summary>
     [Fact]
     public async Task MasDeUnaPaginaDeCandidatasDeUnaSerieEnEsperaNoImpideLlegarALaSiguienteSerie()
     {
@@ -281,8 +307,11 @@ public partial class FacturacionDeVentasEmisionTests
         await ClonarDecisionesAsync(plantilla, 105);
         var elegible = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
         c.Wsfe.Solicitar = Responde(FecaeAprobado());
+        var lecturas = new InterceptorQueCuentaLasLecturasDeCandidatas();
+        var cliente = await ClienteConServiciosAsync(
+            c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(lecturas)));
 
-        var lote = await ProcesarLoteAsync(c.Admin, c.IdPuntoVenta);
+        var lote = await ProcesarLoteAsync(cliente, c.IdPuntoVenta);
 
         // 106 candidatas de la serie B (la plantilla y sus 105 copias) preceden a la factura A: la primera página (100) es
         // toda de la serie en espera, y la elegible está en la segunda.
@@ -291,6 +320,7 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal((1, 107), (lote.Emitidas, lote.PendientesRestantes));
         Assert.Equal(["FECAESolicitar"], c.Wsfe.Operaciones);
         Assert.Equal(0, (await LeerDecisionAsync(c, plantilla.IdFacturacion)).Intentos);
+        Assert.Equal(3, lecturas.Lecturas);
     }
 
     // ===================================================================================================
@@ -670,7 +700,7 @@ public partial class FacturacionDeVentasEmisionTests
     /// del lote nace de él, así que un test lo avanza cuando el espía confirma que el pedido llegó, sin esperar tiempo real. Los
     /// valores de <paramref name="opciones"/> también se copian al host, porque de ahí salen los timeouts de los clientes HTTP.</summary>
     private (ProcesadorDeFacturacionesPorLote Procesador, WaysDbContext Db) NuevoProcesadorDirecto(
-        Ctx c, OpcionesFiscales opciones, TimeProvider tiempo)
+        Ctx c, OpcionesFiscales opciones, TimeProvider tiempo, params IInterceptor[] interceptores)
     {
         var host = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
         {
@@ -683,7 +713,7 @@ public partial class FacturacionDeVentasEmisionTests
             });
         }));
         var servicios = host.Services;
-        var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, c.IdTenant));
+        var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, c.IdTenant), interceptores);
         var contexto = new ContextoFijo(c.IdTenant, c.IdUsuario);
         var parametros = new ServicioDeParametros(db, c.Reloj, new ServicioDeLotes(db, c.Reloj, contexto));
         var opcionesInyectadas = Options.Create(opciones);
@@ -827,6 +857,100 @@ public partial class FacturacionDeVentasEmisionTests
         var siguiente = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
         Assert.Equal((1, 0), (siguiente.Emitidas, siguiente.PendientesRestantes));
         Assert.Equal(1, c.Wsaa.Solicitudes);
+    }
+
+    /// <summary>Una firma de WSAA no se cancela con el corte, así que puede fallar (timeout de WSAA) cuando el presupuesto ya
+    /// venció. Eso es una falla real, no una cancelación: se anota como intento fallido con su código y su espera de siempre
+    /// (30 s), no como la postergación de un minuto sin intento. El lote se corta igual.</summary>
+    [Fact]
+    public async Task UnaFirmaDeWsaaQueVenceDespuesDelPresupuestoSeAnotaComoIntentoYElLoteSeCorta()
+    {
+        var c = await PrepararAsync("lotefirmatarde");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var deOtraSerie = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
+        var firmando = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        c.Wsaa.AntesDeResponderConToken = async _ =>
+        {
+            firmando.TrySetResult();
+            await liberar.Task;
+            throw new ErrorDominio("arca_no_definitivo", "WSAA no respondió dentro del tiempo configurado.", 503);
+        };
+        var tiempo = new FakeTimeProvider();
+        var (procesador, db) = NuevoProcesadorDirecto(c, OpcionesConPresupuestoLargo(), tiempo);
+        await using var contextoDelProcesador = db;
+
+        var tarea = LoteDirectoAsync(procesador, c.IdPuntoVenta);
+        await firmando.Task.WaitAsync(Tope);
+        tiempo.Advance(MasQueElPresupuesto);
+        liberar.TrySetResult();
+        var lote = await ConTopeAsync(tarea);
+
+        // El lote se cortó (no intentó la otra serie) y la falla quedó informada y anotada como intento.
+        Assert.True(lote.CortadoPorPresupuesto);
+        var informada = Assert.Single(lote.Resultados);
+        Assert.Equal(venta.IdFacturacion, informada.IdFacturacion);
+        Assert.Equal((EstadosFiscalesDeVenta.Pendiente, "arca_no_definitivo"), (informada.Fiscal.Estado, informada.Fiscal.Error));
+        Assert.Empty(c.Wsfe.Operaciones);
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal(("pendiente", 1, "arca_no_definitivo"), (decision.Estado, decision.Intentos, decision.UltimoError));
+        Assert.Equal(c.Reloj.Ahora.AddSeconds(30), decision.ProximoIntento);
+        var sinTocar = await LeerDecisionAsync(c, deOtraSerie.IdFacturacion);
+        Assert.Equal(("pendiente", 0, null, null), (sinTocar.Estado, sinTocar.Intentos, sinTocar.UltimoError, sinTocar.ProximoIntento));
+    }
+
+    /// <summary>Vence el presupuesto cuando el lote termina de leer una página de candidatas: avanza el reloj al liberarse el
+    /// lector, con las filas ya materializadas, para que el corte llegue entre una decisión y la siguiente.</summary>
+    private sealed class InterceptorQueVenceElPresupuestoAlLeerLasCandidatas(FakeTimeProvider tiempo) : DbCommandInterceptor
+    {
+        public bool Armado { get; set; }
+
+        public override InterceptionResult DataReaderDisposing(
+            DbCommand command, DataReaderDisposingEventData eventData, InterceptionResult result)
+        {
+            if (Armado && command.CommandText.Contains("NOT EXISTS (SELECT 1 FROM comprobantes_venta e", StringComparison.Ordinal))
+            {
+                tiempo.Advance(MasQueElPresupuesto);
+            }
+
+            return base.DataReaderDisposing(command, eventData, result);
+        }
+    }
+
+    /// <summary>Con el presupuesto vencido entre dos decisiones, la siguiente no se arranca: ni se posterga ni se anota (no se
+    /// intentó), el lote informa el corte y la llamada siguiente la procesa.</summary>
+    [Fact]
+    public async Task UnPresupuestoVencidoEntreDosDecisionesNoArrancaLaSiguienteNiLaPosterga()
+    {
+        var c = await PrepararAsync("lotecorteentre");
+        var cabeza = await SembrarVentaDecididaAsync(c);
+        await DejarEspejoPendienteAsync(c, cabeza);
+        var siguiente = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
+        c.Reloj.Ahora = c.Reloj.Ahora.AddSeconds(31);
+        c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+        var tiempo = new FakeTimeProvider();
+        var vence = new InterceptorQueVenceElPresupuestoAlLeerLasCandidatas(tiempo) { Armado = true };
+        var (procesador, db) = NuevoProcesadorDirecto(c, OpcionesConPresupuestoLargo(), tiempo, vence);
+        await using var contextoDelProcesador = db;
+
+        // La cabeza se resuelve entera; recién al terminar de leer las candidatas vence el presupuesto.
+        var corte = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+
+        Assert.True(corte.CortadoPorPresupuesto);
+        Assert.Equal(cabeza.IdFacturacion, Assert.Single(corte.Resultados).IdFacturacion);
+        Assert.Equal((1, 1), (corte.Emitidas, corte.PendientesRestantes));
+        Assert.Equal(["FECompConsultar", "FECAESolicitar"], c.Wsfe.Operaciones);
+        var intacta = await LeerDecisionAsync(c, siguiente.IdFacturacion);
+        Assert.Equal(("pendiente", 0, null, null), (intacta.Estado, intacta.Intentos, intacta.UltimoError, intacta.ProximoIntento));
+
+        // La llamada siguiente (presupuesto nuevo) la procesa.
+        vence.Armado = false;
+        c.Wsfe.Reiniciar();
+        var final = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+        Assert.False(final.CortadoPorPresupuesto);
+        Assert.Equal(siguiente.IdFacturacion, Assert.Single(final.Resultados).IdFacturacion);
+        Assert.Equal((1, 0), (final.Emitidas, final.PendientesRestantes));
     }
 
     /// <summary>Limitación documentada: una decisión que ya no está pendiente (solo conserva un espejo pendiente) no se puede
@@ -1021,13 +1145,13 @@ public partial class FacturacionDeVentasEmisionTests
     }
 
     /// <summary>El timeout de cada cliente sale de la configuración: WSFE de <c>TimeoutDeLlamadaSegundos</c> (8 s por defecto) y
-    /// WSAA de <c>TimeoutDeWsaaSegundos</c> (30 s por defecto, más largo a propósito).</summary>
+    /// WSAA de <c>TimeoutDeWsaaSegundos</c> (15 s por defecto: más largo que el de WSFE y menor que el presupuesto del lote).</summary>
     [Fact]
     public void ElTimeoutDeLosClientesDeArcaSaleDeLaConfiguracionYWsaaTieneElSuyo()
     {
         var porDefecto = fixture.WithWebHostBuilder(_ => { }).Services.GetRequiredService<IHttpClientFactory>();
         Assert.Equal(TimeSpan.FromSeconds(8), porDefecto.CreateClient(nameof(IClienteWsfe)).Timeout);
-        Assert.Equal(TimeSpan.FromSeconds(30), porDefecto.CreateClient(nameof(IClienteWsaa)).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(15), porDefecto.CreateClient(nameof(IClienteWsaa)).Timeout);
 
         var configurado = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
             services.Configure<OpcionesFiscales>(o =>

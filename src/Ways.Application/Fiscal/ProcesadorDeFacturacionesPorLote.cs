@@ -49,11 +49,16 @@ public sealed record ResultadoDeLoteDeFacturacion(
 /// el <see cref="TimeProvider"/> inyectado, no el de la solicitud. Un corte por presupuesto detiene el lote y no cuenta como fallo
 /// de la decisión que se estaba procesando (el servicio solo anota un intento cuando su token NO está cancelado), pero la deja
 /// postergada <see cref="ServicioDeFacturacionDeVentas.EsperaPorCorteDeLote"/>, sin tocar sus intentos, para que la próxima llamada
-/// llegue a las demás. Limitación: una decisión que ya no está pendiente (solo conserva un espejo pendiente) no se puede
-/// postergar.</item>
+/// llegue a las demás. Excepción: si lo que lanzó es un <see cref="ErrorDominio"/> (una falla real que terminó pasado el
+/// presupuesto, como una firma de WSAA que venció) se anota como intento fallido con su código, igual que fuera del corte; el
+/// lote se corta igual. El presupuesto acota cuándo EMPIEZA el trabajo: no arranca una decisión con el presupuesto agotado (ni se
+/// la posterga ni se la anota), pero una firma de WSAA en vuelo no se interrumpe. Limitaciones: una decisión que ya no está
+/// pendiente (solo conserva un espejo pendiente) no se puede postergar ni se le puede anotar un intento fallido, y cortes
+/// repetidos postergan la decisión un minuto cada vez, sin espera creciente.</item>
 /// <item>Una falla del propio lote (las lecturas de cabezas y candidatas, la carga de series) se registra y se propaga: el
 /// endpoint responde un error y quien llama sabe que no hubo intento. Lo ya comiteado por las decisiones anteriores de la misma
-/// llamada queda comiteado.</item>
+/// llamada queda comiteado, pero esos resultados NO están en ninguna respuesta: la llamada siguiente no los informa porque ya no
+/// están pendientes (el endpoint de una decisión suelta devuelve su estado actual, de forma idempotente).</item>
 /// </list>
 ///
 /// Los cabezas de serie no cuentan para <c>maximo</c> (hay a lo sumo uno por serie): un espejo trabado no puede dejar sin cupo
@@ -236,16 +241,36 @@ public class ProcesadorDeFacturacionesPorLote(
     private async Task<bool> ProcesarAsync(
         Lote lote, int idFacturacion, int idComprobanteVenta, short serie, CancellationToken ct)
     {
+        // Con el presupuesto agotado no se arranca otra decisión: no se intentó, así que no se posterga ni se anota.
+        if (ct.IsCancellationRequested)
+        {
+            lote.CortadoPorPresupuesto = true;
+            return false;
+        }
+
         EstadoFiscalDeVenta estado;
         try
         {
             estado = await facturacion.ProcesarDecisionAsync(idFacturacion, ct);
         }
-        catch (Exception) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (ct.IsCancellationRequested)
         {
             lote.CortadoPorPresupuesto = true;
-            using var posterga = new CancellationTokenSource(PresupuestoDeCierre, tiempo);
-            await facturacion.PostergarPorCorteDeLoteAsync(idFacturacion, posterga.Token);
+            using var cierreDeDecision = new CancellationTokenSource(PresupuestoDeCierre, tiempo);
+            if (ex is ErrorDominio dominio)
+            {
+                // Una falla real que terminó pasado el presupuesto (p. ej. una firma de WSAA que venció) no es una cancelación.
+                log.LogWarning(ex, "La facturación {IdFacturacion} falló del lado de ARCA ({Codigo}) pasado el presupuesto del lote; se anota el intento y el lote se corta.", idFacturacion, dominio.Codigo);
+                await facturacion.RegistrarFalloInesperadoAsync(idFacturacion, dominio.Codigo, cierreDeDecision.Token);
+                lote.Resultados.Add(new ResultadoDeFacturacionDeLote(
+                    idFacturacion, idComprobanteVenta,
+                    new EstadoFiscalDeVenta(EstadosFiscalesDeVenta.Pendiente, null, idFacturacion, dominio.Codigo)));
+            }
+            else
+            {
+                await facturacion.PostergarPorCorteDeLoteAsync(idFacturacion, cierreDeDecision.Token);
+            }
+
             return false;
         }
         catch (Exception ex)

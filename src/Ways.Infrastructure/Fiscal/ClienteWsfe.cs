@@ -216,10 +216,13 @@ public sealed class ClienteWsfe : IClienteWsfe
     /// <summary>Envía un sobre ya armado con backoff exponencial acotado a
     /// <see cref="_intentosMaximos"/> intentos (solo ante falla de TRANSPORTE — socket/5xx, nunca ante una respuesta de negocio
     /// ya parseada) y respeta el circuito abierto sin emitir ningún request mientras dure (target 50). Un TIMEOUT de la
-    /// llamada NO se reintenta: es de inmediato un resultado no definitivo (<c>arca_no_definitivo</c>), porque ARCA pudo haber
-    /// procesado el pedido y volver a enviar el mismo <c>FECAESolicitar</c> puede devolver un error de numeración en lugar del
-    /// CAE; lo resuelve el "consultar primero" del intento siguiente. Para el circuito un timeout es una llamada fallida más,
-    /// igual que cuando se agotaban los intentos.</summary>
+    /// llamada NO se reintenta, en NINGUNA operación: es de inmediato un resultado no definitivo (<c>arca_no_definitivo</c>).
+    /// Por dos razones. Para <c>FECAESolicitar</c>, la seguridad del reenvío: ARCA pudo haber procesado el pedido y volver a
+    /// enviarlo puede devolver un error de numeración en lugar del CAE; lo resuelve el "consultar primero" del intento siguiente.
+    /// Para todas, incluidas las lecturas (consulta, último autorizado, parámetros), que se podrían reenviar sin riesgo: un solo
+    /// intento acotado por el timeout es lo que deja que una llamada colgada termine dentro del presupuesto del lote y se anote.
+    /// El costo: una lectura lenta ahora falla donde antes tres intentos la resolvían, y un CAE que ARCA ya emitió se adopta un
+    /// retroceso más tarde. Para el circuito un timeout es una llamada fallida más, igual que cuando se agotaban los intentos.</summary>
     private async Task<XElement> EnviarAsync(string operacion, string sobre, CancellationToken ct)
     {
         VerificarCircuitoCerrado();

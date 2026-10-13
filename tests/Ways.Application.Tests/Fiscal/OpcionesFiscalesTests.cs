@@ -2,8 +2,8 @@ using Ways.Application.Fiscal;
 
 namespace Ways.Application.Tests.Fiscal;
 
-/// <summary>Los valores por defecto del timeout de las llamadas a WSFE (8 s), de la firma de WSAA (30 s) y del presupuesto de un
-/// lote (20 s); que un valor no positivo o NaN vuelve al por defecto en vez de dejar al HttpClient sin timeout o con uno inválido;
+/// <summary>Los valores por defecto del timeout de las llamadas a WSFE (8 s), de la firma de WSAA (15 s, menor que el presupuesto) y del
+/// presupuesto de un lote (20 s, con piso de 1 s); que un valor no positivo o NaN vuelve al por defecto en vez de dejar al HttpClient sin timeout o con uno inválido;
 /// y que un valor absurdo (infinito, enorme, ínfimo) se acota en vez de lanzar al usarse.</summary>
 public class OpcionesFiscalesTests
 {
@@ -13,8 +13,9 @@ public class OpcionesFiscalesTests
         var opciones = new OpcionesFiscales();
 
         Assert.Equal(TimeSpan.FromSeconds(8), opciones.TimeoutDeLlamada);
-        Assert.Equal(TimeSpan.FromSeconds(30), opciones.TimeoutDeWsaa);
+        Assert.Equal(TimeSpan.FromSeconds(15), opciones.TimeoutDeWsaa);
         Assert.Equal(TimeSpan.FromSeconds(20), opciones.PresupuestoDeLote);
+        Assert.True(opciones.TimeoutDeWsaa < opciones.PresupuestoDeLote);
     }
 
     [Fact]
@@ -43,7 +44,7 @@ public class OpcionesFiscalesTests
         };
 
         Assert.Equal(TimeSpan.FromSeconds(8), opciones.TimeoutDeLlamada);
-        Assert.Equal(TimeSpan.FromSeconds(30), opciones.TimeoutDeWsaa);
+        Assert.Equal(TimeSpan.FromSeconds(15), opciones.TimeoutDeWsaa);
         Assert.Equal(TimeSpan.FromSeconds(20), opciones.PresupuestoDeLote);
     }
 
@@ -89,17 +90,33 @@ public class OpcionesFiscalesTests
     [InlineData(1e-9)]
     [InlineData(double.Epsilon)]
     [InlineData(0.0004)]
-    public void UnValorPositivoMenorQueUnMilisegundoSeSubeAUnMilisegundo(double segundos)
+    public void UnTimeoutPositivoMenorQueUnMilisegundoSeSubeAUnMilisegundo(double segundos)
     {
-        var opciones = new OpcionesFiscales
-        {
-            TimeoutDeLlamadaSegundos = segundos, TimeoutDeWsaaSegundos = segundos, PresupuestoDeLoteSegundos = segundos
-        };
+        var opciones = new OpcionesFiscales { TimeoutDeLlamadaSegundos = segundos, TimeoutDeWsaaSegundos = segundos };
 
         // Un HttpClient con timeout cero lanza al usarse: el piso evita el valor degenerado.
         Assert.Equal(TimeSpan.FromMilliseconds(1), opciones.TimeoutDeLlamada);
         Assert.Equal(TimeSpan.FromMilliseconds(1), opciones.TimeoutDeWsaa);
-        Assert.Equal(TimeSpan.FromMilliseconds(1), opciones.PresupuestoDeLote);
+    }
+
+    [Theory]
+    [InlineData(1e-9)]
+    [InlineData(0.0004)]
+    [InlineData(0.5)]
+    [InlineData(0.999)]
+    public void UnPresupuestoDeLotePositivoMenorQueUnSegundoSeSubeAUnSegundo(double segundos)
+    {
+        // Un presupuesto ínfimo cortaría cada llamada antes de intentar nada, en silencio y para siempre.
+        var opciones = new OpcionesFiscales { PresupuestoDeLoteSegundos = segundos };
+
+        Assert.Equal(TimeSpan.FromSeconds(1), opciones.PresupuestoDeLote);
+    }
+
+    [Fact]
+    public void UnPresupuestoDeLoteDeUnSegundoOMasSeRespeta()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(1), new OpcionesFiscales { PresupuestoDeLoteSegundos = 1 }.PresupuestoDeLote);
+        Assert.Equal(TimeSpan.FromSeconds(1.5), new OpcionesFiscales { PresupuestoDeLoteSegundos = 1.5 }.PresupuestoDeLote);
     }
 
     [Fact]
