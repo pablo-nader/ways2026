@@ -18,7 +18,9 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
 
 jobs:
-  # Un cambio que solo toca documentación o instrucciones de agentes no corre las suites.
+  # Un pull request que solo toca documentación o instrucciones de agentes no corre las
+  # suites. En `push` a main corren siempre: esa corrida valida la punta que se despliega,
+  # y su diff no cubre los commits de una corrida pendiente que GitHub haya descartado.
   # Los jobs pesados se saltean únicamente si este job dijo `codigo=false` de forma
   # explícita: si falla o no llega a decidir, corren igual (un job salteado cuenta como
   # aprobado para el ruleset de main, así que ante la duda no se saltea nada).
@@ -51,8 +53,10 @@ jobs:
             echo "desktop=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git diff --name-only "$base" HEAD > cambiados.txt
-          if [ ! -s cambiados.txt ] || grep -qvE "$SOLO_DOCUMENTACION" cambiados.txt; then
+          # Sin detección de renombres: mover un archivo de código a docs/ tiene que
+          # listar también la ruta que desaparece.
+          git diff --name-only --no-renames "$base" HEAD > cambiados.txt
+          if [ "$EVENTO" != "pull_request" ] || [ ! -s cambiados.txt ]             || grep -qvE "$SOLO_DOCUMENTACION" cambiados.txt; then
             echo "codigo=true" >> "$GITHUB_OUTPUT"
           else
             echo "Solo cambió documentación: se saltean las suites."

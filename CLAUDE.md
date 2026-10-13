@@ -46,7 +46,7 @@ adversarial automated review before it is sent:
 2. Create the PR (per `branch-pr` skill) only on `JUDGMENT: APPROVED`. If any confirmed
    issue remains after round two, the verdict is `ESCALATED`: stop, do not open the PR, and
    report the remaining findings to the owner for a decision.
-3. Every finished stage or slice ships as a PR automatically, without asking: open it, enable
+3. Every finished stage or slice that reached `APPROVED` ships as a PR automatically, without asking: open it, enable
    auto-merge (main requires green CI) and enable the desktop app's Auto-fix monitor so CI
    failures are resolved without the owner's intervention. Then continue with the next slice.
 4. Review findings that reveal a recurring mistake must feed the skills loop (see Skills
