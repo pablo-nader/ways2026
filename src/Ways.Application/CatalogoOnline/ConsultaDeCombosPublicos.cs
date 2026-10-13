@@ -15,8 +15,8 @@ namespace Ways.Application.CatalogoOnline;
 /// <para>Esta clase decide lo que la policy no puede. Un combo se ofrece solo si es de todo el tenant o de la empresa
 /// de la vitrina y TODOS sus componentes son artículos (los de familia piden elegir un miembro, algo que la tienda no
 /// tiene todavía) que están disponibles para esa empresa, tienen un precio vigente en la lista de la tienda y se
-/// venden por <see cref="UnidadVenta.Unidad"/>: es la única unidad que el motor de combos de la venta online acepta,
-/// así que un combo con un componente pesable no se ofrece. El precio es el fijo del combo, sin pasar por la lista ni
+/// venden por <see cref="UnidadVenta.Unidad"/>: la tienda no tiene todavía cómo pedir una cantidad por peso, así que un
+/// combo con un componente pesable no se ofrece aunque el motor de la venta lo acepte. El precio es el fijo del combo, sin pasar por la lista ni
 /// por las ofertas, redondeado al peso entero: es el que cobra el motor de la venta (<c>199,4</c> se lista a <c>199</c>).
 /// Un combo sin componentes tampoco figura. Ordenados por nombre.</para>
 ///
