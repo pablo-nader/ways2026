@@ -208,6 +208,9 @@ export function Usuarios() {
     }
 
     const datos = formulario
+    // Una lectura en vuelo queda invalidada por el token de esta escritura: no va a dejar datos ni a
+    // bajar `cargando`. Si la escritura falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(true)
@@ -241,7 +244,17 @@ export function Usuarios() {
           mensajeOk = `Usuario "${datos.usuario}" actualizado.`
         }
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        if (generacion.current === token) {
+          const mensaje = e instanceof ErrorApi ? e.message : 'No se pudo guardar.'
+          setError(mensaje)
+          if (habiaLecturaEnVuelo) {
+            // La lectura limpia el error compartido al aterrizar: el motivo del rechazo se vuelve a rendir.
+            const tokenLectura = ++generacion.current
+            void cargar(tokenLectura, busquedaAplicada).then(() => {
+              if (generacion.current === tokenLectura) setError(mensaje)
+            })
+          }
+        }
 
         return
       }
