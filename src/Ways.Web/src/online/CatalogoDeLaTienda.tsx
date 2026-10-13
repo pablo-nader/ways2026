@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Chevrones } from '../publico/Glifos'
 import { BarraDelCatalogo } from './BarraDelCatalogo'
-import { articuloParaElCarrito } from './carrito'
+import { articuloParaElCarrito, comboParaElCarrito } from './carrito'
 import { useCarrito } from './CarritoContext'
 import { filtroInicialDeLaUrl } from './filtroInicial'
+import { ID_DE_LA_SECCION_DE_COMBOS, SeccionDeCombos } from './SeccionDeCombos'
 import { TarjetaDeArticulo } from './TarjetaDeArticulo'
 import { useCatalogo } from './useCatalogo'
+import { useCombos } from './useCombos'
 
 function CatalogoEnPreparacion() {
   return (
@@ -61,7 +63,8 @@ export function CatalogoDeLaTienda() {
   const [buscar, setBuscar] = useState(filtroInicial.buscar)
   const [idCategoria, setIdCategoria] = useState(filtroInicial.idCategoria)
   const catalogo = useCatalogo({ buscar, idCategoria })
-  const { cantidades, sincronizar } = useCarrito()
+  const combos = useCombos(catalogo.lecturas)
+  const { cantidades, cantidadesDeCombos, sincronizar, sincronizarCombos } = useCarrito()
 
   // Cada lista que llega (primera lectura, otro filtro, "Ver más") pone al día las líneas del
   // carrito cuyo artículo figura en ella: nombre, precio, unidad e imagen salen de la última lectura.
@@ -69,6 +72,25 @@ export function CatalogoDeLaTienda() {
   useEffect(() => {
     sincronizar(articulosLeidos.map(articuloParaElCarrito))
   }, [articulosLeidos, sincronizar])
+
+  // Los combos se releen con cada lectura del catálogo: la lista que llega pone al día las líneas de combo
+  // del carrito, y las que ya no figuran quedan marcadas. Una lectura que falló no cambia `combos`.
+  useEffect(() => {
+    if (combos !== null) sincronizarCombos(combos.map(comboParaElCarrito))
+  }, [combos, sincronizarCombos])
+
+  // Los combos no se filtran por búsqueda ni por categoría: con un filtro activo no se muestran,
+  // igual que el catálogo no los trae en esas consultas.
+  const hayFiltro = buscar !== '' || idCategoria !== null
+  const mostrarCombos = combos !== null && combos.length > 0 && !hayFiltro && catalogo.cargadoAlgunaVez && !catalogo.vacioAlEntrar
+
+  // Llegar con `#combos` (el enlace de la landing) lleva a la sección apenas se dibuja, una sola vez.
+  const irACombos = useRef(window.location.hash === `#${ID_DE_LA_SECCION_DE_COMBOS}`)
+  useEffect(() => {
+    if (!mostrarCombos || !irACombos.current) return
+    irACombos.current = false
+    document.getElementById(ID_DE_LA_SECCION_DE_COMBOS)?.scrollIntoView?.()
+  }, [mostrarCombos])
 
   if (!catalogo.cargadoAlgunaVez) {
     return catalogo.fase === 'error' ? (
@@ -94,6 +116,7 @@ export function CatalogoDeLaTienda() {
         alBuscar={setBuscar}
         alElegirCategoria={setIdCategoria}
       />
+      {mostrarCombos && <SeccionDeCombos combos={combos} cantidades={cantidadesDeCombos} />}
       {catalogo.fase === 'error' ? (
         <AvisoDeError mensaje="No pudimos cargar los artículos. Probá de nuevo en un momento." alReintentar={catalogo.reintentar} />
       ) : (

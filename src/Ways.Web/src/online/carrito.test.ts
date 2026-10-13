@@ -20,6 +20,7 @@ import {
 } from './carrito'
 
 const martillo: ArticuloParaElCarrito = {
+  tipo: 'articulo',
   idArticulo: 1,
   nombre: 'Martillo',
   precio: 1500.5,
@@ -28,6 +29,7 @@ const martillo: ArticuloParaElCarrito = {
 }
 
 const clavos: ArticuloParaElCarrito = {
+  tipo: 'articulo',
   idArticulo: 2,
   nombre: 'Clavos',
   precio: 2000,

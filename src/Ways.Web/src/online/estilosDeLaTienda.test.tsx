@@ -6,8 +6,9 @@ import { BarraDelCatalogo } from './BarraDelCatalogo'
 import { BotonCarrito } from './BotonCarrito'
 import { claveDelCarrito } from './carrito'
 import { CarritoProvider } from './CarritoProvider'
-import { categoriaPublica } from './datosDePrueba'
+import { categoriaPublica, comboPublico, componenteDeCombo } from './datosDePrueba'
 import { PanelCarrito } from './PanelCarrito'
+import { CuerpoDelCombo } from './TarjetaDeCombo'
 
 /**
  * Estas pruebas leen el estilo calculado que jsdom obtiene de `publico.css` (Vitest corre con
@@ -62,6 +63,20 @@ describe('aro de foco dentro de contenedores con desplazamiento', () => {
     expect(getComputedStyle(lineas).overflowY).toBe('auto')
     expect(lados(lineas, 'padding')).toEqual(['6px', '6px', '6px', '6px'])
     expect(lados(lineas, 'margin')).toEqual(['-6px', '-6px', '-6px', '-6px'])
+  })
+})
+
+describe('tira de miniaturas de un combo', () => {
+  it.each([1, 2, 3])('con %i imagen(es) la tira tiene alto fijo y cada miniatura mide hasta 96 px de ancho', (cuantas) => {
+    const componentes = Array.from({ length: cuantas }, (_, i) => componenteDeCombo(10 + i, { imagenVersion: i + 1 }))
+    const { container } = render(<CuerpoDelCombo combo={comboPublico(1, { componentes })} />)
+
+    const tira = container.querySelector('.publico-combo-miniaturas') as HTMLElement
+    const miniaturas = Array.from(container.querySelectorAll<HTMLElement>('.publico-combo-miniatura'))
+
+    expect(miniaturas).toHaveLength(cuantas)
+    expect(getComputedStyle(tira).height).toBe('96px')
+    for (const miniatura of miniaturas) expect(getComputedStyle(miniatura).maxWidth).toBe('96px')
   })
 })
 

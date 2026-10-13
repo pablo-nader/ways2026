@@ -7,7 +7,7 @@ import { ErrorApi } from '../api/cliente'
 import type { VitrinaPublica } from '../api/tipos'
 import '../publico/publico.css'
 import { claveDelCarrito } from './carrito'
-import { articuloPublico, catalogoPublico, categoriaPublica, diferida } from './datosDePrueba'
+import { articuloPublico, catalogoPublico, categoriaPublica, diferida, itemsGuardados } from './datosDePrueba'
 import { Tienda } from './Tienda'
 
 const obtenerVitrinaMock = vi.fn()
@@ -62,7 +62,7 @@ function llamadas() {
 /** Lo que el carrito tiene guardado en el navegador: la verdad del carrito aunque el campo muestre otra cosa. */
 function cantidadesGuardadas() {
   const crudo = localStorage.getItem(claveDelCarrito(window.location.host))
-  const lineas = JSON.parse(crudo ?? '[]') as { idArticulo: number; cantidad: number }[]
+  const lineas = itemsGuardados(crudo) as { idArticulo: number; cantidad: number }[]
 
   return lineas.map(({ idArticulo, cantidad }) => ({ idArticulo, cantidad }))
 }
@@ -491,7 +491,7 @@ describe('catálogo de la tienda', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
 
-      expect(screen.getByRole('button', { name: 'Carrito, 1 artículo' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Carrito, 1 ítem' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Agregar Martillo al carrito' })).not.toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Cantidad de Martillo' })).toHaveValue('1')
       expect(screen.getByRole('button', { name: 'Agregar Clavos al carrito' })).toBeInTheDocument()
@@ -773,8 +773,8 @@ describe('catálogo de la tienda', () => {
 
       expect(linea).toHaveTextContent('$ 1.234,56')
       expect(linea).toHaveTextContent('$ 2.469,12')
-      expect(JSON.parse(localStorage.getItem(claveDelCarrito(window.location.host)) as string)).toEqual([
-        { idArticulo: 1, nombre: 'Martillo', precio: 1234.56, unidadVenta: 'Unidad', cantidad: 2, imagenVersion: 42 },
+      expect(itemsGuardados(localStorage.getItem(claveDelCarrito(window.location.host)))).toEqual([
+        { tipo: 'articulo', idArticulo: 1, nombre: 'Martillo', precio: 1234.56, unidadVenta: 'Unidad', cantidad: 2, imagenVersion: 42 },
       ])
     })
 
