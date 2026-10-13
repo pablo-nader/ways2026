@@ -67,12 +67,14 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   guardas estructurales, prueba de mutación del predicado. Ruta: delegada.
 - [x] **T4 — Decisión al ingerir.** Servicio de decisión, `ForzarFactura` en la solicitud y en
   `ExigirMismoContenido`, estado fiscal en la respuesta. Depende de T1–T3.
-- [ ] **T5a — Emisión del espejo (núcleo).** Test que fija el comportamiento actual (un fallo
+- [x] **T5a — Emisión del espejo (núcleo).** Test que fija el comportamiento actual (un fallo
   de ARCA revierte fila y número), `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync` en
   dos transacciones, liberación del número ante rechazo, reversión del acumulado, anulación
   bloqueada para ventas facturadas, endpoint de una decisión. Ver "Diseño de T5". Depende de T4.
 - [ ] **T5b — Procesador por lote.** `POST /api/fiscal/facturaciones/procesar`, espera entre
-  intentos, orden por serie, concurrencia. Depende de T5a.
+  intentos, orden por serie, concurrencia. Incluye lo que T5a dejó anotado: tope de tiempo de
+  las llamadas a WSFE y que invalidar el ticket de acceso solo descarte el ticket que falló
+  (hoy descarta el que esté guardado, y dos llamadas simultáneas pueden pisarse). Depende de T5a.
 - [ ] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
   comprobante en la respuesta de la venta. Depende de T5b.
 - [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
@@ -288,6 +290,36 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   Para T5: no emitir si la venta está anulada (cancelar la decisión); el estado fiscal en la
   respuesta ya prevé `aprobado`/`rechazado`.
 
+- 2026-10-14 — T5a hecha. Ruta: delegada (un escritor y dos rondas de corrección).
+  `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync` y
+  `POST /api/fiscal/facturaciones/{id}/procesar`. Pasos A (reserva la serie, bloquea la venta
+  y la decisión, relee bajo lock, numera e inserta el espejo), C (consulta un espejo
+  preexistente; si ARCA no lo tiene y las compuertas pasan, guarda la fecha nueva) y S
+  (solicita el CAE), con una guarda de época (`xmin` del espejo) entre pasos.
+  Rechazo definitivo: espejo borrado, número devuelto, decisión `rechazada`, débito revertido;
+  la venta no se toca. Sin respuesta definitiva: espejo en trámite, intento y espera
+  anotados (todavía nadie respeta la espera). Solo el código 602 de la consulta significa
+  comprobante inexistente; un error de llamada se consulta antes de liberar; un 600 en la
+  consulta renueva el ticket una vez. Anulación: 409
+  `venta_facturada_requiere_nota_de_credito` si la venta tiene espejo aprobado o en trámite.
+  Cambio fuera de la feature: `ReintentarAsync` (19a) excluye espejos y, ante un error de la
+  consulta que no sea 602, corta con 503 en vez de pedir un CAE nuevo.
+  Checks sobre el código final: `dotnet build` sin errores; dominio 1691/1691; aplicación
+  963/963; integración completa 4390/4390. Sin test-first estricto: la evidencia por cláusula
+  son las mutaciones de las tres rondas, todas en rojo y sin sobrevivientes.
+  Judgment-day: ronda 1, un crítico confirmado (crear el espejo confiaba en lecturas sin
+  lock) y dos advertencias (qué es "no encontrado", qué es rechazo definitivo), corregidos;
+  re-juicio 1, dos advertencias nuevas confirmadas (ticket sin renovar en la consulta, 500
+  por una carrera benigna), corregidas; re-juicio 2: todo resuelto, sin críticos.
+  JUDGMENT: APPROVED. Queda una advertencia confirmada por los dos jueces, de un patrón
+  que ya existía en 19a y que T5a usa en más lugares: invalidar el ticket descarta el que
+  esté guardado, no el que falló; pasa a T5b.
+  Limitaciones aceptadas: todo probado contra simuladores (602 y fecha de la consulta sin
+  verificar contra ARCA real); sin tope de tiempo en WSFE, la serie queda retenida mientras
+  dura una llamada; cualquier usuario de POS del tenant puede procesar cualquier decisión;
+  un espejo `rechazado` por la guarda del número ocupa el lugar del espejo de la venta; una
+  compuerta que lanza tras "no encontrado" da 500 sin anotar intento.
+
 ## Próximo paso
 
-T5.
+T5b.

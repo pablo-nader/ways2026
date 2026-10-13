@@ -492,8 +492,7 @@ en línea desde la venta son T5b y T5c.
     `estado = 'pendiente'`, sin lock previo ni lectura previa.
 - **Un espejo pendiente siempre se resuelve**, sea cual sea el estado de su decisión. Si el espejo está `pendiente` y su decisión
   ya no lo está (en esta rebanada ningún camino de producción deja una decisión no pendiente con un espejo pendiente; la
-  resolución existe como salvaguarda y los tests la ejercen con estados fabricados, o la decisión cambió mientras ARCA
-  contestaba), igual se consulta (C) y: si ARCA lo
+  resolución existe como salvaguarda y los tests la ejercen con estados fabricados), igual se consulta (C) y: si ARCA lo
   tiene se adopta su CAE y, de la decisión, solo se enlaza `id_comprobante_fiscal` si no tenía enlace (ningún CHECK de la tabla lo
   prohíbe: solo `emitida` exige enlace); si ARCA no lo tiene se libera (borra ítems y fila y devuelve el número con la guarda del
   contador) sin pedir un CAE nuevo. En los dos casos el estado de la decisión y el acumulado no se tocan y se registra un error en
