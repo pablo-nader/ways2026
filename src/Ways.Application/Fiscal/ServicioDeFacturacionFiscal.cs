@@ -570,11 +570,13 @@ public class ServicioDeFacturacionFiscal(
 
     internal AmbienteFiscal ResolverAmbiente() => opciones.Value.ResolverAmbiente();
 
-    internal async Task<DateOnly> ResolverFechaFiscalAsync(int idEmpresa, DateTimeOffset instante, CancellationToken ct)
+    internal async Task<DateOnly> ResolverFechaFiscalAsync(int idEmpresa, DateTimeOffset instante, CancellationToken ct) =>
+        FechaFiscal.DeInstante(instante, await ResolverZonaFiscalAsync(idEmpresa, ct));
+
+    internal async Task<TimeZoneInfo> ResolverZonaFiscalAsync(int idEmpresa, CancellationToken ct)
     {
         var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, null, ct);
-        var zona = TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
-        return FechaFiscal.DeInstante(instante, zona);
+        return TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
     }
 
     internal static string ExigirCuitNumerico(Empresa empresa)

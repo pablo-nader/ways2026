@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -18,23 +19,29 @@ namespace Ways.Application.Fiscal;
 /// un comprobante fiscal enlazado por <c>id_venta_origen</c> que lleva comprobante e ítems y nada de stock, pagos, cuenta
 /// corriente ni turno.
 ///
-/// Dos transacciones, porque ARCA puede autorizar un número aunque nunca recibamos la respuesta, así que el número tiene que
-/// sobrevivir a la falta de respuesta (la emisión directa, <see cref="ServicioDeFacturacionFiscal"/>, lo deshace todo ante
-/// ese caso):
-///   A) toma el lock de la serie, verifica que la serie no esté detenida por otro espejo pendiente, bloquea la venta y
-///      verifica que siga emitida, toma el número e inserta el espejo en <c>pendiente</c>. Commit.
-///   B) retoma el lock de la serie (el que sostiene la llamada a ARCA) y pide el CAE; si el espejo ya existía de una
-///      llamada anterior, consulta primero y solo pide un CAE nuevo si ARCA no tiene el número. Aplica el resultado y
-///      actualiza la decisión, guardada por <c>estado = 'pendiente'</c>.
-/// Las dos usan la estrategia sin reintento: un reintento tras un commit ambiguo quemaría otro número.
+/// ARCA puede autorizar un número aunque nunca recibamos la respuesta, así que el número tiene que sobrevivir a la falta de
+/// respuesta (la emisión directa, <see cref="ServicioDeFacturacionFiscal"/>, lo deshace todo ante ese caso). Cada paso es su
+/// propia transacción, sin reintento (un reintento tras un commit ambiguo quemaría otro número), y cada uno retoma el lock de
+/// la serie:
+///   A) crea el espejo: lock de la serie, verifica que no la detenga otro espejo pendiente, bloquea la venta y, bajo ese lock,
+///      relee que la venta siga emitida, que no tenga ya un espejo y que su decisión siga pendiente; toma el número e inserta
+///      el espejo en <c>pendiente</c>. Si algo de eso dejó de valer no inserta nada ni toma número.
+///   C) consulta un espejo pendiente que ya existía (de una llamada anterior). Encontrado: lo adopta. No encontrado: guarda la
+///      fecha de hoy en una transacción propia ya comiteada, ANTES de pedir. Cualquier otro error de la consulta no es definitivo.
+///   S) pide el CAE con la fecha ya guardada y aplica el resultado. Solo corre si el espejo no cambió desde el paso anterior de
+///      la misma llamada (la época, o <c>xmin</c>, de su fila): así ninguna otra llamada pudo consultar o pedir en el medio.
+/// Un espejo pendiente SIEMPRE se resuelve, sea cual sea el estado de su decisión: si la decisión ya no está pendiente se
+/// consulta y se adopta o se libera, nunca se pide un CAE nuevo.
 ///
-/// Orden de locks: <c>numeraciones_fiscales</c> → <c>comprobantes_venta</c> → <c>facturaciones_de_venta</c> →
-/// <c>acumulados_de_facturacion</c> (por medio de pago ascendente). El acumulado solo se escribe con SQL crudo, igual que
-/// en <see cref="ServicioDeDecisionDeFacturacion"/>, y cada reversión es la contraparte exacta de lo que aplicó esa decisión.
+/// Orden de locks: <c>numeraciones_fiscales</c> → <c>comprobantes_venta</c> (venta, luego espejo) → <c>facturaciones_de_venta</c>
+/// → <c>acumulados_de_facturacion</c> (por medio de pago ascendente). Toda transición de una decisión se hace con su fila
+/// bloqueada y su estado releído bajo ese lock. El acumulado solo se escribe con SQL crudo, igual que en
+/// <see cref="ServicioDeDecisionDeFacturacion"/>, y cada reversión es la contraparte exacta de lo que aplicó esa decisión.
 ///
 /// Un resultado es definitivo solo si está en la lista blanca: una <see cref="RespuestaCae"/> (aprobado, aprobado con
-/// observaciones o rechazado) o el error <c>arca_rechazo</c>. Todo lo demás (transporte, falla SOAP, ticket de acceso,
-/// numeración desincronizada, lecturas) deja el espejo pendiente con su número.
+/// observaciones o rechazado), o el error <c>arca_rechazo</c> SI la consulta posterior confirma que ARCA no tiene el número.
+/// Todo lo demás (transporte, falla SOAP, ticket de acceso, numeración desincronizada, un error de la consulta) deja el espejo
+/// pendiente con su número.
 ///
 /// La espera entre intentos (<c>proximo_intento_en</c>) solo se REGISTRA: nada la lee todavía. La respetará el procesador por
 /// lote; este servicio procesa la decisión que se le pide aunque su espera no haya vencido.
@@ -71,36 +78,57 @@ public class ServicioDeFacturacionDeVentas(
 
     // ---- API -----------------------------------------------------------------------------------
 
-    /// <summary>Procesa la decisión: devuelve su estado resultante. Idempotente: una decisión que ya no está pendiente
-    /// devuelve su estado sin ninguna llamada a ARCA. Una decisión inexistente o de otro tenant es un 404.</summary>
+    /// <summary>Procesa la decisión: devuelve su estado resultante. Idempotente: una decisión que ya no está pendiente y no
+    /// tiene un espejo pendiente devuelve su estado sin ninguna llamada a ARCA. Una decisión inexistente o de otro tenant es
+    /// un 404.</summary>
     public async Task<EstadoFiscalDeVenta> ProcesarDecisionAsync(int idFacturacion, CancellationToken ct = default)
     {
         var idTenant = contexto.IdTenant
             ?? throw new InvalidOperationException(
                 "ServicioDeFacturacionDeVentas requiere un actor de tenant; OperacionDePos no admite plataforma.");
+
+        return await ProcesarAsync(idFacturacion, idTenant, ct);
+    }
+
+    /// <summary>Evalúa el estado actual y lo avanza. Se vuelve a llamar a sí mismo ("reevaluar") solo cuando otra llamada
+    /// comiteó un cambio entre las lecturas sin lock y el lock; cada reevaluación presupone una transición nueva y comiteada
+    /// de otra llamada, así que no hay un ciclo sin otro escritor.</summary>
+    private async Task<EstadoFiscalDeVenta> ProcesarAsync(int idFacturacion, int idTenant, CancellationToken ct)
+    {
         db.ChangeTracker.Clear();
 
         var decision = await LeerDecisionAsync(idFacturacion, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la facturación {idFacturacion}.");
-        if (decision.Estado != Pendiente)
-        {
-            return await ProyectarAsync(decision, null, ct);
-        }
-
         var venta = await db.ComprobantesVenta.AsNoTracking()
             .FirstAsync(c => c.Id == decision.IdComprobanteVenta, ct);
         var espejo = await db.ComprobantesVenta.AsNoTracking()
             .FirstOrDefaultAsync(c => c.IdVentaOrigen == decision.IdComprobanteVenta, ct);
 
+        // Un espejo pendiente se resuelve aunque su decisión ya no lo esté.
+        if (espejo is { ResultadoFiscal: ResultadoFiscal.Pendiente })
+        {
+            return await ProcesarEspejoPendienteAsync(decision, espejo, idTenant, ct);
+        }
+
+        if (decision.Estado != Pendiente)
+        {
+            return await ProyectarAsync(decision, null, ct);
+        }
+
+        if (espejo is not null)
+        {
+            throw new InvalidOperationException(
+                $"El espejo {espejo.Id} está '{espejo.ResultadoFiscal}' pero su decisión {decision.Id} sigue pendiente.");
+        }
+
         // Una venta anulada es terminal (emitido → anulado) y un espejo no se crea sobre ella, así que esta lectura sin lock
         // no puede quedar vieja: lo que decide la anulación contra el espejo se decide bajo el lock de la venta.
-        if (espejo is null && venta.Estado != EstadoComprobante.Emitido)
+        if (venta.Estado != EstadoComprobante.Emitido)
         {
             return await CancelarAsync(decision, ct);
         }
 
-        var origen = espejo ?? venta;
-        var evaluacion = await EvaluarCompuertasAsync(origen, espejo is not null, ct);
+        var evaluacion = await EvaluarCompuertasAsync(venta, false, ct);
         if (evaluacion.Fallo is { } fallo)
         {
             return await RegistrarFalloAsync(
@@ -120,34 +148,67 @@ public class ServicioDeFacturacionDeVentas(
                 decision, DescribirFalla(ex), EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct);
         }
 
-        EspejoEnTramite enTramite;
-        if (espejo is null)
+        var creacion = await CrearEspejoAsync(decision, venta, plan, idTenant, ct);
+        switch (creacion.Resultado)
         {
-            var creacion = await CrearEspejoAsync(venta, plan, idTenant, ct);
-            switch (creacion.Resultado)
-            {
-                case ResultadoDeCreacion.VentaNoEmitida:
-                    return await CancelarAsync(decision, ct);
-                case ResultadoDeCreacion.SerieOcupada:
-                    return await ProyectarAsync(decision, $"{SerieOcupada}: otra llamada está usando la serie.", ct);
-                case ResultadoDeCreacion.SerieBloqueada:
-                    return await ProyectarAsync(
-                        decision, $"{SerieBloqueada}: la serie espera que otro comprobante pendiente se resuelva.", ct);
-            }
-
-            enTramite = creacion.Espejo!;
-        }
-        else
-        {
-            enTramite = new EspejoEnTramite(espejo.Id, espejo.Numero, espejo.Fecha, Nuevo: false);
+            case ResultadoDeCreacion.VentaNoEmitida:
+                return await CancelarAsync(decision, ct);
+            case ResultadoDeCreacion.Obsoleta:
+                return await ProcesarAsync(idFacturacion, idTenant, ct);
+            case ResultadoDeCreacion.SerieOcupada:
+                return await ProyectarAsync(decision, $"{SerieOcupada}: otra llamada está usando la serie.", ct);
+            case ResultadoDeCreacion.SerieBloqueada:
+                return await ProyectarAsync(
+                    decision, $"{SerieBloqueada}: la serie espera que otro comprobante pendiente se resuelva.", ct);
         }
 
-        return await ResolverEspejoAsync(decision, plan, enTramite, ticket, idTenant, ct);
+        return await SolicitarAsync(decision, plan, creacion.Espejo!.Id, creacion.Espejo.Epoca, ticket, idTenant, ct);
+    }
+
+    /// <summary>Un espejo pendiente de una llamada anterior. Para consultarlo solo hace falta lo que la consulta usa (certificado,
+    /// CUIT del emisor, punto de venta fiscal, tipo y número), no las compuertas de la venta: si ARCA ya tiene el número se
+    /// adopta aunque la configuración haya cambiado. Las compuertas completas se aplican solo si ARCA no lo tiene y la decisión
+    /// sigue pendiente, antes de volver a pedir.</summary>
+    private async Task<EstadoFiscalDeVenta> ProcesarEspejoPendienteAsync(
+        FacturacionPendiente decision, ComprobanteVenta espejo, int idTenant, CancellationToken ct)
+    {
+        var compuertas = decision.Estado == Pendiente ? await EvaluarCompuertasAsync(espejo, true, ct) : null;
+        var prerrequisitos = await EvaluarPrerrequisitosDeConsultaAsync(espejo, ct);
+
+        if (prerrequisitos.Fallo is { } sinPrerrequisitos)
+        {
+            var fallo = compuertas?.Fallo ?? sinPrerrequisitos;
+            return await RegistrarFalloDeEspejoAsync(
+                decision, espejo.Id, $"{fallo.Codigo}: {fallo.Mensaje}", EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
+        }
+
+        var consulta = prerrequisitos.Contexto!;
+        TicketDeAcceso ticket;
+        try
+        {
+            ticket = await fiscal.ObtenerTicketAsync(consulta.Empresa, consulta.Ambiente, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            return await RegistrarFalloDeEspejoAsync(
+                decision, espejo.Id, DescribirFalla(ex), EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct);
+        }
+
+        return await ConsultarEspejoPendienteAsync(decision, consulta, compuertas, espejo.Id, ticket, idTenant, ct);
     }
 
     // ---- Compuertas (sin red) --------------------------------------------------------------------
 
     private sealed record FalloDeCompuerta(string Codigo, string Mensaje);
+
+    /// <summary>Lo que hace falta para identificar el comprobante ante ARCA y autenticarse: se arma sin las compuertas de la venta.</summary>
+    private sealed record ContextoDeConsulta(
+        PuntoVenta PuntoVenta, Empresa Empresa, AmbienteFiscal Ambiente, string CuitEmisor, short CodigoAfip)
+    {
+        public ClaveDeSerie Serie => new(PuntoVenta.NumeroFiscal!.Value, CodigoAfip);
+    }
+
+    private sealed record Prerrequisitos(ContextoDeConsulta? Contexto, FalloDeCompuerta? Fallo);
 
     private sealed record Plan(
         PuntoVenta PuntoVenta, Empresa Empresa, TipoComprobante Tipo, char Letra, string CuitEmisor,
@@ -155,46 +216,38 @@ public class ServicioDeFacturacionDeVentas(
         AmbienteFiscal Ambiente)
     {
         public ClaveDeSerie Serie => new(PuntoVenta.NumeroFiscal!.Value, Tipo.CodigoAfip!.Value);
+
+        public ContextoDeConsulta Consulta => new(PuntoVenta, Empresa, Ambiente, CuitEmisor, Tipo.CodigoAfip!.Value);
     }
 
     private sealed record Evaluacion(Plan? Plan, FalloDeCompuerta? Fallo);
 
-    /// <summary>Las compuertas se evalúan sobre el ticket (si todavía no hay espejo) o sobre el espejo existente, cuyo tipo,
-    /// cliente e ítems ya quedaron fijados por la llamada que lo creó.</summary>
-    private async Task<Evaluacion> EvaluarCompuertasAsync(ComprobanteVenta origen, bool origenEsEspejo, CancellationToken ct)
+    private static FalloDeCompuerta SinNumeroFiscal() =>
+        new("punto_venta_sin_numero_fiscal", "El punto de venta no tiene cargado su número fiscal ARCA.");
+
+    private static FalloDeCompuerta SinCertificado() =>
+        new("certificado_fiscal_ausente", "No hay un certificado fiscal activo para esta empresa y ambiente.");
+
+    /// <summary>Lo mínimo para consultar un espejo ya creado: punto de venta fiscal, certificado activo, CUIT del emisor y el
+    /// tipo del propio espejo.</summary>
+    private async Task<Prerrequisitos> EvaluarPrerrequisitosDeConsultaAsync(ComprobanteVenta espejo, CancellationToken ct)
     {
-        static Evaluacion Falla(string codigo, string mensaje) => new(null, new FalloDeCompuerta(codigo, mensaje));
+        static Prerrequisitos Falla(FalloDeCompuerta fallo) => new(null, fallo);
 
         var ambiente = fiscal.ResolverAmbiente();
-        var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == origen.IdPuntoVenta, ct);
+        var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == espejo.IdPuntoVenta, ct);
         var empresa = await db.Empresas.AsNoTracking().FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
-
-        if (empresa.IdCondicionFiscal is not { } idCondicionEmisor)
-        {
-            return Falla("empresa_sin_condicion_fiscal", "La empresa no tiene cargada su condición fiscal ARCA.");
-        }
 
         if (puntoVenta.NumeroFiscal is null)
         {
-            return Falla("punto_venta_sin_numero_fiscal", "El punto de venta no tiene cargado su número fiscal ARCA.");
-        }
-
-        var cliente = await db.Clientes.AsNoTracking().FirstAsync(c => c.Id == origen.IdCliente, ct);
-        var condicionEmisor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == idCondicionEmisor, ct);
-        var condicionReceptor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == cliente.IdCondicionFiscal, ct);
-
-        if (condicionReceptor.Codigo == "NO_RESP" || condicionReceptor.CodigoAfip is null)
-        {
-            return Falla(
-                "condicion_fiscal_receptor_no_mapeada",
-                $"La condición fiscal del receptor ('{condicionReceptor.Codigo}') no tiene mapeo ARCA confirmado.");
+            return Falla(SinNumeroFiscal());
         }
 
         var hayCertificadoActivo = await db.CertificadosFiscales.AsNoTracking()
             .AnyAsync(c => c.IdEmpresa == empresa.Id && c.Ambiente == ambiente && c.Activo, ct);
         if (!hayCertificadoActivo)
         {
-            return Falla("certificado_fiscal_ausente", "No hay un certificado fiscal activo para esta empresa y ambiente.");
+            return Falla(SinCertificado());
         }
 
         string cuitEmisor;
@@ -204,7 +257,66 @@ public class ServicioDeFacturacionDeVentas(
         }
         catch (ErrorDominio ex) when (ex.Codigo == "empresa_sin_cuit_valido")
         {
-            return Falla(ex.Codigo, ex.Message);
+            return Falla(new FalloDeCompuerta(ex.Codigo, ex.Message));
+        }
+
+        var tipo = await db.TiposComprobante.AsNoTracking().FirstAsync(t => t.Id == espejo.IdTipoComprobante, ct);
+        if (tipo.CodigoAfip is not { } codigoAfip)
+        {
+            return Falla(new FalloDeCompuerta(
+                "tipo_fiscal_invalido", $"El tipo del espejo ('{tipo.Codigo}') no tiene código ARCA."));
+        }
+
+        return new Prerrequisitos(new ContextoDeConsulta(puntoVenta, empresa, ambiente, cuitEmisor, codigoAfip), null);
+    }
+
+    /// <summary>Las compuertas se evalúan sobre el ticket (si todavía no hay espejo) o sobre el espejo existente, cuyo tipo,
+    /// cliente e ítems ya quedaron fijados por la llamada que lo creó.</summary>
+    private async Task<Evaluacion> EvaluarCompuertasAsync(ComprobanteVenta origen, bool origenEsEspejo, CancellationToken ct)
+    {
+        static Evaluacion Falla(FalloDeCompuerta fallo) => new(null, fallo);
+        static Evaluacion FallaCon(string codigo, string mensaje) => Falla(new FalloDeCompuerta(codigo, mensaje));
+
+        var ambiente = fiscal.ResolverAmbiente();
+        var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == origen.IdPuntoVenta, ct);
+        var empresa = await db.Empresas.AsNoTracking().FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
+
+        if (empresa.IdCondicionFiscal is not { } idCondicionEmisor)
+        {
+            return FallaCon("empresa_sin_condicion_fiscal", "La empresa no tiene cargada su condición fiscal ARCA.");
+        }
+
+        if (puntoVenta.NumeroFiscal is null)
+        {
+            return Falla(SinNumeroFiscal());
+        }
+
+        var cliente = await db.Clientes.AsNoTracking().FirstAsync(c => c.Id == origen.IdCliente, ct);
+        var condicionEmisor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == idCondicionEmisor, ct);
+        var condicionReceptor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == cliente.IdCondicionFiscal, ct);
+
+        if (condicionReceptor.Codigo == "NO_RESP" || condicionReceptor.CodigoAfip is null)
+        {
+            return FallaCon(
+                "condicion_fiscal_receptor_no_mapeada",
+                $"La condición fiscal del receptor ('{condicionReceptor.Codigo}') no tiene mapeo ARCA confirmado.");
+        }
+
+        var hayCertificadoActivo = await db.CertificadosFiscales.AsNoTracking()
+            .AnyAsync(c => c.IdEmpresa == empresa.Id && c.Ambiente == ambiente && c.Activo, ct);
+        if (!hayCertificadoActivo)
+        {
+            return Falla(SinCertificado());
+        }
+
+        string cuitEmisor;
+        try
+        {
+            cuitEmisor = ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa);
+        }
+        catch (ErrorDominio ex) when (ex.Codigo == "empresa_sin_cuit_valido")
+        {
+            return FallaCon(ex.Codigo, ex.Message);
         }
 
         var letra = ResolvedorDeLetraComprobante.Resolver(
@@ -230,14 +342,14 @@ public class ServicioDeFacturacionDeVentas(
 
         if (tipo?.CodigoAfip is null)
         {
-            return Falla("tipo_fiscal_invalido", $"No hay un tipo de factura fiscal activo para la letra '{letra}'.");
+            return FallaCon("tipo_fiscal_invalido", $"No hay un tipo de factura fiscal activo para la letra '{letra}'.");
         }
 
         var (tipoDoc, nroDoc) = ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);
         const short DocumentoCuit = 80;
         if (letra == 'A' && tipoDoc != DocumentoCuit)
         {
-            return Falla("receptor_sin_cuit", "Una factura A exige que el receptor esté identificado con su CUIT.");
+            return FallaCon("receptor_sin_cuit", "Una factura A exige que el receptor esté identificado con su CUIT.");
         }
 
         var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(origen.Id, ct);
@@ -248,12 +360,12 @@ public class ServicioDeFacturacionDeVentas(
         }
         catch (ErrorDominio ex) when (ex.Codigo == "alicuota_sin_mapeo_afip")
         {
-            return Falla(ex.Codigo, ex.Message);
+            return FallaCon(ex.Codigo, ex.Message);
         }
 
         if (totales.ImpTotal != origen.Total)
         {
-            return Falla(
+            return FallaCon(
                 "total_fiscal_no_coincide",
                 $"El total fiscal ({totales.ImpTotal}) no coincide con el total del ticket ({origen.Total}).");
         }
@@ -272,15 +384,18 @@ public class ServicioDeFacturacionDeVentas(
         Creado,
         SerieOcupada,
         SerieBloqueada,
-        VentaNoEmitida
+        VentaNoEmitida,
+        Obsoleta
     }
 
-    private sealed record EspejoEnTramite(int Id, long Numero, DateTimeOffset Fecha, bool Nuevo);
+    /// <summary><paramref name="Epoca"/> es el <c>xmin</c> de la fila del espejo cuando el paso la dejó: el paso siguiente de la
+    /// misma llamada solo sigue si la fila no cambió.</summary>
+    private sealed record EspejoEnTramite(int Id, long Epoca);
 
     private sealed record Creacion(ResultadoDeCreacion Resultado, EspejoEnTramite? Espejo);
 
     private async Task<Creacion> CrearEspejoAsync(
-        ComprobanteVenta venta, Plan plan, int idTenant, CancellationToken ct)
+        FacturacionPendiente decision, ComprobanteVenta venta, Plan plan, int idTenant, CancellationToken ct)
     {
         var momento = reloj.Ahora;
         var codigoAfip = plan.Tipo.CodigoAfip!.Value;
@@ -296,16 +411,25 @@ public class ServicioDeFacturacionDeVentas(
                 return new Creacion(ResultadoDeCreacion.SerieOcupada, null);
             }
 
-            if (await HayEspejoPendienteEnLaSerieAsync(plan.PuntoVenta.Id, codigoAfip, ct))
-            {
-                return new Creacion(ResultadoDeCreacion.SerieBloqueada, null);
-            }
-
             // El lock de la venta serializa contra la anulación: o la anulación ya comiteó y la venta deja de estar
             // emitida, o este espejo comitea primero y la anulación lo encuentra.
             if (await BloquearVentaYLeerEstadoAsync(venta.Id, ct) != "emitido")
             {
                 return new Creacion(ResultadoDeCreacion.VentaNoEmitida, null);
+            }
+
+            // Lo que se leyó sin lock al empezar pudo quedar viejo: otra llamada pudo crear y resolver un espejo, o resolver
+            // la decisión, antes de que esta tomara los locks. Se relee bajo ellos, antes de tomar el número y antes de
+            // preguntar por la serie: un espejo propio de esta venta no es "serie bloqueada" sino un estado que se reevalúa.
+            if (await ExisteEspejoDeLaVentaAsync(venta.Id, ct)
+                || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Pendiente)
+            {
+                return new Creacion(ResultadoDeCreacion.Obsoleta, null);
+            }
+
+            if (await HayEspejoPendienteEnLaSerieAsync(plan.PuntoVenta.Id, codigoAfip, ct))
+            {
+                return new Creacion(ResultadoDeCreacion.SerieBloqueada, null);
             }
 
             var numero = await AsignadorDeNumeroFiscal.AsignarSiguienteAsync(db, plan.PuntoVenta.Id, codigoAfip, ct);
@@ -369,10 +493,11 @@ public class ServicioDeFacturacionDeVentas(
             }
 
             await db.SaveChangesAsync(ct);
+            var epoca = await LeerEpocaDelEspejoAsync(espejo.Id, ct);
             await transaccion.CommitAsync(ct);
             db.ChangeTracker.Clear();
 
-            return new Creacion(ResultadoDeCreacion.Creado, new EspejoEnTramite(espejo.Id, numero, momento, Nuevo: true));
+            return new Creacion(ResultadoDeCreacion.Creado, new EspejoEnTramite(espejo.Id, epoca));
         });
     }
 
@@ -407,138 +532,234 @@ public class ServicioDeFacturacionDeVentas(
         return (string?)await comando.ExecuteScalarAsync(ct);
     }
 
-    // ---- Transacción B: CAE, resultado y decisión -------------------------------------------------
-
-    private abstract record ResultadoDeRed;
-
-    private sealed record Definitivo(RespuestaCae Respuesta) : ResultadoDeRed;
-
-    private sealed record NoDefinitivo(string Descripcion) : ResultadoDeRed;
-
-    private async Task<EstadoFiscalDeVenta> ResolverEspejoAsync(
-        FacturacionPendiente decision, Plan plan, EspejoEnTramite enTramite, TicketDeAcceso ticket, int idTenant,
-        CancellationToken ct)
+    /// <summary>¿Tiene la venta un espejo, en cualquier estado? El índice único <c>ux_comprobantes_venta_venta_origen</c> admite
+    /// uno solo: esta pregunta, hecha bajo el lock de la venta, evita llegar a él.</summary>
+    private async Task<bool> ExisteEspejoDeLaVentaAsync(int idVenta, CancellationToken ct)
     {
-        var codigoAfip = plan.Tipo.CodigoAfip!.Value;
+        await using var comando = await NuevoComandoAsync(
+            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1)", ct, idVenta);
+        return (bool)(await comando.ExecuteScalarAsync(ct))!;
+    }
+
+    private async Task<long> LeerEpocaDelEspejoAsync(int idEspejo, CancellationToken ct)
+    {
+        await using var comando = await NuevoComandoAsync(
+            "SELECT xmin::text FROM comprobantes_venta WHERE id_comprobante_venta = $1", ct, idEspejo);
+        return long.Parse((string)(await comando.ExecuteScalarAsync(ct))!, CultureInfo.InvariantCulture);
+    }
+
+    // ---- Transacciones C y S: consulta, fecha, CAE y resultado ---------------------------------------
+
+    private abstract record Desenlace;
+
+    private sealed record Definitivo(RespuestaCae Respuesta, DateOnly? FechaDeArca = null) : Desenlace;
+
+    private sealed record NoDefinitivo(string Descripcion) : Desenlace;
+
+    private sealed record NoEncontrado : Desenlace;
+
+    /// <summary>ARCA no tiene el número y la decisión ya no está pendiente: el espejo se libera sin pedir nada.</summary>
+    private sealed record Liberar : Desenlace;
+
+    /// <summary>Lo que una transacción deja para después del commit (logs, reevaluación, época del paso siguiente): nada se
+    /// loguea desde dentro de una transacción que todavía puede deshacerse.</summary>
+    private sealed class Salida
+    {
+        public string? ErrorSinPenalidad { get; set; }
+
+        public bool Reevaluar { get; set; }
+
+        public long? EpocaParaSolicitar { get; set; }
+
+        public Plan? PlanParaSolicitar { get; set; }
+
+        public (long Numero, string Detalle)? GuardaDelNumero { get; set; }
+
+        public (string EstadoDeLaDecision, string Detalle)? Inconsistencia { get; set; }
+
+        public List<(int IdMedioPago, DateOnly Periodo)> AcumuladosFaltantes { get; } = [];
+    }
+
+    /// <summary>Paso C: el espejo pendiente existía de antes. Se consulta a ARCA antes que nada (I2).</summary>
+    private async Task<EstadoFiscalDeVenta> ConsultarEspejoPendienteAsync(
+        FacturacionPendiente decision, ContextoDeConsulta consulta, Evaluacion? compuertas, int idEspejo,
+        TicketDeAcceso ticket, int idTenant, CancellationToken ct)
+    {
+        var salida = new Salida();
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
-        string? errorSinPenalidad = null;
-        string? errorDeGuardaDelNumero = null;
 
         await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            if (!await TomarLockDeLaSerieAsync(plan.PuntoVenta.Id, codigoAfip, ct))
+            if (!await TomarLockDeLaSerieAsync(consulta.PuntoVenta.Id, consulta.CodigoAfip, ct))
             {
-                errorSinPenalidad = $"{SerieOcupada}: otra llamada está usando la serie.";
+                salida.ErrorSinPenalidad = $"{SerieOcupada}: otra llamada está usando la serie.";
                 return;
             }
 
-            // Bajo el lock de la serie: otra llamada pudo resolver la decisión entre la lectura inicial y este lock.
-            if (await LeerEstadoDeLaDecisionAsync(decision.Id, ct) != Pendiente)
+            var espejo = await BloquearYLeerEspejoAsync(idEspejo, ct);
+            if (espejo is not { Estado: Pendiente })
             {
+                salida.Reevaluar = true;
                 return;
             }
 
-            var (resultadoFiscal, fecha) = await LeerEspejoAsync(enTramite.Id, ct);
-            if (resultadoFiscal != Pendiente)
+            var desenlace = await ConsultarEnArcaAsync(consulta, ticket, espejo.Numero, ct);
+            if (desenlace is NoEncontrado)
             {
-                throw new InvalidOperationException(
-                    $"El espejo {enTramite.Id} está '{resultadoFiscal}' pero su decisión {decision.Id} sigue pendiente.");
+                var estadoDeLaDecision = await BloquearDecisionYLeerEstadoAsync(decision.Id, ct);
+                if (estadoDeLaDecision != Pendiente)
+                {
+                    await AplicarAsync(
+                        decision, estadoDeLaDecision, consulta, idEspejo, espejo, new Liberar(), idTenant, salida, ct);
+                }
+                else if (compuertas is null)
+                {
+                    salida.Reevaluar = true;
+                    return;
+                }
+                else if (compuertas.Fallo is { } fallo)
+                {
+                    _ = await EscribirFalloAsync(
+                        decision.Id, $"{fallo.Codigo}: {fallo.Mensaje}", EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
+                }
+                else
+                {
+                    // Se va a pedir con la fecha de hoy: se guarda ahora, en una transacción que comitea antes de la
+                    // llamada, para que el espejo nunca quede con una fecha distinta de la que viajó.
+                    salida.EpocaParaSolicitar = await RefrescarFechaDelEspejoAsync(idEspejo, reloj.Ahora, ct);
+                    salida.PlanParaSolicitar = compuertas.Plan;
+                }
             }
-
-            var resultado = await PedirCaeAsync(plan, enTramite, ticket, fecha, ct);
-
-            switch (resultado)
+            else
             {
-                case Definitivo { Respuesta.Resultado: ResultadoFiscal.Rechazado } rechazo:
-                    var rechazoAplicado = await ResolverRechazoAsync(decision, plan, enTramite, rechazo.Respuesta, idTenant, ct);
-                    if (!rechazoAplicado.Aplicado)
-                    {
-                        return;
-                    }
-
-                    errorDeGuardaDelNumero = rechazoAplicado.ErrorDeGuardaDelNumero;
-                    break;
-
-                case Definitivo aprobado:
-                    if (await fiscal.AplicarResultadoGuardadoAsync(idTenant, enTramite.Id, aprobado.Respuesta, ct) == 0)
-                    {
-                        throw new InvalidOperationException(
-                            $"La actualización guardada no afectó ninguna fila para el espejo {enTramite.Id}.");
-                    }
-
-                    await AsignadorDeNumeroFiscal.ReconciliarAsync(
-                        db, plan.PuntoVenta.Id, codigoAfip, enTramite.Numero, reloj, ct);
-                    if (await ActualizarDecisionAsync(decision.Id, Emitida, enTramite.Id, null, ct) == 0)
-                    {
-                        return;
-                    }
-
-                    break;
-
-                case NoDefinitivo noDefinitivo:
-                    if (await EscribirFalloAsync(
-                            decision.Id, noDefinitivo.Descripcion, EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct)
-                        is null)
-                    {
-                        return;
-                    }
-
-                    break;
+                await BloquearYAplicarAsync(decision, consulta, idEspejo, espejo, desenlace, idTenant, salida, ct);
             }
 
             await transaccion.CommitAsync(ct);
         });
 
-        if (errorDeGuardaDelNumero is not null)
+        if (salida.EpocaParaSolicitar is { } epoca)
+        {
+            return await SolicitarAsync(decision, salida.PlanParaSolicitar!, idEspejo, epoca, ticket, idTenant, ct);
+        }
+
+        return await CerrarAsync(decision, consulta, idEspejo, salida, idTenant, ct);
+    }
+
+    /// <summary>Paso S: pide el CAE con la fecha que el espejo ya tiene guardada, solo si el espejo no cambió desde el paso
+    /// anterior de esta llamada.</summary>
+    private async Task<EstadoFiscalDeVenta> SolicitarAsync(
+        FacturacionPendiente decision, Plan plan, int idEspejo, long epocaEsperada, TicketDeAcceso ticket, int idTenant,
+        CancellationToken ct)
+    {
+        var consulta = plan.Consulta;
+        var salida = new Salida();
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            if (!await TomarLockDeLaSerieAsync(consulta.PuntoVenta.Id, consulta.CodigoAfip, ct))
+            {
+                salida.ErrorSinPenalidad = $"{SerieOcupada}: otra llamada está usando la serie.";
+                return;
+            }
+
+            // Bajo el lock de la serie: otra llamada pudo resolver o liberar el espejo, o tocarlo (y entonces consultó o pidió por
+            // su cuenta: cualquier cambio de la fila cambia su época), o la decisión pudo dejar de estar pendiente. En ninguno de
+            // los casos se pide: se evalúa de nuevo.
+            var espejo = await BloquearYLeerEspejoAsync(idEspejo, ct);
+            if (espejo?.Epoca != epocaEsperada || await LeerEstadoDeLaDecisionAsync(decision.Id, ct) != Pendiente)
+            {
+                salida.Reevaluar = true;
+                return;
+            }
+
+            var desenlace = await PedirCaeAsync(plan, idEspejo, espejo, ticket, ct);
+            await BloquearYAplicarAsync(decision, consulta, idEspejo, espejo, desenlace, idTenant, salida, ct);
+            await transaccion.CommitAsync(ct);
+        });
+
+        return await CerrarAsync(decision, consulta, idEspejo, salida, idTenant, ct);
+    }
+
+    private async Task<EstadoFiscalDeVenta> CerrarAsync(
+        FacturacionPendiente decision, ContextoDeConsulta consulta, int idEspejo, Salida salida, int idTenant,
+        CancellationToken ct)
+    {
+        if (salida.GuardaDelNumero is { } guarda)
         {
             log.LogError(
                 "No se pudo devolver el número {Numero} del espejo {IdEspejo} a la serie (punto de venta {IdPuntoVenta}, " +
                 "tipo {CodigoAfip}): {Detalle} El espejo queda rechazado con su número y la serie queda desincronizada con ARCA.",
-                enTramite.Numero, enTramite.Id, plan.PuntoVenta.Id, codigoAfip, errorDeGuardaDelNumero);
+                guarda.Numero, idEspejo, consulta.PuntoVenta.Id, consulta.CodigoAfip, guarda.Detalle);
+        }
+
+        if (salida.Inconsistencia is { } inconsistencia)
+        {
+            log.LogError(
+                "La decisión {IdFacturacion} está '{Estado}' pero el espejo {IdEspejo} de su venta seguía pendiente. " +
+                "Se resolvió el espejo ({Detalle}) y no se tocó el estado de la decisión.",
+                decision.Id, inconsistencia.EstadoDeLaDecision, idEspejo, inconsistencia.Detalle);
+        }
+
+        LoguearAcumuladosFaltantes(decision.Id, salida);
+
+        if (salida.Reevaluar)
+        {
+            return await ProcesarAsync(decision.Id, idTenant, ct);
         }
 
         db.ChangeTracker.Clear();
         var final = await LeerDecisionAsync(decision.Id, ct)
             ?? throw new InvalidOperationException($"La decisión {decision.Id} dejó de existir.");
-        return await ProyectarAsync(final, errorSinPenalidad, ct);
+        return await ProyectarAsync(final, salida.ErrorSinPenalidad, ct);
     }
 
-    /// <summary>Consulta primero si hay un intento previo (I2); sin él, pide el CAE directo. Devuelve un
-    /// <see cref="Definitivo"/> solo para la lista blanca de resultados definitivos (una respuesta de ARCA o el error
-    /// <c>arca_rechazo</c>); cualquier otra falla es <see cref="NoDefinitivo"/>.</summary>
-    private async Task<ResultadoDeRed> PedirCaeAsync(
-        Plan plan, EspejoEnTramite enTramite, TicketDeAcceso ticket, DateTimeOffset fechaDelEspejo, CancellationToken ct)
+    private void LoguearAcumuladosFaltantes(int idFacturacion, Salida salida)
     {
-        var numero = enTramite.Numero;
-        var decide = MaquinaDeEstadosCae.Decidir(
-            enTramite.Nuevo ? EstadoDeIntento.SinIntentoPrevio : EstadoDeIntento.NoDefinitivo);
-
-        if (decide == DecisionDeReintento.ConsultarPrimero)
+        foreach (var (idMedioPago, periodo) in salida.AcumuladosFaltantes)
         {
-            ConsultaDeComprobante consulta;
-            try
-            {
-                consulta = await clienteWsfe.ConsultarAsync(ticket, plan.CuitEmisor, plan.Serie, numero, ct);
-            }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
-            {
-                return new NoDefinitivo(DescribirFalla(ex));
-            }
+            log.LogError(
+                "No existe el acumulado de facturación del medio {IdMedioPago} para el período {Periodo:yyyy-MM}: la decisión " +
+                "{IdFacturacion} no pudo ajustarlo y el resto de la resolución siguió adelante.",
+                idMedioPago, periodo, idFacturacion);
+        }
+    }
 
-            if (consulta.Encontrado)
-            {
-                return new Definitivo(new RespuestaCae(
-                    consulta.Resultado!.Value, consulta.Cae, consulta.CaeVencimiento, [], []));
-            }
-
-            // ARCA no tiene el número: se pide con el mismo número y la fecha de hoy.
-            fechaDelEspejo = reloj.Ahora;
-            await RefrescarFechaDelEspejoAsync(enTramite.Id, fechaDelEspejo, ct);
+    /// <summary>Consulta a ARCA si ya tiene el número. "No encontrado" es solo la respuesta explícita de comprobante
+    /// inexistente; cualquier otro error de la consulta es no definitivo.</summary>
+    private async Task<Desenlace> ConsultarEnArcaAsync(
+        ContextoDeConsulta consulta, TicketDeAcceso ticket, long numero, CancellationToken ct)
+    {
+        ConsultaDeComprobante respuesta;
+        try
+        {
+            respuesta = await clienteWsfe.ConsultarAsync(ticket, consulta.CuitEmisor, consulta.Serie, numero, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            return new NoDefinitivo(DescribirFalla(ex));
         }
 
-        var fechaFiscal = await fiscal.ResolverFechaFiscalAsync(plan.Empresa.Id, fechaDelEspejo, ct);
+        return respuesta.Encontrado
+            ? new Definitivo(
+                new RespuestaCae(respuesta.Resultado!.Value, respuesta.Cae, respuesta.CaeVencimiento, [], []),
+                respuesta.Fecha)
+            : new NoEncontrado();
+    }
+
+    /// <summary>Pide el CAE del número del espejo con la fecha que el espejo ya tiene. Devuelve un <see cref="Definitivo"/> solo
+    /// para la lista blanca de resultados definitivos: una respuesta de ARCA, o el error de nivel de llamada <c>arca_rechazo</c>
+    /// si la consulta del mismo número confirma que ARCA no lo tiene; cualquier otra falla es <see cref="NoDefinitivo"/>.</summary>
+    private async Task<Desenlace> PedirCaeAsync(
+        Plan plan, int idEspejo, EspejoBloqueado espejo, TicketDeAcceso ticket, CancellationToken ct)
+    {
+        var numero = espejo.Numero;
+        var fechaFiscal = await fiscal.ResolverFechaFiscalAsync(plan.Empresa.Id, espejo.Fecha, ct);
         var totales = plan.Totales;
         var solicitud = new SolicitudDeCae(
             plan.Serie, numero, numero, 1, plan.TipoDocReceptor, plan.NroDocReceptor, fechaFiscal, totales.ImpTotal,
@@ -548,12 +769,18 @@ public class ServicioDeFacturacionDeVentas(
         try
         {
             return new Definitivo(await fiscal.SolicitarCaeConReintentoDeTicketAsync(
-                plan.Empresa, plan.Ambiente, plan.CuitEmisor, enTramite.Id, numero, solicitud, ct));
+                plan.Empresa, plan.Ambiente, plan.CuitEmisor, idEspejo, numero, solicitud, ct));
         }
         catch (ErrorDominio ex) when (ex.Codigo == "arca_rechazo")
         {
-            return new Definitivo(new RespuestaCae(
-                ResultadoFiscal.Rechazado, null, null, [], [new ObservacionArca(0, ex.Message)]));
+            // Un error de nivel de llamada no prueba que ARCA no tenga el número (puede ser una falla interna posterior a
+            // registrarlo): antes de liberarlo se le pregunta.
+            return await ConsultarEnArcaAsync(plan.Consulta, ticket, numero, ct) switch
+            {
+                NoEncontrado => new Definitivo(new RespuestaCae(
+                    ResultadoFiscal.Rechazado, null, null, [], [new ObservacionArca(0, ex.Message)])),
+                var otro => otro
+            };
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -561,60 +788,156 @@ public class ServicioDeFacturacionDeVentas(
         }
     }
 
-    private readonly record struct RechazoResuelto(bool Aplicado, string? ErrorDeGuardaDelNumero);
+    private async Task BloquearYAplicarAsync(
+        FacturacionPendiente decision, ContextoDeConsulta consulta, int idEspejo, EspejoBloqueado espejo, Desenlace desenlace,
+        int idTenant, Salida salida, CancellationToken ct)
+    {
+        var estadoDeLaDecision = await BloquearDecisionYLeerEstadoAsync(decision.Id, ct);
+        await AplicarAsync(decision, estadoDeLaDecision, consulta, idEspejo, espejo, desenlace, idTenant, salida, ct);
+    }
 
-    /// <summary>Rechazo definitivo de ARCA: el espejo se borra y su número vuelve a la serie (regla 1), la decisión pasa a
-    /// rechazada con los errores de ARCA y se devuelve el débito del acumulado (regla 3). Si el contador ya avanzó, el número
-    /// no se puede devolver y el espejo queda rechazado con su número. Si la decisión ya no estaba pendiente no se aplica nada
-    /// (la transacción se deshace).</summary>
-    private async Task<RechazoResuelto> ResolverRechazoAsync(
-        FacturacionPendiente decision, Plan plan, EspejoEnTramite enTramite, RespuestaCae respuesta, int idTenant,
+    /// <summary>Aplica el desenlace con la decisión ya bloqueada y su estado releído bajo ese lock (<paramref name="estadoDeLaDecision"/>).
+    /// El espejo se resuelve siempre; la decisión solo se mueve si está pendiente. Si no lo está, el espejo igual se resuelve, la
+    /// inconsistencia se loguea y la decisión conserva su estado (con el único agregado de enlazar el comprobante adoptado).</summary>
+    private async Task AplicarAsync(
+        FacturacionPendiente decision, string? estadoDeLaDecision, ContextoDeConsulta consulta, int idEspejo,
+        EspejoBloqueado espejo, Desenlace desenlace, int idTenant, Salida salida, CancellationToken ct)
+    {
+        var pendiente = estadoDeLaDecision == Pendiente;
+
+        switch (desenlace)
+        {
+            case Definitivo { Respuesta.Resultado: ResultadoFiscal.Rechazado } rechazo:
+                await LiberarEspejoAsync(consulta, idEspejo, espejo.Numero, rechazo.Respuesta, idTenant, salida, ct);
+                if (pendiente)
+                {
+                    await ActualizarDecisionAsync(
+                        decision.Id, Rechazada, null, ConstruirTextoDeErrores(rechazo.Respuesta), ct);
+                    var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
+                    foreach (var (idMedio, monto) in vendido.OrderBy(v => v.Key))
+                    {
+                        await AplicarAlAcumuladoAsync(
+                            salida, decision.IdEmpresa, idMedio, decision.Periodo, monto, 0m, -monto, ct);
+                    }
+                }
+                else
+                {
+                    salida.Inconsistencia = (
+                        estadoDeLaDecision!, "ARCA rechazó el comprobante y el espejo se liberó");
+                }
+
+                break;
+
+            case Definitivo aprobado:
+                await AjustarFechaALaDeArcaAsync(consulta, idEspejo, espejo.Fecha, aprobado.FechaDeArca, ct);
+                await fiscal.AplicarResultadoGuardadoAsync(idTenant, idEspejo, aprobado.Respuesta, ct);
+                await AsignadorDeNumeroFiscal.ReconciliarAsync(
+                    db, consulta.PuntoVenta.Id, consulta.CodigoAfip, espejo.Numero, reloj, ct);
+                if (pendiente)
+                {
+                    await ActualizarDecisionAsync(decision.Id, Emitida, idEspejo, null, ct);
+                }
+                else
+                {
+                    var enlazada = await EnlazarComprobanteAsync(decision.Id, idEspejo, ct);
+                    salida.Inconsistencia = (
+                        estadoDeLaDecision!,
+                        enlazada
+                            ? "ARCA ya tenía el comprobante: se adoptó su CAE y se enlazó a la decisión"
+                            : "ARCA ya tenía el comprobante: se adoptó su CAE y la decisión ya estaba enlazada a otro comprobante");
+                }
+
+                break;
+
+            case Liberar:
+                await LiberarEspejoAsync(
+                    consulta, idEspejo, espejo.Numero, RespuestaDeLiberacion, idTenant, salida, ct);
+                salida.Inconsistencia = (
+                    estadoDeLaDecision!, "ARCA no tenía el número: el espejo se liberó sin pedir un CAE nuevo");
+                break;
+
+            case NoDefinitivo noDefinitivo:
+                if (pendiente)
+                {
+                    _ = await EscribirFalloAsync(
+                        decision.Id, noDefinitivo.Descripcion, EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct);
+                }
+                else
+                {
+                    salida.Inconsistencia = (
+                        estadoDeLaDecision!, $"no hubo respuesta definitiva de ARCA y el espejo sigue pendiente: {noDefinitivo.Descripcion}");
+                }
+
+                break;
+        }
+    }
+
+    private static readonly RespuestaCae RespuestaDeLiberacion = new(
+        ResultadoFiscal.Rechazado, null, null, [],
+        [new ObservacionArca(0, "El espejo se liberó sin respuesta de ARCA: su decisión ya no estaba pendiente y ARCA no tiene el número.")]);
+
+    /// <summary>Libera el espejo: se borran sus ítems y su fila y el número vuelve a la serie (regla 1). Si el contador ya
+    /// avanzó, el número no se puede devolver y el espejo queda rechazado con su número.</summary>
+    private async Task LiberarEspejoAsync(
+        ContextoDeConsulta consulta, int idEspejo, long numero, RespuestaCae respuesta, int idTenant, Salida salida,
         CancellationToken ct)
     {
-        string? errorDeGuarda = null;
-
-        if (await DevolverNumeroAsync(plan.PuntoVenta.Id, plan.Tipo.CodigoAfip!.Value, enTramite.Numero, ct) == 1)
+        if (await DevolverNumeroAsync(consulta.PuntoVenta.Id, consulta.CodigoAfip, numero, ct) == 1)
         {
-            await BorrarEspejoAsync(enTramite.Id, ct);
-        }
-        else
-        {
-            errorDeGuarda = $"El contador no estaba en {enTramite.Numero + 1}.";
-            if (await fiscal.AplicarResultadoGuardadoAsync(idTenant, enTramite.Id, respuesta, ct) == 0)
-            {
-                throw new InvalidOperationException(
-                    $"La actualización guardada no afectó ninguna fila para el espejo {enTramite.Id}.");
-            }
+            await BorrarEspejoAsync(idEspejo, ct);
+            return;
         }
 
-        if (await ActualizarDecisionAsync(decision.Id, Rechazada, null, ConstruirTextoDeErrores(respuesta), ct) == 0)
+        salida.GuardaDelNumero = (numero, $"El contador no estaba en {numero + 1}.");
+        await fiscal.AplicarResultadoGuardadoAsync(idTenant, idEspejo, respuesta, ct);
+    }
+
+    /// <summary>Si ARCA registró el comprobante con una fecha distinta de la guardada, el espejo toma la de ARCA. Se compara el
+    /// día fiscal de la empresa; si coincide no se toca nada. El instante nuevo es el mediodía de ese día en la zona
+    /// fiscal.</summary>
+    private async Task AjustarFechaALaDeArcaAsync(
+        ContextoDeConsulta consulta, int idEspejo, DateTimeOffset fechaGuardada, DateOnly? fechaDeArca, CancellationToken ct)
+    {
+        if (fechaDeArca is not { } diaDeArca)
         {
-            return new RechazoResuelto(false, null);
+            return;
         }
 
-        var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
-        foreach (var (idMedio, monto) in vendido.OrderBy(v => v.Key))
+        var zona = await fiscal.ResolverZonaFiscalAsync(consulta.Empresa.Id, ct);
+        if (FechaFiscal.DeInstante(fechaGuardada, zona) == diaDeArca)
         {
-            await AplicarAlAcumuladoAsync(decision.IdEmpresa, idMedio, decision.Periodo, monto, 0m, -monto, ct);
+            return;
         }
 
-        return new RechazoResuelto(true, errorDeGuarda);
+        var mediodia = diaDeArca.ToDateTime(new TimeOnly(12, 0));
+        var nueva = new DateTimeOffset(mediodia, zona.GetUtcOffset(mediodia));
+        await using var comando = await NuevoComandoAsync(
+            "UPDATE comprobantes_venta SET fecha = $2, updated_at = $3 WHERE id_comprobante_venta = $1",
+            ct, idEspejo, nueva, reloj.Ahora);
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     // ---- Cancelación -----------------------------------------------------------------------------
 
     private async Task<EstadoFiscalDeVenta> CancelarAsync(FacturacionPendiente decision, CancellationToken ct)
     {
+        var salida = new Salida();
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            if (await ActualizarDecisionAsync(decision.Id, Cancelada, null, null, ct) == 0)
+            // Mismos locks y mismo orden que la creación del espejo: la venta primero, que la serializa contra ella, y
+            // después, bajo ese lock, se relee que siga sin espejo y que la decisión siga pendiente.
+            _ = await BloquearVentaYLeerEstadoAsync(decision.IdComprobanteVenta, ct);
+            if (await ExisteEspejoDeLaVentaAsync(decision.IdComprobanteVenta, ct)
+                || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Pendiente)
             {
                 return;
             }
+
+            await ActualizarDecisionAsync(decision.Id, Cancelada, null, null, ct);
 
             var aportes = JsonSerializer.Deserialize<List<AporteDeSaldo>>(decision.Aportes, OpcionesDeAportes)!;
             var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
@@ -622,12 +945,13 @@ public class ServicioDeFacturacionDeVentas(
             {
                 var monto = vendido.GetValueOrDefault(inverso.IdMedioPago);
                 await AplicarAlAcumuladoAsync(
-                    decision.IdEmpresa, inverso.IdMedioPago, decision.Periodo, inverso.Aporte, -monto, -monto, ct);
+                    salida, decision.IdEmpresa, inverso.IdMedioPago, decision.Periodo, inverso.Aporte, -monto, -monto, ct);
             }
 
             await transaccion.CommitAsync(ct);
         });
 
+        LoguearAcumuladosFaltantes(decision.Id, salida);
         db.ChangeTracker.Clear();
         var final = await LeerDecisionAsync(decision.Id, ct)
             ?? throw new InvalidOperationException($"La decisión {decision.Id} dejó de existir.");
@@ -643,6 +967,22 @@ public class ServicioDeFacturacionDeVentas(
         var final = await LeerDecisionAsync(decision.Id, ct)
             ?? throw new InvalidOperationException($"La decisión {decision.Id} dejó de existir.");
         return await ProyectarAsync(final, null, ct);
+    }
+
+    /// <summary>Un espejo pendiente que no se puede consultar: si la decisión está pendiente se le anota el fallo; si no, no hay a
+    /// quién anotárselo y queda el error en el log.</summary>
+    private async Task<EstadoFiscalDeVenta> RegistrarFalloDeEspejoAsync(
+        FacturacionPendiente decision, int idEspejo, string descripcion, TimeSpan espera, TimeSpan tope, CancellationToken ct)
+    {
+        if (decision.Estado == Pendiente)
+        {
+            return await RegistrarFalloAsync(decision, descripcion, espera, tope, ct);
+        }
+
+        log.LogError(
+            "El espejo {IdEspejo} sigue pendiente y su decisión {IdFacturacion} está '{Estado}': no se pudo consultar a ARCA: {Detalle}",
+            idEspejo, decision.Id, decision.Estado, descripcion);
+        return await ProyectarAsync(decision, null, ct);
     }
 
     /// <summary>Suma un intento fallido a la decisión pendiente y registra cuándo volver a intentar:
@@ -700,41 +1040,68 @@ public class ServicioDeFacturacionDeVentas(
         return (string?)await comando.ExecuteScalarAsync(ct);
     }
 
-    /// <summary>Guardada por <c>estado = 'pendiente'</c>: la decisión solo sale de pendiente una vez. Devuelve las filas
-    /// afectadas.</summary>
-    private async Task<int> ActualizarDecisionAsync(
+    /// <summary>Bloquea la fila de la decisión y devuelve su estado: la lectura única, bajo el lock, sobre la que se decide
+    /// cualquier transición.</summary>
+    private async Task<string?> BloquearDecisionYLeerEstadoAsync(int idFacturacion, CancellationToken ct)
+    {
+        await using var comando = await NuevoComandoAsync(
+            "SELECT estado::text FROM facturaciones_de_venta WHERE id_facturacion_venta = $1 FOR UPDATE", ct, idFacturacion);
+        return (string?)await comando.ExecuteScalarAsync(ct);
+    }
+
+    /// <summary>Mueve la decisión de pendiente a su estado nuevo. Se llama siempre con la fila bloqueada y su estado releído
+    /// como pendiente (<see cref="BloquearDecisionYLeerEstadoAsync"/>).</summary>
+    private async Task ActualizarDecisionAsync(
         int idFacturacion, string estado, int? idComprobanteFiscal, string? error, CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
             "UPDATE facturaciones_de_venta SET estado = $2::estado_facturacion_venta, id_comprobante_fiscal = $3, " +
-            "ultimo_error = $4, updated_at = $5 " +
-            "WHERE id_facturacion_venta = $1 AND estado = 'pendiente'::estado_facturacion_venta",
+            "ultimo_error = $4, updated_at = $5 WHERE id_facturacion_venta = $1",
             ct, idFacturacion, estado, idComprobanteFiscal, error, reloj.Ahora);
-        return await comando.ExecuteNonQueryAsync(ct);
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Enlaza el comprobante adoptado a una decisión que ya no está pendiente, sin tocar su estado. Solo si no tenía
+    /// enlace. Devuelve si lo enlazó.</summary>
+    private async Task<bool> EnlazarComprobanteAsync(int idFacturacion, int idEspejo, CancellationToken ct)
+    {
+        await using var comando = await NuevoComandoAsync(
+            "UPDATE facturaciones_de_venta SET id_comprobante_fiscal = $2, updated_at = $3 " +
+            "WHERE id_facturacion_venta = $1 AND id_comprobante_fiscal IS NULL",
+            ct, idFacturacion, idEspejo, reloj.Ahora);
+        return await comando.ExecuteNonQueryAsync(ct) == 1;
     }
 
     // ---- El espejo ---------------------------------------------------------------------------------
 
-    private async Task<(string ResultadoFiscal, DateTimeOffset Fecha)> LeerEspejoAsync(int idEspejo, CancellationToken ct)
+    private sealed record EspejoBloqueado(string Estado, DateTimeOffset Fecha, long Numero, long Epoca);
+
+    /// <summary>Bloquea la fila del espejo y la lee: la lectura única, bajo el lock, de su estado, su fecha y su época. Devuelve
+    /// <c>null</c> si ya no existe (otra llamada lo liberó).</summary>
+    private async Task<EspejoBloqueado?> BloquearYLeerEspejoAsync(int idEspejo, CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
-            "SELECT resultado_fiscal::text, fecha FROM comprobantes_venta WHERE id_comprobante_venta = $1", ct, idEspejo);
+            "SELECT resultado_fiscal::text, fecha, numero, xmin::text FROM comprobantes_venta " +
+            "WHERE id_comprobante_venta = $1 AND id_venta_origen IS NOT NULL FOR UPDATE",
+            ct, idEspejo);
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
         {
-            throw new InvalidOperationException($"El espejo {idEspejo} no existe.");
+            return null;
         }
 
-        return (lector.GetString(0), lector.GetFieldValue<DateTimeOffset>(1));
+        return new EspejoBloqueado(
+            lector.GetString(0), lector.GetFieldValue<DateTimeOffset>(1), lector.GetInt64(2),
+            long.Parse(lector.GetString(3), CultureInfo.InvariantCulture));
     }
 
-    private async Task RefrescarFechaDelEspejoAsync(int idEspejo, DateTimeOffset fecha, CancellationToken ct)
+    /// <summary>Guarda la fecha de hoy en el espejo pendiente y devuelve su época nueva (el <c>xmin</c> de la fila reescrita).</summary>
+    private async Task<long> RefrescarFechaDelEspejoAsync(int idEspejo, DateTimeOffset fecha, CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
-            "UPDATE comprobantes_venta SET fecha = $2, updated_at = $2 " +
-            "WHERE id_comprobante_venta = $1 AND resultado_fiscal = 'pendiente'",
+            "UPDATE comprobantes_venta SET fecha = $2, updated_at = $2 WHERE id_comprobante_venta = $1 RETURNING xmin::text",
             ct, idEspejo, fecha);
-        await comando.ExecuteNonQueryAsync(ct);
+        return long.Parse((string)(await comando.ExecuteScalarAsync(ct))!, CultureInfo.InvariantCulture);
     }
 
     /// <summary>Devuelve el número a la serie solo si el contador sigue en <c>numero + 1</c>, o sea si nadie tomó otro
@@ -748,7 +1115,7 @@ public class ServicioDeFacturacionDeVentas(
         return await comando.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>Borrado físico del espejo rechazado: ARCA no lo registró, así que no queda comprobante fiscal (regla 1).
+    /// <summary>Borrado físico del espejo liberado: ARCA no lo registró, así que no queda comprobante fiscal (regla 1).
     /// Solo borra los ítems y la fila de ESE espejo.</summary>
     private async Task BorrarEspejoAsync(int idEspejo, CancellationToken ct)
     {
@@ -789,8 +1156,10 @@ public class ServicioDeFacturacionDeVentas(
         return vendido;
     }
 
+    /// <summary>Una fila del acumulado que falta no frena la resolución fiscal (ARCA ya contestó): se anota para loguear el error
+    /// después del commit y se sigue.</summary>
     private async Task AplicarAlAcumuladoAsync(
-        int idEmpresa, int idMedioPago, DateOnly periodo, decimal saldo, decimal vendido, decimal facturado,
+        Salida salida, int idEmpresa, int idMedioPago, DateOnly periodo, decimal saldo, decimal vendido, decimal facturado,
         CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
@@ -798,10 +1167,9 @@ public class ServicioDeFacturacionDeVentas(
             "total_vendido = total_vendido + $5, total_facturado = total_facturado + $6 " +
             "WHERE id_empresa = $1 AND id_medio_pago = $2 AND periodo = $3",
             ct, idEmpresa, idMedioPago, periodo, saldo, vendido, facturado);
-        if (await comando.ExecuteNonQueryAsync(ct) != 1)
+        if (await comando.ExecuteNonQueryAsync(ct) == 0)
         {
-            throw new InvalidOperationException(
-                $"No existe el acumulado de facturación del medio {idMedioPago} para el período {periodo:yyyy-MM}.");
+            salida.AcumuladosFaltantes.Add((idMedioPago, periodo));
         }
     }
 

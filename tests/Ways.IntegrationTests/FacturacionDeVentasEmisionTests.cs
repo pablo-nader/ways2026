@@ -41,10 +41,13 @@ namespace Ways.IntegrationTests;
 /// (el ticket) se siembra directo y su decisión la toma el servicio real de decisión, así que el acumulado parte de un estado
 /// previo distinto de cero y cada reversión se compara contra él.
 ///
-/// Mutation-proof-tests: las cláusulas bajo prueba son cada conjunción del UPDATE que devuelve el número, la guarda de la
-/// decisión por <c>estado = 'pendiente'</c>, consultar antes de pedir, la lista blanca de resultados definitivos, la verificación
-/// de que la venta siga emitida al crear el espejo, la pregunta de la anulación por el espejo vigente, los signos de la
-/// reversión del acumulado (rechazada y cancelada) y la exclusión de espejos en <c>ReintentarAsync</c>.
+/// Mutation-proof-tests: las cláusulas bajo prueba son cada conjunción del UPDATE que devuelve el número, el lock y la relectura de
+/// la decisión (en la creación del espejo, en la cancelación y al aplicar un resultado), la relectura de "sin espejo" bajo el lock de
+/// la venta, resolver siempre el espejo pendiente aunque su decisión no lo esté, consultar antes de pedir, qué es "no encontrado",
+/// guardar la fecha antes de pedir, la consulta previa a liberar tras un error de llamada, consultar antes de las compuertas, la
+/// lista blanca de resultados definitivos, la verificación de que la venta siga emitida, la pregunta de la anulación por el espejo
+/// vigente, los signos de la reversión del acumulado (rechazada y cancelada), el acumulado faltante y la exclusión de espejos en
+/// <c>ReintentarAsync</c>. Los pasos de una misma llamada se pausan con interceptores de transacción, sin esperas por tiempo.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -81,11 +84,18 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
 
         public bool Falla { get; set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        /// <summary>Se ejecuta en cada pedido, antes de contestar: simula que algo cambia mientras el servicio espera el ticket.</summary>
+        public Func<Task>? AntesDeResponder { get; set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Solicitudes++;
-            return Task.FromResult(
-                Falla ? new HttpResponseMessage(HttpStatusCode.InternalServerError) : RespuestaXml(cuerpoDeRespuesta));
+            if (AntesDeResponder is not null)
+            {
+                await AntesDeResponder();
+            }
+
+            return Falla ? new HttpResponseMessage(HttpStatusCode.InternalServerError) : RespuestaXml(cuerpoDeRespuesta);
         }
     }
 
@@ -293,11 +303,12 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         "<Errors><Err><Code>10000</Code><Msg>Error de validación de la llamada.</Msg></Err></Errors><Events />" +
         "</FECAESolicitarResult></FECAESolicitarResponse></soapenv:Body></soapenv:Envelope>";
 
-    private static string ConsultarEncontrado(string cae = "70999999999999") =>
+    /// <summary>La consulta que encuentra el comprobante. <paramref name="fecha"/> es el <c>CbteFch</c> que ARCA tiene registrado.</summary>
+    private static string ConsultarEncontrado(string cae = "70999999999999", string fecha = "20260115") =>
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
         "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
         "<ResultGet><Concepto>1</Concepto><DocTipo>99</DocTipo><DocNro>0</DocNro><CbteDesde>1</CbteDesde>" +
-        "<CbteHasta>1</CbteHasta><CbteFch>20260115</CbteFch><ImpTotal>231.00</ImpTotal><ImpTotConc>0.00</ImpTotConc>" +
+        $"<CbteHasta>1</CbteHasta><CbteFch>{fecha}</CbteFch><ImpTotal>231.00</ImpTotal><ImpTotConc>0.00</ImpTotConc>" +
         "<ImpNeto>199.55</ImpNeto><ImpOpEx>0.00</ImpOpEx><ImpIVA>31.45</ImpIVA><ImpTrib>0.00</ImpTrib><MonId>PES</MonId>" +
         $"<MonCotiz>1</MonCotiz><CodAutorizacion>{cae}</CodAutorizacion><EmisionTipo>CAE</EmisionTipo><FchVto>20260125</FchVto>" +
         "<Resultado>A</Resultado><Observaciones /></ResultGet><Errors /></FECompConsultarResult></FECompConsultarResponse>" +
@@ -307,6 +318,13 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
         "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
         "<ResultGet /><Errors><Err><Code>602</Code><Msg>No encontrado.</Msg></Err></Errors></FECompConsultarResult>" +
+        "</FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
+
+    /// <summary>Una consulta que falla con un error de ARCA que NO es "comprobante inexistente" (602).</summary>
+    private static string ConsultarConError(int codigo) =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+        "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+        $"<ResultGet /><Errors><Err><Code>{codigo}</Code><Msg>Error de ARCA {codigo}.</Msg></Err></Errors></FECompConsultarResult>" +
         "</FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
 
     // ---- Escenario -------------------------------------------------------------------------------------
@@ -953,6 +971,8 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         c.Wsfe.Solicitar = Responde(errorDeLlamada ? FecaeErrorDeLlamada() : FecaeRechazado());
         var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
 
+        // Un error de nivel de llamada solo se da por definitivo tras consultar el número (que ARCA no tiene).
+        Assert.Equal(errorDeLlamada ? ["FECAESolicitar", "FECompConsultar"] : ["FECAESolicitar"], c.Wsfe.Operaciones);
         Assert.Equal(EstadosFiscalesDeVenta.Rechazado, estado.Estado);
         Assert.Null(estado.Comprobante);
         Assert.Contains(errorDeLlamada ? "Error de validación de la llamada." : "10015: Rechazado por el receptor.", estado.Error);
@@ -1121,7 +1141,7 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
 
         // Segunda llamada: ARCA ya tiene el número. Se consulta y se adopta, SIN ningún FECAESolicitar.
         c.Wsfe.Reiniciar();
-        c.Wsfe.Consultar = Responde(ConsultarEncontrado("70555555555555"));
+        c.Wsfe.Consultar = Responde(ConsultarEncontrado("70555555555555", Yyyymmdd(FechaFiscalDe(espejo.Fecha))));
         c.Wsfe.Solicitar = RespondeHttp500();
         var segunda = await ProcesarAsync(c.Admin, venta.IdFacturacion);
 
@@ -1653,27 +1673,47 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
     }
 
-    /// <summary>La guarda por <c>estado = 'pendiente'</c> de la decisión: si alguien la cambió mientras ARCA contestaba, el
-    /// resultado no se aplica y la transacción se deshace entera (el espejo sigue pendiente, la decisión no se pisa).</summary>
-    [Fact]
-    public async Task SiLaDecisionCambiaMientrasArcaContestaNoSePisaYNoSeAplicaNada()
+    /// <summary>La decisión se relee bajo su lock antes de moverla: si alguien la cambió mientras ARCA contestaba, el espejo igual
+    /// se resuelve (ARCA ya contestó), pero la decisión no se pisa ni se le toca el acumulado; solo se le enlaza el comprobante
+    /// adoptado.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SiLaDecisionCambiaMientrasArcaContestaElEspejoSeResuelveYLaDecisionNoSePisa(bool arcaAprueba)
     {
-        var c = await PrepararAsync("guardad");
+        var c = await PrepararAsync($"guardad{arcaAprueba}");
         var venta = await SembrarVentaDecididaAsync(c);
+        var acumulados = await LeerAcumuladosAsync(c);
         c.Wsfe.Solicitar = async _ =>
         {
             await EjecutarComoOwnerAsync(
                 "UPDATE facturaciones_de_venta SET estado = 'cancelada' WHERE id_facturacion_venta = $1", venta.IdFacturacion);
-            return RespuestaXml(FecaeAprobado());
+            return RespuestaXml(arcaAprueba ? FecaeAprobado("70444444444444") : FecaeRechazado());
         };
 
         var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
 
         Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
-        Assert.Equal("cancelada", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
-        var espejo = Assert.Single(await LeerEspejosAsync(c));
-        Assert.Equal("pendiente", espejo.Resultado);
-        Assert.Null(espejo.Cae);
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal("cancelada", decision.Estado);
+        Assert.Equal(acumulados, await LeerAcumuladosAsync(c));
+        if (arcaAprueba)
+        {
+            var espejo = Assert.Single(await LeerEspejosAsync(c));
+            Assert.Equal(("aprobado", "70444444444444"), (espejo.Resultado, espejo.Cae));
+            Assert.Equal(espejo.Id, decision.IdComprobanteFiscal);
+        }
+        else
+        {
+            Assert.Empty(await LeerEspejosAsync(c));
+            Assert.Equal(1L, await LeerProximoAsync(c, 6));
+            Assert.Null(decision.IdComprobanteFiscal);
+        }
+
+        Assert.Contains(
+            c.Logs.Entradas,
+            e => e.Nivel == LogLevel.Error && e.Categoria.EndsWith(nameof(ServicioDeFacturacionDeVentas), StringComparison.Ordinal)
+                && e.Mensaje.Contains($"La decisión {venta.IdFacturacion} está 'cancelada'", StringComparison.Ordinal));
     }
 
     /// <summary>La misma guarda en el camino de la falla: si la decisión ya no está pendiente, no se le anota un intento ni un error.</summary>
@@ -1801,22 +1841,745 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         return fila;
     }
 
-    /// <summary>Si falta la fila del acumulado, la reversión no puede aplicarse: la transacción se deshace y la decisión sigue
-    /// pendiente en vez de quedar rechazada con el cupo sin devolver.</summary>
-    [Fact]
-    public async Task SiFaltaLaFilaDelAcumuladoLaReversionAbortaYLaDecisionSigueSinResolver()
+    /// <summary>Una fila de acumulado que falta no frena la resolución fiscal: ARCA ya contestó, así que el espejo se libera, el
+    /// número vuelve y la decisión pasa a su estado; el hueco se loguea como error y las demás filas se ajustan igual.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SiFaltaLaFilaDelAcumuladoLaResolucionSigueYSeLoguea(bool cancelada)
     {
-        var c = await PrepararAsync("faltaac");
+        var c = await PrepararAsync($"faltaac{cancelada}");
         var venta = await SembrarVentaDecididaAsync(c);
         await EjecutarComoOwnerAsync(
             "DELETE FROM acumulados_de_facturacion WHERE id_empresa = $1 AND id_medio_pago = $2", c.IdEmpresa, c.IdTransferencia);
+        var tras = await LeerAcumuladosAsync(c);
+        if (cancelada)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null)).StatusCode);
+        }
+        else
+        {
+            c.Wsfe.Solicitar = Responde(FecaeRechazado());
+        }
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(cancelada ? EstadosFiscalesDeVenta.Cancelado : EstadosFiscalesDeVenta.Rechazado, estado.Estado);
+        Assert.Equal(cancelada ? "cancelada" : "rechazada", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
+        Assert.Empty(await LeerEspejosAsync(c));
+        if (!cancelada)
+        {
+            Assert.Equal(1L, await LeerProximoAsync(c, 6));
+        }
+
+        // La fila que existe se ajusta; la que falta no se inventa.
+        var efectivo = Assert.Single(await LeerAcumuladosAsync(c));
+        var previo = Assert.Single(tras);
+        Assert.Equal(c.IdEfectivo, efectivo.IdMedio);
+        Assert.NotEqual(previo, efectivo);
+        Assert.Contains(
+            c.Logs.Entradas,
+            e => e.Nivel == LogLevel.Error && e.Categoria.EndsWith(nameof(ServicioDeFacturacionDeVentas), StringComparison.Ordinal)
+                && e.Mensaje.Contains($"medio {c.IdTransferencia}", StringComparison.Ordinal)
+                && e.Mensaje.Contains($"decisión {venta.IdFacturacion}", StringComparison.Ordinal));
+    }
+
+    // ===================================================================================================
+    // Lecturas viejas, locks y carreras (juicio J-1)
+    // ===================================================================================================
+
+    /// <summary>Pausa la transacción número <c>numero</c> (contando desde que se arma) de un host derivado, justo después de abrirla.</summary>
+    private sealed class InterceptorDePausaEnLaTransaccionNumero(
+        int numero, TaskCompletionSource iniciada, TaskCompletionSource continuar) : DbTransactionInterceptor
+    {
+        private int _contador;
+
+        public bool Armado { get; set; }
+
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armado && Interlocked.Increment(ref _contador) == numero)
+            {
+                iniciada.TrySetResult();
+                await continuar.Task;
+            }
+
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>Hace fallar el commit número <c>numero</c> (contando desde que se arma): el pedido a ARCA ya salió y la transacción se
+    /// deshace.</summary>
+    private sealed class InterceptorQueFallaAlComitar(int numero) : DbTransactionInterceptor
+    {
+        private int _contador;
+
+        public bool Armado { get; set; }
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armado && Interlocked.Increment(ref _contador) == numero)
+            {
+                throw new InvalidOperationException("Falla simulada al comitar.");
+            }
+
+            return base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed record Pausa(HttpClient Cliente, TaskCompletionSource Iniciada, TaskCompletionSource Continuar);
+
+    /// <summary>Un cliente cuya transacción número <paramref name="numero"/> queda pausada tras abrirse.</summary>
+    private async Task<Pausa> PausarEnLaTransaccionAsync(Ctx c, int numero)
+    {
+        var iniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaEnLaTransaccionNumero(numero, iniciada, continuar);
+        var cliente = await ClienteConServiciosAsync(
+            c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor)));
+        interceptor.Armado = true;
+        return new Pausa(cliente, iniciada, continuar);
+    }
+
+    private async Task<(Venta Venta, FilaDeEspejo Espejo)> SembrarVentaConEspejoPendienteAsync(Ctx c)
+    {
+        var venta = await SembrarVentaDecididaAsync(c);
+        c.Wsfe.Solicitar = RespondeHttp500();
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        var espejo = Assert.Single(await LeerEspejosAsync(c));
+        c.Wsfe.Reiniciar();
+        return (venta, espejo);
+    }
+
+    /// <summary>Las operaciones hacia ARCA sin los reintentos de transporte del cliente: ante un 5xx el cliente repite el mismo pedido
+    /// hasta tres veces, y el espía los cuenta todos.</summary>
+    private static IReadOnlyList<string> Pasos(EspiaWsfe wsfe)
+    {
+        var pasos = new List<string>();
+        foreach (var operacion in wsfe.Operaciones.Where(o => pasos.Count == 0 || pasos[^1] != o))
+        {
+            pasos.Add(operacion);
+        }
+
+        return pasos;
+    }
+
+    private static bool EsErrorDelServicio(
+        (LogLevel Nivel, string Categoria, string Mensaje) entrada, string fragmento) =>
+        entrada.Nivel == LogLevel.Error && entrada.Categoria.EndsWith(nameof(ServicioDeFacturacionDeVentas), StringComparison.Ordinal)
+        && entrada.Mensaje.Contains(fragmento, StringComparison.Ordinal);
+
+    /// <summary>Lecturas viejas: la segunda llamada leyó la decisión pendiente y sin espejo, y se pausó antes de su transacción A. La
+    /// primera terminó con un rechazo definitivo. Al retomar, la segunda relee bajo los locks, no inserta nada ni toma número, y
+    /// devuelve el estado actual de la decisión sin llamar a ARCA.</summary>
+    [Fact]
+    public async Task UnaLlamadaConLecturasViejasNoCreaUnEspejoSiOtraYaRechazoLaDecision()
+    {
+        var c = await PrepararAsync("viejar");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var pausa = await PausarEnLaTransaccionAsync(c, 1);
         c.Wsfe.Solicitar = Responde(FecaeRechazado());
 
-        var respuesta = await c.Admin.PostAsync(Ruta(venta.IdFacturacion), null);
+        var segunda = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        var primera = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Equal(EstadosFiscalesDeVenta.Rechazado, primera.Estado);
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(segunda);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Rechazado, estado.Estado);
+        Assert.Equal(["FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Empty(await LeerEspejosAsync(c));
+        Assert.Equal(1L, await LeerProximoAsync(c, 6));
+        Assert.Equal("rechazada", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
+
+        // La serie no quedó bloqueada y la venta se puede anular.
+        var otra = await SembrarVentaDecididaAsync(c, sembrarAcumulados: false);
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarAsync(c.Admin, otra.IdFacturacion)).Comprobante!.Numero);
+        Assert.Equal(
+            HttpStatusCode.OK, (await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task UnaLlamadaConLecturasViejasDevuelveLaFacturaSiOtraYaLaEmitio()
+    {
+        var c = await PrepararAsync("viejaa");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var pausa = await PausarEnLaTransaccionAsync(c, 1);
+        c.Wsfe.Solicitar = Responde(FecaeAprobado("70121212121212"));
+
+        var segunda = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        var primera = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, primera.Estado);
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(segunda);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal("70121212121212", estado.Comprobante!.Cae);
+        Assert.Equal(["FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Single(await LeerEspejosAsync(c));
+        Assert.Equal(2L, await LeerProximoAsync(c, 6));
+    }
+
+    /// <summary>La decisión sigue pendiente pero la primera llamada dejó un espejo pendiente (sin respuesta): la segunda no puede
+    /// insertar otro. Al reevaluar lo encuentra y lo resuelve consultando.</summary>
+    [Fact]
+    public async Task UnaLlamadaConLecturasViejasNoInsertaUnSegundoEspejoSiOtraDejoUnoPendiente()
+    {
+        var c = await PrepararAsync("viejap");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var pausa = await PausarEnLaTransaccionAsync(c, 1);
+        c.Wsfe.Solicitar = RespondeHttp500();
+
+        var segunda = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        var primera = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, primera.Estado);
+        var espejo = Assert.Single(await LeerEspejosAsync(c));
+        c.Wsfe.Consultar = Responde(ConsultarEncontrado("70131313131313", Yyyymmdd(FechaFiscalDe(espejo.Fecha))));
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(segunda);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal(["FECAESolicitar", "FECompConsultar"], Pasos(c.Wsfe));
+        Assert.Equal(espejo.Id, Assert.Single(await LeerEspejosAsync(c)).Id);
+        Assert.Equal(2L, await LeerProximoAsync(c, 6));
+    }
+
+    /// <summary>El lock de la fila de la decisión en la transacción A: otra sesión la sostiene y la cancela. La transacción A espera
+    /// ese lock, relee la decisión ya cancelada y no inserta nada ni toma número.</summary>
+    [Fact]
+    public async Task LaCreacionDelEspejoEsperaElLockDeLaDecisionYRespetaLoQueEseLockResolvio()
+    {
+        var c = await PrepararAsync("lockdec");
+        var venta = await SembrarVentaDecididaAsync(c);
+
+        await using var sostenedor = await AbrirOwnerAsync();
+        await using var transaccion = await sostenedor.BeginTransactionAsync();
+        await using (var bloqueo = sostenedor.CreateCommand())
+        {
+            bloqueo.Transaction = transaccion;
+            bloqueo.CommandText = "SELECT 1 FROM facturaciones_de_venta WHERE id_facturacion_venta = $1 FOR UPDATE";
+            bloqueo.Parameters.Add(new NpgsqlParameter { Value = venta.IdFacturacion });
+            await bloqueo.ExecuteScalarAsync();
+        }
+
+        var procesamiento = ProcesarAsync(c.Admin, venta.IdFacturacion);
+        await EsperarAsync(
+            () => HayEsperaDeLockAsync("SELECT estado::text FROM facturaciones_de_venta"),
+            "la transacción A esperando el lock de la decisión");
+
+        await using (var cancelacion = sostenedor.CreateCommand())
+        {
+            cancelacion.Transaction = transaccion;
+            cancelacion.CommandText =
+                "UPDATE facturaciones_de_venta SET estado = 'cancelada' WHERE id_facturacion_venta = $1";
+            cancelacion.Parameters.Add(new NpgsqlParameter { Value = venta.IdFacturacion });
+            await cancelacion.ExecuteNonQueryAsync();
+        }
+
+        await transaccion.CommitAsync();
+        var estado = await ConTopeAsync(procesamiento);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
+        Assert.Empty(await LeerEspejosAsync(c));
+        Assert.Empty(await LeerSeriesAsync(c));
+        Assert.Empty(c.Wsfe.Operaciones);
+    }
+
+    /// <summary>La anulación gana la carrera: la segunda llamada leyó la venta emitida, pero cuando toma los locks otra ya canceló la
+    /// decisión. Su cancelación relee bajo el lock y no revierte el acumulado por segunda vez.</summary>
+    [Fact]
+    public async Task LaCancelacionQueLlegaTardeNoRevierteElAcumuladoDosVeces()
+    {
+        var c = await PrepararAsync("cancel2");
+        var previo = new[] { (c.IdEfectivo, 17.25m, 300m, 200m), (c.IdTransferencia, -3.5m, 40m, 10m) };
+        var venta = await SembrarVentaDecididaAsync(c);
+        var pausa = await PausarEnLaTransaccionAsync(c, 1);
+
+        var segunda = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        Assert.Equal(HttpStatusCode.OK, (await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null)).StatusCode);
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, (await ProcesarAsync(c.Admin, venta.IdFacturacion)).Estado);
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(segunda);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
+        Assert.Empty(c.Wsfe.Operaciones);
+        Assert.Empty(await LeerEspejosAsync(c));
+        Assert.Empty(await LeerSeriesAsync(c));
+        Assert.Equal(
+            previo.OrderBy(p => p.Item1).Select(p => new FilaDeAcumulado(p.Item1, venta.Periodo, p.Item2, p.Item3, p.Item4)),
+            await LeerAcumuladosAsync(c));
+    }
+
+    /// <summary>La otra mitad de la carrera, fabricada con SQL (ninguna ruta del servicio la produce: la anulación rechaza una venta con
+    /// espejo): una cancelación con lecturas viejas ve, bajo el lock de la venta, que ya hay un espejo y no cancela.</summary>
+    [Fact]
+    public async Task LaCancelacionConLecturasViejasNoCancelaSiYaHayUnEspejo()
+    {
+        var c = await PrepararAsync("cancel3");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var acumulados = await LeerAcumuladosAsync(c);
+        Assert.Equal(HttpStatusCode.OK, (await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null)).StatusCode);
+        var pausa = await PausarEnLaTransaccionAsync(c, 1);
+
+        var cancelacion = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        await EjecutarComoOwnerAsync(
+            "UPDATE comprobantes_venta SET estado = 'emitido' WHERE id_comprobante_venta = $1", venta.IdVenta);
+        c.Wsfe.Solicitar = RespondeHttp500();
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, (await ProcesarAsync(c.Admin, venta.IdFacturacion)).Estado);
+        await EjecutarComoOwnerAsync(
+            "UPDATE comprobantes_venta SET estado = 'anulado' WHERE id_comprobante_venta = $1", venta.IdVenta);
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(cancelacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+        Assert.Equal("pendiente", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
+        Assert.Equal("pendiente", Assert.Single(await LeerEspejosAsync(c)).Resultado);
+        Assert.Equal(acumulados, await LeerAcumuladosAsync(c));
+    }
+
+    /// <summary>La cancelación toma primero el lock de la venta (el mismo que la creación del espejo): mientras otra sesión lo sostiene,
+    /// espera, y recién entonces decide.</summary>
+    [Fact]
+    public async Task LaCancelacionTomaElLockDeLaVentaAntesDeDecidir()
+    {
+        var c = await PrepararAsync("lockven");
+        var venta = await SembrarVentaDecididaAsync(c);
+        Assert.Equal(HttpStatusCode.OK, (await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null)).StatusCode);
+
+        await using var sostenedor = await AbrirOwnerAsync();
+        await using var transaccion = await sostenedor.BeginTransactionAsync();
+        await using (var bloqueo = sostenedor.CreateCommand())
+        {
+            bloqueo.Transaction = transaccion;
+            bloqueo.CommandText = "SELECT 1 FROM comprobantes_venta WHERE id_comprobante_venta = $1 FOR UPDATE";
+            bloqueo.Parameters.Add(new NpgsqlParameter { Value = venta.IdVenta });
+            await bloqueo.ExecuteScalarAsync();
+        }
+
+        var cancelacion = ProcesarAsync(c.Admin, venta.IdFacturacion);
+        await EsperarAsync(
+            () => HayEsperaDeLockAsync("SELECT estado::text FROM comprobantes_venta"),
+            "la cancelación esperando el lock de la venta");
+        await transaccion.CommitAsync();
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, (await ConTopeAsync(cancelacion)).Estado);
+    }
+
+    // ===================================================================================================
+    // Un espejo pendiente siempre se resuelve (juicio J-1c)
+    // ===================================================================================================
+
+    [Theory]
+    [InlineData("rechazada", true)]
+    [InlineData("rechazada", false)]
+    [InlineData("cancelada", true)]
+    [InlineData("cancelada", false)]
+    public async Task UnEspejoPendienteCuyaDecisionYaNoEstaPendienteSeResuelveSinPedirUnCaeNuevo(string estadoDeLaDecision, bool arcaLoTiene)
+    {
+        var c = await PrepararAsync($"huerf{estadoDeLaDecision}{arcaLoTiene}");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        await EjecutarComoOwnerAsync(
+            $"UPDATE facturaciones_de_venta SET estado = '{estadoDeLaDecision}', ultimo_error = 'previo' WHERE id_facturacion_venta = $1",
+            venta.IdFacturacion);
+        var acumulados = await LeerAcumuladosAsync(c);
+        var antes = await LeerDecisionAsync(c, venta.IdFacturacion);
+        c.Wsfe.Consultar = arcaLoTiene
+            ? Responde(ConsultarEncontrado("70888888888888", Yyyymmdd(FechaFiscalDe(espejo.Fecha))))
+            : Responde(ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal(antes with { IdComprobanteFiscal = arcaLoTiene ? espejo.Id : null }, decision);
+        Assert.Equal(acumulados, await LeerAcumuladosAsync(c));
+        if (arcaLoTiene)
+        {
+            var adoptado = Assert.Single(await LeerEspejosAsync(c));
+            Assert.Equal(("aprobado", "70888888888888"), (adoptado.Resultado, adoptado.Cae));
+            Assert.Equal(2L, await LeerProximoAsync(c, 6));
+        }
+        else
+        {
+            Assert.Empty(await LeerEspejosAsync(c));
+            Assert.Equal(1L, await LeerProximoAsync(c, 6));
+        }
+
+        Assert.Contains(
+            c.Logs.Entradas,
+            e => EsErrorDelServicio(e, $"La decisión {venta.IdFacturacion} está '{estadoDeLaDecision}'")
+                && e.Mensaje.Contains($"espejo {espejo.Id}", StringComparison.Ordinal));
+
+        // Resuelto, la siguiente llamada no hace nada.
+        c.Wsfe.Reiniciar();
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Empty(c.Wsfe.Operaciones);
+    }
+
+    /// <summary>Aplicar el resultado bloquea la fila de la decisión y la relee: otra sesión la sostiene mientras ARCA contesta y la
+    /// cancela. El resultado espera ese lock, ve la decisión cancelada y no la pisa.</summary>
+    [Fact]
+    public async Task AplicarElResultadoEsperaElLockDeLaDecisionYNoPisaLoQueEseLockResolvio()
+    {
+        var c = await PrepararAsync("lockapl");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var sostenedor = await AbrirOwnerAsync();
+        var transaccion = await sostenedor.BeginTransactionAsync();
+        c.Wsfe.Solicitar = async _ =>
+        {
+            await using var bloqueo = sostenedor.CreateCommand();
+            bloqueo.Transaction = transaccion;
+            bloqueo.CommandText = "SELECT 1 FROM facturaciones_de_venta WHERE id_facturacion_venta = $1 FOR UPDATE";
+            bloqueo.Parameters.Add(new NpgsqlParameter { Value = venta.IdFacturacion });
+            await bloqueo.ExecuteScalarAsync();
+            return RespuestaXml(FecaeAprobado("70181818181818"));
+        };
+
+        try
+        {
+            var procesamiento = ProcesarAsync(c.Admin, venta.IdFacturacion);
+            await EsperarAsync(
+                () => HayEsperaDeLockAsync("SELECT estado::text FROM facturaciones_de_venta"),
+                "el resultado esperando el lock de la decisión");
+
+            await using (var cancelacion = sostenedor.CreateCommand())
+            {
+                cancelacion.Transaction = transaccion;
+                cancelacion.CommandText =
+                    "UPDATE facturaciones_de_venta SET estado = 'cancelada' WHERE id_facturacion_venta = $1";
+                cancelacion.Parameters.Add(new NpgsqlParameter { Value = venta.IdFacturacion });
+                await cancelacion.ExecuteNonQueryAsync();
+            }
+
+            await transaccion.CommitAsync();
+            var estado = await ConTopeAsync(procesamiento);
+
+            Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
+            var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+            Assert.Equal("cancelada", decision.Estado);
+            var espejo = Assert.Single(await LeerEspejosAsync(c));
+            Assert.Equal(("aprobado", "70181818181818"), (espejo.Resultado, espejo.Cae));
+            Assert.Equal(espejo.Id, decision.IdComprobanteFiscal);
+        }
+        finally
+        {
+            await transaccion.DisposeAsync();
+            await sostenedor.DisposeAsync();
+        }
+    }
+
+    /// <summary>Si ARCA no contesta la consulta de un espejo cuya decisión ya está resuelta, el espejo sigue pendiente, a la decisión no
+    /// se le anota ningún intento y la llamada siguiente lo resuelve.</summary>
+    [Fact]
+    public async Task UnaConsultaSinRespuestaDejaIntactoElEspejoDeUnaDecisionYaResuelta()
+    {
+        var c = await PrepararAsync("huerfred");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'rechazada' WHERE id_facturacion_venta = $1", venta.IdFacturacion);
+        var antes = await LeerDecisionAsync(c, venta.IdFacturacion);
+        c.Wsfe.Consultar = RespondeHttp500();
+
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(["FECompConsultar"], Pasos(c.Wsfe));
+        Assert.Equal(antes, await LeerDecisionAsync(c, venta.IdFacturacion));
+        Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
+
+        c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Empty(await LeerEspejosAsync(c));
+    }
+
+    /// <summary>Un espejo ya resuelto con una decisión que sigue pendiente es una inconsistencia: se rechaza con un error, no se
+    /// reevalúa sin fin.</summary>
+    [Fact]
+    public async Task UnEspejoResueltoConUnaDecisionPendienteEsUnaInconsistenciaYNoCicla()
+    {
+        var c = await PrepararAsync("inconsis");
+        var venta = await SembrarVentaDecididaAsync(c);
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'pendiente', id_comprobante_fiscal = NULL WHERE id_facturacion_venta = $1",
+            venta.IdFacturacion);
+        c.Wsfe.Reiniciar();
+
+        var respuesta = await ConTopeAsync(c.Admin.PostAsync(Ruta(venta.IdFacturacion), null));
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
-        Assert.Equal("pendiente", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
-        var espejo = Assert.Single(await LeerEspejosAsync(c));
-        Assert.Equal(("pendiente", 1L), (espejo.Resultado, espejo.Numero));
+        Assert.Empty(c.Wsfe.Operaciones);
+    }
+
+    /// <summary>La decisión estaba resuelta al empezar y volvió a pendiente antes de que la consulta tomara los locks: se reevalúa y se
+    /// sigue como una decisión pendiente más (con sus compuertas), sin dar por resuelto lo que no se resolvió.</summary>
+    [Fact]
+    public async Task UnaDecisionQueVuelveAPendienteMientrasSeConsultaSeReevaluaConSusCompuertas()
+    {
+        var c = await PrepararAsync("vuelve");
+        var (venta, _) = await SembrarVentaConEspejoPendienteAsync(c);
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'rechazada' WHERE id_facturacion_venta = $1", venta.IdFacturacion);
+        var pausa = await PausarEnLaTransaccionAsync(c, 1);
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var procesamiento = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'pendiente' WHERE id_facturacion_venta = $1", venta.IdFacturacion);
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(procesamiento);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal(["FECompConsultar", "FECompConsultar", "FECAESolicitar"], c.Wsfe.Operaciones);
+    }
+
+    // ===================================================================================================
+    // Época del espejo: ninguna otra llamada se mete entre dos pasos de la misma
+    // ===================================================================================================
+
+    /// <summary>La primera llamada crea el espejo y se pausa antes de pedir. Otra llamada lo encuentra, lo consulta, guarda la fecha y
+    /// pide (sin respuesta). Al retomar, la primera ya no puede pedir directo: el espejo cambió, así que vuelve a consultar.</summary>
+    [Fact]
+    public async Task UnaLlamadaNoPideDirectoSiOtraConsultoYPidioEntreLaCreacionYElPedido()
+    {
+        var c = await PrepararAsync("epoca");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var pausa = await PausarEnLaTransaccionAsync(c, 2);
+        c.Wsfe.Solicitar = RespondeHttp500();
+
+        var primera = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        var otra = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, otra.Estado);
+        Assert.Equal(["FECompConsultar", "FECAESolicitar"], Pasos(c.Wsfe));
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(primera);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+        Assert.Equal(["FECompConsultar", "FECAESolicitar", "FECompConsultar", "FECAESolicitar"], Pasos(c.Wsfe));
+        Assert.Single(await LeerEspejosAsync(c));
+    }
+
+    /// <summary>La decisión dejó de estar pendiente entre la creación del espejo y el pedido: no se pide un CAE para ella; el espejo se
+    /// consulta y, como ARCA no lo tiene, se libera.</summary>
+    [Fact]
+    public async Task UnaDecisionQueDejaDeEstarPendienteEntreLaCreacionYElPedidoNoPideCae()
+    {
+        var c = await PrepararAsync("entre");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var pausa = await PausarEnLaTransaccionAsync(c, 2);
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var procesamiento = ProcesarAsync(pausa.Cliente, venta.IdFacturacion);
+        await pausa.Iniciada.Task.WaitAsync(Tope);
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'cancelada' WHERE id_facturacion_venta = $1", venta.IdFacturacion);
+        pausa.Continuar.TrySetResult();
+        var estado = await ConTopeAsync(procesamiento);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
+        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
+        Assert.Empty(await LeerEspejosAsync(c));
+        Assert.Equal(1L, await LeerProximoAsync(c, 6));
+    }
+
+    // ===================================================================================================
+    // Consulta, fecha y rechazo de nivel de llamada (juicios J-2, J-3)
+    // ===================================================================================================
+
+    [Theory]
+    [InlineData(10000, "arca_no_definitivo")]
+    [InlineData(600, "ticket_de_acceso_invalido")]
+    public async Task UnErrorDeLaConsultaQueNoEsComprobanteInexistenteNoRefrescaLaFechaNiPide(int codigo, string codigoDeDominio)
+    {
+        var c = await PrepararAsync($"cerr{codigo}");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        c.Reloj.Ahora = c.Reloj.Ahora.AddDays(2);
+        c.Wsfe.Consultar = Responde(ConsultarConError(codigo));
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
+        Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal(2, decision.Intentos);
+        Assert.StartsWith(codigoDeDominio + ":", decision.UltimoError, StringComparison.Ordinal);
+    }
+
+    /// <summary>La fecha de hoy se guarda en una transacción propia, antes de pedir. El pedido sale y el commit del resultado falla: el
+    /// espejo conserva la fecha que viajó, y una adopción posterior la ve.</summary>
+    [Fact]
+    public async Task LaFechaQueViajoAArcaQuedaGuardadaAunqueSeDeshagaLaTransaccionDelResultado()
+    {
+        var c = await PrepararAsync("fechaenv");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        c.Reloj.Ahora = c.Reloj.Ahora.AddDays(2);
+        c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeAprobado("70141414141414"));
+        var falla = new InterceptorQueFallaAlComitar(2);
+        var cliente = await ClienteConServiciosAsync(
+            c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(falla)));
+        falla.Armado = true;
+
+        var respuesta = await cliente.PostAsync(Ruta(venta.IdFacturacion), null);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+        Assert.Equal(["FECompConsultar", "FECAESolicitar"], c.Wsfe.Operaciones);
+        var enviada = CampoDelCuerpo(Assert.Single(c.Wsfe.CuerposDeSolicitud), "CbteFch");
+        var tras = Assert.Single(await LeerEspejosAsync(c));
+        Assert.Equal(("pendiente", c.Reloj.Ahora), (tras.Resultado, tras.Fecha));
+        Assert.NotEqual(espejo.Fecha, tras.Fecha);
+        Assert.Equal(enviada, Yyyymmdd(FechaFiscalDe(tras.Fecha)));
+        Assert.Equal(1, (await LeerDecisionAsync(c, venta.IdFacturacion)).Intentos);
+
+        // ARCA sí registró el comprobante con la fecha enviada: la adopción posterior muestra la fecha que ARCA tiene.
+        c.Wsfe.Reiniciar();
+        c.Wsfe.Consultar = Responde(ConsultarEncontrado("70141414141414", enviada));
+        var adoptado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, adoptado.Estado);
+        Assert.Equal(FechaFiscalDe(c.Reloj.Ahora), adoptado.Comprobante!.Fecha);
+        Assert.Equal(c.Reloj.Ahora, Assert.Single(await LeerEspejosAsync(c)).Fecha);
+    }
+
+    /// <summary>Si ARCA registró el comprobante con otro día que el guardado, la adopción deja la fecha de ARCA.</summary>
+    [Fact]
+    public async Task AlAdoptarElEspejoTomaLaFechaQueArcaTieneRegistrada()
+    {
+        var c = await PrepararAsync("fechaarca");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        var diaDeArca = FechaFiscalDe(espejo.Fecha).AddDays(-3);
+        c.Wsfe.Consultar = Responde(ConsultarEncontrado("70151515151515", Yyyymmdd(diaDeArca)));
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal(diaDeArca, estado.Comprobante!.Fecha);
+        Assert.Equal(diaDeArca, FechaFiscalDe(Assert.Single(await LeerEspejosAsync(c)).Fecha));
+    }
+
+    [Theory]
+    [InlineData("encontrado")]
+    [InlineData("no_encontrado")]
+    [InlineData("error")]
+    public async Task UnErrorDeLlamadaDeArcaSoloEsDefinitivoSiLaConsultaConfirmaQueNoTieneElNumero(string consulta)
+    {
+        var c = await PrepararAsync($"llam{consulta}");
+        var venta = await SembrarVentaDecididaAsync(c);
+        c.Wsfe.Solicitar = Responde(FecaeErrorDeLlamada());
+        c.Wsfe.Consultar = consulta switch
+        {
+            "encontrado" => Responde(ConsultarEncontrado("70161616161616", Yyyymmdd(FechaFiscalDe(c.Reloj.Ahora)))),
+            "no_encontrado" => Responde(ConsultarNoEncontrado()),
+            _ => RespondeHttp500()
+        };
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(["FECAESolicitar", "FECompConsultar"], Pasos(c.Wsfe));
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        switch (consulta)
+        {
+            case "encontrado":
+                Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+                Assert.Equal("70161616161616", estado.Comprobante!.Cae);
+                Assert.Equal("emitida", decision.Estado);
+                Assert.Equal("aprobado", Assert.Single(await LeerEspejosAsync(c)).Resultado);
+                Assert.Equal(2L, await LeerProximoAsync(c, 6));
+                break;
+            case "no_encontrado":
+                Assert.Equal(EstadosFiscalesDeVenta.Rechazado, estado.Estado);
+                Assert.Equal("rechazada", decision.Estado);
+                Assert.Empty(await LeerEspejosAsync(c));
+                Assert.Equal(1L, await LeerProximoAsync(c, 6));
+                break;
+            default:
+                Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+                Assert.Equal(("pendiente", 1), (decision.Estado, decision.Intentos));
+                Assert.Contains("arca_no_definitivo", decision.UltimoError);
+                var espejo = Assert.Single(await LeerEspejosAsync(c));
+                Assert.Equal(("pendiente", 1L), (espejo.Resultado, espejo.Numero));
+                Assert.Equal(2L, await LeerProximoAsync(c, 6));
+                break;
+        }
+    }
+
+    // ===================================================================================================
+    // Un espejo ya creado se consulta antes que las compuertas de la venta (S-1)
+    // ===================================================================================================
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnaCompuertaDeLaVentaRotaNoImpideAdoptarUnCaeQueArcaYaTiene(bool arcaLoTiene)
+    {
+        var c = await PrepararAsync($"adopt{arcaLoTiene}");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        await EjecutarComoOwnerAsync("UPDATE empresas SET id_condicion_fiscal = NULL WHERE id_empresa = $1", c.IdEmpresa);
+        c.Wsfe.Consultar = arcaLoTiene
+            ? Responde(ConsultarEncontrado("70171717171717", Yyyymmdd(FechaFiscalDe(espejo.Fecha))))
+            : Responde(ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
+        if (arcaLoTiene)
+        {
+            Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+            Assert.Equal("70171717171717", estado.Comprobante!.Cae);
+        }
+        else
+        {
+            Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+            Assert.StartsWith("empresa_sin_condicion_fiscal:", estado.Error, StringComparison.Ordinal);
+            Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
+            Assert.Equal(2, (await LeerDecisionAsync(c, venta.IdFacturacion)).Intentos);
+        }
+    }
+
+    [Fact]
+    public async Task SiLaConsultaNoPuedeCorrerPorFaltarSuCertificadoSeRegistraLaCompuertaComoSiempre()
+    {
+        var c = await PrepararAsync("sincert");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        await EjecutarComoOwnerAsync("UPDATE certificados_fiscales SET activo = false WHERE id_empresa = $1", c.IdEmpresa);
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+        Assert.StartsWith("certificado_fiscal_ausente:", estado.Error, StringComparison.Ordinal);
+        Assert.Empty(c.Wsfe.Operaciones);
+        Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
+        Assert.Equal(2, (await LeerDecisionAsync(c, venta.IdFacturacion)).Intentos);
+    }
+
+    /// <summary>La decisión cambió entre la lectura inicial y el registro de una falla del ticket de acceso: el intento no se anota.</summary>
+    [Fact]
+    public async Task UnaFallaDelTicketNoSeLeAnotaAUnaDecisionQueYaNoEstaPendiente()
+    {
+        var c = await PrepararAsync("ticketv");
+        var venta = await SembrarVentaDecididaAsync(c);
+        c.Wsaa.Falla = true;
+        c.Wsaa.AntesDeResponder = () => EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'cancelada' WHERE id_facturacion_venta = $1", venta.IdFacturacion);
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal(("cancelada", 0, null), (decision.Estado, decision.Intentos, decision.UltimoError));
     }
 }

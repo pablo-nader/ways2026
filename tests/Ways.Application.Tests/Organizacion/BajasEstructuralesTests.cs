@@ -60,9 +60,11 @@ public class BajasEstructuralesTests
     /// abajo, no solo declarado.
     ///
     /// <c>ServicioDeFacturacionDeVentas</c> (facturación por medio de pago, T5a) borra el comprobante fiscal espejo que ARCA
-    /// rechazó y sus ítems, para que no quede un comprobante fiscal sin CAE (decisión del dueño, 2026-10-13). Es un detalle
-    /// operativo de <c>comprobantes_venta</c>/<c>items_comprobante_venta</c> —tablas de ventas, no de organización—, acotado al
-    /// espejo recién creado por la misma llamada y bajo el lock de su serie fiscal. No es la baja de una entidad ni de una venta.
+    /// rechazó (o que no tiene y cuya decisión ya no está pendiente) y sus ítems, para que no quede un comprobante fiscal sin
+    /// CAE (decisión del dueño, 2026-10-13). Es un detalle operativo de <c>comprobantes_venta</c>/<c>items_comprobante_venta</c>
+    /// —tablas de ventas, no de organización—, acotado a UN espejo pendiente (el creado por la misma llamada o uno que dejó una
+    /// llamada anterior), identificado por su id, bloqueado y releído como pendiente, y bajo el lock de su serie fiscal. No es la
+    /// baja de una entidad ni de una venta.
     /// </summary>
     private static readonly string[] DeleteFromPermitidos =
     [

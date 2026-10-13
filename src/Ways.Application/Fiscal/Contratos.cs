@@ -102,14 +102,16 @@ public sealed record RespuestaCae(
     IReadOnlyList<ObservacionArca> Observaciones,
     IReadOnlyList<ObservacionArca> Errors);
 
-/// <summary>Resultado de <c>FECompConsultar</c> (I2). <see cref="Encontrado"/> <c>false</c> cubre
-/// tanto "nunca se intentó" como "ARCA no tiene registro de ese número" — el llamador no distingue
-/// esos dos casos, en ninguno hay nada para adoptar.</summary>
+/// <summary>Resultado de <c>FECompConsultar</c> (I2). <see cref="Encontrado"/> <c>false</c> significa SOLO la respuesta
+/// explícita de ARCA "no existe ese comprobante" (nunca se intentó, o ARCA no tiene registro de ese número): en ninguno de
+/// los dos casos hay nada para adoptar. Cualquier otro error de la consulta no es un resultado: el cliente lo lanza como
+/// <c>ErrorDominio</c> no definitivo. <see cref="Fecha"/> es la fecha del comprobante que ARCA registró (<c>CbteFch</c>).</summary>
 public sealed record ConsultaDeComprobante(
     bool Encontrado,
     string? Cae,
     DateOnly? CaeVencimiento,
-    ResultadoFiscal? Resultado);
+    ResultadoFiscal? Resultado,
+    DateOnly? Fecha = null);
 
 /// <summary>Una fila de <c>FEParamGetTiposCbte</c>/<c>FEParamGetTiposIva</c>/
 /// <c>FEParamGetCondicionIvaReceptor</c> — misma forma <c>{Id, Desc}</c> en los tres catálogos.

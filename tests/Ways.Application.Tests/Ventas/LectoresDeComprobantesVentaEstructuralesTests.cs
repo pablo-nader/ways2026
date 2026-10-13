@@ -104,8 +104,14 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta c \" +")] =
                 (1, "Busca espejos pendientes de la serie fiscal: tiene que verlos, un espejo pendiente detiene la serie."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
-                "\"SELECT resultado_fiscal::text, fecha FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
+                "\"SELECT resultado_fiscal::text, fecha, numero, xmin::text FROM comprobantes_venta \" +")] =
                 (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"SELECT xmin::text FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
+                (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1)\", ct, idVenta);")] =
+                (1, "Pregunta si UNA venta ya tiene espejo, en cualquier estado: tiene que verlo, es justo lo que pregunta."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "\"DELETE FROM items_comprobante_venta WHERE id_comprobante_venta = $1\", ct, idEspejo))")] =
                 (1, "Borra los ítems de UN espejo fiscal rechazado por ARCA, por id."),

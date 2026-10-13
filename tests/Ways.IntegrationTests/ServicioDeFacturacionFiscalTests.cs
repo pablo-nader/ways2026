@@ -681,6 +681,33 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(["FECompConsultar", "FECAESolicitar"], espiaWsfe.Operaciones);
     }
 
+    /// <summary>Cambio de comportamiento de la consulta: "no encontrado" es solo el 602 explícito. Cualquier otro error de
+    /// <c>FECompConsultar</c> es no definitivo también acá: el reintento se corta (503), no pide un CAE nuevo y el comprobante queda
+    /// pendiente.</summary>
+    [Fact]
+    public async Task ElReintentoNoPideUnCaeSiLaConsultaFallaConUnErrorQueNoEsComprobanteInexistente()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+                "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+                "<ResultGet /><Errors><Err><Code>10000</Code><Msg>Falla interna de ARCA.</Msg></Err></Errors></FECompConsultarResult>" +
+                "</FECompConsultarResponse></soapenv:Body></soapenv:Envelope>"),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(57))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoNoPideUnCaeSiLaConsultaFallaConUnErrorQueNoEsComprobanteInexistente), espiaWsaa, espiaWsfe);
+
+        var idComprobante = await SembrarPendienteAsync(ctx, 57);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+        Assert.Equal(["FECompConsultar"], espiaWsfe.Operaciones);
+    }
+
     // --- El CRITICAL de judgment 19a-slice-5 ronda 2 juez A: la re-emisión (rama no-adoptada de
     //     ReintentarAsync) tenía que recomponer el desglose fiscal COMPLETO desde el snapshot
     //     congelado de items_comprobante_venta, nunca fabricar ImpOpEx=0/Iva[]=[] — el invariante

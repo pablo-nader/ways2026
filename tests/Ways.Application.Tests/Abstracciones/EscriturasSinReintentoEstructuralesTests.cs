@@ -157,11 +157,13 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "GuardarImagenAsync" },
         { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "QuitarImagenAsync" },
 
-        // Facturación por medio de pago, T5a: emitir el espejo fiscal. Tomar el número e insertar el espejo, pedir el CAE y
-        // resolver la decisión, y cancelarla, mueven un contador de ARCA y el acumulado sin clave de idempotencia: un
-        // reintento tras un commit ambiguo quemaría otro número o aplicaría dos veces el débito.
+        // Facturación por medio de pago, T5a: emitir el espejo fiscal. Tomar el número e insertar el espejo, consultar y
+        // resolver un espejo pendiente, pedir el CAE y resolver la decisión, y cancelarla, mueven un contador de ARCA y el
+        // acumulado sin clave de idempotencia: un reintento tras un commit ambiguo quemaría otro número o aplicaría dos veces
+        // el débito.
         { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "CrearEspejoAsync" },
-        { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "ResolverEspejoAsync" },
+        { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "ConsultarEspejoPendienteAsync" },
+        { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "SolicitarAsync" },
         { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "CancelarAsync" },
     };
 
