@@ -214,14 +214,18 @@ public sealed class ClienteWsfe : IClienteWsfe
     }
 
     /// <summary>Envía un sobre ya armado con backoff exponencial acotado a
-    /// <see cref="_intentosMaximos"/> intentos (solo ante falla de TRANSPORTE — timeout/5xx/socket,
-    /// nunca ante una respuesta de negocio ya parseada) y respeta el circuito abierto sin emitir
-    /// ningún request mientras dure (target 50).</summary>
+    /// <see cref="_intentosMaximos"/> intentos (solo ante falla de TRANSPORTE — socket/5xx, nunca ante una respuesta de negocio
+    /// ya parseada) y respeta el circuito abierto sin emitir ningún request mientras dure (target 50). Un TIMEOUT de la
+    /// llamada NO se reintenta: es de inmediato un resultado no definitivo (<c>arca_no_definitivo</c>), porque ARCA pudo haber
+    /// procesado el pedido y volver a enviar el mismo <c>FECAESolicitar</c> puede devolver un error de numeración en lugar del
+    /// CAE; lo resuelve el "consultar primero" del intento siguiente. Para el circuito un timeout es una llamada fallida más,
+    /// igual que cuando se agotaban los intentos.</summary>
     private async Task<XElement> EnviarAsync(string operacion, string sobre, CancellationToken ct)
     {
         VerificarCircuitoCerrado();
 
-        for (var intento = 1; intento <= _intentosMaximos; intento++)
+        var vencio = false;
+        for (var intento = 1; intento <= _intentosMaximos && !vencio; intento++)
         {
             try
             {
@@ -253,11 +257,16 @@ public sealed class ClienteWsfe : IClienteWsfe
             catch (Exception ex) when (EsFallaTransitoria(ex) && !ct.IsCancellationRequested)
             {
                 // Con el token del llamador sin cancelar, un TaskCanceledException es el timeout del HttpClient: falla de
-                // transporte, no definitiva. Con el token cancelado la cancelación es del llamador y se propaga sin tocar el circuito.
+                // transporte, no definitiva, y no se reintenta. Con el token cancelado la cancelación es del llamador y se
+                // propaga sin tocar el circuito.
                 // El filtro captura TODOS los intentos, incluido el último — así el fallo cae al
                 // registro del circuito + el ErrorDominio de abajo en vez de propagar la excepción
                 // cruda de transporte. Solo se espera (backoff) si queda otro intento por delante.
-                if (intento < _intentosMaximos)
+                if (ex is TaskCanceledException)
+                {
+                    vencio = true;
+                }
+                else if (intento < _intentosMaximos)
                 {
                     var demora = TimeSpan.FromTicks(_retardoBase.Ticks * (1L << (intento - 1)));
                     await _esperador.EsperarAsync(demora, ct);
@@ -266,7 +275,10 @@ public sealed class ClienteWsfe : IClienteWsfe
         }
 
         RegistrarFalloDelCircuito();
-        throw new ErrorDominio("arca_no_definitivo", "WSFE no respondió de forma definitiva.", 503);
+        throw new ErrorDominio(
+            "arca_no_definitivo",
+            vencio ? "WSFE no respondió dentro del tiempo configurado." : "WSFE no respondió de forma definitiva.",
+            503);
     }
 
     private static bool EsFallaTransitoria(Exception ex) => ex is HttpRequestException or TaskCanceledException;

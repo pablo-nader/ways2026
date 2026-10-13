@@ -75,8 +75,13 @@ public sealed class RepositorioEnMemoriaDeTicketDeAcceso(IRelojDelSistema reloj)
                 return vigente;
             }
 
-            var nuevo = await obtenerNuevo(ct);
-            await GuardarAsync(clave, nuevo, ct);
+            // La firma en vuelo no se cancela con el token del llamador (por ejemplo, el presupuesto de un lote): WSAA no emite un
+            // ticket nuevo mientras hay uno vigente, así que abandonar una firma cuya respuesta se perdió bloquea al emisor hasta
+            // que el ticket vence. La acota el timeout del cliente de WSAA. El ticket se guarda y recién entonces se vuelve a mirar
+            // el token del llamador; los que esperan el cerrojo sí se cancelan con el suyo.
+            var nuevo = await obtenerNuevo(CancellationToken.None);
+            await GuardarAsync(clave, nuevo, CancellationToken.None);
+            ct.ThrowIfCancellationRequested();
             return nuevo;
         }
         finally

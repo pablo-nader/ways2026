@@ -1021,6 +1021,45 @@ public class ServicioDeFacturacionDeVentas(
         return await comando.ExecuteScalarAsync(ct) as int?;
     }
 
+    /// <summary>Espera con la que el procesador por lote posterga una decisión cuyo procesamiento cortó su presupuesto.</summary>
+    public static readonly TimeSpan EsperaPorCorteDeLote = TimeSpan.FromMinutes(1);
+
+    /// <summary>Posterga una decisión cortada por el presupuesto del lote: solo fija <c>proximo_intento_en</c> a
+    /// <see cref="EsperaPorCorteDeLote"/> desde ahora, sin tocar <c>intentos</c> ni <c>ultimo_error</c> (el corte no es un fallo).
+    /// Un único UPDATE guardado por <c>estado = 'pendiente'</c>: una decisión que ya no está pendiente (por ejemplo, la que
+    /// solo conserva un espejo pendiente) no se puede postergar. Nunca lanza; <paramref name="ct"/> tiene que ser un token
+    /// propio y corto, porque el del lote ya está cancelado.</summary>
+    public async Task PostergarPorCorteDeLoteAsync(int idFacturacion, CancellationToken ct)
+    {
+        try
+        {
+            await using var comando = await NuevoComandoAsync(
+                "UPDATE facturaciones_de_venta SET proximo_intento_en = $2, updated_at = $3 " +
+                "WHERE id_facturacion_venta = $1 AND estado = 'pendiente'::estado_facturacion_venta",
+                ct, idFacturacion, reloj.Ahora + EsperaPorCorteDeLote, reloj.Ahora);
+            _ = await comando.ExecuteNonQueryAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "No se pudo postergar la facturación {IdFacturacion} cortada por el lote.", idFacturacion);
+        }
+    }
+
+    /// <summary>Anota como intento fallido (con la espera creciente de un fallo no definitivo) una decisión cuyo procesamiento
+    /// lanzó una excepción que no es uno de los resultados registrados. <paramref name="codigo"/> es un código estable, sin
+    /// detalles internos. Nunca lanza.</summary>
+    public async Task RegistrarFalloInesperadoAsync(int idFacturacion, string codigo, CancellationToken ct)
+    {
+        try
+        {
+            _ = await EscribirFalloAsync(idFacturacion, codigo, EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "No se pudo anotar el fallo de la facturación {IdFacturacion}.", idFacturacion);
+        }
+    }
+
     private static string DescribirFalla(Exception ex) =>
         ex is ErrorDominio dominio ? $"{dominio.Codigo}: {dominio.Message}" : $"{ex.GetType().Name}: {ex.Message}";
 

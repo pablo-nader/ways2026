@@ -7,11 +7,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Ways.Application.Abstracciones;
 using Ways.Application.Fiscal;
 using Ways.Application.Parametros;
 using Ways.Application.Stock;
 using Ways.Domain.Caja;
+using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Fiscal;
@@ -26,9 +28,13 @@ namespace Ways.IntegrationTests;
 ///
 /// Mutation-proof-tests: las cláusulas bajo prueba son el filtro de espera (<c>proximo_intento_en</c>, incluido el borde), el orden
 /// por decisión, el tope por defecto y el máximo, el cabeza de serie primero, la espera del cabeza que salta toda su serie, el
-/// aislamiento de una decisión que falla, el corte por presupuesto que no es un fallo, el filtro de punto de venta (candidatas y
-/// pendientes restantes), el timeout aplicado al cliente de WSFE y la comparación del ticket al invalidarlo. Las carreras se
-/// resuelven pausando el espía de WSFE, sin esperas por tiempo.
+/// aislamiento de una decisión que falla (anotada como intento con un código estable y postergada), el corte por presupuesto que
+/// no es un fallo y posterga la decisión sin tocar sus intentos, el filtro de punto de venta (candidatas, cabezas y pendientes
+/// restantes), el paginado de las candidatas, la falla del propio lote que se propaga, el timeout aplicado a los clientes de WSFE
+/// y WSAA, que una firma de WSAA en vuelo no se abandona con el corte y la comparación del ticket al invalidarlo. Ningún test
+/// espera por tiempo para que algo ocurra: las carreras se resuelven pausando el espía y el presupuesto del lote nace de un
+/// <see cref="FakeTimeProvider"/> que el test avanza recién cuando el espía confirma que el pedido llegó; el único tiempo real es
+/// el timeout del HttpClient, que solo puede vencer una llamada que se cuelga a propósito.
 /// </summary>
 public partial class FacturacionDeVentasEmisionTests
 {
@@ -198,6 +204,10 @@ public partial class FacturacionDeVentasEmisionTests
         var delOtroPuntoDeVenta = await SembrarVentaDecididaAsync(
             c with { IdPuntoVenta = idOtroPuntoVenta, IdTurno = idTurnoDelOtro }, sembrarAcumulados: false);
         var deOtroTenant = await SembrarVentaDecididaAsync(ajeno);
+        // Una candidata SIN espejo en el otro punto de venta, del mismo tenant: solo el filtro de punto de venta de la consulta de
+        // candidatas la deja afuera (la de arriba la deja afuera además por tener un espejo pendiente).
+        var sinEspejoDelOtro = await SembrarVentaDecididaAsync(
+            c with { IdPuntoVenta = idOtroPuntoVenta, IdTurno = idTurnoDelOtro }, sembrarAcumulados: false);
 
         // La del otro punto de venta ya tiene su espejo pendiente (cabeza de su serie) y su espera vencida: es lo más tentador.
         await DejarEspejoPendienteAsync(c, delOtroPuntoDeVenta);
@@ -215,12 +225,72 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Empty(ajeno.Wsfe.Operaciones);
         Assert.Equal(cabezaAjena, await LeerDecisionAsync(c, delOtroPuntoDeVenta.IdFacturacion));
         Assert.Equal("pendiente", (await LeerDecisionAsync(ajeno, deOtroTenant.IdFacturacion)).Estado);
+        var intactaDelOtro = await LeerDecisionAsync(c, sinEspejoDelOtro.IdFacturacion);
+        Assert.Equal(("pendiente", 0, null), (intactaDelOtro.Estado, intactaDelOtro.Intentos, intactaDelOtro.ProximoIntento));
 
-        // El otro punto de venta ve lo suyo y solo lo suyo.
+        // El otro punto de venta ve lo suyo y solo lo suyo: la cabeza primero y después su candidata.
         var delOtro = await ProcesarLoteAsync(c.Admin, idOtroPuntoVenta);
-        Assert.Equal(delOtroPuntoDeVenta.IdFacturacion, Assert.Single(delOtro.Resultados).IdFacturacion);
-        Assert.Equal((1, 0), (delOtro.Emitidas, delOtro.PendientesRestantes));
+        Assert.Equal(
+            [delOtroPuntoDeVenta.IdFacturacion, sinEspejoDelOtro.IdFacturacion], delOtro.Resultados.Select(r => r.IdFacturacion));
+        Assert.Equal((2, 0), (delOtro.Emitidas, delOtro.PendientesRestantes));
         Assert.Equal("pendiente", (await LeerDecisionAsync(ajeno, deOtroTenant.IdFacturacion)).Estado);
+    }
+
+    /// <summary>Copia por SQL la venta y la decisión de <paramref name="plantilla"/> <paramref name="cantidad"/> veces (solo cambia el
+    /// número de la venta): son candidatas válidas para el lote sin pagar la siembra completa de cada una.</summary>
+    private Task ClonarDecisionesAsync(Venta plantilla, int cantidad) => EjecutarComoOwnerAsync(
+        $"""
+        DO $$
+        DECLARE
+            columnas_venta text;
+            columnas_decision text;
+            nueva_venta int;
+            i int;
+        BEGIN
+            SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) INTO columnas_venta
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'comprobantes_venta'
+              AND column_name NOT IN ('id_comprobante_venta', 'numero');
+            SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) INTO columnas_decision
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'facturaciones_de_venta'
+              AND column_name NOT IN ('id_facturacion_venta', 'id_comprobante_venta');
+            FOR i IN 1..{cantidad} LOOP
+                EXECUTE format(
+                    'INSERT INTO comprobantes_venta (%s, numero) SELECT %s, numero + %s FROM comprobantes_venta ' ||
+                    'WHERE id_comprobante_venta = %s RETURNING id_comprobante_venta',
+                    columnas_venta, columnas_venta, 1000000 + i, {plantilla.IdVenta}) INTO nueva_venta;
+                EXECUTE format(
+                    'INSERT INTO facturaciones_de_venta (%s, id_comprobante_venta) SELECT %s, %s FROM facturaciones_de_venta ' ||
+                    'WHERE id_facturacion_venta = %s',
+                    columnas_decision, columnas_decision, nueva_venta, {plantilla.IdFacturacion});
+            END LOOP;
+        END $$;
+        """);
+
+    /// <summary>Las candidatas de una serie detenida se saltean sin gastar cupo, así que se leen de a páginas de 100: más de una
+    /// página de ésas seguida de una elegible tiene que llegar a la elegible (el cursor avanza y la lectura no para en la primera
+    /// página).</summary>
+    [Fact]
+    public async Task MasDeUnaPaginaDeCandidatasDeUnaSerieEnEsperaNoImpideLlegarALaSiguienteSerie()
+    {
+        var c = await PrepararAsync("lotepag");
+        var cabeza = await SembrarVentaDecididaAsync(c);
+        await DejarEspejoPendienteAsync(c, cabeza);
+        var plantilla = await SembrarVentaDecididaAsync(c, sembrarAcumulados: false);
+        await ClonarDecisionesAsync(plantilla, 105);
+        var elegible = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var lote = await ProcesarLoteAsync(c.Admin, c.IdPuntoVenta);
+
+        // 106 candidatas de la serie B (la plantilla y sus 105 copias) preceden a la factura A: la primera página (100) es
+        // toda de la serie en espera, y la elegible está en la segunda.
+        Assert.Equal(elegible.IdFacturacion, Assert.Single(lote.Resultados).IdFacturacion);
+        Assert.Equal([new SerieBloqueadaDeLote(CodigoFacturaB, ProcesadorDeFacturacionesPorLote.CabezaEnEspera)], lote.SeriesBloqueadas);
+        Assert.Equal((1, 107), (lote.Emitidas, lote.PendientesRestantes));
+        Assert.Equal(["FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Equal(0, (await LeerDecisionAsync(c, plantilla.IdFacturacion)).Intentos);
     }
 
     // ===================================================================================================
@@ -417,26 +487,143 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal(1, (await LeerDecisionAsync(c, sinRespuesta.IdFacturacion)).Intentos);
     }
 
-    /// <summary>Hace fallar el commit número <paramref name="numero"/> del host: una excepción que NO es del presupuesto.</summary>
-    [Fact]
-    public async Task UnaDecisionQueLanzaNoImpideLasSiguientesNiHaceLanzarAlLote()
+    /// <summary>Hace fallar los primeros <paramref name="cuantos"/> commits del host con la excepción que arma
+    /// <paramref name="excepcion"/>: algo que NO es del presupuesto.</summary>
+    private sealed class InterceptorQueFallaLosPrimerosCommits(int cuantos, Func<Exception> excepcion) : DbTransactionInterceptor
     {
-        var c = await PrepararAsync("loteexc");
-        var ventas = await SembrarVariasAsync(c, 2);
-        var falla = new InterceptorQueFallaAlComitar(1);
+        private int _contador;
+
+        public bool Armado { get; set; }
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armado && Interlocked.Increment(ref _contador) <= cuantos)
+            {
+                throw excepcion();
+            }
+
+            return base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+        }
+    }
+
+    private async Task<HttpClient> ClienteQueFallaAlComitarAsync(Ctx c, int cuantos, Func<Exception> excepcion)
+    {
+        var falla = new InterceptorQueFallaLosPrimerosCommits(cuantos, excepcion);
         var cliente = await ClienteConServiciosAsync(
             c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(falla)));
         falla.Armado = true;
+        return cliente;
+    }
+
+    [Fact]
+    public async Task UnaDecisionQueLanzaSeAnotaComoIntentoConUnCodigoEstableYNoSeIntentaHastaQueVence()
+    {
+        var c = await PrepararAsync("loteexc");
+        var ventas = await SembrarVariasAsync(c, 2);
+        var cliente = await ClienteQueFallaAlComitarAsync(
+            c, 1, () => new InvalidOperationException("detalle interno que no tiene que salir"));
 
         var lote = await ProcesarLoteAsync(cliente, c.IdPuntoVenta);
 
+        // Aislada: la siguiente sigue. Sin detalles internos: el código estable y nada más (ni el tipo de la excepción).
         Assert.Equal([ventas[0].IdFacturacion, ventas[1].IdFacturacion], lote.Resultados.Select(r => r.IdFacturacion));
         Assert.Equal(EstadosFiscalesDeVenta.Pendiente, lote.Resultados[0].Fiscal.Estado);
-        Assert.StartsWith("error_inesperado:", lote.Resultados[0].Fiscal.Error, StringComparison.Ordinal);
+        Assert.Equal("error_inesperado", lote.Resultados[0].Fiscal.Error);
         Assert.Equal(EstadosFiscalesDeVenta.Aprobado, lote.Resultados[1].Fiscal.Estado);
         Assert.Equal((1, 1, false), (lote.Emitidas, lote.PendientesRestantes, lote.CortadoPorPresupuesto));
         Assert.Equal(1, c.Wsfe.Contar("FECAESolicitar"));
         Assert.Equal(1, Assert.Single(await LeerEspejosAsync(c)).Numero);
+
+        // Anotada como un intento fallido, con la espera inicial de un fallo no definitivo (30 s).
+        var lanzo = await LeerDecisionAsync(c, ventas[0].IdFacturacion);
+        Assert.Equal(("pendiente", 1, "error_inesperado"), (lanzo.Estado, lanzo.Intentos, lanzo.UltimoError));
+        Assert.Equal(c.Reloj.Ahora.AddSeconds(30), lanzo.ProximoIntento);
+
+        // La llamada siguiente no la intenta mientras espera (ni red ni intento nuevo)...
+        c.Wsfe.Reiniciar();
+        var enEspera = await ProcesarLoteAsync(cliente, c.IdPuntoVenta);
+        Assert.Empty(enEspera.Resultados);
+        Assert.Equal((0, 1), (enEspera.Emitidas, enEspera.PendientesRestantes));
+        Assert.Empty(c.Wsfe.Operaciones);
+        Assert.Equal(1, (await LeerDecisionAsync(c, ventas[0].IdFacturacion)).Intentos);
+
+        // ...y vencida la espera, la retoma.
+        c.Reloj.Ahora = c.Reloj.Ahora.AddSeconds(31);
+        var vencida = await ProcesarLoteAsync(cliente, c.IdPuntoVenta);
+        Assert.Equal(ventas[0].IdFacturacion, Assert.Single(vencida.Resultados).IdFacturacion);
+        Assert.Equal((1, 0), (vencida.Emitidas, vencida.PendientesRestantes));
+    }
+
+    [Fact]
+    public async Task UnErrorDeDominioInesperadoSeInformaConSuCodigoYElMaximoDeDecisionesQueLanzanNoDejaSinCupoALasJovenes()
+    {
+        var c = await PrepararAsync("loteexcmax");
+        var ventas = await SembrarVariasAsync(c, 3);
+        var cliente = await ClienteQueFallaAlComitarAsync(
+            c, 2, () => new ErrorDominio("falla_de_prueba", "mensaje con detalle", 409));
+
+        var primera = await ProcesarLoteAsync(cliente, c.IdPuntoVenta, 2);
+
+        // Dos decisiones que lanzan gastan los dos cupos: la tercera no se intentó. El código de dominio, sin su mensaje.
+        Assert.Equal([ventas[0].IdFacturacion, ventas[1].IdFacturacion], primera.Resultados.Select(r => r.IdFacturacion));
+        Assert.All(primera.Resultados, r => Assert.Equal("falla_de_prueba", r.Fiscal.Error));
+        Assert.Equal((0, 3), (primera.Emitidas, primera.PendientesRestantes));
+        Assert.Empty(c.Wsfe.Operaciones);
+        foreach (var venta in ventas.Take(2))
+        {
+            var anotada = await LeerDecisionAsync(c, venta.IdFacturacion);
+            Assert.Equal(("pendiente", 1, "falla_de_prueba"), (anotada.Estado, anotada.Intentos, anotada.UltimoError));
+        }
+
+        // Postergadas, ya no son las candidatas más viejas: la llamada siguiente llega a la tercera.
+        var segunda = await ProcesarLoteAsync(cliente, c.IdPuntoVenta, 2);
+        Assert.Equal(ventas[2].IdFacturacion, Assert.Single(segunda.Resultados).IdFacturacion);
+        Assert.Equal((1, 2), (segunda.Emitidas, segunda.PendientesRestantes));
+        Assert.Equal(1, c.Wsfe.Contar("FECAESolicitar"));
+        Assert.Equal(1, (await LeerDecisionAsync(c, ventas[0].IdFacturacion)).Intentos);
+        Assert.Equal(1, (await LeerDecisionAsync(c, ventas[1].IdFacturacion)).Intentos);
+    }
+
+    /// <summary>Falla la consulta de las candidatas número <c>numero</c> (la lectura del propio lote, fuera de toda decisión).</summary>
+    private sealed class InterceptorQueFallaLaLecturaDeCandidatas(int numero) : DbCommandInterceptor
+    {
+        private int _contador;
+
+        public bool Armado { get; set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armado
+                && command.CommandText.Contains("NOT EXISTS (SELECT 1 FROM comprobantes_venta e", StringComparison.Ordinal)
+                && Interlocked.Increment(ref _contador) == numero)
+            {
+                throw new InvalidOperationException("Falla simulada de la lectura del lote.");
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task UnaFallaDelPropioLoteNoSeTragaComoSiNoHubieraNadaYLoYaComiteadoQueda()
+    {
+        var c = await PrepararAsync("lotefalla");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var falla = new InterceptorQueFallaLaLecturaDeCandidatas(2);
+        var cliente = await ClienteConServiciosAsync(
+            c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(falla)));
+        falla.Armado = true;
+
+        // La primera página trae la decisión y la emite; la segunda lectura del lote falla.
+        var respuesta = await PostLoteAsync(cliente, new { idPuntoVenta = c.IdPuntoVenta });
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.InternalServerError, "error_interno");
+        Assert.Equal("emitida", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
+        Assert.Equal(1, c.Wsfe.Contar("FECAESolicitar"));
     }
 
     [Fact]
@@ -479,9 +666,22 @@ public partial class FacturacionDeVentasEmisionTests
     // Presupuesto de tiempo
     // ===================================================================================================
 
-    private (ProcesadorDeFacturacionesPorLote Procesador, WaysDbContext Db) NuevoProcesadorDirecto(Ctx c, OpcionesFiscales opciones)
+    /// <summary>Un procesador armado a mano sobre un host derivado, con el <see cref="TimeProvider"/> que se le pase: el presupuesto
+    /// del lote nace de él, así que un test lo avanza cuando el espía confirma que el pedido llegó, sin esperar tiempo real. Los
+    /// valores de <paramref name="opciones"/> también se copian al host, porque de ahí salen los timeouts de los clientes HTTP.</summary>
+    private (ProcesadorDeFacturacionesPorLote Procesador, WaysDbContext Db) NuevoProcesadorDirecto(
+        Ctx c, OpcionesFiscales opciones, TimeProvider tiempo)
     {
-        var host = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(c.Servicios));
+        var host = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            c.Servicios(services);
+            services.Configure<OpcionesFiscales>(o =>
+            {
+                o.TimeoutDeLlamadaSegundos = opciones.TimeoutDeLlamadaSegundos;
+                o.TimeoutDeWsaaSegundos = opciones.TimeoutDeWsaaSegundos;
+                o.PresupuestoDeLoteSegundos = opciones.PresupuestoDeLoteSegundos;
+            });
+        }));
         var servicios = host.Services;
         var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, c.IdTenant));
         var contexto = new ContextoFijo(c.IdTenant, c.IdUsuario);
@@ -494,7 +694,8 @@ public partial class FacturacionDeVentasEmisionTests
         var facturacion = new ServicioDeFacturacionDeVentas(
             db, c.Reloj, contexto, fiscal, NullLogger<ServicioDeFacturacionDeVentas>.Instance);
         return (new ProcesadorDeFacturacionesPorLote(
-            db, c.Reloj, contexto, facturacion, opcionesInyectadas, NullLogger<ProcesadorDeFacturacionesPorLote>.Instance), db);
+            db, c.Reloj, contexto, facturacion, opcionesInyectadas, tiempo,
+            NullLogger<ProcesadorDeFacturacionesPorLote>.Instance), db);
     }
 
     private async Task<long> SesionesIdleEnTransaccionAsync()
@@ -506,11 +707,21 @@ public partial class FacturacionDeVentasEmisionTests
         return Convert.ToInt64(await comando.ExecuteScalarAsync());
     }
 
+    private static Task<ResultadoDeLoteDeFacturacion> LoteDirectoAsync(ProcesadorDeFacturacionesPorLote procesador, int idPuntoVenta) =>
+        procesador.ProcesarLoteAsync(new SolicitudDeLoteDeFacturacion(idPuntoVenta, null));
+
+    /// <summary>Un presupuesto de lote más largo que el tope de espera de los tests: si el token del lote naciera del reloj real en
+    /// vez del <see cref="TimeProvider"/>, el corte no llegaría a tiempo y el test fallaría por el tope.</summary>
+    private static OpcionesFiscales OpcionesConPresupuestoLargo() => new() { PresupuestoDeLoteSegundos = 120 };
+
+    private static readonly TimeSpan MasQueElPresupuesto = TimeSpan.FromSeconds(121);
+
     [Fact]
-    public async Task UnCortePorPresupuestoDetieneElLoteNoSeAnotaComoIntentoYLaMismaInstanciaSigueFuncionando()
+    public async Task UnCortePorPresupuestoPosponeLaDecisionSinContarUnIntentoYLaProximaLlamadaLlegaALasDemas()
     {
         var c = await PrepararAsync("lotecorte");
-        var ventas = await SembrarVariasAsync(c, 2);
+        var cortada = await SembrarVentaDecididaAsync(c);
+        var deOtraSerie = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
         var llego = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         c.Wsfe.SolicitarConToken = async (_, ct) =>
         {
@@ -518,25 +729,29 @@ public partial class FacturacionDeVentasEmisionTests
             await Task.Delay(Timeout.Infinite, ct);
             throw new InvalidOperationException("No llega: la espera solo termina cancelada.");
         };
-        var opciones = new OpcionesFiscales { PresupuestoDeLoteSegundos = 1.5 };
-        var (procesador, db) = NuevoProcesadorDirecto(c, opciones);
+        var tiempo = new FakeTimeProvider();
+        var (procesador, db) = NuevoProcesadorDirecto(c, OpcionesConPresupuestoLargo(), tiempo);
         await using var contextoDelProcesador = db;
 
-        var lote = await ConTopeAsync(procesador.ProcesarLoteAsync(new SolicitudDeLoteDeFacturacion(c.IdPuntoVenta, null)));
+        var tarea = LoteDirectoAsync(procesador, c.IdPuntoVenta);
+        await llego.Task.WaitAsync(Tope);
+        tiempo.Advance(MasQueElPresupuesto);
+        var lote = await ConTopeAsync(tarea);
 
-        // El pedido de la primera quedó colgado hasta el corte: el lote termina, informa el corte y no intenta la segunda.
-        Assert.True(llego.Task.IsCompletedSuccessfully);
+        // El pedido de la primera quedó colgado hasta el corte: el lote termina, informa el corte y no intenta la otra serie.
         Assert.True(lote.CortadoPorPresupuesto);
         Assert.Empty(lote.Resultados);
         Assert.Equal((0, 2), (lote.Emitidas, lote.PendientesRestantes));
         Assert.Equal(1, c.Wsfe.Contar("FECAESolicitar"));
 
-        // No es un fallo de la decisión: sin intento, sin error y sin espera. El espejo sí quedó, con su número.
-        var decision = await LeerDecisionAsync(c, ventas[0].IdFacturacion);
-        Assert.Equal(("pendiente", 0, null, null), (decision.Estado, decision.Intentos, decision.UltimoError, decision.ProximoIntento));
+        // No es un fallo de la decisión: sin intento ni error. Queda postergada un minuto. El espejo sí quedó, con su número.
+        var decision = await LeerDecisionAsync(c, cortada.IdFacturacion);
+        Assert.Equal(("pendiente", 0, null), (decision.Estado, decision.Intentos, decision.UltimoError));
+        Assert.Equal(c.Reloj.Ahora.AddMinutes(1), decision.ProximoIntento);
         var espejo = Assert.Single(await LeerEspejosAsync(c));
         Assert.Equal(("pendiente", 1L), (espejo.Resultado, espejo.Numero));
-        Assert.Equal(("pendiente", 0), ((await LeerDecisionAsync(c, ventas[1].IdFacturacion)).Estado, (await LeerDecisionAsync(c, ventas[1].IdFacturacion)).Intentos));
+        var sinTocar = await LeerDecisionAsync(c, deOtraSerie.IdFacturacion);
+        Assert.Equal(("pendiente", 0, null, null), (sinTocar.Estado, sinTocar.Intentos, sinTocar.UltimoError, sinTocar.ProximoIntento));
 
         // Sin transacción abierta ni lock de la serie retenido.
         Assert.Equal(0, await SesionesIdleEnTransaccionAsync());
@@ -548,19 +763,104 @@ public partial class FacturacionDeVentasEmisionTests
             Assert.Equal(1, Convert.ToInt32(await comando.ExecuteScalarAsync()));
         }
 
-        // La misma instancia, con un presupuesto normal: consulta el espejo antes de pedir y emite las dos.
+        // La misma instancia: la serie de la cortada espera (sin red) y la llamada llega a la otra, que antes no se alcanzó.
         c.Wsfe.SolicitarConToken = null;
         c.Wsfe.Reiniciar();
         c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
         c.Wsfe.Solicitar = Responde(FecaeAprobado());
-        opciones.PresupuestoDeLoteSegundos = null;
 
-        var siguiente = await ConTopeAsync(procesador.ProcesarLoteAsync(new SolicitudDeLoteDeFacturacion(c.IdPuntoVenta, null)));
+        var siguiente = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
 
         Assert.False(siguiente.CortadoPorPresupuesto);
-        Assert.Equal((2, 0), (siguiente.Emitidas, siguiente.PendientesRestantes));
-        Assert.Equal(["FECompConsultar", "FECAESolicitar", "FECAESolicitar"], c.Wsfe.Operaciones);
-        Assert.Equal(["1", "2"], Numeros(c.Wsfe));
+        Assert.Equal(deOtraSerie.IdFacturacion, Assert.Single(siguiente.Resultados).IdFacturacion);
+        Assert.Equal([new SerieBloqueadaDeLote(CodigoFacturaB, ProcesadorDeFacturacionesPorLote.CabezaEnEspera)], siguiente.SeriesBloqueadas);
+        Assert.Equal((1, 1), (siguiente.Emitidas, siguiente.PendientesRestantes));
+        Assert.Equal(["FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Equal(0, (await LeerDecisionAsync(c, cortada.IdFacturacion)).Intentos);
+
+        // Cumplido el minuto, la retoma: consulta el espejo antes de pedir y conserva su número.
+        c.Wsfe.Reiniciar();
+        c.Reloj.Ahora = c.Reloj.Ahora.AddSeconds(61);
+        var final = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+        Assert.Equal(cortada.IdFacturacion, Assert.Single(final.Resultados).IdFacturacion);
+        Assert.Equal((1, 0), (final.Emitidas, final.PendientesRestantes));
+        Assert.Equal(["FECompConsultar", "FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Equal(["1"], Numeros(c.Wsfe));
+    }
+
+    /// <summary>WSAA no emite un ticket nuevo mientras hay uno vigente: si el corte abandonara la firma en vuelo y se perdiera su
+    /// respuesta, el emisor quedaría sin facturar hasta que el ticket venza. La firma termina, el ticket se guarda y recién
+    /// entonces se mira el corte.</summary>
+    [Fact]
+    public async Task UnCorteDelPresupuestoDuranteLaFirmaDeWsaaNoAbandonaLaFirmaYElTicketQuedaGuardado()
+    {
+        var c = await PrepararAsync("lotefirma");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var firmando = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        c.Wsaa.AntesDeResponderConToken = async ct =>
+        {
+            firmando.TrySetResult();
+            await liberar.Task.WaitAsync(ct);
+        };
+        var tiempo = new FakeTimeProvider();
+        var (procesador, db) = NuevoProcesadorDirecto(c, OpcionesConPresupuestoLargo(), tiempo);
+        await using var contextoDelProcesador = db;
+
+        var tarea = LoteDirectoAsync(procesador, c.IdPuntoVenta);
+        await firmando.Task.WaitAsync(Tope);
+        tiempo.Advance(MasQueElPresupuesto);
+        liberar.TrySetResult();
+        var lote = await ConTopeAsync(tarea);
+
+        // La firma terminó (no se cortó) y el corte se vio justo después: no se llegó a WSFE ni a crear el espejo.
+        Assert.True(lote.CortadoPorPresupuesto);
+        Assert.Equal(1, c.Wsaa.Solicitudes);
+        Assert.Empty(c.Wsfe.Operaciones);
+        Assert.Empty(await LeerEspejosAsync(c));
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal(("pendiente", 0, null), (decision.Estado, decision.Intentos, decision.UltimoError));
+
+        // El ticket quedó guardado: el lote siguiente no vuelve a firmar.
+        c.Wsaa.AntesDeResponderConToken = null;
+        c.Reloj.Ahora = c.Reloj.Ahora.AddSeconds(61);
+        var siguiente = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+        Assert.Equal((1, 0), (siguiente.Emitidas, siguiente.PendientesRestantes));
+        Assert.Equal(1, c.Wsaa.Solicitudes);
+    }
+
+    /// <summary>Limitación documentada: una decisión que ya no está pendiente (solo conserva un espejo pendiente) no se puede
+    /// postergar. El UPDATE de la postergación está guardado por <c>estado = 'pendiente'</c> y no la toca.</summary>
+    [Fact]
+    public async Task UnCorteSobreUnaCabezaCuyaDecisionYaNoEstaPendienteNoLaPosterga()
+    {
+        var c = await PrepararAsync("lotecorteno");
+        var cabeza = await SembrarVentaDecididaAsync(c);
+        await DejarEspejoPendienteAsync(c, cabeza);
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'cancelada'::estado_facturacion_venta WHERE id_facturacion_venta = $1",
+            cabeza.IdFacturacion);
+        var antes = await LeerDecisionAsync(c, cabeza.IdFacturacion);
+        Assert.Equal("cancelada", antes.Estado);
+        var llego = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        c.Wsfe.ConsultarConToken = async (_, ct) =>
+        {
+            llego.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("No llega: la espera solo termina cancelada.");
+        };
+        var tiempo = new FakeTimeProvider();
+        var (procesador, db) = NuevoProcesadorDirecto(c, OpcionesConPresupuestoLargo(), tiempo);
+        await using var contextoDelProcesador = db;
+
+        var tarea = LoteDirectoAsync(procesador, c.IdPuntoVenta);
+        await llego.Task.WaitAsync(Tope);
+        tiempo.Advance(MasQueElPresupuesto);
+        var lote = await ConTopeAsync(tarea);
+
+        Assert.True(lote.CortadoPorPresupuesto);
+        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
+        Assert.Equal(antes, await LeerDecisionAsync(c, cabeza.IdFacturacion));
     }
 
     // ===================================================================================================
@@ -613,24 +913,31 @@ public partial class FacturacionDeVentasEmisionTests
     // Timeout de las llamadas a ARCA
     // ===================================================================================================
 
+    /// <summary>Segundos del timeout de WSFE en los tests que cuelgan un pedido a propósito: alcanza para que una llamada normal
+    /// del espía (inmediata) nunca lo toque, así que solo puede vencer la que se cuelga.</summary>
+    private const double TimeoutDeWsfeDeLosTests = 3;
+
     [Fact]
-    public async Task UnPedidoQueSuperaElTimeoutConfiguradoEsNoDefinitivoYDejaElEspejoPendienteConSuNumero()
+    public async Task UnPedidoQueSuperaElTimeoutConfiguradoEsNoDefinitivoSinReintentoYDejaElEspejoPendienteConSuNumero()
     {
         var c = await PrepararAsync("lotetimeout");
         var venta = await SembrarVentaDecididaAsync(c);
         c.Wsfe.SolicitarConToken = async (_, ct) =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
-            return RespuestaXml(FecaeAprobado());
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("No llega: la espera solo termina cancelada.");
         };
         var cliente = await ClienteConServiciosAsync(
-            c, services => services.Configure<OpcionesFiscales>(o => o.TimeoutDeLlamadaSegundos = 0.2));
+            c, services => services.Configure<OpcionesFiscales>(o => o.TimeoutDeLlamadaSegundos = TimeoutDeWsfeDeLosTests));
 
         var estado = await ConTopeAsync(ProcesarAsync(cliente, venta.IdFacturacion));
 
-        // Un timeout no es un rechazo ni una cancelación del llamador: la decisión sigue pendiente con el intento anotado.
+        // Un timeout no es un rechazo ni una cancelación del llamador: la decisión sigue pendiente con el intento anotado, y el
+        // pedido se mandó UNA vez (ARCA pudo haberlo procesado: reenviarlo daría un error de numeración, no el CAE).
         Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
         Assert.StartsWith("arca_no_definitivo:", estado.Error, StringComparison.Ordinal);
+        Assert.Equal(1, c.Wsfe.Contar("FECAESolicitar"));
+        Assert.Equal(1, c.Wsaa.Solicitudes);
         var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
         Assert.Equal(("pendiente", 1), (decision.Estado, decision.Intentos));
         Assert.StartsWith("arca_no_definitivo:", decision.UltimoError, StringComparison.Ordinal);
@@ -647,6 +954,89 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal(EstadosFiscalesDeVenta.Aprobado, adoptado.Estado);
         Assert.Equal(1L, adoptado.Comprobante!.Numero);
         Assert.Equal(["1"], Numeros(c.Wsfe));
+    }
+
+    /// <summary>Con el timeout de una llamada más corto que el presupuesto del lote, un pedido colgado se anota como intento
+    /// fallido (con su espera) en vez de cortar el lote cada vez: la serie espera y las demás siguen.</summary>
+    [Fact]
+    public async Task UnPedidoColgadoDentroDelLoteSeAnotaComoIntentoYSuSerieEsperaMientrasLasDemasSiguen()
+    {
+        var c = await PrepararAsync("lotehang");
+        var colgada = await SembrarVentaDecididaAsync(c);
+        var deOtraSerie = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
+        c.Wsfe.SolicitarConToken = async (req, ct) =>
+        {
+            if (CampoDelCuerpo(await req.Content!.ReadAsStringAsync(ct), "CbteTipo") == CodigoFacturaB.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+
+            return RespuestaXml(FecaeAprobado());
+        };
+        // El reloj del presupuesto no avanza: el lote solo puede terminar por el timeout de la llamada.
+        var (procesador, db) = NuevoProcesadorDirecto(
+            c, new OpcionesFiscales { TimeoutDeLlamadaSegundos = TimeoutDeWsfeDeLosTests }, new FakeTimeProvider());
+        await using var contextoDelProcesador = db;
+
+        var primero = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+
+        Assert.False(primero.CortadoPorPresupuesto);
+        Assert.Equal([colgada.IdFacturacion, deOtraSerie.IdFacturacion], primero.Resultados.Select(r => r.IdFacturacion));
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, primero.Resultados[0].Fiscal.Estado);
+        Assert.StartsWith("arca_no_definitivo:", primero.Resultados[0].Fiscal.Error, StringComparison.Ordinal);
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, primero.Resultados[1].Fiscal.Estado);
+        Assert.Equal((1, 1), (primero.Emitidas, primero.PendientesRestantes));
+        Assert.Equal(
+            1, c.Wsfe.CuerposDeSolicitud.Count(cuerpo => CampoDelCuerpo(cuerpo, "CbteTipo") == "6"));
+        Assert.Equal(2, c.Wsfe.Contar("FECAESolicitar"));
+        var anotada = await LeerDecisionAsync(c, colgada.IdFacturacion);
+        Assert.Equal(("pendiente", 1), (anotada.Estado, anotada.Intentos));
+        Assert.StartsWith("arca_no_definitivo:", anotada.UltimoError, StringComparison.Ordinal);
+        Assert.Equal(c.Reloj.Ahora.AddSeconds(30), anotada.ProximoIntento);
+        var espejo = Assert.Single(await LeerEspejosAsync(c), e => e.IdVentaOrigen == colgada.IdVenta);
+        Assert.Equal(("pendiente", 1L), (espejo.Resultado, espejo.Numero));
+
+        // La llamada siguiente salta la serie de la colgada sin red y procesa una decisión de la otra serie.
+        var otraDeLaSerieA = await SembrarVentaDecididaAsync(c, c.IdClienteRi, sembrarAcumulados: false);
+        c.Wsfe.SolicitarConToken = null;
+        c.Wsfe.Reiniciar();
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var segundo = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+
+        Assert.Equal(otraDeLaSerieA.IdFacturacion, Assert.Single(segundo.Resultados).IdFacturacion);
+        Assert.Equal([new SerieBloqueadaDeLote(CodigoFacturaB, ProcesadorDeFacturacionesPorLote.CabezaEnEspera)], segundo.SeriesBloqueadas);
+        Assert.Equal((1, 1), (segundo.Emitidas, segundo.PendientesRestantes));
+        Assert.Equal(["FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Equal(anotada, await LeerDecisionAsync(c, colgada.IdFacturacion));
+
+        // Cumplida la espera, la retoma: consulta antes de pedir y conserva el número.
+        c.Wsfe.Reiniciar();
+        c.Reloj.Ahora = c.Reloj.Ahora.AddSeconds(31);
+        c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
+        var tercero = await ConTopeAsync(LoteDirectoAsync(procesador, c.IdPuntoVenta));
+        Assert.Equal(colgada.IdFacturacion, Assert.Single(tercero.Resultados).IdFacturacion);
+        Assert.Equal(["FECompConsultar", "FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Equal(["1"], Numeros(c.Wsfe));
+    }
+
+    /// <summary>El timeout de cada cliente sale de la configuración: WSFE de <c>TimeoutDeLlamadaSegundos</c> (8 s por defecto) y
+    /// WSAA de <c>TimeoutDeWsaaSegundos</c> (30 s por defecto, más largo a propósito).</summary>
+    [Fact]
+    public void ElTimeoutDeLosClientesDeArcaSaleDeLaConfiguracionYWsaaTieneElSuyo()
+    {
+        var porDefecto = fixture.WithWebHostBuilder(_ => { }).Services.GetRequiredService<IHttpClientFactory>();
+        Assert.Equal(TimeSpan.FromSeconds(8), porDefecto.CreateClient(nameof(IClienteWsfe)).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), porDefecto.CreateClient(nameof(IClienteWsaa)).Timeout);
+
+        var configurado = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.Configure<OpcionesFiscales>(o =>
+            {
+                o.TimeoutDeLlamadaSegundos = 7;
+                o.TimeoutDeWsaaSegundos = 45;
+            }))).Services.GetRequiredService<IHttpClientFactory>();
+        Assert.Equal(TimeSpan.FromSeconds(7), configurado.CreateClient(nameof(IClienteWsfe)).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(45), configurado.CreateClient(nameof(IClienteWsaa)).Timeout);
     }
 
     // ===================================================================================================

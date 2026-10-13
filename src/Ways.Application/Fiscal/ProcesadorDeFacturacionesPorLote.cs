@@ -42,10 +42,18 @@ public sealed record ResultadoDeLoteDeFacturacion(
 /// <c>serie_bloqueada</c> no se intenta otra de esa serie en la misma llamada.</item>
 /// <item>La espera registrada (<c>proximo_intento_en</c>) se respeta acá: una candidata en espera no se intenta. El endpoint de
 /// una decisión suelta la sigue ignorando.</item>
-/// <item>Aislamiento: una decisión que lanza no frena a las demás.</item>
-/// <item>Presupuesto propio (<see cref="OpcionesFiscales.PresupuestoDeLote"/>, 20 s por defecto) con su propio token, no el de la
-/// solicitud. Un corte por presupuesto detiene el lote y no cuenta como fallo de la decisión que se estaba procesando: el servicio
-/// solo anota un intento cuando su token NO está cancelado.</item>
+/// <item>Aislamiento: una decisión que lanza no frena a las demás. Se anota como un intento fallido (espera creciente) con un
+/// código estable (el de su <see cref="ErrorDominio"/> o <c>error_inesperado</c>); el detalle va solo al log. Así no queda como la
+/// candidata más vieja ni gasta cupo en cada llamada.</item>
+/// <item>Presupuesto propio (<see cref="OpcionesFiscales.PresupuestoDeLote"/>, 20 s por defecto) con su propio token, creado desde
+/// el <see cref="TimeProvider"/> inyectado, no el de la solicitud. Un corte por presupuesto detiene el lote y no cuenta como fallo
+/// de la decisión que se estaba procesando (el servicio solo anota un intento cuando su token NO está cancelado), pero la deja
+/// postergada <see cref="ServicioDeFacturacionDeVentas.EsperaPorCorteDeLote"/>, sin tocar sus intentos, para que la próxima llamada
+/// llegue a las demás. Limitación: una decisión que ya no está pendiente (solo conserva un espejo pendiente) no se puede
+/// postergar.</item>
+/// <item>Una falla del propio lote (las lecturas de cabezas y candidatas, la carga de series) se registra y se propaga: el
+/// endpoint responde un error y quien llama sabe que no hubo intento. Lo ya comiteado por las decisiones anteriores de la misma
+/// llamada queda comiteado.</item>
 /// </list>
 ///
 /// Los cabezas de serie no cuentan para <c>maximo</c> (hay a lo sumo uno por serie): un espejo trabado no puede dejar sin cupo
@@ -57,6 +65,7 @@ public class ProcesadorDeFacturacionesPorLote(
     IContextoDeUsuario contexto,
     ServicioDeFacturacionDeVentas facturacion,
     IOptions<OpcionesFiscales> opciones,
+    TimeProvider tiempo,
     ILogger<ProcesadorDeFacturacionesPorLote> log)
 {
     public const int MaximoPorDefecto = 10;
@@ -72,6 +81,9 @@ public class ProcesadorDeFacturacionesPorLote(
     public const string SerieOcupada = ServicioDeFacturacionDeVentas.SerieOcupada;
 
     public const string SerieBloqueada = ServicioDeFacturacionDeVentas.SerieBloqueada;
+
+    /// <summary>Código con el que se anota y se informa una decisión que lanzó algo que no es un <see cref="ErrorDominio"/>.</summary>
+    public const string ErrorInesperado = "error_inesperado";
 
     private const int TamanioDePagina = 100;
 
@@ -106,7 +118,7 @@ public class ProcesadorDeFacturacionesPorLote(
         }
 
         var lote = new Lote();
-        using (var presupuesto = new CancellationTokenSource(opciones.Value.PresupuestoDeLote))
+        using (var presupuesto = new CancellationTokenSource(opciones.Value.PresupuestoDeLote, tiempo))
         {
             try
             {
@@ -118,8 +130,9 @@ public class ProcesadorDeFacturacionesPorLote(
             }
             catch (Exception ex)
             {
-                // Una falla del propio lote (no de una decisión): se informa lo hecho hasta acá y el resto queda pendiente.
+                // Una falla del propio lote (no de una decisión) no se traga: sin esto "falló" y "no había nada" se ven igual.
                 log.LogError(ex, "El lote de facturaciones del punto de venta {IdPuntoVenta} falló.", idPuntoVenta);
+                throw;
             }
         }
 
@@ -130,7 +143,7 @@ public class ProcesadorDeFacturacionesPorLote(
                 idPuntoVenta);
         }
 
-        using var cierre = new CancellationTokenSource(PresupuestoDeCierre);
+        using var cierre = new CancellationTokenSource(PresupuestoDeCierre, tiempo);
         var pendientes = await ContarPendientesAsync(idPuntoVenta, cierre.Token);
 
         return new ResultadoDeLoteDeFacturacion(
@@ -231,14 +244,16 @@ public class ProcesadorDeFacturacionesPorLote(
         catch (Exception) when (ct.IsCancellationRequested)
         {
             lote.CortadoPorPresupuesto = true;
+            using var posterga = new CancellationTokenSource(PresupuestoDeCierre, tiempo);
+            await facturacion.PostergarPorCorteDeLoteAsync(idFacturacion, posterga.Token);
             return false;
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "No se pudo procesar la facturación {IdFacturacion} dentro del lote; el lote sigue con la siguiente.", idFacturacion);
-            estado = new EstadoFiscalDeVenta(
-                EstadosFiscalesDeVenta.Pendiente, null, idFacturacion,
-                ex is ErrorDominio dominio ? $"{dominio.Codigo}: {dominio.Message}" : $"error_inesperado: {ex.GetType().Name}");
+            var codigo = ex is ErrorDominio dominio ? dominio.Codigo : ErrorInesperado;
+            log.LogWarning(ex, "No se pudo procesar la facturación {IdFacturacion} dentro del lote ({Codigo}); el lote sigue con la siguiente.", idFacturacion, codigo);
+            await facturacion.RegistrarFalloInesperadoAsync(idFacturacion, codigo, ct);
+            estado = new EstadoFiscalDeVenta(EstadosFiscalesDeVenta.Pendiente, null, idFacturacion, codigo);
         }
 
         lote.Resultados.Add(new ResultadoDeFacturacionDeLote(idFacturacion, idComprobanteVenta, estado));

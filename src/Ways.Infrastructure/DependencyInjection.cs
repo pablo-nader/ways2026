@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
@@ -119,7 +120,7 @@ public static class DependencyInjection
                 http.BaseAddress = new Uri(url);
             }
 
-            http.Timeout = sp.GetRequiredService<IOptions<OpcionesFiscales>>().Value.TimeoutDeLlamada;
+            http.Timeout = sp.GetRequiredService<IOptions<OpcionesFiscales>>().Value.TimeoutDeWsaa;
         });
 
         // stage-19a-slice5 (task 5.7): primer registro de IClienteWsfe — sin caller de producción
@@ -154,6 +155,9 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeDecisionDeFacturacion>();
         services.AddScoped<ServicioDeFacturacionDeVentas>();
         services.AddScoped<ProcesadorDeFacturacionesPorLote>();
+
+        // El presupuesto de tiempo del procesador por lote nace de este reloj, para que un test pueda avanzarlo sin esperar.
+        services.TryAddSingleton(TimeProvider.System);
 
         return services;
     }

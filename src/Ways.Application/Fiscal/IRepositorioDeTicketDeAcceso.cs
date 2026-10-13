@@ -27,7 +27,9 @@ public interface IRepositorioDeTicketDeAcceso
     /// <summary>Si hay un TA vigente lo devuelve sin invocar <paramref name="obtenerNuevo"/>; si no,
     /// orquesta el cache+single-flight de la implementación concreta (double-checked locking) antes
     /// de invocar el factory — pedidos concurrentes que rondan al primero no vuelven a llamar WSAA
-    /// (target 33, D8).</summary>
+    /// (target 33, D8). La firma en vuelo NO se cancela con <paramref name="ct"/>: <paramref name="obtenerNuevo"/> recibe un
+    /// token que el llamador no puede cancelar, el ticket se guarda y recién después se lanza la cancelación del llamador.
+    /// <paramref name="ct"/> solo corta la espera del cerrojo.</summary>
     Task<TicketDeAcceso> ObtenerOFirmarAsync(
         ClaveDeTicket clave, Func<CancellationToken, Task<TicketDeAcceso>> obtenerNuevo, CancellationToken ct);
 
