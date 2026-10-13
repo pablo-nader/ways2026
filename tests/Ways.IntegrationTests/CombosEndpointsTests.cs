@@ -261,7 +261,8 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         "componente_vacio" => Alta(null, [Art(a), new ComponenteDeSolicitudDeCombo(null, null, 1m)]),
         "componente_con_ambos" => Alta(null, [Art(a), new ComponenteDeSolicitudDeCombo(b, e.IdEmpresa, 1m)]),
         "componente_nulo" => Alta(null, [Art(a), null!]),
-        "cantidad_fraccionaria" => Alta(null, [Art(a, 1.5m), Art(b)]),
+        "cantidad_con_cuatro_decimales" => Alta(null, [Art(a, 1.2345m), Art(b)]),
+        "cantidad_fraccionaria_de_un_articulo_por_unidad" => Alta(null, [Art(a, 1.5m), Art(b)]),
         "cantidad_cero" => Alta(null, [Art(a, 0m), Art(b)]),
         "cantidad_sobre_el_tope" => Alta(null, [Art(a, ReglaDeCombos.CantidadMaxima + 1m), Art(b)]),
         "articulo_repetido" => Alta(null, [Art(a), Art(b), Art(a)]),
@@ -284,7 +285,8 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     [InlineData("componente_vacio", "combo_componente_invalido")]
     [InlineData("componente_con_ambos", "combo_componente_invalido")]
     [InlineData("componente_nulo", "combo_componente_invalido")]
-    [InlineData("cantidad_fraccionaria", "combo_cantidad_invalida")]
+    [InlineData("cantidad_con_cuatro_decimales", "combo_cantidad_invalida")]
+    [InlineData("cantidad_fraccionaria_de_un_articulo_por_unidad", "combo_cantidad_no_admitida")]
     [InlineData("cantidad_cero", "combo_cantidad_invalida")]
     [InlineData("cantidad_sobre_el_tope", "combo_cantidad_invalida")]
     [InlineData("articulo_repetido", "combo_componente_duplicado")]
@@ -359,17 +361,22 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     [Fact]
-    public async Task UnArticuloPesableComoComponenteDa400NoUnitario()
+    public async Task UnComboDeDosArticulosPesablesConCantidadesFraccionariasSeCreaYSeLeeConEsasCantidades()
     {
-        using var e = await apoyo.PrepararAsync(nameof(UnArticuloPesableComoComponenteDa400NoUnitario));
-        var pesable = await ArticuloAsync(e, "jamon", pesable: true);
-        var unitario = await ArticuloAsync(e, "pan");
+        using var e = await apoyo.PrepararAsync(
+            nameof(UnComboDeDosArticulosPesablesConCantidadesFraccionariasSeCreaYSeLeeConEsasCantidades));
+        var jamon = await ArticuloAsync(e, "jamon", pesable: true);
+        var queso = await ArticuloAsync(e, "queso", pesable: true);
 
-        var respuesta = await PostAsync(e.Admin, Alta(null, [Art(pesable), Art(unitario)]));
+        var combo = await CrearAsync(e.Admin, Alta(null, [Art(jamon, 0.200m), Art(queso, 0.125m)], precio: 3000m));
 
-        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
-        Assert.Equal("combo_componente_no_unitario", (await ProblemaAsync(respuesta)).Codigo);
-        Assert.Empty(await ListarAsync(e.Admin));
+        Assert.Equal([(jamon, 0.200m), (queso, 0.125m)], combo.Componentes.Select(c => (c.IdArticulo!.Value, c.Cantidad)));
+        Assert.Equal(
+            [(jamon, 0.200m), (queso, 0.125m)],
+            (await ComponentesEnBaseAsync(combo.Id)).Select(f => (f.IdArticulo!.Value, f.Cantidad)));
+        Assert.Equal(
+            [0.200m, 0.125m],
+            Assert.Single(await ListarAsync(e.Admin)).Componentes.Select(c => c.Cantidad));
     }
 
     [Fact]
@@ -384,6 +391,32 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(respuesta)).Codigo);
+        Assert.Empty(await ListarAsync(e.Admin));
+    }
+
+    /// <summary>Cláusula: el rechazo por importe no depende de la cantidad y va antes que el de cantidad no admitida:
+    /// con una cantidad que la unidad por importe no admite (2, o una fracción) el código sigue siendo el de importe, no
+    /// el que le pediría al usuario una cantidad entera.</summary>
+    [Theory]
+    [InlineData("2")]
+    [InlineData("0.5")]
+    public async Task UnArticuloPorImporteConUnaCantidadQueSuUnidadNoAdmiteDa400PorImporteYNoCantidadNoAdmitida(string cantidad)
+    {
+        using var e = await apoyo.PrepararAsync(
+            nameof(UnArticuloPorImporteConUnaCantidadQueSuUnidadNoAdmiteDa400PorImporteYNoCantidadNoAdmitida));
+        var porImporte = await apoyo.SembrarArticuloAsync(
+            e, "fiambreria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false });
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Rubros");
+        await apoyo.SembrarArticuloAsync(
+            e, "verduleria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false }, familia);
+        var unitario = await ArticuloAsync(e, "pan");
+        var valor = decimal.Parse(cantidad, System.Globalization.CultureInfo.InvariantCulture);
+
+        var deArticulo = await PostAsync(e.Admin, Alta(null, [Art(porImporte, valor), Art(unitario)]));
+        var deFamilia = await PostAsync(e.Admin, Alta(null, [Fam(familia, valor), Art(unitario)]));
+
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(deArticulo)).Codigo);
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(deFamilia)).Codigo);
         Assert.Empty(await ListarAsync(e.Admin));
     }
 
@@ -406,21 +439,43 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     [Fact]
-    public async Task UnaFamiliaConUnMiembroPesableDa400NoUnitarioPeroNoSiEseMiembroEstaDadoDeBaja()
+    public async Task UnArticuloPesableAdmiteUnaCantidadEnteraYUnoPorUnidadNoAdmiteUnaFraccion()
     {
-        using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaConUnMiembroPesableDa400NoUnitarioPeroNoSiEseMiembroEstaDadoDeBaja));
-        var familia = await apoyo.SembrarFamiliaAsync(e, "Fiambres");
-        var pesable = await apoyo.SembrarArticuloAsync(
-            e, "jamon", ValoresBase(e) with { UnidadVenta = UnidadVenta.Peso }, familia);
-        var unitario = await ArticuloAsync(e, "pan");
+        using var e = await apoyo.PrepararAsync(nameof(UnArticuloPesableAdmiteUnaCantidadEnteraYUnoPorUnidadNoAdmiteUnaFraccion));
+        var jamon = await ArticuloAsync(e, "jamon", pesable: true);
+        var pan = await ArticuloAsync(e, "pan");
 
-        var rechazada = await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(unitario)]));
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(e.Admin, Alta(null, [Art(jamon), Art(pan)]))).StatusCode);
+
+        var rechazada = await PostAsync(e.Admin, Alta(null, [Art(jamon, 0.200m), Art(pan, 0.500m)]));
+
         Assert.Equal(HttpStatusCode.BadRequest, rechazada.StatusCode);
-        Assert.Equal("combo_componente_no_unitario", (await ProblemaAsync(rechazada)).Codigo);
+        Assert.Equal("combo_cantidad_no_admitida", (await ProblemaAsync(rechazada)).Codigo);
+        Assert.Single(await ListarAsync(e.Admin));
+    }
 
-        await apoyo.DarDeBajaAsync("articulos", "id_articulo", pesable);
+    /// <summary>Cláusula: la cantidad de un componente familia tiene que admitirla la unidad de venta de TODOS sus
+    /// miembros vivos. Un solo miembro por unidad rechaza la fracción; dado de baja, deja de contar.</summary>
+    [Fact]
+    public async Task UnaFamiliaConUnMiembroPorUnidadNoAdmiteUnaFraccionPeroSiCuandoEseMiembroEstaDadoDeBaja()
+    {
+        using var e = await apoyo.PrepararAsync(
+            nameof(UnaFamiliaConUnMiembroPorUnidadNoAdmiteUnaFraccionPeroSiCuandoEseMiembroEstaDadoDeBaja));
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Fiambres");
+        await apoyo.SembrarArticuloAsync(e, "jamon", ValoresBase(e) with { UnidadVenta = UnidadVenta.Peso }, familia);
+        var porUnidad = await apoyo.SembrarArticuloAsync(e, "salamin", ValoresBase(e), familia);
+        var pan = await ArticuloAsync(e, "pan");
 
-        Assert.Equal(HttpStatusCode.Created, (await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(unitario)]))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(pan)]))).StatusCode);
+
+        var rechazada = await PostAsync(e.Admin, Alta(null, [Fam(familia, 0.250m), Art(pan)]));
+        Assert.Equal(HttpStatusCode.BadRequest, rechazada.StatusCode);
+        Assert.Equal("combo_cantidad_no_admitida", (await ProblemaAsync(rechazada)).Codigo);
+
+        await apoyo.DarDeBajaAsync("articulos", "id_articulo", porUnidad);
+
+        var aceptada = await CrearAsync(e.Admin, Alta(null, [Fam(familia, 0.250m), Art(pan)]));
+        Assert.Equal(0.250m, aceptada.Componentes[0].Cantidad);
     }
 
     // =================================================================================================
@@ -633,7 +688,7 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
     [Theory]
     [InlineData("referencia_invalida")]
-    [InlineData("no_unitario")]
+    [InlineData("cantidad_no_admitida")]
     [InlineData("duplicado_en_el_pedido")]
     [InlineData("codigo_ocupado")]
     public async Task UnPutRechazadoNoTocaNiElComboNiSusComponentes(string caso)
@@ -641,7 +696,6 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         using var e = await apoyo.PrepararAsync(nameof(UnPutRechazadoNoTocaNiElComboNiSusComponentes) + caso);
         var a = await ArticuloAsync(e, "a");
         var b = await ArticuloAsync(e, "b");
-        var pesable = await ArticuloAsync(e, "pesable", pesable: true);
         await CrearAsync(e.Admin, Alta(2, [Art(a), Art(b)]));
         var combo = await CrearAsync(e.Admin, Alta(1, [Art(a, 2m), Art(b)], nombre: "Intacto"));
         var antes = await ComboEnBaseAsync(combo.Id);
@@ -649,7 +703,7 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var (edicion, estado, codigo) = caso switch
         {
             "referencia_invalida" => (Edicion(null, [Art(a), Art(999_999_999)]), HttpStatusCode.BadRequest, "referencia_invalida"),
-            "no_unitario" => (Edicion(null, [Art(a), Art(pesable)]), HttpStatusCode.BadRequest, "combo_componente_no_unitario"),
+            "cantidad_no_admitida" => (Edicion(null, [Art(a), Art(b, 0.5m)]), HttpStatusCode.BadRequest, "combo_cantidad_no_admitida"),
             "duplicado_en_el_pedido" => (Edicion(null, [Art(a), Art(a)]), HttpStatusCode.BadRequest, "combo_componente_duplicado"),
             _ => (Edicion(2, [Art(a), Art(b)]), HttpStatusCode.Conflict, "combo_codigo_duplicado")
         };

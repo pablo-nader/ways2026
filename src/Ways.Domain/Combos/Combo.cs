@@ -3,10 +3,10 @@ using Ways.Domain.Common;
 namespace Ways.Domain.Combos;
 
 /// <summary>
-/// Conjunto de dos o más unidades que se vende a un precio fijo (doc 10 §Combos). Catálogo-scoped
+/// Conjunto de componentes (artículos por unidad o por peso) que se vende a un precio fijo (doc 10 §Combos). Catálogo-scoped
 /// como <see cref="Ofertas.Oferta"/>: <c>id_tenant</c> NOT NULL e <see cref="IdEmpresa"/> NULL =
 /// todo el tenant. Los componentes viven en <see cref="ComboComponente"/>; el invariante de
-/// forma (al menos dos unidades, un componente es artículo o familia) lo valida
+/// forma (al menos dos componentes, o uno solo con cantidad de 2 o más; un componente es artículo o familia) lo valida
 /// <see cref="ReglaDeCombos"/> y lo respaldan las CHECKs de esquema.
 /// </summary>
 public class Combo : EntidadTenant

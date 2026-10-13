@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import { restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import type { ArticuloEscaneado } from '../api/tipos'
-import { componentesAElegir, resolverLineasDeCombo, totalElegido, type ComboParaCargar, type EleccionDeMiembros } from '../pos/cargaDeCombos'
+import {
+  componentesAElegir,
+  formatearCantidadDeCombo,
+  resolverLineasDeCombo,
+  totalElegido,
+  type ComboParaCargar,
+  type EleccionDeMiembros,
+} from '../pos/cargaDeCombos'
 import { Modal } from './Modal'
 
 export type PropsSelectorDeMiembrosDeCombo = {
@@ -12,10 +20,11 @@ export type PropsSelectorDeMiembrosDeCombo = {
 }
 
 /**
- * Reparto de las unidades de los componentes de familia entre sus miembros, en UN solo diálogo para todo el combo. Cada
+ * Reparto de la cantidad de los componentes de familia entre sus miembros, en UN solo diálogo para todo el combo. Cada
  * componente con varios candidatos pide que el total elegido sea exactamente su cantidad; "Agregar combo" queda
- * deshabilitado hasta que todos cierren. Cancelar (botón, Escape o ×) no agrega nada: un combo se carga entero o no se
- * carga. Los componentes con un solo candidato no preguntan nada y se listan aparte.
+ * deshabilitado hasta que todos cierren. El campo de cada miembro sigue su unidad de venta: enteros si se vende por
+ * unidad, kilos con hasta tres decimales si se vende por peso. Cancelar (botón, Escape o ×) no agrega nada: un combo se
+ * carga entero o no se carga. Los componentes con un solo candidato no preguntan nada y se listan aparte.
  */
 export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: PropsSelectorDeMiembrosDeCombo) {
   const [elecciones, setElecciones] = useState<EleccionDeMiembros>({})
@@ -71,7 +80,7 @@ export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: Pr
           return (
             <fieldset key={indice} className="mb-3">
               <legend className="fs-6">
-                {componente.etiqueta}: elegí {componente.cantidad}
+                {componente.etiqueta}: elegí {formatearCantidadDeCombo(componente.cantidad)}
               </legend>
               {componente.candidatos.map((candidato, posicion) => (
                 <div key={candidato.idArticulo} className="d-flex align-items-center justify-content-between gap-2 mb-1">
@@ -86,14 +95,14 @@ export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: Pr
                     style={{ width: 90 }}
                     min={0}
                     max={componente.cantidad}
-                    step={1}
+                    step={restriccionDeCantidad(candidato.unidadVenta).step}
                     value={elecciones[indice]?.[candidato.idArticulo] ?? 0}
                     onChange={(e) => cambiar(indice, candidato.idArticulo, e.target.value)}
                   />
                 </div>
               ))}
               <div className={`small ${elegido === componente.cantidad ? 'text-success' : 'text-muted'}`} role="status">
-                Elegidas {elegido} de {componente.cantidad}
+                Elegidas {formatearCantidadDeCombo(elegido)} de {formatearCantidadDeCombo(componente.cantidad)}
               </div>
             </fieldset>
           )
@@ -101,7 +110,7 @@ export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: Pr
 
         {fijos.length > 0 && (
           <p className="small text-muted mb-0">
-            También se agrega: {fijos.map((c) => `${c.candidatos[0]?.nombre ?? c.etiqueta} × ${c.cantidad}`).join(', ')}.
+            También se agrega: {fijos.map((c) => `${c.candidatos[0]?.nombre ?? c.etiqueta} × ${formatearCantidadDeCombo(c.cantidad)}`).join(', ')}.
           </p>
         )}
         <button type="submit" hidden aria-hidden="true" tabIndex={-1} />

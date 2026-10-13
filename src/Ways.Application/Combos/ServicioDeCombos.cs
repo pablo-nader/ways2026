@@ -77,8 +77,10 @@ public class ServicioDeCombos(
     /// artículo o de la familia (LEFT JOIN: una fila dada de baja deja el componente con <c>Nombre</c> nulo en vez de
     /// desaparecer, dangling-fk-read-models) y los artículos candidatos de todos los componentes juntos. Un candidato es
     /// lo que el escaneo resuelve (<see cref="ServicioDeEscaneo"/>: artículo vivo, activo y disponible a la venta, sin
-    /// mirar precio, que se resuelve aparte) y además de unidad de venta <c>Unidad</c>, la única que un combo admite. Un miembro de una familia
-    /// dada de baja no cuenta.
+    /// mirar precio, que se resuelve aparte) y además de una unidad de venta que entra a combos y admite la cantidad
+    /// del componente (<see cref="ReglaDeCombos.AdmiteComoComponente"/>: por unidad o por peso, nunca por importe): el
+    /// ABM lo comprueba al guardar, pero después un artículo puede cambiar de unidad o sumarse a la familia. Un miembro
+    /// de una familia dada de baja no cuenta.
     /// </summary>
     public static async Task<ComboCargable> CargarParaPosAsync(
         IWaysDbContext db, int id, int? idEmpresa, CancellationToken ct = default)
@@ -112,7 +114,6 @@ public class ServicioDeCombos(
             from a in db.Articulos
             where a.Activo
                 && a.DisponibleVenta
-                && a.UnidadVenta == UnidadVenta.Unidad
                 && (idsArticulos.Contains(a.Id)
                     || (a.IdFamilia != null
                         && idsFamilias.Contains(a.IdFamilia.Value)
@@ -128,7 +129,8 @@ public class ServicioDeCombos(
                     c.IdArticulo, c.IdFamilia, c.Nombre, c.Cantidad,
                     [
                         .. candidatos
-                            .Where(x => c.IdArticulo is { } idArticulo ? x.Id == idArticulo : x.IdFamilia == c.IdFamilia)
+                            .Where(x => (c.IdArticulo is { } idArticulo ? x.Id == idArticulo : x.IdFamilia == c.IdFamilia)
+                                && ReglaDeCombos.AdmiteComoComponente(x.UnidadVenta, c.Cantidad))
                             .Select(x => new ArticuloEscaneado(
                                 x.Id, x.CodigoInterno, x.Nombre, null, 1m, x.AcumulaEnVenta, x.UnidadVenta))
                     ]))
@@ -359,9 +361,13 @@ public class ServicioDeCombos(
 
     /// <summary>Bajo el lock de combos: toma cada fila referenciada <c>FOR KEY SHARE</c>, en orden ascendente de id y
     /// artículos antes que familias, y comprueba que sea viva y del tenant (RLS esconde la ajena); después exige que
-    /// ningún componente sea pesable. Es un chequeo puntual: ni cambiar la unidad de venta de un componente a Peso ni sumar un
-    /// artículo pesable a una familia ya usada por un combo se bloquea después, así que la detección de combos en la
-    /// venta tiene que excluir los artículos pesables por su unidad de venta y no por la cantidad.</summary>
+    /// ningún componente sea un artículo por importe ni una familia con un miembro vivo por importe
+    /// (<c>combo_componente_por_importe</c>, sin importar la cantidad) y que
+    /// la cantidad de cada componente sea una que admite la unidad de venta de su artículo, o la de todos los miembros
+    /// vivos de su familia (<see cref="ReglaDeCantidadDeVenta"/>; <c>combo_cantidad_no_admitida</c>). Es un chequeo
+    /// puntual: ni cambiar la unidad de venta de un componente ni sumar un artículo a una familia ya usada por un combo
+    /// se bloquea después, así que la detección de combos en la venta y la carga en el POS vuelven a decidir por la
+    /// unidad de venta de cada artículo.</summary>
     private async Task ExigirReferenciasUtilizablesAsync(
         IReadOnlyCollection<ComponenteDeCombo> componentes, CancellationToken ct)
     {
@@ -384,42 +390,37 @@ public class ServicioDeCombos(
             }
         }
 
-        if (idsArticulos.Count > 0
-            && await db.Articulos.AnyAsync(a => idsArticulos.Contains(a.Id) && a.UnidadVenta == UnidadVenta.Peso, ct))
-        {
-            throw new ErrorDominio(
-                "combo_componente_no_unitario",
-                "Un artículo que se vende por peso no puede ser componente de un combo.",
-                400);
-        }
+        var unidades = await db.Articulos
+            .Where(a => idsArticulos.Contains(a.Id) || (a.IdFamilia != null && idsFamilias.Contains(a.IdFamilia.Value)))
+            .Select(a => new { a.Id, a.IdFamilia, a.UnidadVenta })
+            .ToListAsync(ct);
 
-        if (idsFamilias.Count > 0
-            && await db.Articulos.AnyAsync(
-                a => a.IdFamilia != null && idsFamilias.Contains(a.IdFamilia.Value) && a.UnidadVenta == UnidadVenta.Peso, ct))
+        foreach (var componente in componentes)
         {
-            throw new ErrorDominio(
-                "combo_componente_no_unitario",
-                "Una familia con artículos que se venden por peso no puede ser componente de un combo.",
-                400);
-        }
+            var unidadesDelComponente = unidades
+                .Where(u => componente.IdArticulo is { } idArticulo ? u.Id == idArticulo : u.IdFamilia == componente.IdFamilia)
+                .Select(u => u.UnidadVenta)
+                .ToList();
 
-        if (idsArticulos.Count > 0
-            && await db.Articulos.AnyAsync(a => idsArticulos.Contains(a.Id) && a.UnidadVenta == UnidadVenta.Importe, ct))
-        {
-            throw new ErrorDominio(
-                "combo_componente_por_importe",
-                "Un artículo que se vende por importe no puede ser componente de un combo.",
-                400);
-        }
+            if (unidadesDelComponente.Any(u => !ReglaDeCombos.ParticipaEnCombos(u)))
+            {
+                throw new ErrorDominio(
+                    "combo_componente_por_importe",
+                    componente.IdArticulo is not null
+                        ? "Un artículo que se vende por importe no puede ser componente de un combo."
+                        : "Una familia con artículos que se venden por importe no puede ser componente de un combo.",
+                    400);
+            }
 
-        if (idsFamilias.Count > 0
-            && await db.Articulos.AnyAsync(
-                a => a.IdFamilia != null && idsFamilias.Contains(a.IdFamilia.Value) && a.UnidadVenta == UnidadVenta.Importe, ct))
-        {
-            throw new ErrorDominio(
-                "combo_componente_por_importe",
-                "Una familia con artículos que se venden por importe no puede ser componente de un combo.",
-                400);
+            if (unidadesDelComponente.Any(u => !ReglaDeCantidadDeVenta.EsCantidadAdmitida(u, componente.Cantidad)))
+            {
+                throw new ErrorDominio(
+                    "combo_cantidad_no_admitida",
+                    componente.IdArticulo is not null
+                        ? "Un artículo que se vende por unidad lleva una cantidad entera en el combo."
+                        : "Una familia con artículos que se venden por unidad lleva una cantidad entera en el combo.",
+                    400);
+            }
         }
     }
 

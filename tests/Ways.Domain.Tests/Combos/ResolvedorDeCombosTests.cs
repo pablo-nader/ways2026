@@ -1,3 +1,5 @@
+using System.Globalization;
+using Ways.Domain.Articulos;
 using Ways.Domain.Combos;
 using Ways.Domain.Ventas;
 
@@ -13,11 +15,21 @@ public class ResolvedorDeCombosTests
     private const int Papas = 4;
     private const int FamiliaBebidas = 10;
     private const int FamiliaSnacks = 20;
+    private const int Jamon = 5;
+    private const int Queso = 6;
+    private const int Salame = 7;
+    private const int FamiliaFiambres = 30;
 
     private static LineaParaCombos Linea(
         int indice, int idArticulo, decimal precio, decimal cantidad = 1m, int? idFamilia = null,
-        decimal descuentoDeOferta = 0m) =>
-        new(indice, idArticulo, idFamilia, cantidad, precio, descuentoDeOferta);
+        decimal descuentoDeOferta = 0m, UnidadVenta unidad = UnidadVenta.Unidad) =>
+        new(indice, idArticulo, idFamilia, cantidad, precio, descuentoDeOferta, unidad);
+
+    private static LineaParaCombos PorPeso(
+        int indice, int idArticulo, decimal precioPorKilo, decimal kilos, int? idFamilia = null) =>
+        Linea(indice, idArticulo, precioPorKilo, kilos, idFamilia, unidad: UnidadVenta.Peso);
+
+    private static decimal Numero(string valor) => decimal.Parse(valor, CultureInfo.InvariantCulture);
 
     private static ComponenteDeCombo Art(int idArticulo, decimal cantidad = 1m) => new(idArticulo, null, cantidad);
 
@@ -431,7 +443,7 @@ public class ResolvedorDeCombosTests
     {
         var resolucion = Resolver(
             [Linea(0, Pancho, 1m, cantidad: int.MaxValue), Linea(1, Coca, 1m)],
-            Combo(1, 1m, Art(Pancho, 3_000_000_000m), Art(Coca)));
+            Combo(1, 1m, Art(Pancho, 10_000_000_000_000_000m), Art(Coca)));
 
         Assert.Empty(resolucion.Combos);
     }
@@ -457,7 +469,7 @@ public class ResolvedorDeCombosTests
     [InlineData(1.5)]
     [InlineData(-1)]
     [InlineData(0)]
-    public void LasLineasConCantidadNoEnteraONoPositivaSeIgnoranEnLaDeteccion(double cantidad)
+    public void LasLineasPorUnidadConCantidadNoEnteraONoPositivaSeIgnoranEnLaDeteccion(double cantidad)
     {
         var resolucion = Resolver(
             [Linea(0, Pancho, 3000m, cantidad: (decimal)cantidad), Linea(1, Coca, 2500m)],
@@ -467,13 +479,315 @@ public class ResolvedorDeCombosTests
         Assert.Empty(resolucion.Combos);
     }
 
-    [Fact]
-    public void UnComboCuyoComponenteTieneCantidadFraccionariaNoSeAplica()
+    /// <summary>Cláusula: una línea solo es candidata de un componente si su unidad de venta admite la cantidad
+    /// del componente. Un artículo por unidad no completa un componente fraccionario aunque le sobren unidades.</summary>
+    [Theory]
+    [InlineData("1.5")]
+    [InlineData("0.5")]
+    public void UnaLineaPorUnidadNoCompletaUnComponenteDeCantidadFraccionaria(string cantidad)
     {
         var resolucion = Resolver(
             [Linea(0, Pancho, 3000m, cantidad: 2m), Linea(1, Coca, 2500m)],
-            Combo(1, 5000m, Art(Pancho, 1.5m), Art(Coca)));
+            Combo(1, 2000m, Art(Pancho, Numero(cantidad)), Art(Coca)));
 
+        Assert.Empty(resolucion.Lineas);
+        Assert.Empty(resolucion.Combos);
+    }
+
+    [Fact]
+    public void DosComponentesPesablesDeDoscientosGramosAplicanElComboUnaVez()
+    {
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 10000m, 0.200m), PorPeso(1, Queso, 8000m, 0.200m)];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Art(Jamon, 0.200m), Art(Queso, 0.200m)));
+
+        var jamon = DeLinea(resolucion, 0);
+        var queso = DeLinea(resolucion, 1);
+        Assert.Equal(0.200m, jamon.UnidadesConsumidas);
+        Assert.Equal(333m, jamon.AhorroDeCombo);
+        Assert.Equal(0.200m, queso.UnidadesConsumidas);
+        Assert.Equal(267m, queso.AhorroDeCombo);
+        Assert.Equal(new ComboAplicado(1, "combo 1", 1, 600m), Assert.Single(resolucion.Combos));
+        Assert.Equal(3000m, TotalCobrado(lineas, resolucion));
+    }
+
+    [Fact]
+    public void ElExcedenteDeUnaLineaPesableQuedaAPrecioDeListaYLaLineaNoSeParte()
+    {
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 10000m, 0.215m), PorPeso(1, Queso, 8000m, 0.200m)];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Art(Jamon, 0.200m), Art(Queso, 0.200m)));
+
+        var jamon = DeLinea(resolucion, 0);
+        Assert.Equal(0.200m, jamon.UnidadesConsumidas);
+        Assert.Equal(333m, jamon.AhorroDeCombo);
+        Assert.Equal(1, Assert.Single(resolucion.Combos).Veces);
+
+        // El combo cobra 3000 y los 15 g que sobran del jamón, 150 a precio de lista.
+        Assert.Equal(3000m + 150m, TotalCobrado(lineas, resolucion));
+    }
+
+    [Fact]
+    public void ElDobleDeCadaComponentePesableAplicaElComboDosVeces()
+    {
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 10000m, 0.400m), PorPeso(1, Queso, 8000m, 0.400m)];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Art(Jamon, 0.200m), Art(Queso, 0.200m)));
+
+        Assert.Equal(0.400m, DeLinea(resolucion, 0).UnidadesConsumidas);
+        Assert.Equal(666m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(0.400m, DeLinea(resolucion, 1).UnidadesConsumidas);
+        Assert.Equal(534m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(new ComboAplicado(1, "combo 1", 2, 1200m), Assert.Single(resolucion.Combos));
+        Assert.Equal(6000m, TotalCobrado(lineas, resolucion));
+    }
+
+    [Fact]
+    public void LasVecesSonLaParteEnteraDeLoDisponibleSobreLoQuePideElComponente()
+    {
+        // 0,590 kg de jamón alcanzan para dos conjuntos de 0,200 (sobran 0,190) aunque el queso alcance para tres.
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 10000m, 0.590m), PorPeso(1, Queso, 8000m, 0.600m)];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Art(Jamon, 0.200m), Art(Queso, 0.200m)));
+
+        Assert.Equal(2, Assert.Single(resolucion.Combos).Veces);
+        Assert.Equal(0.400m, DeLinea(resolucion, 0).UnidadesConsumidas);
+        Assert.Equal(0.400m, DeLinea(resolucion, 1).UnidadesConsumidas);
+    }
+
+    [Fact]
+    public void UnaLineaPesableQueNoLlegaALaCantidadDelComponenteNoAplicaElCombo()
+    {
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 10000m, 0.150m), PorPeso(1, Queso, 8000m, 0.200m)],
+            Combo(1, 2000m, Art(Jamon, 0.200m), Art(Queso, 0.200m)));
+
+        Assert.Empty(resolucion.Lineas);
+        Assert.Empty(resolucion.Combos);
+    }
+
+    /// <summary>Cláusula: el importe de lista de la porción consumida se redondea a dos decimales antes del reparto
+    /// (0,125 × 9999,50 = 1249,9375 → 1249,94; 0,333 × 7000,10 = 2331,0333 → 2331,03), así que el ahorro de cada
+    /// línea no lleva más de dos decimales.</summary>
+    [Fact]
+    public void ElAhorroDeUnaLineaPesableNuncaLlevaMasDeDosDecimales()
+    {
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 9999.50m, 0.125m), PorPeso(1, Queso, 7000.10m, 0.333m)];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Art(Jamon, 0.125m), Art(Queso, 0.333m)));
+
+        Assert.Equal(202.94m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(378.03m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(580.97m, Assert.Single(resolucion.Combos).Ahorro);
+        Assert.Equal(3000m, TotalCobrado(lineas, resolucion));
+    }
+
+    /// <summary>Cláusula: un combo cuyo cobro no baja del total de lista ya redondeado no se aplica. Con dos gramos a
+    /// 1 el kilo el total de lista redondea a cero: no hay importe que repartir.</summary>
+    [Fact]
+    public void UnComboCuyoTotalDeListaRedondeaACeroNoSeAplica()
+    {
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 1m, 0.001m), PorPeso(1, Queso, 1m, 0.001m)],
+            Combo(1, 0.20m, Art(Jamon, 0.001m), Art(Queso, 0.001m)));
+
+        Assert.Empty(resolucion.Lineas);
+        Assert.Empty(resolucion.Combos);
+    }
+
+    [Fact]
+    public void UnArticuloPesableCompletaUnComponenteDeCantidadEnteraYElRestoQuedaFuera()
+    {
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 10000m, 1.500m), Linea(1, Coca, 2500m)],
+            Combo(1, 11000m, Art(Jamon), Art(Coca)));
+
+        Assert.Equal(1m, DeLinea(resolucion, 0).UnidadesConsumidas);
+        Assert.Equal(1m, DeLinea(resolucion, 1).UnidadesConsumidas);
+    }
+
+    /// <summary>Cláusula: una línea de un artículo por importe no se detecta, aunque su cantidad (siempre 1) sea una
+    /// que la regla de cantidades admite. La misma línea, por unidad, completa el combo.</summary>
+    [Fact]
+    public void UnaLineaDeUnArticuloPorImporteNoConsumeUnComboYLaMismaLineaPorUnidadSi()
+    {
+        var combo = Combo(1, 5000m, Art(Pancho), Art(Coca));
+
+        var porImporte = Resolver([Linea(0, Pancho, 3000m, unidad: UnidadVenta.Importe), Linea(1, Coca, 2500m)], combo);
+        var porUnidad = Resolver([Linea(0, Pancho, 3000m), Linea(1, Coca, 2500m)], combo);
+
+        Assert.Empty(porImporte.Lineas);
+        Assert.Empty(porImporte.Combos);
+        Assert.Equal(2, porUnidad.Lineas.Count);
+    }
+
+    /// <summary>Cláusula: un miembro por importe de una familia no es candidato del componente familia, aunque esté
+    /// antes en el documento y la cantidad del componente sea 1: lo completa el miembro siguiente y la línea por importe
+    /// queda sin consumo.</summary>
+    [Fact]
+    public void UnMiembroPorImporteDeUnaFamiliaNoEsCandidatoDelComponenteFamilia()
+    {
+        var combo = Combo(1, 5000m, Art(Pancho), Fam(FamiliaBebidas));
+
+        var resolucion = Resolver(
+            [
+                Linea(0, Pancho, 3000m),
+                Linea(1, Coca, 2500m, idFamilia: FamiliaBebidas, unidad: UnidadVenta.Importe),
+                Linea(2, Sprite, 2500m, idFamilia: FamiliaBebidas)
+            ],
+            combo);
+
+        Assert.Equal([0, 2], resolucion.Lineas.Select(l => l.Indice));
+    }
+
+    [Fact]
+    public void UnSoloComponentePesableDeDosKilosOMasSeAplicaYUnoMenorNo()
+    {
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 10000m, 2.500m)];
+
+        Assert.Equal(2m, DeLinea(Resolver(lineas, Combo(1, 15000m, Art(Jamon, 2m))), 0).UnidadesConsumidas);
+        Assert.Empty(Resolver(lineas, Combo(2, 1000m, Art(Jamon, 0.500m))).Combos);
+    }
+
+    /// <summary>Cláusula: la unidad de venta de la línea decide qué cantidades son detectables. Una línea pesable
+    /// con más de tres decimales o no positiva no entra.</summary>
+    [Theory]
+    [InlineData("0.2005")]
+    [InlineData("0")]
+    [InlineData("-0.200")]
+    public void UnaLineaPesableConCantidadQueSuUnidadNoAdmiteSeIgnora(string kilos)
+    {
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 10000m, Numero(kilos)), PorPeso(1, Queso, 8000m, 0.200m)],
+            Combo(1, 1000m, Art(Jamon, 0.200m), Art(Queso, 0.200m)));
+
+        Assert.Empty(resolucion.Combos);
+    }
+
+    /// <summary>Cláusula: una línea pesable cuya cantidad en milésimas no entra en un entero de 32 bits no se
+    /// detecta, igual que una línea por unidad con más de <see cref="int.MaxValue"/> unidades.</summary>
+    [Fact]
+    public void UnaLineaPesableCuyasMilesimasNoEntranEnUnEnteroSeIgnoraYLaDelTopeNo()
+    {
+        var combo = Combo(1, 1000m, Art(Jamon), Art(Coca));
+
+        var sobreElTope = Resolver([PorPeso(0, Jamon, 10000m, 2_147_483.648m), Linea(1, Coca, 2500m)], combo);
+        var enElTope = Resolver([PorPeso(0, Jamon, 10000m, 2_147_483.647m), Linea(1, Coca, 2500m)], combo);
+
+        Assert.Empty(sobreElTope.Combos);
+        Assert.Equal(1, Assert.Single(enElTope.Combos).Veces);
+    }
+
+    /// <summary>Cláusula: de una línea por unidad solo se toman unidades enteras. Con una familia de miembros
+    /// mixtos, lo que falta tras un miembro pesable puede ser una fracción; el miembro por unidad aporta la parte
+    /// entera y la fracción la completa otro pesable.</summary>
+    [Fact]
+    public void DeUnaLineaPorUnidadSoloSeTomanUnidadesEnterasAunqueAlComponenteLeFalteUnaFraccion()
+    {
+        LineaParaCombos[] lineas =
+        [
+            PorPeso(0, Jamon, 1000m, 0.500m, idFamilia: FamiliaFiambres),
+            Linea(1, Salame, 400m, cantidad: 3m, idFamilia: FamiliaFiambres),
+            PorPeso(2, Queso, 1000m, 0.500m, idFamilia: FamiliaFiambres),
+            Linea(3, Coca, 2500m)
+        ];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Fam(FamiliaFiambres, 2m), Art(Coca)));
+
+        Assert.Equal(0.500m, DeLinea(resolucion, 0).UnidadesConsumidas);
+        Assert.Equal(1m, DeLinea(resolucion, 1).UnidadesConsumidas);
+        Assert.Equal(0.500m, DeLinea(resolucion, 2).UnidadesConsumidas);
+        Assert.Equal(3000m + 800m, TotalCobrado(lineas, resolucion));
+    }
+
+    /// <summary>Cláusula: una línea por unidad a la que le llega menos de una unidad por completar no aporta nada y
+    /// no figura en el reparto; el componente lo termina la línea pesable siguiente.</summary>
+    [Fact]
+    public void UnaLineaPorUnidadALaQueLeLlegaMenosDeUnaUnidadNoAportaNadaYElComboSeCompletaConLaSiguiente()
+    {
+        LineaParaCombos[] lineas =
+        [
+            PorPeso(0, Jamon, 1000m, 1.500m, idFamilia: FamiliaFiambres),
+            Linea(1, Salame, 400m, cantidad: 3m, idFamilia: FamiliaFiambres),
+            PorPeso(2, Queso, 1000m, 0.500m, idFamilia: FamiliaFiambres),
+            Linea(3, Coca, 2500m)
+        ];
+
+        var resolucion = Resolver(lineas, Combo(1, 3000m, Fam(FamiliaFiambres, 2m), Art(Coca)));
+
+        Assert.Equal([0, 2, 3], resolucion.Lineas.Select(l => l.Indice));
+        Assert.Equal(1.500m, DeLinea(resolucion, 0).UnidadesConsumidas);
+        Assert.Equal(0.500m, DeLinea(resolucion, 2).UnidadesConsumidas);
+    }
+
+    /// <summary>Cláusula: un miembro de la familia cuya unidad de venta no admite la cantidad del componente no es
+    /// candidato, ni siquiera por su parte entera. 1,5 de la familia no se arma con una unidad del miembro por unidad
+    /// más medio kilo del pesable; sí con un kilo y medio del pesable solo.</summary>
+    [Fact]
+    public void UnMiembroPorUnidadNoEsCandidatoDeUnComponenteFamiliaFraccionarioNiPorSuParteEntera()
+    {
+        var combo = Combo(1, 1000m, Fam(FamiliaFiambres, 1.500m), Art(Coca));
+
+        var mezclado = Resolver(
+            [
+                Linea(0, Salame, 400m, cantidad: 2m, idFamilia: FamiliaFiambres),
+                PorPeso(1, Jamon, 1000m, 0.500m, idFamilia: FamiliaFiambres),
+                Linea(2, Coca, 2500m)
+            ],
+            combo);
+        var soloPesable = Resolver(
+            [
+                Linea(0, Salame, 400m, cantidad: 2m, idFamilia: FamiliaFiambres),
+                PorPeso(1, Jamon, 1000m, 1.500m, idFamilia: FamiliaFiambres),
+                Linea(2, Coca, 2500m)
+            ],
+            combo);
+
+        Assert.Empty(mezclado.Combos);
+        Assert.Equal([1, 2], soloPesable.Lineas.Select(l => l.Indice));
+    }
+
+    /// <summary>Cláusula: el redondeo a dos decimales del importe de lista aleja el punto medio de cero, como todo
+    /// redondeo de venta: 0,250 × 100,10 = 25,025 → 25,03 (el redondeo bancario daría 25,02).</summary>
+    [Fact]
+    public void ElImporteDeListaDeLaPorcionConsumidaRedondeaElMedioCentavoHaciaArriba()
+    {
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 100.10m, 0.250m), PorPeso(1, Queso, 8000m, 0.200m)],
+            Combo(1, 1000m, Art(Jamon, 0.250m), Art(Queso, 0.200m)));
+
+        Assert.Equal(10.03m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(615m, DeLinea(resolucion, 1).AhorroDeCombo);
+    }
+
+    [Fact]
+    public void UnComponenteFamiliaPesableSeCompletaConVariasLineasEnOrdenDeDocumento()
+    {
+        var resolucion = Resolver(
+            [
+                PorPeso(0, Jamon, 10000m, 0.150m, idFamilia: FamiliaFiambres),
+                PorPeso(1, Queso, 8000m, 0.300m, idFamilia: FamiliaFiambres),
+                Linea(2, Coca, 2500m)
+            ],
+            Combo(1, 4000m, Fam(FamiliaFiambres, 0.400m), Art(Coca)));
+
+        Assert.Equal(0.150m, DeLinea(resolucion, 0).UnidadesConsumidas);
+        Assert.Equal(0.250m, DeLinea(resolucion, 1).UnidadesConsumidas);
+    }
+
+    /// <summary>Cláusula: un combo con un componente de cantidad inválida no se aplica. Sin ella, un componente que
+    /// no llega a una milésima no pediría nada y el combo se completaría solo con los demás.</summary>
+    [Theory]
+    [InlineData("0.0004")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    public void UnComboConUnComponenteDeCantidadInvalidaNoSeAplicaAunqueLosDemasSeCompleten(string cantidad)
+    {
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 10000m, 1m), Linea(1, Pancho, 3000m, cantidad: 2m), Linea(2, Coca, 2500m)],
+            Combo(1, 1000m, Art(Jamon, Numero(cantidad)), Art(Pancho), Art(Coca)));
+
+        Assert.Empty(resolucion.Lineas);
         Assert.Empty(resolucion.Combos);
     }
 
@@ -583,5 +897,18 @@ public class ResolvedorDeCombosTests
     {
         Assert.Empty(Resolver([], Combo(1, 5000m, Art(Pancho), Art(Coca))).Combos);
         Assert.Empty(Resolver([Linea(0, Pancho, 3000m)]).Lineas);
+    }
+
+    [Fact]
+    public void ElAhorroAcumuladoDeUnaLineaNoSuperaElImporteDeListaDeLoQueConsumio()
+    {
+        // Cada aplicación redondea 0,250 × 9,99 = 2,4975 hacia arriba (2,50): tres veces suman 7,50 y el bruto es 7,49.
+        var resolucion = Resolver(
+            [PorPeso(0, Jamon, 9.99m, 0.750m), Linea(1, Coca, 500m, cantidad: 3m)],
+            Combo(1, 100m, Art(Jamon, 0.250m), Art(Coca)));
+
+        Assert.Equal(7.49m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(1200m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(3, resolucion.Combos[0].Veces);
     }
 }

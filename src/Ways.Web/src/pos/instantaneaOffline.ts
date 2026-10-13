@@ -31,7 +31,7 @@ import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
 import { leerImporteTipeado } from '../api/importeDeVenta'
 import { redondearImporte } from '../formato/importes'
 import { normalizarParaBuscar } from '../formato/texto'
-import { resolverCombos, tieneMasDeDosDecimales, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
+import { resolverCombos, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
  * `'instantanea'` con otra forma y nunca se lee — se vuelve a descargar entera. */
@@ -443,10 +443,15 @@ function candidatosDeCombos(combos: readonly ComboDeInstantanea[]): ComboCandida
  *
  * ÚNICO lugar donde se aplica la regla de combos offline — la consumen la vista previa del carrito, el
  * payload encolado y el ticket sintético, como `preciosVigentesDeLasLineas` con la regla de precio. Mismas
- * exclusiones que el servidor (`CombosEnVenta.Detectar`): quedan fuera de la detección los artículos cuya
- * unidad de venta no es `Unidad` (la unidad decide, nunca la cantidad; una unidad ausente es `Peso`), las líneas por importe, las
- * líneas sin precio y las de descuento de oferta negativo. La compuerta de cantidades enteras la aplica el
- * motor. Una instantánea sin `combos` devuelve los precios vigentes tal cual.
+ * exclusiones que el servidor (`CombosEnVenta.Detectar`): quedan fuera de la detección las líneas sin precio
+ * y las de descuento de oferta negativo. Tampoco entra una línea que trae `importe` (la venta por importe no
+ * consume combos), sin mirar la unidad del artículo en la instantánea. La unidad de venta de cada artículo viaja
+ * al motor, que decide con ella si la línea entra (`Importe` nunca) y qué cantidades valen (una unidad ausente,
+ * la de una instantánea anterior al dato, cuenta como `Peso`).
+ * Una instantánea sin `combos` devuelve los precios vigentes tal cual.
+ *
+ * El ahorro de una línea nunca lleva más de dos decimales (el servidor rechazaría la venta encolada con
+ * `combo_offline_invalido`): el motor redondea a dos el importe de lista de lo que consume antes de repartir.
  */
 export function resolverDocumentoOffline(
   lineas: readonly { idArticulo: number; cantidad: number; importe?: number }[],
@@ -462,7 +467,7 @@ export function resolverDocumentoOffline(
   lineas.forEach((linea, i) => {
     const precios = vigentes[i]
     const articulo = porId.get(linea.idArticulo)
-    if (!precios || !articulo || linea.importe !== undefined || articulo.unidadVenta !== 'Unidad' || precios.descuentoUnitario < 0) return
+    if (!precios || !articulo || linea.importe !== undefined || precios.descuentoUnitario < 0) return
     entrada.push({
       indice: i,
       idArticulo: linea.idArticulo,
@@ -470,14 +475,11 @@ export function resolverDocumentoOffline(
       cantidad: linea.cantidad,
       precioLista: precios.precioOriginal,
       descuentoUnitarioDeOferta: precios.descuentoUnitario,
+      unidadVenta: articulo.unidadVenta,
     })
   })
 
   const resolucion = resolverCombos(entrada, candidatos)
-  // El servidor rechaza una parte de combo con más de dos decimales (`combo_offline_invalido`) y la venta
-  // encolada quedaría varada. Con precios de dos decimales no ocurre; con un precio de fracción de centavo, el
-  // documento se cotiza, se encola y se imprime como si no hubiera combos: una sola regla para los tres.
-  if (resolucion.lineas.some((l) => tieneMasDeDosDecimales(l.ahorroDeCombo))) return { lineas: vigentes, combos: [] }
   const conCombo: (PreciosDeLineaConCombo | null)[] = [...vigentes]
   for (const consumo of resolucion.lineas) {
     const precios = vigentes[consumo.indice]

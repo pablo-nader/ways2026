@@ -179,6 +179,28 @@ public class CombosConsultasTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(19, contador.Total);
     }
 
+    /// <summary>Cláusula: las líneas de artículos por importe no cuentan para la detección. Una unidad más una línea
+    /// por importe sigue sin pagar la consulta de candidatos; la misma venta con dos unidades la paga (caso de arriba).</summary>
+    [Fact]
+    public async Task UnaUnidadMasUnaLineaPorImporteNoPagaLaConsultaDeCandidatos()
+    {
+        var (ctx, pancho, _, _) = await EscenarioOfflineAsync(nameof(UnaUnidadMasUnaLineaPorImporteNoPagaLaConsultaDeCandidatos));
+        var fiambreria = await apoyo.ArticuloAsync(ctx, "fiambreria", 100m);
+        await using (var db = apoyo.Db(ctx.IdTenant))
+        {
+            await db.Articulos.Where(a => a.Id == fiambreria).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.UnidadVenta, Ways.Domain.Articulos.UnidadVenta.Importe)
+                .SetProperty(a => a.AcumulaEnVenta, false));
+        }
+
+        var (emitir, contador) = await VentasContadasAsync(ctx);
+
+        var emitido = await emitir(Venta(ctx, 1, 3150m, Offline(pancho, 3000m), new LineaDeVenta(fiambreria, 1m, null, Importe: 150m)));
+
+        Assert.Equal(3150m, emitido.Total);
+        Assert.Equal(0, contador.Candidatos);
+    }
+
     // ---- Vista previa ----
 
     private async Task<(ServicioDeOfertas Servicio, ContadorDeConsultas Contador)> OfertasContadasAsync(Escenario ctx)

@@ -9,6 +9,7 @@
  */
 import { CODIGO_RESULTADO_INCIERTO, COPIA_RESULTADO_INCIERTO } from './bajas'
 import { api, ErrorApi } from './cliente'
+import { esCantidadValida } from './cantidadPorUnidad'
 import type {
   AltaCombo,
   ArticuloListado,
@@ -16,11 +17,14 @@ import type {
   ComponenteDeComboListado,
   ComponenteDeSolicitudDeCombo,
   EdicionCombo,
+  UnidadVenta,
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
-import { tieneMasDeDosDecimales } from '../pos/motorDeCombos'
+import { formatearCantidadDeCombo } from '../pos/cargaDeCombos'
+import { participaEnCombos, tieneMasDeDosDecimales } from '../pos/motorDeCombos'
 
-export const UNIDADES_MINIMAS = 2
+/** Cantidad mínima del componente de un combo que tiene uno solo (espejo de `ReglaDeCombos`). */
+export const CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO = 2
 export const COMPONENTES_MAXIMOS = 50
 export const CANTIDAD_MAXIMA = 999_999
 export const CODIGO_MAXIMO = 999_999
@@ -35,17 +39,19 @@ export const clienteDeCombosAbm = {
   eliminar: (id: number) => api.delete(`/combos/${id}`),
 }
 
-/** Un componente de combo es un artículo por unidad y activo: el servidor rechaza los pesables y el POS no puede vender
- * uno inactivo. */
+/** Un componente de combo es un artículo activo que se vende por unidad o por peso: el POS no puede vender uno inactivo
+ * y uno que se vende por importe no entra a combos (el servidor lo rechaza con `combo_componente_por_importe`). */
 export function esArticuloElegibleParaCombo(articulo: Pick<ArticuloListado, 'unidadVenta' | 'activo'>): boolean {
-  return articulo.unidadVenta === 'Unidad' && articulo.activo
+  return articulo.activo && participaEnCombos(articulo.unidadVenta)
 }
 
 export type TipoDeComponente = 'Articulo' | 'Familia'
 
 /** Una fila del editor. `clave` es local y estable (identifica la fila al quitar otra); `nombre` es el rótulo de lo
  * elegido (vacío si el servidor no lo trajo); `disponible` es `false` solo para una fila que el servidor devolvió con
- * su artículo o familia dados de baja y que todavía no se reemplazó. */
+ * su artículo o familia dados de baja y que todavía no se reemplazó. `cantidad` es el texto tal como se escribe (admite
+ * coma decimal). `unidadVenta` es la del artículo recién elegido; es `null` en una familia y en un componente que viene
+ * del servidor, cuyo listado no la trae: ahí la cantidad admite hasta tres decimales y el servidor decide el resto. */
 export type FilaDeComponente = {
   clave: number
   tipo: TipoDeComponente
@@ -54,6 +60,7 @@ export type FilaDeComponente = {
   nombre: string
   cantidad: string
   disponible: boolean
+  unidadVenta: UnidadVenta | null
 }
 
 export type FormularioCombo = {
@@ -71,7 +78,7 @@ let contadorDeClaves = 0
 
 export function filaDeComponenteVacia(tipo: TipoDeComponente = 'Articulo'): FilaDeComponente {
   contadorDeClaves += 1
-  return { clave: contadorDeClaves, tipo, idArticulo: '', idFamilia: '', nombre: '', cantidad: '1', disponible: true }
+  return { clave: contadorDeClaves, tipo, idArticulo: '', idFamilia: '', nombre: '', cantidad: '1', disponible: true, unidadVenta: null }
 }
 
 /** El alta arranca con dos filas vacías: es el mínimo que un combo necesita. */
@@ -104,15 +111,33 @@ export function aValoresCombo(combo: ComboListado): FormularioCombo {
         idArticulo: c.idArticulo ?? '',
         idFamilia: c.idFamilia ?? '',
         nombre: c.nombre ?? '',
-        cantidad: String(c.cantidad),
+        cantidad: formatearCantidadDeCombo(c.cantidad),
         disponible: c.disponible,
       }
     }),
   }
 }
 
+/** Texto de una cantidad de componente → número. Admite coma o punto decimal y nada más (ni exponente, ni signo, ni miles):
+ * lo que no es un decimal positivo sin signo da `NaN`. */
+export function numeroDeCantidadDeComponente(texto: string): number {
+  const limpio = texto.trim()
+  return /^\d+([.,]\d+)?$/.test(limpio) ? Number(limpio.replace(',', '.')) : Number.NaN
+}
+
+/** Unidad de venta que rige la cantidad de la fila: la del artículo elegido, o `null` si no se conoce. */
+export function unidadDeFila(fila: Pick<FilaDeComponente, 'tipo' | 'unidadVenta'>): UnidadVenta | null {
+  return fila.tipo === 'Articulo' ? fila.unidadVenta : null
+}
+
+/** Cantidad que queda en la fila al elegir un artículo: la escrita si su unidad la admite y, si no, 1. Evita dejar sin
+ * aviso una cantidad que el artículo recién elegido no admite. */
+export function cantidadTrasElegirArticulo(cantidadActual: string, unidadVenta: UnidadVenta): string {
+  return esCantidadValida(unidadVenta, numeroDeCantidadDeComponente(cantidadActual)) ? cantidadActual : '1'
+}
+
 function aComponenteDeSolicitud(fila: FilaDeComponente): ComponenteDeSolicitudDeCombo {
-  const cantidad = Number(fila.cantidad.trim())
+  const cantidad = numeroDeCantidadDeComponente(fila.cantidad)
   return fila.tipo === 'Articulo'
     ? { idArticulo: Number(fila.idArticulo), cantidad }
     : { idFamilia: Number(fila.idFamilia), cantidad }
@@ -163,11 +188,15 @@ function rotuloDeComponente(tipo: TipoDeComponente, id: number | '', nombre: str
   return tipo === 'Familia' ? `${base} (familia)` : base
 }
 
-function parteDeResumen(cantidad: number, rotulo: string, disponible: boolean): string {
-  return `${cantidad} × ${rotulo}${disponible ? '' : ' (no disponible)'}`
+/** Una cantidad con decimales solo puede ser por peso, así que lleva kg aunque no se conozca la unidad. */
+function parteDeResumen(cantidad: number, rotulo: string, disponible: boolean, esPeso = false): string {
+  const texto = formatearCantidadDeCombo(cantidad)
+  const conUnidad = esPeso || !Number.isInteger(cantidad) ? `${texto} kg` : texto
+  return `${conUnidad} × ${rotulo}${disponible ? '' : ' (no disponible)'}`
 }
 
-/** Resumen de una línea de los componentes de un combo del listado: `1 × Pancho + 1 × Línea Coca 500 (familia)`. */
+/** Resumen de una línea de los componentes de un combo del listado: `1 × Pancho + 0,2 kg × Jamón + 1 × Línea Coca 500
+ * (familia)`. */
 export function resumenDeComponentes(componentes: readonly ComponenteDeComboListado[]): string {
   return componentes
     .map((c) =>
@@ -190,9 +219,10 @@ export function tieneComponentesNoDisponibles(combo: Pick<ComboListado, 'compone
 export function resumenDeFormulario(f: FormularioCombo): string {
   const partes = f.componentes.flatMap((fila) => {
     const id = fila.tipo === 'Articulo' ? fila.idArticulo : fila.idFamilia
-    const cantidad = fila.cantidad.trim()
-    if (id === '' || !/^\d+$/.test(cantidad) || Number(cantidad) < 1) return []
-    return [parteDeResumen(Number(cantidad), rotuloDeComponente(fila.tipo, id, fila.nombre), fila.disponible)]
+    const unidad = unidadDeFila(fila)
+    const cantidad = numeroDeCantidadDeComponente(fila.cantidad)
+    if (id === '' || !esCantidadValida(unidad, cantidad)) return []
+    return [parteDeResumen(cantidad, rotuloDeComponente(fila.tipo, id, fila.nombre), fila.disponible, unidad === 'Peso')]
   })
   if (partes.length === 0) return ''
   const componentes = partes.join(' + ')
@@ -200,7 +230,9 @@ export function resumenDeFormulario(f: FormularioCombo): string {
 }
 
 export const MENSAJE_COMPONENTE_NO_DISPONIBLE = 'Este componente ya no está disponible: quitalo o reemplazalo para poder guardar.'
-const MENSAJE_CANTIDAD = `La cantidad tiene que ser un entero entre 1 y ${CANTIDAD_MAXIMA}.`
+const MENSAJE_CANTIDAD_ENTERA = `La cantidad tiene que ser un entero entre 1 y ${CANTIDAD_MAXIMA}.`
+const MENSAJE_CANTIDAD_CON_DECIMALES = `La cantidad tiene que ser mayor a cero, con hasta 3 decimales y no superar ${CANTIDAD_MAXIMA}.`
+const MENSAJE_MINIMO = 'El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.'
 const MENSAJE_CODIGO = `El código tiene que ser un entero entre 1 y ${CODIGO_MAXIMO}.`
 
 export type ErrorDeFila = { referencia?: string; cantidad?: string }
@@ -209,10 +241,19 @@ export type ErroresDeCombo = {
   nombre?: string
   precio?: string
   codigo?: string
-  /** Reglas del conjunto: mínimo de unidades y tope de componentes. */
+  /** Reglas del conjunto: mínimo de componentes y tope de componentes. */
   componentes?: string
   /** Por `clave` de fila; solo figuran las filas con algún error. */
   filas: Record<number, ErrorDeFila>
+}
+
+/** Espejo de `ReglaDeCombos.AlcanzaElMinimo`: dos componentes o más, o uno solo de cantidad dos o más. Se llama con las
+ * cantidades ya validadas. */
+function alcanzaElMinimo(componentes: readonly FilaDeComponente[]): boolean {
+  return (
+    componentes.length >= 2 ||
+    (componentes.length === 1 && numeroDeCantidadDeComponente(componentes[0].cantidad) >= CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO)
+  )
 }
 
 export function validarCombo(f: FormularioCombo): ErroresDeCombo {
@@ -233,7 +274,6 @@ export function validarCombo(f: FormularioCombo): ErroresDeCombo {
 
   const articulosVistos = new Set<number>()
   const familiasVistas = new Set<number>()
-  let unidades = 0
   let hayCantidadInvalida = false
 
   for (const fila of f.componentes) {
@@ -253,11 +293,13 @@ export function validarCombo(f: FormularioCombo): ErroresDeCombo {
     if (cantidad === '') {
       error.cantidad = 'Ingresá la cantidad.'
       hayCantidadInvalida = true
-    } else if (!/^\d+$/.test(cantidad) || Number(cantidad) < 1 || Number(cantidad) > CANTIDAD_MAXIMA) {
-      error.cantidad = MENSAJE_CANTIDAD
-      hayCantidadInvalida = true
     } else {
-      unidades += Number(cantidad)
+      const unidad = unidadDeFila(fila)
+      const numero = numeroDeCantidadDeComponente(cantidad)
+      if (!esCantidadValida(unidad, numero) || numero > CANTIDAD_MAXIMA) {
+        error.cantidad = unidad === 'Unidad' ? MENSAJE_CANTIDAD_ENTERA : MENSAJE_CANTIDAD_CON_DECIMALES
+        hayCantidadInvalida = true
+      }
     }
 
     if (error.referencia !== undefined || error.cantidad !== undefined) errores.filas[fila.clave] = error
@@ -265,8 +307,8 @@ export function validarCombo(f: FormularioCombo): ErroresDeCombo {
 
   if (f.componentes.length > COMPONENTES_MAXIMOS) {
     errores.componentes = `Un combo admite hasta ${COMPONENTES_MAXIMOS} componentes.`
-  } else if (!hayCantidadInvalida && unidades < UNIDADES_MINIMAS) {
-    errores.componentes = `El combo tiene que sumar al menos ${UNIDADES_MINIMAS} unidades entre todos sus componentes.`
+  } else if (!hayCantidadInvalida && !alcanzaElMinimo(f.componentes)) {
+    errores.componentes = MENSAJE_MINIMO
   }
 
   return errores
@@ -296,22 +338,19 @@ const RECHAZOS_CONOCIDOS: ReadonlyMap<string, ErrorDeServidorDeCombo> = new Map<
     { campo: 'precio', mensaje: 'El precio tiene que ser mayor a cero, con hasta dos decimales y no superar 999.999.999.999,99.' },
   ],
   ['combo_componente_invalido', { campo: 'componentes', mensaje: 'Cada componente tiene que ser un artículo o una familia.' }],
-  ['combo_cantidad_invalida', { campo: 'componentes', mensaje: MENSAJE_CANTIDAD }],
+  ['combo_cantidad_invalida', { campo: 'componentes', mensaje: MENSAJE_CANTIDAD_CON_DECIMALES }],
   [
     'combo_componente_duplicado',
     { campo: 'componentes', mensaje: 'Un artículo o una familia puede figurar una sola vez en el combo.' },
   ],
-  [
-    'combo_unidades_insuficientes',
-    { campo: 'componentes', mensaje: `El combo tiene que sumar al menos ${UNIDADES_MINIMAS} unidades entre todos sus componentes.` },
-  ],
+  ['combo_unidades_insuficientes', { campo: 'componentes', mensaje: MENSAJE_MINIMO }],
   ['combo_componentes_excedidos', { campo: 'componentes', mensaje: `Un combo admite hasta ${COMPONENTES_MAXIMOS} componentes.` }],
   [
-    'combo_componente_no_unitario',
+    'combo_cantidad_no_admitida',
     {
       campo: 'componentes',
       mensaje:
-        'Un combo solo admite artículos que se venden por unidad: algún artículo (o algún artículo de una familia elegida) se vende por peso.',
+        'La cantidad de algún componente no la admite su unidad de venta: un artículo por unidad solo admite cantidades enteras y uno por peso, hasta 3 decimales. Lo mismo vale para los artículos de una familia elegida.',
     },
   ],
   [

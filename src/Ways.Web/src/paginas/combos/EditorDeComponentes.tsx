@@ -1,14 +1,17 @@
 import { useEffect, useRef } from 'react'
 import { opcionesDeFamiliaDeOferta } from '../../api/ofertas'
 import {
+  cantidadTrasElegirArticulo,
+  CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO,
   COMPONENTES_MAXIMOS,
   filaDeComponenteVacia,
   MENSAJE_COMPONENTE_NO_DISPONIBLE,
-  UNIDADES_MINIMAS,
+  unidadDeFila,
   type ErrorDeFila,
   type FilaDeComponente,
   type TipoDeComponente,
 } from '../../api/combosAbm'
+import { restriccionDeCantidad } from '../../api/cantidadPorUnidad'
 import type { FamiliaListado } from '../../api/tipos'
 import { BotonIcono } from '../../componentes/BotonIcono'
 import { SelectorDeArticuloDeCombo } from './SelectorDeArticuloDeCombo'
@@ -20,7 +23,7 @@ type Props = {
   familiasListas: boolean
   /** Errores por `clave` de fila ya filtrados por quien llama (los de validación solo se ven tras un intento de guardar). */
   errores: Record<number, ErrorDeFila>
-  /** Error del conjunto (mínimo de unidades, tope, rechazos del servidor sin fila identificable). */
+  /** Error del conjunto (mínimo de componentes, tope, rechazos del servidor sin fila identificable). */
   errorDelConjunto?: string
   /** Id del mensaje de `errorDelConjunto`: el conjunto lo referencia con `aria-describedby`. */
   idDelErrorDelConjunto: string
@@ -67,7 +70,7 @@ export function EditorDeComponentes({
 
   function cambiarTipo(fila: FilaDeComponente, tipo: TipoDeComponente) {
     if (tipo === fila.tipo) return
-    cambiarFila(fila.clave, { tipo, idArticulo: '', idFamilia: '', nombre: '', disponible: true })
+    cambiarFila(fila.clave, { tipo, idArticulo: '', idFamilia: '', nombre: '', disponible: true, unidadVenta: null })
   }
 
   return (
@@ -78,14 +81,17 @@ export function EditorDeComponentes({
     >
       <legend className="h6 mb-1">Componentes</legend>
       <div className="form-text mb-2">
-        Cada componente es un artículo o una familia (sirve cualquier artículo de la familia) con su cantidad. Solo se pueden usar
-        artículos que se venden por unidad. El combo suma al menos {UNIDADES_MINIMAS} unidades.
+        Cada componente es un artículo o una familia (sirve cualquier artículo de la familia) con su cantidad. Los artículos que
+        se venden por peso llevan la cantidad en kg, con hasta 3 decimales. El combo tiene al menos dos componentes, o uno solo
+        con cantidad {CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO} o más.
       </div>
 
       {filas.map((fila, indice) => {
         const numero = indice + 1
         const error = errores[fila.clave]
         const errorDeReferencia = error?.referencia ?? (fila.disponible ? undefined : MENSAJE_COMPONENTE_NO_DISPONIBLE)
+        const unidad = unidadDeFila(fila)
+        const esEntera = unidad === 'Unidad'
         const familiaFaltante = fila.idFamilia !== '' && !familias.some((f) => f.id === fila.idFamilia)
         const idErrorReferencia = `cb-fila-${fila.clave}-referencia-error`
         const idErrorCantidad = `cb-fila-${fila.clave}-cantidad-error`
@@ -120,7 +126,15 @@ export function EditorDeComponentes({
                     disabled={disabled}
                     invalido={referenciaInvalida}
                     idDelError={ayudaDeReferencia}
-                    onSeleccionar={(id, nombre) => cambiarFila(fila.clave, { idArticulo: id, nombre, disponible: true })}
+                    onSeleccionar={(id, nombre, unidadVenta) =>
+                      cambiarFila(fila.clave, {
+                        idArticulo: id,
+                        nombre,
+                        disponible: true,
+                        unidadVenta,
+                        cantidad: cantidadTrasElegirArticulo(fila.cantidad, unidadVenta),
+                      })
+                    }
                   />
                 ) : (
                   <select
@@ -152,17 +166,20 @@ export function EditorDeComponentes({
               </div>
 
               <div className="col-6 col-md-2">
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  className={`form-control form-control-sm ${error?.cantidad ? 'is-invalid' : ''}`}
-                  aria-label={`Cantidad del componente ${numero}`}
-                  aria-invalid={error?.cantidad ? true : undefined}
-                  aria-describedby={error?.cantidad ? idErrorCantidad : undefined}
-                  value={fila.cantidad}
-                  onChange={(e) => cambiarFila(fila.clave, { cantidad: e.target.value })}
-                />
+                <div className="input-group input-group-sm">
+                  <input
+                    {...(esEntera
+                      ? { type: 'number', min: restriccionDeCantidad(unidad).min, step: restriccionDeCantidad(unidad).step }
+                      : { type: 'text', inputMode: 'decimal', autoComplete: 'off' })}
+                    className={`form-control form-control-sm ${error?.cantidad ? 'is-invalid' : ''}`}
+                    aria-label={`Cantidad del componente ${numero}`}
+                    aria-invalid={error?.cantidad ? true : undefined}
+                    aria-describedby={error?.cantidad ? idErrorCantidad : undefined}
+                    value={fila.cantidad}
+                    onChange={(e) => cambiarFila(fila.clave, { cantidad: e.target.value })}
+                  />
+                  {unidad === 'Peso' && <span className="input-group-text">kg</span>}
+                </div>
               </div>
 
               <div className="col-6 col-md-2 text-end">

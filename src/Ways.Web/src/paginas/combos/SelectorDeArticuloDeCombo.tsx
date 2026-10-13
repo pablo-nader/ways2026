@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import { esArticuloElegibleParaCombo } from '../../api/combosAbm'
-import type { ArticuloListado } from '../../api/tipos'
+import type { ArticuloListado, UnidadVenta } from '../../api/tipos'
 
 type Props = {
   /** Posición (desde 1) de la fila: nombra los controles para que sean únicos en el editor. */
@@ -13,16 +13,16 @@ type Props = {
   /** Mensaje de error de la fila (si lo hay): el campo lo referencia con `aria-describedby`. */
   idDelError?: string
   invalido?: boolean
-  onSeleccionar: (id: number, nombre: string) => void
+  onSeleccionar: (id: number, nombre: string, unidadVenta: UnidadVenta) => void
 }
 
 type Truncado = { recibidos: number; total: number }
 
 /**
  * Buscador de artículo de una fila del editor de componentes. Busca contra `/api/articulos` (sin catálogo completo en
- * memoria) y deja afuera lo que no puede ser componente. El listado del servidor no filtra por unidad de venta, así que
- * el filtro es del cliente y solo ve la página que llegó: si el servidor dice que hay más resultados, lo avisa en vez de
- * afirmar que no hay ninguno. Búsqueda generacional: una respuesta tardía de una búsqueda anterior, o de una que se
+ * memoria) y deja afuera lo que no puede ser componente (los artículos inactivos y los que se venden por importe); los que
+ * se venden por peso se ofrecen y se rotulan. El filtro es del cliente y solo ve la página que llegó: si el servidor dice que hay más resultados, lo avisa en
+ * vez de afirmar que no hay ninguno. Búsqueda generacional: una respuesta tardía de una búsqueda anterior, o de una que se
  * superó al elegir, no pisa los resultados (`react-async-state` regla 2).
  *
  * Los resultados son un combobox con listbox: las flechas mueven la opción resaltada sin elegir; Enter o un clic eligen;
@@ -88,7 +88,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
     setBuscado(false)
     setAbierta(false)
     setTermino('')
-    onSeleccionar(articulo.id, articulo.nombre)
+    onSeleccionar(articulo.id, articulo.nombre, articulo.unidadVenta)
   }
 
   function alTeclear(evento: React.KeyboardEvent<HTMLInputElement>) {
@@ -164,7 +164,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
       </div>
       {error && <div className="alert alert-danger py-1 px-2 small mt-1 mb-0">{error}</div>}
       {buscado && resultados.length === 0 && truncado === null && (
-        <div className="form-text">No hay artículos por unidad que coincidan.</div>
+        <div className="form-text">No hay artículos activos, por unidad o por peso, que coincidan.</div>
       )}
       {buscado && resultados.length === 0 && truncado !== null && (
         <div className="form-text">Ninguno de los resultados mostrados puede ser componente.</div>
@@ -193,6 +193,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
               onClick={() => elegir(a)}
             >
               {a.codigoInterno} — {a.nombre}
+              {a.unidadVenta === 'Peso' && ' (por peso)'}
             </div>
           ))}
       </div>
@@ -204,7 +205,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
       {ocultos > 0 && (
         <div className="form-text">
           {ocultos === 1 ? 'Se ocultó 1 resultado' : `Se ocultaron ${ocultos} resultados`} de los mostrados: solo los artículos
-          activos que se venden por unidad pueden ser componentes.
+          activos que se venden por unidad o por peso pueden ser componentes.
         </div>
       )}
     </div>

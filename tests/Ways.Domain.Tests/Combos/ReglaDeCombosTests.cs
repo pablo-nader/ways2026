@@ -1,3 +1,4 @@
+using Ways.Domain.Articulos;
 using Ways.Domain.Combos;
 using Ways.Domain.Common;
 
@@ -24,10 +25,18 @@ public class ReglaDeCombosTests
         ReglaDeCombos.Validar(5000m, [Art(1), Fam(2)]);
     }
 
-    [Fact]
-    public void UnSoloComponenteConCantidadDosAlcanzaPorqueElMinimoEsSobreLaCantidadTotal()
+    [Theory]
+    [InlineData("2")]
+    [InlineData("2.5")]
+    public void UnSoloComponenteAlcanzaSiSuCantidadEsDosOMas(string cantidad)
     {
-        ReglaDeCombos.Validar(5000m, [Art(1, 2m)]);
+        ReglaDeCombos.Validar(5000m, [Art(1, Precio(cantidad))]);
+    }
+
+    [Fact]
+    public void DosComponentesAlcanzanAunqueSuCantidadTotalNoLlegueADos()
+    {
+        ReglaDeCombos.Validar(5000m, [Art(1, 0.2m), Art(2, 0.2m)]);
     }
 
     [Fact]
@@ -35,7 +44,7 @@ public class ReglaDeCombosTests
     {
         ReglaDeCombos.Validar(ReglaDeCombos.PrecioMaximo, [Art(1, ReglaDeCombos.CantidadMaxima), Art(2)]);
 
-        AssertCodigo("combo_cantidad_invalida", 5000m, Art(1, ReglaDeCombos.CantidadMaxima + 1m), Art(2));
+        AssertCodigo("combo_cantidad_invalida", 5000m, Art(1, ReglaDeCombos.CantidadMaxima + 0.001m), Art(2));
         AssertCodigo("combo_precio_invalido", ReglaDeCombos.PrecioMaximo + 0.01m, Art(1), Art(2));
     }
 
@@ -74,9 +83,12 @@ public class ReglaDeCombosTests
             5000m,
             [.. Enumerable.Range(1, ReglaDeCombos.ComponentesMaximos + 1).Select(_ => new ComponenteDeCombo(null, null, 1m))]);
 
-    [Fact]
-    public void UnaSolaUnidadEnTotalSeRechaza() =>
-        AssertCodigo("combo_unidades_insuficientes", 5000m, Art(1));
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0.5")]
+    [InlineData("1.999")]
+    public void UnSoloComponenteConCantidadMenorADosSeRechaza(string cantidad) =>
+        AssertCodigo("combo_unidades_insuficientes", 5000m, Art(1, Precio(cantidad)));
 
     [Fact]
     public void SinComponentesSeRechazaPorUnidadesInsuficientes() =>
@@ -97,12 +109,23 @@ public class ReglaDeCombosTests
         AssertCodigo("combo_componente_invalido", 5000m, Art(1), new ComponenteDeCombo(2, 3, 1m));
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    [InlineData(1.5)]
-    [InlineData(0.5)]
-    public void LaCantidadDeUnComponenteTieneQueSerUnEnteroPositivo(double cantidad) =>
-        AssertCodigo("combo_cantidad_invalida", 5000m, Art(1, (decimal)cantidad), Art(2));
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("-0.2")]
+    [InlineData("0.0005")]
+    [InlineData("1.2345")]
+    public void LaCantidadDeUnComponenteTieneQueSerPositivaYDeHastaTresDecimales(string cantidad) =>
+        AssertCodigo("combo_cantidad_invalida", 5000m, Art(1, Precio(cantidad)), Art(2));
+
+    [Theory]
+    [InlineData("0.001")]
+    [InlineData("0.2")]
+    [InlineData("1.5")]
+    [InlineData("1.250")]
+    public void UnaCantidadFraccionariaDeHastaTresDecimalesSeAcepta(string cantidad)
+    {
+        ReglaDeCombos.Validar(5000m, [Art(1, Precio(cantidad)), Art(2)]);
+    }
 
     [Fact]
     public void ElMismoArticuloDosVecesSeRechaza() =>
@@ -136,5 +159,31 @@ public class ReglaDeCombosTests
         var error = Assert.Throws<ErrorDominio>(() => ReglaDeCombos.ValidarCodigo(codigo));
         Assert.Equal("combo_codigo_invalido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData(UnidadVenta.Unidad, true)]
+    [InlineData(UnidadVenta.Peso, true)]
+    [InlineData(UnidadVenta.Importe, false)]
+    public void SoloLosArticulosPorUnidadYPorPesoEntranACombos(UnidadVenta unidad, bool esperado)
+    {
+        Assert.Equal(esperado, ReglaDeCombos.ParticipaEnCombos(unidad));
+    }
+
+    /// <summary>Cláusula: un artículo cubre un componente si su unidad entra a combos Y admite la cantidad. La unidad
+    /// por importe admite la cantidad 1 y aun así no cubre ningún componente.</summary>
+    [Theory]
+    [InlineData(UnidadVenta.Unidad, "1", true)]
+    [InlineData(UnidadVenta.Unidad, "0.5", false)]
+    [InlineData(UnidadVenta.Peso, "0.200", true)]
+    [InlineData(UnidadVenta.Peso, "0.2001", false)]
+    [InlineData(UnidadVenta.Importe, "1", false)]
+    [InlineData(UnidadVenta.Importe, "2", false)]
+    public void UnArticuloCubreUnComponenteSiSuUnidadEntraACombosYAdmiteLaCantidad(
+        UnidadVenta unidad, string cantidad, bool esperado)
+    {
+        var valor = decimal.Parse(cantidad, System.Globalization.CultureInfo.InvariantCulture);
+
+        Assert.Equal(esperado, ReglaDeCombos.AdmiteComoComponente(unidad, valor));
     }
 }

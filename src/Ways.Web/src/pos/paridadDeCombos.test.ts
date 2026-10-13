@@ -1,20 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import { calcularTotalesDeLinea } from '../api/ajusteManual'
-import { resolverCombos, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
+import type { UnidadVenta } from '../api/tipos'
+import { resolverCombos, type ComboCandidato, type ComponenteDeCombo, type LineaParaCombos } from './motorDeCombos'
 
 // Tabla de paridad servidor/web: los mismos carritos con los mismos netos esperados por línea que
 // `tests/Ways.Domain.Tests/Combos/ParidadDeCombosConElMotorWebTests.cs` (`ResolvedorDeCombos` más
 // `CalculadorDeTotales`). Acá la salida del motor de TypeScript pasa por `calcularTotalesDeLinea`.
 // Un cambio de un número en una de las dos tablas exige el mismo cambio en la otra.
 
-const linea = (indice: number, idArticulo: number, precioLista: number, cantidad = 1, descuentoUnitarioDeOferta = 0): LineaParaCombos => ({
+const linea = (
+  indice: number,
+  idArticulo: number,
+  precioLista: number,
+  cantidad = 1,
+  descuentoUnitarioDeOferta = 0,
+  unidadVenta: UnidadVenta = 'Unidad',
+  idFamilia: number | null = null,
+): LineaParaCombos => ({
   indice,
   idArticulo,
-  idFamilia: null,
+  idFamilia,
   cantidad,
   precioLista,
   descuentoUnitarioDeOferta,
+  unidadVenta,
 })
+
+const porPeso = (indice: number, idArticulo: number, precioPorKilo: number, kilos: number, idFamilia: number | null = null): LineaParaCombos =>
+  linea(indice, idArticulo, precioPorKilo, kilos, 0, 'Peso', idFamilia)
+
+const art = (idArticulo: number, cantidad: number): ComponenteDeCombo => ({ idArticulo, idFamilia: null, cantidad })
+const fam = (idFamilia: number, cantidad: number): ComponenteDeCombo => ({ idArticulo: null, idFamilia, cantidad })
+const comboDe = (id: number, precio: number, ...componentes: ComponenteDeCombo[]): ComboCandidato => ({ id, nombre: `combo ${id}`, precio, componentes })
+
+const JAMON = 5
+const QUESO = 6
+const SALAME = 7
+const FAMILIA_FIAMBRES = 30
+const doscientosMasDoscientos = comboDe(7, 3000, art(JAMON, 0.2), art(QUESO, 0.2))
 
 const combo = (id: number, precio: number, ...articulos: number[]): ComboCandidato => ({
   id,
@@ -45,6 +68,10 @@ function verificar(lineas: LineaParaCombos[], candidato: ComboCandidato, netosEs
 describe('paridad de combos con el servidor', () => {
   it('reparte el cobro en pesos enteros entre dos líneas', () => {
     verificar([linea(0, 1, 3000), linea(1, 2, 2500)], combo(7, 5000, 1, 2), [2727, 2273], [273, 227])
+  })
+
+  it('una línea de un artículo por importe no consume el combo y las dos líneas quedan a precio de lista', () => {
+    verificar([linea(0, 1, 3000, 1, 0, 'Importe'), linea(1, 2, 2500)], combo(7, 5000, 1, 2), [3000, 2500], [0, 0])
   })
 
   it('tres líneas iguales dejan el resto en la última', () => {
@@ -82,5 +109,81 @@ describe('paridad de combos con el servidor', () => {
   it('un empate exacto del reparto sube al peso aunque en punto flotante quede debajo', () => {
     // 3 × 1,2 / 7,2 es 0,5 exacto; en flotante da 0,49999… y redondearía hacia abajo.
     verificar([linea(0, 1, 1.2), linea(1, 2, 6)], combo(7, 3, 1, 2), [1, 2], [0.2, 4])
+  })
+
+  it('dos componentes pesables de 200 g reparten el cobro entre las dos líneas', () => {
+    verificar([porPeso(0, JAMON, 10000, 0.2), porPeso(1, QUESO, 8000, 0.2)], doscientosMasDoscientos, [1667, 1333], [333, 267])
+  })
+
+  it('una línea de 215 g aporta 200 g al combo y los 15 g que sobran se cobran a precio de lista', () => {
+    verificar([porPeso(0, JAMON, 10000, 0.215), porPeso(1, QUESO, 8000, 0.2)], doscientosMasDoscientos, [1817, 1333], [333, 267])
+    expect(
+      resolverCombos([porPeso(0, JAMON, 10000, 0.215), porPeso(1, QUESO, 8000, 0.2)], [doscientosMasDoscientos]).lineas.map((l) => l.unidadesConsumidas),
+    ).toEqual([0.2, 0.2])
+  })
+
+  it('400 g de cada componente aplican el combo dos veces', () => {
+    verificar([porPeso(0, JAMON, 10000, 0.4), porPeso(1, QUESO, 8000, 0.4)], doscientosMasDoscientos, [3334, 2666], [666, 534])
+  })
+
+  it('150 g no completan un componente de 200 g y el combo no se aplica', () => {
+    verificar([porPeso(0, JAMON, 10000, 0.15), porPeso(1, QUESO, 8000, 0.2)], doscientosMasDoscientos, [1500, 1600], [0, 0])
+  })
+
+  it('el importe de lista de la porción consumida redondea el medio centavo hacia arriba (0,250 × 100,10 = 25,03)', () => {
+    verificar(
+      [porPeso(0, JAMON, 100.1, 0.25), porPeso(1, QUESO, 8000, 0.2)],
+      comboDe(7, 1000, art(JAMON, 0.25), art(QUESO, 0.2)),
+      [15, 985],
+      [10.03, 615],
+    )
+  })
+
+  it('en una familia mixta el miembro por unidad no es candidato de un componente de 1,5 y lo completa el pesable', () => {
+    verificar(
+      [linea(0, SALAME, 400, 2, 0, 'Unidad', FAMILIA_FIAMBRES), porPeso(1, JAMON, 1000, 1.5, FAMILIA_FIAMBRES), linea(2, 2, 2500)],
+      comboDe(7, 1000, fam(FAMILIA_FIAMBRES, 1.5), art(2, 1)),
+      [800, 375, 625],
+      [0, 1125, 1875],
+    )
+  })
+
+  it('en una familia mixta un componente de 200 g lo completa el miembro pesable y no el de unidad', () => {
+    verificar(
+      [linea(0, SALAME, 400, 1, 0, 'Unidad', FAMILIA_FIAMBRES), porPeso(1, JAMON, 10000, 0.2, FAMILIA_FIAMBRES), porPeso(2, QUESO, 8000, 0.2)],
+      comboDe(7, 3000, fam(FAMILIA_FIAMBRES, 0.2), art(QUESO, 0.2)),
+      [400, 1667, 1333],
+      [0, 333, 267],
+    )
+  })
+
+  it('una línea por unidad con cantidad fraccionaria se ignora', () => {
+    verificar([linea(0, 1, 3000, 1.5), linea(1, 2, 2500)], combo(7, 5000, 1, 2), [4500, 2500], [0, 0])
+  })
+
+  it('el ahorro acumulado de una línea pesable no supera el bruto de lo que consumió (3 × 0,250 kg a 9,99)', () => {
+    // Por aplicación el importe de lista sube a 2,50 y la parte de cobro de la línea es cero: 3 × 2,50 = 7,50 superaría
+    // el bruto de 0,750 kg (7,49).
+    verificar(
+      [porPeso(0, JAMON, 9.99, 0.75), linea(1, 2, 500, 3)],
+      comboDe(7, 100, art(JAMON, 0.25), art(2, 1)),
+      [0, 300],
+      [7.49, 1200],
+    )
+  })
+
+  it('una línea por unidad que recibe una toma de cero de una familia no figura en los combos que no la consumieron', () => {
+    const lineas = [porPeso(0, JAMON, 1000, 1.5, FAMILIA_FIAMBRES), linea(1, SALAME, 400, 2, 0, 'Unidad', FAMILIA_FIAMBRES), porPeso(2, QUESO, 1000, 0.5, FAMILIA_FIAMBRES)]
+    const resolucion = resolverCombos(lineas, [comboDe(3, 1000, fam(FAMILIA_FIAMBRES, 2)), comboDe(9, 500, art(SALAME, 2))])
+
+    expect(resolucion.lineas.map((l) => [l.indice, l.unidadesConsumidas, l.ahorroDeCombo, l.idsDeCombo])).toEqual([
+      [0, 1.5, 750, [3]],
+      [1, 2, 300, [9]],
+      [2, 0.5, 250, [3]],
+    ])
+    expect(resolucion.combos.map((c) => [c.idCombo, c.veces, c.ahorro])).toEqual([
+      [3, 1, 1000],
+      [9, 1, 300],
+    ])
   })
 })

@@ -970,19 +970,68 @@ describe('resolverPreviaOffline — combos', () => {
     expect(total(lineas, instantaneaConCombos(undefined))).toBe(5500)
   })
 
-  it('un artículo pesable (o con unidad ausente) no entra al combo aunque la cantidad sea entera', () => {
-    const lineas = lineasDe([PANCHO, 1], [COCA, 1])
-    for (const unidadVenta of ['Peso', undefined] as const) {
-      const articulos = [articuloDeCombosFixture(PANCHO, 3000, { unidadVenta }), articuloDeCombosFixture(COCA, 2500)]
-      const instantanea = instantaneaConCombos([comboPanchoCoca], articulos)
-      expect(resolverPreviaOffline(lineas, instantanea, LISTA).combos).toEqual([])
-      expect(total(lineas, instantanea)).toBe(5500)
-    }
+  it.each(['Peso', undefined] as const)('un artículo pesable (unidad %s) entra al combo: la unidad de venta viaja al motor', (unidadVenta) => {
+    const lineas = lineasDe([PANCHO, 1.5], [COCA, 1])
+    const articulos = [articuloDeCombosFixture(PANCHO, 3000, { unidadVenta }), articuloDeCombosFixture(COCA, 2500)]
+    const instantanea = instantaneaConCombos([comboPanchoCoca], articulos)
+
+    const { precios, combos } = resolverPreviaOffline(lineas, instantanea, LISTA)
+
+    expect(combos.map((c) => [c.idCombo, c.veces])).toEqual([[7, 1]])
+    expect(precios['l-11'].combo).toEqual({ unidadesConsumidas: 1, ahorro: 273, idCombo: 7 })
+    // combo 5000 + el medio kilo que sobra a precio de lista (1500).
+    expect(total(lineas, instantanea)).toBe(6500)
   })
 
-  it('una cantidad no entera deja la línea fuera del combo', () => {
+  it('un artículo por unidad con cantidad no entera queda fuera del combo', () => {
     const lineas = lineasDe([PANCHO, 1.5], [COCA, 1])
     expect(resolverPreviaOffline(lineas, instantaneaConCombos([comboPanchoCoca]), LISTA).combos).toEqual([])
+  })
+
+  describe('componentes pesables', () => {
+    const JAMON = 21
+    const QUESO = 22
+    const fiambres = [
+      articuloDeCombosFixture(JAMON, 10000, { unidadVenta: 'Peso' }),
+      articuloDeCombosFixture(QUESO, 8000, { unidadVenta: 'Peso' }),
+    ]
+    const picada: ComboDeInstantanea = {
+      idCombo: 9,
+      codigo: 9,
+      nombre: 'Picada',
+      precio: 3000,
+      componentes: [
+        { idArticulo: JAMON, cantidad: 0.2 },
+        { idArticulo: QUESO, cantidad: 0.2 },
+      ],
+    }
+
+    it('215 g de jamón y 200 g de queso aplican el combo una vez y los 15 g que sobran se cobran a precio de lista', () => {
+      const lineas = lineasDe([JAMON, 0.215], [QUESO, 0.2])
+      const instantanea = instantaneaConCombos([picada], fiambres)
+
+      const { precios, combos } = resolverPreviaOffline(lineas, instantanea, LISTA)
+
+      expect(precios['l-21'].combo).toEqual({ unidadesConsumidas: 0.2, ahorro: 333, idCombo: 9 })
+      expect(precios['l-22'].combo).toEqual({ unidadesConsumidas: 0.2, ahorro: 267, idCombo: 9 })
+      expect(combos).toEqual([{ idCombo: 9, codigo: 9, nombre: 'Picada', veces: 1, ahorro: 600 }])
+      expect(total(lineas, instantanea)).toBe(3150)
+    })
+
+    it('400 g de cada uno lo aplican dos veces y 150 g de jamón no lo aplican', () => {
+      const instantanea = instantaneaConCombos([picada], fiambres)
+
+      expect(resolverPreviaOffline(lineasDe([JAMON, 0.4], [QUESO, 0.4]), instantanea, LISTA).combos.map((c) => c.veces)).toEqual([2])
+      expect(total(lineasDe([JAMON, 0.4], [QUESO, 0.4]), instantanea)).toBe(6000)
+      expect(resolverPreviaOffline(lineasDe([JAMON, 0.15], [QUESO, 0.2]), instantanea, LISTA).combos).toEqual([])
+    })
+
+    it('un artículo por unidad no completa un componente de 200 g aunque el combo lo nombre', () => {
+      const articulos = [articuloDeCombosFixture(JAMON, 10000), articuloDeCombosFixture(QUESO, 8000, { unidadVenta: 'Peso' })]
+      const lineas = lineasDe([JAMON, 1], [QUESO, 0.2])
+
+      expect(resolverPreviaOffline(lineas, instantaneaConCombos([picada], articulos), LISTA).combos).toEqual([])
+    })
   })
 
   it('un componente de familia se cubre con cualquier artículo de la familia, vía idFamilia', () => {
@@ -1076,32 +1125,18 @@ describe('resolverPreviaOffline — combos', () => {
     expect(resueltas.map((r) => r?.combo)).toEqual([undefined, undefined])
   })
 
-  describe('una parte de combo con más de dos decimales (el servidor la rechazaría y la venta encolada quedaría varada)', () => {
-    // Pancho a 0,005 y coca a 2 con el combo a 1: el reparto cae 0,00 / 1,005 (la última línea absorbe el resto).
+  it('con un precio de fracción de centavo el combo se aplica y ninguna parte lleva más de dos decimales (el servidor las rechazaría)', () => {
+    // Pancho a 0,005 y coca a 2 con el combo a 1: la lista del pancho es 0,01 y todo el cobro cae en la coca.
     const articulosSubcentavo = [articuloDeCombosFixture(PANCHO, 0.005), articuloDeCombosFixture(COCA, 2)]
-    const comboSubcentavo: ComboDeInstantanea = { ...comboPanchoCoca, precio: 1 }
     const lineas = lineasDe([PANCHO, 1], [COCA, 1])
 
-    it('el documento se cotiza como si no hubiera combos: sin combo en ninguna línea ni combos aplicados', () => {
-      const { lineas: resueltas, combos } = resolverDocumentoOffline(lineas, instantaneaConCombos([comboSubcentavo], articulosSubcentavo), LISTA)
+    const { lineas: resueltas, combos } = resolverDocumentoOffline(lineas, instantaneaConCombos([{ ...comboPanchoCoca, precio: 1 }], articulosSubcentavo), LISTA)
 
-      expect(combos).toEqual([])
-      expect(resueltas).toEqual(resolverDocumentoOffline(lineas, instantaneaConCombos(undefined, articulosSubcentavo), LISTA).lineas)
-      for (const r of resueltas) expect(r).not.toHaveProperty('combo')
-    })
-
-    it('la vista previa sigue la misma regla que el payload (una sola función): precios sin combo y lista vacía', () => {
-      const { precios, combos } = resolverPreviaOffline(lineas, instantaneaConCombos([comboSubcentavo], articulosSubcentavo), LISTA)
-
-      expect(combos).toEqual([])
-      expect(precios['l-11']).not.toHaveProperty('combo')
-      expect(precios['l-12']).not.toHaveProperty('combo')
-    })
-
-    it('con precios de dos decimales el combo se aplica (la regla solo corta la fracción de centavo)', () => {
-      const { combos } = resolverPreviaOffline(lineas, instantaneaConCombos([comboPanchoCoca]), LISTA)
-      expect(combos).toHaveLength(1)
-    })
+    expect(resueltas.map((r) => r?.combo)).toEqual([
+      { unidadesConsumidas: 1, ahorro: 0.01, idCombo: 7 },
+      { unidadesConsumidas: 1, ahorro: 1, idCombo: 7 },
+    ])
+    expect(combos).toEqual([{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 1.01 }])
   })
 
   it('resolverPreciosOffline devuelve los mismos precios que resolverPreviaOffline', () => {

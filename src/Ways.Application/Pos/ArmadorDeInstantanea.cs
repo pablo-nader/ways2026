@@ -151,26 +151,32 @@ public static class ArmadorDeInstantanea
     /// instantánea. Un combo solo viaja ENTERO: si algún componente no se puede vender, el combo completo se descarta
     /// (uno parcial haría creer al dispositivo que puede armarlo). Un componente artículo es vendible si figura en la
     /// instantánea (activo, disponible a la venta y con precio en alguna lista; la instantánea ya dejó afuera los de uso
-    /// interno, así que un combo con un componente que no se vende no viaja) y se vende por unidad: como en la venta online
-    /// (<c>CombosEnVenta</c>), un artículo pesable nunca consume ni es consumido por un combo. Un componente familia
-    /// es vendible si algún artículo vendible de la instantánea tiene esa familia (la misma regla de emparejamiento que
-    /// la venta online, que compara la familia del artículo); una familia dada de baja deja de contar cuando sus
-    /// artículos dejan de figurar. Las cantidades que el motor no puede usar (no enteras o no positivas) también
-    /// descartan el combo. <c>null</c> si no queda ninguno, para que la clave se omita en el JSON.
+    /// interno, así que un combo con un componente que no se vende no viaja) y su unidad de venta entra a combos y
+    /// admite la cantidad del componente (<see cref="ReglaDeCombos.AdmiteComoComponente"/>: entera por unidad, hasta
+    /// tres decimales por peso), el mismo criterio con el que la venta online elige las líneas candidatas
+    /// (<c>ResolvedorDeCombos</c>). Un artículo por importe figura en la instantánea sin precios y nunca es un
+    /// componente vendible. Un componente familia es vendible si algún artículo de la instantánea tiene esa familia y
+    /// una unidad de venta que admite la cantidad; una familia dada de baja deja de contar cuando sus artículos dejan
+    /// de figurar. Una cantidad no positiva también descarta el combo. <c>null</c> si no queda ninguno, para que la
+    /// clave se omita en el JSON.
     /// </summary>
     public static IReadOnlyList<ComboDeInstantanea>? ArmarCombos(
         IReadOnlyList<ComboCandidato> candidatos, IReadOnlyList<ArticuloDeInstantanea> articulos)
     {
-        var porUnidad = articulos.Where(a => a.UnidadVenta == UnidadVenta.Unidad).ToList();
-        var idsArticulo = porUnidad.Select(a => a.IdArticulo).ToHashSet();
-        var idsFamilia = porUnidad.Where(a => a.IdFamilia.HasValue).Select(a => a.IdFamilia!.Value).ToHashSet();
+        var unidadesPorArticulo = articulos.ToLookup(a => a.IdArticulo, a => a.UnidadVenta);
+        var unidadesPorFamilia = articulos
+            .Where(a => a.IdFamilia.HasValue)
+            .ToLookup(a => a.IdFamilia!.Value, a => a.UnidadVenta);
+
+        bool AlgunaAdmite(IEnumerable<UnidadVenta> unidades, decimal cantidad) =>
+            unidades.Any(u => ReglaDeCombos.AdmiteComoComponente(u, cantidad));
 
         var combos = candidatos
             .Where(c => c.Componentes.Count > 0
                 && c.Componentes.All(m =>
-                    m.Cantidad > 0 && m.Cantidad == decimal.Truncate(m.Cantidad)
-                    && ((m.IdArticulo is { } idArticulo && idsArticulo.Contains(idArticulo))
-                        || (m.IdFamilia is { } idFamilia && idsFamilia.Contains(idFamilia)))))
+                    m.Cantidad > 0
+                    && ((m.IdArticulo is { } idArticulo && AlgunaAdmite(unidadesPorArticulo[idArticulo], m.Cantidad))
+                        || (m.IdFamilia is { } idFamilia && AlgunaAdmite(unidadesPorFamilia[idFamilia], m.Cantidad)))))
             .OrderBy(c => c.Id)
             .Select(c => new ComboDeInstantanea(
                 c.Id,

@@ -40,13 +40,44 @@ public class CombosEnVentaTests
         Assert.Equal([1, 2], resultado.Keys.Order());
     }
 
+    /// <summary>Cláusula: la unidad de venta de la línea viaja al motor. Una línea pesable completa un componente
+    /// fraccionario y la misma línea, por unidad, no.</summary>
     [Fact]
-    public void UnaLineaPesableConCantidadEnteraNoSeConsumeAunqueElComboLaNombre()
+    public void UnaLineaPesableEntraALaDeteccionConSuUnidadDeVentaYConsumeLaCantidadDelComponente()
+    {
+        const int Jamon = 30;
+        var combo = new ComboCandidato(
+            1, "Picada", 3500m, [new ComponenteDeCombo(Jamon, null, 0.200m), new ComponenteDeCombo(Coca, null, 1m)]);
+
+        var pesable = CombosEnVenta.Resolver(
+            [Linea(Jamon, 0.215m, 10000m, unidad: UnidadVenta.Peso), Linea(Coca, 1m, 2500m)], [combo]);
+        var porUnidad = CombosEnVenta.Resolver(
+            [Linea(Jamon, 2m, 10000m), Linea(Coca, 1m, 2500m)], [combo]);
+
+        Assert.Equal(new ComboEnLinea(0.200m, 444m, 1), pesable[0]);
+        Assert.Equal(new ComboEnLinea(1m, 556m, 1), pesable[1]);
+        Assert.Empty(porUnidad);
+    }
+
+    [Fact]
+    public void UnaLineaPesableConCantidadEnteraCompletaUnComponenteDeCantidadEntera()
     {
         var resultado = CombosEnVenta.Resolver(
             [Linea(Pancho, 1m, 3000m, unidad: UnidadVenta.Peso), Linea(Coca, 1m, 2500m)], [PanchoYCoca()]);
 
-        Assert.Empty(resultado);
+        Assert.Equal([0, 1], resultado.Keys.Order());
+    }
+
+    /// <summary>Cláusula: la unidad de venta por importe viaja al motor y la línea no consume el combo, aunque traiga
+    /// precio (el importe tipeado) y cantidad 1.</summary>
+    [Fact]
+    public void UnaLineaDeUnArticuloPorImporteNoConsumeElCombo()
+    {
+        var resultado = CombosEnVenta.Detectar(
+            [Linea(Pancho, 1m, 3000m, unidad: UnidadVenta.Importe), Linea(Coca, 1m, 2500m)], [PanchoYCoca()]);
+
+        Assert.Empty(resultado.Lineas);
+        Assert.Empty(resultado.Combos);
     }
 
     [Fact]

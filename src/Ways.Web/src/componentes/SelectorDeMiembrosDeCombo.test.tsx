@@ -1,12 +1,12 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import type { ArticuloEscaneado } from '../api/tipos'
+import type { ArticuloEscaneado, UnidadVenta } from '../api/tipos'
 import type { ComboParaCargar } from '../pos/cargaDeCombos'
 import { SelectorDeMiembrosDeCombo } from './SelectorDeMiembrosDeCombo'
 
-function articulo(idArticulo: number, nombre: string): ArticuloEscaneado {
-  return { idArticulo, codigoInterno: `A${idArticulo}`, nombre, codigoBarra: null, cantidad: 1, acumulaEnVenta: true, unidadVenta: 'Unidad' }
+function articulo(idArticulo: number, nombre: string, unidadVenta: UnidadVenta = 'Unidad'): ArticuloEscaneado {
+  return { idArticulo, codigoInterno: `A${idArticulo}`, nombre, codigoBarra: null, cantidad: 1, acumulaEnVenta: true, unidadVenta }
 }
 
 const COCA = articulo(2, 'Coca')
@@ -138,6 +138,54 @@ describe('SelectorDeMiembrosDeCombo', () => {
 
     expect(onCancelar).toHaveBeenCalledTimes(2)
     expect(onConfirmar).not.toHaveBeenCalled()
+  })
+
+  describe('una familia de artículos pesables', () => {
+    const JAMON = articulo(7, 'Jamón', 'Peso')
+    const QUESO = articulo(8, 'Queso', 'Peso')
+    const picada = () =>
+      combo({
+        componentes: [
+          { idArticulo: null, idFamilia: 30, etiqueta: 'Fiambres', cantidad: 0.3, candidatos: [JAMON, QUESO] },
+          { idArticulo: 1, idFamilia: null, etiqueta: 'Pancho', cantidad: 1, candidatos: [PANCHO] },
+        ],
+      })
+
+    it('el campo de cada miembro acepta la granularidad de su unidad: milésimas en el pesable, enteros en el de unidad', () => {
+      montar(
+        combo({
+          componentes: [{ idArticulo: null, idFamilia: 30, etiqueta: 'Picada', cantidad: 2, candidatos: [JAMON, COCA] }],
+        }),
+      )
+
+      expect(screen.getByLabelText('Jamón')).toHaveAttribute('step', '0.001')
+      expect(screen.getByLabelText('Coca')).toHaveAttribute('step', '1')
+    })
+
+    it('reparte kilos entre los miembros, compara el total exacto (0,1 + 0,2 = 0,3) y entrega las líneas en kilos', async () => {
+      const usuario = userEvent.setup()
+      const { onConfirmar } = montar(picada())
+      const confirmar = screen.getByRole('button', { name: 'Agregar combo' })
+
+      expect(screen.getByText('Fiambres: elegí 0,3')).toBeInTheDocument()
+      await usuario.clear(screen.getByLabelText('Jamón'))
+      await usuario.type(screen.getByLabelText('Jamón'), '0.1')
+      expect(confirmar).toBeDisabled()
+      expect(screen.getByRole('status')).toHaveTextContent('Elegidas 0,1 de 0,3')
+
+      await usuario.clear(screen.getByLabelText('Queso'))
+      await usuario.type(screen.getByLabelText('Queso'), '0.2')
+      expect(screen.getByRole('status')).toHaveTextContent('Elegidas 0,3 de 0,3')
+      expect(confirmar).toBeEnabled()
+
+      await usuario.click(confirmar)
+      expect(onConfirmar).toHaveBeenCalledWith([
+        { ...JAMON, cantidad: 0.1 },
+        { ...QUESO, cantidad: 0.2 },
+        { ...PANCHO, cantidad: 1 },
+      ])
+      expect(screen.getByText(/También se agrega: Pancho × 1/)).toBeInTheDocument()
+    })
   })
 
   it('varias familias se resuelven en un solo diálogo y se confirman juntas', async () => {

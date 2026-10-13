@@ -39,7 +39,7 @@ const ARTICULOS = [
 ]
 
 describe('fuenteDesdeInstantanea', () => {
-  it('lista los combos por código y arma los candidatos: artículo, o los miembros por unidad y con precio en la lista', async () => {
+  it('lista los combos por código y arma los candidatos: artículo, o los miembros con precio en la lista cuya unidad admite la cantidad', async () => {
     const fuente = fuenteDesdeInstantanea(
       instantanea(ARTICULOS, [
         { idCombo: 20, codigo: 8, nombre: 'Otro', precio: 900, componentes: [{ idArticulo: 1, cantidad: 2 }, { idArticulo: 3, cantidad: 1 }] },
@@ -57,20 +57,63 @@ describe('fuenteDesdeInstantanea', () => {
       codigo: 3,
       nombre: 'Pancho + gaseosa',
       precio: 5000,
-      resumen: 'Pancho × 1 + Coca / Sprite × 2',
+      resumen: 'Pancho × 1 + Coca / Pesable / Sin unidad / … × 2',
       motivoNoCargable: null,
     })
     expect(combo.componentes[0].candidatos.map((c) => c.idArticulo)).toEqual([1])
     expect(combo.componentes[1].candidatos.map((c) => [c.idArticulo, c.cantidad, c.codigoBarra, c.unidadVenta])).toEqual([
       [3, 1, null, 'Unidad'],
+      [4, 1, null, 'Peso'],
+      [6, 1, null, undefined],
       [2, 1, null, 'Unidad'],
     ])
+  })
+
+  it('un componente pesable de 200 g es cargable, con su artículo como candidato y la cantidad con coma en el resumen', async () => {
+    const fuente = fuenteDesdeInstantanea(
+      instantanea(ARTICULOS, [{ idCombo: 10, codigo: 3, nombre: 'Picada', precio: 3000, componentes: [{ idArticulo: 4, cantidad: 0.2 }, { idArticulo: 1, cantidad: 1 }] }]),
+      LISTA,
+    )
+
+    expect((await fuente.listar())[0]).toMatchObject({ resumen: 'Pesable × 0,2 + Pancho × 1', motivoNoCargable: null })
+    expect((await fuente.cargar(10)).componentes[0].candidatos.map((c) => [c.idArticulo, c.cantidad])).toEqual([[4, 1]])
+  })
+
+  it('en una familia mixta solo son candidatos de un componente de 200 g los miembros cuya unidad admite esa cantidad', async () => {
+    const fuente = fuenteDesdeInstantanea(
+      instantanea(ARTICULOS, [{ idCombo: 10, codigo: 3, nombre: 'C', precio: 1, componentes: [{ idArticulo: 1, cantidad: 1 }, { idFamilia: 9, cantidad: 0.2 }] }]),
+      LISTA,
+    )
+
+    const combo = await fuente.cargar(10)
+
+    expect(combo.componentes[1].candidatos.map((c) => c.idArticulo)).toEqual([4, 6])
+    expect(combo.componentes[1].etiqueta).toBe('Pesable / Sin unidad')
+  })
+
+  // Sin lista (`null`) no se filtra por precio: lo único que deja afuera al artículo por importe, que viaja sin precios,
+  // es su unidad de venta.
+  it('un artículo por importe no es candidato de un componente, ni como artículo ni como miembro de una familia', async () => {
+    const fiambreria = articuloDeInstantanea(7, 'Fiambrería', { idFamilia: 9, unidadVenta: 'Importe' }, [])
+    const fuente = fuenteDesdeInstantanea(
+      instantanea(
+        [...ARTICULOS, fiambreria],
+        [{ idCombo: 10, codigo: 3, nombre: 'C', precio: 1, componentes: [{ idArticulo: 7, cantidad: 1 }, { idFamilia: 9, cantidad: 1 }] }],
+      ),
+      null,
+    )
+
+    const combo = await fuente.cargar(10)
+
+    expect(combo.componentes[0].candidatos).toEqual([])
+    expect(combo.componentes[1].candidatos.map((c) => c.idArticulo)).toEqual([3, 4, 5, 6, 2])
+    expect((await fuente.listar())[0].motivoNoCargable).toBe('No hay artículos disponibles para «Fiambrería».')
   })
 
   it('un componente sin artículos vendibles deja el combo como no cargable, con el motivo', async () => {
     const fuente = fuenteDesdeInstantanea(
       instantanea(ARTICULOS, [
-        { idCombo: 10, codigo: 3, nombre: 'Con pesable', precio: 5000, componentes: [{ idArticulo: 1, cantidad: 1 }, { idArticulo: 4, cantidad: 1 }] },
+        { idCombo: 10, codigo: 3, nombre: 'Fracción de un artículo por unidad', precio: 5000, componentes: [{ idArticulo: 4, cantidad: 1 }, { idArticulo: 1, cantidad: 0.2 }] },
         { idCombo: 11, codigo: 4, nombre: 'Familia vacía', precio: 5000, componentes: [{ idArticulo: 1, cantidad: 1 }, { idFamilia: 77, cantidad: 1 }] },
         { idCombo: 12, codigo: 5, nombre: 'Sin precio', precio: 5000, componentes: [{ idArticulo: 1, cantidad: 1 }, { idArticulo: 5, cantidad: 1 }] },
         { idCombo: 13, codigo: 6, nombre: 'Ausente', precio: 5000, componentes: [{ idArticulo: 1, cantidad: 1 }, { idArticulo: 404, cantidad: 1 }] },
@@ -81,22 +124,24 @@ describe('fuenteDesdeInstantanea', () => {
     const lista = await fuente.listar()
 
     expect(lista.map((c) => c.motivoNoCargable)).toEqual([
-      'No hay artículos disponibles para «Pesable».',
+      'No hay artículos disponibles para «Pancho».',
       'No hay artículos disponibles para «Familia sin artículos disponibles».',
       'No hay artículos disponibles para «Sin precio en la lista».',
       'No hay artículos disponibles para «artículo no disponible».',
     ])
   })
 
-  it('la unidad de venta ausente se trata como Peso y queda fuera de los candidatos', async () => {
+  it('la unidad de venta ausente se trata como Peso: es candidata de una cantidad entera y de una fraccionaria', async () => {
     const fuente = fuenteDesdeInstantanea(
-      instantanea(ARTICULOS, [{ idCombo: 10, codigo: 3, nombre: 'C', precio: 1, componentes: [{ idArticulo: 1, cantidad: 1 }, { idFamilia: 9, cantidad: 1 }] }]),
+      instantanea(ARTICULOS, [
+        { idCombo: 10, codigo: 3, nombre: 'C', precio: 1, componentes: [{ idArticulo: 6, cantidad: 1 }, { idArticulo: 1, cantidad: 1 }] },
+        { idCombo: 11, codigo: 4, nombre: 'D', precio: 1, componentes: [{ idArticulo: 6, cantidad: 0.125 }, { idArticulo: 1, cantidad: 1 }] },
+      ]),
       LISTA,
     )
 
-    const combo = await fuente.cargar(10)
-
-    expect(combo.componentes[1].candidatos.map((c) => c.idArticulo)).toEqual([3, 2])
+    expect((await fuente.cargar(10)).componentes[0].candidatos.map((c) => c.idArticulo)).toEqual([6])
+    expect((await fuente.cargar(11)).componentes[0].candidatos.map((c) => c.idArticulo)).toEqual([6])
   })
 
   it('sin lista de precios conocida no filtra por precio', async () => {

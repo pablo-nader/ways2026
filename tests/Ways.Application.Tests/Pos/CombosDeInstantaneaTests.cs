@@ -62,33 +62,87 @@ public class CombosDeInstantaneaTests
         Assert.Null(combos);
     }
 
-    /// <summary>Cláusula: solo cuentan los artículos que se venden por unidad. Un componente artículo pesable no puede
-    /// completarse (la venta online lo deja afuera de la detección).</summary>
     [Fact]
-    public void UnComboConUnArticuloPesableNoViaja()
+    public void UnComboConUnArticuloPesableViajaConSuCantidadFraccionaria()
     {
         var combos = ArmadorDeInstantanea.ArmarCombos(
-            [Combo(7, PorArticulo(1), PorArticulo(2))], [Articulo(1), Articulo(2, UnidadVenta.Peso)]);
+            [Combo(7, PorArticulo(1), PorArticulo(2, 0.200m))], [Articulo(1), Articulo(2, UnidadVenta.Peso)]);
 
-        Assert.Null(combos);
+        Assert.Equal(
+            [new ComponenteDeComboDeInstantanea(1, null, 1m), new ComponenteDeComboDeInstantanea(2, null, 0.200m)],
+            Assert.Single(combos!).Componentes);
     }
 
-    /// <summary>Cláusula: una familia cuyos únicos artículos son pesables tampoco se puede completar.</summary>
+    /// <summary>Cláusula: un artículo por importe figura en la instantánea (viaja sin precios) pero no es un componente
+    /// vendible, aunque la cantidad del componente sea 1. El mismo combo con ese artículo por unidad sí viaja.</summary>
     [Fact]
-    public void UnaFamiliaSoloConArticulosPesablesNoCuenta()
+    public void UnComboConUnArticuloPorImporteNoViajaYConEseArticuloPorUnidadSi()
+    {
+        ComboCandidato[] candidatos = [Combo(7, PorArticulo(1), PorArticulo(2))];
+
+        Assert.Null(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), Articulo(2, UnidadVenta.Importe)]));
+        Assert.Single(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), Articulo(2)])!);
+    }
+
+    /// <summary>Cláusula: una familia cuyo único artículo de la instantánea se vende por importe no se puede completar;
+    /// con otro miembro por unidad, sí.</summary>
+    [Fact]
+    public void UnaFamiliaSoloConArticulosPorImporteNoCuentaYConUnMiembroPorUnidadSi()
+    {
+        ComboCandidato[] candidatos = [Combo(7, PorArticulo(1), PorFamilia(40))];
+        var porImporte = Articulo(2, UnidadVenta.Importe, idFamilia: 40);
+
+        Assert.Null(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), porImporte]));
+        Assert.Single(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), porImporte, Articulo(3, idFamilia: 40)])!);
+    }
+
+    [Fact]
+    public void UnaFamiliaSoloConArticulosPesablesCuenta()
     {
         var combos = ArmadorDeInstantanea.ArmarCombos(
-            [Combo(7, PorArticulo(1), PorFamilia(40))], [Articulo(1), Articulo(2, UnidadVenta.Peso, idFamilia: 40)]);
+            [Combo(7, PorArticulo(1), PorFamilia(40, 0.250m))], [Articulo(1), Articulo(2, UnidadVenta.Peso, idFamilia: 40)]);
 
-        Assert.Null(combos);
+        Assert.Single(combos!);
     }
 
-    /// <summary>Cláusula: una cantidad que el motor no puede usar (fraccionaria) descarta el combo.</summary>
+    /// <summary>Cláusula: un componente artículo solo se puede completar si la unidad de venta del artículo admite su
+    /// cantidad. Una fracción de un artículo por unidad descarta el combo.</summary>
     [Fact]
-    public void UnComboConCantidadFraccionariaNoViaja()
+    public void UnComboConCantidadFraccionariaDeUnArticuloPorUnidadNoViaja()
     {
         var combos = ArmadorDeInstantanea.ArmarCombos(
             [Combo(7, PorArticulo(1, 1.5m), PorArticulo(2))], [Articulo(1), Articulo(2)]);
+
+        Assert.Null(combos);
+    }
+
+    /// <summary>Cláusula: un componente familia se puede completar si la unidad de venta de algún miembro de la
+    /// instantánea admite su cantidad. Con todos los miembros por unidad una fracción descarta el combo; con uno
+    /// pesable, viaja.</summary>
+    [Fact]
+    public void UnaFamiliaConCantidadFraccionariaViajaSoloSiAlgunMiembroLaAdmite()
+    {
+        var combo = Combo(7, PorArticulo(1), PorFamilia(40, 0.250m));
+
+        var soloPorUnidad = ArmadorDeInstantanea.ArmarCombos([combo], [Articulo(1), Articulo(2, idFamilia: 40)]);
+        var conUnPesable = ArmadorDeInstantanea.ArmarCombos(
+            [combo], [Articulo(1), Articulo(2, idFamilia: 40), Articulo(3, UnidadVenta.Peso, idFamilia: 40)]);
+
+        Assert.Null(soloPorUnidad);
+        Assert.Single(conUnPesable!);
+    }
+
+    /// <summary>Cláusula: una cantidad no positiva o con más de tres decimales descarta el combo aunque el artículo
+    /// sea pesable.</summary>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-0.200")]
+    [InlineData("0.2005")]
+    public void UnComboConUnaCantidadQueNingunaUnidadAdmiteNoViaja(string cantidad)
+    {
+        var combos = ArmadorDeInstantanea.ArmarCombos(
+            [Combo(7, PorArticulo(1), PorArticulo(2, decimal.Parse(cantidad, System.Globalization.CultureInfo.InvariantCulture)))],
+            [Articulo(1), Articulo(2, UnidadVenta.Peso)]);
 
         Assert.Null(combos);
     }

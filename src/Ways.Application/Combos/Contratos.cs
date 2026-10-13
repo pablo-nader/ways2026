@@ -60,8 +60,9 @@ public sealed record EdicionCombo(
 /// <summary>
 /// Un componente de un combo listo para cargarse en el carrito del POS. <see cref="Candidatos"/> son los artículos con los
 /// que se puede completar, con la misma forma que devuelve el escaneo (<c>cantidad = 1</c>, sin código de barra): para
-/// un componente de artículo, ese artículo; para uno de familia, sus miembros vivos, activos y por unidad. Vacía cuando
-/// el componente no se puede vender (referencia colgada, artículo inactivo o pesable, familia sin miembros vendibles):
+/// un componente de artículo, ese artículo; para uno de familia, sus miembros vivos y activos; en los dos casos solo
+/// los de una unidad de venta que admite <see cref="Cantidad"/>. Vacía cuando el componente no se puede vender
+/// (referencia colgada, artículo inactivo o de una unidad que no admite la cantidad, familia sin miembros vendibles):
 /// el cliente muestra el combo como no cargable. <see cref="Nombre"/> es el del artículo o de la familia, <c>null</c> si
 /// esa fila fue dada de baja.
 /// </summary>

@@ -1173,8 +1173,9 @@ export type ResultadoDeResolucion = {
   combo?: ComboDeLinea
 }
 
-/** Lo que un combo le hizo a una línea (espejo de `ComboEnLineaResuelta`): `ahorro` es un importe DE LÍNEA
- * (no por unidad) que se suma al descuento por oferta de las unidades no consumidas. */
+/** Lo que un combo le hizo a una línea (espejo de `ComboEnLineaResuelta`): `unidadesConsumidas` va en la unidad de
+ * venta del artículo (unidades enteras, o kilos con hasta tres decimales) y `ahorro` es un importe DE LÍNEA (no por
+ * unidad) que se suma al descuento por oferta de la cantidad no consumida. */
 export type ComboDeLinea = { unidadesConsumidas: number; ahorro: number; idCombo: number }
 
 /** Un combo aplicado a un documento, con las veces y el ahorro total (espejo de `ComboAplicadoResuelto`). */
@@ -1281,7 +1282,8 @@ export type ClienteDeInstantanea = {
   creditoIlimitado: boolean
 }
 
-/** Componente de un combo de la instantánea: exactamente uno entre `idArticulo` e `idFamilia`. */
+/** Componente de un combo de la instantánea: exactamente uno entre `idArticulo` e `idFamilia`. `cantidad` va en
+ * unidades, o en kilos con hasta tres decimales si el componente se vende por peso. */
 export type ComponenteDeComboDeInstantanea = { idArticulo?: number | null; idFamilia?: number | null; cantidad: number }
 
 /** Combo de la instantánea (espejo de `ComboDeInstantanea`): `precio` es el del conjunto completo. El servidor
@@ -2045,7 +2047,8 @@ export type LineaDeVenta = {
    * queda fuera del todas-o-ninguna del precio de las demás líneas. */
   importe?: number
   /** Combos de una venta offline (espejo de `LineaDeVenta`): las TRES viajan juntas o ninguna, solo con
-   * `precioUnitario`, en la línea que un combo consumió. `ahorroDeCombo` es un importe de línea. */
+   * `precioUnitario`, en la línea que un combo consumió. `unidadesConsumidasPorCombo` va en la unidad de venta del
+   * artículo (unidades enteras, o kilos con hasta tres decimales) y `ahorroDeCombo` es un importe de línea. */
   unidadesConsumidasPorCombo?: number
   ahorroDeCombo?: number
   idCombo?: number

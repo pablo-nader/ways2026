@@ -124,7 +124,9 @@ public class CombosInstantaneaTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     /// <summary>Cláusula: un combo viaja entero o no viaja. Cada caso rompe UN componente del combo bajo prueba y deja
-    /// intacto otro combo, que sí tiene que viajar.</summary>
+    /// intactos otros combos, que sí tienen que viajar: el de dos artículos por unidad y los dos con un componente
+    /// pesable de cantidad fraccionaria (un artículo y una familia). La misma fracción sobre un artículo por unidad, o
+    /// sobre una familia que solo tiene artículos por unidad, no viaja.</summary>
     [Fact]
     public async Task UnComboQueNoSePuedeCompletarOfflineNoViajaNiParcial()
     {
@@ -138,16 +140,20 @@ public class CombosInstantaneaTests(WaysApiFixture fixture) : IClassFixture<Ways
         var familiaVacia = await apoyo.FamiliaAsync(ctx, "Vacia");
         var familiaSoloPesables = await apoyo.FamiliaAsync(ctx, "SoloPesables");
         await apoyo.ArticuloAsync(ctx, "pesable-de-familia", 1000m, UnidadVenta.Peso, familiaSoloPesables);
+        var familiaSoloPorUnidad = await apoyo.FamiliaAsync(ctx, "SoloPorUnidad");
+        await apoyo.ArticuloAsync(ctx, "unidad-de-familia", 1000m, idFamilia: familiaSoloPorUnidad);
         var familiaConInactivo = await apoyo.FamiliaAsync(ctx, "ConInactivo");
         await apoyo.ArticuloAsync(ctx, "inactivo-de-familia", 1000m, idFamilia: familiaConInactivo, activo: false);
 
         var completo = await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(sano2)]);
         await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(inactivo)]);
         await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(sinPrecio)]);
-        await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(pesable)]);
+        var conPesable = await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(pesable, 0.200m)]);
+        await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(sano2, 0.500m)]);
         await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Art(dadoDeBaja)]);
         await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Fam(familiaVacia)]);
-        await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Fam(familiaSoloPesables)]);
+        var conFamiliaDePesables = await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Fam(familiaSoloPesables, 0.250m)]);
+        await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Fam(familiaSoloPorUnidad, 0.250m)]);
         await apoyo.ComboAsync(ctx, 1500m, [Art(sano1), Fam(familiaConInactivo)]);
 
         await using (var db = apoyo.Db(ctx.IdTenant))
@@ -158,7 +164,7 @@ public class CombosInstantaneaTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         var (cuerpo, _) = await LeerAsync(ctx);
 
-        Assert.Equal([completo], IdsDeCombos(cuerpo));
+        Assert.Equal([completo, conPesable, conFamiliaDePesables], IdsDeCombos(cuerpo));
     }
 
     // ---- Etiqueta de contenido ----

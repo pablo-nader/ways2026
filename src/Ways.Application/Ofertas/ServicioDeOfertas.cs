@@ -445,8 +445,10 @@ public class ServicioDeOfertas(
     /// <summary>
     /// Vista previa de lo que la venta online cobrará: la resolución de siempre (<see cref="ResolverSolicitudAsync"/>) más
     /// los combos que <c>ServicioDeVentas.EmitirAsync</c> detectaría sobre esas mismas líneas, por el mismo camino
-    /// (<see cref="CombosEnVenta.DetectarAsync"/>: mismas exclusiones —artículos que no se venden por unidad, líneas sin
-    /// precio vigente, descuento de oferta negativo—, mismo mínimo de 2 unidades, mismas reglas de empresa y mismo
+    /// (<see cref="CombosEnVenta.DetectarAsync"/>: mismas exclusiones —líneas sin
+    /// precio vigente, descuento de oferta negativo; los artículos pesables se detectan—, mismo mínimo (dos componentes,
+    /// o uno con cantidad de 2 o más; la consulta de combos se omite solo si todas las líneas son por unidad y suman
+    /// menos de 2), mismas reglas de empresa y mismo
     /// combo de menor id por línea). Con <see cref="AgregacionDeResolucion.PorLinea"/> no hay documento y nunca hay
     /// combos: el resultado es el de <see cref="ResolverPorLineaAsync"/> con la lista de combos vacía (y un valor
     /// de agregación fuera del enum se rechaza igual que en <see cref="ResolverSolicitudAsync"/>).
@@ -463,8 +465,8 @@ public class ServicioDeOfertas(
     /// no las lee del cuerpo sino de su punto de venta y de su cliente, y una vista previa con otros valores no es el
     /// total de la venta.</para>
     ///
-    /// <para>Presupuesto: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite si el
-    /// documento suma menos de 2 unidades. No escribe nada.</para>
+    /// <para>Presupuesto: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite si todas
+    /// las líneas son de artículos por unidad y el documento suma menos de 2 unidades. No escribe nada.</para>
     /// </summary>
     public async Task<ResolucionConCombos> ResolverConCombosAsync(
         SolicitudDeResolucion solicitud, CancellationToken ct = default)

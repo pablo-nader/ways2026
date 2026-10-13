@@ -108,8 +108,8 @@ public sealed record ComponenteDeComboDeInstantanea(
 /// Un combo vigente que el dispositivo puede completar sin red: <see cref="Codigo"/> es el número que se tipea tras la
 /// <c>C</c>, <see cref="Precio"/> el del conjunto completo y <see cref="Componentes"/> el conjunto entero, con los
 /// artículos primero (por id) y las familias después (por id). Un combo con algún componente que la instantánea no
-/// puede vender (artículo inactivo, sin precio, que no se vende por unidad o dado de baja; familia sin ningún artículo
-/// vendible) no viaja: ver <see cref="ArmadorDeInstantanea.ArmarCombos"/>.
+/// puede vender (artículo inactivo, sin precio, cuya unidad de venta no admite la cantidad del componente o dado de baja;
+/// familia sin ningún artículo vendible) no viaja: ver <see cref="ArmadorDeInstantanea.ArmarCombos"/>.
 /// </summary>
 public sealed record ComboDeInstantanea(
     int IdCombo,

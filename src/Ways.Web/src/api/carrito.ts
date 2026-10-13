@@ -11,6 +11,8 @@
  * resuelto, edición en curso, `key` de React) se indexa por `idLinea`.
  */
 
+import { redondearImporte } from '../formato/importes'
+import { DECIMALES_DE_PESO, respetaGranularidad } from './cantidadPorUnidad'
 import type { UnidadVenta } from './tipos'
 
 export type LineaCarrito = {
@@ -75,9 +77,21 @@ export function idLineaDestinoDeEscaneo(
 }
 
 /**
+ * Suma de la cantidad de una línea y la de un escaneo. Con las dos de a lo sumo tres decimales (lo
+ * que admite una cantidad por peso) la suma queda exacta a tres decimales: 0,1 + 0,2 es 0,3 y no
+ * 0,30000000000000004, que ninguna unidad de venta admite. Si alguna trae más decimales se suma tal
+ * cual: redondearla la volvería válida con una cantidad que nadie tipeó.
+ */
+function sumarCantidades(deLaLinea: number, delEscaneo: number): number {
+  const suma = deLaLinea + delEscaneo
+  return respetaGranularidad('Peso', deLaLinea) && respetaGranularidad('Peso', delEscaneo) ? redondearImporte(suma, DECIMALES_DE_PESO) : suma
+}
+
+/**
  * Único punto de mutación del carrito. `escanear` de un artículo que acumula y ya está en el
  * carrito SUMA la cantidad a su línea (spec: codigos-barra / "Re-scanning sums quantity instead
- * of duplicating the line"); un artículo que no acumula siempre agrega una línea nueva. El resto
+ * of duplicating the line", con `sumarCantidades`); un artículo que no acumula siempre agrega una
+ * línea nueva. El resto
  * de las acciones apunta a una sola línea por `idLinea`. La cantidad de una línea por importe no se edita: es 1
  * y el importe se corrige quitando la línea y tipeándola de nuevo.
  *
@@ -95,7 +109,7 @@ export function reducirCarrito(lineas: LineaCarrito[], accion: AccionCarrito): L
           l.idLinea === destino
             ? {
                 ...l,
-                cantidad: l.cantidad + accion.cantidad,
+                cantidad: sumarCantidades(l.cantidad, accion.cantidad),
                 ...(l.unidadVenta === undefined && accion.linea.unidadVenta !== undefined
                   ? { unidadVenta: accion.linea.unidadVenta }
                   : {}),

@@ -84,8 +84,8 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   no lo muestra). Un combo aparece si está disponible online, activo y vivo
   (la policy), es de todo el tenant o de la empresa de la vitrina, y TODOS sus componentes son artículos (sin familia)
   disponibles online y a la venta, activos, disponibles para esa empresa, con precio vigente en la lista de la tienda y
-  de `UnidadVenta.Unidad` (la única que el motor de combos de la venta online acepta; los componentes pesables dependen de
-  que aterrice el programa de combos pesables), y además ahorra: su precio redondeado al peso es estrictamente menor que
+  de `UnidadVenta.Unidad` (el motor de combos de la venta ya acepta componentes pesables, pero `ConsultaDeCombosPublicos`
+  todavía ofrece solo los combos de artículos por unidad: uno con un componente pesable no aparece en la tienda), y además ahorra: su precio redondeado al peso es estrictamente menor que
   la suma de los precios de tienda de sus componentes por su cantidad (lista de la vitrina con la oferta online aplicada,
   a cantidad 1), que es la condición con la que `ResolvedorDeCombos` lo aplica; uno que no ahorra no se ofrece. Divergencia
   conocida: el motor de la venta calcula las ofertas con la cantidad real del carrito, así que un combo que gana contra el

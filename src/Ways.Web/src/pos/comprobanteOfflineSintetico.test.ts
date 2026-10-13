@@ -638,15 +638,17 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     })
   })
 
-  it('un artículo pesable en el carrito deja el combo sin aplicar en el ticket', () => {
+  it('un artículo pesable en el carrito entra al combo en el ticket, y lo que sobra de su línea va a precio de lista', () => {
     const instantanea: InstantaneaDePos = {
       ...instantaneaConCombo(),
       articulos: instantaneaConCombo().articulos.map((a) => (a.idArticulo === PANCHO ? { ...a, unidadVenta: 'Peso' as const } : a)),
     }
-    const comprobante = construir({ ...base, lineas, instantanea })
+    const conSobrante = lineas.map((l) => (l.idArticulo === PANCHO ? { ...l, cantidad: 1.5 } : l))
+    const comprobante = construir({ ...base, lineas: conSobrante, instantanea })
 
-    expect(comprobante?.items.map((i) => i.idCombo)).toEqual([null, null])
-    expect(comprobante).toMatchObject({ descuentoTotal: 0, total: 5500 })
+    expect(comprobante?.items.map((i) => i.idCombo)).toEqual([7, 7])
+    // combo 5000 + medio kilo de pancho a precio de lista (1500); lista 4500 + 2500.
+    expect(comprobante).toMatchObject({ descuentoTotal: 500, total: 6500 })
   })
 })
 

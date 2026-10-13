@@ -4,6 +4,9 @@
  * que ni el modal ni el código `C12` saben cuál están usando.
  */
 import { ErrorApi } from '../api/cliente'
+import { respetaGranularidad } from '../api/cantidadPorUnidad'
+import type { UnidadVenta } from '../api/tipos'
+import { participaEnCombos } from './motorDeCombos'
 import { clienteDeCombos } from '../api/combos'
 import type {
   ArticuloDeInstantanea,
@@ -13,7 +16,7 @@ import type {
   ComboListado,
   InstantaneaDePos,
 } from '../api/tipos'
-import { motivoDeComboNoCargable, type ComboParaCargar, type ComponenteParaCargar } from './cargaDeCombos'
+import { formatearCantidadDeCombo, motivoDeComboNoCargable, type ComboParaCargar, type ComponenteParaCargar } from './cargaDeCombos'
 import { conTiempoLimite, TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
 
 /** Tras no encontrar un combo con un código en la API, no se vuelve a preguntar por ese mismo código durante este lapso. */
@@ -24,7 +27,7 @@ export type ComboDeLista = {
   codigo: number
   nombre: string
   precio: number
-  /** Los componentes en una línea: `Pancho × 1 + Gaseosas × 2`. */
+  /** Los componentes en una línea: `Pancho × 1 + Gaseosas × 2`; una cantidad en kilos va con coma (`Jamón × 0,2`). */
   resumen: string
   /** Por qué no se puede cargar; `null` si se puede o si todavía no se sabe (la API lo confirma al elegirlo). */
   motivoNoCargable: string | null
@@ -48,7 +51,7 @@ export type FuenteDeCombos = {
 }
 
 function resumenDe(componentes: readonly Pick<ComponenteParaCargar, 'etiqueta' | 'cantidad'>[]): string {
-  return componentes.map((c) => `${c.etiqueta} × ${c.cantidad}`).join(' + ')
+  return componentes.map((c) => `${c.etiqueta} × ${formatearCantidadDeCombo(c.cantidad)}`).join(' + ')
 }
 
 function aComboDeLista(combo: ComboParaCargar, motivoNoCargable: string | null): ComboDeLista {
@@ -185,6 +188,11 @@ function aCandidato(articulo: ArticuloDeInstantanea): ArticuloEscaneado {
   }
 }
 
+/** Espejo de `ReglaDeCombos.AdmiteComoComponente`: la unidad entra a combos (nunca `Importe`) y admite la cantidad. */
+function admiteComoComponente(unidadVenta: UnidadVenta | null | undefined, cantidad: number): boolean {
+  return participaEnCombos(unidadVenta) && respetaGranularidad(unidadVenta, cantidad)
+}
+
 function etiquetaDeFamilia(candidatos: readonly ArticuloEscaneado[]): string {
   if (candidatos.length === 0) return 'Familia sin artículos disponibles'
   const nombres = candidatos.slice(0, 3).map((c) => c.nombre)
@@ -192,10 +200,12 @@ function etiquetaDeFamilia(candidatos: readonly ArticuloEscaneado[]): string {
 }
 
 /**
- * Combos de la instantánea y sus candidatos, calculados sobre la instantánea misma. Un candidato es un artículo de unidad
- * de venta `Unidad` (una unidad ausente es `Peso`, como en el motor) y, con una lista de precios conocida, con precio en
- * ella: la misma regla con que el carrito offline decide qué líneas puede cotizar. Sin lista (`null`, el cliente todavía
- * no se resolvió) no se filtra por precio. Los miembros de una familia se buscan por el `idFamilia` de cada artículo.
+ * Combos de la instantánea y sus candidatos, calculados sobre la instantánea misma. Un candidato de un componente es un
+ * artículo cuya unidad de venta admite la cantidad del componente (por unidad, solo una cantidad entera; por peso, o con la
+ * unidad ausente, también kilos con decimales: la regla de `api/cantidadPorUnidad`; por importe, nunca) y, con una lista
+ * de precios conocida, con precio en ella: la misma regla con que el carrito offline decide qué líneas puede cotizar. Sin
+ * lista (`null`, el cliente todavía no se resolvió) no se filtra por precio. Los miembros de una familia se buscan por el
+ * `idFamilia` de cada artículo.
  */
 export function fuenteDesdeInstantanea(instantanea: InstantaneaDePos, idListaPrecio: number | null): FuenteDeCombos {
   // Los índices se arman la primera vez que se usa la fuente: una caja con miles de artículos no los paga al renderizar.
@@ -206,9 +216,7 @@ export function fuenteDesdeInstantanea(instantanea: InstantaneaDePos, idListaPre
   } | null = null
   const obtenerIndices = () => {
     if (indices) return indices
-    const vendibles = instantanea.articulos.filter(
-      (a) => a.unidadVenta === 'Unidad' && (idListaPrecio === null || a.preciosPorLista.some((p) => p.idListaPrecio === idListaPrecio)),
-    )
+    const vendibles = instantanea.articulos.filter((a) => idListaPrecio === null || a.preciosPorLista.some((p) => p.idListaPrecio === idListaPrecio))
     const porFamilia = new Map<number, ArticuloEscaneado[]>()
     for (const articulo of [...vendibles].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es') || a.idArticulo - b.idArticulo)) {
       if (articulo.idFamilia == null) continue
@@ -237,10 +245,10 @@ export function fuenteDesdeInstantanea(instantanea: InstantaneaDePos, idListaPre
             idFamilia: null,
             etiqueta: vendible?.nombre ?? todosPorId.get(c.idArticulo)?.nombre ?? ARTICULO_NO_DISPONIBLE,
             cantidad: c.cantidad,
-            candidatos: vendible ? [aCandidato(vendible)] : [],
+            candidatos: vendible && admiteComoComponente(vendible.unidadVenta, c.cantidad) ? [aCandidato(vendible)] : [],
           }
         }
-        const candidatos = c.idFamilia != null ? (porFamilia.get(c.idFamilia) ?? []) : []
+        const candidatos = (c.idFamilia != null ? (porFamilia.get(c.idFamilia) ?? []) : []).filter((m) => admiteComoComponente(m.unidadVenta, c.cantidad))
         return {
           idArticulo: null,
           idFamilia: c.idFamilia ?? null,

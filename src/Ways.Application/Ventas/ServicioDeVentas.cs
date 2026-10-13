@@ -596,8 +596,8 @@ public class ServicioDeVentas(
         (materializado.Items, materializado.Totales, [.. Enumerable.Range(0, materializado.Items.Count)]);
 
     /// <summary>Detecta los combos de una venta ya resuelta por ofertas, con el mismo camino que la vista previa del
-    /// carrito (<see cref="CombosEnVenta.DetectarAsync"/>): UNA consulta, y ninguna si la venta suma menos unidades que
-    /// el mínimo de un combo.</summary>
+    /// carrito (<see cref="CombosEnVenta.DetectarAsync"/>): UNA consulta, y ninguna si las líneas que entran a combos
+    /// son todas de artículos por unidad y suman menos de dos unidades.</summary>
     private async Task<IReadOnlyDictionary<int, ComboEnLinea>> DetectarCombosAsync(
         int idEmpresa,
         IReadOnlyList<LineaDeVenta> lineas,
@@ -2138,18 +2138,18 @@ public class ServicioDeVentas(
             var esLineaOffline = linea.PrecioUnitario is not null;
             var tieneComboDetectado = combosDetectados.TryGetValue(i, out var detectado);
 
-            int unidadesDeComboGrabadas;
+            decimal unidadesDeComboGrabadas;
             int? idComboGrabado;
             var comboInexistente = false;
             if (esLineaOffline)
             {
-                unidadesDeComboGrabadas = linea.UnidadesConsumidasPorCombo ?? 0;
+                unidadesDeComboGrabadas = linea.UnidadesConsumidasPorCombo ?? 0m;
                 comboInexistente = linea.IdCombo is { } idDelDispositivo && !combosOfflineExistentes.Contains(idDelDispositivo);
                 idComboGrabado = comboInexistente ? null : linea.IdCombo;
             }
             else
             {
-                unidadesDeComboGrabadas = tieneComboDetectado ? detectado.UnidadesConsumidas : 0;
+                unidadesDeComboGrabadas = tieneComboDetectado ? detectado.UnidadesConsumidas : 0m;
                 idComboGrabado = tieneComboDetectado ? detectado.IdCombo : null;
             }
 
@@ -2560,11 +2560,13 @@ public class ServicioDeVentas(
     }
 
     /// <summary>Combo que trae una línea offline (feature combos): los tres datos o ninguno
-    /// (<c>combo_offline_incompleto</c>), con unidades entre 1 y la cantidad de la línea, una parte del combo (importe
-    /// de línea) de a lo sumo dos decimales, no negativa y que no supere el bruto de las unidades consumidas, y un id
-    /// positivo (<c>combo_offline_invalido</c>). Que el id exista en el tenant NO se exige acá: una venta que el
-    /// dispositivo ya cobró no se rechaza por eso (ver <see cref="ResolverCombosOfflineExistentesAsync"/>). Las unidades
-    /// son un entero por tipo: una fracción no llega a este método (el binding la rechaza).</summary>
+    /// (<c>combo_offline_incompleto</c>), con unidades mayores a cero, hasta la cantidad de la línea y de a lo sumo tres
+    /// decimales (<see cref="ReglaDeCantidadDeVenta.DecimalesMaximosDePeso"/>), una parte del
+    /// combo (importe de línea) de a lo sumo dos decimales, no negativa y que no supere el bruto de las unidades
+    /// consumidas, y un id positivo (<c>combo_offline_invalido</c>). Que el id exista en el tenant NO se exige acá: una
+    /// venta que el dispositivo ya cobró no se rechaza por eso (ver <see cref="ResolverCombosOfflineExistentesAsync"/>).
+    /// Tampoco se compara con la unidad de venta ACTUAL del artículo: el dispositivo ya cobró con la que tenía en su
+    /// instantánea, y un cambio posterior no puede dejar la venta sin subir.</summary>
     private static void ExigirComboOfflineValido(LineaDeVenta linea)
     {
         if (linea.UnidadesConsumidasPorCombo is not { } unidades
@@ -2577,10 +2579,11 @@ public class ServicioDeVentas(
                 400);
         }
 
-        // El bruto de las unidades consumidas se calcula al final del cortocircuito: unidades fuera de 1..Cantidad no
+        // El bruto de las unidades consumidas se calcula al final del cortocircuito: unidades fuera de (0, Cantidad] no
         // llegan a la multiplicación por el precio.
-        if (unidades < 1
+        if (unidades <= 0m
             || unidades > linea.Cantidad
+            || decimal.Round(unidades, ReglaDeCantidadDeVenta.DecimalesMaximosDePeso) != unidades
             || ahorro < 0m
             || decimal.Round(ahorro, 2) != ahorro
             || idCombo <= 0
@@ -2588,8 +2591,8 @@ public class ServicioDeVentas(
         {
             throw new ErrorDominio(
                 "combo_offline_invalido",
-                "Las unidades de combo tienen que estar entre 1 y la cantidad de la línea, el ahorro entre 0 y el bruto " +
-                "de esas unidades (a lo sumo dos decimales) y el id de combo ser positivo.",
+                "Las unidades de combo tienen que ser mayores a cero, de hasta tres decimales y no superar la cantidad de la línea, el ahorro " +
+                "estar entre 0 y el bruto de esas unidades (a lo sumo dos decimales) y el id de combo ser positivo.",
                 400);
         }
     }
@@ -2688,7 +2691,7 @@ public class ServicioDeVentas(
     /// (<see cref="LineaDelPlan.ComboDelDispositivo"/>) y lo que el servidor detectó
     /// (<see cref="LineaDelPlan.ComboEsperado"/>). <see cref="Inexistente"/>: el id del dispositivo no existe en el
     /// tenant.</summary>
-    private sealed record ComboDeAuditoria(int? Unidades, decimal? Ahorro, int? IdCombo, bool Inexistente);
+    private sealed record ComboDeAuditoria(decimal? Unidades, decimal? Ahorro, int? IdCombo, bool Inexistente);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
