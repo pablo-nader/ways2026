@@ -25,7 +25,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.Infrastructure.Persistencia.Migraciones
 {
     [DbContext(typeof(WaysDbContext))]
-    [Migration("20261013034507_FacturacionDecididaEnVenta")]
+    [Migration("20261013045607_FacturacionDecididaEnVenta")]
     partial class FacturacionDecididaEnVenta
     {
         /// <inheritdoc />
@@ -4991,6 +4991,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .IsUnique()
                         .HasDatabaseName("ux_comprobantes_venta_presupuesto_origen")
                         .HasFilter("id_presupuesto_origen IS NOT NULL");
+
+                    b.HasIndex("IdPuntoVenta", "Id")
+                        .HasDatabaseName("ix_comprobantes_venta_decision_debida")
+                        .HasFilter("facturacion_decidida_en IS NULL AND id_venta_origen IS NULL");
 
                     b.HasIndex("IdPuntoVenta", "IdTenant")
                         .HasDatabaseName("ix_comprobantes_venta_fiscal_pendientes")

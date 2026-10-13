@@ -4989,6 +4989,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_comprobantes_venta_presupuesto_origen")
                         .HasFilter("id_presupuesto_origen IS NOT NULL");
 
+                    b.HasIndex("IdPuntoVenta", "Id")
+                        .HasDatabaseName("ix_comprobantes_venta_decision_debida")
+                        .HasFilter("facturacion_decidida_en IS NULL AND id_venta_origen IS NULL");
+
                     b.HasIndex("IdPuntoVenta", "IdTenant")
                         .HasDatabaseName("ix_comprobantes_venta_fiscal_pendientes")
                         .HasFilter("resultado_fiscal = 'pendiente'::resultado_fiscal");

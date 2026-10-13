@@ -70,7 +70,7 @@ public class ComprobanteVenta : EntidadTenant
     public bool FacturaForzada { get; set; }
 
     /// <summary>Cuándo el servidor decidió si este ticket se factura (con o sin fila de decisión). <c>NULL</c> =
-    /// decisión pendiente, o venta a la que no corresponde decidir. Es la marca de idempotencia de la decisión: una
+    /// decisión adeudada; un espejo fiscal no se decide y queda siempre en <c>NULL</c>. Es la marca de idempotencia: una
     /// venta que no se factura no tiene fila en <c>facturaciones_de_venta</c>, así que sin esta marca decidirla dos
     /// veces la contaría dos veces en el acumulado. La escribe solo <c>ServicioDeDecisionDeFacturacion</c>, con SQL
     /// crudo y bajo el lock de esta fila.</summary>

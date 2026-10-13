@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Ways.Application.Tests.Infraestructura;
 
 namespace Ways.Application.Tests.Fiscal;
@@ -5,7 +6,14 @@ namespace Ways.Application.Tests.Fiscal;
 /// <summary>
 /// Facturación por medio de pago, T4: pinea por texto lo que ningún test de comportamiento puede matar de forma
 /// determinista. El lost update del acumulado exige carreras reales; acá se fija el orden de los locks, la lectura
-/// única de saldos bajo el lock y que el acumulado solo se escriba con SQL crudo (<c>SaveChanges</c> rechaza la tabla).
+/// única de saldos bajo el lock, que el acumulado solo se escriba con SQL crudo (<c>SaveChanges</c> rechaza la tabla) y
+/// que el endpoint no le pase a la decisión el token de la solicitud (un corte del cliente no es observable de forma
+/// determinista por HTTP).
+///
+/// Cada test verifica el texto del archivo, no el comportamiento, y su nombre dice solo eso. Que la decisión nunca haga
+/// fallar la venta y que una decisión fallida la complete la venta siguiente lo prueban los tests de
+/// <c>DecisionDeFacturacionAlIngerirTests</c> (<c>UnaDecisionQueFallaNoFallaLaVentaYSeCompletaEnElReenvio</c> y
+/// <c>LaVentaCuyaDecisionFalloSeDecideEnLaSiguienteVentaDelPuntoDeVentaConSuPropioAcumuladoYUnaSolaVez</c>).
 /// </summary>
 public class ServicioDeDecisionDeFacturacionEstructuralTests
 {
@@ -14,18 +22,20 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
 
     private static string Servicio => Fuente("Ways.Application/Fiscal/ServicioDeDecisionDeFacturacion.cs");
 
-    private static string CuerpoDeDecidir()
+    private static string Entre(string fuente, string desde, string hasta)
     {
-        var fuente = Servicio;
-        var inicio = fuente.IndexOf("public async Task<EstadoFiscalDeVenta> DecidirAsync(", StringComparison.Ordinal);
-        Assert.True(inicio >= 0, "No se encontró DecidirAsync.");
-        var fin = fuente.IndexOf("// ---- Lecturas", inicio, StringComparison.Ordinal);
-        Assert.True(fin > inicio, "No se encontró el final de DecidirAsync.");
+        var inicio = fuente.IndexOf(desde, StringComparison.Ordinal);
+        Assert.True(inicio >= 0, $"No se encontró '{desde}'.");
+        var fin = fuente.IndexOf(hasta, inicio + desde.Length, StringComparison.Ordinal);
+        Assert.True(fin > inicio, $"No se encontró '{hasta}' después de '{desde}'.");
         return fuente[inicio..fin];
     }
 
+    private static string CuerpoDeDecidir() =>
+        Entre(Servicio, "public async Task<EstadoFiscalDeVenta> DecidirAsync(", "// ---- Lecturas");
+
     [Fact]
-    public void LosLocksYLasEscriturasSiguenElOrdenDocumentado()
+    public void ElTextoDeDecidirAsyncLlamaALosLocksYLasEscriturasEnElOrdenDocumentado()
     {
         var cuerpo = CuerpoDeDecidir();
         string[] orden =
@@ -43,53 +53,90 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
             "CommitAsync("
         ];
 
-        var anterior = -1;
+        // Cada marca se busca después de la anterior: un token que aparece más de una vez (MarcarDecididaAsync y
+        // CommitAsync también cierran las ramas tempranas) no puede satisfacer el orden con una ocurrencia equivocada.
+        var desde = 0;
         foreach (var marca in orden)
         {
-            var posicion = marca is "CommitAsync(" or "MarcarDecididaAsync(" ? cuerpo.LastIndexOf(marca, StringComparison.Ordinal) : cuerpo.IndexOf(marca, StringComparison.Ordinal);
-            Assert.True(posicion > anterior, $"'{marca}' falta o está fuera de orden en DecidirAsync.");
-            anterior = posicion;
+            var posicion = cuerpo.IndexOf(marca, desde, StringComparison.Ordinal);
+            Assert.True(posicion >= 0, $"'{marca}' falta o está fuera de orden en DecidirAsync.");
+            desde = posicion + marca.Length;
         }
     }
 
     [Fact]
-    public void LosSaldosSeLeenUnaSolaVezYBajoElLockEnOrdenDeMedio()
+    public void ElTextoDelServicioPideLosLocksDeFilaYLasSentenciasDeAcumuladoDocumentadas()
     {
-        var cuerpo = CuerpoDeDecidir();
-        Assert.Equal(1, Contar(cuerpo, "BloquearAcumuladosAsync("));
+        Assert.Equal(1, Contar(CuerpoDeDecidir(), "BloquearAcumuladosAsync("));
 
         var fuente = Servicio;
         Assert.Contains("ORDER BY id_medio_pago FOR UPDATE", fuente, StringComparison.Ordinal);
         Assert.Contains("FOR UPDATE OF c", fuente, StringComparison.Ordinal);
         Assert.Contains("ON CONFLICT (id_empresa, id_medio_pago, periodo) DO NOTHING", fuente, StringComparison.Ordinal);
-        Assert.Contains("ON CONFLICT (id_comprobante_venta, id_tenant) DO NOTHING", fuente, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ElServicioNuncaEscribeConElChangeTrackerYReintentaConElTrackerLimpio()
+    public void ElTextoDeLaFilaDeDecisionEsUnInsertSimpleSinOnConflict()
+    {
+        var insercion = Entre(Servicio, "private static async Task<int> InsertarDecisionAsync(", "private static async Task MarcarDecididaAsync");
+        Assert.Contains("INSERT INTO facturaciones_de_venta", insercion, StringComparison.Ordinal);
+        Assert.DoesNotContain("ON CONFLICT", insercion, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ElTextoDelServicioNoEscribeConElChangeTrackerYLimpiaElTrackerAlEmpezarCadaIntento()
     {
         var fuente = Servicio;
         Assert.DoesNotContain("SaveChangesAsync(", fuente, StringComparison.Ordinal);
-        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(@"\bdb\.\w+\.Add\(", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(5)), fuente);
+        Assert.DoesNotMatch(new Regex(@"\bdb\.\w+\.Add\(", RegexOptions.None, TimeSpan.FromSeconds(5)), fuente);
         Assert.DoesNotContain("FabricaDeEstrategiaSinReintento", fuente, StringComparison.Ordinal);
 
         Assert.Matches(
-            new System.Text.RegularExpressions.Regex(
+            new Regex(
                 @"estrategia\.ExecuteAsync\(async \(\) =>\s*\{\s*db\.ChangeTracker\.Clear\(\);",
-                System.Text.RegularExpressions.RegexOptions.None,
+                RegexOptions.None,
                 TimeSpan.FromSeconds(5)),
             CuerpoDeDecidir());
     }
 
     [Fact]
-    public void LaDecisionNuncaHaceFallarLaVentaYElEndpointLaLlamaDespuesDelCommit()
+    public void ElTextoDeDecidirTrasLaVentaYDelBarridoTieneUnCatchGeneralYNoDeclaraElTokenDeLaSolicitud()
     {
-        Assert.Contains("catch (Exception ex)", Servicio, StringComparison.Ordinal);
+        var fuente = Servicio;
+        var decidirTras = Entre(fuente, "public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(", "public async Task SanearDecisionesDebidasAsync(");
+        var barrido = Entre(fuente, "public async Task SanearDecisionesDebidasAsync(", "public async Task<EstadoFiscalDeVenta> DecidirAsync(");
 
+        Assert.Contains("catch (Exception ex)", decidirTras, StringComparison.Ordinal);
+        Assert.Contains("catch (Exception ex)", barrido, StringComparison.Ordinal);
+        Assert.Contains("DecidirAsync(idComprobanteVenta, CancellationToken.None)", decidirTras, StringComparison.Ordinal);
+        Assert.Contains("new CancellationTokenSource(PresupuestoDeBarrido)", barrido, StringComparison.Ordinal);
+
+        // Las firmas públicas no tienen un CancellationToken que el endpoint pudiera llenar con el de la solicitud.
+        foreach (var firma in new[] { decidirTras, barrido })
+        {
+            var linea = firma[..firma.IndexOf(')')];
+            Assert.DoesNotContain("CancellationToken", linea, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void ElTextoDelEndpointLlamaALaDecisionYAlBarridoDespuesDeEmitirSinPasarElTokenDeLaSolicitud()
+    {
         var endpoint = Fuente("Ways.Api/Endpoints/VentasEndpoints.cs");
         var emision = endpoint.IndexOf("await servicio.EmitirAsync(solicitud, ct)", StringComparison.Ordinal);
-        var decision = endpoint.IndexOf("decision.DecidirTrasLaVentaAsync(", StringComparison.Ordinal);
-        Assert.True(emision >= 0 && decision > emision, "La decisión corre después de emitir la venta.");
+        Assert.True(emision >= 0, "No se encontró la emisión de la venta.");
+        var decision = endpoint.IndexOf("decision.DecidirTrasLaVentaAsync(", emision, StringComparison.Ordinal);
+        Assert.True(decision > emision, "La decisión corre después de emitir la venta.");
+        var barrido = endpoint.IndexOf("decision.SanearDecisionesDebidasAsync(", decision, StringComparison.Ordinal);
+        Assert.True(barrido > decision, "El barrido corre después de decidir la venta actual.");
+
+        var llamadas = Regex.Matches(
+            endpoint[decision..],
+            @"decision\.(DecidirTrasLaVentaAsync|SanearDecisionesDebidasAsync)\(([^)]*)\)",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(5));
+        Assert.Equal(2, llamadas.Count);
+        Assert.All(llamadas, l => Assert.DoesNotMatch(new Regex(@"\bct\b", RegexOptions.None, TimeSpan.FromSeconds(5)), l.Groups[2].Value));
     }
 
     private static int Contar(string texto, string marca)

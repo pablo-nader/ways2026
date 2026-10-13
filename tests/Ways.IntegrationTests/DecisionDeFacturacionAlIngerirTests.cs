@@ -31,9 +31,12 @@ namespace Ways.IntegrationTests;
 /// Se ejercita por <c>POST /api/ventas</c> (siempre con un cajero de dispositivo, que además puede reenviar con número
 /// pre-asignado) y, para fechas fijas y concurrencia, llamando al servicio sobre ventas sembradas.
 ///
+/// Una decisión que falla deja la venta debida (marca en <c>NULL</c>) y la completa el barrido que corre con la venta
+/// siguiente del mismo punto de venta (<c>SanearDecisionesDebidasAsync</c>).
+///
 /// Mutation-proof-tests: las cláusulas bajo prueba son el gate del certificado, la marca de idempotencia, el
-/// <c>FOR UPDATE</c> del acumulado, la derivación del período y <c>ForzarFactura</c> en <c>ExigirMismoContenido</c>;
-/// la evidencia de cada una está en el reporte de la tarea.
+/// <c>FOR UPDATE</c> del acumulado, la derivación del período, <c>ForzarFactura</c> en <c>ExigirMismoContenido</c>, el
+/// barrido (llamada desde el endpoint, límite, orden, aislamiento de fallas) y la marca de las ventas sin certificado.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -196,6 +199,54 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         return cajero;
     }
 
+    private async Task AgregarCertificadoAsync(Escenario e)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        db.CertificadosFiscales.Add(new CertificadoFiscal
+        {
+            IdTenant = e.IdTenant, IdEmpresa = e.IdEmpresa, Ambiente = AmbienteFiscal.Homologacion,
+            Alias = "Homo agregado", CuitTitular = "20111111112", CertificadoPem = "pem",
+            ClavePrivadaCifrada = new byte[48], Nonce = new byte[12], TagAutenticacion = new byte[16],
+            IdClaveMaestra = "v1", HuellaSha256 = new string('b', 64), VigenciaDesde = ahora.AddDays(-1),
+            VigenciaHasta = ahora.AddYears(1), Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Con <paramref name="zona"/> define el parámetro de zona horaria de la empresa; con <c>null</c> lo quita.</summary>
+    private async Task DefinirZonaHorariaAsync(Escenario e, string? zona)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
+        db.Parametros.RemoveRange(await db.Parametros.Where(p => p.Clave == ParametroConocido.ZonaHoraria.Clave).ToListAsync());
+        if (zona is not null)
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            db.Parametros.Add(new Parametro
+            {
+                IdTenant = e.IdTenant, IdEmpresa = e.IdEmpresa, Clave = ParametroConocido.ZonaHoraria.Clave,
+                Valor = JsonSerializer.Serialize(zona), CreatedAt = ahora, UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<Dictionary<int, DateTimeOffset?>> LeerMarcasAsync(int idTenant)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText = "SELECT id_comprobante_venta, facturacion_decidida_en FROM comprobantes_venta";
+        var marcas = new Dictionary<int, DateTimeOffset?>();
+        await using var lector = await comando.ExecuteReaderAsync();
+        while (await lector.ReadAsync())
+        {
+            marcas[lector.GetInt32(0)] = lector.IsDBNull(1) ? null : new DateTimeOffset(lector.GetDateTime(1), TimeSpan.Zero);
+        }
+
+        return marcas;
+    }
+
     private async Task FijarPorcentajeAsync(Escenario e, int idMedioPago, decimal porcentaje)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
@@ -229,7 +280,7 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
     private async Task<int> SembrarVentaAsync(
         Escenario e, DateTimeOffset fecha, int idMedioPago, decimal importe = 100m, decimal vuelto = 0m,
         EstadoComprobante estado = EstadoComprobante.Emitido, int? idTipo = null, int? idVentaOrigen = null,
-        bool conPago = true)
+        bool conPago = true, IReadOnlyList<(int IdMedioPago, decimal Importe, decimal Vuelto)>? pagosAdicionales = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -256,6 +307,17 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
             });
             await db.SaveChangesAsync();
         }
+
+        foreach (var (idMedio, importeExtra, vueltoExtra) in pagosAdicionales ?? [])
+        {
+            db.PagosComprobante.Add(new PagoComprobante
+            {
+                IdTenant = e.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedio,
+                Importe = importeExtra, Vuelto = vueltoExtra, CreatedAt = ahora, UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
 
         return comprobante.Id;
     }
@@ -334,6 +396,17 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
     {
         var fila = Assert.Single(filas, f => f.IdMedioPago == idMedio);
         Assert.Equal((saldo, vendido, facturado), (fila.Saldo, fila.Vendido, fila.Facturado));
+    }
+
+    /// <summary>Suma los meses del medio: las ventas sembradas con fecha fija y las del POS (que usan la hora de hoy) caen
+    /// en meses distintos.</summary>
+    private static void AfirmarTotalesDelMedio(
+        IEnumerable<Acumulado> filas, int idMedio, decimal saldo, decimal vendido, decimal facturado)
+    {
+        var delMedio = filas.Where(f => f.IdMedioPago == idMedio).ToList();
+        Assert.Equal(
+            (saldo, vendido, facturado),
+            (delMedio.Sum(f => f.Saldo), delMedio.Sum(f => f.Vendido), delMedio.Sum(f => f.Facturado)));
     }
 
     private static readonly DateTimeOffset Mayo = new(2026, 5, 10, 15, 0, 0, TimeSpan.Zero);
@@ -449,9 +522,10 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
     }
 
     [Fact]
-    public async Task SinCertificadoActivoNoSeDecideNiSeMueveElAcumulado()
+    public async Task SinCertificadoActivoLaVentaQuedaDecididaComoNoAplicableSinFilaNiAcumulado()
     {
-        var e = await PrepararAsync(nameof(SinCertificadoActivoNoSeDecideNiSeMueveElAcumulado), conCertificado: false);
+        var e = await PrepararAsync(
+            nameof(SinCertificadoActivoLaVentaQuedaDecididaComoNoAplicableSinFilaNiAcumulado), conCertificado: false);
         using var _ = e.Cajero;
         await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
 
@@ -460,7 +534,29 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, emitido.Fiscal!.Estado);
         Assert.Empty(await LeerDecisionesAsync(e.IdTenant));
         Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
-        Assert.Null(await LeerMarcaDeDecisionAsync(e.IdTenant, emitido.Id));
+        Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, emitido.Id));
+    }
+
+    [Fact]
+    public async Task UnaVentaHechaSinCertificadoNoSeFacturaRetroactivamenteCuandoApareceUnCertificado()
+    {
+        var e = await PrepararAsync(
+            nameof(UnaVentaHechaSinCertificadoNoSeFacturaRetroactivamenteCuandoApareceUnCertificado), conCertificado: false);
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+
+        var sinCertificado = await VenderAsync(e, Venta(e, PorTransferencia(e)));
+        var marcaOriginal = await LeerMarcaDeDecisionAsync(e.IdTenant, sinCertificado.Id);
+        Assert.NotNull(marcaOriginal);
+
+        await AgregarCertificadoAsync(e);
+        var conCertificado = await VenderAsync(e, Venta(e, PorTransferencia(e)));
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, conCertificado.Fiscal!.Estado);
+        var decision = Assert.Single(await LeerDecisionesAsync(e.IdTenant));
+        Assert.Equal(conCertificado.Id, decision.IdComprobanteVenta);
+        Assert.Equal(marcaOriginal, await LeerMarcaDeDecisionAsync(e.IdTenant, sinCertificado.Id));
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 100m, facturado: 100m);
     }
 
     [Fact]
@@ -482,7 +578,8 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
             e, new SolicitudDeVenta(e.IdPuntoVenta, null, "NCX", null, lineas, [], null, null));
         Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, emitido.Fiscal!.Estado);
         Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
-        Assert.Null(await LeerMarcaDeDecisionAsync(e.IdTenant, emitido.Id));
+        // La devolución no se decide pero la decisión la examinó: queda marcada para que no figure como debida.
+        Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, emitido.Id));
     }
 
     // ---- Reenvío con número pre-asignado ----------------------------------------------------------
@@ -575,6 +672,210 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         Assert.Equal(EstadosFiscalesDeVenta.Pendiente, reenvio.Fiscal!.Estado);
         Assert.Single(await LeerDecisionesAsync(e.IdTenant));
         AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 100m, facturado: 100m);
+    }
+
+    // ---- Barrido de las decisiones debidas ------------------------------------------------------------------
+
+    [Fact]
+    public async Task LaVentaCuyaDecisionFalloSeDecideEnLaSiguienteVentaDelPuntoDeVentaConSuPropioAcumuladoYUnaSolaVez()
+    {
+        var e = await PrepararAsync(
+            nameof(LaVentaCuyaDecisionFalloSeDecideEnLaSiguienteVentaDelPuntoDeVentaConSuPropioAcumuladoYUnaSolaVez));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await DefinirZonaHorariaAsync(e, "Nowhere/Land");
+
+        var fallida = await VenderAsync(e, Venta(e, PorTransferencia(e)));
+        Assert.Equal(EstadosFiscalesDeVenta.SinDecidir, fallida.Fiscal!.Estado);
+        Assert.Null(await LeerMarcaDeDecisionAsync(e.IdTenant, fallida.Id));
+
+        await DefinirZonaHorariaAsync(e, null);
+        var siguiente = await VenderAsync(e, Venta(e, PorTransferencia(e)));
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, siguiente.Fiscal!.Estado);
+        Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, fallida.Id));
+        Assert.Equal(
+            [fallida.Id, siguiente.Id],
+            (await LeerDecisionesAsync(e.IdTenant)).Select(d => d.IdComprobanteVenta).Order().ToArray());
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 200m, facturado: 200m);
+
+        // Una tercera venta no vuelve a contar ninguna de las dos anteriores.
+        await VenderAsync(e, Venta(e, PorTransferencia(e)));
+        Assert.Equal(3, (await LeerDecisionesAsync(e.IdTenant)).Count);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 300m, facturado: 300m);
+    }
+
+    [Fact]
+    public async Task ElBarridoDecideComoMuchoElLimiteDeVentasPorLlamadaLasMasViejasPrimeroYElRestoSeVaciaEnLasSiguientes()
+    {
+        var e = await PrepararAsync(
+            nameof(ElBarridoDecideComoMuchoElLimiteDeVentasPorLlamadaLasMasViejasPrimeroYElRestoSeVaciaEnLasSiguientes));
+        using var _ = e.Cajero;
+        // Al 1 % nueve tickets de 100 dejan el saldo en 9, lejos del cupo que obligaría a facturar.
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 1m);
+
+        var debidas = new List<int>();
+        for (var i = 0; i < ServicioDeDecisionDeFacturacion.LimiteDeBarrido + 2; i++)
+        {
+            debidas.Add(await SembrarVentaAsync(e, Mayo, e.IdEfectivo));
+        }
+
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+
+        var marcas = await LeerMarcasAsync(e.IdTenant);
+        Assert.Equal(
+            debidas.Take(ServicioDeDecisionDeFacturacion.LimiteDeBarrido),
+            debidas.Where(id => marcas[id] is not null));
+
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+
+        marcas = await LeerMarcasAsync(e.IdTenant);
+        Assert.All(debidas, id => Assert.NotNull(marcas[id]));
+        // Cada venta, sembrada o no, entró una sola vez al acumulado.
+        AfirmarTotalesDelMedio(
+            await LeerAcumuladosAsync(e.IdTenant), e.IdEfectivo, saldo: debidas.Count + 2,
+            vendido: (debidas.Count + 2) * 100m, facturado: 0m);
+    }
+
+    [Fact]
+    public async Task UnaVentaDebidaQueFallaSiempreNoImpideDecidirLasQueLeSiguen()
+    {
+        var e = await PrepararAsync(nameof(UnaVentaDebidaQueFallaSiempreNoImpideDecidirLasQueLeSiguen));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 1m);
+
+        // El primer ticket deja el acumulado del mes en 100. El ticket debido más viejo cobra el máximo de numeric(14,2): al
+        // sumarlo, total_vendido desborda y su decisión falla siempre. Los dos siguientes son normales.
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+        var hoy = DateTimeOffset.UtcNow;
+        var quePermaneceDebida = await SembrarVentaAsync(e, hoy, e.IdEfectivo, importe: 999_999_999_999.99m);
+        var sana1 = await SembrarVentaAsync(e, hoy, e.IdEfectivo);
+        var sana2 = await SembrarVentaAsync(e, hoy, e.IdEfectivo);
+
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+
+        var marcas = await LeerMarcasAsync(e.IdTenant);
+        Assert.Null(marcas[quePermaneceDebida]);
+        Assert.NotNull(marcas[sana1]);
+        Assert.NotNull(marcas[sana2]);
+
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+
+        Assert.Null((await LeerMarcasAsync(e.IdTenant))[quePermaneceDebida]);
+        // Tres ventas del POS y dos sanas: la que falla no suma y las demás no se cuentan dos veces.
+        AfirmarTotalesDelMedio(await LeerAcumuladosAsync(e.IdTenant), e.IdEfectivo, saldo: 5m, vendido: 500m, facturado: 0m);
+    }
+
+    [Fact]
+    public async Task ElBarridoVaciaTodasLasClasesDeVentaDebidaYDejaIntactosLosEspejos()
+    {
+        var e = await PrepararAsync(nameof(ElBarridoVaciaTodasLasClasesDeVentaDebidaYDejaIntactosLosEspejos));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+
+        var ticket = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var devolucion = await SembrarVentaAsync(e, Mayo, e.IdTransferencia, idTipo: e.IdTipoNcx);
+        var anulada = await SembrarVentaAsync(e, Mayo, e.IdTransferencia, estado: EstadoComprobante.Anulado);
+        var sinPagos = await SembrarVentaAsync(e, Mayo, e.IdTransferencia, conPago: false);
+        var espejo = await SembrarVentaAsync(e, Mayo, e.IdTransferencia, idTipo: e.IdTipoFa, idVentaOrigen: ticket);
+
+        await VenderAsync(e, Venta(e, PorTransferencia(e)));
+
+        var marcas = await LeerMarcasAsync(e.IdTenant);
+        Assert.All(new[] { ticket, devolucion, anulada, sinPagos }, id => Assert.NotNull(marcas[id]));
+        Assert.Null(marcas[espejo]);
+        // Solo el ticket debido y la venta del POS se facturan; la devolución, la anulada y la sin pagos no mueven nada.
+        Assert.Equal(2, (await LeerDecisionesAsync(e.IdTenant)).Count);
+        AfirmarTotalesDelMedio(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 200m, facturado: 200m);
+
+        var antes = await LeerMarcasAsync(e.IdTenant);
+        await VenderAsync(e, Venta(e, PorTransferencia(e)));
+        var despues = await LeerMarcasAsync(e.IdTenant);
+        Assert.All(new[] { ticket, devolucion, anulada, sinPagos }, id => Assert.Equal(antes[id], despues[id]));
+    }
+
+    // ---- Composición de pagos de un ticket ---------------------------------------------------------------
+
+    [Fact]
+    public async Task VariosPagosDelMismoMedioEnUnTicketSumanEnUnaSolaFilaDelAcumulado()
+    {
+        var e = await PrepararAsync(nameof(VariosPagosDelMismoMedioEnUnTicketSumanEnUnaSolaFilaDelAcumulado));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 10m);
+        var idVenta = await SembrarVentaAsync(
+            e, Mayo, e.IdEfectivo, importe: 60m, pagosAdicionales: [(e.IdEfectivo, 40m, 0m)]);
+
+        await DecidirAsync(e, idVenta);
+
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdEfectivo, saldo: 10m, vendido: 100m, facturado: 0m);
+    }
+
+    [Fact]
+    public async Task UnPagoDeMontoNetoCeroNoCuentaNiCreaFilaDeAcumuladoYLosPositivosSi()
+    {
+        var e = await PrepararAsync(nameof(UnPagoDeMontoNetoCeroNoCuentaNiCreaFilaDeAcumuladoYLosPositivosSi));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 100m);
+        // El efectivo cobró 50 y devolvió 50 de vuelto: su monto neto es cero.
+        var idVenta = await SembrarVentaAsync(
+            e, Mayo, e.IdTransferencia, importe: 100m, pagosAdicionales: [(e.IdEfectivo, 50m, 50m)]);
+
+        var estado = await DecidirAsync(e, idVenta);
+
+        Assert.Equal(("pendiente", "medio_exige_factura"), (estado.Estado, estado.Motivo));
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 100m, facturado: 100m);
+        Assert.DoesNotContain(await LeerAcumuladosAsync(e.IdTenant), f => f.IdMedioPago == e.IdEfectivo);
+    }
+
+    [Fact]
+    public async Task UnPagoDeMontoNetoNegativoTampocoCuentaNiCreaFilaDeAcumulado()
+    {
+        var e = await PrepararAsync(nameof(UnPagoDeMontoNetoNegativoTampocoCuentaNiCreaFilaDeAcumulado));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 100m);
+        // El vuelto supera al importe del pago en efectivo: monto neto de −20.
+        var idVenta = await SembrarVentaAsync(
+            e, Mayo, e.IdTransferencia, importe: 100m, pagosAdicionales: [(e.IdEfectivo, 30m, 50m)]);
+
+        await DecidirAsync(e, idVenta);
+
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 100m, facturado: 100m);
+        Assert.DoesNotContain(await LeerAcumuladosAsync(e.IdTenant), f => f.IdMedioPago == e.IdEfectivo);
+    }
+
+    /// <summary>Documenta la regla vigente, no un requisito del negocio: la decisión no mira el comportamiento del medio,
+    /// así que un pago a cuenta corriente acumula y puede facturar el ticket igual que cualquier otro medio según su
+    /// porcentaje de facturación.</summary>
+    [Fact]
+    public async Task UnPagoACuentaCorrienteAcumulaComoCualquierOtroMedioSegunSuPorcentaje()
+    {
+        var e = await PrepararAsync(nameof(UnPagoACuentaCorrienteAcumulaComoCualquierOtroMedioSegunSuPorcentaje));
+        using var _ = e.Cajero;
+        int idCuentaCorriente;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var medio = new MedioPago
+            {
+                IdTenant = e.IdTenant, Nombre = "Cuenta corriente", Orden = 9,
+                Comportamiento = ComportamientoMedioPago.CuentaCorriente, AdmiteVuelto = false,
+                RequiereReferencia = false, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.MediosPago.Add(medio);
+            await db.SaveChangesAsync();
+            idCuentaCorriente = medio.Id;
+        }
+
+        var sinPorcentaje = await SembrarVentaAsync(e, Mayo, idCuentaCorriente);
+        Assert.Equal(EstadosFiscalesDeVenta.NoCorresponde, (await DecidirAsync(e, sinPorcentaje)).Estado);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), idCuentaCorriente, saldo: 0m, vendido: 100m, facturado: 0m);
+
+        await FijarPorcentajeAsync(e, idCuentaCorriente, 100m);
+        var alCien = await SembrarVentaAsync(e, Mayo, idCuentaCorriente);
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, (await DecidirAsync(e, alCien)).Estado);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), idCuentaCorriente, saldo: 0m, vendido: 200m, facturado: 100m);
     }
 
     // ---- Servicio sobre ventas sembradas ---------------------------------------------------------------
@@ -722,9 +1023,9 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
 
         Assert.Empty(await LeerDecisionesAsync(e.IdTenant));
         Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
+        // Un espejo nunca se decide ni se marca; lo demás queda marcado para no figurar como debido.
         Assert.Null(await LeerMarcaDeDecisionAsync(e.IdTenant, espejo));
-        Assert.Null(await LeerMarcaDeDecisionAsync(e.IdTenant, anulada));
-        // Sin pagos no hay a qué medio imputar: se marca decidida para no reprocesarla.
+        Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, anulada));
         Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, sinPagos));
     }
 
@@ -751,6 +1052,8 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
 
         Assert.Equal((EstadosFiscalesDeVenta.Pendiente, "forzada"), (estado.Estado, estado.Motivo));
         Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
+        // Sin marca la venta seguiría debida y el barrido la visitaría en cada venta.
+        Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, idVenta));
     }
 
     // ---- Aislamiento --------------------------------------------------------------------------------------

@@ -21,6 +21,12 @@ namespace Ways.Application.Fiscal;
 /// <c>comprobantes_venta.facturacion_decidida_en</c> (que existe porque una venta que no se factura no tiene fila de
 /// decisión) y la fila de decisión hacen que la segunda llamada devuelva lo ya decidido sin tocar saldos.
 ///
+/// La marca en <c>NULL</c> significa una sola cosa: la decisión está debida. Toda venta que la decisión examina queda
+/// marcada, se facture o no (no es un ticket, está anulada, la empresa no tenía certificado activo, no cobró nada); solo
+/// los espejos fiscales, que nunca se deciden, quedan fuera. Las ventas anteriores a la función nacieron marcadas por la
+/// migración. Una decisión que falla deja la marca en <c>NULL</c> y la completa <see cref="SanearDecisionesDebidasAsync"/>
+/// desde la siguiente venta del mismo punto de venta.
+///
 /// Orden de locks de la transacción: 1) la fila del comprobante (FOR UPDATE), que serializa todo lo que decide o anula
 /// esa venta; 2) las filas del acumulado de la venta, por <c>id_medio_pago</c> ascendente. El acumulado solo se escribe
 /// con SQL crudo (<c>SaveChanges</c> rechaza la tabla), igual que <see cref="AsignadorDeNumeroFiscal"/>.
@@ -29,8 +35,9 @@ namespace Ways.Application.Fiscal;
 /// (<c>LectorDeMovimientosDelTurno</c> resta el vuelto del efectivo) y hace que los montos del ticket sumen su total;
 /// con el importe entregado, un ticket de 700 pagado con un billete de 1000 sumaría 1000 al medio.
 ///
-/// Período: el primer día del mes de la fecha del comprobante en la zona horaria del punto de venta
-/// (<c>zona_horaria</c> resuelta por <see cref="ServicioDeParametros"/>), la misma que usan los reportes de ventas.
+/// Período: el primer día del mes de la fecha del comprobante (el reloj del servidor al ingerir la venta) en la zona
+/// horaria del punto de venta (<c>zona_horaria</c> resuelta por <see cref="ServicioDeParametros"/>), la misma que usan
+/// los reportes de ventas.
 /// </summary>
 public class ServicioDeDecisionDeFacturacion(
     IWaysDbContext db,
@@ -39,24 +46,77 @@ public class ServicioDeDecisionDeFacturacion(
     ServicioDeParametros parametros,
     ILogger<ServicioDeDecisionDeFacturacion> log)
 {
+    /// <summary>Cuántas ventas debidas como máximo decide un barrido, para no frenar la caja.</summary>
+    public const int LimiteDeBarrido = 5;
+
+    /// <summary>Tiempo total que puede ocupar un barrido; vencido, las ventas que faltan esperan al siguiente.</summary>
+    public static readonly TimeSpan PresupuestoDeBarrido = TimeSpan.FromSeconds(3);
+
     private static readonly JsonSerializerOptions OpcionesDeAportes = new(JsonSerializerDefaults.Web);
 
     /// <summary>Lo que llama el endpoint de ventas después del commit de la venta. Nunca lanza: la venta ya está
     /// registrada y la caja no puede frenarse por la decisión fiscal. Si falla, responde
-    /// <see cref="EstadosFiscalesDeVenta.SinDecidir"/>: la marca <c>facturacion_decidida_en</c> sigue en <c>NULL</c> y
-    /// la decisión se completa en la próxima llamada (el reenvío de la venta con su número pre-asignado, o el
-    /// procesador de pendientes).</summary>
-    public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(int idComprobanteVenta, CancellationToken ct = default)
+    /// <see cref="EstadosFiscalesDeVenta.SinDecidir"/> y la marca <c>facturacion_decidida_en</c> sigue en <c>NULL</c>:
+    /// <see cref="SanearDecisionesDebidasAsync"/> la completa en una venta posterior. No recibe el token de la solicitud
+    /// a propósito: la venta ya está comiteada y que el cliente corte la conexión no debe dejar la decisión a medias.</summary>
+    public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(int idComprobanteVenta)
     {
         try
         {
-            return await DecidirAsync(idComprobanteVenta, ct);
+            return await DecidirAsync(idComprobanteVenta, CancellationToken.None);
         }
         catch (Exception ex)
         {
             log.LogWarning(
                 ex, "No se pudo decidir la facturación de la venta {IdComprobanteVenta}; queda debida.", idComprobanteVenta);
             return EstadoFiscalDeVenta.SinDecidir;
+        }
+    }
+
+    /// <summary>Decide hasta <see cref="LimiteDeBarrido"/> ventas debidas del punto de venta, las más viejas primero, cada
+    /// una en su propia transacción. Es la forma en que una decisión que falló se completa sola. Nunca lanza, no recibe el
+    /// token de la solicitud y se corta a los <see cref="PresupuestoDeBarrido"/>. Una venta que falla se registra y el
+    /// barrido sigue con la siguiente; cada candidata se intenta una sola vez por llamada. <paramref name="idExcluida"/> es
+    /// la venta que el llamador acaba de decidir, para no reintentarla en la misma llamada.</summary>
+    public async Task SanearDecisionesDebidasAsync(int idPuntoVenta, int idExcluida)
+    {
+        try
+        {
+            using var presupuesto = new CancellationTokenSource(PresupuestoDeBarrido);
+            var ct = presupuesto.Token;
+
+            // Ventas del punto de venta que nadie decidió: sin marca y que no son espejos (que nunca se deciden). Las más
+            // viejas primero por id; el índice parcial ix_comprobantes_venta_decision_debida entrega ese orden.
+            var debidas = await db.Database.SqlQuery<int>(
+                $"""
+                SELECT id_comprobante_venta AS "Value" FROM comprobantes_venta
+                WHERE id_punto_venta = {idPuntoVenta} AND facturacion_decidida_en IS NULL AND id_venta_origen IS NULL
+                AND id_comprobante_venta <> {idExcluida}
+                ORDER BY id_comprobante_venta
+                LIMIT {LimiteDeBarrido}
+                """).ToListAsync(ct);
+
+            foreach (var idDebida in debidas)
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                try
+                {
+                    await DecidirAsync(idDebida, ct);
+                }
+                catch (Exception ex)
+                {
+                    log.LogWarning(
+                        ex, "El barrido no pudo decidir la facturación de la venta {IdComprobanteVenta}; sigue debida.", idDebida);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "El barrido de decisiones de facturación debidas del punto de venta {IdPuntoVenta} falló.", idPuntoVenta);
         }
     }
 
@@ -71,42 +131,62 @@ public class ServicioDeDecisionDeFacturacion(
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
             var conexion = db.Database.GetDbConnection();
             var transaccionCruda = transaccion.GetDbTransaction();
+            var ahora = reloj.Ahora;
 
             // Un espejo fiscal nunca se decide: la lectura lo deja afuera (id_venta_origen IS NULL).
             var venta = await BloquearVentaAsync(conexion, transaccionCruda, idComprobanteVenta, ct);
-            if (venta is null || !venta.EsTicketDeVenta)
+            if (venta is null)
             {
                 return EstadoFiscalDeVenta.NoCorresponde;
+            }
+
+            // Cierra sin mover saldos: la venta queda marcada como decidida (si no lo estaba) y se devuelve el resultado.
+            async Task<EstadoFiscalDeVenta> CerrarSinMovimientoAsync(EstadoFiscalDeVenta resultado)
+            {
+                if (venta.DecididaEn is null)
+                {
+                    await MarcarDecididaAsync(conexion, transaccionCruda, idComprobanteVenta, ahora, ct);
+                    await transaccion.CommitAsync(ct);
+                }
+
+                return resultado;
+            }
+
+            if (!venta.EsTicketDeVenta)
+            {
+                return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
             }
 
             if (await LeerDecisionAsync(conexion, transaccionCruda, idComprobanteVenta, ct) is { } yaDecidida)
             {
-                return yaDecidida;
+                return await CerrarSinMovimientoAsync(yaDecidida);
             }
 
-            if (venta.DecididaEn is not null || venta.Estado != "emitido")
+            if (venta.DecididaEn is not null)
             {
                 return EstadoFiscalDeVenta.NoCorresponde;
             }
 
+            if (venta.Estado != "emitido")
+            {
+                return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
+            }
+
+            // Sin certificado activo la empresa no puede facturar: la venta se decide como no aplicable y queda marcada,
+            // así que un certificado cargado después no la factura retroactivamente.
             var ambiente = opciones.Value.ResolverAmbiente();
             var hayCertificadoActivo = await db.CertificadosFiscales.AsNoTracking()
                 .AnyAsync(c => c.IdEmpresa == venta.IdEmpresa && c.Ambiente == ambiente && c.Activo, ct);
             if (!hayCertificadoActivo)
             {
-                return EstadoFiscalDeVenta.NoCorresponde;
+                return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
             }
 
             var pagos = await LeerPagosAsync(conexion, transaccionCruda, idComprobanteVenta, ct);
-            var ahora = reloj.Ahora;
-
             if (pagos.Count == 0)
             {
-                // Nada se cobró (ticket sin pagos o de importe cero): no hay medio al que imputar ni qué facturar.
-                // Se marca decidida para no reprocesarla.
-                await MarcarDecididaAsync(conexion, transaccionCruda, idComprobanteVenta, ahora, ct);
-                await transaccion.CommitAsync(ct);
-                return EstadoFiscalDeVenta.NoCorresponde;
+                // Nada se cobró (ticket sin pagos o de importe neto cero): no hay medio al que imputar ni qué facturar.
+                return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
             }
 
             var periodo = await ResolverPeriodoAsync(venta, ct);
@@ -134,18 +214,10 @@ public class ServicioDeDecisionDeFacturacion(
             EstadoFiscalDeVenta resultado = EstadoFiscalDeVenta.NoCorresponde;
             if (decision.Facturar)
             {
+                // El lock de la fila de la venta serializa las decisiones de esta venta, así que el UNIQUE de
+                // id_comprobante_venta no puede chocar acá: si lo hiciera sería un defecto y sale como excepción.
                 var idFacturacion = await InsertarDecisionAsync(
                     conexion, transaccionCruda, idComprobanteVenta, venta, decision, periodo, ahora, ct);
-
-                if (idFacturacion is null)
-                {
-                    // Otro escritor ya decidió esta venta (UNIQUE de id_comprobante_venta): se deshace el acumulado de
-                    // esta transacción y se devuelve la decisión existente.
-                    await transaccion.RollbackAsync(ct);
-                    return await LeerDecisionAsync(conexion, null, idComprobanteVenta, ct)
-                        ?? throw new InvalidOperationException(
-                            $"La venta {idComprobanteVenta} chocó con una decisión que ya no se puede leer.");
-                }
 
                 resultado = new EstadoFiscalDeVenta(
                     EstadosFiscalesDeVenta.Pendiente, EtiquetaDeMotivo(decision.Motivo), idFacturacion);
@@ -326,9 +398,9 @@ public class ServicioDeDecisionDeFacturacion(
 
     // ---- Escrituras de la decisión -------------------------------------------------------------
 
-    /// <summary><c>ON CONFLICT DO NOTHING</c> sobre el UNIQUE de la venta: perder la carrera devuelve <c>null</c> en vez
-    /// de abortar la transacción con un 23505.</summary>
-    private static async Task<int?> InsertarDecisionAsync(
+    /// <summary>Inserta la fila de decisión. Es un <c>INSERT</c> simple: el lock de la venta ya serializó a los escritores,
+    /// de modo que un 23505 del UNIQUE de la venta es un defecto y no una carrera que perder.</summary>
+    private static async Task<int> InsertarDecisionAsync(
         DbConnection conexion, DbTransaction transaccion, int idComprobanteVenta, VentaBloqueada venta,
         DecisionDeFacturacion decision, DateOnly periodo, DateTimeOffset ahora, CancellationToken ct)
     {
@@ -338,7 +410,6 @@ public class ServicioDeDecisionDeFacturacion(
             "INSERT INTO facturaciones_de_venta (id_tenant, id_empresa, id_comprobante_venta, motivo, estado, aportes, " +
             "periodo, intentos, created_at, updated_at) " +
             "VALUES ($1, $2, $3, $4::motivo_facturacion, 'pendiente'::estado_facturacion_venta, $5::jsonb, $6, 0, $7, $7) " +
-            "ON CONFLICT (id_comprobante_venta, id_tenant) DO NOTHING " +
             "RETURNING id_facturacion_venta";
         ParametrosDeComando.Agregar(comando, venta.IdTenant);
         ParametrosDeComando.Agregar(comando, venta.IdEmpresa);
@@ -348,7 +419,7 @@ public class ServicioDeDecisionDeFacturacion(
         ParametrosDeComando.Agregar(comando, periodo);
         ParametrosDeComando.Agregar(comando, ahora);
 
-        return await comando.ExecuteScalarAsync(ct) is int id ? id : null;
+        return (int)(await comando.ExecuteScalarAsync(ct))!;
     }
 
     private static async Task MarcarDecididaAsync(
