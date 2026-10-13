@@ -191,6 +191,54 @@ where five judgment-day rounds each found a new variant of the same defect class
     hermana (regla 15 de `mutation-proof-tests`). Una limpieza que otra ya hizo antes en
     todo camino alcanzable es redundante y no se escribe.
 
+17. **Una escritura rechazada vuelve a pedir el listado que su propio token descartó.**
+    Acuñar la generación de la escritura (`++generacion.current`) descarta la lectura del
+    listado que estaba en vuelo, y el `finally` con gate de esa lectura (regla 4) ya no
+    baja `cargando`. Si la escritura termina bien, su refresco lo repara; si se rechaza,
+    nada lo hace y la tabla queda en "Cargando…" para siempre. La rama de fallo vuelve a
+    pedir el listado: capturar el flag ANTES de acuñar el token y releer en el `catch`.
+    ```
+    const habiaLecturaEnVuelo = cargando; // antes del token: después ya nadie lo baja
+    const token = ++generacion.current;
+    try {
+      await escribir();
+    } catch (e) {
+      if (generacion.current === token) {
+        setErrorFormulario(errorAlGuardar(e));
+        if (habiaLecturaEnVuelo) void cargar(++generacion.current, terminoVigente.current);
+      }
+      return;
+    }
+    ```
+    - **Alcance.** Solo aplica a escrituras alcanzables con una lectura en vuelo: las que
+      dispara un control fuera de la tabla que depende solo de `bloqueado` (Agregar,
+      Nuevo…). Los disparadores que viven en filas (editar, eliminar) no son alcanzables,
+      porque la tabla no se rinde mientras `cargando`; ahí la relectura sería código
+      muerto (regla 15).
+    - **Término.** El refresco posterior a una escritura y esta relectura usan el último
+      término PEDIDO: un ref `terminoVigente` seteado al empezar `cargar`, o el estado
+      `busquedaAplicada`. Nunca el texto tipeado en la caja y todavía no enviado.
+    - **Estado `error` único.** Si la pantalla tiene un solo `error` que la carga limpia
+      al terminar bien (`PuntosVenta.tsx`, `Usuarios.tsx`), la relectura lleva un
+      parámetro `conservarError` para no borrar el motivo del rechazo
+      (`if (!conservarError) setError('')`). NO re-aplicar el mensaje con
+      `.then(() => setError(mensaje))`: cae sobre un formulario reabierto durante la
+      relectura y tapa el aviso de una relectura fallida (hallazgo confirmado por los dos
+      jueces en el PR #433).
+    - **Pruebas obligatorias, las dos.** (a) Escritura rechazada con la lectura inicial
+      diferida: aparecen las filas, no queda "Cargando…" y el listado se pidió dos veces.
+      (b) Escritura rechazada con el listado ya cargado: no se vuelve a pedir. La (b) es
+      la única que mata la mutación que quita la condición `habiaLecturaEnVuelo`; la (a)
+      sola la deja viva.
+
+    (Siete pantallas con el mismo defecto: `Personal.tsx` y `CuentasTesoreria.tsx`
+    primero, `Proveedores.tsx` en el PR #430, y `PaginaCatalogo.tsx`, `Categorias.tsx`,
+    `PuntosVenta.tsx`, `Usuarios.tsx` en el PR #433. Es la regla 10 aplicada tarde: al
+    tocar una, buscar `habiaLecturaEnVuelo` en `src/paginas` y comparar con las hermanas.
+    `CuentasTesoreria.tsx` no tiene búsqueda y además relee ante un 404 o un
+    `saldo_inicial_con_movimientos`, porque ahí la fila en pantalla quedó vieja: su
+    prueba (b) usa un rechazo que no sea ninguno de esos dos.)
+
 ## Decision Gates
 
 | Situation | Action |
@@ -204,10 +252,21 @@ where five judgment-day rounds each found a new variant of the same defect class
 | Error-recovery path added to one surface | Grep the error code; replicate in every sibling surface of the PR |
 | `if (ocupado) return` en un handler cuyo botón ya está `disabled` | Mutar la guarda; si sobrevive, borrarla (regla 15) |
 | Acción nueva en una pantalla con aviso o error visible | Borrar lo previo al empezar y probarlo con la request pendiente (regla 16) |
+| Escritura que acuña generación y se dispara desde un control fuera de la tabla (Agregar, Nuevo…) | Capturar `habiaLecturaEnVuelo` antes del token y releer en el `catch` con el último término pedido; `conservarError` si el `error` es único; las dos pruebas (regla 17) |
 
 ## Verification
 
 Before committing, re-trace on paper at minimum: A-in-flight → open B; A-in-flight →
 new/cancel; write in flight → the user leaves (menu, Back) and the response lands; plain
 success (UI must still update!); plain failure (error must still render!); post-write
-refresh failure. `tsc -b`, `oxlint`, `vite build` clean.
+refresh failure; list read in flight → write rejected (the table must leave "Cargando…",
+rule 17). `tsc -b`, `oxlint`, `vite build` clean.
+
+## References
+
+- `src/Ways.Web/src/paginas/Personal.tsx` y `Personal.test.tsx` — regla 17 con ref
+  `terminoVigente`; las dos pruebas viven en "lectura en vuelo al guardar y término aplicado".
+- `src/Ways.Web/src/paginas/Proveedores.tsx` y `Proveedores.test.tsx` — la misma forma en
+  una pantalla con búsqueda.
+- `src/Ways.Web/src/paginas/Usuarios.tsx` y `Usuarios.test.tsx` — regla 17 con
+  `busquedaAplicada` y `conservarError` sobre un `error` único.

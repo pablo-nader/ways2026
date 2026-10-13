@@ -7,6 +7,8 @@ import {
   reducirCarrito,
   totalDelCarrito,
   type ArticuloParaElCarrito,
+  type ComboParaElCarrito,
+  type ItemDelCarrito,
 } from './carrito'
 import { AccionesDelCarritoContext, CarritoContext } from './CarritoContext'
 
@@ -21,6 +23,19 @@ function almacenDelNavegador(): AlmacenDelCarrito | null {
 }
 
 type Anuncio = { texto: string; numero: number }
+
+/** Lo que cambió de disponibilidad entre dos estados del carrito, una frase por línea de combo que se marcó o se desmarcó. */
+function avisosDeDisponibilidad(antes: readonly ItemDelCarrito[], despues: readonly ItemDelCarrito[]): string[] {
+  const estabaNoDisponible = new Map(antes.flatMap((i) => (i.tipo === 'combo' ? [[i.idCombo, i.noDisponible === true] as const] : [])))
+
+  return despues.flatMap((i) => {
+    if (i.tipo !== 'combo') return []
+    const antesNoDisponible = estabaNoDisponible.get(i.idCombo)
+    if (antesNoDisponible === undefined || antesNoDisponible === (i.noDisponible === true)) return []
+
+    return [`${i.nombre} ${i.noDisponible === true ? 'ya no está disponible' : 'volvió a estar disponible'}`]
+  })
+}
 
 /**
  * Dueño del carrito: lo lee del navegador al montar y lo guarda en cada cambio, bajo una clave que
@@ -46,6 +61,8 @@ export function CarritoProvider({
   const [anuncio, setAnuncio] = useState<Anuncio>({ texto: '', numero: 0 })
   // Última lista de artículos con la que se sincronizó: sirve para volver a hacerlo tras adoptar un carrito de otra pestaña.
   const ultimosArticulos = useRef<readonly ArticuloParaElCarrito[]>([])
+  // Ídem para los combos; `null` mientras no hubo una lectura buena (entonces no se sabe cuáles siguen disponibles).
+  const ultimosCombos = useRef<readonly ComboParaElCarrito[] | null>(null)
   // Marca que el próximo cambio del carrito viene de otra pestaña (adoptado y sincronizado en el mismo
   // render): no se escribe de vuelta. Si dos pestañas tienen listas distintas, escribir lo sincronizado
   // haría que cada una pisara a la otra sin fin.
@@ -70,6 +87,7 @@ export function CarritoProvider({
       despachar({ tipo: 'reemplazar', items: leerCarrito(almacenElegido, host) })
       // El carrito adoptado puede traer precios más viejos que la lista que esta pestaña ya leyó.
       despachar({ tipo: 'sincronizar', articulos: ultimosArticulos.current })
+      if (ultimosCombos.current !== null) despachar({ tipo: 'sincronizarCombos', combos: ultimosCombos.current })
     }
     window.addEventListener('storage', alCambiarElAlmacen)
 
@@ -96,7 +114,7 @@ export function CarritoProvider({
 
   const quitar = useCallback(
     (idArticulo: number) => {
-      const item = itemsRef.current.find((i) => i.idArticulo === idArticulo)
+      const item = itemsRef.current.find((i) => i.tipo === 'articulo' && i.idArticulo === idArticulo)
       despachar({ tipo: 'quitar', idArticulo })
       if (item !== undefined) anunciar(`${item.nombre} quitado del carrito`)
     },
@@ -106,6 +124,38 @@ export function CarritoProvider({
   const cambiarCantidad = useCallback((idArticulo: number, cantidad: number) => {
     despachar({ tipo: 'cambiarCantidad', idArticulo, cantidad })
   }, [])
+
+  const agregarCombo = useCallback(
+    (combo: ComboParaElCarrito, cantidad = 1) => {
+      despachar({ tipo: 'agregarCombo', combo, cantidad })
+      anunciar(`${combo.nombre} agregado al carrito`)
+    },
+    [anunciar],
+  )
+
+  const quitarCombo = useCallback(
+    (idCombo: number) => {
+      const item = itemsRef.current.find((i) => i.tipo === 'combo' && i.idCombo === idCombo)
+      despachar({ tipo: 'quitarCombo', idCombo })
+      if (item !== undefined) anunciar(`${item.nombre} quitado del carrito`)
+    },
+    [anunciar],
+  )
+
+  const cambiarCantidadCombo = useCallback((idCombo: number, cantidad: number) => {
+    despachar({ tipo: 'cambiarCantidadCombo', idCombo, cantidad })
+  }, [])
+
+  const sincronizarCombos = useCallback(
+    (combos: readonly ComboParaElCarrito[]) => {
+      ultimosCombos.current = combos
+      const accion = { tipo: 'sincronizarCombos', combos } as const
+      const avisos = avisosDeDisponibilidad(itemsRef.current, reducirCarrito(itemsRef.current, accion))
+      despachar(accion)
+      if (avisos.length > 0) anunciar(avisos.join('. '))
+    },
+    [anunciar],
+  )
 
   const sincronizar = useCallback((articulos: readonly ArticuloParaElCarrito[]) => {
     ultimosArticulos.current = articulos
@@ -118,8 +168,18 @@ export function CarritoProvider({
   }, [anunciar])
 
   const acciones = useMemo(
-    () => ({ agregar, quitar, cambiarCantidad, sincronizar, vaciar }),
-    [agregar, quitar, cambiarCantidad, sincronizar, vaciar],
+    () => ({
+      agregar,
+      quitar,
+      cambiarCantidad,
+      sincronizar,
+      agregarCombo,
+      quitarCombo,
+      cambiarCantidadCombo,
+      sincronizarCombos,
+      vaciar,
+    }),
+    [agregar, quitar, cambiarCantidad, sincronizar, agregarCombo, quitarCombo, cambiarCantidadCombo, sincronizarCombos, vaciar],
   )
 
   const valor = useMemo(
@@ -127,8 +187,10 @@ export function CarritoProvider({
       ...acciones,
       items,
       cantidad: items.length,
+      cantidadQueSuma: items.filter((i) => i.tipo !== 'combo' || i.noDisponible !== true).length,
       total: totalDelCarrito(items),
-      cantidades: new Map(items.map((i) => [i.idArticulo, i.cantidad])),
+      cantidades: new Map(items.flatMap((i) => (i.tipo === 'articulo' ? [[i.idArticulo, i.cantidad] as const] : []))),
+      cantidadesDeCombos: new Map(items.flatMap((i) => (i.tipo === 'combo' ? [[i.idCombo, i.cantidad] as const] : []))),
     }),
     [items, acciones],
   )

@@ -1,6 +1,6 @@
 import type { ArticuloPublico } from '../api/publico'
 import { PREFIJO_ONLINE } from '../config/rutasPublicas'
-import { formatearPrecio } from '../online/carrito'
+import { PrecioConOferta } from '../online/PrecioConOferta'
 import { ImagenDelArticulo } from '../publico/ImagenDelArticulo'
 
 /** Un artículo de la muestra: enlace a la tienda con el nombre como búsqueda (`?buscar=`), para encontrarlo ahí. Aquí no hay carrito. */
@@ -11,8 +11,12 @@ function TarjetaDestacada({ articulo }: { articulo: ArticuloPublico }) {
         <ImagenDelArticulo articulo={articulo} />
         <span className="publico-articulo-nombre">{articulo.nombre}</span>
         <span className="publico-articulo-precio">
-          <span className="publico-precio">{formatearPrecio(articulo.precio)}</span>
-          {articulo.unidadVenta === 'Peso' && <span className="publico-articulo-unidad"> por kg</span>}
+          <PrecioConOferta
+            precio={articulo.precio}
+            precioOriginal={articulo.precioOriginal}
+            oferta={articulo.oferta}
+            unidadVenta={articulo.unidadVenta}
+          />
         </span>
       </a>
     </li>
