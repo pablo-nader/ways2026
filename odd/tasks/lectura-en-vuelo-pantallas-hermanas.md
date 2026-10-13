@@ -20,10 +20,10 @@ Fuera de alcance: el doble envío y la carrera de respuestas viejas de `Clientes
 generación ni `ocupadoRef`); la prueba faltante de la condición `habiaLecturaEnVuelo` en `Personal.tsx`.
 
 ## Tareas
-- [ ] T1 — `PaginaCatalogo.tsx` y `Categorias.tsx`: defecto 1. Ruta: delegada (2+ archivos).
-- [ ] T2 — `PuntosVenta.tsx`: defecto 1 en `guardarAlta`, y en `guardar` / `guardarModo` si son alcanzables con una lectura en vuelo. Ruta: delegada.
-- [ ] T3 — `Usuarios.tsx`: defecto 1. Ruta: delegada.
-- [ ] T4 — `Clientes.tsx`: defecto 2 (archivo de pruebas nuevo). Ruta: delegada.
+- [x] T1 — `PaginaCatalogo.tsx` y `Categorias.tsx`: defecto 1 en `guardar`. Ruta: delegada (2+ archivos). Commit `c2345d3b`.
+- [x] T2 — `PuntosVenta.tsx`: defecto 1 en `guardarAlta` (`guardar`, `guardarModo` y la baja no son alcanzables con una lectura en vuelo). Ruta: delegada. Commit `9fdd3ff5`.
+- [x] T3 — `Usuarios.tsx`: defecto 1 en `guardar` (`accion` y `confirmarBaja` no son alcanzables). Ruta: delegada. Commit `a3b43a22`.
+- [x] T4 — `Clientes.tsx`: defecto 2 (archivo de pruebas nuevo). Ruta: delegada. Commit `be9f18ff`.
 
 ## Criterios de aceptación
 - Cada corrección tiene una prueba escrita antes y vista fallar.
@@ -35,4 +35,8 @@ generación ni `ocupadoRef`); la prueba faltante de la condición `habiaLecturaE
 Un solo PR (pronóstico: menos de 400 líneas). Estrategia `single-pr`.
 
 ## Verificación
-(pendiente)
+- RED observado antes de cada corrección: PaginaCatalogo y Categorias "Unable to find ... Bebidas / Nike" (tabla en el spinner); PuntosVenta "Unable to find an element with the text: PV Centro"; Usuarios "Unable to find an element with the text: vendedor.sur" (dos pruebas); Clientes "expected '/clientes?busqueda=zzz' to be '/clientes'" (cuatro pruebas).
+- Mutación de `habiaLecturaEnVuelo` (condición reemplazada por `true` o sin `if`): en cada pantalla falla la prueba de guarda ("expected ... to be called 1 times, but got 2 times"); en PuntosVenta falla además la prueba preexistente "un rechazo del servidor rinde su mensaje, deja el formulario abierto y no recarga la sesión".
+- En PuntosVenta y Usuarios el error es compartido y la lectura lo limpia al aterrizar: tras releer se vuelve a rendir el motivo del rechazo.
+- Alcanzabilidad: en PuntosVenta y Usuarios las filas (editar, modo, baja, desbloquear) viven dentro de la tabla, que no se renderiza mientras `cargando`; PuntosVenta solo lee al montar y Usuarios tiene la puerta modal, por lo que esas escrituras no pueden arrancar con una lectura en vuelo. Lo mismo vale para `confirmarBaja` en PaginaCatalogo y Categorias.
+- `npm run lint`: sin errores (23 advertencias preexistentes). `npm run build`: correcto. `npm run test`: 233 archivos, 6953 pruebas en verde.
