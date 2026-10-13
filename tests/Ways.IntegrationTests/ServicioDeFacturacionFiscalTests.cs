@@ -175,6 +175,12 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         "<ResultGet /><Errors><Err><Code>602</Code><Msg>No encontrado.</Msg></Err></Errors></FECompConsultarResult>" +
         "</FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
 
+    private static string FecompConsultarTicketInvalido() =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+        "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
+        "<ResultGet /><Errors><Err><Code>600</Code><Msg>El TokenSign no se corresponde a la solicitud dada.</Msg></Err></Errors>" +
+        "</FECompConsultarResult></FECompConsultarResponse></soapenv:Body></soapenv:Envelope>";
+
     // --- Setup: tenant + empresa (condición fiscal + CUIT) + PV (número fiscal) + certificado ---
 
     private sealed record Contexto(
@@ -706,6 +712,73 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
         Assert.Equal(["FECompConsultar"], espiaWsfe.Operaciones);
+    }
+
+    /// <summary>Un 600 en la consulta tiene el mismo tratamiento que en la solicitud: se invalida el ticket, se firma uno nuevo y se
+    /// consulta una vez más. Con el comprobante encontrado el reintento sigue como si la primera consulta hubiera andado.</summary>
+    [Fact]
+    public async Task ElReintentoRefrescaElTicketSiLaConsultaDa600YAdoptaElCae()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var consultas = 0;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(
+                ++consultas == 1 ? FecompConsultarTicketInvalido() : FecompConsultarEncontrado(58, "70585858585858")),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(58))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoRefrescaElTicketSiLaConsultaDa600YAdoptaElCae), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(ctx, 58);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal("70585858585858", emitido.Cae);
+        Assert.Equal(["FECompConsultar", "FECompConsultar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
+    [Fact]
+    public async Task ElReintentoRefrescaElTicketSiLaConsultaDa600YSiNoEncuentraNadaPideConElTicketFresco()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var consultas = 0;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(++consultas == 1 ? FecompConsultarTicketInvalido() : FecompConsultarNoEncontrado()),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(59))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoRefrescaElTicketSiLaConsultaDa600YSiNoEncuentraNadaPideConElTicketFresco), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(ctx, 59);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(["FECompConsultar", "FECompConsultar", "FECAESolicitar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
+    [Fact]
+    public async Task ElReintentoConDosSeiscientosEnLaConsultaEsNoDefinitivoConUnaSolaInvalidacionYNoPide()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(FecompConsultarTicketInvalido()),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(60))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoConDosSeiscientosEnLaConsultaEsNoDefinitivoConUnaSolaInvalidacionYNoPide), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(ctx, 60);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.ServiceUnavailable, "ticket_de_acceso_invalido");
+        Assert.Equal(["FECompConsultar", "FECompConsultar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
     }
 
     // --- El CRITICAL de judgment 19a-slice-5 ronda 2 juez A: la re-emisión (rama no-adoptada de

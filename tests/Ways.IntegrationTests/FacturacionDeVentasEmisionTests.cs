@@ -87,6 +87,10 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         /// <summary>Se ejecuta en cada pedido, antes de contestar: simula que algo cambia mientras el servicio espera el ticket.</summary>
         public Func<Task>? AntesDeResponder { get; set; }
 
+        /// <summary>Si está, arma la respuesta de cada firma a partir de su número de orden (1, 2, …): permite distinguir qué
+        /// ticket viajó en cada pedido a WSFE.</summary>
+        public Func<int, string>? CuerpoPorFirma { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Solicitudes++;
@@ -95,7 +99,9 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
                 await AntesDeResponder();
             }
 
-            return Falla ? new HttpResponseMessage(HttpStatusCode.InternalServerError) : RespuestaXml(cuerpoDeRespuesta);
+            return Falla
+                ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                : RespuestaXml(CuerpoPorFirma?.Invoke(Solicitudes) ?? cuerpoDeRespuesta);
         }
     }
 
@@ -250,7 +256,7 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
 
     // ---- Respuestas de ARCA ----------------------------------------------------------------------------
 
-    private static string LoginCmsGolden() =>
+    private static string LoginCmsGolden(string token = "TOKEN_ESPIA") =>
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope " +
         "xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\"><soapenv:Body>" +
         "<loginCmsResponse xmlns=\"http://wsaa.view.sua.dvadac.desa.afip.gov\"><loginCmsReturn>" +
@@ -258,7 +264,7 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         "&lt;header&gt;&lt;source&gt;CN=test&lt;/source&gt;&lt;destination&gt;CN=ways&lt;/destination&gt;" +
         "&lt;uniqueId&gt;1&lt;/uniqueId&gt;&lt;generationTime&gt;2020-01-01T00:00:00-03:00&lt;/generationTime&gt;" +
         "&lt;expirationTime&gt;2099-01-01T00:00:00-03:00&lt;/expirationTime&gt;&lt;/header&gt;" +
-        "&lt;credentials&gt;&lt;token&gt;TOKEN_ESPIA&lt;/token&gt;&lt;sign&gt;SIGN_ESPIA&lt;/sign&gt;&lt;/credentials&gt;" +
+        $"&lt;credentials&gt;&lt;token&gt;{token}&lt;/token&gt;&lt;sign&gt;SIGN_ESPIA&lt;/sign&gt;&lt;/credentials&gt;" +
         "&lt;/loginTicketResponse&gt;</loginCmsReturn></loginCmsResponse></soapenv:Body></soapenv:Envelope>";
 
     private static string FecaeAprobado(string cae = "70123456789012") =>
@@ -2412,11 +2418,164 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
 
         Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
-        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
+        // Un 600 se consulta una vez más con un ticket fresco; cualquier otro error, una sola vez.
+        Assert.Equal(
+            codigo == 600 ? new[] { "FECompConsultar", "FECompConsultar" } : new[] { "FECompConsultar" }, c.Wsfe.Operaciones);
         Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
         var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
         Assert.Equal(2, decision.Intentos);
         Assert.StartsWith(codigoDeDominio + ":", decision.UltimoError, StringComparison.Ordinal);
+    }
+
+    // ===================================================================================================
+    // El 600 de la consulta refresca el ticket (K-1)
+    // ===================================================================================================
+
+    /// <summary>Una consulta que rechaza el ticket viejo con el 600 y contesta <paramref name="conTicketNuevo"/> a cualquier otro.</summary>
+    private static Func<HttpRequestMessage, Task<HttpResponseMessage>> RechazaElTicketViejo(
+        string tokenViejo, string conTicketNuevo) =>
+        async pedido =>
+        {
+            var cuerpo = await pedido.Content!.ReadAsStringAsync();
+            return RespuestaXml(cuerpo.Contains(tokenViejo, StringComparison.Ordinal) ? ConsultarConError(600) : conTicketNuevo);
+        };
+
+    private static void FirmarTicketsDistintos(Ctx c) => c.Wsaa.CuerpoPorFirma = n => LoginCmsGolden($"TOKEN_{n}");
+
+    [Fact]
+    public async Task UnSeiscientoEnLaConsultaDelEspejoRefrescaElTicketYAdoptaElCae()
+    {
+        var c = await PrepararAsync("k1hallado");
+        FirmarTicketsDistintos(c);
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        Assert.Equal(1, c.Wsaa.Solicitudes);
+        c.Wsfe.Consultar = RechazaElTicketViejo(
+            "TOKEN_1", ConsultarEncontrado("70181818181818", Yyyymmdd(FechaFiscalDe(espejo.Fecha))));
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal("70181818181818", estado.Comprobante!.Cae);
+        Assert.Equal(["FECompConsultar", "FECompConsultar"], c.Wsfe.Operaciones);
+        Assert.Equal(2, c.Wsaa.Solicitudes);
+    }
+
+    [Fact]
+    public async Task UnSeiscientoEnLaConsultaDelEspejoRefrescaElTicketYSiNoHayNadaPideConElTicketFresco()
+    {
+        var c = await PrepararAsync("k1nohall");
+        FirmarTicketsDistintos(c);
+        var (venta, _) = await SembrarVentaConEspejoPendienteAsync(c);
+        c.Wsfe.Consultar = RechazaElTicketViejo("TOKEN_1", ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeAprobado("70191919191919"));
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal(["FECompConsultar", "FECompConsultar", "FECAESolicitar"], c.Wsfe.Operaciones);
+        Assert.Equal(2, c.Wsaa.Solicitudes);
+        var cuerpo = Assert.Single(c.Wsfe.CuerposDeSolicitud);
+        Assert.Contains("TOKEN_2", cuerpo, StringComparison.Ordinal);
+        Assert.DoesNotContain("TOKEN_1", cuerpo, StringComparison.Ordinal);
+    }
+
+    /// <summary>El pedido que sigue a la consulta refrescada también consulta (tras un error de llamada) y tiene que hacerlo con el
+    /// ticket fresco: usar el invalidado sería un tercer ticket y una consulta de más.</summary>
+    [Fact]
+    public async Task ElTicketFrescoDeLaConsultaEsElQueUsaLaConsultaPosteriorAUnErrorDeLlamada()
+    {
+        var c = await PrepararAsync("k1posterior");
+        FirmarTicketsDistintos(c);
+        var (venta, _) = await SembrarVentaConEspejoPendienteAsync(c);
+        c.Wsfe.Consultar = RechazaElTicketViejo("TOKEN_1", ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeErrorDeLlamada());
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Rechazado, estado.Estado);
+        Assert.Equal(["FECompConsultar", "FECompConsultar", "FECAESolicitar", "FECompConsultar"], c.Wsfe.Operaciones);
+        Assert.Equal(2, c.Wsaa.Solicitudes);
+        Assert.Empty(await LeerEspejosAsync(c));
+    }
+
+    [Fact]
+    public async Task DosSeiscientosEnLaConsultaDelEspejoSonNoDefinitivosConUnaSolaInvalidacionYNoPiden()
+    {
+        var c = await PrepararAsync("k1dos");
+        FirmarTicketsDistintos(c);
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        c.Wsfe.Consultar = Responde(ConsultarConError(600));
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, estado.Estado);
+        Assert.Equal(["FECompConsultar", "FECompConsultar"], c.Wsfe.Operaciones);
+        Assert.Equal(2, c.Wsaa.Solicitudes);
+        Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
+        var decision = await LeerDecisionAsync(c, venta.IdFacturacion);
+        Assert.Equal(2, decision.Intentos);
+        Assert.StartsWith("ticket_de_acceso_invalido:", decision.UltimoError, StringComparison.Ordinal);
+    }
+
+    // ===================================================================================================
+    // Concurrencia entre la lectura de la decisión y la del espejo (K-2)
+    // ===================================================================================================
+
+    /// <summary>Pausa la lectura del espejo de la venta (<c>WHERE … id_venta_origen = …</c>) de un host derivado, que en
+    /// <c>ProcesarAsync</c> viene después de la lectura de la decisión.</summary>
+    private sealed class InterceptorDePausaEnLaLecturaDelEspejo(
+        TaskCompletionSource leyendo, TaskCompletionSource continuar) : DbCommandInterceptor
+    {
+        private int _disparos;
+
+        public bool Armado { get; set; }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armado
+                && command.CommandText.Contains("FROM comprobantes_venta", StringComparison.Ordinal)
+                && command.CommandText.Contains(".id_venta_origen = @", StringComparison.Ordinal)
+                && Interlocked.Increment(ref _disparos) == 1)
+            {
+                leyendo.TrySetResult();
+                await continuar.Task;
+            }
+
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task UnaLlamadaQueLeyoLaDecisionPendienteYVeElEspejoYaResueltoDevuelveElEstadoActualSinArca()
+    {
+        var c = await PrepararAsync("k2carrera");
+        var venta = await SembrarVentaDecididaAsync(c);
+        var leyendo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaEnLaLecturaDelEspejo(leyendo, continuar);
+        var pausado = await ClienteConServiciosAsync(
+            c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor)));
+        interceptor.Armado = true;
+
+        var segunda = ProcesarAsync(pausado, venta.IdFacturacion);
+        await leyendo.Task.WaitAsync(Tope);
+        var primera = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, primera.Estado);
+        var firmas = c.Wsaa.Solicitudes;
+        var operaciones = c.Wsfe.Operaciones.Count;
+        continuar.TrySetResult();
+        var estado = await ConTopeAsync(segunda);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal(primera.Comprobante!.Cae, estado.Comprobante!.Cae);
+        Assert.Equal(primera.Comprobante.Numero, estado.Comprobante.Numero);
+        Assert.Equal(firmas, c.Wsaa.Solicitudes);
+        Assert.Equal(operaciones, c.Wsfe.Operaciones.Count);
+        Assert.Single(await LeerEspejosAsync(c));
     }
 
     /// <summary>La fecha de hoy se guarda en una transacción propia, antes de pedir. El pedido sale y el commit del resultado falla: el
@@ -2548,6 +2707,27 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
             Assert.Equal(espejo, Assert.Single(await LeerEspejosAsync(c)));
             Assert.Equal(2, (await LeerDecisionAsync(c, venta.IdFacturacion)).Intentos);
         }
+    }
+
+    /// <summary>Evaluar las compuertas puede LANZAR (no solo devolver un fallo): un código de condición fiscal sin mapeo hace que
+    /// <c>MapearCondicionFiscal</c> lance. Las compuertas se evalúan después de la consulta, así que eso no impide adoptar un CAE que
+    /// ARCA ya tiene.</summary>
+    [Fact]
+    public async Task UnaCompuertaQueLanzaAlEvaluarseNoImpideAdoptarUnCaeQueArcaYaTiene()
+    {
+        var c = await PrepararAsync("lanza");
+        var (venta, espejo) = await SembrarVentaConEspejoPendienteAsync(c);
+        await EjecutarComoOwnerAsync("UPDATE condiciones_fiscales SET codigo = 'CF_ROTO' WHERE codigo = 'CF'");
+        await using var restauracion = new Restauracion(
+            () => EjecutarComoOwnerAsync("UPDATE condiciones_fiscales SET codigo = 'CF' WHERE codigo = 'CF_ROTO'"));
+        c.Wsfe.Consultar = Responde(ConsultarEncontrado("70202020202020", Yyyymmdd(FechaFiscalDe(espejo.Fecha))));
+        c.Wsfe.Solicitar = Responde(FecaeAprobado());
+
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        Assert.Equal("70202020202020", estado.Comprobante!.Cae);
+        Assert.Equal(["FECompConsultar"], c.Wsfe.Operaciones);
     }
 
     [Fact]

@@ -114,10 +114,10 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 (1, "Pregunta si UNA venta ya tiene espejo, en cualquier estado: tiene que verlo, es justo lo que pregunta."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "\"DELETE FROM items_comprobante_venta WHERE id_comprobante_venta = $1\", ct, idEspejo))")] =
-                (1, "Borra los ítems de UN espejo fiscal rechazado por ARCA, por id."),
+                (1, "Borra los ítems de UN espejo fiscal liberado (rechazado por ARCA o con un número que ARCA no tiene), por id."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "\"DELETE FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
-                (1, "Borra UN espejo fiscal rechazado por ARCA, por id."),
+                (1, "Borra UN espejo fiscal liberado (rechazado por ARCA o con un número que ARCA no tiene), por id."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "\"FROM pagos_comprobante p \" +")] =
                 (1, "Pagos de UNA venta ya decidida, por id: de ahí sale lo cobrado por medio que la decisión llevó al acumulado."),

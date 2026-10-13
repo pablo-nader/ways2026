@@ -35,7 +35,8 @@ namespace Ways.Application.Fiscal;
 ///
 /// Orden de locks: <c>numeraciones_fiscales</c> → <c>comprobantes_venta</c> (venta, luego espejo) → <c>facturaciones_de_venta</c>
 /// → <c>acumulados_de_facturacion</c> (por medio de pago ascendente). Toda transición de una decisión se hace con su fila
-/// bloqueada y su estado releído bajo ese lock. El acumulado solo se escribe con SQL crudo, igual que en
+/// bloqueada y su estado releído bajo ese lock; el registro de un fallo es la excepción: un único UPDATE guardado por
+/// <c>estado = 'pendiente'</c>, sin lock previo. El acumulado solo se escribe con SQL crudo, igual que en
 /// <see cref="ServicioDeDecisionDeFacturacion"/>, y cada reversión es la contraparte exacta de lo que aplicó esa decisión.
 ///
 /// Un resultado es definitivo solo si está en la lista blanca: una <see cref="RespuestaCae"/> (aprobado, aprobado con
@@ -51,7 +52,6 @@ public class ServicioDeFacturacionDeVentas(
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto,
     ServicioDeFacturacionFiscal fiscal,
-    IClienteWsfe clienteWsfe,
     ILogger<ServicioDeFacturacionDeVentas> log)
 {
     public static readonly TimeSpan EsperaInicialNoDefinitiva = TimeSpan.FromSeconds(30);
@@ -117,6 +117,14 @@ public class ServicioDeFacturacionDeVentas(
 
         if (espejo is not null)
         {
+            // Otra llamada pudo comitear toda la resolución entre la lectura de la decisión y la del espejo: se relee una vez.
+            var actual = await LeerDecisionAsync(idFacturacion, ct)
+                ?? throw new InvalidOperationException($"La decisión {idFacturacion} dejó de existir.");
+            if (actual.Estado != Pendiente)
+            {
+                return await ProyectarAsync(actual, null, ct);
+            }
+
             throw new InvalidOperationException(
                 $"El espejo {espejo.Id} está '{espejo.ResultadoFiscal}' pero su decisión {decision.Id} sigue pendiente.");
         }
@@ -172,11 +180,11 @@ public class ServicioDeFacturacionDeVentas(
     private async Task<EstadoFiscalDeVenta> ProcesarEspejoPendienteAsync(
         FacturacionPendiente decision, ComprobanteVenta espejo, int idTenant, CancellationToken ct)
     {
-        var compuertas = decision.Estado == Pendiente ? await EvaluarCompuertasAsync(espejo, true, ct) : null;
         var prerrequisitos = await EvaluarPrerrequisitosDeConsultaAsync(espejo, ct);
 
         if (prerrequisitos.Fallo is { } sinPrerrequisitos)
         {
+            var compuertas = decision.Estado == Pendiente ? await EvaluarCompuertasAsync(espejo, true, ct) : null;
             var fallo = compuertas?.Fallo ?? sinPrerrequisitos;
             return await RegistrarFalloDeEspejoAsync(
                 decision, espejo.Id, $"{fallo.Codigo}: {fallo.Mensaje}", EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
@@ -194,7 +202,7 @@ public class ServicioDeFacturacionDeVentas(
                 decision, espejo.Id, DescribirFalla(ex), EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct);
         }
 
-        return await ConsultarEspejoPendienteAsync(decision, consulta, compuertas, espejo.Id, ticket, idTenant, ct);
+        return await ConsultarEspejoPendienteAsync(decision, consulta, espejo, ticket, idTenant, ct);
     }
 
     // ---- Compuertas (sin red) --------------------------------------------------------------------
@@ -582,9 +590,10 @@ public class ServicioDeFacturacionDeVentas(
 
     /// <summary>Paso C: el espejo pendiente existía de antes. Se consulta a ARCA antes que nada (I2).</summary>
     private async Task<EstadoFiscalDeVenta> ConsultarEspejoPendienteAsync(
-        FacturacionPendiente decision, ContextoDeConsulta consulta, Evaluacion? compuertas, int idEspejo,
+        FacturacionPendiente decision, ContextoDeConsulta consulta, ComprobanteVenta espejoLeido,
         TicketDeAcceso ticket, int idTenant, CancellationToken ct)
     {
+        var idEspejo = espejoLeido.Id;
         var salida = new Salida();
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
@@ -605,7 +614,8 @@ public class ServicioDeFacturacionDeVentas(
                 return;
             }
 
-            var desenlace = await ConsultarEnArcaAsync(consulta, ticket, espejo.Numero, ct);
+            Desenlace desenlace;
+            (desenlace, ticket) = await ConsultarEnArcaAsync(consulta, ticket, espejo.Numero, ct);
             if (desenlace is NoEncontrado)
             {
                 var estadoDeLaDecision = await BloquearDecisionYLeerEstadoAsync(decision.Id, ct);
@@ -614,22 +624,27 @@ public class ServicioDeFacturacionDeVentas(
                     await AplicarAsync(
                         decision, estadoDeLaDecision, consulta, idEspejo, espejo, new Liberar(), idTenant, salida, ct);
                 }
-                else if (compuertas is null)
+                else if (decision.Estado != Pendiente)
                 {
                     salida.Reevaluar = true;
                     return;
                 }
-                else if (compuertas.Fallo is { } fallo)
-                {
-                    _ = await EscribirFalloAsync(
-                        decision.Id, $"{fallo.Codigo}: {fallo.Mensaje}", EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
-                }
                 else
                 {
-                    // Se va a pedir con la fecha de hoy: se guarda ahora, en una transacción que comitea antes de la
-                    // llamada, para que el espejo nunca quede con una fecha distinta de la que viajó.
-                    salida.EpocaParaSolicitar = await RefrescarFechaDelEspejoAsync(idEspejo, reloj.Ahora, ct);
-                    salida.PlanParaSolicitar = compuertas.Plan;
+                    // Las compuertas de la venta se evalúan solo ahora que ARCA no tiene el número y hay que volver a pedir.
+                    var compuertas = await EvaluarCompuertasAsync(espejoLeido, true, ct);
+                    if (compuertas.Fallo is { } fallo)
+                    {
+                        _ = await EscribirFalloAsync(
+                            decision.Id, $"{fallo.Codigo}: {fallo.Mensaje}", EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
+                    }
+                    else
+                    {
+                        // Se va a pedir con la fecha de hoy: se guarda ahora, en una transacción que comitea antes de la
+                        // llamada, para que el espejo nunca quede con una fecha distinta de la que viajó.
+                        salida.EpocaParaSolicitar = await RefrescarFechaDelEspejoAsync(idEspejo, reloj.Ahora, ct);
+                        salida.PlanParaSolicitar = compuertas.Plan;
+                    }
                 }
             }
             else
@@ -732,24 +747,26 @@ public class ServicioDeFacturacionDeVentas(
 
     /// <summary>Consulta a ARCA si ya tiene el número. "No encontrado" es solo la respuesta explícita de comprobante
     /// inexistente; cualquier otro error de la consulta es no definitivo.</summary>
-    private async Task<Desenlace> ConsultarEnArcaAsync(
+    private async Task<(Desenlace Desenlace, TicketDeAcceso Ticket)> ConsultarEnArcaAsync(
         ContextoDeConsulta consulta, TicketDeAcceso ticket, long numero, CancellationToken ct)
     {
         ConsultaDeComprobante respuesta;
         try
         {
-            respuesta = await clienteWsfe.ConsultarAsync(ticket, consulta.CuitEmisor, consulta.Serie, numero, ct);
+            (respuesta, ticket) = await fiscal.ConsultarConReintentoDeTicketAsync(
+                consulta.Empresa, consulta.Ambiente, consulta.CuitEmisor, consulta.Serie, numero, ticket, ct);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            return new NoDefinitivo(DescribirFalla(ex));
+            return (new NoDefinitivo(DescribirFalla(ex)), ticket);
         }
 
-        return respuesta.Encontrado
+        Desenlace desenlace = respuesta.Encontrado
             ? new Definitivo(
                 new RespuestaCae(respuesta.Resultado!.Value, respuesta.Cae, respuesta.CaeVencimiento, [], []),
                 respuesta.Fecha)
             : new NoEncontrado();
+        return (desenlace, ticket);
     }
 
     /// <summary>Pide el CAE del número del espejo con la fecha que el espejo ya tiene. Devuelve un <see cref="Definitivo"/> solo
@@ -775,7 +792,8 @@ public class ServicioDeFacturacionDeVentas(
         {
             // Un error de nivel de llamada no prueba que ARCA no tenga el número (puede ser una falla interna posterior a
             // registrarlo): antes de liberarlo se le pregunta.
-            return await ConsultarEnArcaAsync(plan.Consulta, ticket, numero, ct) switch
+            var (previo, _) = await ConsultarEnArcaAsync(plan.Consulta, ticket, numero, ct);
+            return previo switch
             {
                 NoEncontrado => new Definitivo(new RespuestaCae(
                     ResultadoFiscal.Rechazado, null, null, [], [new ObservacionArca(0, ex.Message)])),

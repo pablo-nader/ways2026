@@ -486,22 +486,28 @@ en línea desde la venta son T5b y T5c.
     estado y revierte el acumulado. Si ya hay un espejo o la decisión ya no está pendiente no hace nada.
   - **Orden de locks** de las tres: `numeraciones_fiscales` (A, C y S; la cancelación no lo toma) → `comprobantes_venta` (la venta
     en A y en la cancelación; el espejo en C y S) → `facturaciones_de_venta` → `acumulados_de_facturacion` (por `id_medio_pago`
-    ascendente). Toda transición de una decisión (a `emitida`, `rechazada` o `cancelada`, o la anotación de un fallo) se hace con
-    su fila bloqueada y su estado releído bajo ese lock; en C y S ese lock se toma después de la llamada a ARCA (a lo largo de la
-    llamada solo se sostienen la serie y el espejo).
+    ascendente). Toda transición de una decisión (a `emitida`, `rechazada` o `cancelada`) se hace con su fila bloqueada y su
+    estado releído bajo ese lock; en C y S ese lock se toma después de la llamada a ARCA (a lo largo de la llamada solo se
+    sostienen la serie y el espejo). La anotación de un fallo es la excepción: un único `UPDATE` guardado por
+    `estado = 'pendiente'`, sin lock previo ni lectura previa.
 - **Un espejo pendiente siempre se resuelve**, sea cual sea el estado de su decisión. Si el espejo está `pendiente` y su decisión
-  ya no lo está (se resolvió o canceló por otro camino, o cambió mientras ARCA contestaba), igual se consulta (C) y: si ARCA lo
+  ya no lo está (en esta rebanada ningún camino de producción deja una decisión no pendiente con un espejo pendiente; la
+  resolución existe como salvaguarda y los tests la ejercen con estados fabricados, o la decisión cambió mientras ARCA
+  contestaba), igual se consulta (C) y: si ARCA lo
   tiene se adopta su CAE y, de la decisión, solo se enlaza `id_comprobante_fiscal` si no tenía enlace (ningún CHECK de la tabla lo
   prohíbe: solo `emitida` exige enlace); si ARCA no lo tiene se libera (borra ítems y fila y devuelve el número con la guarda del
   contador) sin pedir un CAE nuevo. En los dos casos el estado de la decisión y el acumulado no se tocan y se registra un error en
   el log con la decisión, su estado y el espejo. Si el pedido ya había salido y la decisión cambió mientras ARCA contestaba, el
-  resultado se aplica igual al espejo. `ProcesarDecisionAsync` no devuelve el estado de una decisión no pendiente mientras su
-  venta tenga un espejo pendiente: lo resuelve primero. Un espejo ya resuelto con una decisión que sigue pendiente es una
-  inconsistencia: `500`, sin llamar a ARCA.
+  resultado se aplica igual al espejo. `ProcesarDecisionAsync` intenta resolver ese espejo antes de devolver el estado de una
+  decisión no pendiente; si la consulta no puede correr (falta un prerrequisito), la serie está ocupada o la consulta no es
+  definitiva, devuelve ese estado con el espejo todavía pendiente. Un espejo ya resuelto con una decisión que figura pendiente
+  se vuelve a leer una vez (otra llamada pudo comitear toda la resolución entre las dos lecturas sin lock): si la decisión ya no
+  está pendiente se devuelve su estado actual sin llamar a ARCA; solo si sigue pendiente es una inconsistencia real: `500`, sin
+  llamar a ARCA.
 - **Consultar antes que las compuertas.** Para un espejo que ya existe, la consulta solo necesita lo que usa: certificado
   activo, CUIT del emisor, número fiscal del punto de venta y el tipo del propio espejo. Si ARCA ya tiene el comprobante se adopta
   aunque la condición fiscal, el cliente o los totales hayan cambiado desde entonces. Las compuertas completas se evalúan solo si
-  ARCA no lo tiene, y si fallan antes de volver a pedir se registran como siempre. Si falta algo de lo que la consulta necesita,
+  ARCA no lo tiene (después de la consulta, no antes: una excepción al evaluarlas no impide adoptar un CAE que ARCA ya tiene), y si fallan antes de volver a pedir se registran como siempre. Si falta algo de lo que la consulta necesita,
   no se consulta y se registra la compuerta que corresponda.
 - **Estados.**
 
@@ -531,7 +537,11 @@ en línea desde la venta son T5b y T5c.
   `ticket_de_acceso_invalido`; cualquier otro error, o una respuesta sin errores ni datos, se lanza como `arca_no_definitivo`: no
   se refresca la fecha, no se pide un CAE nuevo y se anota el intento y la espera. Esto también vale para el reintento de la emisión
   directa (`ServicioDeFacturacionFiscal.ReintentarAsync`): con un "no encontrado" real se comporta como antes; con otro error de la
-  consulta ahora corta con `503` y deja el comprobante pendiente, en vez de tratarlo como inexistente y pedir un CAE nuevo.
+  consulta ahora corta con `503` y deja el comprobante pendiente, en vez de tratarlo como inexistente y pedir un CAE nuevo. Ante
+  un `600` la consulta tiene el mismo tratamiento que la solicitud (`ConsultarConReintentoDeTicketAsync`): invalida el ticket
+  cacheado, obtiene uno fresco y consulta una sola vez más, y el pedido que siga en la misma llamada usa el ticket fresco; un
+  segundo `600` queda como no definitivo. Vale para `ReintentarAsync`, para el paso C del espejo y para la consulta previa a
+  liberar un número tras un `arca_rechazo`.
 - **Fecha (regla 2).** El espejo nace con la fecha de emisión (no la de la venta). Si hay que volver a pedir porque ARCA no tiene el
   número, la fecha se refresca al día de hoy en una transacción propia que comitea antes del pedido; por eso la fecha guardada
   es siempre la que viajó. Al adoptar un comprobante que ARCA ya tenía, el espejo toma la fecha que ARCA registró (`CbteFch` de
@@ -562,7 +572,8 @@ en línea desde la venta son T5b y T5c.
   el procesador por lote (T5b) es el que la va a respetar. Tampoco hay todavía quién llame a este endpoint por sí solo.
 - **Limitaciones aceptadas.** No hay timeout HTTP configurado para WSFE: una llamada colgada sostiene el lock de la serie
   mientras dure (T5b). La autorización es `OperacionDePos`, sin una política más angosta. Una lectura idempotente recalcula el QR y
-  el punto de venta desde la configuración actual. Un espejo `rechazado` que quedó por la guarda del contador detiene la
+  el punto de venta desde la configuración actual. Al volver a pedir un espejo preexistente, la letra se recalcula desde la
+  configuración actual y no desde la del momento en que se creó. Un espejo `rechazado` que quedó por la guarda del contador detiene la
   numeración con el error `10016` de ARCA hasta que alguien la reconcilie (no bloquea la serie por sí mismo) y ocupa el lugar
   del espejo de esa venta: el reintento manual de T9 lo tiene que contemplar. El orden ascendente de los locks del acumulado, el
   alcance de los borrados, las lecturas viejas y las carreras entre pasos están cubiertos por tests de integración (locks

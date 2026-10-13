@@ -334,7 +334,8 @@ public class ServicioDeFacturacionFiscal(
             }
 
             var ticket = await ObtenerTicketAsync(empresa, ambiente, ct);
-            var consulta = await clienteWsfe.ConsultarAsync(ticket, cuitEmisor, claveDeSerie, comprobante.Numero, ct);
+            var (consulta, _) = await ConsultarConReintentoDeTicketAsync(
+                empresa, ambiente, cuitEmisor, claveDeSerie, comprobante.Numero, ticket, ct);
 
             RespuestaCae respuesta;
             if (consulta.Encontrado)
@@ -401,6 +402,28 @@ public class ServicioDeFacturacionFiscal(
     }
 
     // --- El "600 ⇒ invalidar + reintentar UNA vez, el segundo es definitivo" (nota vinculante) ---
+
+    /// <summary>La consulta con el mismo tratamiento del 600 que la solicitud: ante <c>ticket_de_acceso_invalido</c> invalida el
+    /// ticket cacheado, obtiene uno fresco y consulta UNA vez más; un segundo 600 se propaga. Devuelve también el ticket con el
+    /// que respondió ARCA, para que lo siguiente que haga la misma llamada no reutilice uno invalidado.</summary>
+    internal async Task<(ConsultaDeComprobante Consulta, TicketDeAcceso Ticket)> ConsultarConReintentoDeTicketAsync(
+        Empresa empresa, AmbienteFiscal ambiente, string cuitEmisor, ClaveDeSerie serie, long numero,
+        TicketDeAcceso ticket, CancellationToken ct)
+    {
+        try
+        {
+            return (await clienteWsfe.ConsultarAsync(ticket, cuitEmisor, serie, numero, ct), ticket);
+        }
+        catch (ErrorDominio primerIntento) when (primerIntento.Codigo == "ticket_de_acceso_invalido")
+        {
+            var claveDeTicket = new ClaveDeTicket(empresa.Id, ambiente, ServicioWsfe);
+            await repositorioDeTicket.InvalidarAsync(claveDeTicket, ct);
+            var ticketFresco = await repositorioDeTicket.ObtenerOFirmarAsync(
+                claveDeTicket, token => FirmarTicketNuevoAsync(empresa, ambiente, token), ct);
+
+            return (await clienteWsfe.ConsultarAsync(ticketFresco, cuitEmisor, serie, numero, ct), ticketFresco);
+        }
+    }
 
     internal async Task<RespuestaCae> SolicitarCaeConReintentoDeTicketAsync(
         Empresa empresa, AmbienteFiscal ambiente, string cuitEmisor, int idComprobante, long numero,
