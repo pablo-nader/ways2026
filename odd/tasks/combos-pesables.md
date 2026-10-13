@@ -181,5 +181,6 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
     `tsc -b` exit 0; `npm run lint` exit 0; `vitest run` 7070/7070 (232 files); Integration 4207/4207 (full, unfiltered,
     45 m 39 s with another session sharing the Docker daemon; no environmental failure). 9 mutations killed (6 C#, 3
     TypeScript), one test rewritten because it survived (family member by amount, C# side).
+- Second merge with main `1d64bff7`: the 13 doc 10 hunks were ported to the split files (`03-articulos--combos.md`, `03-articulos--tienda-online.md`).
 
 Next step: T4.
