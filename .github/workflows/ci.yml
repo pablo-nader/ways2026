@@ -56,7 +56,8 @@ jobs:
           # Sin detección de renombres: mover un archivo de código a docs/ tiene que
           # listar también la ruta que desaparece.
           git diff --name-only --no-renames "$base" HEAD > cambiados.txt
-          if [ "$EVENTO" != "pull_request" ] || [ ! -s cambiados.txt ]             || grep -qvE "$SOLO_DOCUMENTACION" cambiados.txt; then
+          if [ "$EVENTO" != "pull_request" ] || [ ! -s cambiados.txt ] ||
+            grep -qvE "$SOLO_DOCUMENTACION" cambiados.txt; then
             echo "codigo=true" >> "$GITHUB_OUTPUT"
           else
             echo "Solo cambió documentación: se saltean las suites."
