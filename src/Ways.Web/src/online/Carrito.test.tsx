@@ -9,7 +9,7 @@ import '../publico/publico.css'
 import { claveDelCarrito } from './carrito'
 import { CarritoProvider } from './CarritoProvider'
 import { useCarrito } from './CarritoContext'
-import { articuloPublico, catalogoPublico } from './datosDePrueba'
+import { articuloPublico, catalogoPublico, itemsGuardados } from './datosDePrueba'
 import { PanelCarrito } from './PanelCarrito'
 import { Tienda } from './Tienda'
 
@@ -86,7 +86,7 @@ describe('panel del carrito con artículos', () => {
     expect(lineas[1]).toHaveTextContent('Clavos')
     expect(lineas[1]).toHaveTextContent('$ 2.000,00 por kg')
     expect(within(panel).getByText('Total').closest('p')).toHaveTextContent('$ 3.500,50')
-    expect(screen.getByRole('button', { name: 'Carrito, 2 artículos' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Carrito, 2 ítems' })).toBeInTheDocument()
   })
 
   it('cambiar la cantidad en el panel recalcula el subtotal y el total', async () => {
@@ -185,9 +185,7 @@ describe('panel del carrito con artículos', () => {
    */
   it('Escape con una cantidad tipeada y sin aplicar la aplica y cierra', async () => {
     const guardadaDelMartillo = () =>
-      (JSON.parse(localStorage.getItem(claveDelCarrito('sur.ways.app')) as string) as { idArticulo: number; cantidad: number }[]).find(
-        (l) => l.idArticulo === 1,
-      )?.cantidad
+      itemsGuardados(localStorage.getItem(claveDelCarrito('sur.ways.app'))).find((l) => l.idArticulo === 1)?.cantidad
     localStorage.setItem(
       claveDelCarrito('sur.ways.app'),
       JSON.stringify([{ idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', cantidad: 1, imagenVersion: null }]),
@@ -249,7 +247,7 @@ describe('persistencia en el navegador', () => {
     primera.unmount()
     await verTienda()
 
-    expect(screen.getByRole('button', { name: 'Carrito, 1 artículo' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Carrito, 1 ítem' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Cantidad de Martillo' })).toHaveValue('2')
   })
 
@@ -281,7 +279,7 @@ describe('CarritoProvider', () => {
     return (
       <div>
         <span data-testid={`cuenta-${etiqueta}`}>{cantidad}</span>
-        <button type="button" onClick={() => agregar({ idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', imagenVersion: null })}>
+        <button type="button" onClick={() => agregar({ tipo: 'articulo', idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', imagenVersion: null })}>
           {`Agregar en ${etiqueta}`}
         </button>
       </div>
@@ -325,8 +323,8 @@ describe('CarritoProvider', () => {
     })
 
     expect(await screen.findByTestId('cuenta-sur')).toHaveTextContent('1')
-    expect(JSON.parse(localStorage.getItem(claveDelCarrito('sur.ways.app')) as string)).toEqual([
-      { idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', imagenVersion: null, cantidad: 2 },
+    expect(itemsGuardados(localStorage.getItem(claveDelCarrito('sur.ways.app')))).toEqual([
+      { tipo: 'articulo', idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', imagenVersion: null, cantidad: 2 },
     ])
   })
 
