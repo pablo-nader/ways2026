@@ -51,8 +51,10 @@ public sealed record ResultadoDeLoteDeFacturacion(
 /// postergada <see cref="ServicioDeFacturacionDeVentas.EsperaPorCorteDeLote"/>, sin tocar sus intentos, para que la próxima llamada
 /// llegue a las demás. Excepción: si lo que lanzó es un <see cref="ErrorDominio"/> (una falla real que terminó pasado el
 /// presupuesto, como una firma de WSAA que venció) se anota como intento fallido con su código, igual que fuera del corte; el
-/// lote se corta igual. El presupuesto acota cuándo EMPIEZA el trabajo: no arranca una decisión con el presupuesto agotado (ni se
-/// la posterga ni se la anota), pero una firma de WSAA en vuelo no se interrumpe. Limitaciones: una decisión que ya no está
+/// lote se corta igual. Al vencer el presupuesto el lote no arranca ninguna decisión nueva (a la que no se intentó ni se la
+/// posterga ni se la anota) y el trabajo en vuelo contra WSFE y la base de datos se cancela y se deshace; solo una firma de WSAA
+/// en vuelo no se interrumpe. Su timeout (30 s por defecto) es más largo que el presupuesto: si termina bien pasado el
+/// presupuesto el ticket queda cacheado y la decisión se posterga un minuto sin contar un intento. Limitaciones: una decisión que ya no está
 /// pendiente (solo conserva un espejo pendiente) no se puede postergar ni se le puede anotar un intento fallido, y cortes
 /// repetidos postergan la decisión un minuto cada vez, sin espera creciente.</item>
 /// <item>Una falla del propio lote (las lecturas de cabezas y candidatas, la carga de series) se registra y se propaga: el

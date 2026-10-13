@@ -620,13 +620,16 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
   (antes se tragaba y respondía `200` con todo vacío, indistinguible de "no había nada"). Lo que las decisiones anteriores de la
   misma llamada ya comitearon (espejos, CAE) queda comiteado; la llamada siguiente lo retoma. Esos resultados NO están en ninguna
   respuesta: la llamada siguiente no los informa porque ya no están pendientes. Quien llama puede leerlos con el endpoint de una
-  decisión suelta (`/{id}/procesar`), que devuelve el estado actual de forma idempotente.
+  decisión suelta (`/{id}/procesar`), que devuelve el estado actual de forma idempotente; para eso necesita los ids de las
+  decisiones, y la respuesta fallida no los trae.
 - **Presupuesto.** 20 s por defecto (`Ways:Fiscal:PresupuestoDeLoteSegundos`, valor ausente, no positivo o NaN = 20; un valor
-  positivo menor que 1 s se sube a 1 s; tope 300 s). El presupuesto acota cuándo EMPIEZA el trabajo, no cuándo termina el pedido:
-  no se arranca otra decisión con el presupuesto agotado (la que no se intentó no se posterga ni se anota), pero una llamada en
-  vuelo no se interrumpe a mitad de una firma de WSAA, así que un pedido puede pasarse del presupuesto hasta el timeout de WSAA
-  (con los valores por defecto, hasta unos 35 s si la firma arranca sobre el final del presupuesto; 15 s si arranca al
-  principio). Una llamada colgada a WSFE termina en su timeout (8 s). El token del presupuesto es un `CancellationTokenSource`
+  positivo menor que 1 s se sube a 1 s; tope 300 s). Al vencer el presupuesto el lote no empieza ninguna decisión nueva (la que no
+  se intentó no se posterga ni se anota) y el trabajo en vuelo contra WSFE y la base de datos se cancela y se deshace; solo una
+  firma de WSAA en vuelo se deja terminar. Por eso un pedido puede pasarse del presupuesto: con los valores por defecto, del
+  orden de presupuesto más timeout de WSAA (20 s + 30 s) cuando una firma arranca sobre el final del presupuesto, más hasta unos
+  10 s para los pasos de cierre (anotar o postergar la decisión cortada y contar las pendientes, 5 s como máximo cada uno) si la
+  base está lenta; y puede seguir una segunda firma dentro de la misma decisión si ARCA rechaza el ticket. Es una aproximación,
+  no un máximo exacto. Una llamada colgada a WSFE termina en su timeout (8 s). El token del presupuesto es un `CancellationTokenSource`
   propio creado desde el `TimeProvider` inyectado (`TimeProvider.System` en producción): no usa el
   token de la solicitud, así que un cliente que corta la conexión no deja el lote a medias. Un corte detiene el lote
   (`cortadoPorPresupuesto: true`) y NO es un fallo de la decisión que se estaba procesando: el servicio solo anota un intento cuando
@@ -642,8 +645,10 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
   (`cortadoPorPresupuesto: true`). Limitaciones que quedan: una decisión que ya no está `pendiente` (solo conserva un espejo
   pendiente) no se puede postergar NI se le puede anotar un intento fallido; si su llamada a ARCA siempre agotara el
   presupuesto, seguiría siendo la primera cabeza de cada llamada. Además, cortes repetidos postergan la decisión un minuto cada
-  vez, sin espera creciente. Los timeouts (WSFE 8 s, WSAA 15 s) son menores que el presupuesto (20 s), así que una llamada colgada
-  que arranca al principio se anota como intento fallido con su espera en lugar de cortar el lote.
+  vez, sin espera creciente. El timeout de WSFE (8 s) es menor que el presupuesto (20 s), así que una llamada colgada a WSFE termina
+  dentro de él y se anota como intento fallido con su espera en lugar de cortar el lote. Una firma colgada de WSAA (30 s) sobrevive
+  al presupuesto: cuando por fin falla se anota como intento fallido (rama del error de dominio tardío), y cuando por fin termina
+  bien pasado el presupuesto el ticket queda cacheado y la decisión se posterga un minuto sin contar un intento.
 - **Respuesta.** `{ emitidas, rechazadas, canceladas, pendientesRestantes, cortadoPorPresupuesto, seriesBloqueadas[],
   resultados[] }`. `resultados` trae, en el orden en que se procesaron, `{ idFacturacion, idComprobanteVenta, fiscal }` con el
   mismo `EstadoFiscalDeVenta` de la venta (también para lo que quedó `pendiente` con su error, p. ej. `serie_ocupada`); los tres
@@ -658,9 +663,8 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
   consulta ni pide nada; si llega cuando la decisión ya se resolvió, devuelve su estado sin llamar a ARCA.
 - **Timeout de las llamadas a ARCA.** `Ways:Fiscal:TimeoutDeLlamadaSegundos` (por defecto 8; tope 120; valor ausente, no positivo
   o NaN = 8; un valor positivo menor que 1 ms se sube a 1 ms) es el `Timeout` del `HttpClient` de WSFE: vale por cada ida y vuelta.
-  WSAA tiene el suyo, `Ways:Fiscal:TimeoutDeWsaaSegundos` (por defecto 15, mismas reglas y tope), más largo que el de WSFE a
-  propósito pero menor que el presupuesto del lote (para que una firma colgada que arranca al principio venza dentro del
-  presupuesto y se anote como intento fallido): WSAA no
+  WSAA tiene el suyo, `Ways:Fiscal:TimeoutDeWsaaSegundos` (por defecto 30, mismas reglas y tope), más largo que el de WSFE y que
+  el presupuesto del lote a propósito, porque la firma no se interrumpe una vez en vuelo: WSAA no
   emite un ticket nuevo mientras hay uno vigente (`coe.alreadyAuthenticated`), así que abandonar una firma cuya respuesta se
   perdió bloquea todo el facturado de ese emisor hasta que el ticket vence. Un timeout NO es un rechazo ni una cancelación del
   llamador. `ClienteWsfe` NO reintenta un timeout, en NINGUNA operación: es de inmediato `arca_no_definitivo` (503) con UN solo pedido

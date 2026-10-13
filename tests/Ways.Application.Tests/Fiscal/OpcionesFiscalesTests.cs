@@ -2,7 +2,7 @@ using Ways.Application.Fiscal;
 
 namespace Ways.Application.Tests.Fiscal;
 
-/// <summary>Los valores por defecto del timeout de las llamadas a WSFE (8 s), de la firma de WSAA (15 s, menor que el presupuesto) y del
+/// <summary>Los valores por defecto del timeout de las llamadas a WSFE (8 s), de la firma de WSAA (30 s, más largo que el presupuesto a propósito) y del
 /// presupuesto de un lote (20 s, con piso de 1 s); que un valor no positivo o NaN vuelve al por defecto en vez de dejar al HttpClient sin timeout o con uno inválido;
 /// y que un valor absurdo (infinito, enorme, ínfimo) se acota en vez de lanzar al usarse.</summary>
 public class OpcionesFiscalesTests
@@ -13,9 +13,8 @@ public class OpcionesFiscalesTests
         var opciones = new OpcionesFiscales();
 
         Assert.Equal(TimeSpan.FromSeconds(8), opciones.TimeoutDeLlamada);
-        Assert.Equal(TimeSpan.FromSeconds(15), opciones.TimeoutDeWsaa);
+        Assert.Equal(TimeSpan.FromSeconds(30), opciones.TimeoutDeWsaa);
         Assert.Equal(TimeSpan.FromSeconds(20), opciones.PresupuestoDeLote);
-        Assert.True(opciones.TimeoutDeWsaa < opciones.PresupuestoDeLote);
     }
 
     [Fact]
@@ -44,7 +43,7 @@ public class OpcionesFiscalesTests
         };
 
         Assert.Equal(TimeSpan.FromSeconds(8), opciones.TimeoutDeLlamada);
-        Assert.Equal(TimeSpan.FromSeconds(15), opciones.TimeoutDeWsaa);
+        Assert.Equal(TimeSpan.FromSeconds(30), opciones.TimeoutDeWsaa);
         Assert.Equal(TimeSpan.FromSeconds(20), opciones.PresupuestoDeLote);
     }
 

@@ -292,9 +292,9 @@ public partial class FacturacionDeVentasEmisionTests
     }
 
     /// <summary>Las candidatas de una serie detenida se saltean sin gastar cupo, así que se leen de a páginas de 100: más de una
-    /// página de ésas seguida de una elegible tiene que llegar a la elegible, y la cantidad de lecturas (3: dos páginas con filas
-    /// y una vacía que termina) es la que implica el tamaño de página de 100. Prueba que la lectura no para en la primera
-    /// página y que el tamaño de página no crece sin que el test lo note. NO distingue el cursor <c>&gt;</c> del <c>&gt;=</c>:
+    /// página de ésas seguida de una elegible tiene que llegar a la elegible. Las 3 lecturas (dos páginas con filas y una vacía
+    /// que termina) muestran que la lectura no para en la primera página y que la página no es tan chica ni tan grande como para
+    /// que la cantidad de lecturas cambie con estas filas sembradas; NO fija el tamaño de página exacto. NO distingue el cursor <c>&gt;</c> del <c>&gt;=</c>:
     /// una fila repetida al principio de la página siguiente ya no es elegible (si se procesó, deja de estar pendiente o en
     /// espera; si está bloqueada, se saltea de nuevo), así que no cambia ningún resultado observable.</summary>
     [Fact]
@@ -1145,13 +1145,13 @@ public partial class FacturacionDeVentasEmisionTests
     }
 
     /// <summary>El timeout de cada cliente sale de la configuración: WSFE de <c>TimeoutDeLlamadaSegundos</c> (8 s por defecto) y
-    /// WSAA de <c>TimeoutDeWsaaSegundos</c> (15 s por defecto: más largo que el de WSFE y menor que el presupuesto del lote).</summary>
+    /// WSAA de <c>TimeoutDeWsaaSegundos</c> (30 s por defecto: más largo que el de WSFE y que el presupuesto del lote).</summary>
     [Fact]
     public void ElTimeoutDeLosClientesDeArcaSaleDeLaConfiguracionYWsaaTieneElSuyo()
     {
         var porDefecto = fixture.WithWebHostBuilder(_ => { }).Services.GetRequiredService<IHttpClientFactory>();
         Assert.Equal(TimeSpan.FromSeconds(8), porDefecto.CreateClient(nameof(IClienteWsfe)).Timeout);
-        Assert.Equal(TimeSpan.FromSeconds(15), porDefecto.CreateClient(nameof(IClienteWsaa)).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), porDefecto.CreateClient(nameof(IClienteWsaa)).Timeout);
 
         var configurado = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
             services.Configure<OpcionesFiscales>(o =>
