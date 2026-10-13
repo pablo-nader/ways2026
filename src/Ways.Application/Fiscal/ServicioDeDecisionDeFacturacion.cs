@@ -22,7 +22,7 @@ namespace Ways.Application.Fiscal;
 /// decisión) y la fila de decisión hacen que la segunda llamada devuelva lo ya decidido sin tocar saldos.
 ///
 /// La marca en <c>NULL</c> significa una sola cosa: la decisión está debida. Toda venta que la decisión examina queda
-/// marcada, se facture o no (no es un ticket, está anulada, la empresa no tiene ningún certificado activo, no cobró
+/// marcada, se facture o no (no es un ticket, está anulada, la empresa no tiene un certificado activo del ambiente configurado, no cobró
 /// nada); solo los espejos fiscales, que nunca se deciden, quedan fuera. Los comprobantes que nunca son un ticket y se
 /// crean por otros escritores (consolidación de remitos, recibos de cuenta corriente, emisión fiscal directa) nacen ya
 /// marcados. Las ventas anteriores a la función nacieron marcadas por la migración. Una decisión que falla deja la marca
@@ -73,19 +73,17 @@ public class ServicioDeDecisionDeFacturacion(
 
     private static readonly JsonSerializerOptions OpcionesDeAportes = new(JsonSerializerDefaults.Web);
 
-    /// <summary>La empresa tiene un certificado activo, pero ninguno del ambiente configurado: una anomalía de
-    /// configuración (p. ej. un ambiente mal escrito), no un negocio que no factura. La venta no se marca.</summary>
-    private sealed class AmbienteSinCertificadoException(int idEmpresa, AmbienteFiscal ambiente) : Exception(
-        $"La empresa {idEmpresa} tiene un certificado fiscal activo, pero ninguno del ambiente configurado '{ambiente}'.")
-    {
-        public int IdEmpresa { get; } = idEmpresa;
+    /// <summary>Cada cuánto, como máximo, se avisa en el log que una empresa tiene certificado activo solo de otro
+    /// ambiente que el configurado.</summary>
+    public static readonly TimeSpan PeriodoDeAvisoDeAmbiente = TimeSpan.FromHours(1);
 
-        public AmbienteFiscal Ambiente { get; } = ambiente;
-    }
+    // El servicio es scoped; el aviso se limita por proceso, así que el estado es estático. Se limita por empresa.
+    private static readonly Lock CandadoDeAvisos = new();
+    private static readonly Dictionary<int, DateTimeOffset> UltimoAvisoDeAmbientePorEmpresa = [];
 
     /// <summary>Lo que llama el endpoint de ventas: decide la venta recién emitida y, salvo que esa decisión haya
-    /// terminado en <see cref="EstadosFiscalesDeVenta.SinDecidir"/> (la base probablemente no está sana), sanea las
-    /// ventas debidas del mismo punto de venta. Nunca lanza.</summary>
+    /// terminado en <see cref="EstadosFiscalesDeVenta.SinDecidir"/> (sea cual sea la causa), sanea las ventas debidas
+    /// del mismo punto de venta. Nunca lanza.</summary>
     public async Task<EstadoFiscalDeVenta> DecidirYSanearAsync(int idComprobanteVenta, int idPuntoVenta)
     {
         var estado = await DecidirTrasLaVentaAsync(idComprobanteVenta);
@@ -121,7 +119,9 @@ public class ServicioDeDecisionDeFacturacion(
     /// <summary>Decide hasta <see cref="LimiteDeBarrido"/> ventas debidas del punto de venta cuya espera ya venció, las más
     /// viejas primero, cada una en su propia transacción. Es la forma en que una decisión que falló se completa sola. Nunca
     /// lanza, no recibe el token de la solicitud y se corta a los <see cref="PresupuestoDeBarrido"/>. Una venta que falla
-    /// se anota con su espera creciente y el barrido sigue con la siguiente; cada candidata se intenta una sola vez por
+    /// se anota con su espera creciente y el barrido sigue con la siguiente, salvo que la falla sea el corte del propio
+    /// presupuesto del barrido (su token cancelado): eso no es un fallo de la venta, no se anota y el barrido termina;
+    /// cada candidata se intenta una sola vez por
     /// llamada. <paramref name="idExcluida"/> es la venta que el llamador acaba de decidir, para no reintentarla en la
     /// misma llamada.</summary>
     public async Task SanearDecisionesDebidasAsync(int idPuntoVenta, int idExcluida)
@@ -157,6 +157,15 @@ public class ServicioDeDecisionDeFacturacion(
                 {
                     await DecidirAsync(idDebida, ct);
                 }
+                catch (Exception) when (ct.IsCancellationRequested)
+                {
+                    // El presupuesto del barrido cortó la decisión de una venta sana: no es un fallo de la venta, así que no
+                    // se anota. Queda debida, sin espera, y la decide una llamada posterior.
+                    log.LogDebug(
+                        "El presupuesto del barrido cortó la decisión de la venta {IdComprobanteVenta}; no se anota como fallo.",
+                        idDebida);
+                    break;
+                }
                 catch (Exception ex)
                 {
                     await RegistrarFalloAsync(idDebida, ex);
@@ -173,8 +182,8 @@ public class ServicioDeDecisionDeFacturacion(
     /// fija la espera <c>EsperaInicialTrasFallo × 2^(intentos−1)</c> con tope <see cref="EsperaMaximaTrasFallo"/>, contada
     /// desde el reloj del servicio. Nunca lanza; tiene su propio presupuesto
     /// (<see cref="PresupuestoDeRegistroDeFallo"/>) para no quedar atado a un token vencido ni a una fila bloqueada.
-    /// Registra el fallo con nivel de advertencia, y de error cuando es una anomalía de configuración o la venta ya
-    /// acumula <see cref="IntentosParaRegistrarComoError"/> intentos.</summary>
+    /// Registra el fallo con nivel de advertencia, y de error cuando la venta ya acumula
+    /// <see cref="IntentosParaRegistrarComoError"/> intentos.</summary>
     private async Task RegistrarFalloAsync(int idComprobanteVenta, Exception causa)
     {
         int? intentos = null;
@@ -211,15 +220,7 @@ public class ServicioDeDecisionDeFacturacion(
                 ex, "No se pudo anotar el intento fallido de la decisión de la venta {IdComprobanteVenta}.", idComprobanteVenta);
         }
 
-        if (causa is AmbienteSinCertificadoException anomalia)
-        {
-            log.LogError(
-                causa,
-                "La empresa {IdEmpresa} tiene un certificado fiscal activo pero ninguno del ambiente configurado {Ambiente}: " +
-                "la venta {IdComprobanteVenta} queda debida (intento {Intentos}).",
-                anomalia.IdEmpresa, anomalia.Ambiente, idComprobanteVenta, intentos);
-        }
-        else if (intentos >= IntentosParaRegistrarComoError)
+        if (intentos >= IntentosParaRegistrarComoError)
         {
             log.LogError(
                 causa,
@@ -233,6 +234,27 @@ public class ServicioDeDecisionDeFacturacion(
                 "No se pudo decidir la facturación de la venta {IdComprobanteVenta} (intento {Intentos}); queda debida.",
                 idComprobanteVenta, intentos);
         }
+    }
+
+    /// <summary>Deja un aviso en el log, a lo sumo uno por empresa y por <see cref="PeriodoDeAvisoDeAmbiente"/> en el proceso
+    /// (medido con el reloj del servicio), de que la empresa tiene certificado activo pero no del ambiente configurado.</summary>
+    private void AvisarCertificadoSoloDeOtroAmbiente(int idEmpresa, AmbienteFiscal ambiente)
+    {
+        var ahora = reloj.Ahora;
+        lock (CandadoDeAvisos)
+        {
+            if (UltimoAvisoDeAmbientePorEmpresa.TryGetValue(idEmpresa, out var ultimo) && ahora - ultimo < PeriodoDeAvisoDeAmbiente)
+            {
+                return;
+            }
+
+            UltimoAvisoDeAmbientePorEmpresa[idEmpresa] = ahora;
+        }
+
+        log.LogWarning(
+            "La empresa {IdEmpresa} tiene un certificado fiscal activo, pero ninguno del ambiente configurado {Ambiente}: " +
+            "sus ventas se marcan como no aplicables y no se facturan.",
+            idEmpresa, ambiente);
     }
 
     public async Task<EstadoFiscalDeVenta> DecidirAsync(int idComprobanteVenta, CancellationToken ct = default)
@@ -287,23 +309,24 @@ public class ServicioDeDecisionDeFacturacion(
                 return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
             }
 
-            // Una empresa sin ningún certificado activo no factura: la venta se decide como no aplicable y queda marcada,
-            // así que un certificado cargado después no la factura retroactivamente. Si TIENE certificado activo pero no
-            // del ambiente configurado, es una anomalía de configuración (ResolverAmbiente cae a homologación con
-            // cualquier texto desconocido): la venta no se marca y el intento falla, así se decide cuando se corrija.
+            // Una empresa sin certificado activo del ambiente configurado no puede facturar en este despliegue: la venta se
+            // decide como no aplicable y queda marcada, así que un certificado cargado después no la factura
+            // retroactivamente. Si además tiene uno activo de OTRO ambiente se deja un aviso (limitado) en el log, por si
+            // el ambiente está mal configurado; la venta se marca igual.
             var ambiente = opciones.Value.ResolverAmbiente();
             var ambientesActivos = await db.CertificadosFiscales.AsNoTracking()
                 .Where(c => c.IdEmpresa == venta.IdEmpresa && c.Activo)
                 .Select(c => c.Ambiente)
                 .ToListAsync(ct);
-            if (ambientesActivos.Count == 0)
-            {
-                return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
-            }
-
             if (!ambientesActivos.Contains(ambiente))
             {
-                throw new AmbienteSinCertificadoException(venta.IdEmpresa, ambiente);
+                var sinCertificado = await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
+                if (ambientesActivos.Count > 0)
+                {
+                    AvisarCertificadoSoloDeOtroAmbiente(venta.IdEmpresa, ambiente);
+                }
+
+                return sinCertificado;
             }
 
             var pagos = await LeerPagosAsync(conexion, transaccionCruda, idComprobanteVenta, ct);

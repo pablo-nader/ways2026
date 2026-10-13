@@ -351,8 +351,8 @@ así que en un tenant con muchos comprobantes conviene aplicarla en una ventana 
 decisión en `pendiente` y mueve el acumulado.
 
 - **Qué significa `NULL`.** Una sola cosa: la decisión de esa venta está debida. Toda venta que la decisión examina queda marcada
-  (`facturacion_decidida_en` con la hora del servidor), se facture o no: no es un ticket, está anulada, la empresa no tiene ningún
-  certificado activo, no cobró nada. Solo los espejos fiscales (`id_venta_origen` no nulo) quedan en `NULL` para siempre, porque nunca
+  (`facturacion_decidida_en` con la hora del servidor), se facture o no: no es un ticket, está anulada, la empresa no tiene un
+  certificado activo del ambiente configurado, no cobró nada. Solo los espejos fiscales (`id_venta_origen` no nulo) quedan en `NULL` para siempre, porque nunca
   se deciden, y por eso el índice y el barrido los excluyen. Los comprobantes que nunca son un ticket y que crean otros escritores
   nacen ya marcados, con la hora que ese escritor ya tiene: la consolidación de remitos (TXR), los recibos de cuenta corriente (RC)
   y la emisión fiscal directa (`ServicioDeFacturacionFiscal`); no compiten por los lugares del barrido. El resto de las filas nace en
@@ -380,7 +380,8 @@ decisión en `pendiente` y mueve el acumulado.
   acumulado nunca entra en el conjunto de locks del checkout, y sin el token de la solicitud: un corte del cliente no deja la decisión a
   medias. La decisión de la venta recién emitida tiene su propio presupuesto total de 3 segundos (`PresupuestoDeDecision`), que se pasa
   como token de cancelación a la estrategia de ejecución y a cada comando; si vence, o si la decisión falla, la transacción se deshace,
-  el fallo se anota, la venta responde `sin_decidir` y el barrido no corre en esa solicitud (la base probablemente no está sana). Un test
+  el fallo se anota, la venta responde `sin_decidir` y el barrido no corre en esa solicitud: se omite siempre que la decisión de la venta
+  actual termina en `sin_decidir`, sea cual sea la causa. Un test
   prueba el caso de una fila de la venta tomada por otra sesión (responde `sin_decidir` dentro del tope y la misma conexión sigue sana);
   que el token corte también los reintentos transitorios de la estrategia no tiene un test. El reenvío de una venta con número pre-asignado pasa por el mismo endpoint y vuelve a llamarla. La respuesta
   (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar), `no_corresponde` o `sin_decidir`. Una lectura por id no
@@ -392,27 +393,34 @@ decisión en `pendiente` y mueve el acumulado.
   (`LimiteDeBarrido`) y con un presupuesto total de 3 segundos, y decide cada una en su propia transacción con el mismo código que la
   venta recién emitida. Una venta que falla se anota con su espera y el barrido sigue con la siguiente; cada candidata se intenta una sola
   vez por llamada y la venta recién decidida se excluye. Una venta que falla siempre sale de los candidatos hasta que vence su espera
-  (y la espera crece hasta 4 horas), de modo que no desplaza a las posteriores. El índice `ix_comprobantes_venta_decision_debida
+  (y la espera crece hasta 4 horas), de modo que no desplaza a las posteriores. Si el propio presupuesto de 3 segundos del barrido vence
+  mientras decide una candidata, esa interrupción no es un fallo de la venta: no se anota (ni intento ni espera), el barrido termina y
+  deja una sola línea de nivel debug; la candidata sigue debida y la decide una llamada posterior. Se distingue por el token del
+  presupuesto del barrido: cualquier falla de una candidata con ese token ya cancelado cuenta como corte, y toda otra falla se anota
+  como siempre. El presupuesto de la decisión de la venta actual no se comporta así: su vencimiento sí se anota como fallo. El índice `ix_comprobantes_venta_decision_debida
   (id_punto_venta, id_comprobante_venta) WHERE facturacion_decidida_en IS NULL AND id_venta_origen IS NULL` entrega esas filas ya
   ordenadas; la condición de la espera se evalúa sobre sus filas, así que las ventas que esperan se recorren (sin transacción) hasta
   reunir los candidatos. El punto de venta pertenece a un solo tenant (RLS agrega el filtro de tenant) y la lista que el barrido pide es
   la de su caja. Registro: advertencia en los primeros fallos de una venta y error con su id y la cantidad de intentos desde el quinto
-  (`IntentosParaRegistrarComoError`); una candidata que todavía espera no se registra. Limitaciones: el presupuesto de tiempo del
-  barrido no tiene un test, solo el límite de cantidad; y una venta cuya fila sigue tomada por otra sesión no puede anotar su fallo.
+  (`IntentosParaRegistrarComoError`); una candidata que todavía espera no se registra. Limitación: una venta cuya fila sigue tomada por
+  otra sesión no puede anotar su fallo.
 - **A qué ventas aplica.** Solo un ticket emitido (clase venta, no fiscal, signo positivo, que mueve stock: el TX) se decide. Una
   devolución, una venta anulada antes de decidirse y un comprobante que no es ticket se marcan sin fila ni acumulado. Una empresa sin
-  NINGÚN certificado fiscal activo (en cualquier ambiente) también, sin registro: la venta se decide como no aplicable y se marca, de
-  modo que una venta hecha mientras la empresa no podía facturar no se factura retroactivamente cuando después carga un certificado. Una
-  empresa que SÍ tiene un certificado activo, pero no del ambiente configurado, es una anomalía de configuración
-  (`OpcionesFiscales.ResolverAmbiente` cae a homologación con cualquier texto desconocido, así que un `produccion` mal escrito la
-  provocaría): la venta no se marca, el intento cuenta como fallo (queda debida, con espera creciente) y se registra con nivel de error
-  nombrando la empresa y el ambiente configurado; corregida la configuración, la venta se decide al vencer su espera. Una venta sin pagos
+  un certificado fiscal activo del ambiente configurado (`OpcionesFiscales.ResolverAmbiente`) también, sin fila de decisión, sin
+  movimiento del acumulado, sin intento fallido anotado y sin excepción: la venta se decide como no aplicable (`no_corresponde`) y se
+  marca para siempre, tenga o no certificados activos de otro ambiente. Una venta hecha mientras la empresa no podía facturar en este
+  despliegue nunca se factura retroactivamente, ni cuando después se activa un certificado del ambiente configurado: las ventas nuevas se
+  deciden con normalidad y las anteriores quedan marcadas. Si además la empresa tiene un certificado activo de OTRO ambiente (p. ej.
+  `ResolverAmbiente` cae a homologación con cualquier texto desconocido, así que un `produccion` mal escrito lo provocaría), el servicio
+  deja un aviso en el log, con nivel de advertencia, que nombra la empresa y el ambiente configurado, para que se note un ambiente mal
+  configurado; la venta se marca igual. El aviso se limita a uno por empresa y por hora y por proceso (un mapa en memoria, con
+  candado, medido con el reloj del servicio; se avisa de nuevo al cumplirse la hora) y se escribe después de marcar la venta. Una venta sin pagos
   (o con importe neto cero) no tiene medio al que imputar: se marca y no mueve nada. Un pago con monto neto cero o negativo
   (`importe − vuelto ≤ 0`) no cuenta. Varios pagos del mismo medio suman en una sola fila del acumulado, y un medio de cuenta corriente
   acumula como cualquier otro según su `porcentaje_facturacion`: la decisión no mira el comportamiento del medio.
 - **`ForzarFactura`.** Viaja en la solicitud, se guarda en `comprobantes_venta.factura_forzada` y entra en la identidad del reenvío
   (otro valor con el mismo número pre-asignado es `409 numero_preasignado_con_otro_contenido`). En una nota de crédito se rechaza
-  (`400 forzar_factura_no_admitido`), no se ignora. Se acepta pero no tiene efecto cuando la empresa no tiene certificado activo y
+  (`400 forzar_factura_no_admitido`), no se ignora. Se acepta pero no tiene efecto cuando la empresa no tiene certificado activo del ambiente configurado y
   cuando el monto neto cobrado del ticket es cero; en ambos casos la respuesta es `no_corresponde` sin avisar que no se pudo forzar.
 - **Idempotencia.** `comprobantes_venta.facturacion_decidida_en` es la marca de "ya decidida". Existe porque una venta que no se
   factura no tiene fila en `facturaciones_de_venta` (el CHECK prohíbe `no_requerida`) y sin marca decidirla otra vez la sumaría otra
