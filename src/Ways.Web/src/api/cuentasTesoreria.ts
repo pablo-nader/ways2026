@@ -300,8 +300,12 @@ export function importeDeVistaPrevia(f: FormularioDeAjuste, saldoActual: number)
   return f.modo === 'importe' ? f.importe : diferenciaDeVistaPrevia(saldoActual, f.saldoObjetivo)
 }
 
-/** Primero lo que el usuario corrige en el campo; el rechazo local nunca reemplaza al del servidor, que valida igual. */
-export function validarAjuste(f: FormularioDeAjuste, saldoActual: number): ErrorDeAjuste | null {
+/**
+ * Solo formato y campos obligatorios. Que el saldo informado ya coincida con el de la cuenta y que el saldo resultante quepa en
+ * el rango son decisiones del servidor (409 `ajuste_sin_diferencia`, 400 `saldo_resultante_fuera_de_rango`): el saldo que ve la
+ * pantalla puede estar viejo y un rechazo local bloquearía un ajuste válido.
+ */
+export function validarAjuste(f: FormularioDeAjuste): ErrorDeAjuste | null {
   const concepto = f.concepto.trim()
   if (concepto === '') return { campo: 'concepto', mensaje: 'Ingresá el concepto del ajuste.' }
   if (concepto.length > LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE) {
@@ -316,20 +320,12 @@ export function validarAjuste(f: FormularioDeAjuste, saldoActual: number): Error
     if (Math.abs(f.saldoObjetivo) > SALDO_INICIAL_MAXIMO) {
       return { campo: 'saldoObjetivo', mensaje: COPIA_MONTO_FUERA_DE_RANGO }
     }
-    if (aCentavos(f.saldoObjetivo) === aCentavos(saldoActual)) {
-      return { campo: 'saldoObjetivo', mensaje: COPIA_SIN_DIFERENCIA }
-    }
-
     return null
   }
 
   if (f.importe === null) return { campo: 'importe', mensaje: 'Ingresá el importe a sumar o restar.' }
   if (aCentavos(f.importe) === 0) return { campo: 'importe', mensaje: 'El importe no puede ser cero.' }
   if (Math.abs(f.importe) > SALDO_INICIAL_MAXIMO) return { campo: 'importe', mensaje: COPIA_MONTO_FUERA_DE_RANGO }
-  if (Math.abs(saldoResultanteDeVistaPrevia(saldoActual, f.importe)) > SALDO_INICIAL_MAXIMO) {
-    return { campo: 'importe', mensaje: 'El saldo resultante quedaría fuera del rango permitido.' }
-  }
-
   return null
 }
 

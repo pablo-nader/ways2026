@@ -435,7 +435,8 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
     const usuario = userEvent.setup()
     montar()
     const antesCuentas = () => llamadasA('/reportes/tesoreria/cuentas?').length
-    const antesLibro = () => llamadasA('/reportes/tesoreria/cuentas/1/libro').length
+    // El modal relee el saldo con tamanio=1: no es una recarga del libro de la pantalla.
+    const antesLibro = () => llamadasA('/reportes/tesoreria/cuentas/1/libro').filter((c) => !(c[0] as string).includes('tamanio=1')).length
 
     await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
     await screen.findByLabelText('Totales del período')
@@ -487,5 +488,93 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
     expect(await screen.findByText(/ya coincide con el saldo informado/)).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Tengo el saldo real' })).toBeInTheDocument()
     expect(llamadasA('/reportes/tesoreria/cuentas?').length).toBe(cuentasAntes)
+  })
+})
+
+describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mockearConLibro() {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/reportes/tesoreria/cuentas?')) return Promise.resolve(empresaConCuentas([cuenta()]))
+      if (rutaDeLibro(ruta) === 1) return Promise.resolve(libro())
+      return Promise.reject(new Error(ruta))
+    })
+    apiPostMock.mockImplementation(() => {
+      const fecha = new Date().toISOString()
+      return Promise.resolve({ saldoActual: 1750, movimiento: fila({ id: 99, tipo: 'Ajuste', fecha, final: 1750 }) })
+    })
+  }
+
+  async function ajustar(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: 'Ajustar saldo' }))
+    await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1750')
+    await usuario.type(screen.getByLabelText('Concepto'), 'Conciliación')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+  }
+
+  function ultimoLibro(): string {
+    return decodeURIComponent(llamadasA('/reportes/tesoreria/cuentas/1/libro').at(-1)![0] as string)
+  }
+
+  it('sin editar el rango, un refresco posterior a medianoche vuelve a calcular "hasta" con el día nuevo', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 12, 23, 50))
+    mockearConLibro()
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
+    await screen.findByLabelText('Totales del período')
+    expect(ultimoLibro()).toContain('hasta=2026-10-12T23:59:59.999')
+
+    vi.setSystemTime(new Date(2026, 9, 13, 0, 10))
+    await ajustar(usuario)
+    await screen.findByText(/Ajuste registrado/)
+
+    await waitFor(() => expect(ultimoLibro()).toContain('hasta=2026-10-13T23:59:59.999'))
+    expect(ultimoLibro()).toContain('desde=2026-10-07T00:00:00')
+    expect(screen.queryByText(/quedó fuera del rango elegido/)).not.toBeInTheDocument()
+  })
+
+  it('con el rango editado se respeta y, si el ajuste cae fuera, se avisa', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 12, 23, 50))
+    mockearConLibro()
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
+    await screen.findByLabelText('Totales del período')
+    const desde = screen.getByLabelText('Desde')
+    await usuario.clear(desde)
+    await usuario.type(desde, '01/10/2026')
+    await waitFor(() => expect(ultimoLibro()).toContain('desde=2026-10-01T00:00:00'))
+
+    vi.setSystemTime(new Date(2026, 9, 13, 0, 10))
+    await ajustar(usuario)
+
+    expect(await screen.findByText(/El ajuste quedó fuera del rango elegido/)).toBeInTheDocument()
+    await waitFor(() => expect(ultimoLibro()).toContain('hasta=2026-10-12T23:59:59.999'))
+  })
+
+  it('con el rango editado que sí incluye el ajuste no hay aviso', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 12, 12, 0))
+    mockearConLibro()
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
+    await screen.findByLabelText('Totales del período')
+    const desde = screen.getByLabelText('Desde')
+    await usuario.clear(desde)
+    await usuario.type(desde, '01/10/2026')
+    await ajustar(usuario)
+
+    expect(await screen.findByText(/Ajuste registrado/)).toBeInTheDocument()
+    expect(screen.queryByText(/quedó fuera del rango elegido/)).not.toBeInTheDocument()
   })
 })

@@ -383,41 +383,39 @@ describe('ajuste manual del saldo — reglas puras', () => {
   })
 
   it('un ajuste válido en cada modo no tiene error', () => {
-    expect(validarAjuste(completo(), 100)).toBeNull()
-    expect(validarAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: 50, importe: null }), 100)).toBeNull()
+    expect(validarAjuste(completo())).toBeNull()
+    expect(validarAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: 50, importe: null }))).toBeNull()
   })
 
   it('el concepto es obligatorio y tiene tope, medido después de recortar', () => {
-    expect(validarAjuste(completo({ concepto: '   ' }), 100)).toEqual({
+    expect(validarAjuste(completo({ concepto: '   ' }))).toEqual({
       campo: 'concepto',
       mensaje: 'Ingresá el concepto del ajuste.',
     })
-    expect(validarAjuste(completo({ concepto: ` ${'a'.repeat(LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE)} ` }), 100)).toBeNull()
-    expect(validarAjuste(completo({ concepto: 'a'.repeat(LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE + 1) }), 100)?.campo).toBe('concepto')
+    expect(validarAjuste(completo({ concepto: ` ${'a'.repeat(LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE)} ` }))).toBeNull()
+    expect(validarAjuste(completo({ concepto: 'a'.repeat(LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE + 1) }))?.campo).toBe('concepto')
   })
 
-  it('el importe no puede faltar, ser cero ni llevar el saldo fuera de rango', () => {
-    expect(validarAjuste(completo({ importe: null }), 100)?.campo).toBe('importe')
-    expect(validarAjuste(completo({ importe: 0 }), 100)?.mensaje).toBe('El importe no puede ser cero.')
-    expect(validarAjuste(completo({ importe: SALDO_INICIAL_MAXIMO + 1 }), 0)?.campo).toBe('importe')
-    expect(validarAjuste(completo({ importe: 5 }), SALDO_INICIAL_MAXIMO)?.mensaje).toBe(
-      'El saldo resultante quedaría fuera del rango permitido.',
-    )
-    expect(validarAjuste(completo({ importe: -5 }), -SALDO_INICIAL_MAXIMO)?.campo).toBe('importe')
+  it('el importe no puede faltar, ser cero ni estar fuera de rango; el saldo resultante lo decide el servidor', () => {
+    expect(validarAjuste(completo({ importe: null }))?.campo).toBe('importe')
+    expect(validarAjuste(completo({ importe: 0 }))?.mensaje).toBe('El importe no puede ser cero.')
+    expect(validarAjuste(completo({ importe: SALDO_INICIAL_MAXIMO + 1 }))?.campo).toBe('importe')
+    expect(validarAjuste(completo({ importe: 5 }))).toBeNull()
   })
 
-  it('el saldo real no puede faltar, estar fuera de rango ni coincidir con el actual', () => {
+  it('el saldo real no puede faltar ni estar fuera de rango', () => {
     const modo = { modo: 'saldoObjetivo' as const, importe: null }
-    expect(validarAjuste(completo({ ...modo, saldoObjetivo: null }), 100)?.campo).toBe('saldoObjetivo')
-    expect(validarAjuste(completo({ ...modo, saldoObjetivo: SALDO_INICIAL_MAXIMO + 1 }), 100)?.campo).toBe('saldoObjetivo')
-    expect(validarAjuste(completo({ ...modo, saldoObjetivo: 100 }), 100)?.mensaje).toBe(
-      'El saldo de la cuenta ya coincide con el saldo informado: no hay nada que ajustar.',
-    )
+    expect(validarAjuste(completo({ ...modo, saldoObjetivo: null }))?.campo).toBe('saldoObjetivo')
+    expect(validarAjuste(completo({ ...modo, saldoObjetivo: SALDO_INICIAL_MAXIMO + 1 }))?.campo).toBe('saldoObjetivo')
+  })
+
+  it('un saldo real igual al que muestra la pantalla NO se rechaza localmente: el saldo cacheado puede estar viejo', () => {
+    expect(validarAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: 100, importe: null }))).toBeNull()
   })
 
   it('un campo del otro modo no cuenta: con modo importe se ignora un saldo real inválido y al revés', () => {
-    expect(validarAjuste(completo({ modo: 'importe', saldoObjetivo: SALDO_INICIAL_MAXIMO + 1 }), 100)).toBeNull()
-    expect(validarAjuste(completo({ modo: 'saldoObjetivo', importe: 0, saldoObjetivo: 5 }), 100)).toBeNull()
+    expect(validarAjuste(completo({ modo: 'importe', saldoObjetivo: SALDO_INICIAL_MAXIMO + 1 }))).toBeNull()
+    expect(validarAjuste(completo({ modo: 'saldoObjetivo', importe: 0, saldoObjetivo: 5 }))).toBeNull()
   })
 
   it('la solicitud lleva SOLO el campo del modo elegido y el concepto recortado', () => {

@@ -13,6 +13,7 @@ import {
   type ModoDeAjuste,
   type ResultadoDeAjusteDeCuenta,
 } from '../api/cuentasTesoreria'
+import { clienteDeReportes } from '../api/reportes'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { CampoImporte } from './CampoImporte'
 import { Modal } from './Modal'
@@ -39,6 +40,8 @@ type Props = {
 export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto }: Props) {
   const [formulario, setFormulario] = useState<FormularioDeAjuste>(formularioDeAjusteVacio)
   const [error, setError] = useState<ErrorDeAjuste | null>(null)
+  // El saldo que llega por props sale de un listado que pudo quedar viejo: se relee al abrir y la vista previa parte de ese.
+  const [saldoActual, setSaldoActual] = useState(cuenta.saldoActual)
   const [ajustando, setAjustando] = useState(false)
   const ajustandoRef = useRef(false)
   const vigenteRef = useRef(true)
@@ -50,6 +53,22 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
     }
   }, [])
 
+  useEffect(() => {
+    let vigente = true
+    clienteDeReportes
+      .libroDeCuenta(cuenta.id, { desde: '', hasta: '', pagina: 1, tamanio: 1 })
+      .then((libro) => {
+        if (vigente) setSaldoActual(libro.saldoActual)
+      })
+      .catch(() => {
+        // Sin lectura fresca la vista previa sigue con el saldo conocido; el servidor decide igual.
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [cuenta.id])
+
   function cambiar(cambios: Partial<FormularioDeAjuste>) {
     setFormulario((previo) => ({ ...previo, ...cambios }))
     setError(null)
@@ -58,7 +77,7 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
   async function ajustar() {
     if (ajustandoRef.current) return
 
-    const rechazo = validarAjuste(formulario, cuenta.saldoActual)
+    const rechazo = validarAjuste(formulario)
     if (rechazo) {
       setError(rechazo)
       return
@@ -85,8 +104,8 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
     }
   }
 
-  const importe = importeDeVistaPrevia(formulario, cuenta.saldoActual)
-  const saldoResultante = importe === null ? null : saldoResultanteDeVistaPrevia(cuenta.saldoActual, importe)
+  const importe = importeDeVistaPrevia(formulario, saldoActual)
+  const saldoResultante = importe === null ? null : saldoResultanteDeVistaPrevia(saldoActual, importe)
 
   const errorDe = (campo: ErrorDeAjuste['campo']) => (error?.campo === campo ? error.mensaje : null)
 
@@ -106,7 +125,7 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
       {errorDe('general') && <div className="alert alert-danger py-2 px-3 small">{errorDe('general')}</div>}
 
       <div className="small text-muted mb-3">
-        Saldo actual de la cuenta: <strong>{formatearImporte(cuenta.saldoActual, { simbolo: true })}</strong>
+        Saldo actual de la cuenta: <strong>{formatearImporte(saldoActual, { simbolo: true })}</strong>
       </div>
 
       <fieldset disabled={ajustando} className="border-0 p-0 m-0">

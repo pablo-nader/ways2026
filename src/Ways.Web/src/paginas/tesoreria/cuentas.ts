@@ -66,6 +66,22 @@ export function avisoDeMediosSinCuenta(medios: readonly MedioElectronicoSinCuent
   return `Lo cobrado con ${sujeto} no entra a ninguna cuenta.`
 }
 
+/** Día local (`YYYY-MM-DD`) de un instante ISO, el mismo que usan los filtros de fecha de la pantalla. */
+export function diaLocalDeInstante(iso: string): string {
+  const fecha = new Date(iso)
+  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
+  const dia = String(fecha.getDate()).padStart(2, '0')
+
+  return `${fecha.getFullYear()}-${mes}-${dia}`
+}
+
+/** `true` si el día local del instante no cae dentro del rango (`''` en un extremo = sin límite). */
+export function instanteFueraDelRango(iso: string, rango: { desde: string; hasta: string }): boolean {
+  const dia = diaLocalDeInstante(iso)
+
+  return (rango.desde !== '' && dia < rango.desde) || (rango.hasta !== '' && dia > rango.hasta)
+}
+
 /** Cuentas de la empresa ya cargadas: la elegida solo vale si sigue en la lista (una baja la saca de ahí). */
 export function cuentaElegidaVigente(cuentas: CuentasDeLaEmpresa | null, idElegida: number | null): number | null {
   if (cuentas === null || idElegida === null) return null

@@ -6,10 +6,11 @@ import { ErrorApi } from '../api/cliente'
 import type { ResultadoDeAjusteDeCuenta } from '../api/cuentasTesoreria'
 
 const apiPostMock = vi.fn()
+const apiGetMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
-    get: vi.fn(),
+    get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
     put: vi.fn(),
     delete: vi.fn(),
@@ -75,6 +76,8 @@ function montar() {
 
 beforeEach(() => {
   apiPostMock.mockReset()
+  apiGetMock.mockReset()
+  apiGetMock.mockResolvedValue({ saldoActual: cuenta.saldoActual })
 })
 
 describe('ModalDeAjusteDeCuenta', () => {
@@ -119,16 +122,61 @@ describe('ModalDeAjusteDeCuenta', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('un saldo real igual al actual se rechaza sin llamar al servidor', async () => {
+  it('un saldo real igual al que mostraba la lista SÍ se envía: el servidor decide con el saldo vigente', async () => {
+    apiGetMock.mockResolvedValue({ saldoActual: 1200 })
+    apiPostMock.mockResolvedValue(resultado(1000))
+    const usuario = userEvent.setup()
+    const { onAjustado } = montar()
+    await waitFor(() => expect(screen.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 1.200,00'))
+
+    await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1000')
+    await usuario.type(screen.getByLabelText('Concepto'), 'Conciliación')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    await waitFor(() => expect(onAjustado).toHaveBeenCalledTimes(1))
+    expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/7/ajustes', { concepto: 'Conciliación', saldoObjetivo: 1000 })
+  })
+
+  it('un importe que el saldo cacheado dejaría fuera de rango tampoco se rechaza localmente', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(400, 'saldo_resultante_fuera_de_rango', 'Fuera de rango'))
     const usuario = userEvent.setup()
     montar()
 
-    await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1000')
-    await usuario.type(screen.getByLabelText('Concepto'), 'Sin cambios')
+    await usuario.click(screen.getByRole('radio', { name: 'Sumar o restar un importe' }))
+    await usuario.type(screen.getByLabelText(/Importe/), '999999999999')
+    await usuario.type(screen.getByLabelText('Concepto'), 'Desborde')
     await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
-    expect(screen.getByText(/ya coincide con el saldo informado/)).toBeInTheDocument()
-    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(await screen.findByText('El saldo resultante quedaría fuera del rango permitido.')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('al abrir relee el saldo de la cuenta y la vista previa se actualiza cuando llega', async () => {
+    const fresco = diferido<{ saldoActual: number }>()
+    apiGetMock.mockReturnValue(fresco.promesa)
+    const usuario = userEvent.setup()
+    montar()
+
+    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('/reportes/tesoreria/cuentas/7/libro?'))
+    await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1250')
+    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 250,00')
+
+    await act(async () => {
+      fresco.resolver({ saldoActual: 1100 })
+    })
+
+    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 150,00')
+    expect(screen.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 1.100,00')
+  })
+
+  it('si la relectura del saldo falla la vista previa sigue con el saldo conocido', async () => {
+    apiGetMock.mockRejectedValue(new ErrorApi(500, 'x', 'falla'))
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1250')
+
+    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 250,00')
   })
 
   it('por saldo real manda SOLO saldoObjetivo y el concepto recortado, y avisa una vez al llamador', async () => {

@@ -18,6 +18,7 @@ import {
   descuentosDelRango,
   etiquetaDeTipoMovimientoCuenta,
   formatearPorcentaje,
+  instanteFueraDelRango,
   nombreDelEmpleado,
   nombreDelMedio,
 } from './cuentas'
@@ -53,7 +54,10 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   const generacionCuentasRef = useRef(0)
 
   const [idCuenta, setIdCuenta] = useState<number | null>(null)
-  const [rango, setRango] = useState(rangoUltimosSieteDias)
+  // `null` = el rango por defecto, que se recalcula en cada carga (los últimos siete días hasta hoy); una edición del usuario lo fija.
+  const [rangoElegido, setRangoElegido] = useState<{ desde: string; hasta: string } | null>(null)
+  const desdeElegido = rangoElegido?.desde ?? null
+  const hastaElegido = rangoElegido?.hasta ?? null
   const [pagina, setPagina] = useState(1)
   const [recarga, setRecarga] = useState(0)
 
@@ -120,6 +124,8 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
     setCargandoLibro(true)
     setErrorLibro('')
 
+    const rango = desdeElegido === null || hastaElegido === null ? rangoUltimosSieteDias() : { desde: desdeElegido, hasta: hastaElegido }
+
     clienteDeReportes
       .libroDeCuenta(idCuenta, { desde: rango.desde, hasta: rango.hasta, pagina, tamanio: TAMANIO_DE_PAGINA })
       .then((datos) => {
@@ -135,7 +141,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
         if (generacionLibroRef.current !== miGeneracion) return
         setCargandoLibro(false)
       })
-  }, [idCuenta, rango.desde, rango.hasta, pagina, recarga])
+  }, [idCuenta, desdeElegido, hastaElegido, pagina, recarga])
 
   function elegirCuenta(id: number) {
     if (id === idCuenta) return
@@ -147,7 +153,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   }
 
   function cambiarRango(cambios: Partial<{ desde: string; hasta: string }>) {
-    setRango((previo) => ({ ...previo, ...cambios }))
+    setRangoElegido((previo) => ({ ...(previo ?? rangoUltimosSieteDias()), ...cambios }))
     setPagina(1)
   }
 
@@ -159,7 +165,11 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   function alAjustar(resultado: ResultadoDeAjusteDeCuenta) {
     setModalAbierto(false)
     setAvisoIncierto('')
-    setConfirmacion(`Ajuste registrado. Saldo de ${cuentaElegida?.nombre ?? 'la cuenta'}: ${moneda(resultado.saldoActual)}.`)
+    const fuera = rangoElegido !== null && instanteFueraDelRango(resultado.movimiento.fecha, rangoElegido)
+    setConfirmacion(
+      `Ajuste registrado. Saldo de ${cuentaElegida?.nombre ?? 'la cuenta'}: ${moneda(resultado.saldoActual)}.` +
+        (fuera ? ' El ajuste quedó fuera del rango elegido: ampliá las fechas para verlo en el libro.' : ''),
+    )
     refrescar()
   }
 
@@ -273,7 +283,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
                   <CampoFecha
                     id="cuentas-desde"
                     className="form-control"
-                    value={rango.desde}
+                    value={rangoElegido?.desde ?? rangoUltimosSieteDias().desde}
                     onChange={(valor) => cambiarRango({ desde: valor })}
                   />
                 </div>
@@ -284,7 +294,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
                   <CampoFecha
                     id="cuentas-hasta"
                     className="form-control"
-                    value={rango.hasta}
+                    value={rangoElegido?.hasta ?? rangoUltimosSieteDias().hasta}
                     onChange={(valor) => cambiarRango({ hasta: valor })}
                   />
                 </div>
