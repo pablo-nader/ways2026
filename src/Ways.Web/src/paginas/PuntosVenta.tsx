@@ -135,7 +135,7 @@ export function PuntosVenta() {
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
   const filtroTenantVigente = useRef(SIN_FILTRO)
 
-  const cargar = useCallback(async (token: number, propagar = false) => {
+  const cargar = useCallback(async (token: number, propagar = false, conservarError = false) => {
     setCargando(true)
     try {
       const filas = await clienteDeOrganizacion.listarPuntosVenta()
@@ -150,7 +150,7 @@ export function PuntosVenta() {
       filtroTenantVigente.current = tenantReconciliado
       setFiltroTenant(tenantReconciliado)
       setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenantReconciliado), prev))
-      setError('')
+      if (!conservarError) setError('')
     } catch (e) {
       if (generacion.current !== token) return
       if (propagar) throw e
@@ -256,6 +256,9 @@ export function PuntosVenta() {
       return
     }
 
+    // Una lectura en vuelo queda invalidada por el token de esta escritura: no va a dejar datos ni a
+    // bajar `cargando`. Si la escritura falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(0)
@@ -275,7 +278,12 @@ export function PuntosVenta() {
           web: datos.web || null,
         })
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo crear el punto de venta.')
+        if (generacion.current === token) {
+          const mensaje = e instanceof ErrorApi ? e.message : 'No se pudo crear el punto de venta.'
+          setError(mensaje)
+          // Esta relectura no limpia el error al aterrizar: lo que está en pantalla es el motivo del rechazo.
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, false, true)
+        }
 
         return
       }
