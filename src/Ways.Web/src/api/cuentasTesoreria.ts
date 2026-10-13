@@ -5,7 +5,7 @@
  */
 import { api, ErrorApi } from './cliente'
 import { CODIGO_RESULTADO_INCIERTO, COPIA_RESULTADO_INCIERTO } from './bajas'
-import type { EmpresaListado } from './tipos'
+import type { EmpresaListado, MovimientoDeCuentaListado } from './tipos'
 
 /** Fila del listado. `saldoActual` y `saldoInicialEditable` los calcula el servidor. */
 export type CuentaTesoreriaListado = {
@@ -29,7 +29,16 @@ export const clienteDeCuentasTesoreria = {
   actualizar: (id: number, datos: EdicionDeCuentaTesoreria) =>
     api.put<CuentaTesoreriaListado>(`/cuentas-tesoreria/${id}`, datos),
   eliminar: (id: number) => api.delete(`/cuentas-tesoreria/${id}`),
+  ajustar: (id: number, solicitud: SolicitudDeAjusteDeCuenta) =>
+    api.post<ResultadoDeAjusteDeCuenta>(`/cuentas-tesoreria/${id}/ajustes`, solicitud),
 }
+
+/** Cuerpo del ajuste: `concepto` y EXACTAMENTE uno de `importe` (con signo) y `saldoObjetivo`. */
+export type SolicitudDeAjusteDeCuenta =
+  | { concepto: string; importe: number; saldoObjetivo?: undefined }
+  | { concepto: string; saldoObjetivo: number; importe?: undefined }
+
+export type ResultadoDeAjusteDeCuenta = { movimiento: MovimientoDeCuentaListado; saldoActual: number }
 
 /** Tope de `numeric(14,2)`, en valor absoluto. */
 export const SALDO_INICIAL_MAXIMO = 999_999_999_999.99
@@ -237,4 +246,152 @@ export function opcionesDeCuentas(
   }
 
   return opciones
+}
+
+// ---- Ajuste manual del saldo de una cuenta (solo Admin) ---------------------------------------
+
+/** Tope del concepto del ajuste, igual que el servidor (`ReglasDeAjusteDeCuentaTesoreria`). */
+export const LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE = 200
+
+/** "Tengo el saldo real": el servidor calcula la diferencia bajo el lock. "Sumar o restar": el importe va tal cual. */
+export type ModoDeAjuste = 'saldoObjetivo' | 'importe'
+
+export type FormularioDeAjuste = {
+  modo: ModoDeAjuste
+  saldoObjetivo: number | null
+  importe: number | null
+  concepto: string
+}
+
+export type CampoDeAjuste = 'concepto' | 'saldoObjetivo' | 'importe' | 'general'
+
+export type ErrorDeAjuste = { campo: CampoDeAjuste; mensaje: string }
+
+export function formularioDeAjusteVacio(): FormularioDeAjuste {
+  return { modo: 'saldoObjetivo', saldoObjetivo: null, importe: null, concepto: '' }
+}
+
+const COPIA_AJUSTE_GENERICA = 'No se pudo registrar el ajuste.'
+const COPIA_MONTO_FUERA_DE_RANGO = 'El monto debe estar entre -999.999.999.999,99 y 999.999.999.999,99, con hasta dos decimales.'
+const COPIA_SIN_DIFERENCIA = 'El saldo de la cuenta ya coincide con el saldo informado: no hay nada que ajustar.'
+
+function aCentavos(valor: number): number {
+  return Math.round(valor * 100)
+}
+
+/**
+ * Diferencia que mostraría el ajuste por saldo real: es una VISTA PREVIA, el servidor la recalcula contra el saldo
+ * que tenga la cuenta al escribir. `null` si todavía no hay un saldo informado. En centavos enteros para no arrastrar
+ * el error binario del punto flotante (1000,10 − 999,90 no debe dar 0,2000000000000455).
+ */
+export function diferenciaDeVistaPrevia(saldoActual: number, saldoObjetivo: number | null): number | null {
+  if (saldoObjetivo === null) return null
+
+  return (aCentavos(saldoObjetivo) - aCentavos(saldoActual)) / 100
+}
+
+/** Saldo que quedaría tras sumar `importe` (con signo) al actual, en centavos enteros. Vista previa, no el valor del servidor. */
+export function saldoResultanteDeVistaPrevia(saldoActual: number, importe: number): number {
+  return (aCentavos(saldoActual) + aCentavos(importe)) / 100
+}
+
+/** Importe con signo que el ajuste escribiría según el modo, o `null` mientras el campo no es válido. */
+export function importeDeVistaPrevia(f: FormularioDeAjuste, saldoActual: number): number | null {
+  return f.modo === 'importe' ? f.importe : diferenciaDeVistaPrevia(saldoActual, f.saldoObjetivo)
+}
+
+/**
+ * Solo formato y campos obligatorios. Que el saldo informado ya coincida con el de la cuenta y que el saldo resultante quepa en
+ * el rango son decisiones del servidor (409 `ajuste_sin_diferencia`, 400 `saldo_resultante_fuera_de_rango`): el saldo que ve la
+ * pantalla puede estar viejo y un rechazo local bloquearía un ajuste válido.
+ */
+export function validarAjuste(f: FormularioDeAjuste): ErrorDeAjuste | null {
+  const concepto = f.concepto.trim()
+  if (concepto === '') return { campo: 'concepto', mensaje: 'Ingresá el concepto del ajuste.' }
+  if (concepto.length > LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE) {
+    return {
+      campo: 'concepto',
+      mensaje: `El concepto no puede superar los ${LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE} caracteres.`,
+    }
+  }
+
+  if (f.modo === 'saldoObjetivo') {
+    if (f.saldoObjetivo === null) return { campo: 'saldoObjetivo', mensaje: 'Ingresá el saldo real de la plataforma.' }
+    if (Math.abs(f.saldoObjetivo) > SALDO_INICIAL_MAXIMO) {
+      return { campo: 'saldoObjetivo', mensaje: COPIA_MONTO_FUERA_DE_RANGO }
+    }
+    return null
+  }
+
+  if (f.importe === null) return { campo: 'importe', mensaje: 'Ingresá el importe a sumar o restar.' }
+  if (aCentavos(f.importe) === 0) return { campo: 'importe', mensaje: 'El importe no puede ser cero.' }
+  if (Math.abs(f.importe) > SALDO_INICIAL_MAXIMO) return { campo: 'importe', mensaje: COPIA_MONTO_FUERA_DE_RANGO }
+  return null
+}
+
+/** Cuerpo del ajuste: viaja SOLO el campo del modo elegido, nunca los dos. Exige un formulario ya validado. */
+export function aSolicitudDeAjuste(f: FormularioDeAjuste): SolicitudDeAjusteDeCuenta {
+  const concepto = f.concepto.trim()
+
+  if (f.modo === 'importe') {
+    if (f.importe === null) throw new Error('El importe es obligatorio.')
+    return { concepto, importe: f.importe }
+  }
+
+  if (f.saldoObjetivo === null) throw new Error('El saldo objetivo es obligatorio.')
+  return { concepto, saldoObjetivo: f.saldoObjetivo }
+}
+
+const ERROR_DE_AJUSTE_POR_CODIGO: ReadonlyMap<string, ErrorDeAjuste> = new Map<string, ErrorDeAjuste>([
+  ['concepto_requerido', { campo: 'concepto', mensaje: 'Ingresá el concepto del ajuste.' }],
+  [
+    'concepto_muy_largo',
+    {
+      campo: 'concepto',
+      mensaje: `El concepto no puede superar los ${LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE} caracteres.`,
+    },
+  ],
+  ['importe_invalido', { campo: 'importe', mensaje: `El importe no puede ser cero. ${COPIA_MONTO_FUERA_DE_RANGO}` }],
+  ['saldo_objetivo_invalido', { campo: 'saldoObjetivo', mensaje: COPIA_MONTO_FUERA_DE_RANGO }],
+  ['ajuste_sin_diferencia', { campo: 'saldoObjetivo', mensaje: COPIA_SIN_DIFERENCIA }],
+  [
+    'saldo_resultante_fuera_de_rango',
+    { campo: 'general', mensaje: 'El saldo resultante quedaría fuera del rango permitido.' },
+  ],
+  [
+    'importe_o_saldo_objetivo_requerido',
+    { campo: 'general', mensaje: 'Ingresá el saldo real o el importe a sumar o restar.' },
+  ],
+  [
+    'importe_y_saldo_objetivo_excluyentes',
+    { campo: 'general', mensaje: 'Elegí un solo modo: el saldo real o el importe.' },
+  ],
+])
+
+/** `true` cuando no se sabe si el ajuste se escribió (red cortada o cualquier 5xx): el llamador no debe dejar reintentar a ciegas. */
+export function esResultadoIncierto(e: unknown): boolean {
+  return !(e instanceof ErrorApi) || e.estado >= 500
+}
+
+/** El rechazo de un ajuste, ubicado en el campo que corresponde. Se elige por `codigo`, nunca por `mensaje`. */
+export function errorAlAjustar(e: unknown): ErrorDeAjuste {
+  if (!(e instanceof ErrorApi)) return { campo: 'general', mensaje: `${COPIA_AJUSTE_GENERICA} ${COPIA_RESULTADO_INCIERTO}` }
+
+  const propio = ERROR_DE_AJUSTE_POR_CODIGO.get(e.codigo)
+  if (propio) return propio
+
+  if (e.estado === 404) return { campo: 'general', mensaje: 'La cuenta ya no existe. Actualizá la pantalla.' }
+  if (e.estado === 403) return { campo: 'general', mensaje: 'Solo un administrador puede ajustar el saldo de una cuenta.' }
+
+  if (e.estado >= 500) {
+    const delServidor = e.message.trim()
+    const esCommitAmbiguo = e.codigo === CODIGO_RESULTADO_INCIERTO && delServidor.length > 0
+
+    return {
+      campo: 'general',
+      mensaje: esCommitAmbiguo ? delServidor : `${COPIA_AJUSTE_GENERICA} ${COPIA_RESULTADO_INCIERTO}`,
+    }
+  }
+
+  return { campo: 'general', mensaje: e.message.trim() || COPIA_AJUSTE_GENERICA }
 }

@@ -759,6 +759,82 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
     }
 
     [Fact]
+    public async Task UnCierreQueEsperaElLockNoFechaSusFilasAntesDelAjusteQueComiteaPrimeroYElLibroPorRangoCuadra()
+    {
+        var ctx = await PrepararAsync(nameof(UnCierreQueEsperaElLockNoFechaSusFilasAntesDelAjusteQueComiteaPrimeroYElLibroPorRangoCuadra));
+        using var _ = ctx.Admin;
+        var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
+        var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 10m);
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarPagoAsync(ctx, turno, medio, 100m);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var futuro = ahora.AddHours(1);
+        await InsertarFilaCrudaAsync(ctx, cuenta, ahora.AddHours(-2), "cobro", 0m, 50m, 0m, 50m, null);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var transaccion = await conexion.BeginTransactionAsync();
+        await using (var bloquear = new NpgsqlCommand(
+            $"SELECT 1 FROM cuentas_tesoreria WHERE id_cuenta_tesoreria = {cuenta} FOR NO KEY UPDATE", conexion, transaccion))
+        {
+            await bloquear.ExecuteScalarAsync();
+        }
+
+        await InsertarFilaCrudaAsync(ctx, cuenta, futuro, "ajuste", 50m, 5m, 0m, 55m, (conexion, transaccion));
+
+        var cierre = CerrarAsync(ctx, turno, "retiro");
+        await EsperarUnaSesionBloqueadaAsync("FOR NO KEY UPDATE");
+        await transaccion.CommitAsync();
+        var respuesta = await cierre;
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
+
+        var filas = await LibroAsync(ctx, cuenta);
+        Assert.Equal(4, filas.Count);
+        Assert.Equal(filas.Select(f => f.Fecha).Order().ToList(), filas.Select(f => f.Fecha).ToList());
+        Assert.All(filas.Skip(2), f => Assert.Equal(filas[1].Fecha, f.Fecha));
+        for (var i = 1; i < filas.Count; i++)
+        {
+            Assert.Equal(filas[i - 1].Final, filas[i].Inicio);
+        }
+
+        var desde = Uri.EscapeDataString(ahora.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture));
+        var libro = await ctx.Admin.GetFromJsonAsync<LibroDeCuenta>(
+            $"/api/reportes/tesoreria/cuentas/{cuenta}/libro?desde={desde}", OpcionesJson);
+        Assert.Equal(3, libro!.Items.Count);
+        Assert.Equal(50m, libro.SaldoDeApertura);
+        Assert.Equal(libro.SaldoDeApertura + libro.Totales.Neto, libro.SaldoAlCierre);
+        Assert.Equal(filas[^1].Final, libro.SaldoAlCierre);
+        Assert.Equal(libro.Items[0].Final - libro.Items[0].Ingreso + libro.Items[0].Egreso, libro.SaldoDeApertura);
+    }
+
+    private async Task InsertarFilaCrudaAsync(
+        Contexto ctx, int idCuenta, DateTimeOffset fecha, string tipo, decimal inicio, decimal ingreso, decimal egreso,
+        decimal final, (NpgsqlConnection Conexion, NpgsqlTransaction Transaccion)? enTransaccion)
+    {
+        var propia = enTransaccion is null ? await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant) : null;
+        try
+        {
+            await using var comando = new NpgsqlCommand(
+                "INSERT INTO movimientos_cuenta (id_tenant, id_cuenta_tesoreria, fecha, tipo, concepto, inicio, ingreso, egreso, " +
+                "final, id_empleado) VALUES ($1, $2, $3, $4::tipo_movimiento_cuenta, 'previo', $5, $6, $7, $8, $9)",
+                enTransaccion?.Conexion ?? propia, enTransaccion?.Transaccion);
+            foreach (var valor in new object[] { ctx.IdTenant, idCuenta, fecha, tipo, inicio, ingreso, egreso, final, ctx.IdEmpleado })
+            {
+                comando.Parameters.Add(new NpgsqlParameter { Value = valor });
+            }
+
+            await comando.ExecuteNonQueryAsync();
+        }
+        finally
+        {
+            if (propia is not null)
+            {
+                await propia.DisposeAsync();
+            }
+        }
+    }
+
+    [Fact]
     public async Task ElCierreEsperaLaEdicionDeUnMedioEnCursoYSnapshotteaSusPorcentajesYaComiteados()
     {
         var ctx = await PrepararAsync(nameof(ElCierreEsperaLaEdicionDeUnMedioEnCursoYSnapshotteaSusPorcentajesYaComiteados));

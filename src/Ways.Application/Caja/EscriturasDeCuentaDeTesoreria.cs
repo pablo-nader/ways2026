@@ -24,6 +24,15 @@ namespace Ways.Application.Caja;
 /// Que el medio sea electrónico no se vuelve a chequear: <c>ck_medios_pago_cuenta_solo_electronico</c> impide que un
 /// medio de otro comportamiento tenga cuenta, así que "tiene cuenta" ya implica "es electrónico".
 ///
+/// Fechas monótonas: la <c>fecha</c> de toda fila que se agrega a una cuenta, de este escritor o del ajuste manual, es
+/// <c>max(hora propia, fecha del último movimiento de la cuenta)</c> (<see cref="FechaMonotona"/>), leída junto con el
+/// <c>final</c> bajo el lock. Cada escritor fija su hora antes de esperar ese lock, así que sin esto un cierre podía comitear un id
+/// mayor con una fecha anterior. Con la regla, para cada cuenta el orden por fecha (con empates) es el orden por id, y el libro por
+/// rango puede definir su saldo de apertura como el último movimiento anterior al rango. Las filas de un cierre para una misma
+/// cuenta comparten la fecha resultante. La fila de la tesorería de efectivo conserva la hora del cierre. Consecuencia: si el último
+/// movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), toda fila posterior de esa cuenta lleva esa
+/// fecha hasta que la hora real la alcance; se cura sola y no se detecta (la pantalla avisa si el ajuste cae fuera del rango mostrado).
+///
 /// Lo que el libro todavía NO refleja: (a) una devolución por nota de crédito de una venta cobrada con un medio digital
 /// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
 /// un ajuste manual; (b) un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
@@ -37,6 +46,9 @@ public static class EscriturasDeCuentaDeTesoreria
         int IdMedioPago, string Nombre, int IdCuenta, decimal Bruto, PorcentajesDeCobro Porcentajes);
 
     private sealed record CuentaBloqueada(decimal SaldoInicial);
+
+    /// <summary>Saldo vigente de la cuenta y fecha de su último movimiento (<c>null</c> sin movimientos).</summary>
+    public sealed record ColaDeCuenta(decimal Saldo, DateTimeOffset? Fecha);
 
     /// <summary>Sin cuenta (o con una cuenta dada de baja o de otra empresa que la del turno) un medio electrónico no escribe nada y no
     /// frena el cierre. Un bruto cero no genera filas. Una cuenta inactiva igual recibe movimientos: desactivarla solo
@@ -64,15 +76,12 @@ public static class EscriturasDeCuentaDeTesoreria
             conexion, transaccion, idTenant, idEmpresa, medios.Select(m => m.IdCuenta).Distinct().Order().ToList(), ct);
 
         var saldos = new Dictionary<int, decimal>();
+        var fechas = new Dictionary<int, DateTimeOffset>();
         foreach (var (idCuenta, cuenta) in cuentas.OrderBy(c => c.Key))
         {
-            var ultimoFinal = await db.MovimientosCuenta
-                .Where(m => m.IdCuentaTesoreria == idCuenta && m.IdTenant == idTenant)
-                .OrderByDescending(m => m.Id)
-                .Select(m => (decimal?)m.Final)
-                .FirstOrDefaultAsync(ct);
-
-            saldos[idCuenta] = ultimoFinal ?? cuenta.SaldoInicial;
+            var cola = await LeerColaAsync(db, idTenant, idCuenta, cuenta.SaldoInicial, ct);
+            saldos[idCuenta] = cola.Saldo;
+            fechas[idCuenta] = FechaMonotona(momento, cola.Fecha);
         }
 
         foreach (var medio in medios.Where(m => saldos.ContainsKey(m.IdCuenta)))
@@ -87,7 +96,7 @@ public static class EscriturasDeCuentaDeTesoreria
                 {
                     IdTenant = idTenant,
                     IdCuentaTesoreria = medio.IdCuenta,
-                    Fecha = momento,
+                    Fecha = fechas[medio.IdCuenta],
                     Tipo = componente.Tipo,
                     IdTurnoCaja = idTurnoCaja,
                     IdMedioPago = medio.IdMedioPago,
@@ -105,6 +114,40 @@ public static class EscriturasDeCuentaDeTesoreria
 
         await db.SaveChangesAsync(ct);
     }
+
+    /// <summary>Bloquea una sola cuenta viva del tenant con el mismo <c>FOR NO KEY UPDATE</c> que el cierre y devuelve su saldo
+    /// vigente: el <c>final</c> del último movimiento, leído después del lock, o <c>saldo_inicial</c> si no tiene. <c>null</c>
+    /// si la cuenta no existe, está dada de baja o es de otro tenant. La empresa no se filtra: un ajuste manual no pertenece a
+    /// un turno. Exige una transacción abierta, porque el lock se libera al terminar el statement.</summary>
+    public static async Task<ColaDeCuenta?> BloquearYLeerColaAsync(
+        IWaysDbContext db, DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCuenta,
+        CancellationToken ct)
+    {
+        var cuentas = await LeerYBloquearCuentasAsync(conexion, transaccion, idTenant, idEmpresa: null, [idCuenta], ct);
+
+        return cuentas.TryGetValue(idCuenta, out var cuenta)
+            ? await LeerColaAsync(db, idTenant, idCuenta, cuenta.SaldoInicial, ct)
+            : null;
+    }
+
+    private static async Task<ColaDeCuenta> LeerColaAsync(
+        IWaysDbContext db, int idTenant, int idCuenta, decimal saldoInicial, CancellationToken ct)
+    {
+        var ultimo = await db.MovimientosCuenta
+            .Where(m => m.IdCuentaTesoreria == idCuenta && m.IdTenant == idTenant)
+            .OrderByDescending(m => m.Id)
+            .Select(m => new { m.Final, m.Fecha })
+            .FirstOrDefaultAsync(ct);
+
+        return ultimo is null ? new ColaDeCuenta(saldoInicial, null) : new ColaDeCuenta(ultimo.Final, ultimo.Fecha);
+    }
+
+    /// <summary>Fecha con la que una fila se agrega a la cadena de una cuenta: nunca anterior a la del último movimiento. Cada
+    /// escritor fija su hora ANTES de esperar el lock de la cuenta, así que un cierre que esperó puede traer una hora más vieja que
+    /// la de un ajuste ya comiteado; subirla a la de la cola mantiene el orden por fecha igual al orden por id. Con una cola fechada en el
+    /// futuro, todas las filas siguientes llevan esa fecha hasta que la hora real la pase.</summary>
+    public static DateTimeOffset FechaMonotona(DateTimeOffset candidata, DateTimeOffset? fechaDeLaCola) =>
+        fechaDeLaCola is { } cola && cola > candidata ? cola : candidata;
 
     private static string Concepto(ComponenteDeMovimientoDeCuenta componente, string medio, int idTurnoCaja)
     {
@@ -153,18 +196,23 @@ public static class EscriturasDeCuentaDeTesoreria
     }
 
     private static async Task<Dictionary<int, CuentaBloqueada>> LeerYBloquearCuentasAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idEmpresa, List<int> idsDeCuenta,
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int? idEmpresa, List<int> idsDeCuenta,
         CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "SELECT id_cuenta_tesoreria, saldo_inicial FROM cuentas_tesoreria " +
-            "WHERE id_tenant = $1 AND id_empresa = $2 AND id_cuenta_tesoreria = ANY($3) AND deleted_at IS NULL " +
+            (idEmpresa is null
+                ? "WHERE id_tenant = $1 AND id_cuenta_tesoreria = ANY($2) AND deleted_at IS NULL "
+                : "WHERE id_tenant = $1 AND id_cuenta_tesoreria = ANY($2) AND deleted_at IS NULL AND id_empresa = $3 ") +
             "ORDER BY id_cuenta_tesoreria FOR NO KEY UPDATE";
         ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idEmpresa);
         ParametrosDeComando.Agregar(comando, idsDeCuenta.ToArray());
+        if (idEmpresa is { } empresa)
+        {
+            ParametrosDeComando.Agregar(comando, empresa);
+        }
 
         var cuentas = new Dictionary<int, CuentaBloqueada>();
         await using var lector = await comando.ExecuteReaderAsync(ct);

@@ -1885,6 +1885,84 @@ export type PaginaDeMovimientosTesoreria = {
   tamanio: number
 }
 
+// --- Cuentas de tesorería (lectura) — espejo de `Ways.Application.Caja.ContratosDeCuentasTesoreria`.
+
+/** Espejo del enum `TipoMovimientoCuenta` (Ways.Domain.Caja) — viaja como texto PascalCase. */
+export type TipoMovimientoCuenta =
+  | 'Cobro'
+  | 'Comision'
+  | 'RetencionIibb'
+  | 'RetencionIva'
+  | 'RetencionGanancias'
+  | 'Ajuste'
+  | 'Transferencia'
+  | 'Deposito'
+  | 'Retiro'
+
+/** Cuenta de `GET /api/reportes/tesoreria/cuentas`. `fechaUltimoMovimiento` es `null` sin movimientos. */
+export type CuentaConSaldo = {
+  id: number
+  nombre: string
+  activo: boolean
+  saldoInicial: number
+  saldoActual: number
+  fechaUltimoMovimiento: string | null
+}
+
+/** Medio electrónico y activo cuyo cobro no entra a ninguna cuenta de la empresa. */
+export type MedioElectronicoSinCuenta = { id: number; nombre: string }
+
+export type CuentasDeLaEmpresa = {
+  idEmpresa: number
+  cuentas: CuentaConSaldo[]
+  mediosSinCuenta: MedioElectronicoSinCuenta[]
+}
+
+/** Fila del libro de una cuenta. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
+ * usuario dados de baja: el id distingue los dos casos. */
+export type MovimientoDeCuentaListado = {
+  id: number
+  fecha: string
+  tipo: TipoMovimientoCuenta
+  concepto: string
+  ingreso: number
+  egreso: number
+  final: number
+  idTurnoCaja: number | null
+  idMedioPago: number | null
+  nombreMedioPago: string | null
+  idEmpleado: number
+  nombreEmpleado: string | null
+  baseBruta: number | null
+  porcentajeAplicado: number | null
+}
+
+/** Totales de TODO el rango (no de la página). Los descuentos son positivos cuando restan. */
+export type TotalesDeCuentaEnElRango = {
+  cobrado: number
+  comision: number
+  retencionIibb: number
+  retencionIva: number
+  retencionGanancias: number
+  ajustes: number
+  otros: number
+  neto: number
+}
+
+export type LibroDeCuenta = {
+  idCuenta: number
+  nombre: string
+  activo: boolean
+  saldoActual: number
+  saldoDeApertura: number
+  saldoAlCierre: number
+  totales: TotalesDeCuentaEnElRango
+  items: MovimientoDeCuentaListado[]
+  total: number
+  pagina: number
+  tamanio: number
+}
+
 // --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de
 // `Ways.Application.Reportes.Contratos`. Sin fecha/zona horaria: el stock es estado ACTUAL, no
 // tiene dimensión temporal (a diferencia del resto de los reportes de esta etapa).

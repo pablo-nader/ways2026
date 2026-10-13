@@ -2532,8 +2532,8 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 
 > **Estado (cuentas de tesorería, esquema):** la tesorería de efectivo (`movimientos_tesoreria`,
 > una cadena por empresa) y las cuentas digitales (`movimientos_cuenta`, una cadena por cuenta) son
-> libros separados: cada uno con su propia cadena y su propio candado. El único escritor hoy es el cierre de turno
-> (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
+> libros separados: cada uno con su propia cadena y su propio candado. Hay dos escritores: el cierre de turno y el ajuste manual
+> de saldo (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
 >
 > `cuentas_tesoreria`: clave alterna `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant` (destino de
 > las FK compuestas), FK compuesta `fk_cuentas_tesoreria_empresa` a `empresas` (RESTRICT), único
@@ -2565,7 +2565,9 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
 > se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
 >
-> **Quién escribe el libro (cierre de turno).** `EscriturasDeCuentaDeTesoreria`, dentro de la transacción compartida por
+> **Quién escribe el libro.** Dos escritores: el cierre de turno y el ajuste manual (más abajo).
+>
+> **Cierre de turno.** `EscriturasDeCuentaDeTesoreria`, dentro de la transacción compartida por
 > los dos modos de cierre (`InsertarArqueosYTesoreriaAsync`), después de la fila de tesorería de efectivo. Por cada medio
 > con pagos distintos de cero en el turno y con cuenta, el bruto es el total de pagos del medio en el turno (el mismo número
 > del resumen de cierre) y `CalculadorDeMovimientosDeCuenta` (puro) lo descompone en filas, en este orden: `cobro` por el
@@ -2582,10 +2584,31 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > (`ck_pagos_comprobante_importe_no_negativo`) y `ValidadorDePagos` rechaza los pagos en una nota de crédito, así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
 > ejerce.
 >
+> **Ajuste manual (`POST /api/cuentas-tesoreria/{id}/ajustes`, solo Admin).** `ServicioDeAjusteDeCuentaDeTesoreria` escribe UNA fila
+> `tipo = 'ajuste'` para conciliar la cuenta con lo que informa la plataforma, sin turno, sin medio, con `base_bruta` y
+> `porcentaje_aplicado` nulos, `id_empleado` = quien ajusta y `fecha` = ahora. El cuerpo lleva `concepto` (obligatorio, hasta 200
+> caracteres) y EXACTAMENTE uno de `importe` (con signo, distinto de cero, hasta 2 decimales: positivo es `ingreso`, negativo es
+> `egreso`) y `saldoObjetivo` (el saldo real de la plataforma: el servidor calcula la diferencia contra el saldo vigente BAJO el
+> lock, no contra el que la pantalla mostraba). Una cuenta inactiva se puede ajustar; una dada de baja o ajena da 404 antes de
+> validar el cuerpo. Códigos: 400 `concepto_requerido`, `concepto_muy_largo`, `importe_o_saldo_objetivo_requerido`,
+> `importe_y_saldo_objetivo_excluyentes`, `importe_invalido`, `saldo_objetivo_invalido`, `saldo_resultante_fuera_de_rango` (el
+> `final` no cabe en `numeric(14,2)`); 409 `ajuste_sin_diferencia` (el saldo objetivo ya es el saldo vigente: no se escribe nada).
+> Como el ajuste manual de cuenta corriente, no lleva clave de idempotencia ni fila de auditoría: un reenvío del mismo importe
+> escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
+> re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
+>
+> **Lectura (`GET /api/reportes/tesoreria/cuentas?idEmpresa=` y `.../cuentas/{id}/libro`, Supervisor y Admin).**
+> `ServicioDeLibroDeCuentas`. Las cuentas vivas de la empresa con su saldo (`final` del último movimiento por id, o
+> `saldo_inicial`) y la fecha de ese movimiento, más el aviso de los medios electrónicos activos sin cuenta utilizable (sin cuenta,
+> con una dada de baja o con una de otra empresa: la misma regla con la que el cierre descarta una cuenta). El libro de una cuenta
+> se ordena por id y nunca por fecha, usa el rango inclusivo del libro de efectivo y trae el saldo de apertura (el `final` del
+> último movimiento por id con fecha anterior al rango, o el saldo inicial) y los totales por tipo de TODO el rango. Un medio o un
+> usuario dado de baja deja su nombre en `null` y conserva el id. No hay exportación.
+>
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
-> ajuste manual. (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
-> cuenta. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
+> ajuste manual (ver "Ajuste manual"). (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+> cuenta; también se corrige con un ajuste manual. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
 > `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
 > turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
 > `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
@@ -2599,6 +2622,13 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > UPDATE guardado por estado del turno (409 `turno_ya_cerrado`); si una fila de cierre repetida llegara a la base,
 > `ux_movimientos_cuenta_cierre` da 23505 y `ManejadorDeErrores` lo traduce al mismo 409 (supone que solo el cierre escribe filas cubiertas por ese índice). Recalcular el arqueo de un turno
 > cerrado (edición de gastos) no toca `movimientos_cuenta`.
+>
+> **Lock del ajuste manual.** Toma solo la fila de la cuenta con el MISMO `FOR NO KEY UPDATE` y la misma lectura de cola que el cierre
+> (`EscriturasDeCuentaDeTesoreria.BloquearYLeerSaldoAsync`, sin filtrar por empresa porque un ajuste no pertenece a un turno), de modo
+> que su fila y las del cierre se serializan en una sola cadena; lee la cola DESPUÉS del lock, sin reintento, y el saldo objetivo se
+> resuelve contra esa cola. No toma el lock de la empresa ni los de los medios, así que no puede cerrar un ciclo con el cierre.
+>
+> **Fechas monótonas por cuenta.** Cada escritor fija su hora ANTES de esperar el lock de la cuenta (el cierre la fija al empezar), así que un cierre que espera podía comitear un id mayor con una fecha anterior a la de un ajuste ya comiteado. Por eso, bajo el lock, toda fila que se agrega a una cuenta (componentes del cierre y ajuste) toma `max(hora propia, fecha del último movimiento de la cuenta)`, leída junto con el `final` de la cola (`EscriturasDeCuentaDeTesoreria.FechaMonotona`); las filas de un cierre para una misma cuenta comparten esa fecha. La fila de la tesorería de efectivo conserva la hora del cierre. Con eso, para cada cuenta el orden por fecha (con empates) es el orden por id, y por eso vale que el saldo de apertura de un rango (el `final` del último movimiento anterior a `desde`) más el neto del rango es el saldo al cierre. Consecuencia: si el último movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), TODA fila posterior de esa cuenta lleva esa fecha hasta que la hora real la alcance; se cura sola, no se detecta, y la pantalla avisa cuando el ajuste recién registrado cae fuera del rango que muestra. Las filas anteriores a esta regla no se reescriben: un rango que las cruce podría seguir sin cuadrar.
 >
 > **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
 > debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
@@ -2616,8 +2646,8 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 >   `ServicioDeMediosPago` al asignarla o al cambiar la empresa del medio. Si el tenant suma una empresa
 >   después, un medio de todo el tenant que ya tenía cuenta la conserva: la regla se revisa al escribir, no hay trigger.
 > - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta:
->   el escritor del cierre lo cumple (descarta una cuenta de otra empresa y lee la cuenta del medio bajo lock); un
->   escritor futuro (ajustes, transferencias) deberá exigirlo por su cuenta.
+>   el escritor del cierre lo cumple (descarta una cuenta de otra empresa y lee la cuenta del medio bajo lock); el ajuste
+>   manual no escribe turno ni medio; un escritor futuro (transferencias) deberá exigirlo por su cuenta.
 > - La baja lógica de una cuenta solo se permite sin referencias (medios o movimientos): la baja lógica
 >   esquiva RESTRICT.
 > - Cambiar `comportamiento` de un medio con cuenta o porcentajes distintos de cero a algo que no es

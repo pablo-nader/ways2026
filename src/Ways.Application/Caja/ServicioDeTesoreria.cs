@@ -62,7 +62,7 @@ public class ServicioDeTesoreria(IWaysDbContext db)
 
         var paginaQuery = query
             .OrderBy(m => m.Id)
-            .Skip((pagina - 1) * tamanio)
+            .Skip((int)Math.Min((long)(pagina - 1) * tamanio, int.MaxValue))
             .Take(tamanio);
 
         var items = await Proyectar(paginaQuery).ToListAsync(ct);

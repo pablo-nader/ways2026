@@ -43,6 +43,18 @@ public static class CuentasTesoreriaEndpoints
         })
         .WithSummary("Baja lógica de la cuenta, solo si ningún medio de pago ni movimiento la referencia.");
 
+        // Solo Admin, igual que el resto del grupo: el saldo de una cuenta de tesorería es un dato del dueño. Si más
+        // adelante lo ajusta un Supervisor, se cambia acá con una política propia.
+        grupo.MapPost("/{id:int}/ajustes", async (
+            ServicioDeAjusteDeCuentaDeTesoreria servicio, int id, SolicitudDeAjusteDeCuenta solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.AjustarAsync(id, solicitud, ct);
+            return Results.Created($"/api/reportes/tesoreria/cuentas/{id}/libro", resultado);
+        })
+        .WithSummary(
+            "Ajuste manual del saldo de una cuenta: concepto obligatorio y exactamente uno de importe con signo o saldo " +
+            "objetivo (la diferencia se calcula bajo el lock de la cuenta).");
+
         return app;
     }
 }

@@ -1,20 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE,
   LARGO_MAXIMO_DE_NOMBRE,
   SALDO_INICIAL_MAXIMO,
   aAlta,
+  aSolicitudDeAjuste,
   aEdicion,
   aFormulario,
   clienteDeCuentasTesoreria,
   conSaldoInicialBloqueado,
   copiaDeBajaDeCuenta,
+  diferenciaDeVistaPrevia,
+  errorAlAjustar,
   errorAlGuardar,
+  esResultadoIncierto,
+  formularioDeAjusteVacio,
   formularioVacio,
+  importeDeVistaPrevia,
   nombreDeEmpresa,
   opcionesDeCuentas,
+  saldoResultanteDeVistaPrevia,
+  validarAjuste,
   validarFormulario,
   type CuentaTesoreriaListado,
   type Formulario,
+  type FormularioDeAjuste,
 } from './cuentasTesoreria'
 import { COPIA_RESULTADO_INCIERTO } from './bajas'
 import { ErrorApi } from './cliente'
@@ -338,5 +348,136 @@ describe('opcionesDeCuentas', () => {
 
   it('sin cuenta actual y sin lectura no hay opciones', () => {
     expect(opcionesDeCuentas(null, null, '', '', '', false)).toEqual([])
+  })
+})
+
+describe('ajuste manual del saldo — reglas puras', () => {
+  const completo = (sobrescribir: Partial<FormularioDeAjuste> = {}): FormularioDeAjuste => ({
+    modo: 'importe',
+    saldoObjetivo: null,
+    importe: 10,
+    concepto: 'Conciliación',
+    ...sobrescribir,
+  })
+
+  it('arranca en el modo "tengo el saldo real", vacío', () => {
+    expect(formularioDeAjusteVacio()).toEqual({ modo: 'saldoObjetivo', saldoObjetivo: null, importe: null, concepto: '' })
+  })
+
+  it('la vista previa de la diferencia se calcula en centavos, sin arrastrar el error del punto flotante', () => {
+    expect(diferenciaDeVistaPrevia(999.9, 1000.1)).toBe(0.2)
+    expect(diferenciaDeVistaPrevia(1000, 940.5)).toBe(-59.5)
+    expect(diferenciaDeVistaPrevia(100, 100)).toBe(0)
+    expect(diferenciaDeVistaPrevia(100, null)).toBeNull()
+  })
+
+  it('el saldo resultante de la vista previa suma en centavos enteros', () => {
+    expect(saldoResultanteDeVistaPrevia(0.1, 0.2)).toBe(0.3)
+    expect(saldoResultanteDeVistaPrevia(100, -250.55)).toBe(-150.55)
+  })
+
+  it('el importe de la vista previa sale del modo elegido', () => {
+    expect(importeDeVistaPrevia(completo({ modo: 'importe', importe: -7 }), 100)).toBe(-7)
+    expect(importeDeVistaPrevia(completo({ modo: 'saldoObjetivo', saldoObjetivo: 130 }), 100)).toBe(30)
+    expect(importeDeVistaPrevia(completo({ modo: 'saldoObjetivo', saldoObjetivo: null }), 100)).toBeNull()
+  })
+
+  it('un ajuste válido en cada modo no tiene error', () => {
+    expect(validarAjuste(completo())).toBeNull()
+    expect(validarAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: 50, importe: null }))).toBeNull()
+  })
+
+  it('el concepto es obligatorio y tiene tope, medido después de recortar', () => {
+    expect(validarAjuste(completo({ concepto: '   ' }))).toEqual({
+      campo: 'concepto',
+      mensaje: 'Ingresá el concepto del ajuste.',
+    })
+    expect(validarAjuste(completo({ concepto: ` ${'a'.repeat(LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE)} ` }))).toBeNull()
+    expect(validarAjuste(completo({ concepto: 'a'.repeat(LARGO_MAXIMO_DE_CONCEPTO_DE_AJUSTE + 1) }))?.campo).toBe('concepto')
+  })
+
+  it('el importe no puede faltar, ser cero ni estar fuera de rango; el saldo resultante lo decide el servidor', () => {
+    expect(validarAjuste(completo({ importe: null }))?.campo).toBe('importe')
+    expect(validarAjuste(completo({ importe: 0 }))?.mensaje).toBe('El importe no puede ser cero.')
+    expect(validarAjuste(completo({ importe: SALDO_INICIAL_MAXIMO + 1 }))?.campo).toBe('importe')
+    expect(validarAjuste(completo({ importe: 5 }))).toBeNull()
+  })
+
+  it('el saldo real no puede faltar ni estar fuera de rango', () => {
+    const modo = { modo: 'saldoObjetivo' as const, importe: null }
+    expect(validarAjuste(completo({ ...modo, saldoObjetivo: null }))?.campo).toBe('saldoObjetivo')
+    expect(validarAjuste(completo({ ...modo, saldoObjetivo: SALDO_INICIAL_MAXIMO + 1 }))?.campo).toBe('saldoObjetivo')
+  })
+
+  it('un saldo real igual al que muestra la pantalla NO se rechaza localmente: el saldo cacheado puede estar viejo', () => {
+    expect(validarAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: 100, importe: null }))).toBeNull()
+  })
+
+  it('un campo del otro modo no cuenta: con modo importe se ignora un saldo real inválido y al revés', () => {
+    expect(validarAjuste(completo({ modo: 'importe', saldoObjetivo: SALDO_INICIAL_MAXIMO + 1 }))).toBeNull()
+    expect(validarAjuste(completo({ modo: 'saldoObjetivo', importe: 0, saldoObjetivo: 5 }))).toBeNull()
+  })
+
+  it('la solicitud lleva SOLO el campo del modo elegido y el concepto recortado', () => {
+    const porImporte = aSolicitudDeAjuste(completo({ modo: 'importe', importe: -4.5, saldoObjetivo: 99, concepto: ' Ajuste ' }))
+    expect(porImporte).toEqual({ concepto: 'Ajuste', importe: -4.5 })
+    expect('saldoObjetivo' in porImporte).toBe(false)
+
+    const porSaldo = aSolicitudDeAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: 250, importe: 7 }))
+    expect(porSaldo).toEqual({ concepto: 'Conciliación', saldoObjetivo: 250 })
+    expect('importe' in porSaldo).toBe(false)
+  })
+
+  it('armar la solicitud de un formulario sin el valor del modo es un error de programación', () => {
+    expect(() => aSolicitudDeAjuste(completo({ modo: 'importe', importe: null }))).toThrow()
+    expect(() => aSolicitudDeAjuste(completo({ modo: 'saldoObjetivo', saldoObjetivo: null }))).toThrow()
+  })
+
+  it('el cliente postea a /cuentas-tesoreria/{id}/ajustes', async () => {
+    apiPostMock.mockResolvedValue({ saldoActual: 1 })
+
+    await clienteDeCuentasTesoreria.ajustar(7, { concepto: 'x', importe: 1 })
+
+    expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/7/ajustes', { concepto: 'x', importe: 1 })
+  })
+
+  it.each([
+    ['concepto_requerido', 'concepto'],
+    ['concepto_muy_largo', 'concepto'],
+    ['importe_invalido', 'importe'],
+    ['saldo_objetivo_invalido', 'saldoObjetivo'],
+    ['ajuste_sin_diferencia', 'saldoObjetivo'],
+    ['saldo_resultante_fuera_de_rango', 'general'],
+    ['importe_o_saldo_objetivo_requerido', 'general'],
+    ['importe_y_saldo_objetivo_excluyentes', 'general'],
+  ])('el código %s se ubica en el campo %s', (codigo, campo) => {
+    expect(errorAlAjustar(new ErrorApi(codigo === 'ajuste_sin_diferencia' ? 409 : 400, codigo, 'texto del servidor')).campo).toBe(campo)
+  })
+
+  it('un código desconocido cae al mensaje del servidor; el estado 404 y el 403 tienen copia propia', () => {
+    expect(errorAlAjustar(new ErrorApi(400, 'otro', 'Algo salió mal'))).toEqual({ campo: 'general', mensaje: 'Algo salió mal' })
+    expect(errorAlAjustar(new ErrorApi(404, 'no_encontrado', 'x')).mensaje).toBe('La cuenta ya no existe. Actualizá la pantalla.')
+    expect(errorAlAjustar(new ErrorApi(403, 'prohibido', 'x')).mensaje).toBe(
+      'Solo un administrador puede ajustar el saldo de una cuenta.',
+    )
+  })
+
+  it('un código heredado del prototipo no se confunde con uno conocido', () => {
+    expect(errorAlAjustar(new ErrorApi(400, 'constructor', 'Rechazo')).mensaje).toBe('Rechazo')
+  })
+
+  it('un 5xx rinde el texto del servidor si es resultado_incierto y la guía genérica si no; un error de red, la guía', () => {
+    expect(errorAlAjustar(new ErrorApi(503, 'resultado_incierto', 'Verificá el libro antes de reintentar.')).mensaje).toBe(
+      'Verificá el libro antes de reintentar.',
+    )
+    expect(errorAlAjustar(new ErrorApi(500, 'error', '')).mensaje).toBe(`No se pudo registrar el ajuste. ${COPIA_RESULTADO_INCIERTO}`)
+    expect(errorAlAjustar(new Error('red')).mensaje).toBe(`No se pudo registrar el ajuste. ${COPIA_RESULTADO_INCIERTO}`)
+  })
+
+  it('solo un 5xx o un error sin respuesta es un resultado incierto: un 4xx es un rechazo cierto', () => {
+    expect(esResultadoIncierto(new ErrorApi(503, 'resultado_incierto', ''))).toBe(true)
+    expect(esResultadoIncierto(new Error('red'))).toBe(true)
+    expect(esResultadoIncierto(new ErrorApi(400, 'importe_invalido', ''))).toBe(false)
+    expect(esResultadoIncierto(new ErrorApi(409, 'ajuste_sin_diferencia', ''))).toBe(false)
   })
 })
