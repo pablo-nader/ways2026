@@ -294,4 +294,71 @@ public class FacturacionEspejoNoDobleConteoTests(WaysApiFixture fixture) : IClas
         Assert.Equal("FA", fila.TipoComprobante);
         Assert.Equal(TotalVenta, fila.Total);
     }
+
+    [Fact]
+    public async Task UnaDevolucionNoPuedeAsociarseAUnEspejoFiscal()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionNoPuedeAsociarseAUnEspejoFiscal));
+        var sembrado = await SembrarVentaConEspejoAsync(ctx);
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            db.TurnosCaja.Add(new Ways.Domain.Caja.TurnoCaja
+            {
+                IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleadoApertura = ctx.IdEmpleado,
+                FechaApertura = ahora, FondoInicial = 0m, Estado = Ways.Domain.Caja.EstadoTurno.Abierto,
+                CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "NCX", sembrado.IdEspejo,
+            [new LineaDeVenta(ctx.IdArticulo, 1m, null)], [], null, null);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.BadRequest, cuerpo);
+        Assert.Equal(
+            "comprobante_asociado_es_espejo_fiscal",
+            JsonSerializer.Deserialize<JsonElement>(cuerpo).GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnEspejoFiscalRechazadoNoSeAnulaPorLaViaDeVentas()
+    {
+        var ctx = await PrepararAsync(nameof(UnEspejoFiscalRechazadoNoSeAnulaPorLaViaDeVentas));
+        var sembrado = await SembrarVentaConEspejoAsync(ctx);
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var espejo = await db.ComprobantesVenta.SingleAsync(c => c.Id == sembrado.IdEspejo);
+            espejo.ResultadoFiscal = ResultadoFiscal.Rechazado;
+            espejo.Cae = null;
+            espejo.CaeVencimiento = null;
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/ventas/{sembrado.IdEspejo}/anulacion", null);
+
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        Assert.Equal(
+            "comprobante_es_espejo_fiscal",
+            JsonSerializer.Deserialize<JsonElement>(cuerpo).GetProperty("codigo").GetString());
+
+        await using var verificacion = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(
+            EstadoComprobante.Emitido,
+            await verificacion.ComprobantesVenta.Where(c => c.Id == sembrado.IdEspejo).Select(c => c.Estado).SingleAsync());
+    }
+
+    [Fact]
+    public async Task AnularUnComprobanteInexistenteSigueDandoNoEncontrado()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnComprobanteInexistenteSigueDandoNoEncontrado));
+
+        var respuesta = await ctx.Admin.PostAsync("/api/ventas/2000000000/anulacion", null);
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
 }

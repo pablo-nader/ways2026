@@ -1109,6 +1109,7 @@ public class ServicioDeVentas(
         var comprobantePreLectura = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
         if (comprobantePreLectura is not null)
         {
+            ReglaDeComprobantes.ValidarAnulacionDeVenta(comprobantePreLectura);
             ReglaDeComprobantes.ValidarTransicionAEstado(comprobantePreLectura.Estado, EstadoComprobante.Anulado);
 
             // La pre-lectura alcanza sin conjunción en el UPDATE del paso 1: los dos estados que

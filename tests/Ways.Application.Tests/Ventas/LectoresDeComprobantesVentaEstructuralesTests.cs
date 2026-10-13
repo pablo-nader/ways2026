@@ -8,16 +8,21 @@ namespace Ways.Application.Tests.Ventas;
 /// venta que ya está contada como ticket, así que todo lector que AGREGUE o LISTE ventas tiene que excluirlo con el
 /// predicado compartido <c>SinEspejosFiscales</c> (o, en SQL crudo, <c>id_venta_origen IS NULL</c>).
 ///
-/// El guard recorre <c>src/</c> y, para cada lectura de <c>ComprobantesVenta</c>, <c>ItemsComprobanteVenta</c> o
-/// <c>PagosComprobante</c> (LINQ) y de <c>comprobantes_venta</c>, <c>items_comprobante_venta</c> o
-/// <c>pagos_comprobante</c> (SQL crudo), exige una de dos cosas: que la sentencia contenga el predicado, o que la
-/// línea esté en <see cref="LectoresPermitidos"/> con su justificación. Un lector nuevo que no hace ninguna de las
-/// dos pone esta prueba en rojo. Una entrada de la lista que ya no coincide con ninguna lectura también la pone en
-/// rojo, para que la lista no acumule fantasmas.
+/// Qué es: un barrido de TEXTO sobre <c>src/</c>. Para cada sentencia que menciona <c>ComprobantesVenta</c>,
+/// <c>ItemsComprobanteVenta</c> o <c>PagosComprobante</c> (también como <c>Set&lt;ComprobanteVenta&gt;()</c> y sus
+/// equivalentes de items y pagos) o, en SQL crudo, <c>comprobantes_venta</c>, <c>items_comprobante_venta</c> o
+/// <c>pagos_comprobante</c>, exige una de dos cosas: que la sentencia contenga el predicado, o que la línea esté en
+/// <see cref="LectoresPermitidos"/> con su justificación y la cantidad exacta de apariciones (más o menos falla, así
+/// que un lector nuevo con el mismo texto que uno permitido, o una aparición quitada, se notan). Una entrada que ya no
+/// coincide con ninguna lectura también falla, para que la lista no acumule fantasmas. Las pruebas de autoverificación
+/// alimentan la clasificación con muestras en memoria (una lectura sin protección y una protegida) para que una
+/// expresión regular rota no pase en silencio.
 ///
-/// Alcance honesto: es un barrido de texto sobre sentencias (del renglón posterior al último que cierra una sentencia o un
-/// bloque hasta el siguiente <c>;</c>), no un análisis semántico. Detecta el lector que olvida el predicado; no demuestra que el
-/// predicado esté en la cláusula correcta (eso lo prueban los tests de integración de cada reporte).
+/// Qué NO ve: lectores alcanzados por navegaciones (<c>Include</c>, colecciones de otra entidad) o por métodos
+/// auxiliares que devuelven <c>IQueryable</c> y se consumen en otra sentencia; la carpeta
+/// <c>Ways.Infrastructure/Persistencia/</c> (configuración del modelo y migraciones, excluida a propósito); ni si el
+/// predicado está en la cláusula correcta de una sentencia que lo nombra. Eso último lo cubren los tests de
+/// integración de cada reporte (<c>FacturacionEspejoNoDobleConteoTests</c>), con los que este barrido se complementa.
 /// </summary>
 public class LectoresDeComprobantesVentaEstructuralesTests
 {
@@ -50,93 +55,93 @@ public class LectoresDeComprobantesVentaEstructuralesTests
 
     /// <summary>Lecturas que NO excluyen espejos, por archivo y línea (recortada), con el motivo. Hay dos clases:
     /// las que no deben excluirlos porque necesitan ver la factura, y las que ya quedan fuera por otra vía.</summary>
-    private static readonly IReadOnlyDictionary<(string Archivo, string Linea), string> LectoresPermitidos =
-        new Dictionary<(string, string), string>
+    private static readonly IReadOnlyDictionary<(string Archivo, string Linea), (int Cantidad, string Motivo)> LectoresPermitidos =
+        new Dictionary<(string, string), (int, string)>
         {
             [("Ways.Application/Caja/LectorDeContenidoDeResumen.cs",
                 "var comprobantesDelTurno = db.ComprobantesVenta")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeContenidoDeResumen.cs",
                 "var totalesPorArea = await db.ItemsComprobanteVenta")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeContenidoDeResumen.cs",
                 "db.ComprobantesVenta,")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeLineasDelTurno.cs",
                 "var crudos = await db.ComprobantesVenta")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "var pagosDelTurno = db.PagosComprobante")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "db.ComprobantesVenta,")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Caja/LectorDeRendicionDeDispositivos.cs",
                 "FROM comprobantes_venta cv")] =
-                "Cuenta los comprobantes de la serie de un dispositivo por (punto de venta, tipo de ticket, rango de números): un espejo es de un tipo fiscal y numera por la serie fiscal.",
+                (1, "Cuenta los comprobantes de la serie de un dispositivo por (punto de venta, tipo de ticket, rango de números): un espejo es de un tipo fiscal y numera por la serie fiscal."),
             [("Ways.Application/CuentaCorriente/LectorDeConsumosReliquidables.cs",
                 "join c in db.ComprobantesVenta on m.IdComprobanteVenta equals (int?)c.Id")] =
-                PorCuentaCorriente,
+                (1, PorCuentaCorriente),
             [("Ways.Application/CuentaCorriente/LectorDeConsumosReliquidables.cs",
                 "var items = await db.ItemsComprobanteVenta")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
                 "var comprobante = await db.ComprobantesVenta")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
                 "var actual = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idComprobante, ct);")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
                 "var items = await db.ItemsComprobanteVenta.AsNoTracking()")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Reportes/ServicioDeLibroIva.cs",
                 "var consulta = db.ComprobantesVenta")] =
-                LibroIva,
+                (1, LibroIva),
             [("Ways.Application/Reportes/ServicioDeLibroIva.cs",
                 "var items = await db.ItemsComprobanteVenta")] =
-                LibroIva,
+                (1, LibroIva),
             [("Ways.Application/Stock/ServicioDeLotes.cs",
                 "? await db.ItemsComprobanteVenta")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Ventas/ServicioDePresupuestos.cs",
                 "var idComprobanteVenta = await db.ComprobantesVenta.AsNoTracking()")] =
-                "Busca la venta que convirtió un presupuesto: id_presupuesto_origen es único y lo lleva el ticket.",
+                (1, "Busca la venta que convirtió un presupuesto: id_presupuesto_origen es único y lo lleva el ticket."),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "? await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == idAsociado, ct)")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "&& await db.ComprobantesVenta.AnyAsync(")] =
-                PorClaveUnica,
+                (1, PorClaveUnica),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var vendidos = await db.ItemsComprobanteVenta")] =
-                PorId,
+                (2, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var comprobante = await db.ComprobantesVenta.FirstOrDefaultAsync(")] =
-                PorClaveUnica,
+                (1, PorClaveUnica),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var items = await db.ItemsComprobanteVenta")] =
-                PorId,
+                (2, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var pagos = await db.PagosComprobante")] =
-                PorId,
+                (2, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var crudos = await db.ComprobantesVenta")] =
-                PorTurno,
+                (1, PorTurno),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var pagos = await db.PagosComprobante.AsNoTracking()")] =
-                "Pagos de los ids de la página del listado, que ya salen sin espejos.",
+                (1, "Pagos de los ids de la página del listado, que ya salen sin espejos."),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var comprobantePreLectura = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var existe = await db.ComprobantesVenta.AnyAsync(c => c.Id == id, ct);")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == id, ct)")] =
-                PorId,
+                (1, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "\"JOIN comprobantes_venta c ON c.id_turno_caja = t.id_turno_caja AND c.id_tenant = t.id_tenant \" +")] =
-                "Resuelve el turno de UN comprobante por id.",
+                (1, "Resuelve el turno de UN comprobante por id."),
         };
 
     /// <summary>Las lecturas que tienen que VER los espejos: si alguien les agrega el predicado, el libro IVA ventas
@@ -149,7 +154,8 @@ public class LectoresDeComprobantesVentaEstructuralesTests
     private sealed record Lectura(string Archivo, string Linea, string Sentencia);
 
     private static readonly Regex LecturaLinq = new(
-        @"\b(?:ComprobantesVenta|ItemsComprobanteVenta|PagosComprobante)\b(?!\s*\.\s*(?:Add|AddRange)\()",
+        @"\b(?:ComprobantesVenta|ItemsComprobanteVenta|PagosComprobante)\b(?!\s*\.\s*(?:Add|AddRange)\()"
+        + @"|\bSet\s*<\s*(?:ComprobanteVenta|ItemComprobanteVenta|PagoComprobante)\s*>\s*\(",
         RegexOptions.Compiled);
 
     private static readonly Regex LecturaSql = new(
@@ -176,17 +182,26 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 continue;
             }
 
-            var contenido = File.ReadAllText(archivo).Replace("\r\n", "\n");
-            foreach (var coincidencia in LecturaLinq.Matches(contenido).Concat(LecturaSql.Matches(contenido)))
-            {
-                var linea = LineaDe(contenido, coincidencia.Index);
-                if (linea.StartsWith("//", StringComparison.Ordinal) || linea.StartsWith('*'))
-                {
-                    continue;
-                }
+            lecturas.AddRange(LeerLecturasDe(relativa, File.ReadAllText(archivo)));
+        }
 
-                lecturas.Add(new Lectura(relativa, linea, SentenciaDe(contenido, coincidencia.Index)));
+        return lecturas;
+    }
+
+    /// <summary>La clasificación en sí, sobre un texto dado: la usan el barrido real y las pruebas de autoverificación.</summary>
+    private static IReadOnlyList<Lectura> LeerLecturasDe(string relativa, string texto)
+    {
+        var contenido = texto.Replace("\r\n", "\n");
+        var lecturas = new List<Lectura>();
+        foreach (var coincidencia in LecturaLinq.Matches(contenido).Concat(LecturaSql.Matches(contenido)))
+        {
+            var linea = LineaDe(contenido, coincidencia.Index);
+            if (linea.StartsWith("//", StringComparison.Ordinal) || linea.StartsWith('*'))
+            {
+                continue;
             }
+
+            lecturas.Add(new Lectura(relativa, linea, SentenciaDe(contenido, coincidencia.Index)));
         }
 
         return lecturas;
@@ -255,6 +270,24 @@ public class LectoresDeComprobantesVentaEstructuralesTests
     }
 
     [Fact]
+    public void CadaEntradaPermitidaCoincideConLaCantidadExactaDeLecturasSinProteccion()
+    {
+        var lecturas = LeerLecturas();
+
+        var desparejas = LectoresPermitidos
+            .Select(e => (e.Key, Esperadas: e.Value.Cantidad, Reales: lecturas.Count(
+                l => l.Archivo == e.Key.Archivo && l.Linea == e.Key.Linea && !Protegida(l))))
+            .Where(x => x.Reales != x.Esperadas)
+            .Select(x => $"{x.Key.Archivo}: {x.Key.Linea} (esperadas {x.Esperadas}, reales {x.Reales})")
+            .ToList();
+
+        Assert.True(
+            desparejas.Count == 0,
+            "La cantidad de lecturas sin protección no coincide con la de LectoresPermitidos (un lector nuevo con el " +
+            "mismo texto, o una aparición quitada):\n" + string.Join("\n", desparejas));
+    }
+
+    [Fact]
     public void NingunaEntradaDeLaListaDePermitidosQuedaHuerfana()
     {
         var lecturas = LeerLecturas();
@@ -315,8 +348,7 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 continue;
             }
 
-            var contenido = File.ReadAllText(archivo);
-            if (Regex.IsMatch(contenido, @"\bIdVentaOrigen\s*(?:==|!=|is)\s*(?:not\s+)?null\b"))
+            if (DefineElPredicado(File.ReadAllText(archivo)))
             {
                 definiciones.Add(relativa);
             }
@@ -326,5 +358,74 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             definiciones.Count == 0,
             "El predicado 'no es un espejo fiscal' se define una sola vez (ConsultasDeComprobantesVenta); copias en:\n" +
             string.Join("\n", definiciones));
+    }
+
+    private static readonly Regex DefinicionDelPredicado = new(
+        @"\bIdVentaOrigen\s*(?:==|!=|is)\s*(?:not\s+)?null\b|\bIdVentaOrigen\s*\.\s*HasValue\b",
+        RegexOptions.Compiled);
+
+    private static bool DefineElPredicado(string texto) => DefinicionDelPredicado.IsMatch(texto);
+
+    private static string Muestra(string sentencia) =>
+        $"class C\n{{\n    void M()\n    {{\n        {sentencia}\n    }}\n}}\n";
+
+    // ---- Autoverificación: si una expresión regular se rompe, estas pruebas se ponen rojas, no el barrido en silencio ----
+
+    [Theory]
+    [InlineData("var x = await db.ComprobantesVenta.Where(c => c.Total > 0).ToListAsync(ct);")]
+    [InlineData("var x = await db.ItemsComprobanteVenta.ToListAsync(ct);")]
+    [InlineData("var x = await db.PagosComprobante.ToListAsync(ct);")]
+    [InlineData("var x = await db.Set<ComprobanteVenta>().ToListAsync(ct);")]
+    [InlineData("var x = await db.Set<ItemComprobanteVenta>().ToListAsync(ct);")]
+    [InlineData("var x = await db.Set<PagoComprobante>().ToListAsync(ct);")]
+    [InlineData("var f = await conexion.QueryAsync(\"SELECT * FROM comprobantes_venta WHERE total > 0\");")]
+    [InlineData("var f = await conexion.QueryAsync(\"SELECT * FROM x JOIN pagos_comprobante p ON p.id = 1\");")]
+    public void ElBarridoClasificaUnLectorSinProteccionComoDesprotegido(string sentencia)
+    {
+        var lectura = Assert.Single(LeerLecturasDe("Ways.Application/Muestra.cs", Muestra(sentencia)));
+
+        Assert.False(Protegida(lectura));
+    }
+
+    [Theory]
+    [InlineData("var x = await db.ComprobantesVenta.SinEspejosFiscales().ToListAsync(ct);")]
+    [InlineData("var x = await db.Set<ComprobanteVenta>().Where(ConsultasDeComprobantesVenta.NoEsEspejoFiscal).ToListAsync(ct);")]
+    [InlineData("var f = await conexion.QueryAsync(\"SELECT * FROM comprobantes_venta WHERE id_venta_origen IS NULL\");")]
+    public void ElBarridoClasificaUnLectorConElPredicadoComoProtegido(string sentencia)
+    {
+        var lectura = Assert.Single(LeerLecturasDe("Ways.Application/Muestra.cs", Muestra(sentencia)));
+
+        Assert.True(Protegida(lectura));
+    }
+
+    [Fact]
+    public void ElBarridoIgnoraEscriturasComentariosYUnPredicadoSoloComentado()
+    {
+        const string texto = "class C\n{\n    void M()\n    {\n" +
+            "        db.ComprobantesVenta.Add(nuevo);\n" +
+            "        // var x = await db.ComprobantesVenta.ToListAsync(ct);\n" +
+            "        var y = await db.ComprobantesVenta\n" +
+            "            // .SinEspejosFiscales()\n" +
+            "            .ToListAsync(ct);\n" +
+            "    }\n}\n";
+
+        var lectura = Assert.Single(LeerLecturasDe("Ways.Application/Muestra.cs", texto));
+
+        Assert.Equal("var y = await db.ComprobantesVenta", lectura.Linea);
+        Assert.False(Protegida(lectura));
+    }
+
+    [Theory]
+    [InlineData("c => c.IdVentaOrigen == null", true)]
+    [InlineData("c.IdVentaOrigen != null", true)]
+    [InlineData("c.IdVentaOrigen is null", true)]
+    [InlineData("c.IdVentaOrigen is not null", true)]
+    [InlineData("c.IdVentaOrigen.HasValue", true)]
+    [InlineData("!c.IdVentaOrigen.HasValue", true)]
+    [InlineData("comprobante.IdVentaOrigen = idVenta;", false)]
+    [InlineData("var id = c.IdVentaOrigen;", false)]
+    public void LaBusquedaDeDefinicionesDelPredicadoReconoceSusFormas(string codigo, bool esperado)
+    {
+        Assert.Equal(esperado, DefineElPredicado(codigo));
     }
 }
