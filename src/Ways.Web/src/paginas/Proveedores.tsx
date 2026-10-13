@@ -164,8 +164,12 @@ export function Proveedores() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo" — la ÚNICA guarda de re-entrancia válida. */
   const ocupadoRef = useRef(false)
+  /** Último término que el usuario pidió buscar (o `''` al entrar): el refresco posterior a una
+   * escritura recarga con ese, nunca con el texto tipeado en la caja y todavía no enviado. */
+  const terminoVigente = useRef('')
 
   const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
+    terminoVigente.current = termino
     setCargando(true)
     try {
       const resultado = await clienteDeProveedores.listar(termino, false)
@@ -193,7 +197,7 @@ export function Proveedores() {
 
     setAviso(mensajeOk)
     try {
-      await cargar(token, busqueda, true)
+      await cargar(token, terminoVigente.current, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
     }
@@ -203,6 +207,9 @@ export function Proveedores() {
     if (!formulario || ocupadoRef.current) return
 
     const datos = formulario
+    // Una lectura en vuelo queda invalidada por el token de esta escritura: no va a dejar datos ni a
+    // bajar `cargando`. Si la escritura falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setGuardando(true)
@@ -218,7 +225,10 @@ export function Proveedores() {
           await clienteDeProveedores.actualizar(datos.id, alta)
         }
       } catch (e) {
-        if (generacion.current === token) setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        if (generacion.current === token) {
+          setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, terminoVigente.current)
+        }
 
         return
       }
