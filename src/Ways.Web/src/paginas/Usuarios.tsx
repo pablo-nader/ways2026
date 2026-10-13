@@ -114,7 +114,7 @@ export function Usuarios() {
    */
   const ocupadoRef = useRef(false)
 
-  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
+  const cargar = useCallback(async (token: number, termino: string, propagar = false, conservarError = false) => {
     setCargando(true)
     try {
       const parametros = termino ? `?busqueda=${encodeURIComponent(termino)}` : ''
@@ -122,7 +122,7 @@ export function Usuarios() {
       if (generacion.current !== token) return
       setPagina(respuesta)
       setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(respuesta.items), prev))
-      setError('')
+      if (!conservarError) setError('')
     } catch (e) {
       if (generacion.current !== token) return
       if (propagar) throw e
@@ -247,13 +247,8 @@ export function Usuarios() {
         if (generacion.current === token) {
           const mensaje = e instanceof ErrorApi ? e.message : 'No se pudo guardar.'
           setError(mensaje)
-          if (habiaLecturaEnVuelo) {
-            // La lectura limpia el error compartido al aterrizar: el motivo del rechazo se vuelve a rendir.
-            const tokenLectura = ++generacion.current
-            void cargar(tokenLectura, busquedaAplicada).then(() => {
-              if (generacion.current === tokenLectura) setError(mensaje)
-            })
-          }
+          // Esta relectura no limpia el error al aterrizar: lo que está en pantalla es el motivo del rechazo.
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, busquedaAplicada, false, true)
         }
 
         return

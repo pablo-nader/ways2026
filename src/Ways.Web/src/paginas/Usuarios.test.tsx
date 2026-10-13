@@ -1590,11 +1590,13 @@ describe('Usuarios — lectura en vuelo al guardar', () => {
 
   function diferido<T>() {
     let resolver!: (valor: T) => void
-    const promesa = new Promise<T>((res) => {
+    let rechazar!: (motivo: unknown) => void
+    const promesa = new Promise<T>((res, rej) => {
       resolver = res
+      rechazar = rej
     })
 
-    return { promesa, resolver }
+    return { promesa, resolver, rechazar }
   }
 
   function paginaDe(items: UsuarioListado[]): PaginaDe<UsuarioListado> {
@@ -1667,6 +1669,57 @@ describe('Usuarios — lectura en vuelo al guardar', () => {
     expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
     expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios?busqueda=sur', '/usuarios?busqueda=sur'])
     expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `conservarError` de la relectura; reabrir el formulario mientras relee no deja el rechazo viejo. */
+  it('reabrir el formulario mientras la relectura está en vuelo no resucita el rechazo anterior', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PaginaDe<UsuarioListado>>()
+    const relectura = diferido<PaginaDe<UsuarioListado>>()
+    montarConListados([inicial.promesa, relectura.promesa])
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await completarYGuardar(usuario)
+    await act(async () => {
+      inicial.resolver(paginaDe([cuentaDeTenant]))
+      await inicial.promesa
+    })
+    await waitFor(() => expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios']))
+    expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await act(async () => {
+      relectura.resolver(paginaDe([cuentaDeTenant]))
+      await relectura.promesa
+    })
+
+    expect(await screen.findByText('vendedor.sur')).toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un usuario con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la relectura que falla deja su propio mensaje de carga, no el del rechazo de la escritura. */
+  it('una relectura que falla tras un alta rechazada muestra el fallo de la carga', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PaginaDe<UsuarioListado>>()
+    const relectura = diferido<PaginaDe<UsuarioListado>>()
+    montarConListados([inicial.promesa, relectura.promesa])
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await completarYGuardar(usuario)
+    await act(async () => {
+      inicial.resolver(paginaDe([cuentaDeTenant]))
+      await inicial.promesa
+    })
+    await waitFor(() => expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios']))
+    await act(async () => {
+      relectura.rechazar(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      await relectura.promesa.catch(() => {})
+    })
+
+    expect(await screen.findByText('Se cayó.')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un usuario con ese nombre.')).not.toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el listado ya cargado, un rechazo no relee. */

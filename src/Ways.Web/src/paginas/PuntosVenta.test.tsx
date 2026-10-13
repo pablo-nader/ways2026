@@ -1214,6 +1214,86 @@ describe('PuntosVenta — lectura en vuelo al crear', () => {
     expect(screen.getByLabelText('Empresa destino')).toBeInTheDocument()
   })
 
+  /** Monta con el primer y el segundo pedido del listado a cargo del test; los siguientes resuelven con la fila. */
+  function montarConDosListados(primero: Promise<PuntoVentaListado[]>, segundo: Promise<PuntoVentaListado[]>) {
+    const pedidos = { listados: 0 }
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      pedidos.listados += 1
+      if (pedidos.listados === 1) return primero
+      if (pedidos.listados === 2) return segundo
+
+      return Promise.resolve([pvSurCentro])
+    })
+    render(<PuntosVenta />)
+
+    return pedidos
+  }
+
+  /** Cláusula bajo prueba: `conservarError` de la relectura; reabrir el formulario mientras relee no deja el rechazo viejo. */
+  it('reabrir el formulario mientras la relectura está en vuelo no resucita el rechazo anterior', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PuntoVentaListado[]>()
+    const relectura = diferido<PuntoVentaListado[]>()
+    const post = diferido<PuntoVentaListado>()
+    apiPostMock.mockReturnValue(post.promesa)
+    const pedidos = montarConDosListados(inicial.promesa, relectura.promesa)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await completarYEnviar(usuario)
+    await act(async () => {
+      inicial.resolver([pvSurCentro])
+      await inicial.promesa
+    })
+    await act(async () => {
+      post.rechazar(new ErrorApi(409, 'nombre_duplicado', 'Ya existe un punto de venta con ese nombre.'))
+      await post.promesa.catch(() => {})
+    })
+    await waitFor(() => expect(pedidos.listados).toBe(2))
+    expect(screen.getByText('Ya existe un punto de venta con ese nombre.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await act(async () => {
+      relectura.resolver([pvSurCentro])
+      await relectura.promesa
+    })
+
+    expect(await screen.findByText('PV Centro')).toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un punto de venta con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la relectura que falla deja su propio mensaje de carga, no el del rechazo de la escritura. */
+  it('una relectura que falla tras un alta rechazada muestra el fallo de la carga', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PuntoVentaListado[]>()
+    const relectura = diferido<PuntoVentaListado[]>()
+    const post = diferido<PuntoVentaListado>()
+    apiPostMock.mockReturnValue(post.promesa)
+    const pedidos = montarConDosListados(inicial.promesa, relectura.promesa)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await completarYEnviar(usuario)
+    await act(async () => {
+      inicial.resolver([pvSurCentro])
+      await inicial.promesa
+    })
+    await act(async () => {
+      post.rechazar(new ErrorApi(409, 'nombre_duplicado', 'Ya existe un punto de venta con ese nombre.'))
+      await post.promesa.catch(() => {})
+    })
+    await waitFor(() => expect(pedidos.listados).toBe(2))
+    await act(async () => {
+      relectura.rechazar(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      await relectura.promesa.catch(() => {})
+    })
+
+    expect(await screen.findByText('Se cayó.')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un punto de venta con ese nombre.')).not.toBeInTheDocument()
+  })
+
   /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el listado ya cargado, un rechazo no relee. */
   it('un alta rechazada con el listado ya cargado no vuelve a pedirlo', async () => {
     const usuario = userEvent.setup()

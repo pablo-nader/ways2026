@@ -135,7 +135,7 @@ export function PuntosVenta() {
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
   const filtroTenantVigente = useRef(SIN_FILTRO)
 
-  const cargar = useCallback(async (token: number, propagar = false) => {
+  const cargar = useCallback(async (token: number, propagar = false, conservarError = false) => {
     setCargando(true)
     try {
       const filas = await clienteDeOrganizacion.listarPuntosVenta()
@@ -150,7 +150,7 @@ export function PuntosVenta() {
       filtroTenantVigente.current = tenantReconciliado
       setFiltroTenant(tenantReconciliado)
       setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenantReconciliado), prev))
-      setError('')
+      if (!conservarError) setError('')
     } catch (e) {
       if (generacion.current !== token) return
       if (propagar) throw e
@@ -281,13 +281,8 @@ export function PuntosVenta() {
         if (generacion.current === token) {
           const mensaje = e instanceof ErrorApi ? e.message : 'No se pudo crear el punto de venta.'
           setError(mensaje)
-          if (habiaLecturaEnVuelo) {
-            // La lectura limpia el error compartido al aterrizar: el motivo del rechazo se vuelve a rendir.
-            const tokenLectura = ++generacion.current
-            void cargar(tokenLectura).then(() => {
-              if (generacion.current === tokenLectura) setError(mensaje)
-            })
-          }
+          // Esta relectura no limpia el error al aterrizar: lo que está en pantalla es el motivo del rechazo.
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, false, true)
         }
 
         return
