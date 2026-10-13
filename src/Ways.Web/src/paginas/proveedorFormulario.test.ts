@@ -44,6 +44,12 @@ describe('aFormulario', () => {
 })
 
 describe('aAlta', () => {
+  it('una edición devuelve la empresa de la fila y un alta o una fila de todo el tenant mandan null', () => {
+    expect(aAlta(aFormulario(proveedor({ idEmpresa: 5 }))).idEmpresa).toBe(5)
+    expect(aAlta(aFormulario(proveedor({ idEmpresa: null }))).idEmpresa).toBeNull()
+    expect(aAlta(formularioVacio()).idEmpresa).toBeNull()
+  })
+
   it('manda los tres flags tal cual salen del formulario', () => {
     const alta = aAlta({ ...aFormulario(proveedor()), percibeIibb: true, percibeIva: true, preciosIncluyenIva: true })
 

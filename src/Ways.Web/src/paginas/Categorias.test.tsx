@@ -508,3 +508,51 @@ describe('Categorias — error y foco de la modal', () => {
     expect(abrir).toHaveFocus()
   })
 })
+
+describe('Categorias — empresa de la fila al guardar', () => {
+  it('editar una categoría de una empresa manda la empresa de la fila en el PUT', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture({ idEmpresa: 5 })])
+    apiPutMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(editarDe('Bebidas'))
+    await usuario.click(within(screen.getByRole('dialog', { name: 'Editar categoría' })).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/catalogos/categorias/1')
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 5 })
+  })
+
+  it('editar una categoría de todo el tenant manda null', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture({ idEmpresa: null })])
+    apiPutMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(editarDe('Bebidas'))
+    await usuario.click(within(screen.getByRole('dialog', { name: 'Editar categoría' })).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: null })
+  })
+
+  it('un alta manda null aunque antes se haya abierto la edición de una categoría de una empresa', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture({ idEmpresa: 5 })])
+    apiPostMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(editarDe('Bebidas'))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Limpieza', idEmpresa: null })
+  })
+})

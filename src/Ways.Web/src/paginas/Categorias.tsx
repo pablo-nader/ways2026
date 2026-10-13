@@ -21,9 +21,18 @@ type Formulario = {
   orden: string
   idCategoriaPadre: number | null
   activo: boolean
+  /** Empresa de la fila que se edita; null en un alta y en una categoría de todo el tenant. */
+  idEmpresa: number | null
 }
 
-const FORMULARIO_VACIO: Formulario = { id: null, nombre: '', orden: '1', idCategoriaPadre: null, activo: true }
+const FORMULARIO_VACIO: Formulario = {
+  id: null,
+  nombre: '',
+  orden: '1',
+  idCategoriaPadre: null,
+  activo: true,
+  idEmpresa: null,
+}
 
 type Nodo = CategoriaListado & { hijos: Nodo[]; nivel: number }
 
@@ -169,7 +178,7 @@ export function Categorias() {
       try {
         const datosAlta: CategoriaAlta = {
           nombre: datos.nombre,
-          idEmpresa: null,
+          idEmpresa: datos.idEmpresa,
           orden: Number(datos.orden || '1'),
           idCategoriaPadre: datos.idCategoriaPadre,
           activo: datos.activo,
@@ -273,6 +282,7 @@ export function Categorias() {
       orden: String(item.orden),
       idCategoriaPadre: item.idCategoriaPadre,
       activo: item.activo,
+      idEmpresa: item.idEmpresa,
     })
     setAviso('')
     setError('')

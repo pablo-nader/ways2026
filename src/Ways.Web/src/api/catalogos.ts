@@ -17,8 +17,6 @@ import type {
   AreaAlta,
   AreaListado,
   CatalogoListado,
-  CategoriaAlta,
-  CategoriaListado,
   CondicionFiscalListado,
   GrupoAlta,
   GrupoListado,
@@ -361,22 +359,10 @@ export const DESCRIPTORES_DE_CATALOGO = {
 
 export type RecursoDeCatalogo = keyof typeof DESCRIPTORES_DE_CATALOGO
 
-export const descriptorCategorias: DescriptorDeCatalogo<CategoriaListado, CategoriaAlta> = {
-  recurso: 'categorias',
-  titulo: 'Categorías',
-  tituloSingular: 'categoría',
-  campos: [],
-  valoresPorDefecto: {},
-  aValores: () => ({}),
-  aAlta: (nombre, activo, _valores, idEmpresa) => ({ nombre, idEmpresa, activo, orden: 1, idCategoriaPadre: null }),
-  sujetoDeBaja: 'la categoría',
-}
-
 /**
  * stage-3-articulos-y-precios (Slice 6, design: ABM Composition): `listas_precio` reusa la
- * máquina genérica igual que `descriptorCategorias`, con ruta propia (`/listas-precio`, no
- * `/catalogos/:recurso`) — mismo criterio que `categorias`, no se agrega a
- * `DESCRIPTORES_DE_CATALOGO`. `idListaBase`/`porcentaje` solo aplican en modo `Derivada`
+ * máquina genérica, con ruta propia (`/listas-precio`, no `/catalogos/:recurso`), por lo que
+ * no se agrega a `DESCRIPTORES_DE_CATALOGO`. `idListaBase`/`porcentaje` solo aplican en modo `Derivada`
  * (`visibleSi`); el swap de `esDefault` y las guardas de modo/desactivación las valida el
  * servidor — esta pantalla solo muestra el mensaje que devuelve (`ErrorApi.message`).
  */

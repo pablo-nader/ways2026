@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   descriptorAreas,
-  descriptorCategorias,
   descriptorGrupos,
   descriptorListasPrecio,
   descriptorMarcas,
@@ -34,7 +33,6 @@ describe('sujetoDeBaja de cada descriptor de catálogo', () => {
     expect(descriptorMarcas.sujetoDeBaja).toBe('la marca')
     expect(descriptorGrupos.sujetoDeBaja).toBe('el grupo')
     expect(descriptorMediosPago.sujetoDeBaja).toBe('el medio de pago')
-    expect(descriptorCategorias.sujetoDeBaja).toBe('la categoría')
     expect(descriptorListasPrecio.sujetoDeBaja).toBe('la lista de precios')
   })
 })
@@ -428,7 +426,6 @@ describe('aAlta de los catálogos genéricos — empresa de la fila', () => {
     { nombre: 'áreas', descriptor: descriptorAreas },
     { nombre: 'marcas', descriptor: descriptorMarcas },
     { nombre: 'grupos', descriptor: descriptorGrupos },
-    { nombre: 'categorías', descriptor: descriptorCategorias },
     { nombre: 'listas de precio', descriptor: descriptorListasPrecio },
     { nombre: 'medios de pago', descriptor: descriptorMediosPago },
   ] as const

@@ -36,6 +36,8 @@ type Formulario = {
   limiteCredito: number | null
   creditoIlimitado: boolean
   activo: boolean
+  /** Empresa de la fila que se edita; null en un alta y en un cliente de todo el tenant. */
+  idEmpresa: number | null
 }
 
 function formularioVacio(idListaPrecioPorDefecto: number | ''): Formulario {
@@ -57,6 +59,7 @@ function formularioVacio(idListaPrecioPorDefecto: number | ''): Formulario {
     limiteCredito: 0,
     creditoIlimitado: false,
     activo: true,
+    idEmpresa: null,
   }
 }
 
@@ -79,6 +82,7 @@ function aFormulario(c: ClienteListado): Formulario {
     limiteCredito: c.limiteCredito,
     creditoIlimitado: c.creditoIlimitado,
     activo: c.activo,
+    idEmpresa: c.idEmpresa,
   }
 }
 
@@ -104,7 +108,7 @@ function aAlta(f: Formulario): AltaCliente {
     idListaPrecio: f.idListaPrecio === '' ? 0 : f.idListaPrecio,
     limiteCredito: f.limiteCredito ?? 0,
     creditoIlimitado: f.creditoIlimitado,
-    idEmpresa: null,
+    idEmpresa: f.idEmpresa,
     activo: f.activo,
   }
 }
