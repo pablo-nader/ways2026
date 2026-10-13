@@ -153,6 +153,8 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                    npgsql.MapEnum<MotivoDeFacturacion>("motivo_facturacion");
+                    npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     // stage-desktop-pos: mismo gap que arriba, ahora con modo_punto_venta.
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
                     // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.

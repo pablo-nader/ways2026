@@ -140,6 +140,8 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                    npgsql.MapEnum<Ways.Domain.Fiscal.MotivoDeFacturacion>("motivo_facturacion");
+                    npgsql.MapEnum<Ways.Domain.Fiscal.EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     // ModoPuntoVenta NO se mapea: el tipo modo_punto_venta todavía no existe en
                     // MigracionAnterior, que es exactamente el estado que este test necesita.
                 })

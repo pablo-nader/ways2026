@@ -11,6 +11,11 @@ namespace Ways.Domain.Ventas;
 /// </summary>
 public static class ReglaDeComprobantes
 {
+    /// <summary>La definición única de "no es un espejo fiscal" (<see cref="ConsultasDeComprobantesVenta"/>), compilada
+    /// una vez para las reglas por id.</summary>
+    private static readonly Func<ComprobanteVenta, bool> NoEsEspejoFiscal =
+        ConsultasDeComprobantesVenta.NoEsEspejoFiscal.Compile();
+
     /// <summary>Signo vs <c>tipos_comprobante.signo</c> (design decisión 4): TX (+1) exige
     /// todas las cantidades positivas, NCX (−1) exige todas negativas — nunca cero. El signo NO
     /// se aplica/flipea acá, solo se valida: <c>signo</c> conserva un trabajo real (rechazar un
@@ -76,10 +81,24 @@ public static class ReglaDeComprobantes
         }
     }
 
+    /// <summary>Un espejo fiscal (<c>id_venta_origen</c>) es la factura de una venta que ya existe como ticket: no se
+    /// anula por la vía de ventas, porque eso cambiaría su estado sin tocar su decisión fiscal.</summary>
+    public static void ValidarAnulacionDeVenta(ComprobanteVenta comprobante)
+    {
+        if (!NoEsEspejoFiscal(comprobante))
+        {
+            throw new ErrorDominio(
+                "comprobante_es_espejo_fiscal",
+                "El comprobante es la factura fiscal de una venta y no se anula como venta.",
+                409);
+        }
+    }
+
     /// <summary><c>id_comprobante_asociado</c> (spec: Devoluciones As NCX Comprobantes) —
     /// siempre opcional; cuando está poblado, exige NCX (nunca un TX asociado a otro) y que el
     /// comprobante referenciado esté <see cref="EstadoComprobante.Emitido"/>, del mismo punto de
-    /// venta y del mismo cliente (design: Protection Rules).</summary>
+    /// venta y del mismo cliente (design: Protection Rules). Un espejo fiscal no es una venta: se rechaza como
+    /// asociado para no devolver dos veces la misma venta (ticket y factura).</summary>
     public static void ValidarComprobanteAsociado(
         short signoTipoComprobante,
         int? idComprobanteAsociado,
@@ -101,6 +120,14 @@ public static class ReglaDeComprobantes
         if (asociado is null)
         {
             throw new ErrorDominio("comprobante_asociado_invalido", "El comprobante asociado no existe.", 404);
+        }
+
+        if (!NoEsEspejoFiscal(asociado))
+        {
+            throw new ErrorDominio(
+                "comprobante_asociado_es_espejo_fiscal",
+                "El comprobante asociado es la factura fiscal de una venta: la devolución se asocia a la venta de origen.",
+                400);
         }
 
         if (asociado.Estado != EstadoComprobante.Emitido)

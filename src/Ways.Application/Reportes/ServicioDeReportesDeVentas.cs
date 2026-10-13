@@ -196,7 +196,8 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
 
     /// <summary>LINQ plano (design: Raw-SQL Invariant Checklist filas 3-4) — <c>Tenant</c> y
     /// <c>BajaLogica</c> los aplica EF automáticamente vía sus query filters globales; acá se
-    /// espeletrean explícitamente <c>Estado != Anulado</c>, igual que el SQL crudo de
+    /// espeletrean explícitamente <c>Estado != Anulado</c> y la exclusión de los espejos fiscales
+    /// (<c>SinEspejosFiscales</c>: la factura de una venta no es otra venta), igual que el SQL crudo de
     /// <see cref="LectorDeSerieTemporal"/> los espeletrea a mano. Sin el <c>Join</c> a
     /// <c>tipos_comprobante</c> todavía — cada consumidor lo arma con una proyección anónima
     /// propia: EF no logra traducir un <c>GroupBy</c> sobre la propiedad de un record con nombre
@@ -206,6 +207,7 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
     private IQueryable<ComprobanteVenta> ComprobantesVentaDelPeriodo(
         IReadOnlyCollection<int> idsPuntoVenta, RangoDeReporte rango) =>
         db.ComprobantesVenta
+            .SinEspejosFiscales()
             .Where(cv => idsPuntoVenta.Contains(cv.IdPuntoVenta))
             .Where(cv => cv.Estado != EstadoComprobante.Anulado)
             .Where(cv => cv.Fecha >= rango.DesdeUtc && cv.Fecha < rango.HastaUtcExclusivo);

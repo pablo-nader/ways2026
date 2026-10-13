@@ -93,6 +93,8 @@ public class ComprasRemitoYAlicuotasBackfillTests(WaysApiFixture fixture) : ICla
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                    npgsql.MapEnum<Ways.Domain.Fiscal.MotivoDeFacturacion>("motivo_facturacion");
+                    npgsql.MapEnum<Ways.Domain.Fiscal.EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
                     npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
                 })

@@ -34,6 +34,7 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
         JOIN tipos_comprobante tc ON tc.id_tipo_comprobante = cv.id_tipo_comprobante
         WHERE cv.deleted_at IS NULL
           AND cv.estado <> 'anulado'::estado_comprobante
+          AND cv.id_venta_origen IS NULL
           AND tc.clase = 'venta'::clase_comprobante
           AND cv.id_tenant = $2
           AND cv.id_punto_venta = ANY($3)

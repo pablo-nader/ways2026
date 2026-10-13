@@ -25,9 +25,16 @@ comprobantes_venta (          -- [operativa]
     cae                    varchar(14) NULL,
     cae_vencimiento        date        NULL,
     resultado_fiscal       resultado_fiscal NULL,  -- enum: pendiente|aprobado|aprobado_con_observaciones|rechazado
-    observaciones_fiscales jsonb       NULL         -- [{ "codigo": int, "mensaje": string }]
+    observaciones_fiscales jsonb       NULL,        -- [{ "codigo": int, "mensaje": string }]
+    -- Facturación por medio de pago: espejo fiscal y bandera del cajero
+    id_venta_origen        integer     NULL,        -- espejo fiscal → la venta (TX) que factura
+    factura_forzada        boolean     NOT NULL DEFAULT false  -- el cajero pidió facturar este ticket
 );
 -- UNIQUE (id_punto_venta, id_tipo_comprobante, numero)
+-- FK (id_venta_origen, id_tenant) → comprobantes_venta ON DELETE RESTRICT
+-- UNIQUE (id_venta_origen, id_tenant) WHERE id_venta_origen IS NOT NULL  ⇒ a lo sumo un espejo por venta
+-- CHECK id_venta_origen IS NULL OR resultado_fiscal IS NOT NULL  ⇒ un espejo es siempre fiscal
+-- CHECK id_venta_origen IS NULL OR id_turno_caja IS NULL         ⇒ un espejo no pertenece a ningún turno
 
 items_comprobante_venta (
     id_item, id_comprobante_venta, orden,
@@ -246,6 +253,93 @@ tenían `codigo_afip smallint NULL` desde la etapa 1. Los caminos de escritura d
 en slices posteriores: `AsignadorDeNumeroFiscal`/`ServicioDeCertificados` (slice 4) y
 `ServicioDeFacturacionFiscal` — la emisión end-to-end contra mocks, primer y único caller real de
 `ResolvedorDeLetraComprobante` — (slice 5, cierre de la sub-etapa).
+
+### Facturación por medio de pago (espejo fiscal)
+
+Cada medio de pago define qué porcentaje de lo vendido debe salir facturado por ARCA (`medios_pago.porcentaje_facturacion`).
+Un ticket del POS (`TX`) que debe facturarse genera después una **factura espejo**: una fila de `comprobantes_venta`
+fiscal (con `resultado_fiscal`) enlazada al ticket por `id_venta_origen`. El ticket sigue siendo el documento económico: el
+espejo lleva comprobante e ítems y, por convención de quien lo escribe (ninguna restricción lo impide), sin stock, pagos,
+cuenta corriente ni turno; lo único que la base garantiza es que es fiscal y no tiene turno. Los agregados y listados de
+ventas lo excluyen con un único predicado compartido (`ConsultasDeComprobantesVenta.SinEspejosFiscales`, en SQL crudo
+`id_venta_origen IS NULL`); el libro IVA ventas es el único que lo necesita y no lo usa. Las lecturas por id no filtran, así
+que los caminos que podrían tratarlo como una venta lo rechazan: una devolución no puede asociarse a un espejo
+(`comprobante_asociado_es_espejo_fiscal`, 400) y la anulación por la vía de ventas lo rechaza (`comprobante_es_espejo_fiscal`,
+409). `LectoresDeComprobantesVentaEstructuralesTests` es un barrido de texto sobre las sentencias de `src/` (con cantidad
+exacta por lectura justificada y autoverificación de sus expresiones): detecta la sentencia que lee comprobantes, ítems o pagos
+sin el predicado y sin estar justificada. No ve los lectores alcanzados por navegaciones ni por métodos auxiliares que
+devuelven `IQueryable`, ni la carpeta `Persistencia/`, y no prueba que el predicado esté en la cláusula correcta; eso lo
+cubren los tests de integración de cada reporte.
+
+```sql
+facturaciones_de_venta (        -- [operativa] id_tenant + id_empresa NOT NULL, EntidadBase completa
+    id_facturacion_venta   integer PK identity,
+    id_tenant, id_empresa  integer NOT NULL,
+    id_comprobante_venta   integer NOT NULL,        -- la venta; clave de idempotencia de la decisión
+    motivo                 motivo_facturacion NOT NULL,        -- enum: forzada | medio_exige_factura | cupo_alcanzado
+    estado                 estado_facturacion_venta NOT NULL,  -- enum: pendiente | emitida | rechazada | cancelada
+    aportes                jsonb NOT NULL,          -- [{ "idMedioPago": int, "aporte": decimal }] aplicados al acumulado
+    periodo                date  NOT NULL,          -- primer día del mes al que se aplicaron los aportes
+    id_comprobante_fiscal  integer NULL,            -- el espejo, una vez emitido
+    intentos               integer NOT NULL DEFAULT 0,
+    ultimo_error           text NULL,
+    proximo_intento_en     timestamptz NULL,
+    created_at, updated_at, deleted_at
+);
+-- UNIQUE (id_comprobante_venta, id_tenant)                                   ux_facturaciones_de_venta_comprobante
+-- UNIQUE (id_comprobante_fiscal, id_tenant) WHERE id_comprobante_fiscal IS NOT NULL  ..._comprobante_fiscal
+-- INDEX  (id_tenant, proximo_intento_en) WHERE estado = 'pendiente'          ix_facturaciones_de_venta_pendientes
+-- FK compuestas (id_empresa|id_comprobante_venta|id_comprobante_fiscal, id_tenant), todas RESTRICT:
+--       fk_facturaciones_de_venta_empresa | _comprobante | _comprobante_fiscal
+-- FK id_tenant → tenants, RESTRICT                                           fk_facturaciones_de_venta_tenant
+-- INDEX  (id_empresa, id_tenant) · (id_tenant)                               ix_facturaciones_de_venta_empresa | _tenant
+-- CHECK periodo día 1 · aportes es un arreglo jsonb · intentos >= 0 · motivo <> 'no_requerida' ·
+--       estado <> 'emitida' OR id_comprobante_fiscal IS NOT NULL
+
+acumulados_de_facturacion (     -- [operativa] id_tenant + id_empresa, PK-only sin auditoría
+                                -- (mismo criterio que numeraciones_fiscales)
+    id_empresa      integer NOT NULL,
+    id_medio_pago   integer NOT NULL,
+    periodo         date    NOT NULL,               -- primer día del mes (CHECK de día 1)
+    id_tenant       integer NOT NULL,
+    saldo_a_facturar numeric(18,6) NOT NULL DEFAULT 0,  -- lo vendido por el medio que todavía no se facturó
+    total_vendido    numeric(14,2) NOT NULL DEFAULT 0,
+    total_facturado  numeric(14,2) NOT NULL DEFAULT 0
+    -- PK (id_empresa, id_medio_pago, periodo)
+);
+-- CHECK EXTRACT(DAY FROM periodo) = 1                                        ck_acumulados_de_facturacion_periodo_dia_uno
+-- FK compuestas (id_empresa, id_tenant) → empresas y (id_medio_pago, id_tenant) → medios_pago, RESTRICT:
+--       fk_acumulados_de_facturacion_empresa | _medio_pago
+-- FK id_tenant → tenants, RESTRICT                                           fk_acumulados_de_facturacion_tenant
+-- INDEX  (id_empresa, id_tenant) · (id_medio_pago, id_tenant) · (id_tenant)  ix_acumulados_de_facturacion_empresa | _medio_pago | _tenant
+```
+
+**Estado (facturación por medio de pago, T3): implementada**, migración `FacturacionPorMedioDePagoEsquema`. Solo DDL (las
+dos tablas nacen vacías y las columnas nuevas de `comprobantes_venta` tienen valor por defecto, así que no hay backfill).
+RLS estándar (`ENABLE` + `FORCE`) en ambas tablas, creada en la misma migración.
+
+**Bloqueo de la migración.** Los CHECK (`ck_comprobantes_venta_espejo_fiscal`, `ck_comprobantes_venta_espejo_sin_turno`), la FK
+autorreferente (`fk_comprobantes_venta_venta_origen`) y el índice único (`ux_comprobantes_venta_venta_origen`) sobre
+`comprobantes_venta` se crean sin `NOT VALID` ni `CONCURRENTLY`: la migración recorre esa tabla mientras bloquea las escrituras,
+así que en un tenant con muchos comprobantes conviene aplicarla en una ventana de bajo tráfico.
+
+- **Cupo mensual.** El cupo se cumple dentro de cada mes calendario y el saldo arranca en cero el día 1: cada mes es otra fila
+  de `acumulados_de_facturacion`, y `facturaciones_de_venta.periodo` guarda a qué mes se aplicaron los aportes para que una
+  anulación los revierta sobre el mismo mes.
+- **Escala del saldo.** Un aporte es `importe × porcentaje / 100` con el importe en 2 decimales y el porcentaje en 2
+  (`numeric(5,2)`), o sea hasta 6 decimales exactos; `numeric(18,6)` los guarda sin redondear y deja 12 dígitos enteros.
+- **Único escritor del acumulado.** Como `numeraciones_fiscales`, no hereda de `EntidadTenant`, necesita el filtro de tenant
+  escrito a mano (`AplicarFiltroDeTenantEnAcumuladoDeFacturacion`) y `SaveChangesAsync` rechaza escribirla: el saldo solo se
+  mueve con un `INSERT … ON CONFLICT DO UPDATE` crudo que suma el aporte en la base, para que dos ventas concurrentes no se pisen (ese escritor llega con la decisión de facturar al ingerir la venta).
+- **Enums nativos nuevos** (`motivo_facturacion`, `estado_facturacion_venta`), creados por `CREATE TYPE`; el orden de los
+  valores es el del ciclo de vida. `motivo_facturacion` conserva `no_requerida` (valor 0 del enum de dominio) para que el mapeo
+  sea 1:1, y un CHECK impide usarlo: una venta que no se factura no tiene fila.
+- **Baja de empresa y de medio de pago.** `acumulados_de_facturacion` es un dependiente `sinmarca` (sin baja lógica) de
+  `empresas`, `medios_pago` y `tenants`; `facturaciones_de_venta` es `marcado`. La guarda de baja los cuenta como uso (el inventario de
+  dependientes los incluye), igual que a un medio con pagos.
+- **Respaldos de error.** Los tres índices únicos se traducen a `409` (`venta_ya_facturada`, `facturacion_de_venta_duplicada`,
+  `factura_ya_asignada`); los CHECK no se traducen a propósito: los valores los deriva el servidor y una violación es un
+  defecto del servidor, no un error del cliente.
 
 ### Presupuestos (Etapa 17)
 

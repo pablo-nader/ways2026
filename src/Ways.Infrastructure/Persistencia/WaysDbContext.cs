@@ -194,6 +194,12 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<CertificadoFiscal> CertificadosFiscales => Set<CertificadoFiscal>();
     public DbSet<NumeracionFiscal> NumeracionesFiscales => Set<NumeracionFiscal>();
 
+    // Facturación por medio de pago: la decisión por venta (operativa, expuesta en IWaysDbContext) y el
+    // acumulado por medio y mes. AcumuladoDeFacturacion NO se expone en la interfaz (mismo criterio que
+    // NumeracionFiscal): su único escritor es un upsert crudo que suma de forma atómica.
+    public DbSet<FacturacionDeVenta> FacturacionesDeVenta => Set<FacturacionDeVenta>();
+    public DbSet<AcumuladoDeFacturacion> AcumuladosDeFacturacion => Set<AcumuladoDeFacturacion>();
+
     // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): expuesto desde esta slice —
     // ServicioDeVentas.ExigirNumeroPreasignadoPropioAsync es el único consumidor de lectura de
     // Application hoy (vía LINQ). El único escritor legítimo
@@ -322,6 +328,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoCuenta(modelBuilder);
         AplicarFiltroDeTenantEnAuditoria(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionFiscal(modelBuilder);
+        AplicarFiltroDeTenantEnAcumuladoDeFacturacion(modelBuilder);
         AplicarFiltroDeTenantEnReservaNumeracion(modelBuilder);
     }
 
@@ -366,6 +373,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         RechazarEscriturasDeNumeracionArticulo();
         RechazarEscriturasDeNumeracionComprobante();
         RechazarEscriturasDeNumeracionFiscal();
+        RechazarEscriturasDeAcumuladoDeFacturacion();
         RechazarEscriturasDeReservaNumeracion();
 
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
@@ -494,6 +502,25 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                     "numeraciones_fiscales solo se escribe con SQL crudo, vía " +
                     "AsignadorDeNumeroFiscal — nunca por " +
                     $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mismo guard que <see cref="RechazarEscriturasDeNumeracionFiscal"/>, acá para
+    /// <see cref="AcumuladoDeFacturacion"/>: el saldo solo se mueve con un <c>INSERT … ON CONFLICT DO
+    /// UPDATE</c> crudo que suma el aporte en la base; un <c>SaveChanges</c> pisaría el valor leído y perdería
+    /// aportes concurrentes.
+    /// </summary>
+    private void RechazarEscriturasDeAcumuladoDeFacturacion()
+    {
+        foreach (var entrada in ChangeTracker.Entries<AcumuladoDeFacturacion>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "acumulados_de_facturacion solo se escribe con SQL crudo (upsert que suma el aporte) — " +
+                    $"nunca por {nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
     }
@@ -752,6 +779,21 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(NumeracionFiscal), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionFiscal.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="AcumuladoDeFacturacion"/> no hereda de <see cref="EntidadTenant"/> (PK compuesta, sin
+    /// auditoría), mismo motivo que <see cref="NumeracionFiscal"/>: necesita la variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnAcumuladoDeFacturacion(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(AcumuladoDeFacturacion))!;
+
+        var parametro = Expression.Parameter(typeof(AcumuladoDeFacturacion), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(AcumuladoDeFacturacion.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

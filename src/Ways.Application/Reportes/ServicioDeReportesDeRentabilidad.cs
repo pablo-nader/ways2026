@@ -43,7 +43,7 @@ public class ServicioDeReportesDeRentabilidad(IWaysDbContext db, ServicioDeParam
             ? []
             : await (
                 from item in db.ItemsComprobanteVenta
-                join header in db.ComprobantesVenta on item.IdComprobanteVenta equals header.Id
+                join header in db.ComprobantesVenta.SinEspejosFiscales() on item.IdComprobanteVenta equals header.Id
                 join tipo in db.TiposComprobante on header.IdTipoComprobante equals tipo.Id
                 where header.Estado != EstadoComprobante.Anulado
                    && tipo.Clase == ClaseComprobante.Venta

@@ -39,6 +39,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "comportamiento_medio_pago", new[] { "cuenta_corriente", "efectivo", "electronico" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_compra", new[] { "anulada", "borrador", "confirmada" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_comprobante", new[] { "anulado", "emitido" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_facturacion_venta", new[] { "cancelada", "emitida", "pendiente", "rechazada" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_orden_compra", new[] { "anulada", "borrador", "cerrada", "enviada", "recibida_parcial" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_presupuesto", new[] { "anulado", "borrador", "convertido", "enviado" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_remito", new[] { "anulado", "borrador", "emitido", "facturado" });
@@ -47,6 +48,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_usuario", new[] { "activo", "bloqueado", "inactivo" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_lista", new[] { "derivada", "fija" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_punto_venta", new[] { "escritorio", "web" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_facturacion", new[] { "cupo_alcanzado", "forzada", "medio_exige_factura", "no_requerida" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_stock", new[] { "ajuste", "anulacion", "compra", "decomiso", "inventario", "reclasificacion", "remito", "transferencia", "venta" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_fondos_gasto", new[] { "caja_turno", "tesoreria" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "resultado_fiscal", new[] { "aprobado", "aprobado_con_observaciones", "pendiente", "rechazado" });
@@ -3037,6 +3039,60 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("dispositivos", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Fiscal.AcumuladoDeFacturacion", b =>
+                {
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdMedioPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago");
+
+                    b.Property<DateOnly>("Periodo")
+                        .HasColumnType("date")
+                        .HasColumnName("periodo");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("SaldoAFacturar")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,6)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("saldo_a_facturar");
+
+                    b.Property<decimal>("TotalFacturado")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("total_facturado");
+
+                    b.Property<decimal>("TotalVendido")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("total_vendido");
+
+                    b.HasKey("IdEmpresa", "IdMedioPago", "Periodo")
+                        .HasName("pk_acumulados_de_facturacion");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_acumulados_de_facturacion_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_acumulados_de_facturacion_empresa");
+
+                    b.HasIndex("IdMedioPago", "IdTenant")
+                        .HasDatabaseName("ix_acumulados_de_facturacion_medio_pago");
+
+                    b.ToTable("acumulados_de_facturacion", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_acumulados_de_facturacion_periodo_dia_uno", "EXTRACT(DAY FROM periodo) = 1");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Fiscal.CertificadoFiscal", b =>
                 {
                     b.Property<int>("Id")
@@ -3147,6 +3203,110 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_certificados_fiscales_material", "octet_length(nonce) = 12 AND octet_length(tag_autenticacion) = 16 AND octet_length(clave_privada_cifrada) > 0");
 
                             t.HasCheckConstraint("ck_certificados_fiscales_vigencia", "vigencia_hasta > vigencia_desde");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.Fiscal.FacturacionDeVenta", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_facturacion_venta");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Aportes")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("aportes");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<EstadoFacturacionDeVenta>("Estado")
+                        .HasColumnType("estado_facturacion_venta")
+                        .HasColumnName("estado");
+
+                    b.Property<int?>("IdComprobanteFiscal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_fiscal");
+
+                    b.Property<int>("IdComprobanteVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_venta");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<int>("Intentos")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("intentos");
+
+                    b.Property<MotivoDeFacturacion>("Motivo")
+                        .HasColumnType("motivo_facturacion")
+                        .HasColumnName("motivo");
+
+                    b.Property<DateOnly>("Periodo")
+                        .HasColumnType("date")
+                        .HasColumnName("periodo");
+
+                    b.Property<DateTimeOffset?>("ProximoIntentoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("proximo_intento_en");
+
+                    b.Property<string>("UltimoError")
+                        .HasColumnType("text")
+                        .HasColumnName("ultimo_error");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_facturaciones_de_venta");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_facturaciones_de_venta_tenant");
+
+                    b.HasIndex("IdComprobanteFiscal", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_facturaciones_de_venta_comprobante_fiscal")
+                        .HasFilter("id_comprobante_fiscal IS NOT NULL");
+
+                    b.HasIndex("IdComprobanteVenta", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_facturaciones_de_venta_comprobante");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_facturaciones_de_venta_empresa");
+
+                    b.HasIndex("IdTenant", "ProximoIntentoEn")
+                        .HasDatabaseName("ix_facturaciones_de_venta_pendientes")
+                        .HasFilter("estado = 'pendiente'::estado_facturacion_venta");
+
+                    b.ToTable("facturaciones_de_venta", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_aportes_arreglo", "jsonb_typeof(aportes) = 'array'");
+
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_emitida_con_comprobante", "estado <> 'emitida'::estado_facturacion_venta OR id_comprobante_fiscal IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_intentos_no_negativo", "intentos >= 0");
+
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_motivo_requerido", "motivo <> 'no_requerida'::motivo_facturacion");
+
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_periodo_dia_uno", "EXTRACT(DAY FROM periodo) = 1");
                         });
                 });
 
@@ -4711,6 +4871,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("estado_comprobante")
                         .HasColumnName("estado");
 
+                    b.Property<bool>("FacturaForzada")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("factura_forzada");
+
                     b.Property<DateTimeOffset>("Fecha")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha");
@@ -4746,6 +4912,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<int?>("IdTurnoCaja")
                         .HasColumnType("integer")
                         .HasColumnName("id_turno_caja");
+
+                    b.Property<int?>("IdVentaOrigen")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_venta_origen");
 
                     b.Property<decimal?>("IvaTotal")
                         .HasColumnType("numeric(14,2)")
@@ -4822,6 +4992,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdTurnoCaja", "IdTenant")
                         .HasDatabaseName("ix_comprobantes_venta_turno");
 
+                    b.HasIndex("IdVentaOrigen", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_comprobantes_venta_venta_origen")
+                        .HasFilter("id_venta_origen IS NOT NULL");
+
                     b.HasIndex("IdPuntoVenta", "IdTenant", "Fecha")
                         .HasDatabaseName("ix_comprobantes_venta_punto_venta_fecha");
 
@@ -4832,6 +5007,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("comprobantes_venta", null, t =>
                         {
                             t.HasCheckConstraint("ck_comprobantes_venta_cae_digitos", "cae IS NULL OR cae ~ '^[0-9]{14}$'");
+
+                            t.HasCheckConstraint("ck_comprobantes_venta_espejo_fiscal", "id_venta_origen IS NULL OR resultado_fiscal IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_comprobantes_venta_espejo_sin_turno", "id_venta_origen IS NULL OR id_turno_caja IS NULL");
 
                             t.HasCheckConstraint("ck_comprobantes_venta_fiscal_coherente", "(resultado_fiscal IS NULL AND cae IS NULL AND cae_vencimiento IS NULL AND observaciones_fiscales IS NULL) OR (resultado_fiscal IS NOT NULL AND ((cae IS NULL) = (cae_vencimiento IS NULL)) AND ((resultado_fiscal IN ('aprobado','aprobado_con_observaciones')) = (cae IS NOT NULL)))");
 
@@ -6599,6 +6778,32 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasConstraintName("fk_dispositivos_punto_venta");
                 });
 
+            modelBuilder.Entity("Ways.Domain.Fiscal.AcumuladoDeFacturacion", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_acumulados_de_facturacion_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_acumulados_de_facturacion_empresa");
+
+                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdMedioPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_acumulados_de_facturacion_medio_pago");
+                });
+
             modelBuilder.Entity("Ways.Domain.Fiscal.CertificadoFiscal", b =>
                 {
                     b.HasOne("Ways.Domain.Organizacion.Tenant", null)
@@ -6615,6 +6820,39 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_certificados_fiscales_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Fiscal.FacturacionDeVenta", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_facturaciones_de_venta_tenant");
+
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteFiscal", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_facturaciones_de_venta_comprobante_fiscal");
+
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_facturaciones_de_venta_comprobante");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_facturaciones_de_venta_empresa");
                 });
 
             modelBuilder.Entity("Ways.Domain.Fiscal.NumeracionFiscal", b =>
@@ -7163,6 +7401,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_comprobantes_venta_turno");
+
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdVentaOrigen", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_comprobantes_venta_venta_origen");
                 });
 
             modelBuilder.Entity("Ways.Domain.Ventas.ItemComprobanteVenta", b =>

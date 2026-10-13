@@ -961,7 +961,8 @@ public class ServicioDeVentas(
     private IQueryable<ComprobanteVenta> ConstruirQuery(
         int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta, int? idCliente, EstadoComprobante? estado)
     {
-        var query = db.ComprobantesVenta.AsQueryable();
+        // La factura espejo de una venta no es otra venta: el ticket ya está en el listado.
+        var query = db.ComprobantesVenta.SinEspejosFiscales();
 
         if (idPuntoVenta is { } pv)
         {
@@ -1108,6 +1109,7 @@ public class ServicioDeVentas(
         var comprobantePreLectura = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
         if (comprobantePreLectura is not null)
         {
+            ReglaDeComprobantes.ValidarAnulacionDeVenta(comprobantePreLectura);
             ReglaDeComprobantes.ValidarTransicionAEstado(comprobantePreLectura.Estado, EstadoComprobante.Anulado);
 
             // La pre-lectura alcanza sin conjunción en el UPDATE del paso 1: los dos estados que

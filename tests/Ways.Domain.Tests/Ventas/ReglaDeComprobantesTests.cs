@@ -198,4 +198,35 @@ public class ReglaDeComprobantesTests
             ReglaDeComprobantes.ValidarComprobanteAsociado(-1, original.Id, original, idPuntoVenta: 1, idCliente: 99));
         Assert.Equal("comprobante_asociado_invalido", excepcion.Codigo);
     }
+
+    [Fact]
+    public void UnNcxCuyoAsociadoEsUnEspejoFiscalSeRechazaParaNoDevolverDosVeces()
+    {
+        var espejo = CrearComprobante();
+        espejo.IdVentaOrigen = 77;
+
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeComprobantes.ValidarComprobanteAsociado(-1, espejo.Id, espejo, idPuntoVenta: 1, idCliente: 10));
+        Assert.Equal("comprobante_asociado_es_espejo_fiscal", excepcion.Codigo);
+        Assert.Equal(400, excepcion.EstadoHttp);
+    }
+
+    // ---- ValidarAnulacionDeVenta: un espejo no se anula por la vía de ventas -----------------
+
+    [Fact]
+    public void UnEspejoFiscalNoSeAnulaPorLaViaDeVentas()
+    {
+        var espejo = CrearComprobante();
+        espejo.IdVentaOrigen = 77;
+
+        var excepcion = Assert.Throws<ErrorDominio>(() => ReglaDeComprobantes.ValidarAnulacionDeVenta(espejo));
+        Assert.Equal("comprobante_es_espejo_fiscal", excepcion.Codigo);
+        Assert.Equal(409, excepcion.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnTicketSeAnulaPorLaViaDeVentas()
+    {
+        ReglaDeComprobantes.ValidarAnulacionDeVenta(CrearComprobante());
+    }
 }
