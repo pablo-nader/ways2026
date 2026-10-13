@@ -922,6 +922,21 @@ describe('Personal — lectura en vuelo al guardar y término aplicado', () => {
     expect(screen.getByRole('dialog', { name: 'Nuevo personal' })).toBeInTheDocument()
   })
 
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo` de esa relectura. */
+  it('un guardado rechazado con el listado ya cargado no lo vuelve a pedir', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'usuario_ya_vinculado', 'Ese usuario ya está vinculado a otro personal.'))
+    const usuarioEvento = userEvent.setup()
+    renderPersonal()
+    await abrirAlta(usuarioEvento)
+    await llenarAlta(usuarioEvento)
+
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Ese usuario ya está vinculado a otro personal.')
+    expect(apiGetMock.mock.calls.filter((c) => String(c[0]).startsWith('/personal'))).toHaveLength(1)
+    expect(screen.getByText('Ana Gómez')).toBeInTheDocument()
+  })
+
   /** Cláusula bajo prueba: `terminoVigente` en el refresco posterior a la escritura. El texto tipeado
    * y todavía no enviado no viaja; el último término enviado, sí. */
   it.each([
