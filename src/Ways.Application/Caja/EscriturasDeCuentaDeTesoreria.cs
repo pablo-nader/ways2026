@@ -29,7 +29,9 @@ namespace Ways.Application.Caja;
 /// <c>final</c> bajo el lock. Cada escritor fija su hora antes de esperar ese lock, así que sin esto un cierre podía comitear un id
 /// mayor con una fecha anterior. Con la regla, para cada cuenta el orden por fecha (con empates) es el orden por id, y el libro por
 /// rango puede definir su saldo de apertura como el último movimiento anterior al rango. Las filas de un cierre para una misma
-/// cuenta comparten la fecha resultante. La fila de la tesorería de efectivo conserva la hora del cierre.
+/// cuenta comparten la fecha resultante. La fila de la tesorería de efectivo conserva la hora del cierre. Consecuencia: si el último
+/// movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), toda fila posterior de esa cuenta lleva esa
+/// fecha hasta que la hora real la alcance; se cura sola y no se detecta (la pantalla avisa si el ajuste cae fuera del rango mostrado).
 ///
 /// Lo que el libro todavía NO refleja: (a) una devolución por nota de crédito de una venta cobrada con un medio digital
 /// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
@@ -142,7 +144,8 @@ public static class EscriturasDeCuentaDeTesoreria
 
     /// <summary>Fecha con la que una fila se agrega a la cadena de una cuenta: nunca anterior a la del último movimiento. Cada
     /// escritor fija su hora ANTES de esperar el lock de la cuenta, así que un cierre que esperó puede traer una hora más vieja que
-    /// la de un ajuste ya comiteado; subirla a la de la cola mantiene el orden por fecha igual al orden por id.</summary>
+    /// la de un ajuste ya comiteado; subirla a la de la cola mantiene el orden por fecha igual al orden por id. Con una cola fechada en el
+    /// futuro, todas las filas siguientes llevan esa fecha hasta que la hora real la pase.</summary>
     public static DateTimeOffset FechaMonotona(DateTimeOffset candidata, DateTimeOffset? fechaDeLaCola) =>
         fechaDeLaCola is { } cola && cola > candidata ? cola : candidata;
 

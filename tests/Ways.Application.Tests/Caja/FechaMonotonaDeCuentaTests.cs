@@ -28,7 +28,7 @@ public class FechaMonotonaDeCuentaTests
     }
 
     [Fact]
-    public void DosEscritoresEncadenadosNuncaProducenUnaFechaDecreciente()
+    public void LaFuncionEncadenadaConHorasDesordenadasNuncaDevuelveUnaFechaDecreciente()
     {
         DateTimeOffset? cola = null;
         var horas = new[] { Diez.AddSeconds(5), Diez, Diez.AddSeconds(2), Diez.AddSeconds(9), Diez.AddSeconds(1) };
