@@ -376,6 +376,19 @@ public class CuentasTesoreriaLecturaTests(WaysApiFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task UnaPaginaEnteraEnormeDaUnaPaginaVaciaEnLosDosLibrosYNoUn500()
+    {
+        var (ctx, cuenta) = await SembrarLibroAsync(nameof(UnaPaginaEnteraEnormeDaUnaPaginaVaciaEnLosDosLibrosYNoUn500));
+
+        var deCuenta = await LeerLibroAsync(ctx.Supervisor, cuenta, "?pagina=2147483647&tamanio=200");
+        var deEfectivo = await ctx.Supervisor.GetAsync($"/api/reportes/tesoreria?idEmpresa={ctx.IdEmpresa}&pagina=2147483647&tamanio=200");
+
+        Assert.Empty(deCuenta.Items);
+        Assert.Equal(4, deCuenta.Total);
+        Assert.Equal(HttpStatusCode.OK, deEfectivo.StatusCode);
+    }
+
+    [Fact]
     public async Task LaFilaTraeMedioEmpleadoBaseYPorcentajeYUnMedioDadoDeBajaQuedaSinNombre()
     {
         var ctx = await PrepararAsync(nameof(LaFilaTraeMedioEmpleadoBaseYPorcentajeYUnMedioDadoDeBajaQuedaSinNombre));

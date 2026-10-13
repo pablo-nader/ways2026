@@ -371,6 +371,35 @@ public class CuentasTesoreriaAjusteTests(WaysApiFixture fixture) : IClassFixture
     }
 
     [Fact]
+    public async Task UnaColaConFechaFuturaHaceQueLosAjustesSiguientesNuncaFechenAntes()
+    {
+        var ctx = await PrepararAsync(nameof(UnaColaConFechaFuturaHaceQueLosAjustesSiguientesNuncaFechenAntes));
+        var cuenta = await CrearCuentaAsync(ctx, saldoInicial: 0m);
+        var ahora = DateTimeOffset.UtcNow.AddHours(2);
+        var futuro = new DateTimeOffset(ahora.Ticks - ahora.Ticks % 10, TimeSpan.Zero);
+        await using (var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant))
+        await using (var comando = new NpgsqlCommand(
+            "INSERT INTO movimientos_cuenta (id_tenant, id_cuenta_tesoreria, fecha, tipo, concepto, inicio, ingreso, egreso, " +
+            "final, id_empleado) VALUES ($1, $2, $3, 'ajuste', 'previo', 0, 10, 0, 10, $4)", conexion))
+        {
+            foreach (var valor in new object[] { ctx.IdTenant, cuenta, futuro, ctx.IdUsuarioAdmin })
+            {
+                comando.Parameters.Add(new NpgsqlParameter { Value = valor });
+            }
+
+            await comando.ExecuteNonQueryAsync();
+        }
+
+        await Task.WhenAll(Enumerable.Range(1, 4).Select(i =>
+            AjustarOkAsync(ctx.Admin, cuenta, new SolicitudDeAjusteDeCuenta($"Ajuste {i}", i, null))));
+
+        var fechas = (await FilasAsync(ctx, cuenta)).Select(f => f.Fecha).ToList();
+        Assert.Equal(5, fechas.Count);
+        Assert.Equal(fechas.Order().ToList(), fechas);
+        Assert.All(fechas, f => Assert.True(f >= futuro));
+    }
+
+    [Fact]
     public async Task DosAjustesSimultaneosSeSerializanYLaCadenaQuedaContinua()
     {
         var ctx = await PrepararAsync(nameof(DosAjustesSimultaneosSeSerializanYLaCadenaQuedaContinua));

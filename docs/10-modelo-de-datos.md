@@ -2628,6 +2628,8 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > que su fila y las del cierre se serializan en una sola cadena; lee la cola DESPUÉS del lock, sin reintento, y el saldo objetivo se
 > resuelve contra esa cola. No toma el lock de la empresa ni los de los medios, así que no puede cerrar un ciclo con el cierre.
 >
+> **Fechas monótonas por cuenta.** Cada escritor fija su hora ANTES de esperar el lock de la cuenta (el cierre la fija al empezar), así que un cierre que espera podía comitear un id mayor con una fecha anterior a la de un ajuste ya comiteado. Por eso, bajo el lock, toda fila que se agrega a una cuenta (componentes del cierre y ajuste) toma `max(hora propia, fecha del último movimiento de la cuenta)`, leída junto con el `final` de la cola (`EscriturasDeCuentaDeTesoreria.FechaMonotona`); las filas de un cierre para una misma cuenta comparten esa fecha. La fila de la tesorería de efectivo conserva la hora del cierre. Con eso, para cada cuenta el orden por fecha (con empates) es el orden por id, y por eso vale que el saldo de apertura de un rango (el `final` del último movimiento anterior a `desde`) más el neto del rango es el saldo al cierre. Las filas anteriores a esta regla no se reescriben: un rango que las cruce podría seguir sin cuadrar.
+>
 > **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
 > debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
 > hay movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene

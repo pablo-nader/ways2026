@@ -111,7 +111,7 @@ public class ServicioDeLibroDeCuentas(IWaysDbContext db)
         var total = await enElRango.CountAsync(ct);
 
         var items = await (
-            from m in enElRango.OrderBy(m => m.Id).Skip((pagina - 1) * tamanio).Take(tamanio)
+            from m in enElRango.OrderBy(m => m.Id).Skip((int)Math.Min((long)(pagina - 1) * tamanio, int.MaxValue)).Take(tamanio)
             select new MovimientoDeCuentaListado(
                 m.Id,
                 m.Fecha,
