@@ -17,7 +17,7 @@ type Props = {
 
 /**
  * Alta rápida de categoría desde el formulario de artículo — `nombre` + categoría padre opcional.
- * `orden`/`activo` salen con los mismos defaults que `descriptorCategorias.aAlta` (orden 1,
+ * `orden`/`activo` salen con los mismos defaults que el alta de `Categorias.tsx` (orden 1,
  * activa); el servidor sigue validando profundidad máxima y ciclos como con cualquier alta.
  */
 export function AltaRapidaCategoria({ categorias, onCreado, onCancelar }: Props) {

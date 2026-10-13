@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   descriptorAreas,
-  descriptorCategorias,
   descriptorGrupos,
   descriptorListasPrecio,
   descriptorMarcas,
@@ -34,7 +33,6 @@ describe('sujetoDeBaja de cada descriptor de catálogo', () => {
     expect(descriptorMarcas.sujetoDeBaja).toBe('la marca')
     expect(descriptorGrupos.sujetoDeBaja).toBe('el grupo')
     expect(descriptorMediosPago.sujetoDeBaja).toBe('el medio de pago')
-    expect(descriptorCategorias.sujetoDeBaja).toBe('la categoría')
     expect(descriptorListasPrecio.sujetoDeBaja).toBe('la lista de precios')
   })
 })
@@ -46,7 +44,7 @@ describe('descriptorListasPrecio.aAlta', () => {
       modo: 'Fija',
       idListaBase: '3',
       porcentaje: '10',
-    })
+    }, null)
 
     expect(alta.idListaBase).toBeNull()
     expect(alta.porcentaje).toBeNull()
@@ -58,7 +56,7 @@ describe('descriptorListasPrecio.aAlta', () => {
       modo: 'Derivada',
       idListaBase: '3',
       porcentaje: '10.5',
-    })
+    }, null)
 
     expect(alta.idListaBase).toBe(3)
     expect(alta.porcentaje).toBe(10.5)
@@ -70,7 +68,7 @@ describe('descriptorListasPrecio.aAlta', () => {
       modo: 'Derivada',
       idListaBase: '',
       porcentaje: '',
-    })
+    }, null)
 
     expect(alta.idListaBase).toBeNull()
     expect(alta.porcentaje).toBeNull()
@@ -82,29 +80,29 @@ describe('descriptorListasPrecio.aAlta', () => {
       modo: 'Fija',
       idListaBase: '',
       porcentaje: '',
-    })
+    }, null)
     const altaFalse = descriptorListasPrecio.aAlta('Lista E', true, {
       esDefault: false,
       modo: 'Fija',
       idListaBase: '',
       porcentaje: '',
-    })
+    }, null)
 
     expect(altaTrue.esDefault).toBe(true)
     expect(altaFalse.esDefault).toBe(false)
   })
 
-  it('pasa nombre y activo sin transformar, e idEmpresa siempre en null', () => {
+  it('pasa nombre y activo sin transformar y la empresa que recibe', () => {
     const alta = descriptorListasPrecio.aAlta('Lista F', false, {
       esDefault: false,
       modo: 'Fija',
       idListaBase: '',
       porcentaje: '',
-    })
+    }, 9)
 
     expect(alta.nombre).toBe('Lista F')
     expect(alta.activo).toBe(false)
-    expect(alta.idEmpresa).toBeNull()
+    expect(alta.idEmpresa).toBe(9)
   })
 })
 
@@ -218,18 +216,18 @@ describe('descriptorMediosPago.porcentajeFacturacion', () => {
   })
 
   it('aAlta convierte el texto a número', () => {
-    const alta = descriptorMediosPago.aAlta('QR', true, { ...descriptorMediosPago.valoresPorDefecto, porcentajeFacturacion: '12.5' })
+    const alta = descriptorMediosPago.aAlta('QR', true, { ...descriptorMediosPago.valoresPorDefecto, porcentajeFacturacion: '12.5' }, null)
     expect(alta.porcentajeFacturacion).toBe(12.5)
   })
 
   it('aAlta manda 0 cuando el campo queda vacío, nunca null', () => {
-    const alta = descriptorMediosPago.aAlta('QR', true, { ...descriptorMediosPago.valoresPorDefecto, porcentajeFacturacion: '' })
+    const alta = descriptorMediosPago.aAlta('QR', true, { ...descriptorMediosPago.valoresPorDefecto, porcentajeFacturacion: '' }, null)
     expect(alta.porcentajeFacturacion).toBe(0)
   })
 
   it('ida y vuelta: aValores y aAlta conservan el porcentaje', () => {
     const valores = descriptorMediosPago.aValores(medioFixture({ porcentajeFacturacion: 100 }))
-    expect(descriptorMediosPago.aAlta('Transferencia', true, valores).porcentajeFacturacion).toBe(100)
+    expect(descriptorMediosPago.aAlta('Transferencia', true, valores, null).porcentajeFacturacion).toBe(100)
   })
 })
 
@@ -267,7 +265,7 @@ describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
   })
 
   it('el alta arranca sin cuenta y con todo en 0', () => {
-    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos())
+    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos(), null)
 
     expect(alta).toMatchObject({
       idCuentaTesoreria: null,
@@ -300,7 +298,7 @@ describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
       retencionGananciasPorcentaje: '0',
     })
 
-    expect(descriptorMediosPago.aAlta('QR', true, valores)).toMatchObject({
+    expect(descriptorMediosPago.aAlta('QR', true, valores, null)).toMatchObject({
       idCuentaTesoreria: 7,
       comisionPorcentaje: 4.5,
       retencionIibbPorcentaje: 1.25,
@@ -313,11 +311,11 @@ describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
     const valores = descriptorMediosPago.aValores(medioFixture())
 
     expect(valores.idCuentaTesoreria).toBe('')
-    expect(descriptorMediosPago.aAlta('QR', true, valores).idCuentaTesoreria).toBeNull()
+    expect(descriptorMediosPago.aAlta('QR', true, valores, null).idCuentaTesoreria).toBeNull()
   })
 
   it('un porcentaje vacío se manda como 0 y nunca como null', () => {
-    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos({ comisionPorcentaje: '', retencionIvaPorcentaje: '' }))
+    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos({ comisionPorcentaje: '', retencionIvaPorcentaje: '' }), null)
 
     expect(alta.comisionPorcentaje).toBe(0)
     expect(alta.retencionIvaPorcentaje).toBe(0)
@@ -337,6 +335,7 @@ describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
           retencionIvaPorcentaje: '2',
           retencionGananciasPorcentaje: '3',
         }),
+        null,
       )
 
       expect(alta).toMatchObject({
@@ -409,15 +408,47 @@ describe('avisoDeLasCuentas', () => {
 })
 
 describe('descriptorMediosPago — empresa de la fila', () => {
-  it('aValores lleva la empresa de la fila y aAlta la devuelve, para que editar no convierta el medio en uno de todo el tenant', () => {
+  it('aAlta devuelve la empresa que recibe, para que editar no convierta el medio en uno de todo el tenant', () => {
     const valores = descriptorMediosPago.aValores(medioFixture({ idEmpresa: 4 }))
 
     expect(valores.idEmpresa).toBe('4')
-    expect(descriptorMediosPago.aAlta('QR', true, valores).idEmpresa).toBe(4)
+    expect(descriptorMediosPago.aAlta('QR', true, valores, 4).idEmpresa).toBe(4)
   })
 
   it('un medio de todo el tenant y un alta nueva mandan idEmpresa null', () => {
     expect(descriptorMediosPago.aValores(medioFixture({ idEmpresa: null })).idEmpresa).toBe('')
-    expect(descriptorMediosPago.aAlta('QR', true, descriptorMediosPago.valoresPorDefecto).idEmpresa).toBeNull()
+    expect(descriptorMediosPago.aAlta('QR', true, descriptorMediosPago.valoresPorDefecto, null).idEmpresa).toBeNull()
+  })
+})
+
+describe('aAlta de los catálogos genéricos — empresa de la fila', () => {
+  const catalogos = [
+    { nombre: 'áreas', descriptor: descriptorAreas },
+    { nombre: 'marcas', descriptor: descriptorMarcas },
+    { nombre: 'grupos', descriptor: descriptorGrupos },
+    { nombre: 'listas de precio', descriptor: descriptorListasPrecio },
+    { nombre: 'medios de pago', descriptor: descriptorMediosPago },
+  ] as const
+
+  it.each(catalogos)('%s: una edición devuelve la empresa de la fila', ({ descriptor }) => {
+    const alta = (descriptor.aAlta as (n: string, a: boolean, v: Record<string, unknown>, e: number | null) => { idEmpresa: number | null })(
+      'X',
+      true,
+      descriptor.valoresPorDefecto,
+      6,
+    )
+
+    expect(alta.idEmpresa).toBe(6)
+  })
+
+  it.each(catalogos)('%s: una fila de todo el tenant y un alta mandan null', ({ descriptor }) => {
+    const alta = (descriptor.aAlta as (n: string, a: boolean, v: Record<string, unknown>, e: number | null) => { idEmpresa: number | null })(
+      'X',
+      true,
+      descriptor.valoresPorDefecto,
+      null,
+    )
+
+    expect(alta.idEmpresa).toBeNull()
   })
 })

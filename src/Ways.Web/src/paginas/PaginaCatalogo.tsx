@@ -15,6 +15,8 @@ type Formulario = {
   id: number | null
   nombre: string
   activo: boolean
+  /** Empresa de la fila que se edita; null en un alta y en una fila de todo el tenant. */
+  idEmpresa: number | null
   valores: Record<string, ValorDeCampo>
 }
 
@@ -155,7 +157,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     if (ocupadoRef.current) return
 
     marcarApertura()
-    setFormulario({ id: null, nombre: '', activo: true, valores: { ...valoresPorDefecto } })
+    setFormulario({ id: null, nombre: '', activo: true, idEmpresa: null, valores: { ...valoresPorDefecto } })
     setAviso('')
     setError('')
     setErrorFormulario('')
@@ -165,7 +167,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     if (ocupadoRef.current) return
 
     marcarApertura()
-    setFormulario({ id: item.id, nombre: item.nombre, activo: item.activo, valores: aValores(item) })
+    setFormulario({ id: item.id, nombre: item.nombre, activo: item.activo, idEmpresa: item.idEmpresa, valores: aValores(item) })
     setAviso('')
     setError('')
     setErrorFormulario('')
@@ -192,7 +194,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     setAviso('')
     try {
       try {
-        const alta = aAlta(datos.nombre, datos.activo, datos.valores)
+        const alta = aAlta(datos.nombre, datos.activo, datos.valores, datos.idEmpresa)
         if (datos.id === null) {
           await api.post(`/catalogos/${recurso}`, alta)
         } else {

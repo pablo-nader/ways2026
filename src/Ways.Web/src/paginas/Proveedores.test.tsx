@@ -705,6 +705,48 @@ describe('Proveedores — error y foco de la modal', () => {
   })
 })
 
+describe('Proveedores — empresa de la fila al guardar', () => {
+  function mockearUnProveedor(idEmpresa: number | null) {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/proveedores') return Promise.resolve(paginaFixture([proveedorFixture({ idEmpresa })]))
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') {
+        return Promise.resolve([{ id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true }])
+      }
+      return undefined
+    })
+  }
+
+  it('editar un proveedor de una empresa manda la empresa de la fila en el PUT', async () => {
+    mockearUnProveedor(5)
+    apiPutMock.mockResolvedValue(proveedorFixture())
+    const usuario = userEvent.setup()
+
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await screen.findByRole('option', { name: 'Responsable Inscripto' })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 5 })
+  })
+
+  it('editar un proveedor de todo el tenant manda null', async () => {
+    mockearUnProveedor(null)
+    apiPutMock.mockResolvedValue(proveedorFixture())
+    const usuario = userEvent.setup()
+
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await screen.findByRole('option', { name: 'Responsable Inscripto' })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: null })
+  })
+})
+
 function diferido<T>() {
   let resolver!: (valor: T) => void
   let rechazar!: (motivo: unknown) => void

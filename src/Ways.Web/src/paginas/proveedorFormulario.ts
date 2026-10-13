@@ -21,6 +21,8 @@ export type Formulario = {
   percibeIibb: boolean
   percibeIva: boolean
   preciosIncluyenIva: boolean
+  /** Empresa de la fila que se edita; null en un alta y en un proveedor de todo el tenant. */
+  idEmpresa: number | null
 }
 
 export function formularioVacio(): Formulario {
@@ -43,6 +45,7 @@ export function formularioVacio(): Formulario {
     percibeIibb: false,
     percibeIva: false,
     preciosIncluyenIva: false,
+    idEmpresa: null,
   }
 }
 
@@ -66,6 +69,7 @@ export function aFormulario(p: ProveedorListado): Formulario {
     percibeIibb: p.percibeIibb,
     percibeIva: p.percibeIva,
     preciosIncluyenIva: p.preciosIncluyenIva,
+    idEmpresa: p.idEmpresa,
   }
 }
 
@@ -89,7 +93,7 @@ export function aAlta(f: Formulario): AltaProveedor {
     celularSupervisor: aVacioNulo(f.celularSupervisor),
     margen: f.margen.trim() === '' ? null : Number(f.margen),
     observaciones: aVacioNulo(f.observaciones),
-    idEmpresa: null,
+    idEmpresa: f.idEmpresa,
     activo: f.activo,
     percibeIibb: f.percibeIibb,
     percibeIva: f.percibeIva,
