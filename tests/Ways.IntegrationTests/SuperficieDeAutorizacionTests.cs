@@ -117,6 +117,15 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // SupervisionDeCuentaDeProveedor en vez de GestionDeCatalogo. 403 Vendedor cubierto en
         // AjusteDeCuentaCorrienteDeProveedorTests.
         ("POST", "/api/proveedores/{idProveedor:int}/cuenta-corriente/ajustes"),
+        // Cuenta del personal: carga de horas y ajuste. Usan GestionDeCuentaDePersonal (Supervisor y Admin) en
+        // vez de GestionDeCatalogo, que dejaría afuera al Supervisor. El 403 del Vendedor y el 201 del
+        // Supervisor están en CuentaDePersonalEndpointsTests.AdminYSupervisorEscribenYLeenPeroElVendedorQuedaAfuera.
+        ("POST", "/api/personal/{id:int}/horas"),
+        ("POST", "/api/personal/{id:int}/ajustes"),
+        // Pago de personal: mismo criterio que la carga de horas y el ajuste (Supervisor y Admin); el 403 del
+        // Vendedor y el 403 del Supervisor con origen tesorería (la regla va en el servicio, no en la política)
+        // están en PagoDePersonalTests.
+        ("POST", "/api/personal/{id:int}/pagos"),
         // stage-17-presupuestos-y-remitos (Slice 2, design decisión 17/proposal decisión 10):
         // /api/presupuestos agrupa SOLO bajo OperacionDePos, nada apilado — a diferencia de
         // /api/ordenes-compra, que SÍ apila GestionDeCatalogo. Un Vendedor tiene que poder

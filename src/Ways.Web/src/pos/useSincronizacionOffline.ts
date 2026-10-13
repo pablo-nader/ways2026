@@ -44,7 +44,7 @@ import {
   type VentaEnCola,
   type VentaRechazada,
 } from './outboxOffline'
-import { INTERVALO_POR_DEFECTO_MINUTOS, minutosAMilisegundos } from './intervaloDeSincronizacion'
+import { INTERVALO_DE_SINCRONIZACION_MS } from './intervaloDeSincronizacion'
 import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
 import { mensajeDeRechazoDeAjusteManualAlDrenar } from '../api/ajusteManual'
 import { clienteDePos } from '../api/pos'
@@ -64,8 +64,8 @@ export const LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS = 3_000
 
 /** La guarda de cierre de turno del servidor rechaza un reporte de rendición de más de 5 minutos
  * (`ReglaDeRendicionDeCola.VentanaDeFrescura`) sobre el bloque vivo. El intervalo de sincronización
- * lo configura el cajero hasta 60 minutos, así que la rendición tiene su propio período, fijo y
- * por debajo de esa ventana: sin esto, un cierre desde otra máquina quedaría bloqueado por un
+ * es de 10 minutos, así que la rendición tiene su propio período, más corto y por debajo de esa
+ * ventana: sin esto, un cierre desde otra máquina quedaría bloqueado por un
  * reporte vencido de este dispositivo. Es un POST chico, y sin bloque local no sale nada. */
 export const INTERVALO_DE_RENDICION_MS = 2 * 60_000
 
@@ -120,8 +120,8 @@ export type ParametrosDeSincronizacionOffline = {
   activo: boolean
   /** Inyectable para tests — default `crearAlmacenIndexedDb()` (IndexedDB real). */
   almacen?: AlmacenClaveValor
-  /** Período del ciclo automático — default `INTERVALO_POR_DEFECTO_MINUTOS`; `Pos.tsx` pasa el
-   * configurado por el cajero (`intervaloDeSincronizacion.ts`). */
+  /** Período del ciclo automático — default `INTERVALO_DE_SINCRONIZACION_MS` (fijo, 10 minutos);
+   * solo los tests lo acortan. */
   intervaloMs?: number
   /** `true` (default) bloquea la venta hasta que termina el ciclo de arranque
    * (`sincronizacionInicialPendiente`). `Pos.tsx` lo apaga fuera del POS de escritorio: la
@@ -193,6 +193,8 @@ export type ResultadoDeSincronizacionOffline = {
      * previa propia que congelar (p. ej. los tests de este mismo hook). */
     instantaneaCongelada?: InstantaneaDePos | null
   }) => Promise<EncoladoOffline>
+  /** Cuenta corriente de las ventas de este cliente que siguen en el outbox: el saldo del servidor todavía no la incluye. */
+  consumoPendienteDeCuentaCorriente: (idCliente: number) => Promise<number>
   /** judgment-day ronda 2 (WARNING): la salida real que `ventasConError` prometía y no tenía —
    * re-encola la venta rechazada AL FINAL del outbox para que el próximo drenado la reintente. Es
    * seguro incluso si el rechazo original fue real y persiste (el servidor la va a rechazar otra
@@ -224,6 +226,11 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
   for (const [indice, linea] of lineas.entries()) {
     const precios = vigentes[indice]
     if (!precios) return null
+    // La línea por importe viaja con su importe y nunca con precio de lista ni descuento (el servidor rechaza la mezcla).
+    if (linea.importe !== undefined) {
+      enriquecidas.push(linea)
+      continue
+    }
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
     // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`
@@ -243,7 +250,7 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
 }
 
 export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffline): ResultadoDeSincronizacionOffline {
-  const { idPuntoVenta, activo, intervaloMs = minutosAMilisegundos(INTERVALO_POR_DEFECTO_MINUTOS), sincronizarAntesDeVender = true } = params
+  const { idPuntoVenta, activo, intervaloMs = INTERVALO_DE_SINCRONIZACION_MS, sincronizarAntesDeVender = true } = params
 
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
   // Desmontada la pantalla (al navegar, o al remontarse por `key` con otro punto de venta), un envío
@@ -916,6 +923,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizarAhora,
     drenarAhora,
     encolarVentaOffline,
+    consumoPendienteDeCuentaCorriente,
     reintentarVentaConError,
     descartarVentaConError,
   }

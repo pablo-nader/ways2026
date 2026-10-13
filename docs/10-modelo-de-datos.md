@@ -322,6 +322,15 @@ medios_pago (                 -- [catálogo]
     admite_vuelto   boolean,                 -- default según comportamiento, editable
     requiere_referencia boolean,             -- nro de cupón / operación
     recargo_porcentaje  numeric(5,2) NULL,   -- p.ej. crédito +10%
+    porcentaje_facturacion numeric(5,2) NOT NULL DEFAULT 0,
+                    -- parte (0..100) de lo vendido con este medio que debe facturarse
+                    -- fiscalmente; CHECK ck_medios_pago_porcentaje_facturacion
+    id_cuenta_tesoreria integer NULL,        -- cuenta (§7) donde entra lo cobrado con este medio;
+                    -- FK compuesta (id_cuenta_tesoreria, id_tenant) a cuentas_tesoreria, RESTRICT
+    comision_porcentaje            numeric(6,3) NOT NULL DEFAULT 0,  -- comisión de la plataforma
+    retencion_iibb_porcentaje      numeric(6,3) NOT NULL DEFAULT 0,
+    retencion_iva_porcentaje       numeric(6,3) NOT NULL DEFAULT 0,
+    retencion_ganancias_porcentaje numeric(6,3) NOT NULL DEFAULT 0,
     orden, activo
 )
 ```
@@ -329,6 +338,30 @@ medios_pago (                 -- [catálogo]
 Mata las columnas fijas `efectivo/tarjetas/c_corriente` del legacy. Un pago es una fila
 (ver `pagos_comprobante`), la caja totaliza por medio, y agregar "QR" es un INSERT del
 tenant, no una migración.
+
+`porcentaje_facturacion` solo se guarda y se expone (ABM y copia offline del POS); la
+decisión de qué tickets se facturan es de una etapa posterior.
+
+> **Cuenta, comisión y retenciones (cuentas de tesorería).** El ABM del catálogo (`/api/catalogos/medios-pago`)
+> guarda y devuelve `id_cuenta_tesoreria` y los cuatro porcentajes (`idCuentaTesoreria`, `comisionPorcentaje`,
+> `retencionIibbPorcentaje`, `retencionIvaPorcentaje`, `retencionGananciasPorcentaje`); el listado trae además el
+> nombre de la cuenta y si está inactiva (esos campos solo los recibe el Admin; para Supervisor y Vendedor, que leen este
+> listado, vienen en `null`; mismo mecanismo que los costos, pero esos también los ve el Supervisor), y trata una cuenta dada de baja como "sin cuenta". La instantánea del POS no los
+> lleva. Una edición que omite un campo conserva lo guardado (igual que `porcentaje_facturacion`); uno enviado se aplica,
+> incluidos la cuenta en `null` y un porcentaje en `0`. Cada porcentaje va de 0 a 100 con hasta 3 decimales y los cuatro
+> suman a lo sumo 100. La cuenta y los porcentajes distintos de cero solo existen con `comportamiento = 'electronico'`:
+> enviar una cuenta o un porcentaje distinto de cero a un medio que no lo es se rechaza (400
+> `cuenta_solo_electronico`), y cambiar el comportamiento sin enviarlos los limpia (cuenta en `NULL`, porcentajes en 0) y la
+> respuesta ya lo muestra. Tres CHECK de respaldo: `ck_medios_pago_porcentajes_cuenta_rango`,
+> `ck_medios_pago_porcentajes_cuenta_suma` y `ck_medios_pago_cuenta_solo_electronico`, traducidas a los mismos códigos
+> que el servicio (`porcentaje_cuenta_invalido`, `porcentajes_cuenta_suma_invalida`, `cuenta_solo_electronico`); la FK
+> compuesta a la cuenta sale como 400 `referencia_invalida`. Índice de soporte de la FK: `ix_medios_pago_cuenta_tesoreria`.
+> Lo que la base no valida lo valida `ServicioDeMediosPago` al asignar una cuenta: existe en el tenant (400
+> `referencia_invalida`, sin distinguir otro tenant de inexistente), es de la empresa del medio (400
+> `cuenta_tesoreria_de_otra_empresa`), un medio de todo el tenant solo la toma en un tenant de una sola empresa (400
+> `cuenta_tesoreria_requiere_empresa`) y no está inactiva (400 `cuenta_tesoreria_inactiva`; un medio que ya apuntaba a una
+> cuenta desactivada después se guarda sin cambiarla). La asignación toma `FOR KEY SHARE` sobre la fila viva de la
+> cuenta, que choca con el `FOR UPDATE` de su baja: una cuenta no queda dada de baja con un medio apuntándole.
 
 ---
 
@@ -374,6 +407,21 @@ proveedores (                 -- [catálogo]
     saldo numeric(14,2) NOT NULL DEFAULT 0  -- cache; el libro es
                                              -- movimientos_cuenta_corriente_proveedor (§8, Etapa 15)
 );
+
+personal (                    -- [catálogo]
+    id_personal,
+    nombre citext, documento citext NULL, telefono citext NULL, observaciones,
+    valor_hora          numeric(14,2) NOT NULL DEFAULT 0,  -- CHECK >= 0; valor por defecto de la
+                                             -- próxima carga de horas, no el de cargas ya hechas
+    saldo               numeric(14,2) NOT NULL DEFAULT 0,  -- cache; positivo: la empresa le debe al
+                                             -- empleado. El libro es movimientos_personal (§8c)
+    id_usuario          integer NULL,        -- FK simple a usuarios; único entre filas vivas
+    id_cliente          integer NULL         -- FK compuesta (id_cliente, id_tenant) a clientes;
+                                             -- único entre filas vivas; nunca el Consumidor Final
+);
+-- Los dos vínculos son opcionales e independientes. El nombre evita "empleado" porque
+-- `id_empleado` ya significa el usuario que opera. Unicidad: `ux_personal_usuario` y
+-- `ux_personal_cliente`, parciales `WHERE deleted_at IS NULL`.
 ```
 
 ---
@@ -403,12 +451,16 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     id_area, id_categoria NULL, id_marca NULL, id_grupo NULL,
     id_proveedor_habitual integer NULL,      -- para reposición; no exclusivo
     id_alicuota_iva  integer NOT NULL,
-    unidad_venta     unidad_venta,           -- enum: unidad | peso  (pesables: cantidad 12,3)
+    unidad_venta     unidad_venta,           -- enum: unidad | peso | importe  (pesables: cantidad 12,3;
+                                             -- importe: rubro sin detalle cobrado por el monto que escribe el
+                                             -- cajero, cantidad siempre 1; solo ALTER TYPE ... ADD VALUE)
     unidades_por_bulto numeric(10,2) NULL,
     es_producto      boolean,                -- false = servicio: no toca stock
     controla_lote    boolean NOT NULL DEFAULT false, -- exige lote en todo movimiento de stock (§ lotes)
     acumula_en_venta boolean NOT NULL DEFAULT true,  -- true: agregar de nuevo suma cantidad en una línea;
                                              -- false: cada alta es una línea nueva (lo aplica el carrito)
+                                             -- CHECK ck_articulos_importe_no_acumula:
+                                             --   unidad_venta <> 'importe' OR acumula_en_venta = false
     costo_lista      numeric(14,2) NULL,     -- lista del proveedor, tal como se cargó (ver costo_lista_por / _incluye_iva)
     costo_lista_por  text NOT NULL DEFAULT 'Unidad', -- base del costo_lista: 'Unidad' | 'Bulto'
                                              -- CHECK ck_articulos_costo_lista_por; 'Bulto' exige unidades_por_bulto > 0
@@ -420,12 +472,27 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
                                              -- cálculo; la compra lo pisa con el costo efectivo
     disponible_para_todas boolean NOT NULL DEFAULT true,
     activo,
-    publicado_web    boolean NOT NULL DEFAULT false, -- se ofrece en la tienda online (§3, "Tienda online");
+    disponible_online boolean NOT NULL DEFAULT true, -- se ofrece en la tienda online (§3, "Tienda online");
                                              -- por artículo: no es un campo compartido de la familia
-    id_familia       integer NULL            -- familia a la que pertenece (§3, "Familias de artículos");
+    disponible_venta boolean NOT NULL DEFAULT true,  -- false = de uso interno: se compra y se stockea, pero no se
+                                             -- vende (POS, tienda ni venta); tampoco es un campo de la familia
+    id_familia       integer NULL,           -- familia a la que pertenece (§3, "Familias de artículos");
                                              -- FK compuesta (id_familia, id_tenant), NULL = sin familia
+    tecla_atajo      text NULL               -- tecla de función del POS de un artículo por importe: F5..F8;
+                                             -- NULL = sin atajo. Por artículo: no es un campo compartido de la familia
+                                             -- CHECK ck_articulos_tecla_atajo: tecla_atajo IN ('F5', 'F6', 'F7', 'F8')
+                                             -- CHECK ck_articulos_tecla_atajo_solo_importe:
+                                             --   tecla_atajo IS NULL OR unidad_venta = 'importe'
 );
--- ix_articulos_publicado_web (id_tenant) WHERE publicado_web AND activo AND deleted_at IS NULL
+-- ux_articulos_tecla_atajo UNIQUE (id_tenant, tecla_atajo) WHERE deleted_at IS NULL AND tecla_atajo IS NOT NULL
+-- (23505 -> 409 tecla_atajo_duplicada). Un artículo por importe nunca acumula (importe_no_acumula), solo él tiene
+-- tecla (tecla_atajo_solo_importe) y no puede ser componente de un combo (combo_componente_por_importe). Se rechaza,
+-- no se corrige: el alta sin acumula_en_venta toma false si es por importe; la edición exige mandar la tecla en
+-- null al pasar a otra unidad (null = sin atajo, a diferencia de acumula_en_venta). Con alcance de familia, cambiar
+-- la unidad compartida a una que no es por importe mientras OTRO miembro tiene tecla es 409
+-- familia_miembro_con_tecla_atajo, y agrupar un artículo con tecla contra una referencia que no es por importe es
+-- 409 articulo_con_tecla_atajo.
+-- ix_articulos_disponible_online (id_tenant) WHERE disponible_online AND disponible_venta AND activo AND deleted_at IS NULL
 
 articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
     id_articulo, id_empresa, id_tenant,
@@ -463,11 +530,15 @@ El artículo **no tiene precio de venta**: el precio vive en las listas. Se acab
 
 ### Tienda online
 
-Qué artículos muestra la tienda del dominio de un comercio, con qué precio y con qué imagen. La publicación es una
-decisión por artículo (`articulos.publicado_web`, default `false`: ningún artículo existente se publica solo) y vale
-para todo el tenant; en qué empresa se ve lo decide la disponibilidad de siempre (`disponible_para_todas` +
-`articulos_empresas`). No es un campo compartido de la familia: publicar un miembro no publica a los demás, y editar
-a la familia no lo toca.
+Qué artículos y combos muestra la tienda del dominio de un comercio, con qué precio y con qué imagen. Todo está en la
+tienda salvo lo que se destilda: `articulos.disponible_online`, `ofertas.disponible_online` y `combos.disponible_online`
+nacen en `true` (la migración `DisponibilidadOnlineYVenta` reemplazó `publicado_web`, que nacía en `false`, y dejó
+todas las filas existentes en `true`: la columna nueva tiene un default constante, así que la migración no escribe
+datos). `articulos.disponible_venta` (default `true`) marca los artículos de uso interno: no se venden, ni en la
+tienda ni en la caja (ver "Disponible a la venta" abajo). La disponibilidad online vale para todo el tenant; en qué
+empresa se ve un artículo lo decide la disponibilidad de siempre (`disponible_para_todas` + `articulos_empresas`).
+Ninguna de las dos banderas es un campo compartido de la familia: apagarla en un miembro no la apaga en los demás, y
+editar a la familia no la toca.
 
 ```sql
 imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como el artículo del que cuelga
@@ -487,10 +558,12 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
 ```
 
 - **RLS**: `imagenes_articulo_tenant` (estándar, `HabilitarRlsDeTenant`) y, para el modo público, una policy
-  `{tabla}_publico_lectura` en seis tablas: `articulos` (`publicado_web AND activo AND deleted_at IS NULL`),
-  `articulos_empresas`, `listas_precio`, `precios`, `categorias` e `imagenes_articulo` (estas tres y la anterior
-  con `deleted_at IS NULL`). Todas `FOR SELECT` y con `id_tenant = app_tenant_publico()`; qué deja ver cada una y
-  qué decide la consulta en lugar de la policy, en doc 09 "Modo de acceso público".
+  `{tabla}_publico_lectura` en diez tablas: `articulos` (`disponible_online AND disponible_venta AND activo AND
+  deleted_at IS NULL`), `ofertas` y `combos` (`disponible_online AND activo AND deleted_at IS NULL`),
+  `articulos_empresas`, `ofertas_listas` y `combos_componentes` (solo el tenant: no tienen baja lógica) y `listas_precio`,
+  `precios`, `categorias` e `imagenes_articulo` (con `deleted_at IS NULL`). Todas `FOR SELECT` y con `id_tenant =
+  app_tenant_publico()`; qué deja ver cada una y qué decide la consulta en lugar de la policy, en doc 09 "Modo de
+  acceso público".
 - **Imagen**: una por artículo vivo. Subir reemplaza la fila viva (mismo `id`, nuevo `actualizado_en`); quitar **borra
   la fila** (`DELETE`, no baja lógica: es un derivado sin historia que valga la pena conservar y guardarla dejaría hasta
   1 MB por artículo sin uso) y una subida posterior inserta una fila nueva. Dar de baja el artículo
@@ -499,28 +572,52 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   inventario de dependientes la sigue marcando `marcado`. Las valida `ValidadorDeImagen`, la misma regla que el logo de la vitrina: `413 imagen_demasiado_grande`
   por encima de 1 MB y `415 imagen_no_admitida` para cualquier otra cosa o un tipo declarado que no coincide.
 - **Escritura** (`ServicioDeCatalogoWeb`, `GestionDeCatalogo` como editar el artículo, sin reintento): `PUT
-  /api/articulos/{id}/web` con `{ publicado }` (obligatorio: `400 publicado_requerido`; idempotente, pedir el estado
-  actual no escribe) y `PUT/DELETE /api/articulos/{id}/imagen` con la imagen como cuerpo crudo. Las tres toman
+  /api/articulos/{id}/disponibilidad` con `{ disponibleVenta, disponibleOnline }` (los dos obligatorios: `400
+  disponible_venta_requerido` / `400 disponible_online_requerido`; idempotente, pedir el estado actual no escribe) y `PUT/DELETE /api/articulos/{id}/imagen` con la imagen como cuerpo crudo. Las tres toman
   `FOR UPDATE` sobre la fila del artículo antes de leer lo que mutan y, ya bajo el lock, comprueban que sigue vivo
   (404 si la baja ganó): es el único lock que toman, no entran al protocolo de locks de familias. El 404 de un artículo
   que no se ve va primero, antes del cuerpo. `GET /api/articulos/{id}/imagen` es la vista previa del admin: `Cache-Control:
-  private, no-store`, ETag de `actualizado_en` y `304` sin leer `contenido`, aunque el artículo no esté publicado.
-  El listado, el detalle, el alta, la edición y la grilla del artículo informan `publicadoWeb` y `tieneImagen`.
+  private, no-store`, ETag de `actualizado_en` y `304` sin leer `contenido`, aunque el artículo no esté en la tienda.
+  El listado, el detalle, el alta, la edición y la grilla del artículo informan `disponibleOnline`, `disponibleVenta` y
+  `tieneImagen`. Las ofertas y los combos guardan su `disponibleOnline` por su POST y su PUT de siempre: el alta lo toma
+  como `true` si falta y la edición lo deja como estaba si falta (opcional en el PUT, omitido = sin cambios; solo lo
+  cambia si viene), de modo que un cliente anterior al campo sigue editando sin sacar nada de la tienda.
 - **Backstops** (`ManejadorDeErrores`): `ux_imagenes_articulo_articulo` → `409 imagen_duplicada` (inalcanzable por
   la API: la subida lee la imagen bajo el lock del artículo); `ck_imagenes_articulo_contenido` → `400
   imagen_no_admitida`.
 - **Catálogo público** (`GET /api/publico/catalogo?buscar=&idCategoria=&pagina=1&tamano=24`, anónimo, tenant del
   host, `Cache-Control: public, max-age=60`; `404 vitrina_no_publicada` si el host no tiene vitrina publicada o el
-  tenant no puede operar). Un artículo aparece si está publicado, activo y vivo (la policy), disponible para la
+  tenant no puede operar). Un artículo aparece si está disponible online y a la venta, activo y vivo (la policy), disponible para la
   empresa de la vitrina (`disponible_para_todas` o una fila en `articulos_empresas` de esa empresa) y con un precio
   vigente en la lista de la tienda. La lista es la de la vitrina (`id_lista_precio`) o, si no tiene, la default
   compartida (`id_empresa IS NULL AND es_default`, la misma de la grilla del back-office); si no sirve (inactiva, de
   otra empresa, derivada sin porcentaje o sin base fija, o ninguna default) el catálogo sale vacío en vez de fallar.
   Precio vigente: la fila con `vigente_desde <= ahora` y `vigente_hasta` nulo o futuro; en una lista derivada, el de
   su base con `ResolvedorDePrecios.ResolverPrecioDerivado` (el redondeo del POS). **No se reusa el motor del POS**
-  (`ServicioDeInstantaneaDePos`/ofertas): resuelve clientes, escalones y ofertas y lee tablas que el modo público no
-  ve, y la tienda muestra el precio de lista; la existencia del precio se decide en SQL antes de paginar y el monto
-  se resuelve solo para la página. Las ofertas no se aplican todavía y el stock no se mira (es de los pedidos).
+  (`ServicioDeInstantaneaDePos`/`ServicioDeOfertas`): resuelven clientes y escalones y leen tablas que el modo público
+  no ve; la existencia del precio se decide en SQL antes de paginar y el monto se resuelve solo para la página. El stock
+  no se mira (es de los pedidos). **Ofertas**: sobre el precio de lista de cada artículo de la página corre el
+  resolvedor puro del dominio (`ResolvedorDeOfertas`) a cantidad 1, con las ofertas que la policy deja ver
+  (`disponible_online`, activas), sus listas objetivo (`ofertas_listas`), la cadena de categorías y la hora local del
+  servidor. La lista que se le pasa es la ORIGINAL de la vitrina, también si es derivada, así que una oferta dirigida a
+  una lista derivada aplica y una dirigida a su base no. Cada artículo lleva `precio` (el final) y, solo si una oferta
+  lo baja, `precioOriginal` y `oferta` (el nombre de la aplicada de mayor prioridad que descuenta); sin oferta las dos
+  claves faltan. Es una vista previa por artículo: una oferta con cantidad mínima mayor que 1 no aplica, y las
+  escalonadas y de familia a nivel carrito son del checkout. **Combos**: el catálogo suma `combos` solo en la primera
+  página sin `buscar` ni `idCategoria` (`pagina = 1` ya acotada), vacío en cualquier otra consulta;
+  `GET /api/publico/combos` (anónimo, mismo `Cache-Control` y mismo `404 vitrina_no_publicada`) los devuelve siempre:
+  `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` ordenados por
+  nombre, con el precio fijo del combo redondeado al peso entero (el que cobra el motor de la venta: un combo de 199,40 se lista a
+  199) y sin imagen propia (sin el `codigo` del combo: es el atajo de la caja y la tienda
+  no lo muestra). Un combo aparece si está disponible online, activo y vivo
+  (la policy), es de todo el tenant o de la empresa de la vitrina, y TODOS sus componentes son artículos (sin familia)
+  disponibles online y a la venta, activos, disponibles para esa empresa, con precio vigente en la lista de la tienda y
+  de `UnidadVenta.Unidad` (la única que el motor de combos de la venta online acepta; los componentes pesables dependen de
+  que aterrice el programa de combos pesables), y además ahorra: su precio redondeado al peso es estrictamente menor que
+  la suma de los precios de tienda de sus componentes por su cantidad (lista de la vitrina con la oferta online aplicada,
+  a cantidad 1), que es la condición con la que `ResolvedorDeCombos` lo aplica; uno que no ahorra no se ofrece. Divergencia
+  conocida: el motor de la venta calcula las ofertas con la cantidad real del carrito, así que un combo que gana contra el
+  precio a cantidad 1 puede no ganar contra una oferta escalonada, y al revés.
   `buscar` coincide solo con el nombre (el código interno no se publica en la respuesta, así que buscarlo sería un
   oráculo sobre un dato que la tienda no muestra), sin mayúsculas ni acentos (`BusquedaSinAcentos`); se le quitan los
   caracteres de control (un NUL llegaría a Postgres como error), se recorta y se acota a 100 caracteres, y un término que
@@ -532,7 +629,25 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   página sí lo aplican. Un artículo cuya categoría no es visible sale con `idCategoria` nulo y filtrar por una categoría
   invisible no encuentra nada (`dangling-fk-read-models`). `GET /api/publico/articulos/{id}/imagen`: `Cache-Control:
   public, max-age=3600`, ETag y `304` sin leer `contenido`, `404 imagen_no_encontrada` si el artículo no está
-  publicado, activo y disponible para la empresa de la vitrina o no tiene imagen.
+  disponible online y a la venta, activo y disponible para la empresa de la vitrina o no tiene imagen.
+- **Disponible a la venta** (`articulos.disponible_venta = false`, un artículo de uso interno): se compra, se stockea y
+  figura en los reportes, pero no se vende. Queda afuera de la instantánea del POS (web y escritorio la comparten), así
+  que un combo que lo lleva como componente tampoco viaja (la regla de "todos los componentes vendibles" ya miraba los
+  artículos de la instantánea; un componente familia sigue viajando mientras algún miembro se venda); de `GET
+  /api/articulos/escaneo` (salvo con `incluirNoVendibles=true`, la salida de una devolución: ver abajo); de los candidatos de `GET /api/combos/{id}/cargable`; de la búsqueda de la caja
+  (`GET /api/articulos?soloVendibles=true`: el parámetro es opcional y su ausencia deja el listado de siempre, que
+  usan las compras y el back-office); y de la tienda (la policy de `articulos`). `ReglaDeArticuloVendible` rechaza con `409
+  articulo_no_vendible` (con el nombre del artículo) una línea de venta (`ServicioDeVentas.EmitirAsync`), de presupuesto
+  o de remito al guardar el borrador, y otra vez cuando el documento se concreta, para que un borrador viejo no la
+  esquive: al convertir un presupuesto en venta, y al emitir un remito (facturar remitos ya emitidos no la
+  vuelve a exigir: la mercadería ya salió y la liquidación no se frena por un cambio de bandera posterior). Quedan fuera de la regla en la venta,
+  como ya lo hace la de cantidades por unidad de venta, la que un dispositivo ya cobró offline (`NumeroPreasignado`) y la
+  devolución (signo negativo): cambiar la bandera no reescribe lo ya vendido. Como una devolución puede ser de un
+  artículo que después pasó a uso interno, `GET /api/articulos/escaneo` y la búsqueda de la caja
+  (`soloVendibles=true`) aceptan `incluirNoVendibles=true`, que devuelve el artículo igual (el back-office lo usa para
+  una nota de crédito; no abre artículos inactivos). La instantánea del POS sigue excluyéndolo siempre: una devolución
+  offline de un artículo de uso interno no se puede hacer en el dispositivo y se resuelve desde el back-office.
+  Compras, stock y reportes no la miran.
 - **Baja de tenant**: `imagenes_articulo` entra al inventario de dependientes como `marcado` (un tenant con una
   imagen cargada no se puede dar de baja, igual que con vitrinas).
 
@@ -655,7 +770,7 @@ difiera de la familia):
    de menor `id_articulo`, leído una sola vez bajo esos locks;
 3. los quince campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
    `409 familia_valores_distintos`, que nombra las columnas que difieren. El pedido que no trae
-   `acumula_en_venta` lleva su valor por defecto, `true`, y se compara como cualquier otro. Los rechazos se evalúan en ese orden
+   `acumula_en_venta` lleva su valor por defecto (`true`, o `false` en un artículo por importe) y se compara como cualquier otro. Los rechazos se evalúan en ese orden
    (inactiva, sin artículos, valores distintos) y siempre antes de insertar nada;
 4. se inserta el artículo con `id_familia = F` y, en la misma transacción y con el mismo "ahora", se copia el
    estado de precios de la referencia en cada lista fija: el precio vigente a ese instante (la fila nueva
@@ -958,7 +1073,8 @@ ofertas (                     -- [catálogo]
     importe_fijo    numeric(14,2) NULL,      -- "$X de descuento" / "3x2 a $X"
     prioridad       int NOT NULL DEFAULT 0,  -- ante solapamiento gana la mayor;
     acumulable      boolean NOT NULL DEFAULT false,  -- ¿se suma a otras o excluye?
-    activo
+    activo,
+    disponible_online boolean NOT NULL DEFAULT true  -- la tienda online la aplica a los precios que muestra (§3, "Tienda online")
 );
 CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1);
 CHECK (num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1);
@@ -1016,7 +1132,8 @@ combos (                      -- [catálogo]
     codigo     integer NOT NULL,             -- lo que se tipea tras la "C" en el POS
     nombre     citext,                       -- lo que imprime el ticket (no único)
     precio     numeric(14,2) NOT NULL,       -- precio fijo del conjunto, no depende de la lista de precios
-    activo
+    activo,
+    disponible_online boolean NOT NULL DEFAULT true  -- la tienda online lo ofrece (§3, "Tienda online")
 );
 CHECK (codigo > 0);                          -- ck_combos_codigo_positivo
 CHECK (precio > 0);                          -- ck_combos_precio_positivo
@@ -1537,6 +1654,48 @@ movimientos, y los movimientos no se editan.
 > offline. Sin tablas nuevas: ambas columnas viven en tablas operativas que ya tienen
 > `id_tenant` y RLS.
 
+> **Estado (artículos por importe — venta): implementada.** El único cambio de esquema es
+> `items_comprobante_venta.por_importe boolean NOT NULL DEFAULT false` (sin backfill: ninguna fila anterior se vendió por
+> importe): el snapshot de cómo se vendió la línea. La línea ya guarda `precio_unitario`; el artículo puede cambiar de
+> unidad después de la venta, así que la reliquidación y la devolución asociada deciden por esta columna y no por la
+> `unidad_venta` de hoy. Un artículo `unidad_venta = 'importe'` se vende por el monto que escribe el cajero. La línea del
+> request (`LineaDeVenta`) y la de la vista previa (`LineaDeResolucion`, `POST /api/ofertas/resolver` y
+> `resolver-con-combos`) suman `importe` (`decimal?`): **obligatorio** en un artículo por importe (`400
+> importe_requerido`) y **rechazado** en cualquier otro (`400 importe_no_admitido`, en vez de ignorarse); mayor a cero,
+> con a lo sumo 2 decimales y dentro de `numeric(14,2)` (`400 importe_invalido`, `ReglaDeImporteDeVenta`); la cantidad es
+> exactamente 1 (`400 cantidad_importe_invalida`) y junto a `precioUnitario` no tiene destino (`400
+> importe_con_precio_no_admitido`). `ServicioDeOfertas` resuelve la línea sin mirar lista, ofertas ni combos: precio
+> original = precio final = importe, descuento 0, sin ofertas aplicadas (`articulo_sin_precio_vigente` no aplica). La
+> venta persiste el item como cualquier otro: `cantidad` 1, `precio_unitario` = importe, `descuento` 0, `id_oferta`
+> NULL, `id_combo` NULL, `id_lista_precio` la del cliente. El ajuste manual (`ajusteManualPorcentaje`) se aplica encima y
+> el total de la línea sigue la regla de peso entero de `CalculadorDeTotales`: un importe con centavos conserva el
+> precio unitario tipeado (150,50) y el total de la línea sale al peso (151).
+>
+> - **Offline.** La línea por importe lleva `importe` y nunca `precioUnitario`/`descuentoUnitario`; el "todas o ninguna" del
+>   precio offline se mide solo sobre las líneas de lista, así que una venta solo de importes y una mixta se aceptan. No es
+>   una discrepancia de precio. Una línea que el dispositivo ya cobró con precio de lista para un artículo que hoy es por
+>   importe se honra (no se le exige `importe`).
+> - **Devolución (NCX).** Cada línea por importe lleva el importe devuelto; con comprobante asociado tiene que existir en él
+>   una línea por importe (`por_importe`, cantidad positiva) de ese artículo con ese precio unitario y ese mismo
+>   `ajuste_manual_porcentaje` (`400 importe_devolucion_inexistente`): el neto reembolsado no puede superar el cobrado por la
+>   línea vendida. No se lleva
+>   la cuenta de lo ya devuelto, igual que las cantidades de una devolución común. Una devolución offline (con número
+>   pre-asignado) no se compara.
+> - **Escaneo.** `GET /api/articulos/escaneo?entrada=150*500` sobre un artículo por importe responde `cantidad` 1 e
+>   `importe` 150; con el código solo, sin `importe` (la clave se omite) y el cliente lo pide. El prefijo de un artículo por
+>   importe se lee estricto (solo dígitos y punto decimal): uno vacío, cero, negativo, ilegible, con coma, con más de 2
+>   decimales o fuera de rango es `400 importe_invalido`, en vez de caer a "cantidad 1" como en los demás artículos.
+> - **Instantánea del POS.** El artículo por importe viaja siempre con `preciosPorLista` vacío (aunque conserve un precio de
+>   lista, que el dispositivo no debe usar).
+> - **Reenvío con número pre-asignado.** El importe de una línea por importe entra en la identidad del contenido: otro
+>   importe bajo el mismo número es `409 numero_preasignado_con_otro_contenido`.
+> - **Ofertas por familia.** Una línea por importe no suma a la cantidad agregada de su familia.
+> - **Reliquidación de cuenta corriente.** La línea vendida por importe (`por_importe`) conserva el monto tipeado: no se reprecifica, el detalle la
+>   marca como omitida con su motivo y el delta es cero.
+> - **Presupuestos y remitos** rechazan un artículo por importe (`400 articulo_por_importe_no_admitido`). **Tienda online:**
+>   no se puede ofrecer (encender `disponible_online` da `400 articulo_por_importe_no_publicable`; apagarla, o cambiar solo
+>   `disponible_venta` con la bandera ya encendida, sigue siendo válido) y el catálogo público no lo lista.
+
 ### Fiscal ARCA (Etapa 19a)
 
 El núcleo fiscal buildable sin credenciales (`openspec/changes/stage-19-fiscal-arca/`, slice 1
@@ -1997,9 +2156,12 @@ gastos (                      -- [operativa]
     id_area NULL, concepto, detalle,
     id_medio_pago integer NOT NULL,          -- con qué se pagó (efectivo de caja, transferencia…)
     numero_factura text NULL, importe,
+    id_movimiento_personal integer NULL,     -- pago de personal que lo generó (§8c)
 
     CONSTRAINT ck_gastos_caja_turno_requiere_turno
-        CHECK (origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL)
+        CHECK (origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL),
+    CONSTRAINT ck_gastos_movimiento_personal_es_sueldo
+        CHECK (id_movimiento_personal IS NULL OR categoria = 'sueldos')
 );
 ```
 
@@ -2353,18 +2515,167 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
 > no se encadenan entre sí porque la cadena entera vive a nivel empresa, nunca por punto de venta.
 
+### Cuentas de tesorería
+
+```sql
+cuentas_tesoreria (           -- [catálogo por empresa: id_empresa NOT NULL] — Mercado Pago, banco
+    id_cuenta_tesoreria, id_empresa,
+    nombre citext,                           -- único por (id_tenant, id_empresa) entre las vivas
+    saldo_inicial numeric(14,2) NOT NULL DEFAULT 0,
+    activo, created_at, updated_at, deleted_at
+);
+
+movimientos_cuenta (          -- [operativa — libro append-only] encadenado por cuenta
+    id_movimiento_cuenta, id_cuenta_tesoreria, fecha,
+    tipo tipo_movimiento_cuenta,             -- enum: cobro | comision | retencion_iibb | retencion_iva |
+                                             -- retencion_ganancias | ajuste | transferencia | deposito | retiro
+    id_turno_caja NULL, id_medio_pago NULL, concepto,
+    inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_cuenta_tesoreria)
+    id_empleado,
+    base_bruta numeric(14,2) NULL,           -- base sobre la que se calculó el porcentaje, congelada
+    porcentaje_aplicado numeric(6,3) NULL    -- porcentaje vigente al escribir la fila, congelado
+);
+```
+
+> **Estado (cuentas de tesorería, esquema):** la tesorería de efectivo (`movimientos_tesoreria`,
+> una cadena por empresa) y las cuentas digitales (`movimientos_cuenta`, una cadena por cuenta) son
+> libros separados: cada uno con su propia cadena y su propio candado. Hay dos escritores: el cierre de turno y el ajuste manual
+> de saldo (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
+>
+> `cuentas_tesoreria`: clave alterna `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant` (destino de
+> las FK compuestas), FK compuesta `fk_cuentas_tesoreria_empresa` a `empresas` (RESTRICT), único
+> parcial `ux_cuentas_tesoreria_nombre_empresa` `(id_tenant, id_empresa, nombre) WHERE deleted_at IS
+> NULL`, índices `ix_cuentas_tesoreria_tenant` e `ix_cuentas_tesoreria_empresa`. RLS estándar.
+>
+> `movimientos_cuenta`: `ck_movimientos_cuenta_cadena` (`final = inicio + ingreso − egreso`, igual
+> que la tesorería de efectivo), más dos CHECK que `movimientos_tesoreria` no tiene:
+> `ck_movimientos_cuenta_importes_no_negativos` (`ingreso` y `egreso` no negativos) y
+> `ck_movimientos_cuenta_un_solo_lado` (`ingreso = 0 OR egreso = 0`; una fila con los dos lados en
+> cero es válida). FKs compuestas, todas RESTRICT: `fk_movimientos_cuenta_cuenta_tesoreria`,
+> `fk_movimientos_cuenta_turno`, `fk_movimientos_cuenta_medio_pago`; `fk_movimientos_cuenta_empleado`
+> es simple a `usuarios`, como en la tesorería de efectivo. Índices (ninguno implícito `IX_`): `ix_movimientos_cuenta_tenant`;
+> `ix_movimientos_cuenta_cuenta_id` `(id_cuenta_tesoreria, id_tenant, id_movimiento_cuenta)`, que
+> sirve de soporte de la FK a la cuenta y de lectura de la cola de la cadena y del libro;
+> `ix_movimientos_cuenta_turno`, `ix_movimientos_cuenta_medio_pago` e `ix_movimientos_cuenta_empleado`
+> como soporte de las otras FK. `ux_movimientos_cuenta_cierre` es único parcial `(id_tenant,
+> id_turno_caja, id_medio_pago, tipo) WHERE id_turno_caja IS NOT NULL AND tipo IN ('cobro',
+> 'comision', 'retencion_iibb', 'retencion_iva', 'retencion_ganancias')`: respaldo de idempotencia de las
+> filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
+> `id_medio_pago` admite `NULL`, no cubre una fila de turno sin medio. RLS estándar.
+>
+> **ABM (`/api/cuentas-tesoreria`, solo Admin, lectura incluida).** `ServicioDeCuentasDeTesoreria`: alta con empresa del 
+> tenant (400 `referencia_invalida` si no existe o es de otro tenant), edición de nombre, estado y saldo inicial (la empresa no 
+> cambia), baja lógica. El nombre repetido entre las vivas de la empresa da 409 `cuenta_tesoreria_duplicada` (pre-chequeo y 
+> backstop del 23505 de `ux_cuentas_tesoreria_nombre_empresa`). El saldo inicial puede ser negativo y no cambia una vez que hay 
+> movimientos (409 `saldo_inicial_con_movimientos`): la edición lo comprueba tras el `FOR UPDATE` de la fila de la cuenta, con la 
+> que choca el `FOR KEY SHARE` de la FK de un primer movimiento concurrente. Para que la protección sea completa, el escritor de movimientos debe leer `saldo_inicial` DENTRO de su transacción y DESPUÉS de tomar un lock sobre la fila de la cuenta que choque con ese `FOR UPDATE`; leerlo antes puede armar el primer movimiento con un saldo inicial viejo. Desactivar una cuenta no desvincula los medios de pago que apuntan a ella. Todos los campos del cuerpo son obligatorios: uno ausente da 400 `id_empresa_requerido`, `nombre_requerido`, `saldo_inicial_requerido` o `activo_requerido`. La baja solo procede sin referencias de 
+> `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
+> se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
+>
+> **Quién escribe el libro.** Dos escritores: el cierre de turno y el ajuste manual (más abajo).
+>
+> **Cierre de turno.** `EscriturasDeCuentaDeTesoreria`, dentro de la transacción compartida por
+> los dos modos de cierre (`InsertarArqueosYTesoreriaAsync`), después de la fila de tesorería de efectivo. Por cada medio
+> con pagos distintos de cero en el turno y con cuenta, el bruto es el total de pagos del medio en el turno (el mismo número
+> del resumen de cierre) y `CalculadorDeMovimientosDeCuenta` (puro) lo descompone en filas, en este orden: `cobro` por el
+> bruto (`ingreso` si es positivo, `egreso` si es negativo), y `comision`, `retencion_iibb`, `retencion_iva` y
+> `retencion_ganancias` por `bruto × porcentaje / 100`, cada una redondeada por separado a 2 decimales con el punto medio
+> hacia afuera del cero, del lado contrario al cobro cuando el bruto es negativo. Cada componente se redondea por separado y
+> nada compensa el redondeo: la suma puede pasar del bruto por centavos (bruto 0,50 con cuatro porcentajes de 25 % da cuatro
+> egresos de 0,13 y un neto de −0,02), y se acepta. Un componente que redondea a cero se omite y un bruto cero no escribe nada. Cada fila congela `base_bruta` (el bruto con signo) y
+> `porcentaje_aplicado` (nulo en el cobro), lleva `id_turno_caja`, `id_medio_pago` (siempre, porque el índice único no
+> deduplica `NULL`), `id_empleado` (quien cierra) y la `fecha` del cierre, la misma de la fila de tesorería de efectivo. Los
+> medios se procesan por id ascendente, así que dos medios de la misma cuenta encadenan en ese orden. Una cuenta inactiva
+> recibe movimientos (desactivar solo impide asignarla a medios nuevos); un medio sin cuenta, con la cuenta dada de baja o con
+> una cuenta de otra empresa que la del turno no escribe nada y nunca frena el cierre. Un pago de un medio nunca es negativo
+> (`ck_pagos_comprobante_importe_no_negativo`) y `ValidadorDePagos` rechaza los pagos en una nota de crédito, así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
+> ejerce.
+>
+> **Ajuste manual (`POST /api/cuentas-tesoreria/{id}/ajustes`, solo Admin).** `ServicioDeAjusteDeCuentaDeTesoreria` escribe UNA fila
+> `tipo = 'ajuste'` para conciliar la cuenta con lo que informa la plataforma, sin turno, sin medio, con `base_bruta` y
+> `porcentaje_aplicado` nulos, `id_empleado` = quien ajusta y `fecha` = ahora. El cuerpo lleva `concepto` (obligatorio, hasta 200
+> caracteres) y EXACTAMENTE uno de `importe` (con signo, distinto de cero, hasta 2 decimales: positivo es `ingreso`, negativo es
+> `egreso`) y `saldoObjetivo` (el saldo real de la plataforma: el servidor calcula la diferencia contra el saldo vigente BAJO el
+> lock, no contra el que la pantalla mostraba). Una cuenta inactiva se puede ajustar; una dada de baja o ajena da 404 antes de
+> validar el cuerpo. Códigos: 400 `concepto_requerido`, `concepto_muy_largo`, `importe_o_saldo_objetivo_requerido`,
+> `importe_y_saldo_objetivo_excluyentes`, `importe_invalido`, `saldo_objetivo_invalido`, `saldo_resultante_fuera_de_rango` (el
+> `final` no cabe en `numeric(14,2)`); 409 `ajuste_sin_diferencia` (el saldo objetivo ya es el saldo vigente: no se escribe nada).
+> Como el ajuste manual de cuenta corriente, no lleva clave de idempotencia ni fila de auditoría: un reenvío del mismo importe
+> escribe dos filas (el del mismo saldo objetivo no, porque la segunda diferencia da cero) y la protección es la guarda de
+> re-entrada de la pantalla; un 5xx no se reintenta solo. Es el camino para corregir lo que el libro todavía no refleja.
+>
+> **Lectura (`GET /api/reportes/tesoreria/cuentas?idEmpresa=` y `.../cuentas/{id}/libro`, Supervisor y Admin).**
+> `ServicioDeLibroDeCuentas`. Las cuentas vivas de la empresa con su saldo (`final` del último movimiento por id, o
+> `saldo_inicial`) y la fecha de ese movimiento, más el aviso de los medios electrónicos activos sin cuenta utilizable (sin cuenta,
+> con una dada de baja o con una de otra empresa: la misma regla con la que el cierre descarta una cuenta). El libro de una cuenta
+> se ordena por id y nunca por fecha, usa el rango inclusivo del libro de efectivo y trae el saldo de apertura (el `final` del
+> último movimiento por id con fecha anterior al rango, o el saldo inicial) y los totales por tipo de TODO el rango. Un medio o un
+> usuario dado de baja deja su nombre en `null` y conserva el id. No hay exportación.
+>
+> **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
+> descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
+> ajuste manual (ver "Ajuste manual"). (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+> cuenta; también se corrige con un ajuste manual. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
+> `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
+> turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
+> `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
+> ligar `pagos_comprobante` con el total de `comprobantes_venta`, así que una fila anterior a la regla no está protegida por la base.
+>
+> **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
+> `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta
+> y porcentajes consistentes hasta el commit; una edición del medio en curso hace esperar al cierre) y cada cuenta se lee con
+> su lock (`saldo_inicial` y empresa) antes de leer la cola de la cadena. `FOR NO KEY UPDATE` choca con el `FOR UPDATE` del ABM y
+> con sí mismo, pero no con el `FOR KEY SHARE` de los chequeos de FK, que no se bloquean. La idempotencia la da primero el
+> UPDATE guardado por estado del turno (409 `turno_ya_cerrado`); si una fila de cierre repetida llegara a la base,
+> `ux_movimientos_cuenta_cierre` da 23505 y `ManejadorDeErrores` lo traduce al mismo 409 (supone que solo el cierre escribe filas cubiertas por ese índice). Recalcular el arqueo de un turno
+> cerrado (edición de gastos) no toca `movimientos_cuenta`.
+>
+> **Lock del ajuste manual.** Toma solo la fila de la cuenta con el MISMO `FOR NO KEY UPDATE` y la misma lectura de cola que el cierre
+> (`EscriturasDeCuentaDeTesoreria.BloquearYLeerSaldoAsync`, sin filtrar por empresa porque un ajuste no pertenece a un turno), de modo
+> que su fila y las del cierre se serializan en una sola cadena; lee la cola DESPUÉS del lock, sin reintento, y el saldo objetivo se
+> resuelve contra esa cola. No toma el lock de la empresa ni los de los medios, así que no puede cerrar un ciclo con el cierre.
+>
+> **Fechas monótonas por cuenta.** Cada escritor fija su hora ANTES de esperar el lock de la cuenta (el cierre la fija al empezar), así que un cierre que espera podía comitear un id mayor con una fecha anterior a la de un ajuste ya comiteado. Por eso, bajo el lock, toda fila que se agrega a una cuenta (componentes del cierre y ajuste) toma `max(hora propia, fecha del último movimiento de la cuenta)`, leída junto con el `final` de la cola (`EscriturasDeCuentaDeTesoreria.FechaMonotona`); las filas de un cierre para una misma cuenta comparten esa fecha. La fila de la tesorería de efectivo conserva la hora del cierre. Con eso, para cada cuenta el orden por fecha (con empates) es el orden por id, y por eso vale que el saldo de apertura de un rango (el `final` del último movimiento anterior a `desde`) más el neto del rango es el saldo al cierre. Consecuencia: si el último movimiento de una cuenta tiene fecha futura (reloj desfasado o una fila mal cargada), TODA fila posterior de esa cuenta lleva esa fecha hasta que la hora real la alcance; se cura sola, no se detecta, y la pantalla avisa cuando el ajuste recién registrado cae fuera del rango que muestra. Las filas anteriores a esta regla no se reescriben: un rango que las cruce podría seguir sin cuadrar.
+>
+> **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
+> debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
+> hay movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene
+> movimientos: lo deberá exigir el servicio de cuentas (sin trigger en la base).
+>
+> **Lo que la base NO exige y debe exigir un servicio:**
+> - La continuidad de la cadena: la base solo valida cada fila (`final = inicio + ingreso - egreso`).
+>   Que el `inicio` de un movimiento sea el `final` del anterior y que el primero parta de
+>   `saldo_inicial` lo garantiza el escritor del cierre, que agrega bajo el lock de la cuenta
+>   y lee `saldo_inicial` y la cola después de tomarlo; que el libro sea solo de altas (sin UPDATE ni
+>   DELETE) lo sostiene que ningún servicio los emite.
+> - La cuenta de un medio de pago pertenece a la empresa del medio; un medio de todo el tenant
+>   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa. Lo exige
+>   `ServicioDeMediosPago` al asignarla o al cambiar la empresa del medio. Si el tenant suma una empresa
+>   después, un medio de todo el tenant que ya tenía cuenta la conserva: la regla se revisa al escribir, no hay trigger.
+> - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta:
+>   el escritor del cierre lo cumple (descarta una cuenta de otra empresa y lee la cuenta del medio bajo lock); el ajuste
+>   manual no escribe turno ni medio; un escritor futuro (transferencias) deberá exigirlo por su cuenta.
+> - La baja lógica de una cuenta solo se permite sin referencias (medios o movimientos): la baja lógica
+>   esquiva RESTRICT.
+> - Cambiar `comportamiento` de un medio con cuenta o porcentajes distintos de cero a algo que no es
+>   `electronico` falla con 23514 si no se limpian: `ServicioDeMediosPago` los limpia (cuenta en `NULL`, porcentajes en 0)
+>   cuando el cuerpo no los envía, y rechaza con 400 si los envía con valor.
+> - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
+> - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
+
 ## 8. Cuenta corriente de clientes
 
 ```sql
 movimientos_cuenta_corriente (    -- [operativa]
     id_movimiento, id_cliente, fecha, id_punto_venta, id_empleado,
     tipo tipo_movimiento_cc,                 -- enum: consumo | pago | ajuste
-                                             --     | actualizacion_precios
+                                             --     | actualizacion_precios | descuento_personal
     id_comprobante_venta NULL,               -- consumo/devolución que lo originó
     id_pago_comprobante NULL,                -- el pago con medio "cuenta corriente"
     importe numeric(14,2),                   -- + aumenta deuda, − la reduce
     saldo_resultante numeric(14,2),
-    detalle text
+    detalle text,
+    id_movimiento_personal NULL              -- solo descuento_personal: el pago de personal (§8c)
 );
 ```
 
@@ -2384,6 +2695,21 @@ que hoy, pero auditable.
 > elegibles a los consumos todavía sin cubrir. El pago a cuenta (`tipo = pago`) se emite como un
 > comprobante `RC` de cero ítems (doc 10 §1) — el pago con medio `cuenta_corriente` en un
 > comprobante de venta normal sigue generando el movimiento `consumo` como antes, sin cambios.
+>
+> **Estado (pago de personal): `descuento_personal`.** El valor nuevo del enum `tipo_movimiento_cc` es
+> la parte de un pago al personal que se cancela contra la deuda del cliente vinculado al empleado (§8c).
+> No mueve dinero: no tiene turno, comprobante ni gasto. Siempre lleva `id_movimiento_personal` (FK
+> compuesta `(id_movimiento_personal, id_tenant)` a `movimientos_personal`, RESTRICT), no lleva
+> `id_comprobante_venta` ni `id_pago_comprobante` y su `importe` es negativo; el índice único parcial
+> `ux_movimientos_cuenta_corriente_movimiento_personal` admite a lo sumo uno por pago. Dos CHECK lo
+> garantizan: `ck_movimientos_cuenta_corriente_descuento_personal` (la forma) y
+> `ck_movimientos_cuenta_corriente_vinculo_personal` (solo ese tipo lleva el vínculo). El valor del enum
+> y los CHECK que lo nombran están en dos migraciones (`PagoDePersonal` y `ChecksDelDescuentoDePersonal`):
+> Postgres no deja usar un valor de enum en la transacción que lo agregó. `EscriturasDeCuentaCorriente`
+> lo escribe con su propio método (`InsertarDescuentoDePersonalAsync`); el estado de cuenta del cliente lo
+> devuelve como un movimiento más (`tipo = DescuentoPersonal`, `etiqueta` nula). El contrato sí cambia: `tipo`
+> gana ese valor, así que el web lo declara en `TipoMovimientoCc` y lo etiqueta "Descuento de personal"
+> (`etiquetaDeMovimiento`); un cliente que no conozca el valor mostraría el tipo vacío.
 >
 > **Deviación declarada — fracción financiada:** la reliquidación re-precifica solo la porción
 > del comprobante que quedó fiada (`factor = min(1, importeFinanciado / totalComprobante)`), no
@@ -2489,6 +2815,95 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 > (Slice 2) y el ajuste manual bajo `Politicas.SupervisionDeCuentaDeProveedor` (Slice 5). El
 > estado de cuenta paginado (`GET /api/proveedores/{id}/cuenta-corriente`) y el estado de pago
 > por compra re-sourced desde el ledger (Slice 4). Todos mergeados.
+
+### 8c. Cuenta corriente del personal
+
+```sql
+movimientos_personal (                    -- [operativa — libro append-only]
+    id_movimiento     integer       GENERATED BY DEFAULT AS IDENTITY,
+    id_tenant         integer       NOT NULL,
+    id_personal       integer       NOT NULL,   -- FK compuesta (id_personal, id_tenant)
+    id_empleado       integer       NOT NULL,   -- FK simple a usuarios: el usuario que registró el asiento
+    fecha             date          NOT NULL,   -- carga de horas: el día trabajado; resto: la fecha del asiento
+    tipo              tipo_movimiento_personal NOT NULL,  -- enum: horas | pago | ajuste
+    horas             numeric(6,2)  NULL,       -- solo 'horas'
+    valor_hora        numeric(14,2) NULL,       -- solo 'horas'; congelado, no sigue a personal.valor_hora
+    importe           numeric(14,2) NOT NULL,   -- + aumenta lo que se le debe, − lo reduce
+    saldo_resultante  numeric(14,2) NOT NULL,   -- foto de personal.saldo al insertar
+    detalle           text          NULL,       -- obligatorio en el ajuste (regla de servicio)
+    created_at        timestamptz   NOT NULL    -- IRelojDelSistema, sin DEFAULT now()
+);
+```
+
+> Ledger append-only, sin `EntidadBase` (sin `updated_at` ni soft delete) y con `id_tenant` escrito
+> explícito; una carga mal hecha se corrige con un `ajuste`, nunca editando. `personal.saldo` solo lo
+> mueven el `UPDATE ... RETURNING` y el `INSERT` del asiento de `EscriturasDePersonal`, en una misma
+> transacción sin reintento. Los tres valores del enum están declarados desde el inicio; escriben `horas`
+> (`POST /api/personal/{id}/horas`), `ajuste` (`POST /api/personal/{id}/ajustes`) y `pago`
+> (`POST /api/personal/{id}/pagos`, más abajo). La `fecha` es obligatoria en los tres (400
+> `fecha_requerida`): la manda el cliente con su día local y el servidor no deduce el día de negocio.
+> El estado de cuenta (`GET /api/personal/{id}/cuenta`) sin `historico` ni rango abarca desde un mes
+> atrás (contado desde la fecha UTC), sin tope superior; un `hasta` explícito sí lo aplica.
+>
+> **Sin `id_punto_venta`, a propósito** (desvío respecto de §8b): las cargas de horas, los ajustes y los
+> pagos son de back office y no pasan por un turno; un pago llega a un punto de venta únicamente a
+> través de los gastos y del descuento de cuenta corriente que genere.
+>
+> CHECK, uno por tipo: `ck_movimientos_personal_horas` (`horas` en (0, 24], `valor_hora >= 0` e
+> `importe = round(horas × valor_hora, 2)`, que ya implica el importe no negativo), `ck_movimientos_personal_ajuste`
+> (`horas` y `valor_hora` nulos, `importe <> 0`) y `ck_movimientos_personal_pago` (`horas` y
+> `valor_hora` nulos, `importe < 0`). FKs `fk_movimientos_personal_{tenant,personal,empleado}`, todas
+> RESTRICT. Índices: `ix_movimientos_personal_tenant`, `ix_movimientos_personal_personal_fecha`
+> `(id_personal, id_tenant, fecha)` y `ix_movimientos_personal_empleado`. RLS estándar. Un personal
+> con movimientos no se puede dar de baja (409 `personal_en_uso`). El asiento tiene la clave alterna
+> `ak_movimientos_personal_id_movimiento_id_tenant`, destino de las FKs compuestas que siguen.
+>
+> **Pago de personal** (`POST /api/personal/{id}/pagos`, `GestionDeCuentaDePersonal`: Admin y Supervisor).
+> **Pagar de la tesorería es solo de Admin**, como el alta administrativa de gastos (`/api/gastos/administracion`,
+> `GestionDeCatalogo`): un Supervisor que manda `origenFondos = Tesoreria` recibe 403 `prohibido`, decidido
+> después del 404 del personal y antes de cualquier otro 400 del cuerpo y de cualquier escritura. El Supervisor
+> sí paga del cajón (`CajaTurno`) y descuenta de la cuenta corriente. El asiento `pago` es la cabecera: no hay tabla de cabecera aparte. En UNA transacción sin reintento
+> (`ServicioDePagoDePersonal`) escribe: el asiento `pago` con `importe = −(descuento + suma de líneas)`
+> (el saldo puede quedar negativo: es un adelanto); a lo sumo un movimiento `descuento_personal` en la cuenta
+> corriente del cliente vinculado al personal (§8), que baja su deuda y se rechaza si el personal no tiene
+> un cliente vivo vinculado (409 `personal_sin_cliente_vinculado`) o si el saldo que devuelve el `UPDATE`
+> atómico del cliente queda negativo (409 `descuento_supera_la_deuda`). Ese `UPDATE` exige además
+> `deleted_at IS NULL`: la baja de un cliente (`ServicioDeClientes.EliminarAsync`) es una baja lógica común, sin
+> lock explícito ni chequeo de referencias, así que no está serializada con el pago; si el cliente se da de baja
+> mientras el pago espera su fila, el `UPDATE` reevalúa y no devuelve fila, y el pago responde 409
+> `personal_sin_cliente_vinculado` y se revierte entero. Además del descuento, el pago escribe un gasto de categoría `sueldos`
+> por cada línea de dinero (`{ idMedioPago, importe, referencia? }`, la referencia queda en `gastos.detalle`).
+> El origen de los fondos se elige en cada pago (`origenFondos`, obligatorio con líneas y rechazado sin
+> ellas): `Tesoreria` no usa turno, admite fecha retroactiva (nunca futura, en la zona de la empresa), pide
+> `idEmpresa` y escribe un egreso encadenado de tesorería por gasto; `CajaTurno` exige `idPuntoVenta` con
+> turno abierto (409 `turno_no_abierto`), el gasto lleva el instante real como fecha y entra al arqueo del
+> turno. El descuento exige `idPuntoVenta` porque el asiento de cuenta corriente lo lleva. Las demás reglas y
+> códigos son los de los gastos que reemplaza (medio de cuenta corriente 400, fecha futura 400,
+> empresa/punto de venta/medio 404).
+>
+> `gastos` y `movimientos_cuenta_corriente` ganan `id_movimiento_personal integer NULL` con FK compuesta
+> `(id_movimiento_personal, id_tenant)` a `movimientos_personal` (`fk_gastos_movimiento_personal`,
+> `fk_movimientos_cuenta_corriente_movimiento_personal`, RESTRICT) e índice de soporte
+> (`ix_gastos_movimiento_personal`; en cuenta corriente lo cubre el índice único parcial). El vínculo se
+> escribe solo al insertar. **Un gasto con `id_movimiento_personal` es inmutable:** la edición del POS,
+> la edición y la baja administrativas y la vinculación posterior a una compra lo rechazan con 409
+> `gasto_de_pago_de_personal`, después del 404, porque tocarlo desalinearía los cuatro libros del pago.
+> Para que un cliente sepa de antemano qué gastos responderán así, los listados del POS (`GET /api/gastos`, el
+> detalle del turno) y de administración (`GET /api/gastos/administracion` y su detalle) traen
+> `idMovimientoPersonal` (nulo en un gasto común) y el web deshabilita en esos gastos la edición, la baja y la
+> vinculación a una compra. Anular o revertir un pago todavía no existe. El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
+> en cada movimiento `pago` su `desglose`: el descuento y una línea por gasto (medio, importe, origen,
+> referencia).
+>
+> **Orden de locks del pago**, el mismo orden relativo de los demás escritores (turno, filas de negocio,
+> advisory de tesorería al final): 1) turno `FOR SHARE` (solo `CajaTurno`); 2) fila de `personal`
+> (`UPDATE ... RETURNING saldo, id_cliente`, que lee el cliente vinculado bajo el lock); 3) fila de
+> `clientes` (`UPDATE ... RETURNING saldo`, solo con descuento); 4) inserts sin lock explícito (asiento,
+> movimiento de cuenta corriente, gastos); 5) advisory de tesorería de la empresa, último (solo
+> `Tesoreria`). Dos pagos al mismo personal se serializan en el paso 2; ningún escritor toma la fila del
+> cliente y después la del personal, y el alta, la edición y la baja de gastos, el pago de una compra y el
+> cierre de turno toman sus locks en un orden compatible con éste. El detalle del análisis de ciclos está en
+> el comentario de clase de `ServicioDePagoDePersonal`.
 
 ## 9. Parámetros operativos
 
@@ -2615,6 +3030,9 @@ erDiagram
     comprobantes_venta }o--o| turnos_caja : ""
     turnos_caja ||--o{ arqueos_turno : ""
     turnos_caja ||--o{ movimientos_caja : ""
+    empresas ||--o{ cuentas_tesoreria : ""
+    cuentas_tesoreria ||--o{ movimientos_cuenta : ""
+    medios_pago }o--o| cuentas_tesoreria : ""
     movimientos_stock }o--o| comprobantes_venta : ""
     movimientos_stock }o--o| comprobantes_compra : ""
     movimientos_cuenta_corriente }o--|| clientes : ""

@@ -9,13 +9,15 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
+import { SeccionDeCuentas } from './tesoreria/SeccionDeCuentas'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /** Etiqueta en español de `TipoMovimientoTesoreria` — stage-gastos-origen-fondos-pos (PR2):
@@ -354,6 +356,12 @@ export function Tesoreria() {
           </>
         )}
       </Box>
+
+      {empresas !== null && empresas.length > 0 && (
+        <div className="mt-4">
+          <SeccionDeCuentas idEmpresa={filtros?.idEmpresa ?? null} />
+        </div>
+      )}
     </div>
   )
 }

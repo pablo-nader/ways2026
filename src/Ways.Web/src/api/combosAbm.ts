@@ -21,7 +21,7 @@ import type {
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
 import { formatearCantidadDeCombo } from '../pos/cargaDeCombos'
-import { tieneMasDeDosDecimales } from '../pos/motorDeCombos'
+import { participaEnCombos, tieneMasDeDosDecimales } from '../pos/motorDeCombos'
 
 /** Cantidad mínima del componente de un combo que tiene uno solo (espejo de `ReglaDeCombos`). */
 export const CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO = 2
@@ -39,9 +39,10 @@ export const clienteDeCombosAbm = {
   eliminar: (id: number) => api.delete(`/combos/${id}`),
 }
 
-/** Un componente de combo es un artículo activo, se venda por unidad o por peso: el POS no puede vender uno inactivo. */
+/** Un componente de combo es un artículo activo que se vende por unidad o por peso: el POS no puede vender uno inactivo
+ * y uno que se vende por importe no entra a combos (el servidor lo rechaza con `combo_componente_por_importe`). */
 export function esArticuloElegibleParaCombo(articulo: Pick<ArticuloListado, 'unidadVenta' | 'activo'>): boolean {
-  return articulo.activo
+  return articulo.activo && participaEnCombos(articulo.unidadVenta)
 }
 
 export type TipoDeComponente = 'Articulo' | 'Familia'
@@ -69,6 +70,7 @@ export type FormularioCombo = {
   precio: number | null
   idEmpresa: number | ''
   activo: boolean
+  disponibleOnline: boolean
   componentes: FilaDeComponente[]
 }
 
@@ -88,6 +90,7 @@ export function formularioComboVacio(): FormularioCombo {
     precio: null,
     idEmpresa: '',
     activo: true,
+    disponibleOnline: true,
     componentes: [filaDeComponenteVacia(), filaDeComponenteVacia()],
   }
 }
@@ -100,6 +103,7 @@ export function aValoresCombo(combo: ComboListado): FormularioCombo {
     precio: combo.precio,
     idEmpresa: combo.idEmpresa ?? '',
     activo: combo.activo,
+    disponibleOnline: combo.disponibleOnline,
     componentes: combo.componentes.map((c) => {
       const fila = filaDeComponenteVacia(c.idArticulo !== null ? 'Articulo' : 'Familia')
       return {
@@ -139,7 +143,7 @@ function aComponenteDeSolicitud(fila: FilaDeComponente): ComponenteDeSolicitudDe
     : { idFamilia: Number(fila.idFamilia), cantidad }
 }
 
-/** Cuerpo de alta y de edición (el mismo: `activo` viaja siempre). Se llama con el formulario ya validado. Un código
+/** Cuerpo de alta y de edición (el mismo: `activo` y `disponibleOnline` viajan siempre). Se llama con el formulario ya validado. Un código
  * vacío no viaja: en el alta el servidor asigna el siguiente libre y en la edición conserva el actual. */
 export function aSolicitudDeCombo(f: FormularioCombo): AltaCombo {
   const codigo = f.codigo.trim()
@@ -149,6 +153,7 @@ export function aSolicitudDeCombo(f: FormularioCombo): AltaCombo {
     precio: Number(f.precio),
     idEmpresa: f.idEmpresa === '' ? null : f.idEmpresa,
     activo: f.activo,
+    disponibleOnline: f.disponibleOnline,
     componentes: f.componentes.map(aComponenteDeSolicitud),
   }
 }
@@ -166,6 +171,7 @@ export function comboCoincideConAlta(cuerpo: AltaCombo, combo: ComboListado): bo
   if (combo.precio !== cuerpo.precio) return false
   if (combo.idEmpresa !== cuerpo.idEmpresa) return false
   if (combo.activo !== cuerpo.activo) return false
+  if (combo.disponibleOnline !== cuerpo.disponibleOnline) return false
   if (combo.componentes.length !== cuerpo.componentes.length) return false
   const esperados = cuerpo.componentes.map(claveDeComponente).sort()
   const reales = combo.componentes.map(claveDeComponente).sort()
@@ -347,6 +353,13 @@ const RECHAZOS_CONOCIDOS: ReadonlyMap<string, ErrorDeServidorDeCombo> = new Map<
         'La cantidad de algún componente no la admite su unidad de venta: un artículo por unidad solo admite cantidades enteras y uno por peso, hasta 3 decimales. Lo mismo vale para los artículos de una familia elegida.',
     },
   ],
+  [
+    'combo_componente_por_importe',
+    {
+      campo: 'componentes',
+      mensaje: 'Un artículo que se vende por importe (o una familia que tiene uno) no puede ser componente de un combo.',
+    },
+  ],
   ['combo_codigo_invalido', { campo: 'codigo', mensaje: MENSAJE_CODIGO }],
   ['combo_codigo_duplicado', { campo: 'codigo', mensaje: 'Ya hay un combo con ese código. Elegí otro.' }],
   ['combo_codigo_agotado', { campo: 'codigo', mensaje: 'El último código posible ya está en uso: indicá un código libre.' }],
@@ -355,6 +368,11 @@ const RECHAZOS_CONOCIDOS: ReadonlyMap<string, ErrorDeServidorDeCombo> = new Map<
   [
     'activo_requerido',
     { campo: 'formulario', mensaje: 'Falta indicar si el combo está activo. Recargá la pantalla e intentá de nuevo.' },
+  ],
+  // Defensivo y hoy inalcanzable: el servidor toma un `disponibleOnline` ausente como "sin cambios" y el formulario lo manda siempre.
+  [
+    'disponible_online_requerido',
+    { campo: 'formulario', mensaje: 'Falta indicar si el combo está disponible online. Recargá la pantalla e intentá de nuevo.' },
   ],
 ])
 

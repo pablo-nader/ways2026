@@ -280,6 +280,10 @@ public class ServicioDeRemitos(
             .Where(a => idsArticulo.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, ct);
 
+        // Un borrador anterior a que el artículo pasara a uso interno no sale por remito: la regla se exige también
+        // al emitir, no solo al guardar el borrador.
+        ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
+
         // Mutation target 43 (mitad articulo_no_es_producto): remueve por completo la rama
         // "skip de servicio" del checkout (:867) para el cuarto write site — acá TODA línea tiene
         // que mover stock, o se rechaza antes de escribir nada.
@@ -837,6 +841,9 @@ public class ServicioDeRemitos(
         var articuloPorId = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, ct);
+
+        ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
+        ArticulosPorImporte.RechazarEn(articuloPorId.Values, "un remito");
 
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();
         var porcentajePorAlicuota = await db.AlicuotasIva

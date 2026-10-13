@@ -105,7 +105,7 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var put = e.Admin.PutAsJsonAsync(
             $"/api/combos/{combo.Id}",
-            new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), nuevo], true),
+            new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), nuevo], true, true),
             OpcionesJson);
 
         await EsperarAsync(
@@ -150,7 +150,7 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var put = e.Admin.PutAsJsonAsync(
             $"/api/combos/{combo.Id}",
-            new EdicionCombo(null, "Resucitado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 1m)], true),
+            new EdicionCombo(null, "Resucitado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 1m)], true, true),
             OpcionesJson);
 
         await EsperarAsync(
@@ -199,7 +199,7 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var put = e.Admin.PutAsJsonAsync(
             $"/api/combos/{combo.Id}",
-            new EdicionCombo(null, "Con el nuevo", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(nuevo, null, 1m)], true),
+            new EdicionCombo(null, "Con el nuevo", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(nuevo, null, 1m)], true, true),
             OpcionesJson);
 
         await EsperarAsync(
@@ -261,7 +261,7 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             "alta" => e.Admin.PostAsJsonAsync("/api/combos", Alta(null, a, b), OpcionesJson),
             "edicion" => e.Admin.PutAsJsonAsync(
                 $"/api/combos/{existente.Id}",
-                new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 2m)], true),
+                new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 2m)], true, true),
                 OpcionesJson),
             _ => e.Admin.DeleteAsync($"/api/combos/{existente.Id}")
         };

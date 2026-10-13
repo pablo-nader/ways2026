@@ -112,6 +112,18 @@ public static class ReglaDeCombos
         && cantidad <= CantidadMaxima
         && ReglaDeCantidadDeVenta.EsCantidadAdmitida(UnidadVenta.Peso, cantidad);
 
+    /// <summary>Qué unidades de venta entran a un combo: <see cref="UnidadVenta.Unidad"/> y
+    /// <see cref="UnidadVenta.Peso"/>. Un artículo por <see cref="UnidadVenta.Importe"/> nunca es componente ni
+    /// candidato de un componente, y sus líneas no consumen un combo: su cantidad es siempre 1 y lo que se cobra es
+    /// el importe tipeado, no un precio de lista que un combo pueda repartir.</summary>
+    public static bool ParticipaEnCombos(UnidadVenta unidadVenta) =>
+        unidadVenta is UnidadVenta.Unidad or UnidadVenta.Peso;
+
+    /// <summary>Un artículo de esa unidad de venta puede cubrir un componente de esa cantidad: la unidad entra a
+    /// combos (<see cref="ParticipaEnCombos"/>) y admite la cantidad (<see cref="ReglaDeCantidadDeVenta"/>).</summary>
+    public static bool AdmiteComoComponente(UnidadVenta unidadVenta, decimal cantidad) =>
+        ParticipaEnCombos(unidadVenta) && ReglaDeCantidadDeVenta.EsCantidadAdmitida(unidadVenta, cantidad);
+
     /// <summary>Un combo es un conjunto: tiene al menos dos componentes, o uno solo con cantidad
     /// <see cref="CantidadMinimaDeUnComponenteUnico"/> o más. No mira la suma de las cantidades: dos componentes de
     /// 0,200 kg son un combo.</summary>

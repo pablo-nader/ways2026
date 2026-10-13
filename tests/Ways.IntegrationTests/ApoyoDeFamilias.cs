@@ -244,7 +244,8 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     public async Task<int> SembrarArticuloAsync(
         Entorno e, string nombre, ValoresCompartidosDeFamilia compartidos, int? idFamilia = null,
         bool dadoDeBaja = false, int? idMarca = null, string? descripcion = null, bool activo = true,
-        bool disponibleParaTodas = true, int? id = null, string? prefijoDelCodigo = null)
+        bool disponibleParaTodas = true, int? id = null, string? prefijoDelCodigo = null,
+        TeclaAtajo? teclaAtajo = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow.AddMinutes(-10);
@@ -275,6 +276,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             CostoListaIncluyeIva = compartidos.CostoListaIncluyeIva,
             DescuentoProveedor = compartidos.DescuentoProveedor,
             CostoNominal = compartidos.CostoNominal,
+            TeclaAtajo = teclaAtajo,
             CreatedAt = ahora,
             UpdatedAt = ahora,
             DeletedAt = dadoDeBaja ? ahora : null
@@ -530,7 +532,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         EsProducto: a.EsProducto, CostoLista: a.CostoLista, DescuentoProveedor: a.DescuentoProveedor,
         DisponibleParaTodas: a.DisponibleParaTodas, IdsEmpresas: null, Activo: a.Activo,
         ControlaLote: a.ControlaLote, AcumulaEnVenta: a.AcumulaEnVenta, Alcance: alcance,
-        CostoListaPor: a.CostoListaPor, CostoListaIncluyeIva: a.CostoListaIncluyeIva);
+        CostoListaPor: a.CostoListaPor, CostoListaIncluyeIva: a.CostoListaIncluyeIva, TeclaAtajo: a.TeclaAtajo);
 
     /// <summary>Los campos compartidos de <paramref name="valores"/> que el pedido de edición lleva puestos en
     /// él. <c>costo_nominal</c> no viaja: el servidor lo calcula, y <see cref="ValoresConUnCampoCambiado"/> ya

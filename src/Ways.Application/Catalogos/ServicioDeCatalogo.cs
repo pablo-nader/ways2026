@@ -80,6 +80,11 @@ public abstract class ServicioDeCatalogo<T, TListado, TAlta>(
     /// nada acá.</summary>
     protected virtual Task ValidarBajaAsync(T entidad, CancellationToken ct) => Task.CompletedTask;
 
+    /// <summary>Validación propia del alta y la edición que necesita la base, ejecutada después de las validaciones
+    /// baratas (nombre, disponibilidad, <see cref="AplicarPropios"/>) y justo antes de guardar, con la entidad ya
+    /// modificada: lo que cuesta un lock se toma lo más tarde que la corrección permite. Sin cuerpo por defecto.</summary>
+    protected virtual Task AntesDeGuardarAsync(T entidad, CancellationToken ct) => Task.CompletedTask;
+
     public virtual async Task<IReadOnlyList<TListado>> ListarAsync(
         bool incluirInactivos = false, CancellationToken ct = default)
     {
@@ -108,6 +113,7 @@ public abstract class ServicioDeCatalogo<T, TListado, TAlta>(
         var ahora = reloj.Ahora;
         var entidad = Instanciar(nombre, datos.IdEmpresa, datos.Activo, ahora);
         AplicarPropios(entidad, datos);
+        await AntesDeGuardarAsync(entidad, ct);
 
         Conjunto.Add(entidad);
         await db.SaveChangesAsync(ct);
@@ -127,6 +133,7 @@ public abstract class ServicioDeCatalogo<T, TListado, TAlta>(
         entidad.Activo = datos.Activo;
         entidad.UpdatedAt = reloj.Ahora;
         AplicarPropios(entidad, datos);
+        await AntesDeGuardarAsync(entidad, ct);
 
         await db.SaveChangesAsync(ct);
 

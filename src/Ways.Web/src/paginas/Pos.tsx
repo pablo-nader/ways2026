@@ -26,9 +26,21 @@ import {
   type LineaCarrito,
 } from '../api/carrito'
 import { clienteDeCatalogo } from '../api/catalogos'
+import {
+  entradaConPuntoDecimal,
+  esTeclaDeAtajo,
+  MENSAJE_DE_ATAJO_SIN_DATOS,
+  MENSAJE_DE_CANTIDAD_DE_IMPORTE,
+  MENSAJE_DE_IMPORTE_INVALIDO,
+  mensajeDeAtajoSinArticulo,
+  mensajeDeLineaPorImporteObsoleta,
+  mensajeDeAtajoSinImporte,
+  mensajeDeImporteRequerido,
+} from '../api/importeDeVenta'
+import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
-import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
+import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
 import { clienteDeOfertas } from '../api/ofertas'
@@ -56,16 +68,15 @@ import type {
   ArticuloEscaneado,
   ClienteListado,
   ComprobanteEmitido,
-  EstadoDeCuenta,
   ComboAplicadoEnPrevia,
   InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
   PresupuestoParaVenta,
-  PuntoVentaListado,
   ResumenDeCierrePorRetiro,
   SolicitudDeCierrePorRetiro,
+  TeclaAtajo,
   TurnoResumen,
 } from '../api/tipos'
 import { comboVigenteDeLinea, rotuloDeComboAplicado } from '../api/combos'
@@ -81,16 +92,21 @@ import {
   type PreciosPorLinea,
 } from '../api/ventas'
 import { useAuth } from '../auth/useAuth'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { conTiempoLimite } from '../pos/tiempoLimite'
 import { Cargando } from '../componentes/Cargando'
+import { ChipDeSaldo } from '../componentes/ChipDeSaldo'
 import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
-import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
+import { ModalCuentaCorrientePos } from '../componentes/ModalCuentaCorrientePos'
+import type { PagoACuentaRegistrado } from '../componentes/ModalCuentaCorrientePos'
+import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
-import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
+import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import {
   componentesAElegir,
@@ -105,25 +121,22 @@ import { elegirFuenteDeCombos, fuenteDesdeApi, type ComboDeLista } from '../pos/
 import {
   aClienteListado,
   aMedioPagoListado,
-  buscarArticuloOffline,
+  atajosDeImporteOffline,
   buscarClientesOffline,
   formatearVejezDeInstantanea,
+  lineasConImporteDeArticuloOrdinario,
+  resolverAtajoOffline,
+  resolverEscaneoOffline,
   resolverPreviaOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, LIMITE_DE_ESPERA_DEL_TURNO_MS } from '../pos/turnoConfirmadoLocal'
-import {
-  guardarIntervaloDeSincronizacion,
-  INTERVALO_MAXIMO_MINUTOS,
-  INTERVALO_MINIMO_MINUTOS,
-  leerIntervaloDeSincronizacion,
-  minutosAMilisegundos,
-  normalizarIntervaloEnMinutos,
-} from '../pos/intervaloDeSincronizacion'
 import { construirNumeroVisible, mensajeDeRechazoOffline, rechazoOfflineEsDefinitivo, type MotivoRechazoOffline } from '../pos/outboxOffline'
 import { clienteAdmitidoOffline, medioAdmitidoOffline } from '../pos/reglasOffline'
 import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
 import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
+import { useRegistroDeAccionesDePos } from '../pos/AccionesDePosContext'
+import type { EstadoDeAccionesDePos } from '../pos/AccionesDePosContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -135,6 +148,18 @@ const MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO = 'No se agregó el combo: hay un cobr
 /** Se agrega al aviso de un artículo que no apareció cuando tampoco se pudieron leer los combos con ese código. */
 const MENSAJE_DE_COMBOS_SIN_LEER = 'No se pudieron leer los combos.'
 
+/** Escaneo en el servidor. Un importe con coma (`150,50*500`) que el servidor rechaza se reintenta UNA vez con punto: para un
+ * artículo común el servidor lee la coma como separador de miles, así que la corrección solo se prueba después de su rechazo. */
+async function escanearEnElServidor(entrada: string): Promise<ArticuloEscaneado> {
+  try {
+    return await clienteDeArticulos.escanear(entrada)
+  } catch (e) {
+    const conPunto = e instanceof ErrorApi && e.codigo === 'importe_invalido' ? entradaConPuntoDecimal(entrada) : null
+    if (conPunto === null) throw e
+    return clienteDeArticulos.escanear(conPunto)
+  }
+}
+
 function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: ClienteListado | null): ClienteListado[] {
   if (!seleccionado) return opciones
   return opciones.some((c) => c.id === seleccionado.id) ? opciones : [seleccionado, ...opciones]
@@ -143,6 +168,12 @@ function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: Clien
 function etiquetaDeCliente(c: ClienteListado): string {
   const nombreCompleto = c.razonSocial ?? [c.nombre, c.apellido].filter(Boolean).join(' ')
   return `#${c.numero} — ${nombreCompleto}`
+}
+
+type OpcionDeCliente = OpcionDeSelector & { cliente: ClienteListado }
+
+function aOpcionDeCliente(cliente: ClienteListado): OpcionDeCliente {
+  return { id: cliente.id, etiqueta: etiquetaDeCliente(cliente), cliente }
 }
 
 function formatearMoneda(valor: number): string {
@@ -627,9 +658,28 @@ function VentaFinalizada({
  * impresoras — `medios` viaja junto porque es lo único que le falta al llamador para resolver el
  * nombre/comportamiento de cada pago del comprobante (`ComprobanteEmitido.pagos` solo trae
  * `idMedioPago`). En la app web normal el prop queda `undefined` y no cambia nada. */
+/** Lo que la pantalla sabe del saldo de un cliente identificado al emitir su venta, para que el ticket
+ * lo muestre como dato o como estimación. */
+export type SaldoParaTicket = {
+  /** Cuenta corriente de sus ventas en la cola sin enviar, sin contar la que se emite; `null` si no se pudo leer. */
+  consumoPendiente: number | null
+  /** El saldo en pantalla vino de una lectura del servidor posterior a la selección, el último pago o la última venta. */
+  saldoConfirmado: boolean
+}
+
+export type AlEmitirVenta = (
+  comprobante: ComprobanteEmitido,
+  cliente: ClienteListado,
+  medios: MedioPagoListado[],
+  saldo?: SaldoParaTicket,
+) => void
+
+/** Espera máxima por la lectura de la cola para el ticket: sin respuesta, el saldo se imprime como estimado. */
+const ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS = 2_000
+
 type PropsPantallaPos = {
   idPresupuesto: number | null
-  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alEmitir?: AlEmitirVenta
   /** stage-pos-turno-y-foco: seam de navegación de "Cerrar caja" — la app web navega a la ruta
    * libre `/caja/cierre` con `useNavigate` (comportamiento sin cambios, "camino viejo"). El shell
    * de escritorio dejó de pasar esto (stage-pos-retiros-y-cierre-por-retiro, etapa 5): con
@@ -672,261 +722,6 @@ export type CajaDeEscritorio = {
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
 
-function formatearFechaHoraCortaDeMovimiento(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
-}
-
-type PropsModalCuentaCorrientePos = {
-  clienteInicial: ClienteListado | null
-  puntoVenta: PuntoVentaListado
-  medios: MedioPagoListado[]
-  onCerrar: () => void
-  onPagoRegistrado: (idCliente: number) => void
-}
-
-/**
- * stage-pos-adjustments: consulta rápida de saldo + pago a cuenta desde el POS, sin salir de la
- * venta en curso. Cliente por defecto: el ya elegido en la venta, salvo que sea Consumidor Final
- * (sin cuenta corriente real) — ahí arranca en el buscador, igual que si el cajero lo cambiara a
- * mano. El punto de venta lo fija el turno de la sesión (`puntoVentaFijo` de `ModalPagoACuenta`),
- * nunca un selector — acá no hay ninguna elección manual de PV que replicar.
- */
-function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar, onPagoRegistrado }: PropsModalCuentaCorrientePos) {
-  const [clienteElegido, setClienteElegido] = useState<ClienteListado | null>(
-    clienteInicial && !clienteInicial.esConsumidorFinal ? clienteInicial : null,
-  )
-
-  const [terminoBusqueda, setTerminoBusqueda] = useState('')
-  const [opcionesBusqueda, setOpcionesBusqueda] = useState<ClienteListado[]>([])
-  const [buscando, setBuscando] = useState(false)
-  const [errorBusqueda, setErrorBusqueda] = useState('')
-  const generacionBusquedaRef = useRef(0)
-
-  const [estado, setEstado] = useState<EstadoDeCuenta | null>(null)
-  const [cargandoEstado, setCargandoEstado] = useState(false)
-  const [errorEstado, setErrorEstado] = useState('')
-  const generacionEstadoRef = useRef(0)
-
-  const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
-  const [aviso, setAviso] = useState('')
-
-  // react-async-state regla 2: cada cambio de cliente elegido dispara su propia consulta — una
-  // respuesta desactualizada (ej. el cajero cambió de cliente mientras la anterior seguía en
-  // vuelo) nunca puede pisar la más reciente.
-  const cargarEstado = useCallback(() => {
-    if (!clienteElegido) return
-    const miGeneracion = (generacionEstadoRef.current += 1)
-    setCargandoEstado(true)
-    setErrorEstado('')
-    const ventana = rangoUltimoMes()
-
-    clienteDeCuentaCorriente
-      .obtenerEstado(clienteElegido.id, ventana.desde, ventana.hasta, false)
-      .then((datos) => {
-        if (generacionEstadoRef.current !== miGeneracion) return
-        setEstado(datos)
-      })
-      .catch((e) => {
-        if (generacionEstadoRef.current !== miGeneracion) return
-        setEstado(null)
-        setErrorEstado(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
-      })
-      .finally(() => {
-        if (generacionEstadoRef.current !== miGeneracion) return
-        setCargandoEstado(false)
-      })
-  }, [clienteElegido])
-
-  useEffect(() => {
-    cargarEstado()
-  }, [cargarEstado])
-
-  async function buscar() {
-    if (buscando) return
-    const miGeneracion = (generacionBusquedaRef.current += 1)
-    setBuscando(true)
-    setErrorBusqueda('')
-    try {
-      const pagina = await clienteDeClientes.listar(terminoBusqueda, false)
-      if (generacionBusquedaRef.current !== miGeneracion) return
-      // El Consumidor Final no tiene cuenta corriente real — nunca aparece como resultado acá,
-      // aunque el término de búsqueda lo matchee.
-      setOpcionesBusqueda(pagina.items.filter((c) => !c.esConsumidorFinal))
-    } catch (e) {
-      if (generacionBusquedaRef.current !== miGeneracion) return
-      setErrorBusqueda(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
-    } finally {
-      if (generacionBusquedaRef.current === miGeneracion) setBuscando(false)
-    }
-  }
-
-  function elegirCliente(id: number) {
-    const encontrado = opcionesBusqueda.find((c) => c.id === id)
-    if (!encontrado) return
-    setAviso('')
-    setClienteElegido(encontrado)
-  }
-
-  const disponibilidad = estado ? disponibilidadPrevia(estado.header.saldo, estado.header.limiteCredito, estado.header.creditoIlimitado) : null
-
-  if (modalPagoAbierto && estado) {
-    return (
-      <ModalPagoACuenta
-        idCliente={clienteElegido!.id}
-        puntosVenta={[puntoVenta]}
-        puntoVentaFijo={puntoVenta.id}
-        medios={medios}
-        header={estado.header}
-        onCerrar={() => setModalPagoAbierto(false)}
-        onAntesDeEscribir={() => {
-          // regla 3: bumpear la generación ANTES de la escritura — un refetch en vuelo de un
-          // cliente ya abandonado no puede pisar el que dispara `onRegistrado` más abajo.
-          generacionEstadoRef.current += 1
-        }}
-        onRegistrado={(comprobante) => {
-          setModalPagoAbierto(false)
-          setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
-          // regla 6: el refetch queda aislado del try/catch de la escritura del modal de pago.
-          cargarEstado()
-          // JD-1: si el cliente pagado es el mismo de la venta en curso, `PantallaPos` refresca su
-          // `clienteSeleccionado` — su copia cacheada del saldo quedó vieja apenas se registra el pago.
-          onPagoRegistrado(clienteElegido!.id)
-        }}
-      />
-    )
-  }
-
-  return (
-    <>
-      <div className="modal d-block" tabIndex={-1} role="dialog">
-        <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">Cuenta corriente</h5>
-              <button type="button" className="btn-close" aria-label="Cerrar" onClick={onCerrar} />
-            </div>
-            <div className="modal-body">
-              {!clienteElegido ? (
-                <>
-                  <div className="input-group input-group-sm mb-3">
-                    <input
-                      type="search"
-                      className="form-control"
-                      placeholder="Buscar cliente…"
-                      aria-label="Buscar cliente de cuenta corriente"
-                      value={terminoBusqueda}
-                      disabled={buscando}
-                      onChange={(e) => setTerminoBusqueda(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscar())}
-                    />
-                    <button type="button" className="btn btn-outline-primary" disabled={buscando} onClick={buscar}>
-                      {buscando ? 'Buscando…' : 'Buscar'}
-                    </button>
-                  </div>
-                  {errorBusqueda && <div className="alert alert-danger py-1 px-2 small">{errorBusqueda}</div>}
-                  {opcionesBusqueda.length > 0 && (
-                    <select
-                      className="form-select"
-                      aria-label="Resultados de la búsqueda"
-                      size={Math.min(opcionesBusqueda.length, 6)}
-                      value=""
-                      onChange={(e) => elegirCliente(Number(e.target.value))}
-                    >
-                      <option value="" disabled>
-                        Elegir…
-                      </option>
-                      {opcionesBusqueda.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {etiquetaDeCliente(c)}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="d-flex justify-content-between align-items-center mb-3">
-                    <strong>{etiquetaDeCliente(clienteElegido)}</strong>
-                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setClienteElegido(null)}>
-                      Cambiar cliente
-                    </button>
-                  </div>
-
-                  {aviso && <div className="alert alert-success py-1 px-2 small">{aviso}</div>}
-                  {errorEstado && <div className="alert alert-danger py-1 px-2 small">{errorEstado}</div>}
-
-                  {cargandoEstado && <Cargando texto="Cargando estado de cuenta…" />}
-
-                  {!cargandoEstado && estado && (
-                    <>
-                      <div className="row g-3 mb-3">
-                        <div className="col-4">
-                          <div className="small text-muted">Saldo</div>
-                          <div className="fs-5">{formatearMoneda(estado.header.saldo)}</div>
-                        </div>
-                        <div className="col-4">
-                          <div className="small text-muted">Límite</div>
-                          <div>{estado.header.creditoIlimitado ? 'Ilimitado' : formatearMoneda(estado.header.limiteCredito)}</div>
-                        </div>
-                        <div className="col-4">
-                          <div className="small text-muted">Disponible</div>
-                          <div>{disponibilidad === null ? 'Ilimitado' : formatearMoneda(disponibilidad)}</div>
-                        </div>
-                      </div>
-
-                      <h6>Movimientos recientes</h6>
-                      {estado.movimientos.length === 0 ? (
-                        <p className="text-muted small">Sin movimientos en el último mes.</p>
-                      ) : (
-                        <div className="table-responsive">
-                          <table className="table table-sm">
-                            <thead>
-                              <tr>
-                                <th>Fecha</th>
-                                <th>Tipo</th>
-                                <th className="text-end">Importe</th>
-                                <th className="text-end">Saldo</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {estado.movimientos.map((m) => (
-                                <tr key={m.id}>
-                                  <td>{formatearFechaHoraCortaDeMovimiento(m.fecha)}</td>
-                                  <td>{etiquetaDeMovimiento(m)}</td>
-                                  <td className="text-end">{formatearMoneda(m.importe)}</td>
-                                  <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-outline-secondary" onClick={onCerrar}>
-                Cerrar
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!clienteElegido || cargandoEstado || estado === null}
-                onClick={() => setModalPagoAbierto(true)}
-              >
-                Registrar pago
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="modal-backdrop show" />
-    </>
-  )
-}
-
 function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio, alCambiarVentaEnCurso }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
@@ -963,25 +758,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // El mount effect de más abajo (Consumidor Final por defecto) no debe pisar un cliente
   // restaurado del borrador — se decide UNA sola vez, con el mismo `borradorInicial` congelado.
   const clienteRestauradoDelBorradorRef = useRef(borradorInicial?.clienteSeleccionado != null)
-  const [terminoCliente, setTerminoCliente] = useState('')
-  const [buscandoClientes, setBuscandoClientes] = useState(false)
-  // Error de la búsqueda de clientes; la carga inicial tiene su propio slot (`errorCargaClientes`),
-  // que la copia local del escritorio puede volver innecesario sin tocar el de la búsqueda.
+  // Error del cliente del presupuesto; la carga inicial tiene su propio slot (`errorCargaClientes`),
+  // que la copia local del escritorio puede volver innecesario sin tocar este.
   const [errorClientes, setErrorClientes] = useState('')
   const [errorCargaClientes, setErrorCargaClientes] = useState('')
   const [errorCargaClientesEsDeRed, setErrorCargaClientesEsDeRed] = useState(false)
-  // Generación de las búsquedas de clientes; la carga inicial tiene la suya, así una recarga al
-  // volver la red nunca deja colgado el "Buscando…" de una búsqueda en vuelo.
-  const generacionClientesRef = useRef(0)
+  // Generación de la carga inicial de clientes: una respuesta tardía de una carga anterior (la del
+  // arranque, cuando ya se reintentó al volver la red) nunca pisa a la más nueva.
   const generacionCargaClientesRef = useRef(0)
-  // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — `opcionesClientes`
-  // se pisa con los resultados de `buscarClientes` (búsqueda-mientras-tipea), así que el reset
+  // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — el reset
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
-  // Ids de `opcionesClientes` que salieron de la instantánea local (búsqueda local o arranque sin
-  // respuesta del servidor) y no de `GET /clientes`: al elegir uno con red se trae el registro fresco.
-  const idsDeOpcionesLocalesRef = useRef<ReadonlySet<number>>(new Set())
 
   // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
   // cuenta registrado desde `ModalCuentaCorrientePos` (JD-1) o un cliente restaurado desde el
@@ -990,6 +778,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // generación propia + chequeo del id vigente vía updater funcional — si el cajero cambió de
   // cliente mientras el refetch estaba en vuelo, la respuesta desactualizada se descarta.
   const generacionClienteSeleccionadoRef = useRef(0)
+  // El `ClienteListado` que una lectura del servidor dejó como cliente de la venta. Cualquier otro objeto (de la
+  // lista, de la copia local, de un borrador, o el mismo tras un pago o una venta que cambió su saldo) es no confirmado.
+  const saldoConfirmadoRef = useRef<ClienteListado | null>(null)
   const refrescarClienteSeleccionado = useCallback((idCliente: number) => {
     const miGeneracion = (generacionClienteSeleccionadoRef.current += 1)
     clienteDeClientes
@@ -997,6 +788,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .then((actualizado) => {
         if (generacionClienteSeleccionadoRef.current !== miGeneracion) return
         setClienteSeleccionado((prev) => (prev && prev.id === idCliente ? actualizado : prev))
+        // Solo este objeto, el que quedó en pantalla, cuenta como saldo confirmado por el servidor.
+        saldoConfirmadoRef.current = actualizado
       })
       .catch(() => {
         // silencioso: si falla el refetch, se conserva el cliente en pantalla con el saldo que
@@ -1050,6 +843,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // a una acción del propio cajero sobre ESTE input. El foco inicial / al desbloquear el turno usa
   // un mecanismo aparte (ver el efecto "foco neutral" más abajo) que si respeta un foco ajeno.
   const focoPendienteRef = useRef(false)
+  // F1 del shell: pide el foco por el mismo camino y despierta al efecto que lo consume.
+  const [pedidosDeFoco, setPedidosDeFoco] = useState(0)
 
   // stage-pos-buscador-articulos: modal de búsqueda por nombre (F2, botón "Buscar" junto al de
   // código) — se abre solo con la venta libre operable (nunca bajo `?idPresupuesto=`, ni con el
@@ -1108,6 +903,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [confirmandoCobro, setConfirmandoCobro] = useState(false)
   const disparadorConfirmacionRef = useRef<HTMLElement | null>(null)
 
+  // Confirmación de "Vaciar carrito" (clic o F10). Escape lo cancela el propio `Modal`; F10 y F9
+  // los resuelve el único listener de teclado de la pantalla.
+  const [vaciandoCarrito, setVaciandoCarrito] = useState(false)
+
   // stage-6-turnos-caja (Slice 7): gate seam del checkout — un 409 turno_no_abierto reemplaza el
   // panel de cobro por la oferta de abrir turno en vez de un error crudo (design: Web
   // Composition — "Pos.tsx gate seam").
@@ -1130,6 +929,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [cargandoTurnoDelServidor, setCargandoTurno] = useState(false)
   const [errorTurnoDelServidor, setErrorTurno] = useState('')
   const [errorTurnoEsDeRed, setErrorTurnoEsDeRed] = useState(false)
+  // `false` hasta que la primera consulta termina: antes de eso `turno === null` solo significa
+  // "todavía no se sabe", y el header no debe tomarlo por una caja cerrada.
+  const [turnoConsultado, setTurnoConsultado] = useState(false)
   const [esperaDelTurnoVencida, setEsperaDelTurnoVencida] = useState(false)
   const generacionTurnoRef = useRef(0)
 
@@ -1278,28 +1080,35 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     ? (puntosVenta.find((p) => p.id === idPuntoVentaDelPresupuesto) ?? null)
     : puntoVentaDeSesion
 
-  // Intervalo del ciclo automático, configurable por el cajero y persistido por dispositivo.
-  const [minutosDeSincronizacion, setMinutosDeSincronizacion] = useState(leerIntervaloDeSincronizacion)
-  const [textoMinutosDeSincronizacion, setTextoMinutosDeSincronizacion] = useState(() => String(minutosDeSincronizacion))
-
-  function confirmarMinutosDeSincronizacion() {
-    const pedidos = normalizarIntervaloEnMinutos(textoMinutosDeSincronizacion) ?? minutosDeSincronizacion
-    const vigentes = guardarIntervaloDeSincronizacion(pedidos)
-    setMinutosDeSincronizacion(vigentes)
-    setTextoMinutosDeSincronizacion(String(vigentes))
-  }
-
   // stage-pos-venta-offline-web: instantánea local + outbox — nunca corre bajo `?idPresupuesto=`
   // (esa conversión ya necesita red para haber cargado el presupuesto en primer lugar, la venta
   // local no la cubre).
   const sincronizacionOffline = useSincronizacionOffline({
     idPuntoVenta: puntoVentaSeleccionada?.id ?? null,
     activo: !modoPresupuesto,
-    intervaloMs: minutosAMilisegundos(minutosDeSincronizacion),
     // La instantánea es solo del POS de escritorio: en la app web la venta nunca espera el ciclo
     // de arranque.
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
+
+  // Cada vez que el drenado saca ventas de la cola, lo que el servidor sabe del saldo cambió: el que está en
+  // pantalla deja de estar confirmado (y los recibos y tickets en vuelo que lo leyeron antes lo saben por el
+  // contador) hasta que, con señal, una lectura nueva lo reemplace.
+  const descensosDeLaColaRef = useRef(0)
+  // Descensos de la cola al registrarse el último pago: si cambió al imprimir su recibo, el saldo posterior leído puede no incluir lo que se drenó.
+  const descensosAlPagarRef = useRef(0)
+  const largoPrevioDeLaColaRef = useRef(sincronizacionOffline.outboxCount)
+  useEffect(() => {
+    const previo = largoPrevioDeLaColaRef.current
+    largoPrevioDeLaColaRef.current = sincronizacionOffline.outboxCount
+    if (sincronizacionOffline.outboxCount >= previo) return
+    descensosDeLaColaRef.current += 1
+    saldoConfirmadoRef.current = null
+    if (sincronizacionOffline.enLinea && clienteSeleccionado && !clienteSeleccionado.esConsumidorFinal) {
+      refrescarClienteSeleccionado(clienteSeleccionado.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sincronizacionOffline.outboxCount])
 
   // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo se resuelve contra
   // la instantánea sin esperar la red (decisión del dueño: un precio algo viejo es aceptable, una
@@ -1311,6 +1120,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizacionOffline.instantanea.idPuntoVenta === puntoVentaSeleccionada?.id
       ? sincronizacionOffline.instantanea
       : null
+
+  // Los atajos F5 a F8 salen de la misma instantánea: es lo único que trae la tecla de cada artículo por importe.
+  const atajosDeImporte = useMemo(() => (instantaneaDelPuntoVenta ? atajosDeImporteOffline(instantaneaDelPuntoVenta) : []), [instantaneaDelPuntoVenta])
+  // Opciones del selector de cliente y su búsqueda en la copia local: estables entre renders para que la
+  // lista no recalcule el filtro de todos los clientes en cada cambio de la pantalla.
+  const opcionesDeCliente = useMemo(
+    () => fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map(aOpcionDeCliente),
+    [opcionesClientes, clienteSeleccionado],
+  )
+  const buscarClientesLocales = useCallback(
+    (termino: string): OpcionDeCliente[] =>
+      instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, termino).map((c) => aOpcionDeCliente(aClienteListado(c))) : [],
+    [instantaneaDelPuntoVenta],
+  )
 
   // Los combos salen de la instantánea cuando hay una utilizable (también sin red) y, si no, de la API.
   const idListaDeLaVenta = clienteSeleccionado?.idListaPrecio ?? null
@@ -1446,11 +1269,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .listar('', false)
       .then((pagina) => {
         if (!montadoRef.current || generacionCargaClientesRef.current !== generacionCarga) return
-        // La primera página es la lista de antes de buscar: si el cajero ya buscó, su resultado manda.
-        if (generacionClientesRef.current === 0) {
-          idsDeOpcionesLocalesRef.current = new Set()
-          setOpcionesClientes(pagina.items)
-        }
+        setOpcionesClientes(pagina.items)
         setErrorCargaClientes('')
         setErrorCargaClientesEsDeRed(false)
         // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el cliente lo trae el
@@ -1518,13 +1337,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     const consumidorFinal = aClienteListado(consumidorFinalLocal)
     consumidorFinalRef.current = consumidorFinal
     const opcionesLocales = buscarClientesOffline(instantaneaDelPuntoVenta, '').map(aClienteListado)
-    if (opcionesClientes.length === 0) idsDeOpcionesLocalesRef.current = new Set(opcionesLocales.map((c) => c.id))
     setOpcionesClientes((prev) => (prev.length === 0 ? opcionesLocales : prev))
     if (!clienteRestauradoDelBorradorRef.current) {
       setClienteSeleccionado((prev) => prev ?? consumidorFinal)
     }
-    // `opcionesClientes` se lee solo para marcar el origen de la lista; no debe re-disparar la siembra.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datosLocalesDisponibles, instantaneaDelPuntoVenta])
 
   // stage-pos-adjustments (JD-2): un cliente restaurado desde el borrador (navegación afuera y
@@ -1655,6 +1471,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         clearTimeout(idTopeDeEspera)
         if (generacionTurnoRef.current !== miGeneracion) return
         setCargandoTurno(false)
+        setTurnoConsultado(true)
       })
   }
 
@@ -1715,6 +1532,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setErrorTurno('')
     setErrorTurnoEsDeRed(false)
     setCargandoTurno(false)
+    setTurnoConsultado(true)
     aplicarTurnoConfirmado(nuevoTurno)
     // Re-judgment (WARNING, ambos jueces): mismo criterio que en `consultarTurno` — "Abrir turno"
     // (gate propio o safety-net del 409) confirma un turno abierto nuevo, así que cualquier aviso
@@ -2449,6 +2267,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   /** Suma al carrito lo que resolvió un escaneo. Una fracción de un artículo que se vende por
    * unidad no entra: se avisa donde se avisan los demás errores de escaneo. */
   function agregarEscaneado(articulo: ArticuloEscaneado): boolean {
+    // Un artículo por importe sin el monto (se escaneó su código a secas) no tiene precio: se pide el importe.
+    if (articulo.unidadVenta === 'Importe' && articulo.importe == null) {
+      setErrorEscaneo(mensajeDeImporteRequerido(articulo.codigoInterno))
+      return false
+    }
     const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
     if (fraccionaUnaUnidad(linea.unidadVenta, cantidad)) {
       setErrorEscaneo(MENSAJE_DE_CANTIDAD_ENTERA)
@@ -2643,6 +2466,50 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     else evento.currentTarget.blur()
   }
 
+  /** Agrega lo que la instantánea local resuelve para `entrada`. `noEncontrado` es que no la conoce y sigue la búsqueda en el
+   * servidor; `rechazado` es que la conoce pero no se pudo agregar (el motivo ya quedó en el aviso del escaneo). */
+  function agregarDesdeInstantanea(instantanea: InstantaneaDePos, entrada: string): 'agregado' | 'rechazado' | 'noEncontrado' {
+    const resultado = resolverEscaneoOffline(instantanea, entrada)
+    if (resultado.tipo === 'noEncontrado') return 'noEncontrado'
+    if (resultado.tipo === 'importeInvalido') {
+      setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+      return 'rechazado'
+    }
+    return agregarEscaneado(resultado.articulo) ? 'agregado' : 'rechazado'
+  }
+
+  /** F5 a F8 (o el botón de la tecla): agrega el artículo por importe de la tecla con el importe que hay en el campo de código,
+   * con el mismo resultado que tipear `importe*código`. Sin datos, sin importe o con una tecla sin artículo avisa y no agrega. */
+  function agregarPorAtajo(tecla: TeclaAtajo) {
+    // Mismas compuertas que F2 y F4: nada se agrega detrás de un modal ni durante un cobro o una lectura en vuelo.
+    if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || bloqueadoPorTurno) return
+    if (buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada !== null || confirmandoCobro || cajaDeEscritorioOcupada) return
+
+    if (!instantaneaDelPuntoVenta) {
+      setErrorEscaneo(MENSAJE_DE_ATAJO_SIN_DATOS)
+      return
+    }
+    const texto = entradaEscaneo.trim()
+    const resultado = resolverAtajoOffline(instantaneaDelPuntoVenta, tecla, texto)
+    if (resultado.tipo === 'sinArticulo') {
+      setErrorEscaneo(mensajeDeAtajoSinArticulo(tecla))
+      return
+    }
+    if (texto === '') {
+      setErrorEscaneo(mensajeDeAtajoSinImporte(tecla))
+      return
+    }
+    if (resultado.tipo === 'importeInvalido') {
+      setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+      return
+    }
+    if (agregarEscaneado(resultado.articulo)) {
+      setEntradaEscaneo('')
+      setErrorEscaneo('')
+    }
+    focoPendienteRef.current = true
+  }
+
   /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
    * con un código que nunca pasó por `entradaEscaneo` — el buffer de teclado del modal "Venta
    * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
@@ -2671,7 +2538,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // Con instantánea y conexión la caja no espera a la red si la copia local puede responder: primero los combos de la
           // instantánea, después sus artículos, y solo si no conoce ninguno de los dos se le pregunta a la API.
           desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarSinRed)
-          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && buscarArticuloOffline(instantaneaDelPuntoVenta, entrada))) {
+          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && resolverEscaneoOffline(instantaneaDelPuntoVenta, entrada).tipo !== 'noEncontrado')) {
             desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarEnLaApi)
           }
         } else {
@@ -2700,9 +2567,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // Venta local primero: un código que está en la instantánea se agrega sin tocar la red. Solo
     // un código que no está (un artículo nuevo que todavía no sincronizó) va a buscarse online.
     if (instantaneaDelPuntoVenta) {
-      const desdeInstantanea = buscarArticuloOffline(instantaneaDelPuntoVenta, entrada)
-      if (desdeInstantanea) {
-        if (agregarEscaneado(desdeInstantanea)) {
+      const desenlace = agregarDesdeInstantanea(instantaneaDelPuntoVenta, entrada)
+      if (desenlace !== 'noEncontrado') {
+        if (desenlace === 'agregado') {
           setEntradaEscaneo('')
           setErrorEscaneo('')
         }
@@ -2715,7 +2582,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setEscaneando(true)
     setErrorEscaneo('')
     try {
-      const articulo = await clienteDeArticulos.escanear(entrada)
+      const articulo = await escanearEnElServidor(entrada)
       if (tokenEscaneoRef.current !== token) return
       if (agregarEscaneado(articulo)) setEntradaEscaneo('')
       focoPendienteRef.current = true
@@ -2728,13 +2595,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // para otro cliente este es su único fallback. Mismo mapeo `ArticuloEscaneado` que la
       // respuesta online, así `aLineaDeCarritoDesdeEscaneo` no necesita saber de dónde vino.
       if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea) {
-        const desdeInstantanea = buscarArticuloOffline(sincronizacionOffline.instantanea, entrada)
-        if (desdeInstantanea) {
-          if (agregarEscaneado(desdeInstantanea)) setEntradaEscaneo('')
+        const desenlace = agregarDesdeInstantanea(sincronizacionOffline.instantanea, entrada)
+        if (desenlace === 'agregado') setEntradaEscaneo('')
+        if (desenlace !== 'noEncontrado') {
           focoPendienteRef.current = true
           return
         }
         setErrorEscaneo(conAvisoDeCombos('Sin conexión: no se encontró ese código en la última instantánea local.'))
+        return
+      }
+
+      // El importe que tipeó el cajero no es válido: el texto del servidor habla de punto decimal y acá la coma también vale.
+      if (e instanceof ErrorApi && e.codigo === 'importe_invalido') {
+        setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
         return
       }
 
@@ -2744,39 +2617,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
-  /** Muestra al instante lo que encuentra la instantánea local (también sin red). Con señal además
-   * consulta al servidor y suma lo que la copia local no tiene (un cliente dado de alta después de
-   * la última sincronización); para un mismo cliente gana el registro del servidor. */
-  async function buscarClientes() {
-    if (buscandoClientes || cobrandoRef.current) return
-    const generacion = (generacionClientesRef.current += 1)
-    setErrorClientes('')
-
-    const locales = instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, terminoCliente).map(aClienteListado) : null
-    if (locales !== null) {
-      idsDeOpcionesLocalesRef.current = new Set(locales.map((c) => c.id))
-      setOpcionesClientes(locales)
-      if (!sincronizacionOffline.enLinea) {
-        if (locales.length === 0) setErrorClientes('Sin conexión: no se encontró ningún cliente en la copia local.')
-        return
-      }
-    }
-
-    setBuscandoClientes(true)
+  /** Consulta al servidor los clientes que la copia local no tiene (un cliente dado de alta después de la
+   * última sincronización); para un mismo cliente el selector toma el registro del servidor. */
+  async function buscarClientesEnElServidor(termino: string): Promise<OpcionDeCliente[]> {
     try {
-      const pagina = await clienteDeClientes.listar(terminoCliente, false)
-      if (generacionClientesRef.current !== generacion) return
-      const idsDelServidor = new Set(pagina.items.map((c) => c.id))
-      const soloLocales = (locales ?? []).filter((c) => !idsDelServidor.has(c.id))
-      idsDeOpcionesLocalesRef.current = new Set(soloLocales.map((c) => c.id))
-      setOpcionesClientes([...pagina.items, ...soloLocales])
+      const pagina = await clienteDeClientes.listar(termino, false)
+      return pagina.items.map(aOpcionDeCliente)
     } catch (e) {
-      // Con resultados locales en pantalla, una consulta al servidor que falla no los tapa.
-      if (generacionClientesRef.current === generacion && (locales === null || locales.length === 0)) {
-        setErrorClientes(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
-      }
-    } finally {
-      if (generacionClientesRef.current === generacion) setBuscandoClientes(false)
+      throw e instanceof ErrorApi ? e : new Error('No se pudieron buscar clientes.')
     }
   }
 
@@ -2784,6 +2632,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * tipo `escanear`): la resolución de precio/ofertas la sigue haciendo el efecto de `lineas` de
    * siempre, nunca este handler. */
   function agregarDesdeBusqueda(linea: ArticuloParaCarrito, cantidad: number) {
+    // Un artículo por importe no tiene precio sin el monto, y el buscador no lo pide: es la misma regla del escaneo a secas.
+    if (linea.unidadVenta === 'Importe' && linea.importe === undefined) {
+      setErrorEscaneo(mensajeDeImporteRequerido(linea.codigoInterno))
+      setBuscadorAbierto(false)
+      focoPendienteRef.current = true
+      return
+    }
     mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
     setBuscadorAbierto(false)
     focoPendienteRef.current = true
@@ -2794,15 +2649,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     focoPendienteRef.current = true
   }
 
-  function cambiarCliente(id: number) {
+  function cambiarCliente(elegido: OpcionDeCliente) {
     if (cobrandoRef.current) return
-    const encontrado = fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).find((c) => c.id === id)
-    setClienteSeleccionado(encontrado ?? null)
-    // Un cliente de la copia local trae el saldo de la última sincronización: con señal se trae
-    // el registro del servidor en segundo plano (la vista previa ya arrancó con el local).
-    if (encontrado && idsDeOpcionesLocalesRef.current.has(encontrado.id) && sincronizacionOffline.enLinea) {
-      refrescarClienteSeleccionado(encontrado.id)
+    // Elegir al cliente que ya está elegido no pisa sus datos (que pueden ser más frescos que los de la lista).
+    if (elegido.cliente.id !== clienteSeleccionado?.id) {
+      setClienteSeleccionado(elegido.cliente)
+      // El saldo y el límite de la lista pueden ser viejos (copia local, o una lista cargada hace rato) y
+      // alimentan la validación del crédito: con señal se trae el registro del servidor en segundo plano.
+      if (sincronizacionOffline.enLinea) refrescarClienteSeleccionado(elegido.cliente.id)
     }
+    pedirFocoEnElCodigo()
   }
 
   function agregarFilaPago() {
@@ -2850,6 +2706,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setVentaFinalizada(null)
   }
 
+  // F5 a F8 son los atajos de los artículos por importe. El comportamiento del navegador se evita SIEMPRE, mientras esta pantalla
+  // esté montada y haya o no artículo, modal abierto o modificadores: F5 (también con Ctrl o Shift) recarga la página y con ella se
+  // pierde el estado del POS, y F6/F7 mueven el foco o piden el modo cursor. Solo la tecla sola, sin repetición, agrega una línea.
+  // El listener se registra una vez y llama a la versión del render actual por un ref, para no depender de las compuertas.
+  const alAtajoDeImporteRef = useRef(agregarPorAtajo)
+  useEffect(() => {
+    alAtajoDeImporteRef.current = agregarPorAtajo
+  })
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      if (!esTeclaDeAtajo(evento.key)) return
+      evento.preventDefault()
+      if (evento.repeat || evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return
+      alAtajoDeImporteRef.current(evento.key)
+    }
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+  }, [])
+
   // F2 abre el buscador de artículos (spec pos-buscador-articulos) — solo con la venta libre
   // operable: nunca bajo `?idPresupuesto=` (carrito congelado, sin escaneo), nunca con el
   // checkout en vuelo, nunca con el gate de turno o el ticket ya emitido reemplazando la pantalla,
@@ -2859,7 +2734,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito) return
       // stage-pos-retiros-y-cierre-por-retiro (etapa 5): tampoco con un modal de "Retirar"/"Cerrar
       // caja" por retiro abierto.
       if (cajaDeEscritorioOcupada) return
@@ -2868,7 +2743,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
 
   // F4 abre el buscador de combos, con las mismas compuertas que el botón (que se deshabilita con un escaneo en vuelo) y que
   // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
@@ -2879,12 +2754,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
       evento.preventDefault()
       if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
-      if (gateTurno || ventaFinalizada || confirmandoCobro || cajaDeEscritorioOcupada) return
+      if (gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito || cajaDeEscritorioOcupada) return
       setBuscadorDeCombosAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -2905,7 +2780,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
+  }, [pedidosDeFoco, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
   /**
    * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
@@ -2937,6 +2812,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // `subtotalPrevia` es lo que hay que cobrar, ya con los ajustes manuales de cada línea; de ahí
   // salen `totalActual`, `validarPagosLocal` y el vuelto. `ajustesManuales` solo los separa para
   // mostrarlos en "Datos de la venta".
+  /** Orden de pantalla: la línea agregada más recientemente va primera. El estado, el borrador, el pedido al
+   * servidor y el ticket conservan el orden de agregado. */
+  const lineasEnPantalla = [...lineas].reverse()
+
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   const ajustesManuales = calcularAjustesManualesPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -2999,6 +2878,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // precondición de "hay líneas" es "el presupuesto cargó Y es `Convertible`" (la misma fuente de
   // verdad server-side que oculta el botón "Convertir en venta" en Presupuesto.tsx).
   const hayAjusteSinConfirmar = Object.keys(ajustesEnEdicion).length > 0
+  const lineasPorImporteObsoletas = instantaneaDelPuntoVenta ? lineasConImporteDeArticuloOrdinario(lineas, instantaneaDelPuntoVenta) : []
   const precondicionesListas = modoPresupuesto
     ? presupuesto !== null &&
       presupuesto.convertible &&
@@ -3014,6 +2894,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // sin él. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón "Cobrar" y el atajo
       // quedan inertes hasta que se confirma o se descarta.
       !hayAjusteSinConfirmar &&
+      lineasPorImporteObsoletas.length === 0 &&
       lineas.length > 0 &&
       lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
       clienteSeleccionado !== null &&
@@ -3053,6 +2934,40 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // hay ningún modal abierto, así que `pantallaCobroInerte` por sí solo dejaría "Retirar" vivo.
   const controlesDeCajaInertes = verificandoCierre || pantallaCobroInerte
 
+  const enHeader = nodoRanuraHeader !== null
+
+  // Lo que el header del shell necesita para ofrecer las acciones de caja y de sincronización. El
+  // turno cuenta como resuelto cuando el servidor ya contestó o cuando rige el turno local, para
+  // coincidir con lo que muestra el chip "Caja abierta"/"Caja cerrada".
+  const turnoResuelto =
+    !modoPresupuesto && puntoVentaSeleccionada !== null && (turnoConsultado || usarTurnoLocal) && !cargandoTurno && !errorTurno
+  const puedeSincronizar = !modoPresupuesto && puntoVentaSeleccionada !== null && sincronizacionOffline.instantanea !== null
+  const estadoDeAcciones: EstadoDeAccionesDePos = {
+    listo: turnoResuelto,
+    turnoAbierto: turnoResuelto ? turno !== null : null,
+    imposible: modoPresupuesto || puntoVentaSeleccionada === null || errorTurno !== '',
+    verificandoCierre,
+    retiroOfrecido: cajaDeEscritorio !== undefined,
+    habilitadas: {
+      abrirTurno: turnoResuelto && turno === null,
+      cerrarTurno: turnoResuelto && turno !== null && !controlesDeCajaInertes,
+      retirar: turnoResuelto && turno !== null && cajaDeEscritorio !== undefined && !controlesDeCajaInertes,
+      sincronizar: puedeSincronizar && !sincronizacionOffline.sincronizando,
+    },
+    puedeSincronizar,
+    sincronizando: sincronizacionOffline.sincronizando,
+  }
+  useRegistroDeAccionesDePos(estadoDeAcciones, {
+    abrirTurno: () => setGateTurno(true),
+    cerrarTurno: () => void irACerrarCaja(),
+    retirar: abrirRetiro,
+    sincronizar: () => void sincronizacionOffline.sincronizarAhora(),
+    enfocarEscaneo: () => {
+      focoPendienteRef.current = true
+      setPedidosDeFoco((n) => n + 1)
+    },
+  })
+
   /**
    * stage-pos-caja-en-cabecera: acción primaria de caja (badge + "Abrir caja"/"Cerrar caja",
    * antes en "Datos de la venta") — decisión del dueño: se mueve a una posición prominente,
@@ -3075,7 +2990,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               hay algo pendiente, así el cajero nunca tiene que preguntarse si el indicador
               existe. */}
           <span
-            className={`badge ${sincronizacionOffline.outboxCount > 0 ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}`}
+            className={`badge text-nowrap ${sincronizacionOffline.outboxCount > 0 ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}`}
             title="Ventas registradas sin conexión que todavía no se sincronizaron con el servidor"
           >
             Sin sincronizar: {sincronizacionOffline.outboxCount}
@@ -3087,34 +3002,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               (el POS de escritorio) — la app web no tiene nada que sincronizar. */}
           {sincronizacionOffline.instantanea && (
             <span className="d-flex align-items-center gap-2 small">
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm"
-                disabled={sincronizacionOffline.sincronizando}
-                onClick={() => void sincronizacionOffline.sincronizarAhora()}
-              >
-                {sincronizacionOffline.sincronizando ? 'Sincronizando…' : 'Sincronizar ahora'}
-              </button>
-              <span className="text-muted">Precios de {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? sincronizacionOffline.instantanea.momento, new Date())}</span>
-              <label className="d-flex align-items-center gap-1 text-muted mb-0">
-                cada
-                <input
-                  type="number"
-                  className="form-control form-control-sm"
-                  style={{ width: '4.5rem' }}
-                  min={INTERVALO_MINIMO_MINUTOS}
-                  max={INTERVALO_MAXIMO_MINUTOS}
-                  step={1}
-                  aria-label="Minutos entre sincronizaciones"
-                  value={textoMinutosDeSincronizacion}
-                  onChange={(e) => setTextoMinutosDeSincronizacion(e.target.value)}
-                  onBlur={confirmarMinutosDeSincronizacion}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') confirmarMinutosDeSincronizacion()
-                  }}
-                />
-                min
-              </label>
+              {/* En el header del shell, "Sincronizar" vive en el menú Sistema. */}
+              {!enHeader && (
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  disabled={sincronizacionOffline.sincronizando}
+                  onClick={() => void sincronizacionOffline.sincronizarAhora()}
+                >
+                  {sincronizacionOffline.sincronizando ? 'Sincronizando…' : 'Sincronizar ahora'}
+                </button>
+              )}
+              <span className="text-muted text-nowrap">Precios de {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? sincronizacionOffline.instantanea.momento, new Date())}</span>
             </span>
           )}
           {/* judgment-day ronda 1 (CRITICAL): reemplaza al viejo `errorDeDrenado` (un string único
@@ -3202,18 +3101,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             <>
               {turno ? (
                 <>
-                  <span className="badge bg-success">Caja abierta</span>
-                  <button
-                    type="button"
-                    className="btn btn-danger btn-sm"
-                    disabled={controlesDeCajaInertes}
-                    onClick={() => void irACerrarCaja()}
-                  >
-                    {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
-                  </button>
+                  <span className="badge bg-success text-nowrap">Caja abierta</span>
+                  {!enHeader && (
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      disabled={controlesDeCajaInertes}
+                      onClick={() => void irACerrarCaja()}
+                    >
+                      {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
+                    </button>
+                  )}
                   {/* stage-pos-retiros-y-cierre-por-retiro (etapa 5): solo el POS de escritorio
                       (`cajaDeEscritorio` presente) — la app web no tiene cajón ni impresora. */}
-                  {cajaDeEscritorio && (
+                  {!enHeader && cajaDeEscritorio && (
                     <button
                       type="button"
                       className="btn btn-outline-warning btn-sm"
@@ -3226,10 +3127,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 </>
               ) : (
                 <>
-                  <span className="badge bg-secondary">Caja cerrada</span>
-                  <button type="button" className="btn btn-warning btn-sm" onClick={() => setGateTurno(true)}>
-                    Abrir caja
-                  </button>
+                  <span className="badge bg-secondary text-nowrap">Caja cerrada</span>
+                  {!enHeader && (
+                    <button type="button" className="btn btn-warning btn-sm" onClick={() => setGateTurno(true)}>
+                      Abrir caja
+                    </button>
+                  )}
                 </>
               )}
               {avisoCerrarCaja && <span className="alert alert-warning py-1 px-2 small mb-0">{avisoCerrarCaja}</span>}
@@ -3395,6 +3298,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // encolarlo ahora con otro número pre-asignado duplicaría la venta. Se informa como
           // resultado incierto, igual que un 503 `resultado_incierto`.
           if (e instanceof ErrorDeRed) {
+            // La venta pudo registrarse: el saldo de pantalla ya no es el del servidor.
+            saldoConfirmadoRef.current = null
             setErrorCobro(MENSAJE_DE_COBRO_INCIERTO)
             return null
           }
@@ -3402,6 +3307,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         }
       }
 
+      // La lectura de la cola se pide antes de emitir: la cola atiende en orden, así que no incluye la venta que
+      // se está encolando ahora (ni se la cuenta dos veces si es online).
+      const marcaDeLaCola = descensosDeLaColaRef.current
+      const lecturaDeLaCola = clienteSeleccionado.esConsumidorFinal
+        ? null
+        : conTiempoLimite(() => sincronizacionOffline.consumoPendienteDeCuentaCorriente(clienteSeleccionado.id), ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS).catch(() => null)
       const resultado = await emitirOEncolar()
       if (resultado === null) return
       const { emitido, pendienteDeSincronizar, avisoLimiteDeCredito } = resultado
@@ -3425,7 +3336,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
-      alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
+      // Confirmado solo si la lectura del servidor es la que está en pantalla y ninguna venta salió de la cola desde que se empezó a cobrar.
+      const saldoConfirmadoAlCobrar = saldoConfirmadoRef.current === clienteSeleccionado && descensosDeLaColaRef.current === marcaDeLaCola
+      saldoConfirmadoRef.current = null
+      if (lecturaDeLaCola === null) {
+        alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
+      } else {
+        const clienteDeLaVenta = clienteSeleccionado
+        void lecturaDeLaCola.then((consumoPendiente) =>
+          alEmitir?.(emitido, clienteDeLaVenta, medios ?? [], { consumoPendiente, saldoConfirmado: saldoConfirmadoAlCobrar }),
+        )
+      }
       setLineas([])
       setPrecios({})
       setCombosAplicados([])
@@ -3433,7 +3354,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setAjustesEnEdicion({})
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
-      setTerminoCliente('')
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
       setErrorEscaneo('')
@@ -3453,6 +3373,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       }
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
+      // Un cobro que falló sin respuesta definitiva (por ejemplo un 503 `resultado_incierto`) pudo registrarse igual.
+      saldoConfirmadoRef.current = null
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
       // — reintentar el checkout sin turno abierto solo repetiría el mismo 409.
       if (e instanceof ErrorApi && e.codigo === 'turno_no_abierto') {
@@ -3468,7 +3390,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         aplicarTurnoConfirmado(null)
         setGateTurno(true)
       } else {
-        setErrorCobro(e instanceof ErrorApi ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? e.message) : 'No se pudo registrar la venta.')
+        setErrorCobro(
+          copiaDeArticuloNoVendible(e) ??
+            (e instanceof ErrorApi ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? e.message) : 'No se pudo registrar la venta.'),
+        )
       }
     } finally {
       if (generacionCobroRef.current === miGeneracion) {
@@ -3546,6 +3471,77 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     confirmandoCobroPrevioRef.current = confirmandoCobro
   }, [confirmandoCobro])
 
+  /** Quitar o vaciar saca del documento el control que tenía el foco: lo pide para el input de
+   * código por el mismo camino que el resto de las acciones del cajero (queda pendiente si el
+   * input está momentáneamente deshabilitado). */
+  function pedirFocoEnElCodigo() {
+    focoPendienteRef.current = true
+    setPedidosDeFoco((n) => n + 1)
+  }
+
+  function quitarLinea(idLinea: string) {
+    mutarCarrito({ tipo: 'quitarLinea', idLinea })
+    pedirFocoEnElCodigo()
+  }
+
+  const puedeVaciar = !modoPresupuesto && lineas.length > 0 && !escaneando && !pantallaCobroInerte && !bloqueadoPorTurno
+
+  function pedirConfirmacionDeVaciado() {
+    setVaciandoCarrito(true)
+  }
+
+  /** Recibo del pago a cuenta por la misma cola que el resto de los tickets. El pago ya está
+   * registrado: si la impresión falla, lo informa el aviso con "Reimprimir" de la cola. */
+  async function imprimirReciboDePago(pago: PagoACuentaRegistrado) {
+    if (!cajaDeEscritorio) return
+    const consumoPendiente = await conTiempoLimite(
+      () => sincronizacionOffline.consumoPendienteDeCuentaCorriente(pago.cliente.id),
+      ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS,
+    ).catch(() => null)
+    const saldos = saldosDeUnPagoACuenta({
+      pagos: pago.comprobante.pagos,
+      saldoEnPantalla: pago.saldoEnPantalla,
+      saldoPosterior: pago.saldoPosterior,
+      consumoPendiente: consumoPendiente ?? 0,
+    })
+    const colaSinCambios = descensosDeLaColaRef.current === descensosAlPagarRef.current
+    cajaDeEscritorio.encolarImpresion(
+      'el recibo del pago a cuenta',
+      ticketDePagoACuenta(
+        {
+          comprobante: pago.comprobante,
+          cliente: { numero: pago.cliente.numero, nombre: nombreCompletoDeCliente(pago.cliente) },
+          saldoAnterior: saldos.anterior,
+          saldoNuevo: saldos.nuevo,
+          estimado: esSaldoEstimado({ confirmado: pago.saldoPosterior !== null && colaSinCambios, consumoPendiente }),
+        },
+        cajaDeEscritorio.contexto,
+        medios ?? [],
+      ),
+    )
+  }
+
+  function cancelarVaciado() {
+    setVaciandoCarrito(false)
+    pedirFocoEnElCodigo()
+  }
+
+  // Si el carrito deja de poder vaciarse con la confirmación abierta (turno cerrado, cobro en curso),
+  // el diálogo no puede seguir prometiendo que lo vacía.
+  useEffect(() => {
+    if (vaciandoCarrito && !puedeVaciar) {
+      setVaciandoCarrito(false)
+      focoPendienteRef.current = true
+      setPedidosDeFoco((n) => n + 1)
+    }
+  }, [vaciandoCarrito, puedeVaciar])
+
+  function confirmarVaciado() {
+    setVaciandoCarrito(false)
+    mutarCarrito({ tipo: 'vaciar' })
+    pedirFocoEnElCodigo()
+  }
+
   /** Devuelve el foco al input de código cuando el modal "Venta finalizada" TERMINA de cerrarse
    * (clic en "Aceptar" o F9) — mismo criterio que `confirmandoCobroPrevioRef` de arriba, pero acá
    * siempre va al input de código (nunca hay un control disparador que restaurar: el modal
@@ -3590,6 +3586,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     precondicionesListas: boolean
     pagosCubrenElTotal: boolean
     puedeCobrar: boolean
+    vaciandoCarrito: boolean
+    puedeVaciar: boolean
+    pedirConfirmacionDeVaciado: () => void
+    cancelarVaciado: () => void
     confirmarYcobrar: () => void
     cancelarConfirmacionDeCobro: () => void
     enfocarPrimeraFilaDePagoPendiente: () => void
@@ -3608,6 +3608,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       precondicionesListas,
       pagosCubrenElTotal,
       puedeCobrar,
+      vaciandoCarrito,
+      puedeVaciar,
+      pedirConfirmacionDeVaciado,
+      cancelarVaciado,
       confirmarYcobrar,
       cancelarConfirmacionDeCobro,
       enfocarPrimeraFilaDePagoPendiente,
@@ -3619,6 +3623,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     function alTeclado(evento: KeyboardEvent) {
       const m = f9Ref.current
       if (!m) return
+
+      // F10 abre la barra de menú del navegador: en esta pantalla nunca debe llegar a hacerlo.
+      if (evento.key === 'F10') evento.preventDefault()
 
       // stage-pos-modales-de-cobro: respaldo del cierre por F9 del modal "Venta finalizada" — el
       // dueño real es el propio `manejarTeclado` de `VentaFinalizada` (con su buffer de escaneo y
@@ -3652,6 +3659,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           evento.preventDefault()
           m.cancelarConfirmacionDeCobro()
         }
+        return
+      }
+
+      if (m.vaciandoCarrito) {
+        if (evento.key === 'F10' && evento.repeat) return
+        if (evento.key === 'F10') {
+          evento.preventDefault()
+          m.cancelarVaciado()
+        } else if (evento.key === 'F9') {
+          evento.preventDefault()
+        }
+        return
+      }
+
+      if (evento.key === 'F10') {
+        if (evento.repeat) return
+        if (!m.puedeVaciar || m.buscadorAbierto || m.gateTurno) return
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+        m.pedirConfirmacionDeVaciado()
         return
       }
 
@@ -3753,7 +3779,45 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       <div className="row g-3">
         <div className="col-lg-8">
-          <Box titulo="Carrito">
+          <Box
+            etiqueta="Carrito"
+            encabezado={
+              <>
+                <div className="flex-grow-1" style={{ minWidth: 0 }}>
+                  <SelectorConBusqueda<OpcionDeCliente>
+                    id="pos-cliente"
+                    nombreAccesible="Cliente"
+                    className="form-select-sm"
+                    // Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
+                    // y el cobro local salen de su propia lista (`admisibilidadDeVentaOffline`).
+                    opciones={opcionesDeCliente}
+                    valor={clienteSeleccionado?.id ?? null}
+                    disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
+                    buscarLocal={buscarClientesLocales}
+                    alBuscar={sincronizacionOffline.enLinea ? buscarClientesEnElServidor : undefined}
+                    textoSinResultados={
+                      !sincronizacionOffline.enLinea && instantaneaDelPuntoVenta
+                        ? 'Sin conexión: no se encontró ningún cliente en la copia local.'
+                        : 'Sin resultados.'
+                    }
+                    onChange={cambiarCliente}
+                    alCancelar={pedirFocoEnElCodigo}
+                  />
+                </div>
+                {!modoPresupuesto && (
+                  <BotonIcono
+                    icono="detalle"
+                    etiqueta="Ver detalle"
+                    title="Ver detalle"
+                    className="flex-shrink-0"
+                    disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
+                    onClick={() => setModalCuentaCorrienteAbierto(true)}
+                  />
+                )}
+                {clienteSeleccionado && !clienteSeleccionado.esConsumidorFinal && <ChipDeSaldo cliente={clienteSeleccionado} />}
+              </>
+            }
+          >
             {/* stage-pos-turno-y-foco: aviso claro de por qué escaneo/carrito/cliente/pagos están
                 deshabilitados — solo cuando el turno está CONFIRMADO cerrado (nunca mientras
                 todavía se está consultando, ni si la consulta falló: `errorTurno` tiene su propio
@@ -3772,6 +3836,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 copia local de este dispositivo.
               </div>
             )}
+            {!sincronizacionOffline.enLinea && !modoPresupuesto && (
+              <div className="form-text mb-2">Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.</div>
+            )}
             {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger py-1 px-2 small">{errorEscaneo}</div>}
             {avisoPrecios && !modoPresupuesto && (
               <div className="alert alert-warning py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
@@ -3788,7 +3855,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )}
 
             {!modoPresupuesto && (
-              <div className="input-group mb-3">
+              <div className={`input-group ${atajosDeImporte.length > 0 ? 'mb-2' : 'mb-3'}`}>
                 <input
                   ref={inputEscaneoRef}
                   type="text"
@@ -3808,11 +3875,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   {escaneando ? 'Buscando…' : 'Agregar'}
                 </button>
-                {/* "Buscar artículo" en vez de "Buscar" a secas: ya existe un botón "Buscar" en el
-                    panel de cliente de esta misma pantalla (`Buscar cliente`) — un nombre
-                    accesible idéntico rompería cualquier `getByRole('button', { name: 'Buscar' })`
-                    (ambos quedarían matcheados a la vez, tests preexistentes incluidos). El
-                    `(F2)` es `aria-hidden`: solo decoración visual, el nombre accesible sigue
+                {/* "Buscar artículo" en vez de "Buscar" a secas: así el nombre dice qué se busca y no se
+                    confunde con la búsqueda de clientes del selector de la cabecera. El `(F2)` es
+                    `aria-hidden`: solo decoración visual, el nombre accesible sigue
                     siendo "Buscar artículo" a secas — `aria-keyshortcuts` es la forma correcta de
                     exponer el atajo a tecnología asistiva. */}
                 <button
@@ -3835,6 +3900,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   Buscar combo <sup aria-hidden="true">(F4)</sup>
                 </button>
+              </div>
+            )}
+            {/* Atajos de los artículos por importe: la tecla toma el importe tipeado en el campo de código (F5 a F8). */}
+            {!modoPresupuesto && atajosDeImporte.length > 0 && (
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                {atajosDeImporte.map((atajo) => (
+                  <button
+                    key={atajo.teclaAtajo}
+                    type="button"
+                    className="btn btn-outline-primary btn-sm"
+                    disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
+                    aria-keyshortcuts={atajo.teclaAtajo}
+                    onClick={() => agregarPorAtajo(atajo.teclaAtajo)}
+                  >
+                    {atajo.nombre} <sup aria-hidden="true">({atajo.teclaAtajo})</sup>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -3869,7 +3951,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                           <td className="text-end">—</td>
                         </tr>
                       ))
-                    : lineas.map((l) => {
+                    : lineasEnPantalla.map((l) => {
                         const resultado = precios[l.idLinea]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
@@ -3918,9 +4000,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 className={`form-control form-control-sm${cantidadInvalida(l) ? ' is-invalid' : ''}`}
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 aria-invalid={cantidadInvalida(l) || undefined}
-                                title={fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l))) ? MENSAJE_DE_CANTIDAD_ENTERA : undefined}
+                                title={
+                                  l.importe !== undefined
+                                    ? MENSAJE_DE_CANTIDAD_DE_IMPORTE
+                                    : fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l)))
+                                      ? MENSAJE_DE_CANTIDAD_ENTERA
+                                      : undefined
+                                }
                                 value={textoCantidad(l)}
-                                disabled={pantallaCobroInerte || bloqueadoPorTurno}
+                                disabled={pantallaCobroInerte || bloqueadoPorTurno || l.importe !== undefined}
                                 onChange={(e) => cambiarCantidad(l.idLinea, e.target.value)}
                                 onBlur={() => confirmarCantidad(l.idLinea)}
                               />
@@ -3970,14 +4058,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             </td>
                             <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
                             <td className="text-end text-nowrap">
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-outline-danger"
+                              <BotonIcono
+                                icono="eliminar"
+                                etiqueta="Quitar"
+                                title="Quitar"
                                 disabled={lineaInerte}
-                                onClick={() => mutarCarrito({ tipo: 'quitarLinea', idLinea: l.idLinea })}
-                              >
-                                Quitar
-                              </button>
+                                onClick={() => quitarLinea(l.idLinea)}
+                              />
                             </td>
                           </tr>
                         )
@@ -3996,11 +4083,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {!modoPresupuesto && lineas.length > 0 && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm"
-                disabled={pantallaCobroInerte || bloqueadoPorTurno}
-                onClick={() => mutarCarrito({ tipo: 'vaciar' })}
+                className="btn btn-outline-danger btn-sm"
+                disabled={!puedeVaciar}
+                aria-keyshortcuts="F10"
+                onClick={pedirConfirmacionDeVaciado}
               >
-                Vaciar carrito
+                Vaciar carrito <sup aria-hidden="true">(F10)</sup>
               </button>
             )}
           </Box>
@@ -4008,93 +4096,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
         <div className="col-lg-4">
           <Box titulo="Datos de la venta">
-            {errorCargaClientes && !(errorCargaClientesEsDeRed && datosLocalesDisponibles && instantaneaDelPuntoVenta?.clientes.some((c) => c.esConsumidorFinal)) && (
-              <div className="alert alert-danger py-1 px-2 small">{errorCargaClientes}</div>
-            )}
-            {errorClientes && <div className="alert alert-danger py-1 px-2 small">{errorClientes}</div>}
 
-            <div className="mb-2">
-              <label className="form-label" htmlFor="pos-cliente">
-                Cliente
-              </label>
-              <select
-                id="pos-cliente"
-                className="form-select"
-                value={clienteSeleccionado?.id ?? ''}
-                disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
-                onChange={(e) => cambiarCliente(Number(e.target.value))}
-              >
-                {/* Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
-                    y el cobro local salen de su propia lista (`admisibilidadDeVentaOffline`). */}
-                {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {etiquetaDeCliente(c)}
-                    </option>
-                  ))}
-              </select>
-              {!sincronizacionOffline.enLinea && !modoPresupuesto && (
-                <div className="form-text">Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.</div>
-              )}
-            </div>
-
-            {!modoPresupuesto && (sincronizacionOffline.enLinea || instantaneaDelPuntoVenta !== null) && (
-              <div className="input-group input-group-sm mb-3">
-                <input
-                  type="search"
-                  className="form-control"
-                  placeholder="Buscar otro cliente…"
-                  aria-label="Buscar cliente"
-                  value={terminoCliente}
-                  disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
-                  onChange={(e) => setTerminoCliente(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarClientes())}
-                />
-                <button
-                  type="button"
-                  className="btn btn-outline-primary"
-                  disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
-                  onClick={buscarClientes}
-                >
-                  {buscandoClientes ? 'Buscando…' : 'Buscar'}
-                </button>
-              </div>
-            )}
-
-            {!modoPresupuesto && (
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm mb-3"
-                disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
-                onClick={() => setModalCuentaCorrienteAbierto(true)}
-              >
-                Cuenta corriente
-              </button>
-            )}
-
-            <hr />
-
-            {combosAplicados.map((c) => (
-              <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
-                <span>Combo {rotuloDeComboAplicado(c)}</span>
-                <span>{formatearMoneda(-c.ahorro)}</span>
-              </div>
-            ))}
-            {ajustesManuales.descuentoManualTotal !== 0 && (
-              <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
-                <span>Desc. manual</span>
-                <span>{formatearMoneda(-ajustesManuales.descuentoManualTotal)}</span>
-              </div>
-            )}
-            {ajustesManuales.recargoManualTotal !== 0 && (
-              <div className="d-flex justify-content-between mb-1 text-info-emphasis">
-                <span>Recargo</span>
-                <span>{formatearImporteConSigno(ajustesManuales.recargoManualTotal, { simbolo: true })}</span>
-              </div>
-            )}
-
-            <div className="d-flex justify-content-between mb-3">
-              <strong>Total previo</strong>
-              <strong>
+            <div className="text-center mb-3">
+              <span className="d-block text-muted small">Total previo</span>
+              <strong className="d-block display-5 lh-1">
                 {modoPresupuesto
                   ? cargandoPresupuesto
                     ? 'Cargando…'
@@ -4107,6 +4112,33 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </strong>
             </div>
 
+            {(combosAplicados.length > 0 || ajustesManuales.descuentoManualTotal !== 0 || ajustesManuales.recargoManualTotal !== 0) && (
+              <div className="small mb-3">
+                {combosAplicados.map((c) => (
+                  <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
+                    <span>Combo {rotuloDeComboAplicado(c)}</span>
+                    <span>{formatearMoneda(-c.ahorro)}</span>
+                  </div>
+                ))}
+                {ajustesManuales.descuentoManualTotal !== 0 && (
+                  <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
+                    <span>Desc. manual</span>
+                    <span>{formatearMoneda(-ajustesManuales.descuentoManualTotal)}</span>
+                  </div>
+                )}
+                {ajustesManuales.recargoManualTotal !== 0 && (
+                  <div className="d-flex justify-content-between mb-1 text-info-emphasis">
+                    <span>Recargo</span>
+                    <span>{formatearImporteConSigno(ajustesManuales.recargoManualTotal, { simbolo: true })}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {errorCargaClientes && !(errorCargaClientesEsDeRed && datosLocalesDisponibles && instantaneaDelPuntoVenta?.clientes.some((c) => c.esConsumidorFinal)) && (
+              <div className="alert alert-danger py-1 px-2 small">{errorCargaClientes}</div>
+            )}
+            {errorClientes && <div className="alert alert-danger py-1 px-2 small">{errorClientes}</div>}
             {errorMedios && <div className="alert alert-danger py-1 px-2 small">{errorMedios}</div>}
             {errorParametros && <div className="alert alert-danger py-1 px-2 small">{errorParametros}</div>}
             {errorCobro && <div className="alert alert-danger py-1 px-2 small">{errorCobro}</div>}
@@ -4199,16 +4231,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               + Agregar medio de pago
             </button>
 
-            <div className="d-flex justify-content-between small">
-              <span>Falta</span>
-              <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(faltante)}</span>
-            </div>
-            <div className="d-flex justify-content-between small mb-2">
-              <span>Vuelto</span>
-              <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(excedente)}</span>
+            <div className="d-flex justify-content-between align-items-baseline mb-2">
+              <span>{pagosCubrenElTotal ? 'Vuelto' : 'Falta'}</span>
+              <span className={`fw-semibold ${previaFallida ? 'text-muted' : pagosCubrenElTotal ? 'text-success' : 'text-danger'}`}>
+                {previaFallida ? 'se confirma al cobrar' : formatearMoneda(pagosCubrenElTotal ? excedente : faltante)}
+              </span>
             </div>
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+
+            {lineasPorImporteObsoletas.length > 0 && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {mensajeDeLineaPorImporteObsoleta(lineasPorImporteObsoletas[0].nombre)}
+              </div>
+            )}
 
             {hayAjusteSinConfirmar && (
               <div className="alert alert-warning py-1 px-2 small" role="status">
@@ -4256,6 +4292,26 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         />
       )}
 
+      {vaciandoCarrito && (
+        <Modal
+          titulo="Vaciar carrito"
+          restaurarFoco={false}
+          onCerrar={cancelarVaciado}
+          pie={
+            <>
+              <button type="button" className="btn btn-outline-secondary" autoFocus onClick={cancelarVaciado}>
+                No
+              </button>
+              <button type="button" className="btn btn-danger" onClick={confirmarVaciado}>
+                Sí
+              </button>
+            </>
+          }
+        >
+          <p className="mb-0">¿Está seguro que quiere vaciar el carrito?</p>
+        </Modal>
+      )}
+
       {ventaFinalizada && (
         <VentaFinalizada
           numeroVisible={ventaFinalizada.numeroVisible}
@@ -4300,8 +4356,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           clienteInicial={clienteSeleccionado}
           puntoVenta={puntoVentaSeleccionada}
           medios={medios}
-          onCerrar={() => setModalCuentaCorrienteAbierto(false)}
-          onPagoRegistrado={refrescarClienteSeleccionado}
+          onCerrar={() => {
+            setModalCuentaCorrienteAbierto(false)
+            pedirFocoEnElCodigo()
+          }}
+          onPagoRegistrado={(idCliente) => {
+            // El saldo en pantalla quedó viejo: deja de ser confirmado hasta que la lectura nueva lo reemplace.
+            saldoConfirmadoRef.current = null
+            descensosAlPagarRef.current = descensosDeLaColaRef.current
+            refrescarClienteSeleccionado(idCliente)
+          }}
+          onReciboListo={cajaDeEscritorio ? imprimirReciboDePago : undefined}
         />
       )}
 
@@ -4513,7 +4578,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
  * siendo el POS de siempre).
  */
 type PropsPos = {
-  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alEmitir?: AlEmitirVenta
   alIrACerrarCaja?: (idTurno: number) => void
   cajaDeEscritorio?: CajaDeEscritorio
   alCambiarVentaEnCurso?: (enCurso: boolean) => void

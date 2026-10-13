@@ -522,4 +522,41 @@ public class ReliquidadorDeConsumosTests
 
         Assert.Equal((decimal)totalEsperado, Assert.Single(Assert.Single(resultado.Detalle).Lineas).TotalDelDia);
     }
+    // ---- artículo por importe: el importe tipeado no se reprecia -----------------------------------
+
+    [Fact]
+    public void UnaLineaPorImporteConservaElImporteTipeadoAunqueElArticuloTengaPrecioDeLista()
+    {
+        var porImporte = new LineaAReliquidar(
+            IdArticulo: 1, Cantidad: 1m, PrecioUnitario: 150m, Descuento: 0m, TotalHistorico: 150m, PorImporte: true);
+        var comun = new LineaAReliquidar(IdArticulo: 2, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 100m);
+        var consumo = UnConsumo(1, porImporte, comun);
+
+        var resultado = ReliquidadorDeConsumos.Calcular(
+            [consumo], new Dictionary<int, decimal?> { [1] = 999m, [2] = 120m });
+
+        Assert.Equal(20m, resultado.Delta);
+        var detalle = Assert.Single(resultado.Detalle).Lineas;
+        var deLaLineaPorImporte = Assert.Single(detalle, l => l.IdArticulo == 1);
+        Assert.Equal(0m, deLaLineaPorImporte.Delta);
+        Assert.Null(deLaLineaPorImporte.PrecioActual);
+        Assert.Null(deLaLineaPorImporte.TotalDelDia);
+        Assert.NotNull(deLaLineaPorImporte.Motivo);
+        Assert.Contains("importe", deLaLineaPorImporte.Motivo, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(20m, Assert.Single(detalle, l => l.IdArticulo == 2).Delta);
+    }
+
+    [Fact]
+    public void UnConsumoSoloPorImporteNoAportaDeltaYQuedaCubierto()
+    {
+        var linea = new LineaAReliquidar(
+            IdArticulo: 1, Cantidad: 1m, PrecioUnitario: 150m, Descuento: 0m, TotalHistorico: 135m,
+            AjusteManualPorcentaje: -10m, PorImporte: true);
+
+        var resultado = ReliquidadorDeConsumos.Calcular(
+            [UnConsumo(7, linea)], new Dictionary<int, decimal?> { [1] = 999m });
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Equal([7], resultado.IdsMovimientosCubiertos);
+    }
 }

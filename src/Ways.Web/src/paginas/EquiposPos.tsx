@@ -6,6 +6,7 @@ import type { DispositivoListado } from '../api/dispositivos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const AVISO_REFRESCO_FALLIDO = 'Se revocó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
@@ -18,7 +19,7 @@ export const NOTA_DE_REVOCACION =
   'no sincronizó, se pierden: un equipo revocado ya no puede rendir su cola.'
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /**

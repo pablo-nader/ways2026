@@ -166,7 +166,8 @@ function listaPrecioFixture(sobrescribir: Partial<ListaPrecioListado> = {}): Lis
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 20,
     codigoInterno: 'ART-20',
@@ -1610,6 +1611,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
     origenFondos: 'Tesoreria',
     idComprobanteCompra: null,
     turnoAbierto: false,
+    idMovimientoPersonal: null,
     ...sobrescribir,
   }
 }

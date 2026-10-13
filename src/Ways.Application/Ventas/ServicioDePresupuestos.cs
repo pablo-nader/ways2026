@@ -623,6 +623,9 @@ public class ServicioDePresupuestos(
             .Where(a => idsArticulo.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, ct);
 
+        ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
+        ArticulosPorImporte.RechazarEn(articuloPorId.Values, "un presupuesto");
+
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();
         var porcentajePorAlicuota = await db.AlicuotasIva
             .Where(a => idsAlicuota.Contains(a.Id))

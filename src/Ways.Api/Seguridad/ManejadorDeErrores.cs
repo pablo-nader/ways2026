@@ -171,6 +171,28 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_usuarios_mail" } =>
                 (StatusCodes.Status409Conflict, "El mail ya está en uso.", "mail_duplicado"),
 
+            // Backstop de los pre-chequeos de `ServicioDePersonal`: dos altas o ediciones
+            // concurrentes pueden pasar el chequeo y chocar recién en el índice parcial.
+            { SqlState: "23505", ConstraintName: "ux_personal_usuario" } =>
+                (StatusCodes.Status409Conflict, "Ese usuario ya está vinculado a otro personal.", "usuario_ya_vinculado"),
+
+            // Backstop del pre-chequeo de nombre de `ServicioDeCuentasDeTesoreria`: dos altas o ediciones
+            // concurrentes pueden pasar el chequeo y chocar recién en el índice parcial. Por nombre exacto,
+            // antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cuentas_tesoreria_nombre_empresa" } =>
+                (StatusCodes.Status409Conflict, "Ya existe una cuenta de tesorería con ese nombre en esta empresa.", "cuenta_tesoreria_duplicada"),
+
+            // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
+            // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
+            // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas
+            // cubiertas por este índice (cobro, comisión y retenciones con turno): un escritor futuro de esos tipos con turno que choque
+            // acá recibiría este mensaje equivocado y tendría que tener su propio caso. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_movimientos_cuenta_cierre" } =>
+                (StatusCodes.Status409Conflict, "El turno ya está cerrado.", "turno_ya_cerrado"),
+
+            { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
+                (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
+
             // Mismo backstop que el de arriba, para la otra unicidad de `usuarios`
             // (`usuario` por tenant, ADR-7): la misma carrera entre el chequeo previo de
             // `ServicioDeUsuarios` y el `SaveChangesAsync` puede chocar acá.
@@ -410,6 +432,15 @@ public class ManejadorDeErrores(
                 when string.Equals(uxFamiliaNombre, "ux_familias_nombre", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe una familia con ese nombre.", "familia_nombre_duplicado"),
 
+            // Artículos por importe (db-error-backstops): ux_articulos_tecla_atajo — una tecla de atajo del POS por
+            // artículo vivo del tenant. ServicioDeArticulos lo pre-chequea (mismo código); este 409 es el respaldo de
+            // la carrera. Nombre EXACTO antes del brazo genérico de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: string uxTeclaAtajo }
+                when string.Equals(uxTeclaAtajo, "ux_articulos_tecla_atajo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Ya hay un artículo con esa tecla de atajo en este tenant.",
+                    "tecla_atajo_duplicada"),
+
             // Combos (db-error-backstops): ux_combos_codigo — código único por tenant entre los combos vivos.
             // Nombre EXACTO antes del brazo genérico de ClasificarUnicidad: "ux_combos_codigo" contiene
             // "_codigo" y caería en codigo_duplicado ("un registro con ese código"). ServicioDeCombos serializa
@@ -504,10 +535,38 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_empresas_alicuotas_percepcion_rango" } =>
                 (StatusCodes.Status400BadRequest, "Las alícuotas de percepción tienen que estar entre 0 y 100.", "alicuota_percepcion_invalida"),
 
+            // Backstop del porcentaje de facturación del medio de pago: ServicioDeMediosPago rechaza antes
+            // (porcentaje_facturacion_invalido) lo que se sale de 0..100; esto atrapa una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentaje_facturacion" } =>
+                (StatusCodes.Status400BadRequest, "El porcentaje a facturar tiene que estar entre 0 y 100.", "porcentaje_facturacion_invalido"),
+
+            // Backstops de la cuenta de tesorería del medio de pago: ServicioDeMediosPago aplica antes las mismas
+            // reglas (ReglasDeCuentaDeMedioPago) con los mismos códigos; esto atrapa una escritura cruda. La FK
+            // fk_medios_pago_cuenta_tesoreria sale como referencia_invalida por el backstop genérico de las fk_*.
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentajes_cuenta_rango" } =>
+                (StatusCodes.Status400BadRequest, "La comisión y las retenciones tienen que estar entre 0 y 100.", "porcentaje_cuenta_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentajes_cuenta_suma" } =>
+                (StatusCodes.Status400BadRequest, "La comisión y las retenciones, sumadas, no pueden superar el 100%.", "porcentajes_cuenta_suma_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_cuenta_solo_electronico" } =>
+                (StatusCodes.Status400BadRequest, "La cuenta de tesorería, la comisión y las retenciones solo se admiten en medios de pago electrónicos.", "cuenta_solo_electronico"),
+
             // Backstop de la base del costo de lista del artículo: ServicioDeArticulos rechaza antes
             // (costo_lista_por_invalido) cualquier valor fuera de Unidad/Bulto; esto atrapa una escritura cruda.
             { SqlState: "23514", ConstraintName: "ck_articulos_costo_lista_por" } =>
                 (StatusCodes.Status400BadRequest, "El campo costo_lista_por debe ser Unidad o Bulto.", "costo_lista_por_invalido"),
+
+            // Backstops del artículo por importe: ServicioDeArticulos rechaza antes (ReglaDeArticulos.ValidarImporte y
+            // ExigirTeclaAtajoDefinida, mismos códigos); esto atrapa una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_articulos_importe_no_acumula" } =>
+                (StatusCodes.Status400BadRequest, "Un artículo que se vende por importe no puede acumular en la venta.", "importe_no_acumula"),
+
+            { SqlState: "23514", ConstraintName: "ck_articulos_tecla_atajo_solo_importe" } =>
+                (StatusCodes.Status400BadRequest, "Solo un artículo que se vende por importe puede tener una tecla de atajo.", "tecla_atajo_solo_importe"),
+
+            { SqlState: "23514", ConstraintName: "ck_articulos_tecla_atajo" } =>
+                (StatusCodes.Status400BadRequest, "El campo tecla_atajo debe ser F5, F6, F7 o F8.", "tecla_atajo_invalida"),
 
             // Backstop de esquema (judgment-day, slice 3 ronda 2, item 2; GATE-APROBADO
             // 2026-08-03) para "vigente_hasta > vigente_desde" en precios — ServicioDePrecios.

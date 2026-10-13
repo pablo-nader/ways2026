@@ -32,7 +32,9 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
             .Where(x => x.IdTurnoCaja == idTurnoCaja && x.Estado == EstadoComprobante.Emitido);
 
         // 1. pagos por medio — solo comprobantes emitido (spec: Anulados Are Excluded From The
-        // Derivation); un NCX aporta un importe negativo sin rama especial (stage-5 decisión 4).
+        // Derivation). Suma los importes tal cual, sin mirar el signo del tipo de comprobante: un pago nunca es negativo
+        // (ck_pagos_comprobante_importe_no_negativo) y una nota de crédito no lleva pagos (ValidadorDePagos, regla 0c), así que no resta ni suma
+        // nada: este lector no necesita el signo del comprobante.
         var pagosPorMedio = await pagosDelTurno
             .GroupBy(x => x.IdMedioPago)
             .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Importe) })

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EquiposPos, NOTA_DE_REVOCACION } from './EquiposPos'
 import { ErrorApi } from '../api/cliente'
 import type { DispositivoListado } from '../api/dispositivos'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const apiGetMock = vi.fn()
 const apiDeleteMock = vi.fn()
@@ -42,7 +43,7 @@ const caja2: DispositivoListado = {
 }
 
 function fecha(iso: string) {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 function montar(items: DispositivoListado[] = [caja1, caja2]) {

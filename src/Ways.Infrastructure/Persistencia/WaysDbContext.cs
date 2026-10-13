@@ -23,6 +23,7 @@ using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Precios;
+using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -73,6 +74,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // Application en su propio lote).
     public DbSet<Cliente> Clientes => Set<Cliente>();
     public DbSet<Proveedor> Proveedores => Set<Proveedor>();
+    public DbSet<Personal> Personal => Set<Personal>();
+    public DbSet<MovimientoPersonal> MovimientosPersonal => Set<MovimientoPersonal>();
     public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
     public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
@@ -129,6 +132,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<MovimientoCaja> MovimientosCaja => Set<MovimientoCaja>();
     public DbSet<ArqueoTurno> ArqueosTurno => Set<ArqueoTurno>();
     public DbSet<MovimientoTesoreria> MovimientosTesoreria => Set<MovimientoTesoreria>();
+    public DbSet<CuentaTesoreria> CuentasTesoreria => Set<CuentaTesoreria>();
+    public DbSet<MovimientoCuenta> MovimientosCuenta => Set<MovimientoCuenta>();
     public DbSet<Gasto> Gastos => Set<Gasto>();
 
     // stage-8-compras-transferencias-inventario, Slice 1 (schema + seed gate, DB CHANGE GATE
@@ -310,9 +315,11 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoStock(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoPersonal(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoCuenta(modelBuilder);
         AplicarFiltroDeTenantEnAuditoria(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionFiscal(modelBuilder);
         AplicarFiltroDeTenantEnReservaNumeracion(modelBuilder);
@@ -858,6 +865,22 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     }
 
     /// <summary>
+    /// <see cref="MovimientoPersonal"/> es un libro append-only que no hereda <see cref="EntidadTenant"/>:
+    /// necesita la variante escrita a mano, con <c>IdTenant</c> escrito explícito por
+    /// <c>EscriturasDePersonal</c>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoPersonal(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoPersonal))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoPersonal), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoPersonal.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
     /// stage-6-turnos-caja (Slice 1, design: Table Shapes — write path B): <see cref="MovimientoCaja"/>
     /// es un ledger append-only, no hereda <see cref="EntidadTenant"/> (ver el comentario de la
     /// clase) — necesita la variante escrita a mano, mismo criterio que
@@ -901,6 +924,21 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoTesoreria), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoTesoreria.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="MovimientoCuenta"/> es un ledger append-only con el mismo shape que
+    /// <see cref="MovimientoTesoreria"/>: necesita la variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoCuenta(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoCuenta))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoCuenta), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuenta.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

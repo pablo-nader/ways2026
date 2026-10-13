@@ -8,6 +8,8 @@ const RETARDO_DE_BUSQUEDA_MS = 300
 type PropsDeBarra = {
   categorias: readonly CategoriaPublica[]
   idCategoria: number | null
+  /** Búsqueda con la que arrancó el catálogo (la URL): llena la caja sin volver a avisarla. */
+  buscarInicial?: string
   alBuscar: (buscar: string) => void
   alElegirCategoria: (idCategoria: number | null) => void
 }
@@ -18,9 +20,9 @@ type PropsDeBarra = {
  * antes dentro de la pausa no dispara una búsqueda de más. Si hay una categoría elegida, "Todos"
  * se ve aunque la respuesta no traiga categorías, para poder salir de ese filtro.
  */
-export function BarraDelCatalogo({ categorias, idCategoria, alBuscar, alElegirCategoria }: PropsDeBarra) {
-  const [texto, setTexto] = useState('')
-  const ultimaBusqueda = useRef('')
+export function BarraDelCatalogo({ categorias, idCategoria, buscarInicial = '', alBuscar, alElegirCategoria }: PropsDeBarra) {
+  const [texto, setTexto] = useState(buscarInicial)
+  const ultimaBusqueda = useRef(buscarInicial)
 
   const buscar = useCallback(
     (valor: string) => {

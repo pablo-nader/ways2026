@@ -24,7 +24,8 @@
  * que sobra queda fuera del combo y la línea nunca se parte. Qué cantidades valen lo decide la unidad de venta de
  * la línea, nunca la forma del número: una línea cuya cantidad su unidad no admite no se detecta, una línea solo
  * es candidata de un componente cuya cantidad su unidad admite, y de una línea por unidad solo se toman unidades
- * enteras. Las cuentas de cantidad se hacen en milésimas enteras, nunca en punto flotante.
+ * enteras. Solo entran las líneas por unidad y por peso (`ReglaDeCombos.ParticipaEnCombos`): una línea de un artículo
+ * por importe no se detecta. Las cuentas de cantidad se hacen en milésimas enteras, nunca en punto flotante.
  *
  * Aritmética exacta: el servidor trabaja en `decimal` con `MidpointRounding.AwayFromZero`. Acá
  * cada importe y cada cantidad entra por su representación decimal más corta (la que `JSON.stringify` mandó y el
@@ -42,7 +43,7 @@ export type ComboCandidato = { id: number; nombre: string; precio: number; compo
 
 /** El orden de la lista es el orden del documento; `indice` solo identifica la línea en la salida. `cantidad` va
  * en la unidad de venta del artículo (unidades enteras o kilos con hasta tres decimales). Una `unidadVenta` ausente
- * se trata como `Peso`, el mismo criterio que `api/cantidadPorUnidad`. */
+ * se trata como `Peso`, el mismo criterio que `api/cantidadPorUnidad`; una línea `Importe` no se detecta. */
 export type LineaParaCombos = {
   indice: number
   idArticulo: number
@@ -132,16 +133,23 @@ function aMilesimas(cantidad: number): number | null {
   return Number(escalar(cantidad, DECIMALES_DE_CANTIDAD))
 }
 
-/** Espejo de `ReglaDeCantidadDeVenta.EsCantidadAdmitida` sobre milésimas: por unidad, solo enteros. */
+/** Espejo de `ReglaDeCombos.ParticipaEnCombos`: entran a combos los artículos por unidad y por peso (y el de unidad
+ * ausente, que cuenta como `Peso`); el que se vende por importe nunca es componente, candidato ni línea detectable. */
+export function participaEnCombos(unidadVenta: UnidadVenta | null | undefined): boolean {
+  return unidadVenta !== 'Importe'
+}
+
+/** Espejo de `ReglaDeCantidadDeVenta.EsCantidadAdmitida` sobre milésimas, para las unidades que entran a combos:
+ * por unidad, solo enteros. */
 function admite(unidadVenta: UnidadVenta | null | undefined, milesimas: number): boolean {
   return unidadVenta !== 'Unidad' || milesimas % MILESIMAS_POR_UNIDAD === 0
 }
 
-/** La cantidad de la línea en milésimas, o cero si la línea no se detecta: cantidad no positiva, que su unidad de
- * venta no admite, o fuera de tope (2^31−1 unidades para una línea por unidad y 2^31−1 milésimas para una pesable,
+/** La cantidad de la línea en milésimas, o cero si la línea no se detecta: de un artículo por importe, cantidad no
+ * positiva, que su unidad de venta no admite, o fuera de tope (2^31−1 unidades para una línea por unidad y 2^31−1 milésimas para una pesable,
  * los topes del servidor). */
 function milesimasDetectables(linea: LineaParaCombos): number {
-  if (!(linea.cantidad > 0) || linea.cantidad > ENTERO_MAXIMO) return 0
+  if (!participaEnCombos(linea.unidadVenta) || !(linea.cantidad > 0) || linea.cantidad > ENTERO_MAXIMO) return 0
   const milesimas = aMilesimas(linea.cantidad)
   if (milesimas === null || !admite(linea.unidadVenta, milesimas)) return 0
   return linea.unidadVenta !== 'Unidad' && milesimas > ENTERO_MAXIMO ? 0 : milesimas

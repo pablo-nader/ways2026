@@ -181,6 +181,62 @@ public class ArmadorDeInstantaneaTests
         Assert.Null(Assert.Single(resultado[1].PreciosPorLista).EscalonesDeFamilia);
     }
 
+    /// <summary>La tecla viaja con su artículo y, ausente, la clave se omite del JSON: la etiqueta de contenido de la
+    /// instantánea de un tenant sin teclas no cambia.</summary>
+    [Fact]
+    public void ArmarArticulosLlevaLaTeclaDeAtajoYLaOmiteDelJsonCuandoNoHay()
+    {
+        var articulos = new[]
+        {
+            new ArticuloAResolver(11, "A11", "Fiambreria", 21, false, UnidadVenta.Importe, TeclaAtajo: TeclaAtajo.F6),
+            new ArticuloAResolver(12, "A12", "Pan", 21, true, UnidadVenta.Unidad),
+        };
+        var resolucion = new[] { Resuelto(11, 3, 2000m, 2000m, 0m), Resuelto(12, 3, 2000m, 2000m, 0m) };
+
+        var resultado = ArmarArticulos(
+            articulos, [3], resolucion, new Dictionary<int, IReadOnlyList<string>>(), new Dictionary<int, decimal> { [21] = 21m });
+
+        Assert.Equal(TeclaAtajo.F6, resultado[0].TeclaAtajo);
+        Assert.Null(resultado[1].TeclaAtajo);
+        var json = System.Text.Json.JsonSerializer.Serialize(resultado, new System.Text.Json.JsonSerializerOptions
+        {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+        });
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(json, "TeclaAtajo"));
+        Assert.Contains("\"TeclaAtajo\":\"F6\"", json, StringComparison.Ordinal);
+    }
+
+    /// <summary>El artículo por importe viaja siempre y sin precios (se vende por el monto que tipea el cajero), aunque
+    /// no tenga precio en ninguna lista o conserve uno viejo que el dispositivo no debe usar; el común sin precio sigue
+    /// sin viajar.</summary>
+    [Fact]
+    public void ArmarArticulosEmiteElArticuloPorImporteSinPreciosYNoElComunSinPrecio()
+    {
+        var articulos = new[]
+        {
+            new ArticuloAResolver(11, "A11", "Fiambreria", 21, false, UnidadVenta.Importe),
+            new ArticuloAResolver(12, "A12", "Verduleria", 21, false, UnidadVenta.Importe),
+            new ArticuloAResolver(13, "A13", "Pan", 21, true, UnidadVenta.Unidad),
+            new ArticuloAResolver(14, "A14", "Sin precio", 21, true, UnidadVenta.Unidad),
+        };
+        var resolucion = new[]
+        {
+            Resuelto(11, 3, null, null, 0m),
+            Resuelto(12, 3, 999m, 999m, 0m),
+            Resuelto(13, 3, 100m, 100m, 0m),
+            Resuelto(14, 3, null, null, 0m),
+        };
+
+        var resultado = ArmarArticulos(
+            articulos, [3], resolucion, new Dictionary<int, IReadOnlyList<string>>(), new Dictionary<int, decimal> { [21] = 21m });
+
+        Assert.Equal([11, 12, 13], resultado.Select(a => a.IdArticulo).ToList());
+        Assert.Empty(resultado[0].PreciosPorLista);
+        Assert.Empty(resultado[1].PreciosPorLista);
+        Assert.Equal(100m, Assert.Single(resultado[2].PreciosPorLista).PrecioOriginal);
+        Assert.All(resultado.Take(2), a => Assert.Equal(UnidadVenta.Importe, a.UnidadVenta));
+    }
+
     [Fact]
     public void ArmarArticulosRechazaUnaResolucionDeOtroTamanio()
     {
@@ -204,7 +260,7 @@ public class ArmadorDeInstantaneaTests
             7,
             articulos,
             clientes,
-            [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false)],
+            [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false, 0m)],
             10m);
 
 

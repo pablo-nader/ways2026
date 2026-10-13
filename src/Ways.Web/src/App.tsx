@@ -39,6 +39,9 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
+import { CuentaDePersonal } from './paginas/CuentaDePersonal'
+import { Personal } from './paginas/Personal'
+import { CuentasTesoreria } from './paginas/CuentasTesoreria'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
@@ -179,6 +182,16 @@ export function App() {
                 </RutaProtegida>
               }
             />
+            {/* ABM de cuentas de tesorería: admin-only de punta a punta (Politicas.GestionDeCatalogo, también
+                para leer). Cuelga de /caja para no sumar un primer segmento a la lista de rutas del servidor. */}
+            <Route
+              path="/caja/cuentas-tesoreria"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <CuentasTesoreria />
+                </RutaProtegida>
+              }
+            />
             {/* stage-11-exportacion-reportes (Slice 9, design: Web Composition, droppable a
                 Etapa 13): mismo gate que /tablero (Politicas.LecturaDeReportes) — vista de
                 gestión, no el balance del POS (Politicas.OperacionDePos de GET /api/stock). */}
@@ -287,6 +300,29 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Proveedores />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Personal (back office): lectura para Admin y Supervisor (Politicas.LecturaDePersonal);
+                las acciones de escritura de la pantalla son solo del Admin. */}
+            <Route
+              path="/personal"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Personal />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Cuenta del empleado: se llega desde el enlace "Cuenta" del listado, sin entrada de menú propia.
+                Lectura y escrituras de Admin y Supervisor (Politicas.LecturaDePersonal y
+                GestionDeCuentaDePersonal); pagar de la tesorería es solo del Admin. */}
+            <Route
+              path="/personal/:id/cuenta"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <CuentaDePersonal />
                 </RutaProtegida>
               }
             />

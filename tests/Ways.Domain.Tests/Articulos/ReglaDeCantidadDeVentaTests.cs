@@ -42,6 +42,23 @@ public class ReglaDeCantidadDeVentaTests
         Assert.False(ReglaDeCantidadDeVenta.EsCantidadAdmitida(UnidadVenta.Unidad, -1.5m));
     }
 
+    [Theory]
+    [InlineData("1")]
+    [InlineData("-1")]
+    [InlineData("1.000")]
+    public void UnImporteAdmiteSoloUnaUnidadConSuSigno(string cantidad) =>
+        Assert.True(ReglaDeCantidadDeVenta.EsCantidadAdmitida(UnidadVenta.Importe, decimal.Parse(cantidad, CultureInfo.InvariantCulture)));
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("2")]
+    [InlineData("150")]
+    [InlineData("0.5")]
+    [InlineData("1.001")]
+    [InlineData("-2")]
+    public void UnImporteRechazaCualquierCantidadQueNoSeaUna(string cantidad) =>
+        Assert.False(ReglaDeCantidadDeVenta.EsCantidadAdmitida(UnidadVenta.Importe, decimal.Parse(cantidad, CultureInfo.InvariantCulture)));
+
     [Fact]
     public void UnaUnidadDeVentaDesconocidaNoSeAcepta() =>
         Assert.Throws<ArgumentOutOfRangeException>(() => ReglaDeCantidadDeVenta.EsCantidadAdmitida((UnidadVenta)99, 1m));

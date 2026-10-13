@@ -80,6 +80,25 @@ public class EscriturasSinReintentoEstructuralesTests
         // proveedores (entidad dedicada, no extiende ServicioDeCatalogo).
         { "Ways.Application/Proveedores/ServicioDeProveedores.cs", "EliminarAsync" },
 
+        // Personal: la baja lee la fila bajo su FOR UPDATE y consulta sus referencias (los movimientos de su
+        // cuenta); un reintento tras un commit ambiguo respondería 404 a una baja que sí tuvo éxito.
+        { "Ways.Application/Plantel/ServicioDePersonal.cs", "EliminarAsync" },
+
+        // Cuentas de tesorería: la edición lee la cuenta bajo su FOR UPDATE para decidir si el saldo inicial puede cambiar,
+        // y la baja la lee y consulta sus referencias; un reintento tras un commit ambiguo respondería 404 a una baja que
+        // sí tuvo éxito o releería la cuenta ya editada por el intento anterior.
+        { "Ways.Application/Caja/ServicioDeCuentasDeTesoreria.cs", "ActualizarAsync" },
+        { "Ways.Application/Caja/ServicioDeCuentasDeTesoreria.cs", "EliminarAsync" },
+
+        // Cuenta del personal: carga de horas y ajuste mueven el saldo cacheado y escriben el asiento sin clave de
+        // idempotencia; un reintento tras un commit ambiguo duplicaría el movimiento.
+        { "Ways.Application/Plantel/ServicioDeCuentaDePersonal.cs", "EscribirAsync" },
+
+        // Pago de personal: mueve el saldo del personal y el del cliente, y escribe el asiento del libro, el
+        // descuento de cuenta corriente, los gastos de sueldos y el egreso de tesorería sin clave de idempotencia;
+        // un reintento tras un commit ambiguo pagaría dos veces.
+        { "Ways.Application/Plantel/ServicioDePagoDePersonal.cs", "PagarAsync" },
+
         // stage-gasto-a-compra (PR4): vincular un gasto a una compra muta saldo de proveedor y
         // ledger de CC sin ninguna clave de idempotencia — un reintento sobre un commit ambiguo
         // podría re-imputar o re-descontar, mismo criterio que ServicioDeGastos.RegistrarAsync/
@@ -134,7 +153,7 @@ public class EscriturasSinReintentoEstructuralesTests
         // artículo y agregan la imagen si falta: un reintento sobre un commit ambiguo repetiría una escritura que
         // sí tuvo éxito (la subida volvería a leer una fila ya escrita o ya dada de baja), sin clave de
         // idempotencia que lo evite.
-        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "PublicarAsync" },
+        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "CambiarDisponibilidadAsync" },
         { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "GuardarImagenAsync" },
         { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "QuitarImagenAsync" },
     };

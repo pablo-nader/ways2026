@@ -10,6 +10,8 @@ import {
   formularioDeGastoDeAdministracionVacio,
   categoriaAlElegirProveedorAdministracion,
   copiaDeFalloDeEdicion,
+  esGastoDeUnPagoDePersonal,
+  MOTIVO_GASTO_DE_PAGO_DE_PERSONAL,
   type FiltrosDeGastosDeAdministracion,
   type FormularioDeGastoDeAdministracion,
 } from '../api/gastos'
@@ -825,7 +827,8 @@ export function Gastos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-primary"
-                              disabled={filasBloqueadas}
+                              disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
+                              title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
                               onClick={() => abrirPicker(g)}
                             >
                               Vincular a compra
@@ -833,7 +836,8 @@ export function Gastos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-secondary"
-                              disabled={filasBloqueadas}
+                              disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
+                              title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
                               onClick={() => navigate(`/compras/nueva?desdeGasto=${g.id}`)}
                             >
                               Crear compra
@@ -846,13 +850,15 @@ export function Gastos() {
                           icono="editar"
                           etiqueta={`Editar gasto ${g.concepto}`}
                           className="me-1"
-                          disabled={filasBloqueadas}
+                          disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
+                          title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
                           onClick={() => abrirEdicion(g)}
                         />
                         <BotonIcono
                           icono="eliminar"
                           etiqueta={`Eliminar gasto ${g.concepto}`}
-                          disabled={filasBloqueadas}
+                          disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
+                          title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
                           onClick={(evento) => pedirBaja(g, evento.currentTarget)}
                         />
                       </td>

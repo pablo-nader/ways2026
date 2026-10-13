@@ -4,7 +4,9 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Combos;
 using Ways.Domain.Common;
+using Ways.Domain.Ofertas;
 using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.IntegrationTests;
@@ -103,7 +105,8 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
     }
 
     public async Task<int> SembrarCategoriaAsync(
-        int idTenant, string nombre, int orden = 1, int? idEmpresa = null, bool activo = true, bool eliminada = false)
+        int idTenant, string nombre, int orden = 1, int? idEmpresa = null, bool activo = true, bool eliminada = false,
+        int? idCategoriaPadre = null)
     {
         var ahora = DateTimeOffset.UtcNow;
 
@@ -114,6 +117,7 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
             Nombre = nombre,
             Orden = orden,
             IdEmpresa = idEmpresa,
+            IdCategoriaPadre = idCategoriaPadre,
             Activo = activo,
             DeletedAt = eliminada ? ahora : null,
             CreatedAt = ahora,
@@ -130,7 +134,8 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
     public async Task<int> SembrarArticuloAsync(
         Tienda tienda,
         string nombre,
-        bool publicado = true,
+        bool disponibleOnline = true,
+        bool disponibleVenta = true,
         bool activo = true,
         bool eliminado = false,
         int? idEmpresaDisponible = null,
@@ -140,7 +145,9 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         string? descripcion = null,
         string? codigoInterno = null,
         int? idTenant = null,
-        int? idArea = null)
+        int? idArea = null,
+        int? idGrupo = null,
+        int? idFamilia = null)
     {
         var ahora = DateTimeOffset.UtcNow;
         var tenant = idTenant ?? tienda.IdTenant;
@@ -154,10 +161,14 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
             Descripcion = descripcion,
             IdArea = idArea ?? tienda.IdArea,
             IdCategoria = idCategoria,
+            IdGrupo = idGrupo,
+            IdFamilia = idFamilia,
             IdAlicuotaIva = tienda.IdAlicuotaIva,
             UnidadVenta = unidadVenta,
+            AcumulaEnVenta = unidadVenta != UnidadVenta.Importe,
             EsProducto = true,
-            PublicadoWeb = publicado,
+            DisponibleOnline = disponibleOnline,
+            DisponibleVenta = disponibleVenta,
             Activo = activo,
             DisponibleParaTodas = idEmpresaDisponible is null && !restringidoSinEmpresas,
             DeletedAt = eliminado ? ahora : null,
@@ -207,7 +218,148 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         return precio.Id;
     }
 
-    /// <summary>Atajo: un artículo publicado y con precio vigente en la lista default de la tienda.</summary>
+    /// <summary>Una oferta de alcance artículo con porcentaje (o precio unitario / importe fijo si se pide). Todos los
+    /// ejes de vigencia quedan abiertos, salvo los que se pasen.</summary>
+    public async Task<int> SembrarOfertaAsync(
+        int idTenant,
+        string nombre,
+        int? idArticulo = null,
+        int? idCategoria = null,
+        int? idGrupo = null,
+        int? idFamilia = null,
+        TimeOnly? horaDesde = null,
+        TimeOnly? horaHasta = null,
+        short[]? diasSemana = null,
+        decimal? porcentaje = 10m,
+        decimal? precioUnitario = null,
+        decimal? importeFijo = null,
+        int? idEmpresa = null,
+        int prioridad = 0,
+        bool acumulable = false,
+        decimal? cantidadMinima = null,
+        DateOnly? fechaDesde = null,
+        DateOnly? fechaHasta = null,
+        bool activo = true,
+        bool disponibleOnline = true,
+        bool eliminada = false)
+    {
+        var ahora = DateTimeOffset.UtcNow;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var oferta = new Oferta
+        {
+            IdTenant = idTenant,
+            Nombre = nombre,
+            IdEmpresa = idEmpresa,
+            IdArticulo = idArticulo,
+            IdCategoria = idCategoria,
+            IdGrupo = idGrupo,
+            IdFamilia = idFamilia,
+            HoraDesde = horaDesde,
+            HoraHasta = horaHasta,
+            DiasSemana = diasSemana,
+            Porcentaje = precioUnitario is null && importeFijo is null ? porcentaje : null,
+            PrecioUnitario = precioUnitario,
+            ImporteFijo = importeFijo,
+            Prioridad = prioridad,
+            Acumulable = acumulable,
+            CantidadMinima = cantidadMinima,
+            FechaDesde = fechaDesde,
+            FechaHasta = fechaHasta,
+            Activo = activo,
+            DisponibleOnline = disponibleOnline,
+            DeletedAt = eliminada ? ahora : null,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Ofertas.Add(oferta);
+        await db.SaveChangesAsync();
+
+        return oferta.Id;
+    }
+
+    public async Task<int> SembrarGrupoAsync(int idTenant, string nombre)
+    {
+        var ahora = DateTimeOffset.UtcNow;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var grupo = new Grupo { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Grupos.Add(grupo);
+        await db.SaveChangesAsync();
+
+        return grupo.Id;
+    }
+
+    public async Task<int> SembrarFamiliaAsync(int idTenant, string nombre)
+    {
+        var ahora = DateTimeOffset.UtcNow;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var familia = new Familia { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Familias.Add(familia);
+        await db.SaveChangesAsync();
+
+        return familia.Id;
+    }
+
+    /// <summary>Restringe la oferta a esa lista de precios (una fila de <c>ofertas_listas</c>).</summary>
+    public async Task SembrarOfertaListaAsync(int idTenant, int idOferta, int idLista)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        db.OfertasListas.Add(new OfertaLista { IdTenant = idTenant, IdOferta = idOferta, IdListaPrecio = idLista });
+        await db.SaveChangesAsync();
+    }
+
+    private static int siguienteCodigoDeCombo = 100;
+
+    /// <summary>Un combo con sus componentes (artículo y cantidad, o familia y cantidad). Código único por proceso.</summary>
+    public async Task<int> SembrarComboAsync(
+        int idTenant,
+        string nombre,
+        decimal precio,
+        IReadOnlyList<(int? IdArticulo, int? IdFamilia, decimal Cantidad)> componentes,
+        int? idEmpresa = null,
+        bool activo = true,
+        bool disponibleOnline = true,
+        bool eliminado = false)
+    {
+        var ahora = DateTimeOffset.UtcNow;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var combo = new Combo
+        {
+            IdTenant = idTenant,
+            Codigo = Interlocked.Increment(ref siguienteCodigoDeCombo),
+            Nombre = nombre,
+            Precio = precio,
+            IdEmpresa = idEmpresa,
+            Activo = activo,
+            DisponibleOnline = disponibleOnline,
+            DeletedAt = eliminado ? ahora : null,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Combos.Add(combo);
+        await db.SaveChangesAsync();
+
+        foreach (var (idArticulo, idFamilia, cantidad) in componentes)
+        {
+            db.CombosComponentes.Add(new ComboComponente
+            {
+                IdTenant = idTenant,
+                IdCombo = combo.Id,
+                IdArticulo = idArticulo,
+                IdFamilia = idFamilia,
+                Cantidad = cantidad
+            });
+        }
+
+        await db.SaveChangesAsync();
+
+        return combo.Id;
+    }
+
+    /// <summary>Atajo: un artículo disponible y con precio vigente en la lista default de la tienda.</summary>
     public async Task<int> SembrarVendibleAsync(
         Tienda tienda,
         string nombre,
@@ -216,11 +368,14 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         UnidadVenta unidadVenta = UnidadVenta.Unidad,
         string? descripcion = null,
         string? codigoInterno = null,
-        bool publicado = true)
+        bool disponibleOnline = true,
+        bool disponibleVenta = true,
+        int? idGrupo = null,
+        int? idFamilia = null)
     {
         var id = await SembrarArticuloAsync(
-            tienda, nombre, publicado: publicado, idCategoria: idCategoria, unidadVenta: unidadVenta,
-            descripcion: descripcion, codigoInterno: codigoInterno);
+            tienda, nombre, disponibleOnline: disponibleOnline, disponibleVenta: disponibleVenta, idCategoria: idCategoria, unidadVenta: unidadVenta,
+            descripcion: descripcion, codigoInterno: codigoInterno, idGrupo: idGrupo, idFamilia: idFamilia);
         await SembrarPrecioAsync(tienda.IdTenant, id, tienda.IdListaDefault, precio);
 
         return id;
@@ -315,6 +470,8 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
     // ---- HTTP -------------------------------------------------------------------------------------
 
     public const string RutaCatalogo = "/api/publico/catalogo";
+
+    public const string RutaCombos = "/api/publico/combos";
 
     public static string RutaImagenPublica(int idArticulo) => $"/api/publico/articulos/{idArticulo}/imagen";
 

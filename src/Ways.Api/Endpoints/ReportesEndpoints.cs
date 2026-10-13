@@ -577,6 +577,23 @@ public static class ReportesEndpoints
             "un filtro opcional sobre el mismo libro: el subconjunto resultante no se encadena " +
             "entre sí (la cadena completa es por empresa).");
 
+        // Cuentas digitales de tesorería (doc 10 §7): lectura bajo el mismo gate que el libro de efectivo (Supervisor y
+        // Admin), distinto del ABM de cuentas, que es solo Admin. Sin export: queda para una tarea aparte.
+        grupo.MapGet("/tesoreria/cuentas", (
+            ServicioDeLibroDeCuentas servicio, int idEmpresa, CancellationToken ct) =>
+            servicio.ListarCuentasAsync(idEmpresa, ct))
+        .WithSummary(
+            "Cuentas vivas de una empresa con su saldo actual y la fecha de su último movimiento, más los medios " +
+            "electrónicos activos que no acreditan en ninguna cuenta.");
+
+        grupo.MapGet("/tesoreria/cuentas/{idCuenta:int}/libro", (
+            ServicioDeLibroDeCuentas servicio, int idCuenta, DateTimeOffset? desde, DateTimeOffset? hasta,
+            int? pagina, int? tamanio, CancellationToken ct) =>
+            servicio.ObtenerLibroAsync(idCuenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary(
+            "Libro de una cuenta ordenado por id (nunca por fecha), con el saldo de apertura del rango y los " +
+            "totales del rango por tipo de movimiento.");
+
         // Sibling declarado inmediatamente después de su ruta fuente (design: Data Flow) — hereda
         // LecturaDeReportes por co-locación. `desde`/`hasta` son OBLIGATORIOS acá (mismo criterio
         // que /api/ventas/export): un export es por definición un rango acotado, y el nombre de

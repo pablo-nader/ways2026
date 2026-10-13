@@ -26,7 +26,8 @@ vi.mock('../api/cliente', () => ({
 
 function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 9,
     codigoInterno: 'A0009',
@@ -112,6 +113,27 @@ describe('ModalDeBusquedaDeArticulos — contexto de precio', () => {
         agregacion: 'PorLinea',
       }),
     )
+  })
+})
+
+describe('ModalDeBusquedaDeArticulos — solo artículos vendibles', () => {
+  /**
+   * Cláusula bajo prueba: el buscador de la caja pide `soloVendibles=true`; sin él un artículo de uso interno
+   * aparecería para cargarlo y recién la venta lo rechazaría. Mutación: quitar la opción en la llamada hace fallar.
+   */
+  it('la búsqueda pide soloVendibles=true', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(paginaDe([articuloListadoFixture()])) : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockResolvedValue([])
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await screen.findByText('Fanta 1.5L')
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=fa&soloVendibles=true')
   })
 })
 

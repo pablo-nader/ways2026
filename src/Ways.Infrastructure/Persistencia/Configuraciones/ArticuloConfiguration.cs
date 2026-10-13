@@ -16,8 +16,15 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 {
     public void Configure(EntityTypeBuilder<Articulo> builder)
     {
-        builder.ToTable("articulos", t => t.HasCheckConstraint(
-            "ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')"));
+        builder.ToTable("articulos", t =>
+        {
+            t.HasCheckConstraint("ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')");
+            t.HasCheckConstraint("ck_articulos_tecla_atajo", "tecla_atajo IN ('F5', 'F6', 'F7', 'F8')");
+            t.HasCheckConstraint(
+                "ck_articulos_tecla_atajo_solo_importe", "tecla_atajo IS NULL OR unidad_venta = 'importe'");
+            t.HasCheckConstraint(
+                "ck_articulos_importe_no_acumula", "unidad_venta <> 'importe' OR acumula_en_venta = false");
+        });
 
         builder.HasKey(a => a.Id);
 
@@ -105,9 +112,14 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasDefaultValue(true)
             .IsRequired();
 
-        builder.Property(a => a.PublicadoWeb)
-            .HasColumnName("publicado_web")
-            .HasDefaultValue(false)
+        builder.Property(a => a.DisponibleOnline)
+            .HasColumnName("disponible_online")
+            .HasDefaultValue(true)
+            .IsRequired();
+
+        builder.Property(a => a.DisponibleVenta)
+            .HasColumnName("disponible_venta")
+            .HasDefaultValue(true)
             .IsRequired();
 
         // Etapa 12 (proposal decisión 1, gate §E).
@@ -123,6 +135,11 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 
         builder.Property(a => a.IdFamilia).HasColumnName("id_familia");
 
+        builder.Property(a => a.TeclaAtajo)
+            .HasColumnName("tecla_atajo")
+            .HasColumnType("text")
+            .HasConversion<string>();
+
         builder.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(a => a.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(a => a.DeletedAt).HasColumnName("deleted_at");
@@ -137,6 +154,13 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasFilter("deleted_at IS NULL")
             .IsUnique();
 
+        // Una tecla de atajo del POS apunta a un solo artículo vivo por tenant. Backstop del pre-chequeo de
+        // ServicioDeArticulos (409 tecla_atajo_duplicada): cubre la carrera.
+        builder.HasIndex(a => new { a.IdTenant, a.TeclaAtajo })
+            .HasDatabaseName("ux_articulos_tecla_atajo")
+            .HasFilter("deleted_at IS NULL AND tecla_atajo IS NOT NULL")
+            .IsUnique();
+
         builder.HasIndex(a => a.IdTenant).HasDatabaseName("ix_articulos_tenant");
 
         // Etapa 12 (proposal decisión 1, gate §E): sirve tanto el conjunto de reconciliación
@@ -148,11 +172,11 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasDatabaseName("ix_articulos_controla_lote")
             .HasFilter("controla_lote AND deleted_at IS NULL");
 
-        // El catálogo público lee solo los publicados (y activos y vivos): parcial, porque casi ningún
-        // artículo se publica y la lectura siempre es de un tenant.
-        builder.HasIndex(a => a.IdTenant, "ix_articulos_publicado_web")
-            .HasDatabaseName("ix_articulos_publicado_web")
-            .HasFilter("publicado_web AND activo AND deleted_at IS NULL");
+        // El catálogo público lee solo lo disponible online y a la venta (y activo y vivo): parcial, con el mismo
+        // predicado que la policy articulos_publico_lectura, y la lectura siempre es de un tenant.
+        builder.HasIndex(a => a.IdTenant, "ix_articulos_disponible_online")
+            .HasDatabaseName("ix_articulos_disponible_online")
+            .HasFilter("disponible_online AND disponible_venta AND activo AND deleted_at IS NULL");
 
         // Nombres explícitos en snake_case (doc 10): sin esto EF nombra los índices de
         // soporte de cada FK con su convención propia (IX_articulos_id_area, PascalCase),

@@ -17,6 +17,7 @@ using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
+using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -59,6 +60,8 @@ public interface IWaysDbContext
     // arriba, sin consumidor de Application todavía).
     DbSet<Cliente> Clientes { get; }
     DbSet<Proveedor> Proveedores { get; }
+    DbSet<Personal> Personal { get; }
+    DbSet<MovimientoPersonal> MovimientosPersonal { get; }
     DbSet<ListaPrecio> ListasPrecio { get; }
     DbSet<NumeracionCliente> NumeracionesClientes { get; }
 
@@ -112,6 +115,8 @@ public interface IWaysDbContext
     // del mismo punto de venta.
     DbSet<ArqueoTurno> ArqueosTurno { get; }
     DbSet<MovimientoTesoreria> MovimientosTesoreria { get; }
+    DbSet<CuentaTesoreria> CuentasTesoreria { get; }
+    DbSet<MovimientoCuenta> MovimientosCuenta { get; }
 
     // stage-6-turnos-caja, Slice 3: ServicioDeGastos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).

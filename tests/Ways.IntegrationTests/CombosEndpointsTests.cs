@@ -33,7 +33,7 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static EdicionCombo Edicion(
         int? codigo, IReadOnlyList<ComponenteDeSolicitudDeCombo>? componentes, string nombre = "Combo editado",
         decimal precio = 4000m, int? idEmpresa = null, bool activo = true) =>
-        new(codigo, nombre, precio, idEmpresa, componentes, activo);
+        new(codigo, nombre, precio, idEmpresa, componentes, activo, true);
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient cliente, AltaCombo alta) =>
         cliente.PostAsJsonAsync("/api/combos", alta, OpcionesJson);
@@ -377,6 +377,65 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(
             [0.200m, 0.125m],
             Assert.Single(await ListarAsync(e.Admin)).Componentes.Select(c => c.Cantidad));
+    }
+
+    [Fact]
+    public async Task UnArticuloPorImporteComoComponenteDa400PorImporteYNoDejaCombo()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnArticuloPorImporteComoComponenteDa400PorImporteYNoDejaCombo));
+        var porImporte = await apoyo.SembrarArticuloAsync(
+            e, "fiambreria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false });
+        var unitario = await ArticuloAsync(e, "pan");
+
+        var respuesta = await PostAsync(e.Admin, Alta(null, [Art(porImporte), Art(unitario)]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(respuesta)).Codigo);
+        Assert.Empty(await ListarAsync(e.Admin));
+    }
+
+    /// <summary>Cláusula: el rechazo por importe no depende de la cantidad y va antes que el de cantidad no admitida:
+    /// con una cantidad que la unidad por importe no admite (2, o una fracción) el código sigue siendo el de importe, no
+    /// el que le pediría al usuario una cantidad entera.</summary>
+    [Theory]
+    [InlineData("2")]
+    [InlineData("0.5")]
+    public async Task UnArticuloPorImporteConUnaCantidadQueSuUnidadNoAdmiteDa400PorImporteYNoCantidadNoAdmitida(string cantidad)
+    {
+        using var e = await apoyo.PrepararAsync(
+            nameof(UnArticuloPorImporteConUnaCantidadQueSuUnidadNoAdmiteDa400PorImporteYNoCantidadNoAdmitida));
+        var porImporte = await apoyo.SembrarArticuloAsync(
+            e, "fiambreria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false });
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Rubros");
+        await apoyo.SembrarArticuloAsync(
+            e, "verduleria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false }, familia);
+        var unitario = await ArticuloAsync(e, "pan");
+        var valor = decimal.Parse(cantidad, System.Globalization.CultureInfo.InvariantCulture);
+
+        var deArticulo = await PostAsync(e.Admin, Alta(null, [Art(porImporte, valor), Art(unitario)]));
+        var deFamilia = await PostAsync(e.Admin, Alta(null, [Fam(familia, valor), Art(unitario)]));
+
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(deArticulo)).Codigo);
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(deFamilia)).Codigo);
+        Assert.Empty(await ListarAsync(e.Admin));
+    }
+
+    [Fact]
+    public async Task UnaFamiliaConUnMiembroPorImporteDa400PorImportePeroNoSiEseMiembroEstaDadoDeBaja()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaConUnMiembroPorImporteDa400PorImportePeroNoSiEseMiembroEstaDadoDeBaja));
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Rubros");
+        var porImporte = await apoyo.SembrarArticuloAsync(
+            e, "verduleria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false }, familia);
+        var unitario = await ArticuloAsync(e, "pan");
+
+        var rechazada = await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(unitario)]));
+        Assert.Equal(HttpStatusCode.BadRequest, rechazada.StatusCode);
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(rechazada)).Codigo);
+
+        await apoyo.DarDeBajaAsync("articulos", "id_articulo", porImporte);
+
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(unitario)]))).StatusCode);
     }
 
     [Fact]

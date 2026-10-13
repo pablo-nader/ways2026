@@ -62,11 +62,16 @@ public class Articulo : EntidadTenant
 
     public bool Activo { get; set; } = true;
 
-    /// <summary><c>true</c> ⇒ el artículo se ofrece en el catálogo público de la vitrina del comercio. Es una
-    /// decisión por artículo y vale para todo el tenant: en qué empresa se ve lo decide la disponibilidad
-    /// (<see cref="DisponibleParaTodas"/> + <see cref="ArticuloEmpresa"/>). Default <c>false</c>: ningún
-    /// artículo existente se publica solo. No es un campo compartido de la familia.</summary>
-    public bool PublicadoWeb { get; set; }
+    /// <summary><c>true</c> (default) ⇒ el artículo se ofrece en el catálogo público de la vitrina del comercio. Es
+    /// una decisión por artículo y vale para todo el tenant: en qué empresa se ve lo decide la disponibilidad
+    /// (<see cref="DisponibleParaTodas"/> + <see cref="ArticuloEmpresa"/>). Se destilda para esconder una excepción.
+    /// No es un campo compartido de la familia.</summary>
+    public bool DisponibleOnline { get; set; } = true;
+
+    /// <summary><c>true</c> (default) ⇒ el artículo se puede vender. <c>false</c> es un artículo de uso interno: se
+    /// compra y se stockea, pero no figura en el POS ni en la tienda y la venta lo rechaza. No es un campo compartido
+    /// de la familia.</summary>
+    public bool DisponibleVenta { get; set; } = true;
 
     /// <summary>Etapa 12 (proposal decisión 1, gate §E): <c>true</c> ⇒ todo movimiento de stock
     /// de este artículo (venta, compra, transferencia, ajuste, conteo, decomiso, anulación)
@@ -91,4 +96,9 @@ public class Articulo : EntidadTenant
     /// la misma transacción—, no el esquema (doc 10 §3, "Familias de artículos"). Salir de la familia es
     /// dejar este valor en <c>null</c>.</summary>
     public int? IdFamilia { get; set; }
+
+    /// <summary>Tecla de atajo del POS, o <c>null</c> si no tiene. Solo la admite un artículo vendido por
+    /// <see cref="UnidadVenta.Importe"/> y es única por tenant entre los artículos vivos. Es un campo propio del
+    /// artículo: no lo comparte la familia.</summary>
+    public TeclaAtajo? TeclaAtajo { get; set; }
 }

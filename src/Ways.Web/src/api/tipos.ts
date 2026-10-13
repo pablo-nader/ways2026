@@ -138,6 +138,13 @@ export function puedeVerReportes(rolId: number) {
   return rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.LecturaDePersonal`: supervisor y admin leen el personal y su cuenta. El alta,
+ * la edición y la baja son de `puedeGestionarCatalogos`. Puramente cosmético: el servidor vuelve a
+ * exigir la política en cada request. */
+export function puedeVerPersonal(rolId: number) {
+  return rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 /** Espejo de `Politicas.LecturaDeRentabilidad` (stage-10-agregacion-dashboard, Slice 9): solo
  * admin ve el panel de rentabilidad — ni siquiera supervisor entra acá, el costo es el número más
  * sensible del sistema y esta etapa no amplía quién lo ve (spec rentabilidad-y-comisiones:
@@ -200,6 +207,7 @@ export type MedioPagoListado = CatalogoListado & {
   admiteVuelto: boolean
   requiereReferencia: boolean
   recargoPorcentaje: number | null
+  porcentajeFacturacion: number
 }
 export type MedioPagoAlta = {
   nombre: string
@@ -209,7 +217,37 @@ export type MedioPagoAlta = {
   admiteVuelto: boolean
   requiereReferencia: boolean
   recargoPorcentaje: number | null
+  porcentajeFacturacion: number
   activo: boolean
+}
+
+/**
+ * Lo que el back office agrega a un medio de pago: la cuenta de tesorería a la que entra lo cobrado, la comisión de la
+ * plataforma y las tres retenciones. El POS no los usa ni los recibe en su instantánea, así que `MedioPagoListado`
+ * (que el POS arma desde ella) no los lleva. `idCuentaTesoreria` es null cuando el medio no tiene cuenta o la cuenta
+ * fue dada de baja. Solo el Admin recibe estos campos del servidor (para los demás roles vienen en null, como los costos pero con otros roles); el tipo describe
+ * lo que ve la pantalla de medios de pago, que es solo de Admin.
+ */
+export type CuentaDelMedioListado = {
+  idCuentaTesoreria: number | null
+  nombreCuentaTesoreria: string | null
+  /** Para el Admin siempre es un booleano (false si no hay cuenta). */
+  cuentaTesoreriaInactiva: boolean
+  comisionPorcentaje: number
+  retencionIibbPorcentaje: number
+  retencionIvaPorcentaje: number
+  retencionGananciasPorcentaje: number
+}
+export type MedioPagoAdministrado = MedioPagoListado & CuentaDelMedioListado
+
+/** Un alta o edición del back office manda siempre los cinco campos de la cuenta: la edición nunca depende de lo que
+ * el servidor conserve por omisión. */
+export type MedioPagoAdministradoAlta = MedioPagoAlta & {
+  idCuentaTesoreria: number | null
+  comisionPorcentaje: number
+  retencionIibbPorcentaje: number
+  retencionIvaPorcentaje: number
+  retencionGananciasPorcentaje: number
 }
 
 export type CategoriaListado = CatalogoListado & { orden: number; idCategoriaPadre: number | null }
@@ -659,7 +697,13 @@ export type OpcionDeProveedor = {
 // junction de disponibilidad, colección de códigos de barra — ninguno encaja en el shape
 // genérico de `CatalogoListado`/`DescriptorDeCatalogo`.
 
-export type UnidadVenta = 'Unidad' | 'Peso'
+/** `Importe`: el cajero tipea el monto en vez de una cantidad; la línea lleva cantidad 1 y nunca acumula. */
+export type UnidadVenta = 'Unidad' | 'Peso' | 'Importe'
+
+/** Tecla de función del POS que agrega un artículo por importe con el monto tipeado en la caja de escaneo. */
+export type TeclaAtajo = 'F5' | 'F6' | 'F7' | 'F8'
+
+export const TECLAS_ATAJO: readonly TeclaAtajo[] = ['F5', 'F6', 'F7', 'F8']
 
 /** A qué se refiere el costo de lista que se cargó: a una unidad o a un bulto entero. */
 export type CostoListaPor = 'Unidad' | 'Bulto'
@@ -672,6 +716,7 @@ export const COSTOS_LISTA_POR: { valor: CostoListaPor; etiqueta: string }[] = [
 export const UNIDADES_VENTA: { valor: UnidadVenta; etiqueta: string }[] = [
   { valor: 'Unidad', etiqueta: 'Por unidad' },
   { valor: 'Peso', etiqueta: 'Por peso' },
+  { valor: 'Importe', etiqueta: 'Por importe' },
 ]
 
 /** `idsEmpresas` viene vacío en el listado paginado (el backend evita el N+1 de una query por
@@ -712,14 +757,19 @@ export type ArticuloListado = {
   /** `true`: volver a agregarlo en el carrito del POS suma cantidad a su línea; `false`: cada
    * agregado es una línea nueva. */
   acumulaEnVenta: boolean
+  /** Tecla de función del POS de un artículo por importe; `null` o ausente = sin atajo. Es un campo propio del artículo, no se comparte con su familia. */
+  teclaAtajo?: TeclaAtajo | null
   /** Familia a la que pertenece el artículo (`null` = sin familia), tal como está guardada: el servidor
    * no la anula aunque la fila de la familia esté dada de baja (doc 10 §3, "Familias de artículos"). */
   idFamilia: number | null
   /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
    * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
   codigoProveedor?: string | null
-  /** El artículo se ofrece en la tienda online. Se escribe aparte (`PUT /api/articulos/{id}/web`), nunca con la edición. */
-  publicadoWeb: boolean
+  /** El artículo se ofrece en la tienda online (por defecto sí). Se escribe aparte (`PUT /api/articulos/{id}/disponibilidad`), nunca con la edición. */
+  disponibleOnline: boolean
+  /** El artículo se puede vender, en la caja y online (por defecto sí). `false` es un artículo de uso interno: se compra y se
+   * stockea, pero no se vende. Se escribe junto con `disponibleOnline` por el mismo endpoint. */
+  disponibleVenta: boolean
   /** El artículo tiene una imagen cargada; los bytes salen de `GET /api/articulos/{id}/imagen`. */
   tieneImagen: boolean
 }
@@ -752,6 +802,8 @@ export type AltaArticulo = {
   controlaLote: boolean
   /** Ausente: en el alta el servidor asume `true`; en la edición conserva el valor guardado. */
   acumulaEnVenta?: boolean
+  /** Solo un artículo por importe la admite (400 `tecla_atajo_solo_importe`); 409 `tecla_atajo_duplicada` si otro artículo vivo ya la usa. */
+  teclaAtajo?: TeclaAtajo | null
   /** Código del proveedor habitual para este artículo; el servidor exige `idProveedorHabitual`. */
   codigoProveedor?: string | null
   /** El artículo nace como miembro de esa familia: los quince campos compartidos tienen que ser idénticos
@@ -818,8 +870,9 @@ export type FilaDeGrillaDeArticulos = {
   idProveedorHabitual: number | null
   proveedor: string | null
   activo: boolean
-  /** Estado del artículo en la tienda online: si se publica y si tiene una imagen viva. */
-  publicadoWeb: boolean
+  /** Disponibilidad del artículo (a la venta y en la tienda online) y si tiene una imagen viva. */
+  disponibleOnline: boolean
+  disponibleVenta: boolean
   tieneImagen: boolean
 }
 
@@ -1011,6 +1064,8 @@ export type OfertaListado = {
   prioridad: number
   acumulable: boolean
   activo: boolean
+  /** La tienda online aplica la oferta a los precios que muestra (por defecto sí). Independiente de `activo`. */
+  disponibleOnline: boolean
   idsListas: number[]
   nombreArticulo?: string | null
 }
@@ -1037,6 +1092,9 @@ export type AltaOferta = {
   acumulable: boolean
   idsListas: number[] | null
   activo: boolean
+  /** En el alta el servidor asume `true` si falta; en la edición, si falta, la oferta conserva el valor que tenía. El
+   * formulario lo manda siempre. */
+  disponibleOnline: boolean
 }
 
 export type EdicionOferta = AltaOferta
@@ -1077,6 +1135,11 @@ export type ArticuloEscaneado = {
   cantidad: number
   acumulaEnVenta: boolean
   unidadVenta?: UnidadVenta
+  /** Solo en un artículo por importe y solo si el escaneo trajo el monto antes del `*` (`150*500`): el precio unitario de la
+   * línea, con `cantidad` en 1. Ausente en cualquier otro artículo, y en uno por importe cuando se escaneó su código a secas. */
+  importe?: number | null
+  /** Tecla de función asignada a un artículo por importe; ausente si no tiene. */
+  teclaAtajo?: TeclaAtajo | null
 }
 
 /** Cómo el servidor interpreta el lote de `POST /api/ofertas/resolver` (espejo de
@@ -1085,7 +1148,14 @@ export type ArticuloEscaneado = {
 export type AgregacionDeResolucion = 'Documento' | 'PorLinea'
 
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
-export type LineaDeResolucion = { idArticulo: number; idEmpresa: number | null; idListaPrecio: number; cantidad: number }
+export type LineaDeResolucion = {
+  idArticulo: number
+  idEmpresa: number | null
+  idListaPrecio: number
+  cantidad: number
+  /** Solo de un artículo por importe: la línea se resuelve a ese precio, sin lista, ofertas ni combos. */
+  importe?: number
+}
 
 export type OfertaAplicada = { idOferta: number; nombre: string; descuentoUnitario: number }
 
@@ -1182,7 +1252,10 @@ export type ArticuloDeInstantanea = {
   /** Ausente en una instantánea guardada antes de que el servidor la enviara: se trata como
    * `Peso`, sin bloquear ninguna venta. El servidor siempre la manda. */
   unidadVenta?: UnidadVenta
+  /** Un artículo por importe viaja con `preciosPorLista` vacío: se vende por el monto que tipea el cajero. */
   preciosPorLista: PrecioDeListaDeInstantanea[]
+  /** Tecla de función del artículo por importe; ausente si no tiene, y en una instantánea guardada antes de que existiera. */
+  teclaAtajo?: TeclaAtajo | null
   /** Ausente en una instantánea guardada antes de que existiera el campo: se toma como `true`. */
   acumulaEnVenta?: boolean
   /** Familia del artículo; ausente/`null` si no tiene, o en una instantánea guardada antes de que
@@ -1242,6 +1315,8 @@ export type ComboListado = {
   precio: number
   idEmpresa: number | null
   activo: boolean
+  /** La tienda online lista el combo (por defecto sí). Independiente de `activo`. */
+  disponibleOnline: boolean
   componentes: ComponenteDeComboListado[]
 }
 
@@ -1256,6 +1331,9 @@ export type AltaCombo = {
   precio: number
   idEmpresa: number | null
   activo: boolean
+  /** En el alta el servidor asume `true` si falta; en la edición, si falta, el combo conserva el valor que tenía. El
+   * formulario lo manda siempre. */
+  disponibleOnline: boolean
   componentes: ComponenteDeSolicitudDeCombo[]
 }
 
@@ -1290,6 +1368,8 @@ export type MedioPagoDeInstantanea = {
   comportamiento: ComportamientoMedioPago
   admiteVuelto: boolean
   requiereReferencia: boolean
+  /** Ausente en una copia guardada antes de este campo: se lee como 0. */
+  porcentajeFacturacion?: number
 }
 
 /** Respuesta de `GET /api/pos/instantanea?version=2` — espejo de `InstantaneaDePos`. `momento` es
@@ -1481,8 +1561,15 @@ export type SolicitudDeCierrePorRetiro = {
 export type PuntoVentaDeCierre = { id: number; numero: number; nombre: string }
 
 /** Una fila de `ResumenDeCierrePorRetiro.ventasPorMedio` — ventas netas de vuelto por medio
- * (nunca de gastos), nombre ya resuelto. */
-export type VentaPorMedio = { idMedioPago: number; nombre: string; importe: number }
+ * (nunca de gastos), nombre ya resuelto. `comportamiento` es la clasificación con que la fila entra
+ * en los subtotales del resumen (el medio ancla del turno cuenta como efectivo aunque el catálogo
+ * lo haya cambiado después). */
+export type VentaPorMedio = {
+  idMedioPago: number
+  nombre: string
+  comportamiento: ComportamientoMedioPago
+  importe: number
+}
 
 /** Una fila de `ResumenDeCierrePorRetiro.retiros` — TODOS los retiros del turno, incluido el
  * de cierre, con el nombre del empleado ya resuelto. */
@@ -1509,7 +1596,14 @@ export type ResumenDeCierrePorRetiro = {
   empleadoCierre: string
   fondoInicial: number
   ventasPorMedio: VentaPorMedio[]
+  /** Total general de lo cobrado por medio (ventas y recibos de cuenta corriente, neto de vuelto en el
+   * efectivo); `totalDigitales + totalEfectivo` lo suman. */
   totalVentas: number
+  totalDigitales: number
+  totalEfectivo: number
+  /** Ventas del turno hechas con un medio de cuenta corriente: se informan aparte y NO forman parte
+   * de `totalVentas`. */
+  ventasACuentaCorriente: number
   retiros: RetiroDeCierre[]
   totalRetiros: number
   ventasEnEfectivoNetas: number
@@ -1603,6 +1697,9 @@ export type GastoDeTurno = {
   numeroFactura: string | null
   /** Compra a la que está ligado el gasto; no `null` bloquea categoría y proveedor en la edición. */
   idComprobanteCompra: number | null
+  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+   * `gasto_de_pago_de_personal` a su edición). */
+  idMovimientoPersonal: number | null
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1718,6 +1815,9 @@ export type GastoDeAdministracionListado = {
   /** `true` solo si el gasto tiene turno y ese turno sigue abierto (editar uno de un turno
    * cerrado recalcula su arqueo). */
   turnoAbierto: boolean
+  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+   * `gasto_de_pago_de_personal` a su edición, su baja y su vinculación a una compra). */
+  idMovimientoPersonal: number | null
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
@@ -1782,6 +1882,84 @@ export type MovimientoTesoreriaListado = {
 /** Página de `GET /api/reportes/tesoreria` — espejo de `PaginaDeMovimientosTesoreria`. */
 export type PaginaDeMovimientosTesoreria = {
   items: MovimientoTesoreriaListado[]
+  total: number
+  pagina: number
+  tamanio: number
+}
+
+// --- Cuentas de tesorería (lectura) — espejo de `Ways.Application.Caja.ContratosDeCuentasTesoreria`.
+
+/** Espejo del enum `TipoMovimientoCuenta` (Ways.Domain.Caja) — viaja como texto PascalCase. */
+export type TipoMovimientoCuenta =
+  | 'Cobro'
+  | 'Comision'
+  | 'RetencionIibb'
+  | 'RetencionIva'
+  | 'RetencionGanancias'
+  | 'Ajuste'
+  | 'Transferencia'
+  | 'Deposito'
+  | 'Retiro'
+
+/** Cuenta de `GET /api/reportes/tesoreria/cuentas`. `fechaUltimoMovimiento` es `null` sin movimientos. */
+export type CuentaConSaldo = {
+  id: number
+  nombre: string
+  activo: boolean
+  saldoInicial: number
+  saldoActual: number
+  fechaUltimoMovimiento: string | null
+}
+
+/** Medio electrónico y activo cuyo cobro no entra a ninguna cuenta de la empresa. */
+export type MedioElectronicoSinCuenta = { id: number; nombre: string }
+
+export type CuentasDeLaEmpresa = {
+  idEmpresa: number
+  cuentas: CuentaConSaldo[]
+  mediosSinCuenta: MedioElectronicoSinCuenta[]
+}
+
+/** Fila del libro de una cuenta. `nombreMedioPago`/`nombreEmpleado` son `null` sin medio, o con el medio o el
+ * usuario dados de baja: el id distingue los dos casos. */
+export type MovimientoDeCuentaListado = {
+  id: number
+  fecha: string
+  tipo: TipoMovimientoCuenta
+  concepto: string
+  ingreso: number
+  egreso: number
+  final: number
+  idTurnoCaja: number | null
+  idMedioPago: number | null
+  nombreMedioPago: string | null
+  idEmpleado: number
+  nombreEmpleado: string | null
+  baseBruta: number | null
+  porcentajeAplicado: number | null
+}
+
+/** Totales de TODO el rango (no de la página). Los descuentos son positivos cuando restan. */
+export type TotalesDeCuentaEnElRango = {
+  cobrado: number
+  comision: number
+  retencionIibb: number
+  retencionIva: number
+  retencionGanancias: number
+  ajustes: number
+  otros: number
+  neto: number
+}
+
+export type LibroDeCuenta = {
+  idCuenta: number
+  nombre: string
+  activo: boolean
+  saldoActual: number
+  saldoDeApertura: number
+  saldoAlCierre: number
+  totales: TotalesDeCuentaEnElRango
+  items: MovimientoDeCuentaListado[]
   total: number
   pagina: number
   tamanio: number
@@ -1864,6 +2042,10 @@ export type LineaDeVenta = {
    * (ausente = sin ajuste, el payload queda idéntico al de antes): el servidor recalcula el monto
    * sobre el neto posterior a las ofertas y es la única autoridad del importe. */
   ajusteManualPorcentaje?: number | null
+  /** Solo de un artículo por importe, y obligatorio en él: el monto que tipeó el cajero, su precio unitario (la cantidad es 1).
+   * Nunca viaja junto a `precioUnitario`/`descuentoUnitario`: en una venta offline la línea por importe lleva solo su importe y
+   * queda fuera del todas-o-ninguna del precio de las demás líneas. */
+  importe?: number
   /** Combos de una venta offline (espejo de `LineaDeVenta`): las TRES viajan juntas o ninguna, solo con
    * `precioUnitario`, en la línea que un combo consumió. `unidadesConsumidasPorCombo` va en la unidad de venta del
    * artículo (unidades enteras, o kilos con hasta tres decimales) y `ahorroDeCombo` es un importe de línea. */
@@ -1962,6 +2144,8 @@ export type ItemEmitido = {
    * (negativo = descuento, positivo = recargo) ya incluido en `total`. */
   ajusteManualPorcentaje: number | null
   ajusteManual: number
+  /** `true` si la línea se vendió por el importe que tipeó el cajero (`precioUnitario` es ese importe). Ausente se toma como `false`. */
+  porImporte?: boolean
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */
@@ -2003,7 +2187,7 @@ export type ComprobanteEmitido = {
 // (design decisión 9), pago a cuenta (RC) sin ningún campo de importe propio (design decisión 6,
 // `importeAplicado = Σ importe − Σ vuelto`).
 
-export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios'
+export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios' | 'DescuentoPersonal'
 
 /** Distingue un movimiento `Ajuste` por su origen — solo viene poblado para ese tipo (design
  * decisión 8/9, espejo de `EtiquetaDeAjuste`). */
@@ -3200,4 +3384,117 @@ export type LibroIva = {
   zonaHoraria: string | null
   filas: FilaDeLibroIva[]
   totales: TotalesDeLibroIva
+}
+
+/** Espejo de `Ways.Application.Plantel.PersonalListado`. `nombreUsuario`/`nombreCliente` llegan en
+ * `null` cuando el vínculo no existe o apunta a una fila dada de baja. `saldo` positivo = la empresa
+ * le debe al empleado. */
+export type PersonalListado = {
+  id: number
+  nombre: string
+  documento: string | null
+  telefono: string | null
+  observaciones: string | null
+  valorHora: number
+  saldo: number
+  idEmpresa: number | null
+  idUsuario: number | null
+  nombreUsuario: string | null
+  idCliente: number | null
+  nombreCliente: string | null
+}
+
+/** Espejo del enum `TipoMovimientoPersonal`: viaja como texto PascalCase. */
+export type TipoMovimientoPersonal = 'Horas' | 'Pago' | 'Ajuste'
+
+/** Espejo de `LineaDeDesglose`: una entrega de dinero de un pago. `nombreMedioPago` llega en `null`
+ * si el medio se dio de baja; `referencia` es la que se cargó en la línea. */
+export type LineaDeDesgloseDePago = {
+  idGasto: number
+  idMedioPago: number
+  nombreMedioPago: string | null
+  importe: number
+  origenFondos: OrigenFondosGasto
+  referencia: string | null
+}
+
+/** Espejo de `DesgloseDePago`: cómo se compuso un pago. */
+export type DesgloseDePago = {
+  descuentoDeCuentaCorriente: number | null
+  lineas: LineaDeDesgloseDePago[]
+}
+
+/** Espejo de `MovimientoDePersonal`. `importe` lleva signo (el pago es negativo); `desglose` solo viene
+ * en los pagos. */
+export type MovimientoDePersonal = {
+  idMovimiento: number
+  fecha: string
+  tipo: TipoMovimientoPersonal
+  horas: number | null
+  valorHora: number | null
+  importe: number
+  saldoResultante: number
+  detalle: string | null
+  creadoEn: string
+  desglose?: DesgloseDePago | null
+}
+
+/** Espejo de `PaginaDeCuentaDePersonal`. `encabezado.saldo` sale del saldo del empleado, nunca de la
+ * suma de la página. */
+export type PaginaDeCuentaDePersonal = {
+  encabezado: { idPersonal: number; nombre: string; saldo: number }
+  items: MovimientoDePersonal[]
+  total: number
+  pagina: number
+  tamanio: number
+  historico: boolean
+  desde: string | null
+  hasta: string | null
+}
+
+/** Espejo de `SolicitudDeCargaDeHoras`. */
+export type SolicitudDeCargaDeHoras = {
+  fecha: string
+  horas: number
+  valorHora: number
+  detalle?: string
+}
+
+/** Espejo de `SolicitudDeAjusteDePersonal`: `importe` con signo, distinto de cero. */
+export type SolicitudDeAjusteDePersonal = {
+  fecha: string
+  importe: number
+  detalle: string
+}
+
+/** Espejo de `LineaDeSolicitudDePago`. */
+export type LineaDeSolicitudDePagoDePersonal = {
+  idMedioPago: number
+  importe: number
+  referencia?: string
+}
+
+/** Espejo de `SolicitudDePagoDePersonal`. Cada campo opcional se omite cuando no aplica:
+ * `origenFondos` solo con líneas, `idEmpresa` solo con tesorería, `idPuntoVenta` solo con el cajón o
+ * con descuento. */
+export type SolicitudDePagoDePersonal = {
+  fecha: string
+  idEmpresa?: number
+  idPuntoVenta?: number
+  origenFondos?: OrigenFondosGasto
+  descuentoDeCuentaCorriente?: number
+  lineas?: LineaDeSolicitudDePagoDePersonal[]
+  detalle?: string
+}
+
+/** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */
+export type DatosDePersonal = {
+  nombre: string
+  documento: string | null
+  telefono: string | null
+  observaciones: string | null
+  valorHora: number
+  idEmpresa: number | null
+  idUsuario: number | null
+  idCliente: number | null
 }

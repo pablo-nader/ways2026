@@ -19,6 +19,7 @@ import {
   totalesPorMedioDeVentas,
 } from './utilidadesVentasDelTurno'
 import type { FiltrosDeVentasDelTurno } from './utilidadesVentasDelTurno'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function ventaFixture(sobrescribir: Partial<VentaDeTurnoListado> = {}): VentaDeTurnoListado {
   return {
@@ -48,6 +49,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
     admiteVuelto: true,
     requiereReferencia: false,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
     ...sobrescribir,
   }
 }
@@ -71,9 +73,9 @@ describe('formatearMoneda', () => {
 })
 
 describe('formatearFechaHora', () => {
-  it('delega en toLocaleString("es-AR") — mismo criterio que Caja.test.tsx (independiente de la zona horaria del entorno)', () => {
+  it('delega en el formateador compartido de 24 horas (independiente de la zona horaria del entorno)', () => {
     const iso = '2026-09-16T12:05:00Z'
-    expect(formatearFechaHora(iso)).toBe(new Date(iso).toLocaleString('es-AR'))
+    expect(formatearFechaHora(iso)).toBe(fechaHoraATexto(iso))
   })
 })
 

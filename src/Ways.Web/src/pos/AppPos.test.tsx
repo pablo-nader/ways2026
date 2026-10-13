@@ -161,6 +161,7 @@ const medioEfectivo: MedioPagoListado = {
   admiteVuelto: true,
   requiereReferencia: false,
   recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
 }
 
 const SIN_SESION = () => Promise.reject(new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.'))

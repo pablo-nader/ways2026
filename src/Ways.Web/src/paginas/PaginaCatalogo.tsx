@@ -20,6 +20,10 @@ type Formulario = {
 
 const ID_FORMULARIO_CATALOGO = 'formulario-catalogo'
 
+/** Lectura aparte de las opciones de un select (`opcionesRemotas`), atada a la apertura del formulario que la pidió:
+ * lo que llegó para una apertura anterior no se usa en la siguiente. */
+type LecturaRemota = { apertura: number; porClave: Record<string, { datos: unknown; fallo: boolean }> }
+
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
@@ -72,6 +76,11 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
    * re-entrancia válida (`react-async-state` regla 11): dos clicks del mismo tick leen el mismo
    * render, así que el estado los deja pasar a los dos. */
   const ocupadoRef = useRef(false)
+  /** Cuenta las aperturas del formulario (alta o edición). Cada apertura vuelve a leer las opciones remotas, y una
+   * lectura que llega después de que se abrió otro formulario se descarta. */
+  const aperturaRef = useRef(0)
+  const [apertura, setApertura] = useState(0)
+  const [lecturaRemota, setLecturaRemota] = useState<LecturaRemota>({ apertura: 0, porClave: {} })
 
   const { recurso, titulo, tituloSingular, campos, valoresPorDefecto, aValores, aAlta, sujetoDeBaja } = definicion
 
@@ -99,6 +108,35 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     void cargar(++generacion.current, incluirInactivos)
   }, [cargar, incluirInactivos])
 
+  useEffect(() => {
+    if (apertura === 0) return
+
+    for (const campo of campos) {
+      const remotas = campo.opcionesRemotas
+      if (!remotas) continue
+
+      remotas
+        .cargar()
+        .then(
+          (datos) => ({ datos, fallo: false }),
+          () => ({ datos: null, fallo: true }),
+        )
+        .then((resultado) => {
+          if (aperturaRef.current !== apertura) return
+
+          setLecturaRemota((prev) => ({
+            apertura,
+            porClave: { ...(prev.apertura === apertura ? prev.porClave : {}), [campo.clave]: resultado },
+          }))
+        })
+    }
+  }, [apertura, campos])
+
+  function marcarApertura() {
+    aperturaRef.current += 1
+    setApertura(aperturaRef.current)
+  }
+
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga la escritura:
    * de eso se ocupa el `finally` ungated de cada escritura. */
@@ -116,6 +154,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   function abrirNuevo() {
     if (ocupadoRef.current) return
 
+    marcarApertura()
     setFormulario({ id: null, nombre: '', activo: true, valores: { ...valoresPorDefecto } })
     setAviso('')
     setError('')
@@ -125,6 +164,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   function abrirEdicion(item: TListado) {
     if (ocupadoRef.current) return
 
+    marcarApertura()
     setFormulario({ id: item.id, nombre: item.nombre, activo: item.activo, valores: aValores(item) })
     setAviso('')
     setError('')
@@ -348,6 +388,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           error={errorFormulario}
           focoDeReserva={contenedorRef}
           items={items}
+          lecturaRemota={lecturaRemota.apertura === apertura ? lecturaRemota.porClave : {}}
           onCambio={setFormulario}
           onGuardar={guardar}
           onCancelar={cancelarFormulario}
@@ -374,6 +415,7 @@ function ModalDeCatalogo({
   error,
   focoDeReserva,
   items,
+  lecturaRemota,
   onCambio,
   onGuardar,
   onCancelar,
@@ -386,6 +428,7 @@ function ModalDeCatalogo({
   error: string
   focoDeReserva: React.RefObject<HTMLElement | null>
   items: unknown[]
+  lecturaRemota: LecturaRemota['porClave']
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -444,8 +487,15 @@ function ModalDeCatalogo({
         </div>
 
         {camposVisibles.map((campo) => {
-          const opciones = campo.opcionesDesdeListado ? campo.opcionesDesdeListado(items, valor.id) : (campo.opciones ?? [])
+          const remota = campo.opcionesRemotas
+          const lectura = lecturaRemota[campo.clave]
+          const opciones = remota
+            ? remota.armar(lectura?.datos ?? null, valor.valores)
+            : campo.opcionesDesdeListado
+              ? campo.opcionesDesdeListado(items, valor.id)
+              : (campo.opciones ?? [])
           const valorActual = String(valor.valores[campo.clave] ?? '')
+          const avisoRemoto = remota && lectura ? remota.aviso(lectura.fallo ? null : lectura.datos, opciones) : null
           // Solo tiene sentido buscar la opción faltante en `items` cuando las opciones vienen del
           // listado: para selects de opciones estáticas (p. ej. comportamiento de medio de pago),
           // buscar el valor por id en `items` podría matchear con un item no relacionado.
@@ -479,7 +529,9 @@ function ModalDeCatalogo({
                   disabled={bloqueado}
                   required={campo.requerido}
                 >
-                  {valorActual === '' && <option value="">— Elegí una opción —</option>}
+                  {(valorActual === '' || campo.opcionVacia) && (
+                    <option value="">{campo.opcionVacia ?? '— Elegí una opción —'}</option>
+                  )}
                   {opcionFaltante && (
                     <option value={opcionFaltante.valor}>{opcionFaltante.etiqueta}</option>
                   )}
@@ -493,13 +545,17 @@ function ModalDeCatalogo({
                 <input
                   id={`f-${campo.clave}`}
                   type="number"
-                  step={campo.tipo === 'numeroDecimal' ? '0.01' : '1'}
+                  step={campo.paso ?? (campo.tipo === 'numeroDecimal' ? '0.01' : '1')}
                   className="form-control"
                   value={valorActual}
                   onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
                   disabled={bloqueado}
                   required={campo.requerido}
                 />
+              )}
+              {campo.ayuda && <div className="form-text">{campo.ayuda}</div>}
+              {avisoRemoto && (
+                <div className={`form-text${avisoRemoto.error ? ' text-danger' : ''}`}>{avisoRemoto.texto}</div>
               )}
             </div>
           )

@@ -472,6 +472,11 @@ public class ServicioDeTurnos(
             db, idTenant, idEmpresa, idPuntoVenta, momento, TipoMovimientoTesoreria.RetiroCaja, idTurnoCaja,
             idGasto: null, concepto: "Cierre de turno", ingreso: insumos.Retiros, egreso: 0m, idEmpleado, ct);
 
+        // Lo cobrado con cada medio electrónico entra a su cuenta de tesorería, neto de comisión y retenciones: después de la
+        // tesorería de efectivo para que el orden de locks sea turno → empresa → medios → cuentas (EscriturasDeCuentaDeTesoreria).
+        await EscriturasDeCuentaDeTesoreria.AcreditarAsync(
+            db, conexion, transaccionCruda, idTenant, idEmpresa, idTurnoCaja, momento, idEmpleado, insumos.Actividad, ct);
+
         return arqueos;
     }
 

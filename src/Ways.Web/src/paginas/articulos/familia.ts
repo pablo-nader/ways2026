@@ -15,6 +15,7 @@ import type {
   ValoresCompartidosDeLaFamilia,
 } from '../../api/tipos'
 import type { Formulario } from './FormularioArticulo'
+import { fechaHoraATexto } from '../../formato/fechas'
 
 /** Las quince claves compartidas son las de `ValoresCompartidosDeLaFamilia`: un campo nuevo del
  * contrato obliga a decidir acá si se comparte, y `Pick<Formulario, ClaveCompartida>` obliga a que el
@@ -308,7 +309,7 @@ export function describirEstadoDePrecios(estado: EstadoDePrecios): string {
 }
 
 export function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /** Lo que `Articulos` le pasa al formulario sobre la familia del artículo que se está abriendo. */

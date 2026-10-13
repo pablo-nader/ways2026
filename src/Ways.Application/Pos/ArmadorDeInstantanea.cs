@@ -16,7 +16,7 @@ public static class ArmadorDeInstantanea
     public sealed record ListaVisible(int Id, int? IdEmpresa, bool Activo, ModoLista Modo, int? IdListaBase, decimal? Porcentaje);
 
     /// <summary>Un artículo activo, antes de resolverle precios.</summary>
-    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta, int? IdFamilia = null);
+    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta, int? IdFamilia = null, TeclaAtajo? TeclaAtajo = null);
 
     /// <summary>
     /// Listas a resolver, ascendentes por id: las activas compartidas o de la empresa del punto de
@@ -82,7 +82,7 @@ public static class ArmadorDeInstantanea
     /// <summary>
     /// Arma los artículos a partir de la resolución de <see cref="LineasDeResolucion"/> (mismo
     /// orden). Una lista sin precio vigente para el artículo no genera entrada; un artículo sin
-    /// precio en ninguna lista no viaja.
+    /// precio en ninguna lista no viaja, salvo el que se vende por importe: ese viaja siempre y sin precios.
     /// </summary>
     public static IReadOnlyList<ArticuloDeInstantanea> ArmarArticulos(
         IReadOnlyList<ArticuloAResolver> articulos,
@@ -101,7 +101,11 @@ public static class ArmadorDeInstantanea
         for (var i = 0; i < articulos.Count; i++)
         {
             var precios = new List<PrecioDeListaDeInstantanea>(idsLista.Count);
-            for (var j = 0; j < idsLista.Count; j++)
+            var porImporte = articulos[i].UnidadVenta == UnidadVenta.Importe;
+
+            // Un artículo por importe se vende por el monto que tipea el cajero: viaja sin precios aunque conserve
+            // alguno de lista, que el dispositivo no debe usar.
+            for (var j = 0; j < idsLista.Count && !porImporte; j++)
             {
                 var linea = resolucion[(i * idsLista.Count) + j];
                 if (linea.Resultado.PrecioOriginal is not { } precioOriginal)
@@ -119,7 +123,7 @@ public static class ArmadorDeInstantanea
                     linea.EscalonesDeFamilia is { Count: > 0 } ? linea.EscalonesDeFamilia : null));
             }
 
-            if (precios.Count == 0)
+            if (precios.Count == 0 && !porImporte)
             {
                 continue;
             }
@@ -135,7 +139,8 @@ public static class ArmadorDeInstantanea
                 articulo.AcumulaEnVenta,
                 articulo.UnidadVenta,
                 precios,
-                articulo.IdFamilia));
+                articulo.IdFamilia,
+                articulo.TeclaAtajo));
         }
 
         return resultado;
@@ -145,12 +150,15 @@ public static class ArmadorDeInstantanea
     /// Los combos que el dispositivo puede completar sin red con los <paramref name="articulos"/> de esta misma
     /// instantánea. Un combo solo viaja ENTERO: si algún componente no se puede vender, el combo completo se descarta
     /// (uno parcial haría creer al dispositivo que puede armarlo). Un componente artículo es vendible si figura en la
-    /// instantánea (activo y con precio en alguna lista) y su unidad de venta admite la cantidad del componente
-    /// (<see cref="ReglaDeCantidadDeVenta"/>: entera por unidad, hasta tres decimales por peso), el mismo criterio con
-    /// el que la venta online elige las líneas candidatas (<c>ResolvedorDeCombos</c>). Un componente familia es vendible
-    /// si algún artículo de la instantánea tiene esa familia y una unidad de venta que admite la cantidad; una familia
-    /// dada de baja deja de contar cuando sus artículos dejan de figurar. Una cantidad no positiva también descarta
-    /// el combo. <c>null</c> si no queda ninguno, para que la clave se omita en el JSON.
+    /// instantánea (activo, disponible a la venta y con precio en alguna lista; la instantánea ya dejó afuera los de uso
+    /// interno, así que un combo con un componente que no se vende no viaja) y su unidad de venta entra a combos y
+    /// admite la cantidad del componente (<see cref="ReglaDeCombos.AdmiteComoComponente"/>: entera por unidad, hasta
+    /// tres decimales por peso), el mismo criterio con el que la venta online elige las líneas candidatas
+    /// (<c>ResolvedorDeCombos</c>). Un artículo por importe figura en la instantánea sin precios y nunca es un
+    /// componente vendible. Un componente familia es vendible si algún artículo de la instantánea tiene esa familia y
+    /// una unidad de venta que admite la cantidad; una familia dada de baja deja de contar cuando sus artículos dejan
+    /// de figurar. Una cantidad no positiva también descarta el combo. <c>null</c> si no queda ninguno, para que la
+    /// clave se omita en el JSON.
     /// </summary>
     public static IReadOnlyList<ComboDeInstantanea>? ArmarCombos(
         IReadOnlyList<ComboCandidato> candidatos, IReadOnlyList<ArticuloDeInstantanea> articulos)
@@ -161,7 +169,7 @@ public static class ArmadorDeInstantanea
             .ToLookup(a => a.IdFamilia!.Value, a => a.UnidadVenta);
 
         bool AlgunaAdmite(IEnumerable<UnidadVenta> unidades, decimal cantidad) =>
-            unidades.Any(u => ReglaDeCantidadDeVenta.EsCantidadAdmitida(u, cantidad));
+            unidades.Any(u => ReglaDeCombos.AdmiteComoComponente(u, cantidad));
 
         var combos = candidatos
             .Where(c => c.Componentes.Count > 0

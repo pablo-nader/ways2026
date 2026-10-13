@@ -479,7 +479,7 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
             Nombre: deGrupo.Nombre, IdEmpresa: null, IdArticulo: null, IdGrupo: deGrupo.IdGrupo, IdCategoria: null,
             FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null, DiasSemana: null,
             CantidadMinima: null, PrecioUnitario: null, Porcentaje: 10m, ImporteFijo: null,
-            Prioridad: 20, Acumulable: false, IdsListas: null, Activo: true);
+            Prioridad: 20, Acumulable: false, IdsListas: null, Activo: true, DisponibleOnline: true);
         var respuesta = await admin.PutAsJsonAsync($"/api/ofertas/{deGrupo.Id}", subida);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
 

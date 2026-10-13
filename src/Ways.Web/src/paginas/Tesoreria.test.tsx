@@ -162,6 +162,9 @@ function mockearRutasBase(
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture())
+    if (ruta.startsWith('/reportes/tesoreria/cuentas?')) {
+      return Promise.resolve({ idEmpresa: 1, cuentas: [], mediosSinCuenta: [] })
+    }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -174,6 +177,20 @@ beforeEach(() => {
 })
 
 describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)', () => {
+  it('la sección de cuentas pide las cuentas de la empresa elegida y avisa si todavía no hay empresa', async () => {
+    mockearRutasBase(undefined, [empresaUnica, empresaOtra])
+    const usuario = userEvent.setup()
+    renderTesoreria()
+
+    await screen.findByText('Elegí una empresa para ver sus cuentas.')
+    expect(apiGetMock.mock.calls.some((call: unknown[]) => (call[0] as string).startsWith('/reportes/tesoreria/cuentas'))).toBe(false)
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa'), String(empresaOtra.id))
+
+    await screen.findByText('Esta empresa todavía no tiene cuentas de tesorería.')
+    expect(apiGetMock).toHaveBeenCalledWith(`/reportes/tesoreria/cuentas?idEmpresa=${empresaOtra.id}`)
+  })
+
   it('empresa única: se preselecciona y el punto de venta arranca en "Todos"', async () => {
     mockearRutasBase()
     renderTesoreria()

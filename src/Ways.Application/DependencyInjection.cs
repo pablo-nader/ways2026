@@ -21,6 +21,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Application.Pos;
 using Ways.Application.Precios;
+using Ways.Application.Plantel;
 using Ways.Application.Proveedores;
 using Ways.Application.Reportes;
 using Ways.Application.Stock;
@@ -60,6 +61,7 @@ public static class DependencyInjection
         // Tienda online: publicación e imagen de cada artículo (admin) y consulta del catálogo público.
         services.AddScoped<ServicioDeCatalogoWeb>();
         services.AddScoped<ConsultaDeCatalogoPublico>();
+        services.AddScoped<ConsultaDeCombosPublicos>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();
@@ -73,6 +75,9 @@ public static class DependencyInjection
 
         services.AddScoped<ServicioDeClientes>();
         services.AddScoped<ServicioDeProveedores>();
+        services.AddScoped<ServicioDePersonal>();
+        services.AddScoped<ServicioDeCuentaDePersonal>();
+        services.AddScoped<ServicioDePagoDePersonal>();
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeFamilias>();
@@ -207,6 +212,9 @@ public static class DependencyInjection
         // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation): G3, el
         // libro de tesorería — cero derivación, solo lectura encadenada por Id.
         services.AddScoped<ServicioDeTesoreria>();
+        services.AddScoped<ServicioDeCuentasDeTesoreria>();
+        services.AddScoped<ServicioDeLibroDeCuentas>();
+        services.AddScoped<ServicioDeAjusteDeCuentaDeTesoreria>();
 
         // stage-11-exportacion-reportes, Slice 9 (proposal decisión 10, droppable a Etapa 13):
         // existencias — LINQ puro sobre stock ⋈ articulos, sin dependencia de LectorDeSerieTemporal.

@@ -651,3 +651,87 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     expect(comprobante).toMatchObject({ descuentoTotal: 500, total: 6500 })
   })
 })
+
+describe('construirComprobanteOfflineSintetico — artículo por importe', () => {
+  const FIAMBRERIA = 500
+  const fiambreria: ArticuloDeInstantanea = {
+    idArticulo: FIAMBRERIA,
+    codigoInterno: '500',
+    nombre: 'Fiambrería',
+    codigosBarra: [],
+    idAlicuotaIva: 2,
+    porcentajeIva: 10.5,
+    unidadVenta: 'Importe',
+    preciosPorLista: [],
+    acumulaEnVenta: false,
+  }
+  const lineaPorImporte = (importe: number, sobrescribir: Partial<LineaCarrito> = {}) =>
+    lineaFixture({ idLinea: `f-${importe}`, idArticulo: FIAMBRERIA, codigoInterno: '500', nombre: 'Fiambrería', codigoBarra: null, cantidad: 1, acumulaEnVenta: false, unidadVenta: 'Importe', importe, ...sobrescribir })
+
+  const base = {
+    numero: 12,
+    numeroVisible: '0007-00000012',
+    idPuntoVenta: 7,
+    idCliente: 1,
+    pagos: [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }],
+    ahora: new Date('2026-10-12T10:05:00.000Z'),
+  }
+
+  it('la línea por importe sale con cantidad 1, su importe como precio, su alícuota y la marca porImporte', () => {
+    const comprobante = construir({ ...base, lineas: [lineaPorImporte(150)], instantanea: instantaneaFixture([fiambreria]) })
+
+    expect(comprobante?.items[0]).toMatchObject({
+      idArticulo: FIAMBRERIA,
+      descripcion: 'Fiambrería',
+      cantidad: 1,
+      precioUnitario: 150,
+      descuento: 0,
+      total: 150,
+      idAlicuotaIva: 2,
+      porcentajeIva: 10.5,
+      idOferta: null,
+      idCombo: null,
+      porImporte: true,
+    })
+    expect(comprobante).toMatchObject({ subtotal: 150, descuentoTotal: 0, total: 150 })
+  })
+
+  it('150,50 se cobra 151: el total de la línea es de pesos enteros, como en el servidor', () => {
+    const comprobante = construir({ ...base, lineas: [lineaPorImporte(150.5)], instantanea: instantaneaFixture([fiambreria]) })
+
+    expect(comprobante?.items[0]).toMatchObject({ precioUnitario: 150.5, total: 151 })
+    expect(comprobante?.total).toBe(151)
+  })
+
+  it('el ajuste manual se aplica sobre el importe', () => {
+    const comprobante = construir({ ...base, lineas: [lineaPorImporte(150, { ajusteManualPorcentaje: -10 })], instantanea: instantaneaFixture([fiambreria]) })
+
+    expect(comprobante?.items[0]).toMatchObject({ total: 135, ajusteManual: -15, ajusteManualPorcentaje: -10 })
+    expect(comprobante).toMatchObject({ subtotal: 150, descuentoManualTotal: 15, total: 135 })
+  })
+
+  it('una venta mixta mantiene el precio de lista de las demás líneas y no marca porImporte en ellas', () => {
+    const comprobante = construir({
+      ...base,
+      lineas: [lineaFixture({ idArticulo: 1, cantidad: 2 }), lineaPorImporte(150)],
+      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 100, precioFinal: 100 }), fiambreria]),
+    })
+
+    expect(comprobante?.items.map((i) => [i.idArticulo, i.total, i.porImporte ?? false])).toEqual([
+      [1, 200, false],
+      [FIAMBRERIA, 150, true],
+    ])
+    expect(comprobante?.total).toBe(350)
+  })
+
+  it('dos líneas por importe del mismo artículo salen como dos items', () => {
+    const comprobante = construir({ ...base, lineas: [lineaPorImporte(150), lineaPorImporte(80)], instantanea: instantaneaFixture([fiambreria]) })
+
+    expect(comprobante?.items.map((i) => i.total)).toEqual([150, 80])
+    expect(comprobante?.total).toBe(230)
+  })
+
+  it('null si la instantánea no conoce el artículo por importe', () => {
+    expect(construir({ ...base, lineas: [lineaPorImporte(150)], instantanea: instantaneaFixture([articuloFixture()]) })).toBeNull()
+  })
+})

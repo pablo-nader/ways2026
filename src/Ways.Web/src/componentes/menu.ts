@@ -7,6 +7,7 @@ import {
   puedeGestionarUsuarios,
   puedeOperarPos,
   puedeVerAuditoria,
+  puedeVerPersonal,
   puedeVerReportes,
 } from '../api/tipos'
 
@@ -82,6 +83,9 @@ const MODELO: EntradaDelModelo[] = [
           enlace(puedeVerReportes, 'Tablero', '/tablero'),
           enlace(puedeVerReportes, 'Histórico de cajas', '/caja/historico'),
           enlace(puedeVerReportes, 'Tesorería', '/caja/tesoreria'),
+          // Configuración de las cuentas digitales de la tesorería: admin-only como el resto del ABM
+          // (Politicas.GestionDeCatalogo, también para leer).
+          enlace(puedeGestionarCatalogos, 'Cuentas de tesorería', '/caja/cuentas-tesoreria'),
           enlace(puedeVerReportes, 'Existencias', '/reportes/existencias'),
           enlace(puedeVerReportes, 'Vencimientos', '/reportes/stock/vencimientos'),
           enlace(puedeVerReportes, 'Reposición', '/reportes/stock/reposicion'),
@@ -116,6 +120,9 @@ const MODELO: EntradaDelModelo[] = [
         enlaces: [
           enlace(puedeGestionarCatalogos, 'Clientes', '/clientes'),
           enlace(puedeGestionarCatalogos, 'Proveedores', '/proveedores'),
+          // Lectura de Admin y Supervisor (Politicas.LecturaDePersonal): el Supervisor ve la pantalla
+          // en solo lectura, sin el resto de Administración.
+          enlace(puedeVerPersonal, 'Personal', '/personal'),
         ],
       },
       {

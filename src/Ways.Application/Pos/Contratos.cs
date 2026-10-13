@@ -45,13 +45,15 @@ public sealed record PrecioDeListaDeInstantanea(
 /// Un artículo dentro de <see cref="InstantaneaDePos"/>: identidad, códigos, IVA y su precio en
 /// cada lista resuelta (<see cref="PreciosPorLista"/>, ascendente por lista). Un artículo sin
 /// precio vigente en una lista no tiene entrada para esa lista; sin precio en ninguna, el artículo
-/// no viaja (online ya rechazaría <c>articulo_sin_precio_vigente</c>). <see cref="UnidadVenta"/>
+/// no viaja (online ya rechazaría <c>articulo_sin_precio_vigente</c>), salvo el artículo por importe (<see cref="UnidadVenta.Importe"/>): viaja siempre con
+/// <see cref="PreciosPorLista"/> vacío, porque se vende por el monto que tipea el cajero y no por una lista. <see cref="UnidadVenta"/>
 /// le dice al carrito offline si la línea admite fracciones; es parte del contenido de la
 /// etiqueta de <see cref="InstantaneaDePos"/>, así que un dispositivo con una instantánea anterior
 /// recibe el cambio como contenido nuevo. <see cref="IdFamilia"/> le permite al carrito sumar las
 /// cantidades de una familia; ausente si el artículo no tiene. <c>IdArea</c>,
 /// <c>EsProducto</c> y <c>ControlaLote</c> quedan afuera: el servidor los resuelve del artículo
 /// fresco al sincronizar (<c>ServicioDeVentas.MaterializarItems</c>), nunca del request.
+/// <see cref="TeclaAtajo"/> es la tecla de función del artículo por importe; ausente si no tiene.
 /// </summary>
 public sealed record ArticuloDeInstantanea(
     int IdArticulo,
@@ -64,7 +66,9 @@ public sealed record ArticuloDeInstantanea(
     UnidadVenta UnidadVenta,
     IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TeclaAtajo? TeclaAtajo = null);
 
 /// <summary>
 /// Un cliente visible para el punto de venta: activo y compartido o de la empresa del punto de
@@ -184,10 +188,12 @@ public sealed record SolicitudDeRendicionDeCola(string CodigoTipoComprobante, lo
 /// <summary>Recorte de <c>MedioPagoListado</c> (catálogo genérico) a lo que el checkout offline
 /// necesita para armar <c>PagoDeVenta</c> y decidir vuelto/referencia sin ida y vuelta — mismo
 /// criterio que <c>ComprobanteListado</c> vs. el detalle completo: nunca <c>IdEmpresa</c>/
-/// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee.</summary>
+/// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee. <c>PorcentajeFacturacion</c> sí viaja, para que
+/// la copia local del dispositivo lo conserve; hoy ningún consumidor lo lee.</summary>
 public sealed record MedioPagoDeInstantanea(
     int IdMedioPago,
     string Nombre,
     ComportamientoMedioPago Comportamiento,
     bool AdmiteVuelto,
-    bool RequiereReferencia);
+    bool RequiereReferencia,
+    decimal PorcentajeFacturacion);

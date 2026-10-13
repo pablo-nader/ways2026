@@ -5,6 +5,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 
@@ -30,6 +31,11 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
             t.HasCheckConstraint(
                 "ck_gastos_caja_turno_requiere_turno",
                 "origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL");
+
+            // Un gasto nacido de un pago de personal es siempre un sueldo.
+            t.HasCheckConstraint(
+                "ck_gastos_movimiento_personal_es_sueldo",
+                "id_movimiento_personal IS NULL OR categoria = 'sueldos'");
         });
 
         builder.HasKey(g => g.Id).HasName("pk_gastos");
@@ -82,6 +88,8 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         // diferida de doc-10:426-434): columna + FK compuesta aterrizan juntas en esta migración.
         builder.Property(g => g.IdComprobanteCompra).HasColumnName("id_comprobante_compra");
 
+        builder.Property(g => g.IdMovimientoPersonal).HasColumnName("id_movimiento_personal");
+
         builder.Property(g => g.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(g => g.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(g => g.DeletedAt).HasColumnName("deleted_at");
@@ -94,6 +102,7 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         builder.HasIndex(g => new { g.IdPuntoVenta, g.IdTenant, g.Fecha }).HasDatabaseName("ix_gastos_punto_venta_fecha");
         builder.HasIndex(g => new { g.IdProveedor, g.IdTenant }).HasDatabaseName("ix_gastos_proveedor");
         builder.HasIndex(g => new { g.IdComprobanteCompra, g.IdTenant }).HasDatabaseName("ix_gastos_comprobante_compra");
+        builder.HasIndex(g => new { g.IdMovimientoPersonal, g.IdTenant }).HasDatabaseName("ix_gastos_movimiento_personal");
 
         // Índices de soporte de FK (evitan el índice implícito PascalCase de EF, misma trampa
         // que documenta ComprobanteVentaConfiguration).
@@ -147,6 +156,13 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
             .HasForeignKey(g => new { g.IdComprobanteCompra, g.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_gastos_comprobante_compra")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<MovimientoPersonal>()
+            .WithMany()
+            .HasForeignKey(g => new { g.IdMovimientoPersonal, g.IdTenant })
+            .HasPrincipalKey(m => new { m.Id, m.IdTenant })
+            .HasConstraintName("fk_gastos_movimiento_personal")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Area>()

@@ -20,8 +20,8 @@ type Truncado = { recibidos: number; total: number }
 
 /**
  * Buscador de artículo de una fila del editor de componentes. Busca contra `/api/articulos` (sin catálogo completo en
- * memoria) y deja afuera lo que no puede ser componente (los artículos inactivos); los que se venden por peso se ofrecen y se
- * rotulan. El filtro es del cliente y solo ve la página que llegó: si el servidor dice que hay más resultados, lo avisa en
+ * memoria) y deja afuera lo que no puede ser componente (los artículos inactivos y los que se venden por importe); los que
+ * se venden por peso se ofrecen y se rotulan. El filtro es del cliente y solo ve la página que llegó: si el servidor dice que hay más resultados, lo avisa en
  * vez de afirmar que no hay ninguno. Búsqueda generacional: una respuesta tardía de una búsqueda anterior, o de una que se
  * superó al elegir, no pisa los resultados (`react-async-state` regla 2).
  *
@@ -58,7 +58,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
     setBuscando(true)
     setError('')
     try {
-      const pagina = await clienteDeArticulos.listar(termino, false)
+      const pagina = await clienteDeArticulos.listar(termino, false, undefined, { soloVendibles: true })
       if (generacionRef.current !== generacion) return
       const elegibles = pagina.items.filter(esArticuloElegibleParaCombo)
       setResultados(elegibles)
@@ -164,7 +164,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
       </div>
       {error && <div className="alert alert-danger py-1 px-2 small mt-1 mb-0">{error}</div>}
       {buscado && resultados.length === 0 && truncado === null && (
-        <div className="form-text">No hay artículos activos que coincidan.</div>
+        <div className="form-text">No hay artículos activos, por unidad o por peso, que coincidan.</div>
       )}
       {buscado && resultados.length === 0 && truncado !== null && (
         <div className="form-text">Ninguno de los resultados mostrados puede ser componente.</div>
@@ -205,7 +205,7 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
       {ocultos > 0 && (
         <div className="form-text">
           {ocultos === 1 ? 'Se ocultó 1 resultado' : `Se ocultaron ${ocultos} resultados`} de los mostrados: solo los artículos
-          activos pueden ser componentes.
+          activos que se venden por unidad o por peso pueden ser componentes.
         </div>
       )}
     </div>

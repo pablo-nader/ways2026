@@ -160,6 +160,7 @@ const LISTADO: ComboListado[] = [
     precio: 1,
     idEmpresa: 77,
     activo: true,
+    disponibleOnline: true,
     componentes: [{ idArticulo: 1, idFamilia: null, nombre: 'A', cantidad: 1, disponible: true }],
   },
   {
@@ -169,6 +170,7 @@ const LISTADO: ComboListado[] = [
     precio: 1,
     idEmpresa: null,
     activo: false,
+    disponibleOnline: true,
     componentes: [{ idArticulo: 1, idFamilia: null, nombre: 'A', cantidad: 1, disponible: true }],
   },
   {
@@ -178,6 +180,7 @@ const LISTADO: ComboListado[] = [
     precio: 2,
     idEmpresa: 4,
     activo: true,
+    disponibleOnline: true,
     componentes: [
       { idArticulo: 1, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
       { idArticulo: null, idFamilia: 9, nombre: null, cantidad: 2, disponible: false },
@@ -190,6 +193,7 @@ const LISTADO: ComboListado[] = [
     precio: 5000,
     idEmpresa: null,
     activo: true,
+    disponibleOnline: true,
     componentes: [
       { idArticulo: 1, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
       { idArticulo: null, idFamilia: 9, nombre: 'Gaseosas', cantidad: 2, disponible: true },

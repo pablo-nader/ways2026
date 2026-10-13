@@ -113,6 +113,25 @@ const REPORTES: Resumen = {
     },
   ],
 }
+/** Lo mismo que `REPORTES` más la configuración de cuentas de tesorería, que es solo del Admin. */
+const REPORTES_DE_ADMIN: Resumen = {
+  grupo: 'Reportes',
+  secciones: [
+    {
+      enlaces: [
+        ['Tablero', '/tablero'],
+        ['Histórico de cajas', '/caja/historico'],
+        ['Tesorería', '/caja/tesoreria'],
+        ['Cuentas de tesorería', '/caja/cuentas-tesoreria'],
+        ['Existencias', '/reportes/existencias'],
+        ['Vencimientos', '/reportes/stock/vencimientos'],
+        ['Reposición', '/reportes/stock/reposicion'],
+        ['Artículos', '/reportes/articulos'],
+        ['Libro IVA', '/reportes/libro-iva'],
+      ],
+    },
+  ],
+}
 const ADMINISTRACION_DE_ADMIN: Resumen = {
   grupo: 'Administración',
   secciones: [
@@ -137,6 +156,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
       enlaces: [
         ['Clientes', '/clientes'],
         ['Proveedores', '/proveedores'],
+        ['Personal', '/personal'],
       ],
     },
     {
@@ -165,6 +185,11 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
     },
   ],
 }
+// Personal es de lectura para Supervisor: es lo único de Administración que ve.
+const ADMINISTRACION_DE_SUPERVISOR: Resumen = {
+  grupo: 'Administración',
+  secciones: [{ titulo: 'Terceros', enlaces: [['Personal', '/personal']] }],
+}
 const ADMINISTRACION_DE_ROOT: Resumen = {
   grupo: 'Administración',
   secciones: [
@@ -188,8 +213,15 @@ describe('construirMenu', () => {
     expect(resumir(construirMenu(usuarioConRol(ROL.Vendedor)))).toEqual([VENDER, CAJA, VENTAS, COMPRAS])
   })
 
-  it('Supervisor: lo mismo que Vendedor más Reportes', () => {
-    expect(resumir(construirMenu(usuarioConRol(ROL.Supervisor)))).toEqual([VENDER, CAJA, VENTAS, COMPRAS, REPORTES])
+  it('Supervisor: lo mismo que Vendedor más Reportes y Personal en solo lectura', () => {
+    expect(resumir(construirMenu(usuarioConRol(ROL.Supervisor)))).toEqual([
+      VENDER,
+      CAJA,
+      VENTAS,
+      COMPRAS,
+      REPORTES,
+      ADMINISTRACION_DE_SUPERVISOR,
+    ])
   })
 
   it('Admin: todo, con Administración completa salvo Tenants, Nuevo tenant y Dominios', () => {
@@ -198,7 +230,7 @@ describe('construirMenu', () => {
       CAJA,
       VENTAS,
       COMPRAS_DE_ADMIN,
-      REPORTES,
+      REPORTES_DE_ADMIN,
       ADMINISTRACION_DE_ADMIN,
     ])
   })
@@ -223,11 +255,12 @@ describe('construirMenu', () => {
     expect(principales).toEqual([])
   })
 
-  it.each([
-    ['Vendedor', ROL.Vendedor],
-    ['Supervisor', ROL.Supervisor],
-  ])('%s: no tiene Administración', (_nombre, rolId) => {
-    expect(construirMenu(usuarioConRol(rolId)).some((entrada) => entrada.etiqueta === 'Administración')).toBe(false)
+  it('Vendedor: no tiene Administración', () => {
+    expect(construirMenu(usuarioConRol(ROL.Vendedor)).some((entrada) => entrada.etiqueta === 'Administración')).toBe(false)
+  })
+
+  it('Root no ve Personal: opera tenants, no un negocio', () => {
+    expect(etiquetas(construirMenu(usuarioConRol(ROL.Root)))).not.toContain('Personal')
   })
 
   it('Caja declara exactamente las rutas que la dejan activa', () => {
@@ -253,6 +286,7 @@ describe('esRutaActiva', () => {
   const casos: [string, string[]][] = [
     ['/caja/historico', ['Reportes']],
     ['/caja/tesoreria', ['Reportes']],
+    ['/caja/cuentas-tesoreria', ['Reportes']],
     ['/caja', ['Caja']],
     ['/caja/cierre', ['Caja']],
     ['/caja/turnos/7/z', ['Caja']],
@@ -261,6 +295,8 @@ describe('esRutaActiva', () => {
     ['/articulos/5', ['Administración']],
     ['/familias/7', ['Administración']],
     ['/familias/nueva', ['Administración']],
+    ['/personal', ['Administración']],
+    ['/personal/3/cuenta', ['Administración']],
     ['/', []],
     ['/cajas', []],
   ]
