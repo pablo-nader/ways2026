@@ -156,6 +156,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("POST", "/api/fiscal/comprobantes/"),
         ("POST", "/api/fiscal/comprobantes/{id:int}/reintentar"),
         ("POST", "/api/fiscal/facturaciones/{id:int}/procesar"),
+        ("POST", "/api/fiscal/facturaciones/procesar"),
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
         ("POST", "/api/plataforma/tenants/"),

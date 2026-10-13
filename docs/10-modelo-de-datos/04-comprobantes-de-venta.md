@@ -445,8 +445,8 @@ decisión en `pendiente` y mueve el acumulado.
 
 **Emisión del espejo (T5a): implementada.** `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync(idFacturacion)`, expuesto como
 `POST /api/fiscal/facturaciones/{id}/procesar` (política `OperacionDePos`, sin cuerpo; una decisión inexistente o de otro tenant
-es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador por lote, la espera entre intentos y la emisión
-en línea desde la venta son T5b y T5c.
+es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador por lote y la espera entre intentos son T5b
+(ver "Procesador por lote (T5b)" más abajo); la emisión en línea desde la venta es T5c.
 
 - **Qué escribe el espejo.** Una fila de `comprobantes_venta` con `id_venta_origen` = la venta, `resultado_fiscal` `pendiente`
   al nacer, sin turno, `fecha` = el instante de emisión (no el de la venta), empleado, cliente y subtotales de la venta, totales
@@ -537,8 +537,8 @@ en línea desde la venta son T5b y T5c.
   se refresca la fecha, no se pide un CAE nuevo y se anota el intento y la espera. Esto también vale para el reintento de la emisión
   directa (`ServicioDeFacturacionFiscal.ReintentarAsync`): con un "no encontrado" real se comporta como antes; con otro error de la
   consulta ahora corta con `503` y deja el comprobante pendiente, en vez de tratarlo como inexistente y pedir un CAE nuevo. Ante
-  un `600` la consulta tiene el mismo tratamiento que la solicitud (`ConsultarConReintentoDeTicketAsync`): invalida el ticket
-  cacheado, obtiene uno fresco y consulta una sola vez más, y el pedido que siga en la misma llamada usa el ticket fresco; un
+  un `600` la consulta tiene el mismo tratamiento que la solicitud (`ConsultarConReintentoDeTicketAsync`): descarta el ticket
+  que falló (solo si sigue siendo el cacheado, ver T5b), obtiene uno fresco y consulta una sola vez más, y el pedido que siga en la misma llamada usa el ticket fresco; un
   segundo `600` queda como no definitivo. Vale para `ReintentarAsync`, para el paso C del espejo y para la consulta previa a
   liberar un número tras un `arca_rechazo`.
 - **Fecha (regla 2).** El espejo nace con la fecha de emisión (no la de la venta). Si hay que volver a pedir porque ARCA no tiene el
@@ -566,11 +566,10 @@ en línea desde la venta son T5b y T5c.
   verifica que la venta siga emitida antes de insertarlo, así que o el espejo ya está comiteado y se ve, o la anulación gana y no se
   crea ninguno. Un espejo `rechazado` que quedó en pie no cuenta, y una venta con la decisión `pendiente` y sin espejo se anula
   como siempre. La nota de crédito es T8.
-- **Qué se registra pero todavía no se aplica.** `proximo_intento_en` se escribe (30 s duplicándose hasta 10 min; 5 min hasta
-  4 h para una compuerta) pero nada lo lee: este servicio procesa la decisión que se le pide aunque la espera no haya vencido, y
-  el procesador por lote (T5b) es el que la va a respetar. Tampoco hay todavía quién llame a este endpoint por sí solo.
-- **Limitaciones aceptadas.** No hay timeout HTTP configurado para WSFE: una llamada colgada sostiene el lock de la serie
-  mientras dure (T5b). La autorización es `OperacionDePos`, sin una política más angosta. Una lectura idempotente recalcula el QR y
+- **La espera registrada.** `proximo_intento_en` se escribe (30 s duplicándose hasta 10 min; 5 min hasta 4 h para una
+  compuerta). Este servicio y su endpoint procesan la decisión que se les pide aunque la espera no haya vencido; la respeta el
+  procesador por lote (T5b). Tampoco hay todavía quién llame a ninguno de los dos endpoints por sí solo.
+- **Limitaciones aceptadas.** La autorización es `OperacionDePos`, sin una política más angosta. Una lectura idempotente recalcula el QR y
   el punto de venta desde la configuración actual. Al volver a pedir un espejo preexistente, la letra se recalcula desde la
   configuración actual y no desde la del momento en que se creó. Un espejo `rechazado` que quedó por la guarda del contador detiene la
   numeración con el error `10016` de ARCA hasta que alguien la reconcilie (no bloquea la serie por sí mismo) y ocupa el lugar
@@ -582,6 +581,67 @@ en línea desde la venta son T5b y T5c.
   transporte) está probado SOLO contra espías y fixtures locales; nunca se ejerció contra un ARCA real ni contra homologación. El
   código `602` como "comprobante inexistente" viene de esos fixtures y de la documentación de WSFE y está sin verificar contra el
   servicio real: hay que confirmarlo en homologación antes de depender de él.
+
+**Procesador por lote (T5b): implementado.** `ProcesadorDeFacturacionesPorLote.ProcesarLoteAsync`, expuesto como
+`POST /api/fiscal/facturaciones/procesar` (política `OperacionDePos`). Cada decisión se procesa por el mismo
+`ServicioDeFacturacionDeVentas.ProcesarDecisionAsync` de T5a, con sus pasos, locks y lista blanca; el lote solo agrega la
+selección, el orden, la espera, el presupuesto de tiempo y el resumen. **Todavía nada lo llama** (el POS lo hará en T6) y todo lo
+que se dice de ARCA está probado solo contra espías, no contra homologación.
+
+- **Pedido.** `{ "idPuntoVenta": 3, "maximo": 10 }`. `idPuntoVenta` es obligatorio (si falta, `400 solicitud_invalida`); un
+  punto de venta inexistente o de otro tenant es `404` ANTES de validar `maximo`. `maximo` ausente vale 10; fuera de 1..25 es
+  `400 solicitud_invalida` (se rechaza, no se recorta); un `maximo` que no es entero lo rechaza el binding (`400 cuerpo_invalido`).
+- **Selección.** Candidatas: decisiones `pendiente` de ventas de ESE punto de venta, sin espejo (cualquiera sea su estado), cuya
+  espera (`proximo_intento_en`) es `NULL` o ya venció (`<=` el reloj del servicio), en orden de id de decisión (las más viejas
+  primero), hasta juntar `maximo` intentos. Una decisión cuya espera no venció no se intenta: ni red ni anotación. El endpoint de
+  una decisión suelta (`/{id}/procesar`) sigue ignorando la espera.
+- **Cabeza de serie.** Un espejo pendiente detiene su serie (punto de venta y tipo fiscal), así que antes de las candidatas el lote
+  procesa las decisiones que tienen un espejo pendiente en el punto de venta (a lo sumo una por serie), las más viejas primero:
+  se consulta a ARCA antes de volver a pedir, como siempre. Los cabezas no cuentan para `maximo`, para que un espejo trabado no
+  deje sin cupo al resto. Si la espera de ese cabeza no venció, ninguna candidata de su serie se intenta en la llamada
+  (`cabeza_en_espera`: cero llamadas y sin penalidad); si se intentó y su espejo sigue pendiente, tampoco (`cabeza_pendiente`).
+- **Cómo se sabe la serie de una candidata.** Se deduce SIN red con lo mismo que usa el servicio para elegir el tipo fiscal: la
+  condición fiscal del emisor (la de la empresa del punto de venta) cruzada con la del cliente de la venta
+  (`ResolvedorDeLetraComprobante`) y el código de la factura `F{letra}`. Es una segunda copia de esa regla, no una llamada al
+  servicio: si divergieran, la candidata se intenta igual y la serie se aprende del resultado. Además, desde que una decisión
+  responde `serie_ocupada` o `serie_bloqueada` no se intenta otra candidata de esa serie en la misma llamada. Las candidatas
+  saltadas no gastan cupo. Si no se puede deducir la serie (emisor sin condición, cliente sin condición reconocida), la candidata
+  se intenta y una serie "desconocida" bloqueada saltea a las demás candidatas desconocidas.
+- **Aislamiento.** Si una decisión lanza, el lote la informa como `pendiente` con `error_inesperado: <tipo>` (o el código de
+  dominio) y sigue con la siguiente; el lote no lanza por una decisión. Lo que no se pudo intentar o no se resolvió sigue
+  pendiente y sin penalidad: el lote solo anota lo que anota `ProcesarDecisionAsync` (compuertas, falta de respuesta definitiva).
+- **Presupuesto.** 20 s en total (`Ways:Fiscal:PresupuestoDeLoteSegundos`, valor ausente o no positivo = 20), con un
+  `CancellationTokenSource` propio: no usa el token de la solicitud, así que un cliente que corta la conexión no deja el lote a
+  medias. Un corte detiene el lote (`cortadoPorPresupuesto: true`) y NO es un fallo de la decisión que se estaba procesando: el
+  servicio solo anota un intento cuando su token sigue vivo, y todas las transacciones del paso en curso se deshacen (un espejo
+  ya creado queda `pendiente` con su número, y la llamada siguiente lo consulta antes de pedir). La decisión cortada no aparece en
+  `resultados`. Límite conocido: una decisión cuya llamada a ARCA siempre agota el presupuesto no se posterga y se vuelve a
+  intentar, y a cortar, en cada llamada.
+- **Respuesta.** `{ emitidas, rechazadas, canceladas, pendientesRestantes, cortadoPorPresupuesto, seriesBloqueadas[],
+  resultados[] }`. `resultados` trae, en el orden en que se procesaron, `{ idFacturacion, idComprobanteVenta, fiscal }` con el
+  mismo `EstadoFiscalDeVenta` de la venta (también para lo que quedó `pendiente` con su error, p. ej. `serie_ocupada`); los tres
+  contadores salen de ese estado, así que una decisión ya resuelta por otra llamada igual cuenta. `pendientesRestantes` son las
+  decisiones `pendiente` del punto de venta al terminar, estén o no vencidas. `seriesBloqueadas` trae `{ codigoAfip, motivo }` con
+  motivo `cabeza_en_espera`, `cabeza_pendiente`, `serie_ocupada` o `serie_bloqueada` (`codigoAfip` es `null` si no se pudo saber la
+  serie). Las lecturas son del punto de venta pedido y de su tenant (RLS); nada de otros puntos de venta ni tenants aparece.
+- **Concurrencia.** Dos lotes del mismo punto de venta no duplican nada: la serie se toma con `FOR UPDATE SKIP LOCKED` y la decisión
+  se relee bajo su lock en cada paso. El que llega mientras el otro sostiene la serie la ve ocupada (`serie_ocupada`) y no
+  consulta ni pide nada; si llega cuando la decisión ya se resolvió, devuelve su estado sin llamar a ARCA.
+- **Timeout de las llamadas a ARCA.** `Ways:Fiscal:TimeoutDeLlamadaSegundos` (por defecto 10) es el `Timeout` del `HttpClient` de
+  WSAA y de WSFE: vale por cada ida y vuelta, y un reintento de transporte de `ClienteWsfe` (3 intentos) es otra. Un timeout NO es
+  un rechazo ni una cancelación del llamador: con el token del llamador sin cancelar, `ClienteWsfe` lo trata como falla de
+  transporte y, agotados los intentos, lanza `arca_no_definitivo` (503); `ClienteWsaa` lo traduce al mismo código. El resultado es
+  no definitivo: el espejo sigue `pendiente` con su número y se anota el intento. Con el token cancelado (el presupuesto del
+  lote) la cancelación se propaga tal cual, sin reintentar y sin contar contra el circuito. **Cambia también la emisión directa
+  (19a):** antes una llamada colgada esperaba los 100 s por defecto de `HttpClient` por intento; ahora corta a los 10 s y la
+  falla de WSAA por timeout es `arca_no_definitivo` (503) en vez de una excepción de transporte sin traducir. Con 3 intentos y su
+  espera, una llamada que siempre se cuelga puede sostener el lock de la serie del orden de 30 s: más que el presupuesto del lote.
+- **Invalidación del ticket de acceso (comparar y descartar).** `IRepositorioDeTicketDeAcceso.InvalidarAsync(clave, fallido)` solo
+  quita el ticket cacheado si es el que falló (igualdad por valor del ticket). Antes quitaba el que estuviera: dos llamadas que
+  recibían un `600` con el mismo ticket viejo podían descartar el fresco que la primera acababa de firmar, y WSAA no emite uno nuevo
+  mientras hay uno vigente. Ahora, si el ticket ya fue reemplazado, la invalidación no hace nada y la llamada reutiliza el fresco
+  por `ObtenerOFirmarAsync`; en total se firma una sola vez. `SolicitarCaeConReintentoDeTicketAsync` y
+  `ConsultarConReintentoDeTicketAsync` pasan el ticket con el que ARCA respondió `600`.
 
 ### Presupuestos (Etapa 17)
 

@@ -44,9 +44,10 @@ public sealed class RepositorioEnMemoriaDeTicketDeAcceso(IRelojDelSistema reloj)
     /// <summary>judgment 19a-slice-5 ronda 2 juez A — WARNING: solo remueve la entrada del cache;
     /// nunca toca <see cref="_cerrojos"/> — el mismo <see cref="SemaphoreSlim"/> de la clave sigue
     /// sirviendo de single-flight para el próximo <see cref="ObtenerOFirmarAsync"/>.</summary>
-    public Task InvalidarAsync(ClaveDeTicket clave, CancellationToken ct)
+    public Task InvalidarAsync(ClaveDeTicket clave, TicketDeAcceso fallido, CancellationToken ct)
     {
-        _tickets.TryRemove(clave, out _);
+        // Comparar y descartar atómico: solo quita la entrada si su valor es el ticket fallido (igualdad por valor del record).
+        _tickets.TryRemove(new KeyValuePair<ClaveDeTicket, TicketDeAcceso>(clave, fallido));
         return Task.CompletedTask;
     }
 

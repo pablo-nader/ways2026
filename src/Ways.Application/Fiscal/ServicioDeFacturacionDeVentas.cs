@@ -44,8 +44,10 @@ namespace Ways.Application.Fiscal;
 /// Todo lo demás (transporte, falla SOAP, ticket de acceso, numeración desincronizada, un error de la consulta) deja el espejo
 /// pendiente con su número.
 ///
-/// La espera entre intentos (<c>proximo_intento_en</c>) solo se REGISTRA: nada la lee todavía. La respetará el procesador por
-/// lote; este servicio procesa la decisión que se le pide aunque su espera no haya vencido.
+/// La espera entre intentos (<c>proximo_intento_en</c>) se REGISTRA acá y la respeta el procesador por lote
+/// (<see cref="ProcesadorDeFacturacionesPorLote"/>); este servicio procesa la decisión que se le pide aunque su espera no haya
+/// vencido. Si el token que recibe se cancela (el presupuesto del lote), el corte no se anota como intento: todos los registros de
+/// fallo exigen que el token siga vivo.
 /// </summary>
 public class ServicioDeFacturacionDeVentas(
     IWaysDbContext db,
@@ -1004,7 +1006,7 @@ public class ServicioDeFacturacionDeVentas(
     }
 
     /// <summary>Suma un intento fallido a la decisión pendiente y registra cuándo volver a intentar:
-    /// <c>espera × 2^intentos</c> con tope, contada desde el reloj del servicio. Solo se registra, nadie la lee todavía.
+    /// <c>espera × 2^intentos</c> con tope, contada desde el reloj del servicio. La lee el procesador por lote, no este servicio.
     /// Devuelve la cantidad de intentos, o <c>null</c> si la decisión ya no estaba pendiente.</summary>
     private async Task<int?> EscribirFalloAsync(
         int idFacturacion, string descripcion, TimeSpan espera, TimeSpan tope, CancellationToken ct)

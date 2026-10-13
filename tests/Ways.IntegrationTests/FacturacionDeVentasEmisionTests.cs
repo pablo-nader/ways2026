@@ -50,7 +50,7 @@ namespace Ways.IntegrationTests;
 /// <c>ReintentarAsync</c>. Los pasos de una misma llamada se pausan con interceptores de transacción, sin esperas por tiempo.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
@@ -117,6 +117,10 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         public Func<HttpRequestMessage, Task<HttpResponseMessage>> Solicitar { get; set; } =
             _ => throw new InvalidOperationException("EspiaWsfe.Solicitar no configurado.");
 
+        /// <summary>Si está, atiende los <c>FECAESolicitar</c> con el token del pedido (el que cancela el HttpClient por su timeout o
+        /// el llamador) en lugar de <see cref="Solicitar"/>.</summary>
+        public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? SolicitarConToken { get; set; }
+
         public Func<HttpRequestMessage, Task<HttpResponseMessage>> Consultar { get; set; } =
             _ => throw new InvalidOperationException("EspiaWsfe.Consultar no configurado.");
 
@@ -166,7 +170,7 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
                     _cuerpos.Add(cuerpo);
                 }
 
-                return await Solicitar(request);
+                return SolicitarConToken is { } conToken ? await conToken(request, ct) : await Solicitar(request);
             }
 
             if (accion.Contains("FECompConsultar", StringComparison.Ordinal))

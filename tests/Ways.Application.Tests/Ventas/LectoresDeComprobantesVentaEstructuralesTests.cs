@@ -85,6 +85,9 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/CuentaCorriente/LectorDeConsumosReliquidables.cs",
                 "var items = await db.ItemsComprobanteVenta")] =
                 (1, PorId),
+            [("Ways.Application/Fiscal/ProcesadorDeFacturacionesPorLote.cs",
+                "FROM comprobantes_venta e")] =
+                (1, "Busca los espejos pendientes de UN punto de venta: tiene que verlos, un espejo pendiente detiene su serie."),
             [("Ways.Application/Fiscal/ServicioDeDecisionDeFacturacion.cs",
                 "\"FROM pagos_comprobante p \" +")] =
                 (1, "Pagos de UNA venta, ya bloqueada por id y que no es un espejo: de ahí sale lo cobrado por medio."),

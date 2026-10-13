@@ -250,8 +250,10 @@ public sealed class ClienteWsfe : IClienteWsfe
                 RegistrarExitoDelCircuito();
                 return leida.Cuerpo!;
             }
-            catch (Exception ex) when (EsFallaTransitoria(ex))
+            catch (Exception ex) when (EsFallaTransitoria(ex) && !ct.IsCancellationRequested)
             {
+                // Con el token del llamador sin cancelar, un TaskCanceledException es el timeout del HttpClient: falla de
+                // transporte, no definitiva. Con el token cancelado la cancelación es del llamador y se propaga sin tocar el circuito.
                 // El filtro captura TODOS los intentos, incluido el último — así el fallo cae al
                 // registro del circuito + el ErrorDominio de abajo en vez de propagar la excepción
                 // cruda de transporte. Solo se espera (backoff) si queda otro intento por delante.

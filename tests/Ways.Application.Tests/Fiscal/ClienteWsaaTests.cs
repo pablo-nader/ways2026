@@ -98,6 +98,43 @@ public class ClienteWsaaTests
         Assert.Equal(estadoHttpEsperado, error.EstadoHttp);
     }
 
+    private sealed class HttpMessageHandlerQueEspera : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("No llega: la espera solo termina cancelada.");
+        }
+    }
+
+    [Fact]
+    public async Task UnTimeoutDelHttpClientEsUnaRespuestaNoDefinitivaYNoUnaCancelacion()
+    {
+        using var http = new HttpClient(new HttpMessageHandlerQueEspera())
+        {
+            BaseAddress = new Uri("https://wsaa.mock.test/"), Timeout = TimeSpan.FromMilliseconds(50)
+        };
+        var cliente = new ClienteWsaa(http, new GeneradorDeTra(new RelojDeReferencia()));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.ObtenerTicketAsync(
+            new SolicitudDeTicket(Clave, CertificadoDePrueba.Generar()), CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
+        Assert.Equal(503, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task LaCancelacionDelLlamadorSePropagaComoCancelacion()
+    {
+        using var http = new HttpClient(new HttpMessageHandlerQueEspera()) { BaseAddress = new Uri("https://wsaa.mock.test/") };
+        var cliente = new ClienteWsaa(http, new GeneradorDeTra(new RelojDeReferencia()));
+        using var cancelacion = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cliente.ObtenerTicketAsync(
+            new SolicitudDeTicket(Clave, CertificadoDePrueba.Generar()), cancelacion.Token));
+    }
+
     private sealed class RelojDeReferencia : Ways.Application.Abstracciones.IRelojDelSistema
     {
         public DateTimeOffset Ahora => new(2026, 1, 15, 10, 0, 0, TimeSpan.FromHours(-3));

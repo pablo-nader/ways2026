@@ -95,6 +95,13 @@ public static class FiscalEndpoints
             "Procesa la decisión de facturar una venta: emite su factura espejo contra ARCA. Idempotente: una decisión " +
             "ya resuelta devuelve su estado sin llamar a ARCA.");
 
+        facturaciones.MapPost("/procesar", async (
+            ProcesadorDeFacturacionesPorLote procesador, SolicitudDeLoteDeFacturacion solicitud, CancellationToken ct) =>
+            Results.Ok(await procesador.ProcesarLoteAsync(solicitud, ct)))
+        .WithSummary(
+            "Procesa en lote las decisiones de facturar pendientes de un punto de venta (hasta 25, 10 por defecto), respetando " +
+            "la espera entre intentos y procesando primero el espejo pendiente de cada serie. Con presupuesto propio de tiempo.");
+
         return app;
     }
 }

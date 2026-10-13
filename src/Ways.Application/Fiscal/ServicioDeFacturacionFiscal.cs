@@ -417,7 +417,7 @@ public class ServicioDeFacturacionFiscal(
         catch (ErrorDominio primerIntento) when (primerIntento.Codigo == "ticket_de_acceso_invalido")
         {
             var claveDeTicket = new ClaveDeTicket(empresa.Id, ambiente, ServicioWsfe);
-            await repositorioDeTicket.InvalidarAsync(claveDeTicket, ct);
+            await repositorioDeTicket.InvalidarAsync(claveDeTicket, ticket, ct);
             var ticketFresco = await repositorioDeTicket.ObtenerOFirmarAsync(
                 claveDeTicket, token => FirmarTicketNuevoAsync(empresa, ambiente, token), ct);
 
@@ -445,7 +445,7 @@ public class ServicioDeFacturacionFiscal(
             // single-flight elevado en esta misma slice), nunca firmando directo por fuera del
             // cerrojo: dos emisiones concurrentes que pisan el mismo TA inválido comparten UNA sola
             // re-firma en vez de dispararla cada una por su cuenta.
-            await repositorioDeTicket.InvalidarAsync(claveDeTicket, ct);
+            await repositorioDeTicket.InvalidarAsync(claveDeTicket, ticket, ct);
             var ticketFresco = await repositorioDeTicket.ObtenerOFirmarAsync(
                 claveDeTicket, token => FirmarTicketNuevoAsync(empresa, ambiente, token), ct);
 

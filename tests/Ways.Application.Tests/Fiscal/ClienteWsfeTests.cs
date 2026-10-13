@@ -219,6 +219,59 @@ public class ClienteWsfeTests
         Assert.Equal(solicitudesTrasElPrimerFallo, handler.Solicitudes); // CERO requests nuevos
     }
 
+    // ---- Timeout de la llamada vs. cancelación del llamador ------------------------------------
+
+    private sealed class HttpMessageHandlerQueEspera : HttpMessageHandler
+    {
+        public int Solicitudes { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Solicitudes++;
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("No llega: la espera solo termina cancelada.");
+        }
+    }
+
+    [Fact]
+    public async Task UnTimeoutDelHttpClientEsUnaFallaDeTransporteNoDefinitivaQueSeReintenta()
+    {
+        var handler = new HttpMessageHandlerQueEspera();
+        var cliente = new ClienteWsfe(
+            new HttpClient(handler) { BaseAddress = new Uri("https://wsfe.mock.test/"), Timeout = TimeSpan.FromMilliseconds(50) },
+            new RelojFijo(new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero)),
+            new EsperadorFalso(), 3, TimeSpan.FromMilliseconds(1), 10, TimeSpan.FromMinutes(1));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
+        Assert.Equal(503, error.EstadoHttp);
+        Assert.Equal(3, handler.Solicitudes);
+    }
+
+    [Fact]
+    public async Task LaCancelacionDelLlamadorSePropagaSinReintentarNiTocarElCircuito()
+    {
+        var handler = new HttpMessageHandlerQueEspera();
+        var cliente = new ClienteWsfe(
+            new HttpClient(handler) { BaseAddress = new Uri("https://wsfe.mock.test/") },
+            new RelojFijo(new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero)),
+            new EsperadorFalso(), 3, TimeSpan.FromMilliseconds(1), 1, TimeSpan.FromMinutes(1));
+        using var cancelacion = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, cancelacion.Token));
+        Assert.Equal(1, handler.Solicitudes);
+
+        // El circuito (umbral 1) quedó cerrado: una llamada siguiente sale a la red en vez de rebotar con el circuito abierto.
+        using var otraCancelacion = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, otraCancelacion.Token));
+        Assert.Equal(2, handler.Solicitudes);
+    }
+
     // ---- FECompConsultar / FECompUltimoAutorizado ----------------------------------------------
 
     [Fact]
