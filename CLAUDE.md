@@ -6,7 +6,7 @@ ERP/POS rewrite (multi-tenant SaaS). Stack: .NET 10 (`src/Ways.Api|Domain|Infras
 
 - `docs/01-features-existentes.md` — functional parity contract (audited against the legacy code).
 - `docs/09-multi-tenancy.md` — tenancy hierarchy, scoping rules, isolation layers.
-- `docs/10-modelo-de-datos.md` — the definitive schema. Every new table must match its scoping category and naming convention (`id_x` PKs, Spanish snake_case plurals).
+- `docs/10-modelo-de-datos.md` — the definitive schema. Every new table must match its scoping category and naming convention (`id_x` PKs, Spanish snake_case plurals). It is an index (principles + a section → file → tables map); the content lives in `docs/10-modelo-de-datos/`, one file per section. Read the index, then only the part that holds the table being touched — never the whole folder. New tables go in the matching part and get a row in the index.
 
 ## Database changes
 
@@ -40,10 +40,12 @@ adversarial automated review before it is sent:
 
 1. After generating the commits for a PR slice, run the **judgment-day** protocol
    (`judgment-day` skill): two independent blind review agents judge the diff, verdicts
-   are compared, confirmed issues are fixed, and the diff is re-judged. Iterate until a
-   clean round (no confirmed issues).
-2. Only then create the PR (per `branch-pr` skill). Never open a PR that has not passed a
-   clean judgment-day round.
+   are compared, confirmed issues are fixed, and the fix delta is re-judged. The budget is
+   the skill's: at most two fix rounds and two scoped re-judgments, never reset or extended.
+   A re-judgment sees only the frozen findings plus the fix delta, not the whole diff again.
+2. Create the PR (per `branch-pr` skill) only on `JUDGMENT: APPROVED`. If any confirmed
+   issue remains after round two, the verdict is `ESCALATED`: stop, do not open the PR, and
+   report the remaining findings to the owner for a decision.
 3. Every finished stage or slice ships as a PR automatically, without asking: open it, enable
    auto-merge (main requires green CI) and enable the desktop app's Auto-fix monitor so CI
    failures are resolved without the owner's intervention. Then continue with the next slice.
