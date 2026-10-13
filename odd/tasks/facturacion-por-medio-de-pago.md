@@ -71,7 +71,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   de ARCA revierte fila y número), `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync` en
   dos transacciones, liberación del número ante rechazo, reversión del acumulado, anulación
   bloqueada para ventas facturadas, endpoint de una decisión. Ver "Diseño de T5". Depende de T4.
-- [ ] **T5b — Procesador por lote.** `POST /api/fiscal/facturaciones/procesar`, espera entre
+- [x] **T5b — Procesador por lote.** `POST /api/fiscal/facturaciones/procesar`, espera entre
   intentos, orden por serie, concurrencia. Incluye lo que T5a dejó anotado: tope de tiempo de
   las llamadas a WSFE y que invalidar el ticket de acceso solo descarte el ticket que falló
   (hoy descarta el que esté guardado, y dos llamadas simultáneas pueden pisarse). Depende de T5a.
@@ -320,6 +320,39 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   un espejo `rechazado` por la guarda del número ocupa el lugar del espejo de la venta; una
   compuerta que lanza tras "no encontrado" da 500 sin anotar intento.
 
+- 2026-10-14 — T5b hecha. Ruta: delegada (un escritor, dos rondas de corrección y una
+  reversión). `ProcesadorDeFacturacionesPorLote` y `POST /api/fiscal/facturaciones/procesar`
+  `{ idPuntoVenta, maximo? }` (10 por defecto, 1 a 25; fuera de rango se rechaza). Primero
+  resuelve los espejos en trámite que encabezan cada serie y después las candidatas vencidas,
+  por id; las cabezas no gastan `maximo`. La espera entre intentos ahora se respeta en el
+  lote; el endpoint de una decisión la sigue ignorando.
+  Presupuesto de 20 s sobre un `TimeProvider` inyectado: al vencer no empieza otra decisión;
+  la cortada se posterga 1 min sin contar intento; un error de dominio que llega tarde se
+  anota como intento; una decisión que lanza se anota con un código estable; un fallo del
+  propio lote responde 5xx.
+  ARCA: tope de 8 s por llamada a WSFE y un timeout no se reintenta en la misma llamada
+  (ninguna operación); firma del ticket de acceso con tope propio de 30 s, que no se
+  interrumpe en vuelo; invalidar el ticket solo descarta el que falló.
+  Cambios de comportamiento en la emisión directa (19a): tope de 8 s en vez de 100 s, sin
+  reintento tras un timeout, y la firma no se cancela con la solicitud.
+  Checks: integración completa 4419/4419 sobre el commit de la ronda 2; después, la reversión
+  del tope de la firma (una constante y textos) se verificó con `dotnet build`, aplicación
+  994/994 y un filtro de integración fiscal 134/134; la suite completa final queda al CI.
+  Sin test-first estricto; mutaciones de las tres rondas en rojo, con una sobreviviente
+  equivalente (cortar el lote tras un error tardío) revisada por los jueces.
+  Judgment-day: ronda 1, cuatro advertencias confirmadas (ARCA lento trababa el punto de
+  venta, excepción sin postergar, fallo del lote tragado, tests atados al reloj real),
+  corregidas; re-juicio 1, una advertencia nueva confirmada (firma colgada sin anotar),
+  corregida; re-juicio 2: todo resuelto, sin críticos, pero los dos jueces señalaron que
+  bajar el tope de la firma a 15 s era innecesario y dañino. Se revirtió a 30 s, el valor ya
+  revisado, sin abrir otra ronda. JUDGMENT: APPROVED, con esa reversión posterior no juzgada.
+  Limitaciones aceptadas: cualquier usuario de POS del tenant puede lanzar el lote de otro
+  punto de venta del tenant; un pedido puede durar más que el presupuesto mientras hay una
+  firma en vuelo (del orden del presupuesto más el tope de la firma); las lecturas a ARCA
+  tampoco se reintentan tras un timeout; una cabeza cuya decisión no está pendiente no se
+  puede postergar ni anotar; un fallo del lote pierde de la respuesta lo ya emitido; todo
+  probado contra simuladores. Nada llama al lote todavía (lo hará el POS en T6).
+
 ## Próximo paso
 
-T5b.
+T5c.
