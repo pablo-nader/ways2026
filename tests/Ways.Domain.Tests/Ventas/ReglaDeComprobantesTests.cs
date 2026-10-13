@@ -211,7 +211,7 @@ public class ReglaDeComprobantesTests
         Assert.Equal(400, excepcion.EstadoHttp);
     }
 
-    // ---- ValidarNoEsEspejoFiscal: un espejo no se anula por la vía de ventas -----------------
+    // ---- ValidarAnulacionDeVenta: un espejo no se anula por la vía de ventas -----------------
 
     [Fact]
     public void UnEspejoFiscalNoSeAnulaPorLaViaDeVentas()

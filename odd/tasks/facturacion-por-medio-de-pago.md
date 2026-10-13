@@ -62,7 +62,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   rango), Vitest del descriptor. Ruta: delegada (2+ archivos no triviales).
 - [x] **T2 — `PoliticaDeFacturacionPorMedio`.** Dominio puro. Checks: unitarios sin base
   (0 %, 100 %, mixto, forzado, convergencia sobre N tickets, reversión). Ruta: delegada.
-- [ ] **T3 — Esquema y no doble conteo.** Enlace, `factura_forzada`, las dos tablas, RLS,
+- [x] **T3 — Esquema y no doble conteo.** Enlace, `factura_forzada`, las dos tablas, RLS,
   predicado compartido en reportes y listado. Checks: integración con espejo sembrado,
   guardas estructurales, prueba de mutación del predicado. Ruta: delegada.
 - [ ] **T4 — Decisión al ingerir.** Servicio de decisión, `ForzarFactura` en la solicitud y en
@@ -127,6 +127,32 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   decisión del dueño: cupo mensual, que se implementa en T3.
   PR: pablo-nader/ways2026#412. Las PR #411 y #412 están mergeadas en main.
 
+- 2026-10-13 — T3 hecha. Ruta: delegada (un escritor). Commits: el del esquema y el de
+  corrección que le sigue. Esquema: `comprobantes_venta.id_venta_origen` (FK compuesta a sí
+  misma, UNIQUE parcial, CHECK de espejo fiscal y de espejo sin turno) y `factura_forzada`;
+  `facturaciones_de_venta` (RLS estándar, idempotente por venta); `acumulados_de_facturacion`
+  con PK `(id_empresa, id_medio_pago, periodo)` y `saldo_a_facturar numeric(18,6)`, al estilo
+  de `numeraciones_fiscales` (filtro de tenant a mano, guarda de escritura en `SaveChanges`).
+  Predicado único `SinEspejosFiscales` en reportes de ventas, serie temporal, artículos,
+  rentabilidad y listado; el libro IVA ventas sigue viendo los espejos.
+  Checks: RED (7 de 8 con totales duplicados) y GREEN; integración completa 4003/4003 antes
+  del rebase y 4239/4239 después (sobre el commit del esquema); mutaciones del predicado en
+  cada lector, todas en rojo.
+  Judgment-day ronda 1: ningún hallazgo crítico; confirmados por los dos jueces y corregidos:
+  lecturas por id que aceptaban un espejo como venta (devolución y anulación, ahora
+  rechazadas con test), test estructural engañable (ahora cuenta lecturas y se prueba a sí
+  mismo) y `docs/10` impreciso. Tras la corrección: dominio 1635/1635, aplicación 935/935,
+  integración filtrada 485/485; la suite completa posterior queda al CI. Re-juicio: todo
+  resuelto, sin advertencias. JUDGMENT: APPROVED.
+  Aceptado sin corregir: la migración crea CHECKs, FK e índice único sobre
+  `comprobantes_venta` sin `NOT VALID` ni `CONCURRENTLY` (recorre la tabla bloqueando
+  escrituras); la base no ata el enlace a una venta que no sea espejo ni la decisión a su
+  espejo; el UNIQUE del espejo incluye espejos anulados (a resolver en T5/T8). La bajada de
+  la migración se revisó como script, sin ciclo subir-bajar-subir. Un medio de pago o una
+  empresa con acumulado no se puede dar de baja.
+  Para T4/T5: escribir `acumulados_de_facturacion` solo con SQL crudo; test de carrera de los
+  tres 409 nuevos; el espejo va sin turno, pagos, stock ni cuenta corriente.
+
 ## Próximo paso
 
-T3.
+T4.
