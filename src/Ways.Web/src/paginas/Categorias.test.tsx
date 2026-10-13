@@ -508,3 +508,54 @@ describe('Categorias — error y foco de la modal', () => {
     expect(abrir).toHaveFocus()
   })
 })
+
+describe('Categorias — lectura en vuelo al guardar', () => {
+  function diferido<T>() {
+    let resolver!: (valor: T) => void
+    const promesa = new Promise<T>((res) => {
+      resolver = res
+    })
+
+    return { promesa, resolver }
+  }
+
+  /** Cláusula bajo prueba: la relectura de la rama de fallo de `guardar` (`habiaLecturaEnVuelo`). */
+  it('un guardado rechazado con la lectura inicial en vuelo no deja el árbol en el spinner', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<CategoriaListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => (++lecturas === 1 ? inicial.promesa : Promise.resolve([categoriaFixture()])))
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
+    render(<Categorias />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await act(async () => {
+      inicial.resolver([categoriaFixture()])
+      await inicial.promesa
+    })
+
+    expect(await screen.findByRole('button', { name: '+ Subcategoría' })).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(lecturas).toBe(2)
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
+    expect(within(dialogo).getByText('Ya existe una categoría con ese nombre.')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el árbol ya cargado, un rechazo no relee. */
+  it('un guardado rechazado con el árbol ya cargado no vuelve a pedirlo', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Ya existe una categoría con ese nombre.')).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledTimes(1)
+  })
+})
