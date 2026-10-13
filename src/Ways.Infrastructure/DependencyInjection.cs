@@ -146,6 +146,7 @@ public static class DependencyInjection
         // solo la clave Ambiente en 19a; ver el doc-comment de OpcionesFiscales sobre el default).
         services.Configure<OpcionesFiscales>(configuration.GetSection(OpcionesFiscales.Seccion));
         services.AddScoped<ServicioDeFacturacionFiscal>();
+        services.AddScoped<ServicioDeDecisionDeFacturacion>();
 
         return services;
     }

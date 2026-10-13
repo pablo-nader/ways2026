@@ -95,6 +95,8 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasDefaultValue(false)
             .IsRequired();
 
+        builder.Property(c => c.FacturacionDecididaEn).HasColumnName("facturacion_decidida_en");
+
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
 

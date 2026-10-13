@@ -4877,6 +4877,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDefaultValue(false)
                         .HasColumnName("factura_forzada");
 
+                    b.Property<DateTimeOffset?>("FacturacionDecididaEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("facturacion_decidida_en");
+
                     b.Property<DateTimeOffset>("Fecha")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha");

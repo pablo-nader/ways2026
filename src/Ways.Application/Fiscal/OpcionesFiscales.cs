@@ -1,3 +1,5 @@
+using Ways.Domain.Fiscal;
+
 namespace Ways.Application.Fiscal;
 
 /// <summary>
@@ -17,4 +19,10 @@ public sealed class OpcionesFiscales
     public const string Seccion = "Ways:Fiscal";
 
     public string? Ambiente { get; set; }
+
+    /// <summary>El ambiente configurado; cualquier valor distinto de "produccion" es homologación.</summary>
+    public AmbienteFiscal ResolverAmbiente() =>
+        string.Equals(Ambiente, "produccion", StringComparison.OrdinalIgnoreCase)
+            ? AmbienteFiscal.Produccion
+            : AmbienteFiscal.Homologacion;
 }

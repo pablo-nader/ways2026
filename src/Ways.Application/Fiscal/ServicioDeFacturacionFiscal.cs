@@ -566,10 +566,7 @@ public class ServicioDeFacturacionFiscal(
         return (tipoDoc, numeroDoc);
     }
 
-    private AmbienteFiscal ResolverAmbiente() =>
-        string.Equals(opciones.Value.Ambiente, "produccion", StringComparison.OrdinalIgnoreCase)
-            ? AmbienteFiscal.Produccion
-            : AmbienteFiscal.Homologacion;
+    private AmbienteFiscal ResolverAmbiente() => opciones.Value.ResolverAmbiente();
 
     private async Task<DateOnly> ResolverFechaFiscalAsync(int idEmpresa, DateTimeOffset instante, CancellationToken ct)
     {

@@ -28,7 +28,8 @@ comprobantes_venta (          -- [operativa]
     observaciones_fiscales jsonb       NULL,        -- [{ "codigo": int, "mensaje": string }]
     -- Facturación por medio de pago: espejo fiscal y bandera del cajero
     id_venta_origen        integer     NULL,        -- espejo fiscal → la venta (TX) que factura
-    factura_forzada        boolean     NOT NULL DEFAULT false  -- el cajero pidió facturar este ticket
+    factura_forzada        boolean     NOT NULL DEFAULT false, -- el cajero pidió facturar este ticket
+    facturacion_decidida_en timestamptz NULL       -- el servidor ya decidió si el ticket se factura (marca de idempotencia)
 );
 -- UNIQUE (id_punto_venta, id_tipo_comprobante, numero)
 -- FK (id_venta_origen, id_tenant) → comprobantes_venta ON DELETE RESTRICT
@@ -330,7 +331,7 @@ así que en un tenant con muchos comprobantes conviene aplicarla en una ventana 
   (`numeric(5,2)`), o sea hasta 6 decimales exactos; `numeric(18,6)` los guarda sin redondear y deja 12 dígitos enteros.
 - **Único escritor del acumulado.** Como `numeraciones_fiscales`, no hereda de `EntidadTenant`, necesita el filtro de tenant
   escrito a mano (`AplicarFiltroDeTenantEnAcumuladoDeFacturacion`) y `SaveChangesAsync` rechaza escribirla: el saldo solo se
-  mueve con un `INSERT … ON CONFLICT DO UPDATE` crudo que suma el aporte en la base, para que dos ventas concurrentes no se pisen (ese escritor llega con la decisión de facturar al ingerir la venta).
+  mueve con SQL crudo (`INSERT … ON CONFLICT DO NOTHING`, `SELECT … FOR UPDATE` y un `UPDATE` que suma), bajo el lock de la fila, para que dos ventas concurrentes no se pisen (`ServicioDeDecisionDeFacturacion`, ver "Decisión al ingerir la venta").
 - **Enums nativos nuevos** (`motivo_facturacion`, `estado_facturacion_venta`), creados por `CREATE TYPE`; el orden de los
   valores es el del ciclo de vida. `motivo_facturacion` conserva `no_requerida` (valor 0 del enum de dominio) para que el mapeo
   sea 1:1, y un CHECK impide usarlo: una venta que no se factura no tiene fila.
@@ -340,6 +341,40 @@ así que en un tenant con muchos comprobantes conviene aplicarla en una ventana 
 - **Respaldos de error.** Los tres índices únicos se traducen a `409` (`venta_ya_facturada`, `facturacion_de_venta_duplicada`,
   `factura_ya_asignada`); los CHECK no se traducen a propósito: los valores los deriva el servidor y una violación es un
   defecto del servidor, no un error del cliente.
+
+**Decisión al ingerir la venta (T4): implementada**, migración `FacturacionDecididaEnVenta` (una columna nullable sin valor por
+defecto en `comprobantes_venta`: solo metadata, sin reescritura de la tabla). `ServicioDeDecisionDeFacturacion` no emite la
+factura: decide, deja la fila de decisión en `pendiente` y mueve el acumulado.
+
+- **Cuándo corre.** `POST /api/ventas` lo llama después del commit de la venta, en una transacción propia, de modo que el lock del
+  acumulado nunca entra en el conjunto de locks del checkout. El reenvío de una venta con número pre-asignado pasa por el mismo
+  endpoint y vuelve a llamarlo. La respuesta (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar),
+  `no_corresponde` o `sin_decidir`; si la decisión falla, el error se registra, la venta responde igual con `sin_decidir` y la
+  decisión se completa en la próxima llamada (el reenvío, o el procesador de pendientes de T5). Una lectura por id no consulta el
+  estado fiscal (`fiscal` viene `null`).
+- **A qué ventas aplica.** Solo a un ticket emitido (clase venta, no fiscal, signo positivo, que mueve stock: el TX). No a un espejo
+  fiscal, una devolución, una venta anulada antes de decidirse, ni a una empresa sin certificado fiscal activo del ambiente
+  configurado: ahí no se escribe nada (ni fila ni acumulado ni marca) y la función queda inerte hasta que el negocio pueda facturar.
+  Una venta sin pagos (o con importe neto cero) no tiene medio al que imputar: se marca decidida y no mueve nada.
+- **`ForzarFactura`.** Viaja en la solicitud, se guarda en `comprobantes_venta.factura_forzada` y entra en la identidad del reenvío
+  (otro valor con el mismo número pre-asignado es `409 numero_preasignado_con_otro_contenido`). En una nota de crédito se rechaza
+  (`400 forzar_factura_no_admitido`), no se ignora.
+- **Idempotencia.** `comprobantes_venta.facturacion_decidida_en` es la marca de "ya decidida". Existe porque una venta que no se
+  factura no tiene fila en `facturaciones_de_venta` (el CHECK prohíbe `no_requerida`) y sin marca decidirla otra vez la sumaría otra
+  vez al acumulado. La decisión toma `FOR UPDATE` sobre la fila del comprobante, y bajo ese lock: si ya hay fila de decisión la
+  devuelve, si hay marca devuelve `no_corresponde`, y si no decide. La fila de decisión y la marca se escriben en la misma transacción
+  que el movimiento del acumulado, así que un reintento tras un commit ambiguo encuentra la marca y no cuenta dos veces. El UNIQUE de
+  `id_comprobante_venta` es el respaldo: el `INSERT … ON CONFLICT DO NOTHING` que lo pierde deshace el acumulado de su transacción y
+  devuelve la decisión existente.
+- **Monto de cada pago.** `importe − vuelto`: lo que ese medio realmente cobró. Es la convención del arqueo (el vuelto sale del
+  efectivo) y hace que los montos de los medios sumen el total del ticket. El porcentaje es el actual de `medios_pago` al decidir.
+- **Período.** Primer día del mes de la fecha del comprobante en la `zona_horaria` del punto de venta (la misma que usan los reportes
+  de ventas), no del día UTC. Un medio sin fila ese mes parte de saldo cero.
+- **Locks y escrituras.** Orden: fila del comprobante, y luego las filas del acumulado por `id_medio_pago` ascendente. Para cada
+  medio del ticket: `INSERT … ON CONFLICT DO NOTHING` de la fila del mes, un único `SELECT … FOR UPDATE ORDER BY id_medio_pago` que
+  lee los saldos una vez bajo el lock, `PoliticaDeFacturacionPorMedio.Decidir`, y un `UPDATE` que suma `saldo_a_facturar` (el aporte),
+  `total_vendido` (el monto) y `total_facturado` (el monto si se factura). Todo con SQL crudo.
+- **Pendiente (fuera de T4).** Anular una venta con decisión no revierte el acumulado ni cancela la fila `pendiente` (T8).
 
 ### Presupuestos (Etapa 17)
 

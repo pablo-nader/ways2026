@@ -1,3 +1,4 @@
+using Ways.Application.Fiscal;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Ventas;
@@ -46,7 +47,13 @@ namespace Ways.Application.Ventas;
 /// admite junto a <see cref="NumeroPreasignado"/> (400 <c>limite_no_validado_no_admitido</c> en
 /// cualquier otro caso). Cuando se honra, el servidor no rechaza la venta por el límite pero sí
 /// actualiza el saldo, y si el saldo resultante lo supera deja el rastro
-/// <c>AccionAuditada.VentaExcedioLimiteSinValidar</c>.</summary>
+/// <c>AccionAuditada.VentaExcedioLimiteSinValidar</c>.
+///
+/// <see cref="ForzarFactura"/> (facturación por medio de pago): el cajero pide facturar este ticket sí o sí. Se guarda
+/// en <c>comprobantes_venta.factura_forzada</c> y es lo ÚNICO que viaja de la facturación: la decisión, el porcentaje y
+/// el CAE los pone el servidor. Solo tiene sentido en una venta; en una nota de crédito se rechaza (400
+/// <c>forzar_factura_no_admitido</c>) en vez de ignorarse. Entra en la identidad de un reenvío con número
+/// pre-asignado, igual que el resto de lo que tipea el operador.</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -58,7 +65,8 @@ public sealed record SolicitudDeVenta(
     string? Observaciones,
     int? IdPresupuestoOrigen = null,
     long? NumeroPreasignado = null,
-    bool LimiteDeCreditoNoValidado = false);
+    bool LimiteDeCreditoNoValidado = false,
+    bool ForzarFactura = false);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>
@@ -196,7 +204,11 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 /// <see cref="DescuentoManualTotal"/>/<see cref="RecargoManualTotal"/>: suma de los ajustes manuales
 /// de las líneas de porcentaje negativo/positivo, por separado a propósito (un recargo en una línea
 /// no esconde un descuento en otra). <see cref="Total"/> = <see cref="Subtotal"/> −
-/// <see cref="DescuentoTotal"/> − <see cref="DescuentoManualTotal"/> + <see cref="RecargoManualTotal"/>.</summary>
+/// <see cref="DescuentoTotal"/> − <see cref="DescuentoManualTotal"/> + <see cref="RecargoManualTotal"/>.
+///
+/// <see cref="FacturaForzada"/> es el round-trip de <see cref="SolicitudDeVenta.ForzarFactura"/>. <see cref="Fiscal"/>
+/// es lo que el servidor decidió sobre la facturación del ticket: solo la respuesta de la emisión (y de su reenvío)
+/// lo completa; una lectura por id (reimpresión) lo devuelve <c>null</c>, o sea "no consultado", no "no corresponde".</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,
@@ -215,7 +227,9 @@ public sealed record ComprobanteEmitido(
     string? Observaciones,
     IReadOnlyList<ItemEmitido> Items,
     IReadOnlyList<PagoEmitido> Pagos,
-    int? IdPresupuestoOrigen = null);
+    int? IdPresupuestoOrigen = null,
+    bool FacturaForzada = false,
+    EstadoFiscalDeVenta? Fiscal = null);
 
 /// <summary>Fila de <c>GET /api/ventas</c> (listado paginado) — sin items/pagos, mismo criterio
 /// que los demás <c>*Listado</c> del proyecto (evita el N+1 de traer el detalle completo de cada
