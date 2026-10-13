@@ -231,10 +231,13 @@ where five judgment-day rounds each found a new variant of the same defect class
       la única que mata la mutación que quita la condición `habiaLecturaEnVuelo`; la (a)
       sola la deja viva.
 
-    (Siete pantallas con el mismo defecto: `Personal.tsx`, `CuentasTesoreria.tsx`,
-    `Proveedores.tsx` (PR #430) y `PaginaCatalogo.tsx`, `Categorias.tsx`,
-    `PuntosVenta.tsx`, `Usuarios.tsx` (PR #433). Es la regla 10 aplicada tarde: al tocar
-    una, buscar `habiaLecturaEnVuelo` en `src/paginas` y comparar con las hermanas.)
+    (Siete pantallas con el mismo defecto: `Personal.tsx` y `CuentasTesoreria.tsx`
+    primero, `Proveedores.tsx` en el PR #430, y `PaginaCatalogo.tsx`, `Categorias.tsx`,
+    `PuntosVenta.tsx`, `Usuarios.tsx` en el PR #433. Es la regla 10 aplicada tarde: al
+    tocar una, buscar `habiaLecturaEnVuelo` en `src/paginas` y comparar con las hermanas.
+    `CuentasTesoreria.tsx` no tiene búsqueda y además relee ante un 404 o un
+    `saldo_inicial_con_movimientos`, porque ahí la fila en pantalla quedó vieja: su
+    prueba (b) usa un rechazo que no sea ninguno de esos dos.)
 
 ## Decision Gates
 
