@@ -645,6 +645,10 @@ describe('artículos por importe — espejo de ResolvedorDeCombosTests', () => {
   ] as const)('participaEnCombos(%s) es %s', (unidad, esperado) => {
     expect(participaEnCombos(unidad)).toBe(esperado)
   })
+
+  it('una unidad de venta desconocida no participa en combos', () => {
+    expect(participaEnCombos('Litro' as UnidadVenta)).toBe(false)
+  })
 })
 
 describe('tieneMasDeDosDecimales — comparación exacta sobre la representación decimal', () => {

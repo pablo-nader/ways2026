@@ -136,7 +136,7 @@ function aMilesimas(cantidad: number): number | null {
 /** Espejo de `ReglaDeCombos.ParticipaEnCombos`: entran a combos los artículos por unidad y por peso (y el de unidad
  * ausente, que cuenta como `Peso`); el que se vende por importe nunca es componente, candidato ni línea detectable. */
 export function participaEnCombos(unidadVenta: UnidadVenta | null | undefined): boolean {
-  return unidadVenta !== 'Importe'
+  return unidadVenta == null || unidadVenta === 'Unidad' || unidadVenta === 'Peso'
 }
 
 /** Espejo de `ReglaDeCantidadDeVenta.EsCantidadAdmitida` sobre milésimas, para las unidades que entran a combos:

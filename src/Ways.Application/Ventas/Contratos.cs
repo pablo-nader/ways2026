@@ -98,8 +98,7 @@ public sealed record SolicitudDeVenta(
 /// <see cref="UnidadesConsumidasPorCombo"/>, <see cref="AhorroDeCombo"/> e <see cref="IdCombo"/> (feature combos)
 /// son lo que el dispositivo offline calculó con su motor de combos para la línea, junto a su
 /// <see cref="PrecioUnitario"/>: la cantidad de la línea que un combo consumió (mayor a cero, hasta la cantidad de la
-/// línea y admitida por la unidad de venta del artículo: entera por unidad, hasta tres decimales por peso, nunca en un
-/// artículo por importe), la
+/// línea y de hasta tres decimales, sin mirar la unidad de venta actual del artículo: el dispositivo ya cobró), la
 /// parte del combo como IMPORTE DE LÍNEA (no unitario; entre 0 y el bruto de esas unidades) y el combo. Van los tres
 /// o ninguno, y solo con el precio offline (400 <c>combo_offline_no_admitido</c> sin él, <c>combo_offline_incompleto</c>
 /// si falta alguno, <c>combo_offline_invalido</c> fuera de rango). El servidor los graba tal cual —el descuento de la

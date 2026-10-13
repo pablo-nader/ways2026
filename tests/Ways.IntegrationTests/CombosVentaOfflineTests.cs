@@ -362,13 +362,13 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(6000m, Assert.Single(emitido.Items).Descuento);
     }
 
-    /// <summary>Cláusula: las unidades de combo tienen que ser una cantidad que admite la unidad de venta del artículo.
-    /// 1,5 unidades de un artículo por unidad están dentro de la cantidad de la línea (2) y el resto de los datos es
-    /// válido: lo único que las rechaza es la unidad de venta.</summary>
+    /// <summary>Cláusula: la unidad de venta del artículo no restringe las unidades de combo de una venta offline.
+    /// 1,5 unidades de un artículo por unidad están dentro de la cantidad de la línea (2) y de los tres decimales: la
+    /// venta, que el dispositivo ya cobró, se registra.</summary>
     [Fact]
-    public async Task UnaFraccionDeUnidadesDeUnArticuloPorUnidadSeRechaza()
+    public async Task UnaFraccionDeUnidadesDeUnArticuloPorUnidadSeAdmiteEnUnaVentaOffline()
     {
-        var (ctx, pancho, _, combo) = await PanchoYCocaAsync(nameof(UnaFraccionDeUnidadesDeUnArticuloPorUnidadSeRechaza));
+        var (ctx, pancho, _, combo) = await PanchoYCocaAsync(nameof(UnaFraccionDeUnidadesDeUnArticuloPorUnidadSeAdmiteEnUnaVentaOffline));
 
         var cuerpo = new
         {
@@ -388,9 +388,7 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
 
         var respuesta = await ctx.Cajero!.PostAsJsonAsync("/api/ventas", cuerpo);
 
-        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
-        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("combo_offline_invalido", problema.GetProperty("codigo").GetString());
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
     private async Task<(Escenario Ctx, int Jamon, int Queso, int Combo)> JamonYQuesoAsync(string nombre)
@@ -465,14 +463,16 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal("combo_offline_invalido", await CodigoDeRechazoAsync(ctx, Venta(ctx, 1, 1817m, "TX", linea)));
     }
 
-    /// <summary>Cláusula: un artículo por importe no entra a combos, así que sus unidades de combo se rechazan aunque
-    /// valgan 1, la única cantidad que su unidad admite. La línea trae precio offline y no importe (con importe y sin
-    /// precio la rechaza antes <c>combo_offline_no_admitido</c>, probado en <c>VentaPorImporteTests</c>). La misma
-    /// venta, con el artículo todavía por unidad, se admite.</summary>
+    /// <summary>Cláusula: la validación de las unidades de combo de una línea offline no mira la unidad de venta ACTUAL
+    /// del artículo. El dispositivo ya cobró e imprimió con la unidad de su instantánea; si un administrador pasa el
+    /// artículo a importe antes de que la venta suba, la venta se registra igual y no queda varada en la cola. La línea
+    /// trae precio offline y no importe (con importe y sin precio la rechaza antes <c>combo_offline_no_admitido</c>,
+    /// probado en <c>VentaPorImporteTests</c>).</summary>
     [Fact]
-    public async Task LasUnidadesDeComboDeUnArticuloPorImporteSeRechazan()
+    public async Task UnaVentaOfflineConComboSeRegistraAunqueElArticuloHayaPasadoAImporte()
     {
-        var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(LasUnidadesDeComboDeUnArticuloPorImporteSeRechazan));
+        var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(
+            nameof(UnaVentaOfflineConComboSeRegistraAunqueElArticuloHayaPasadoAImporte));
 
         SolicitudDeVenta Solicitud(long numero) => Venta(ctx, numero, 5000m, "TX",
             Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: combo),
@@ -487,7 +487,49 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
                 .SetProperty(a => a.AcumulaEnVenta, false));
         }
 
-        Assert.Equal("combo_offline_invalido", await CodigoDeRechazoAsync(ctx, Solicitud(2)));
+        var emitido = await EmitirAsync(ctx, Solicitud(2));
+
+        Assert.Equal(5000m, emitido.Total);
+        Assert.Equal([273m, 227m], emitido.Items.Select(i => i.Descuento));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+    }
+
+    /// <summary>Cláusula: igual que con importe, un artículo pesable que pasó a unidad antes de que suba la venta
+    /// offline conserva sus unidades de combo fraccionarias: la venta ya está cobrada y se registra.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineConUnidadesDeComboFraccionariasSeRegistraAunqueElArticuloHayaPasadoAUnidad()
+    {
+        var (ctx, jamon, queso, combo) = await JamonYQuesoAsync(
+            nameof(UnaVentaOfflineConUnidadesDeComboFraccionariasSeRegistraAunqueElArticuloHayaPasadoAUnidad));
+
+        await using (var db = apoyo.Db(ctx.IdTenant))
+        {
+            await db.Articulos.Where(a => a.Id == jamon).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.UnidadVenta, UnidadVenta.Unidad));
+        }
+
+        var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 3150m, "TX",
+            Offline(jamon, 0.215m, 10000m, unidades: 0.200m, ahorro: 333m, idCombo: combo),
+            Offline(queso, 0.200m, 8000m, unidades: 0.200m, ahorro: 267m, idCombo: combo)));
+
+        Assert.Equal(3150m, emitido.Total);
+        Assert.Equal([333m, 267m], emitido.Items.Select(i => i.Descuento));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+    }
+
+    /// <summary>Cláusula: las unidades de combo de una línea offline tienen que ser mayores a cero y no superar la
+    /// cantidad de la línea (1 en este caso).</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(2)]
+    public async Task LasUnidadesDeComboFueraDeRangoSeRechazan(int unidades)
+    {
+        var (ctx, pancho, _, combo) = await PanchoYCocaAsync($"{nameof(LasUnidadesDeComboFueraDeRangoSeRechazan)}{unidades}");
+
+        var linea = Offline(pancho, 1m, 3000m, unidades: unidades, ahorro: 0m, idCombo: combo);
+
+        Assert.Equal("combo_offline_invalido", await CodigoDeRechazoAsync(ctx, Venta(ctx, 1, 3000m, "TX", linea)));
     }
 
     /// <summary>Cláusula: el bruto de las unidades consumidas se calcula DESPUÉS de acotar las unidades a 1..cantidad. Con

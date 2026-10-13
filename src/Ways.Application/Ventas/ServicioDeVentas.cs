@@ -199,8 +199,6 @@ public class ServicioDeVentas(
             ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
         }
 
-        ExigirUnidadesDeComboOfflineAdmitidas(lineas, articuloPorId);
-
         // Un artículo de uso interno no se vende ni al convertir un presupuesto viejo (su precio queda congelado, pero
         // la regla de venta es del artículo, no del precio). Quedan fuera lo ya cobrado offline y la devolución de lo
         // que se vendió, que no se reescriben.
@@ -2561,36 +2559,14 @@ public class ServicioDeVentas(
         }
     }
 
-    /// <summary>La cantidad que un combo consumió de una línea offline tiene que ser una que admite la unidad de venta
-    /// del artículo (<see cref="ReglaDeCombos.AdmiteComoComponente"/>): entera si se vende por unidad, de hasta tres
-    /// decimales si se vende por peso, y ninguna si se vende por importe, que no entra a combos
-    /// (<c>combo_offline_invalido</c>). Va aparte de <see cref="ExigirComboOfflineValido"/> porque
-    /// necesita el artículo, que <see cref="EmitirAsync"/> lee después de esa validación; no agrega una lectura.</summary>
-    private static void ExigirUnidadesDeComboOfflineAdmitidas(
-        IReadOnlyList<LineaDeVenta> lineas, IReadOnlyDictionary<int, Articulo> articuloPorId)
-    {
-        foreach (var linea in lineas)
-        {
-            if (linea.UnidadesConsumidasPorCombo is { } unidades
-                && !ReglaDeCombos.AdmiteComoComponente(articuloPorId[linea.IdArticulo].UnidadVenta, unidades))
-            {
-                throw new ErrorDominio(
-                    "combo_offline_invalido",
-                    "Las unidades de combo de una línea tienen que ser una cantidad que admita la unidad de venta del " +
-                    "artículo: entera si se vende por unidad, de hasta tres decimales si se vende por peso. " +
-                    "Un artículo que se vende por importe no entra a combos.",
-                    400);
-            }
-        }
-    }
-
     /// <summary>Combo que trae una línea offline (feature combos): los tres datos o ninguno
-    /// (<c>combo_offline_incompleto</c>), con unidades mayores a cero y hasta la cantidad de la línea, una parte del
+    /// (<c>combo_offline_incompleto</c>), con unidades mayores a cero, hasta la cantidad de la línea y de a lo sumo tres
+    /// decimales (<see cref="ReglaDeCantidadDeVenta.DecimalesMaximosDePeso"/>), una parte del
     /// combo (importe de línea) de a lo sumo dos decimales, no negativa y que no supere el bruto de las unidades
     /// consumidas, y un id positivo (<c>combo_offline_invalido</c>). Que el id exista en el tenant NO se exige acá: una
     /// venta que el dispositivo ya cobró no se rechaza por eso (ver <see cref="ResolverCombosOfflineExistentesAsync"/>).
-    /// Que las unidades sean una cantidad que admite la unidad de venta del artículo lo exige
-    /// <see cref="ExigirUnidadesDeComboOfflineAdmitidas"/>.</summary>
+    /// Tampoco se compara con la unidad de venta ACTUAL del artículo: el dispositivo ya cobró con la que tenía en su
+    /// instantánea, y un cambio posterior no puede dejar la venta sin subir.</summary>
     private static void ExigirComboOfflineValido(LineaDeVenta linea)
     {
         if (linea.UnidadesConsumidasPorCombo is not { } unidades
@@ -2607,6 +2583,7 @@ public class ServicioDeVentas(
         // llegan a la multiplicación por el precio.
         if (unidades <= 0m
             || unidades > linea.Cantidad
+            || decimal.Round(unidades, ReglaDeCantidadDeVenta.DecimalesMaximosDePeso) != unidades
             || ahorro < 0m
             || decimal.Round(ahorro, 2) != ahorro
             || idCombo <= 0
@@ -2614,7 +2591,7 @@ public class ServicioDeVentas(
         {
             throw new ErrorDominio(
                 "combo_offline_invalido",
-                "Las unidades de combo tienen que ser mayores a cero y no superar la cantidad de la línea, el ahorro " +
+                "Las unidades de combo tienen que ser mayores a cero, de hasta tres decimales y no superar la cantidad de la línea, el ahorro " +
                 "estar entre 0 y el bruto de esas unidades (a lo sumo dos decimales) y el id de combo ser positivo.",
                 400);
         }

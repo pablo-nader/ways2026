@@ -233,7 +233,7 @@ servidor los graba tal cual: el descuento de la línea es `round(descuentoUnitar
 ahorroDeCombo` (`CalculadorDeTotales`) y el combo queda en `items_comprobante_venta.id_combo`; una línea con todas sus
 unidades en el combo no lleva `id_oferta`, una con unidades fuera del combo conserva la oferta. Validación
 (`ExigirPreciosOfflineValidos`): sin `precioUnitario` en la línea `400 combo_offline_no_admitido`; los tres o ninguno
-(`400 combo_offline_incompleto`); unidades mayores a cero, hasta la cantidad de la línea y admitidas por la unidad de venta del artículo (ninguna si se vende por importe), ahorro entre 0 y el bruto de las unidades
+(`400 combo_offline_incompleto`); unidades mayores a cero, hasta la cantidad de la línea y de a lo sumo tres decimales (sin mirar la unidad de venta actual del artículo: el dispositivo ya cobró con la de su instantánea, y un cambio posterior no deja la venta varada), ahorro entre 0 y el bruto de las unidades
 consumidas con a lo sumo dos decimales, e id positivo (`400 combo_offline_invalido`); una nota de crédito no admite combos
 (`400 combo_offline_no_admitido`). El camino online
 nunca los admite: sin precio offline son siempre un rechazo.

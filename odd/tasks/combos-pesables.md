@@ -86,8 +86,9 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
   - Contracts widened `int` → `decimal`: `ConsumoDeLinea.UnidadesConsumidas`, `ComboEnLinea.UnidadesConsumidas`,
     `ComboDeLineaDto.UnidadesConsumidas` (JSON `unidadesConsumidas`), `LineaDeVenta.UnidadesConsumidasPorCombo`
     (JSON `unidadesConsumidasPorCombo`). A unit quantity still serializes without decimals (`1`).
-  - Offline: `combo_offline_invalido` now also covers consumed units the article's unit does not admit (a fraction
-    of a unit article used to be `cuerpo_invalido` from the binding); units must be in `(0, Cantidad]`.
+  - Offline: `combo_offline_invalido` now also covers consumed units with more than 3 decimals; units must be in
+    `(0, Cantidad]`. Judgment Day G1: the check depends only on the payload, never on the article's CURRENT unit (the
+    device already charged the sale; a later unit change must not strand it).
   - Decision taken by the writer, not in A1–A5: A2 says detection no longer short-circuits below 2. The
     short-circuit was kept only when every line is a unit article (then it is still exact), because three existing
     tests pin that a one-unit sale does not pay the combos query; a document with any weighable line always pays it.
@@ -163,8 +164,7 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
   - Where the rule lives: `ReglaDeCombos.ParticipaEnCombos` / `AdmiteComoComponente` (domain) and `participaEnCombos` in
     `pos/motorDeCombos.ts`. Used by `ResolvedorDeCombos.MilesimasDetectables` and its TypeScript mirror (an amount line is not
     detectable, so it is never a candidate either), `ServicioDeCombos.CargarParaPosAsync`, `ArmadorDeInstantanea.ArmarCombos`
-    (an amount article travels in the snapshot without prices), `ServicioDeVentas.ExigirUnidadesDeComboOfflineAdmitidas`
-    (`combo_offline_invalido`), `fuenteDeCombos.ts` and `esArticuloElegibleParaCombo` (the back-office picker hides it).
+    (an amount article travels in the snapshot without prices), `fuenteDeCombos.ts` and `esArticuloElegibleParaCombo` (the back-office picker hides it).
   - ABM: main's code `combo_componente_por_importe` is kept and now runs BEFORE `combo_cantidad_no_admitida`, from the single
     read of units (main's two extra `AnyAsync` are gone): an amount article with quantity 2 no longer gets the "integer
     quantity" message.
