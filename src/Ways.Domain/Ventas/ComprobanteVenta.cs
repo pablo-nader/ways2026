@@ -58,6 +58,17 @@ public class ComprobanteVenta : EntidadTenant
     /// transacción de venta (slice 3), nunca editado después.</summary>
     public int? IdPresupuestoOrigen { get; set; }
 
+    /// <summary>La venta (ticket) que este comprobante factura: solo lo tiene el espejo fiscal. <c>NULL</c> en
+    /// todo comprobante que es una venta por derecho propio. Un espejo es siempre fiscal
+    /// (<c>ck_comprobantes_venta_espejo_fiscal</c>) y una venta tiene a lo sumo uno
+    /// (<c>ux_comprobantes_venta_venta_origen</c>). Los agregados de ventas lo excluyen con
+    /// <see cref="ConsultasDeComprobantesVenta.SinEspejosFiscales"/>.</summary>
+    public int? IdVentaOrigen { get; set; }
+
+    /// <summary>El cajero marcó el ticket para facturarlo sí o sí. Solo se guarda acá; la decisión de
+    /// facturar la toma el servidor.</summary>
+    public bool FacturaForzada { get; set; }
+
     public decimal Subtotal { get; set; }
     public decimal DescuentoTotal { get; set; }
 

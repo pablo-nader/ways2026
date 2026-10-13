@@ -42,7 +42,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
             ? []
             : await db.ItemsComprobanteVenta
                 .Where(i => i.IdArticulo != null)
-                .Join(db.ComprobantesVenta, i => i.IdComprobanteVenta, c => c.Id, (i, c) => new { Item = i, Comprobante = c })
+                .Join(db.ComprobantesVenta.SinEspejosFiscales(), i => i.IdComprobanteVenta, c => c.Id, (i, c) => new { Item = i, Comprobante = c })
                 .Join(db.TiposComprobante, x => x.Comprobante.IdTipoComprobante, t => t.Id, (x, t) => new { x.Item, x.Comprobante, Tipo = t })
                 // spec: "clase venta, estado <> anulado" — mismo par de filtros que
                 // ventas/por-punto-venta y ventas/por-vendedor (design: Raw-SQL Invariant

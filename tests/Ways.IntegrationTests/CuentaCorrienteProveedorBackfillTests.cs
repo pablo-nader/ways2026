@@ -75,6 +75,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<MotivoDeFacturacion>("motivo_facturacion");
+                npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                 // stage-desktop-pos: mismo gap, mismo motivo — este fixture migra hasta la ÚLTIMA
                 // del repo a propósito (ver el comentario de MigrateAsync() más abajo), así que
                 // necesita conocer cada enum nuevo que aparezca, para siempre.

@@ -127,6 +127,8 @@ public class TurnosCajaMedioPagoEfectivoMigracionTests(WaysApiFixture fixture) :
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<MotivoDeFacturacion>("motivo_facturacion");
+                npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
             })
             .Options;
 

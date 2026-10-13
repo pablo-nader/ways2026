@@ -771,6 +771,8 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                    npgsql.MapEnum<MotivoDeFacturacion>("motivo_facturacion");
+                    npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                 })
                 .Options;
 
@@ -873,6 +875,8 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                    npgsql.MapEnum<MotivoDeFacturacion>("motivo_facturacion");
+                    npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     // stage-desktop-pos: este fixture corre el inicializador real, que migra a
                     // HEAD por dentro — necesita conocer cada enum nuevo que aparezca, para
                     // siempre (mismo motivo que CuentaCorrienteProveedorBackfillTests).

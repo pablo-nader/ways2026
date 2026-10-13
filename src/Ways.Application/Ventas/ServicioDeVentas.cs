@@ -961,7 +961,8 @@ public class ServicioDeVentas(
     private IQueryable<ComprobanteVenta> ConstruirQuery(
         int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta, int? idCliente, EstadoComprobante? estado)
     {
-        var query = db.ComprobantesVenta.AsQueryable();
+        // La factura espejo de una venta no es otra venta: el ticket ya está en el listado.
+        var query = db.ComprobantesVenta.SinEspejosFiscales();
 
         if (idPuntoVenta is { } pv)
         {

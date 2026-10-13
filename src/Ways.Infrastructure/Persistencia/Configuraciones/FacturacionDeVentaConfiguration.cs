@@ -1,0 +1,123 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Ways.Domain.Fiscal;
+using Ways.Domain.Organizacion;
+using Ways.Domain.Ventas;
+
+namespace Ways.Infrastructure.Persistencia.Configuraciones;
+
+/// <summary>
+/// Mapea <see cref="FacturacionDeVenta"/>: la decisión de facturar una venta. Operativa con RLS estándar
+/// (id_tenant + id_empresa NOT NULL, doc 10). <c>ux_facturaciones_de_venta_comprobante</c> es la clave de
+/// idempotencia de la decisión y además el índice de soporte de su FK a la venta.
+/// </summary>
+public class FacturacionDeVentaConfiguration : IEntityTypeConfiguration<FacturacionDeVenta>
+{
+    public void Configure(EntityTypeBuilder<FacturacionDeVenta> builder)
+    {
+        builder.ToTable("facturaciones_de_venta", t =>
+        {
+            t.HasCheckConstraint(
+                "ck_facturaciones_de_venta_periodo_dia_uno",
+                "EXTRACT(DAY FROM periodo) = 1");
+            t.HasCheckConstraint(
+                "ck_facturaciones_de_venta_aportes_arreglo",
+                "jsonb_typeof(aportes) = 'array'");
+            t.HasCheckConstraint(
+                "ck_facturaciones_de_venta_intentos_no_negativo",
+                "intentos >= 0");
+            // Una venta que no se factura no tiene fila: el tipo nativo conserva el valor 0 del enum de
+            // dominio (no_requerida) para que el mapeo sea 1:1, pero no es un motivo válido acá.
+            t.HasCheckConstraint(
+                "ck_facturaciones_de_venta_motivo_requerido",
+                "motivo <> 'no_requerida'::motivo_facturacion");
+            t.HasCheckConstraint(
+                "ck_facturaciones_de_venta_emitida_con_comprobante",
+                "estado <> 'emitida'::estado_facturacion_venta OR id_comprobante_fiscal IS NOT NULL");
+        });
+
+        builder.HasKey(f => f.Id).HasName("pk_facturaciones_de_venta");
+
+        builder.Property(f => f.Id)
+            .HasColumnName("id_facturacion_venta")
+            .UseIdentityByDefaultColumn();
+
+        builder.Property(f => f.IdTenant).HasColumnName("id_tenant").IsRequired();
+        builder.Property(f => f.IdEmpresa).HasColumnName("id_empresa").IsRequired();
+        builder.Property(f => f.IdComprobanteVenta).HasColumnName("id_comprobante_venta").IsRequired();
+
+        builder.Property(f => f.Motivo)
+            .HasColumnName("motivo")
+            .HasColumnType("motivo_facturacion")
+            .IsRequired();
+
+        builder.Property(f => f.Estado)
+            .HasColumnName("estado")
+            .HasColumnType("estado_facturacion_venta")
+            .IsRequired();
+
+        builder.Property(f => f.Aportes).HasColumnName("aportes").HasColumnType("jsonb").IsRequired();
+        builder.Property(f => f.Periodo).HasColumnName("periodo").HasColumnType("date").IsRequired();
+        builder.Property(f => f.IdComprobanteFiscal).HasColumnName("id_comprobante_fiscal");
+
+        builder.Property(f => f.Intentos)
+            .HasColumnName("intentos")
+            .HasDefaultValue(0)
+            .IsRequired();
+
+        builder.Property(f => f.UltimoError).HasColumnName("ultimo_error").HasColumnType("text");
+        builder.Property(f => f.ProximoIntentoEn).HasColumnName("proximo_intento_en");
+
+        builder.Property(f => f.CreatedAt).HasColumnName("created_at").IsRequired();
+        builder.Property(f => f.UpdatedAt).HasColumnName("updated_at").IsRequired();
+        builder.Property(f => f.DeletedAt).HasColumnName("deleted_at");
+
+        builder.Ignore(f => f.EstaEliminada);
+
+        builder.HasIndex(f => f.IdTenant).HasDatabaseName("ix_facturaciones_de_venta_tenant");
+        builder.HasIndex(f => new { f.IdEmpresa, f.IdTenant }).HasDatabaseName("ix_facturaciones_de_venta_empresa");
+
+        // Clave de idempotencia de la decisión: una venta, una fila. Mismas columnas y orden que la FK.
+        builder.HasIndex(f => new { f.IdComprobanteVenta, f.IdTenant })
+            .HasDatabaseName("ux_facturaciones_de_venta_comprobante")
+            .IsUnique();
+
+        // Un espejo emitido pertenece a una sola decisión. Soporte de fk_facturaciones_de_venta_comprobante_fiscal.
+        builder.HasIndex(f => new { f.IdComprobanteFiscal, f.IdTenant })
+            .HasDatabaseName("ux_facturaciones_de_venta_comprobante_fiscal")
+            .IsUnique()
+            .HasFilter("id_comprobante_fiscal IS NOT NULL");
+
+        // Cola de pendientes: parcial sobre el estado que casi nunca tiene filas.
+        builder.HasIndex(f => new { f.IdTenant, f.ProximoIntentoEn })
+            .HasDatabaseName("ix_facturaciones_de_venta_pendientes")
+            .HasFilter("estado = 'pendiente'::estado_facturacion_venta");
+
+        builder.HasOne<Tenant>()
+            .WithMany()
+            .HasForeignKey(f => f.IdTenant)
+            .HasConstraintName("fk_facturaciones_de_venta_tenant")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Empresa>()
+            .WithMany()
+            .HasForeignKey(f => new { f.IdEmpresa, f.IdTenant })
+            .HasPrincipalKey(e => new { e.Id, e.IdTenant })
+            .HasConstraintName("fk_facturaciones_de_venta_empresa")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<ComprobanteVenta>()
+            .WithMany()
+            .HasForeignKey(f => new { f.IdComprobanteVenta, f.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_facturaciones_de_venta_comprobante")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<ComprobanteVenta>()
+            .WithMany()
+            .HasForeignKey(f => new { f.IdComprobanteFiscal, f.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_facturaciones_de_venta_comprobante_fiscal")
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}

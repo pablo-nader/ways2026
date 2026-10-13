@@ -423,6 +423,27 @@ public class ManejadorDeErrores(
                     "Este gasto ya tiene un movimiento de tesorería vinculado.",
                     "movimiento_de_tesoreria_de_gasto_duplicado"),
 
+            // Facturación por medio de pago (db-error-backstops): tres índices únicos que solo escribe el
+            // servidor (la decisión de facturar y la emisión del espejo, tareas siguientes de la feature); el 409 es
+            // el respaldo de la carrera entre dos procesos que deciden o emiten la misma venta. Nombre EXACTO antes
+            // del brazo genérico de ClasificarUnicidad. Los CHECK de estas tablas no se traducen: sus valores los
+            // deriva el servidor y una violación es un defecto del servidor, no un error del cliente.
+            { SqlState: "23505", ConstraintName: string uxVentaOrigen }
+                when string.Equals(uxVentaOrigen, "ux_comprobantes_venta_venta_origen", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Esta venta ya tiene una factura emitida.", "venta_ya_facturada"),
+
+            { SqlState: "23505", ConstraintName: string uxFacturacionDeVenta }
+                when string.Equals(uxFacturacionDeVenta, "ux_facturaciones_de_venta_comprobante", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Esta venta ya tiene una decisión de facturación.",
+                    "facturacion_de_venta_duplicada"),
+
+            { SqlState: "23505", ConstraintName: string uxFacturacionFiscal }
+                when string.Equals(uxFacturacionFiscal, "ux_facturaciones_de_venta_comprobante_fiscal", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Esta factura ya está asignada a otra decisión de facturación.",
+                    "factura_ya_asignada"),
+
             // Familias de artículos (db-error-backstops): ux_familias_nombre — nombre único por
             // tenant entre las familias vivas. Tiene que resolverse por nombre EXACTO ANTES del
             // brazo genérico de ClasificarUnicidad: "ux_familias_nombre" contiene "_nombre" y caería

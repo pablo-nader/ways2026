@@ -38,6 +38,17 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
                 "AND ((resultado_fiscal IN ('aprobado','aprobado_con_observaciones')) = (cae IS NOT NULL)))");
 
             t.HasCheckConstraint("ck_comprobantes_venta_cae_digitos", "cae IS NULL OR cae ~ '^[0-9]{14}$'");
+
+            // Un espejo fiscal (id_venta_origen) es siempre un comprobante fiscal.
+            t.HasCheckConstraint(
+                "ck_comprobantes_venta_espejo_fiscal",
+                "id_venta_origen IS NULL OR resultado_fiscal IS NOT NULL");
+
+            // El espejo no pertenece a ningún turno de caja (el ticket ya está en el suyo): por eso los lectores que
+            // filtran por turno no ven espejos.
+            t.HasCheckConstraint(
+                "ck_comprobantes_venta_espejo_sin_turno",
+                "id_venta_origen IS NULL OR id_turno_caja IS NULL");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_comprobantes_venta");
@@ -75,6 +86,14 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         // migración de slice 1 — nullable, metadata-only, sin rewrite de tabla. FK 23 e índice
         // 29 se declaran más abajo.
         builder.Property(c => c.IdPresupuestoOrigen).HasColumnName("id_presupuesto_origen");
+
+        // Espejo fiscal de una venta: NULL en todo comprobante que es una venta por derecho propio.
+        builder.Property(c => c.IdVentaOrigen).HasColumnName("id_venta_origen");
+
+        builder.Property(c => c.FacturaForzada)
+            .HasColumnName("factura_forzada")
+            .HasDefaultValue(false)
+            .IsRequired();
 
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
@@ -159,6 +178,13 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .IsUnique()
             .HasFilter("id_presupuesto_origen IS NOT NULL");
 
+        // UNIQUE PARCIAL: una venta tiene a lo sumo un espejo fiscal, y es además el índice de soporte de
+        // fk_comprobantes_venta_venta_origen (mismas columnas, mismo orden).
+        builder.HasIndex(c => new { c.IdVentaOrigen, c.IdTenant })
+            .HasDatabaseName("ux_comprobantes_venta_venta_origen")
+            .IsUnique()
+            .HasFilter("id_venta_origen IS NOT NULL");
+
         // stage-19a (proposal.md §D, index 3): PARCIAL sobre un estado vacío en el 100% de las
         // filas existentes — sin esto, resolver los 'pendiente' hace table scan sobre la tabla
         // más caliente del sistema. Su consumidor (la reconciliación/reintento) llega en slice 5
@@ -240,6 +266,15 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasForeignKey(c => new { c.IdPresupuestoOrigen, c.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
             .HasConstraintName("fk_comprobantes_venta_presupuesto_origen")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Espejo fiscal → venta de origen. Los comprobantes no se borran físicamente (la baja es lógica),
+        // así que Restrict como en el resto de las FK de la tabla.
+        builder.HasOne<ComprobanteVenta>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdVentaOrigen, c.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_comprobantes_venta_venta_origen")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

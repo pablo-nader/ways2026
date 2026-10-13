@@ -172,6 +172,10 @@ public interface IWaysDbContext
     // (slice 4) recibe el IWaysDbContext concreto por parámetro y opera con ADO.NET crudo.
     DbSet<CertificadoFiscal> CertificadosFiscales { get; }
 
+    // Decisión de facturar una venta (facturación por medio de pago). El acumulado por medio y mes NO se
+    // expone: su único escritor es un upsert crudo, como numeraciones_fiscales.
+    DbSet<FacturacionDeVenta> FacturacionesDeVenta { get; }
+
     // stage-pos-reserva-de-numeracion: expuesto desde esta slice — ServicioDeVentas.
     // ExigirNumeroPreasignadoPropioAsync (chequeo de pertenencia del número pre-asignado, vía
     // LINQ) es el único consumidor de lectura de Application hoy;

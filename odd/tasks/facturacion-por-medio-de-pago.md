@@ -32,7 +32,7 @@ facturación por medio de pago (ej.: transferencia 100 %, efectivo 10 %).
   algún medio al 100 % ⇒ factura; si no, difusión de error por medio:
   `saldo' = saldo + importe × pct / 100` y factura si algún medio con pct > 0 queda con
   `saldo' > importe / 2`. Al facturar, cada medio del ticket descuenta su importe del saldo.
-- **Alcance del acumulado:** por `(id_empresa, id_medio_pago)`, perpetuo, con tope.
+- **Alcance del acumulado:** por `(id_empresa, id_medio_pago, periodo)`: el cupo se cumple dentro de cada mes y el saldo arranca en cero el día 1 (decisión del dueño, 2026-10-12).
 - **Dónde se decide:** en el servidor, al ingerir la venta, en una transacción corta propia.
   En la solicitud solo viaja `ForzarFactura`; nunca la decisión, el porcentaje ni el CAE.
 - **Diferido:** fila de decisión en `pendiente`; la procesa un endpoint que el POS dispara en
@@ -44,7 +44,7 @@ facturación por medio de pago (ej.: transferencia 100 %, efectivo 10 %).
 - `comprobantes_venta.id_venta_origen integer NULL` (FK compuesta, UNIQUE parcial).
 - `comprobantes_venta.factura_forzada boolean NOT NULL DEFAULT false`.
 - `facturaciones_de_venta` (operativa, RLS): decisión, estado, aportes, comprobante fiscal.
-- `acumulados_de_facturacion`: PK `(id_empresa, id_medio_pago)`, saldo y totales.
+- `acumulados_de_facturacion`: PK `(id_empresa, id_medio_pago, periodo)`, saldo y totales.
 
 ## Alcance autorizado
 
@@ -81,7 +81,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 ## Supuestos pendientes de confirmación del dueño
 
 - El forzado manual descuenta del cupo del medio.
-- El acumulado es perpetuo y por empresa (no por caja ni mensual).
+- El acumulado es por empresa (no por caja).
 - Un medio compartido entre empresas del tenant usa un solo porcentaje.
 - Con porcentaje parcial y en línea, la caja espera unos segundos la respuesta fiscal (T6).
 - Consumidor Final por defecto; ticket grande que exige identificar queda en "faltan datos".
@@ -124,7 +124,8 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   prioridad de reglas sin test, cotas de convergencia flojas. Mutaciones tras la corrección,
   todas en rojo. Re-juicio: los seis puntos resueltos, sin hallazgos severos.
   JUDGMENT: APPROVED. `Ways.Domain.Tests` 1422/1422. La deriva por arrastre queda como
-  decisión abierta del dueño (cupo mensual o perpetuo) y se resuelve en T3.
+  decisión del dueño: cupo mensual, que se implementa en T3.
+  PR: pablo-nader/ways2026#412. Las PR #411 y #412 están mergeadas en main.
 
 ## Próximo paso
 
