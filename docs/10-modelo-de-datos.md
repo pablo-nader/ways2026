@@ -612,8 +612,8 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   no lo muestra). Un combo aparece si está disponible online, activo y vivo
   (la policy), es de todo el tenant o de la empresa de la vitrina, y TODOS sus componentes son artículos (sin familia)
   disponibles online y a la venta, activos, disponibles para esa empresa, con precio vigente en la lista de la tienda y
-  de `UnidadVenta.Unidad` (la única que el motor de combos de la venta online acepta; los componentes pesables dependen de
-  que aterrice el programa de combos pesables), y además ahorra: su precio redondeado al peso es estrictamente menor que
+  de `UnidadVenta.Unidad` (el motor de combos de la venta ya acepta componentes pesables, pero `ConsultaDeCombosPublicos`
+  todavía ofrece solo los combos de artículos por unidad: uno con un componente pesable no aparece en la tienda), y además ahorra: su precio redondeado al peso es estrictamente menor que
   la suma de los precios de tienda de sus componentes por su cantidad (lista de la vitrina con la oferta online aplicada,
   a cantidad 1), que es la condición con la que `ResolvedorDeCombos` lo aplica; uno que no ahorra no se ofrece. Divergencia
   conocida: el motor de la venta calcula las ofertas con la cantidad real del carrito, así que un combo que gana contra el
@@ -1160,7 +1160,9 @@ la respuesta muestre un precio sin redondear, y el combo tiene hasta 50 componen
 `ReglaDeCombos.ComponentesMaximos`; cada uno cuesta un `FOR KEY SHARE` bajo el lock por tenant). Que la cantidad
 sea la que admite la unidad de venta del artículo (entera para `Unidad`, hasta 3 decimales para `Peso`) NO lo valida
 `ReglaDeCombos`, que no recibe la unidad de venta: lo exige `ServicioDeCombos` (`combo_cantidad_no_admitida`; ver "API"
-más abajo). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
+más abajo). Solo entran a combos los artículos por `Unidad` y por `Peso` (`ReglaDeCombos.ParticipaEnCombos`): uno que se
+vende por `Importe` nunca es componente (`combo_componente_por_importe`), ni candidato de un componente, y sus líneas no
+consumen un combo, aunque su cantidad sea 1. `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
 documento y reparte el ahorro entre las líneas consumidas:
 
 - Un combo aplica tantas veces como conjuntos completos haya; cada unidad la consume un solo combo. El algoritmo es
@@ -1182,7 +1184,7 @@ documento y reparte el ahorro entre las líneas consumidas:
   absorberlo y, si no cabe, retrocede a las anteriores. Las unidades consumidas de cada conjunto suman exactamente el
   precio del combo. Es un importe de línea, no unitario.
 - Las líneas con cantidad no positiva, o cuya cantidad no admite su unidad de venta (fracción de un artículo por
-  unidad), se ignoran en la detección. Los artículos pesables se detectan: el combo consume exactamente la cantidad del
+  unidad), se ignoran en la detección, igual que las líneas de un artículo por importe. Los artículos pesables se detectan: el combo consume exactamente la cantidad del
   componente (hasta 3 decimales) y el resto de la línea queda a precio de lista. Qué cantidades valen lo decide la
   unidad de venta de la línea, nunca la forma del número.
 - El cobro de una aplicación es el precio del combo redondeado al peso entero, exacto por aplicación. El importe de
@@ -1315,8 +1317,8 @@ El POS en línea muestra el mismo total que el servidor cobrará. Recibe el mism
   de con y sin empresa) dan `400 empresa_inconsistente` y líneas con listas distintas dan `400 lista_inconsistente`;
   `/resolver` no rechaza ninguna mezcla porque filtra las ofertas línea por línea, y los combos se detectan sobre el
   documento entero. Que los valores enviados sean los del punto de venta y el cliente no lo verifica el servidor.
-- Costo: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite solo si todas las líneas son de unidad `Unidad` y el
-  documento suma menos de 2 (6 y 5 respectivamente, fijado en `CombosConsultasTests`). Los combos aplican en un documento de signo positivo; la vista previa no sabe de notas de crédito.
+- Costo: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite solo si todas las líneas que entran a combos (las de un artículo por importe no cuentan) son de unidad `Unidad` y
+  suman menos de 2 (6 y 5 respectivamente, fijado en `CombosConsultasTests`). Los combos aplican en un documento de signo positivo; la vista previa no sabe de notas de crédito.
 
 ##### Combos en el POS offline
 
@@ -1334,7 +1336,8 @@ funcionalidad. El ETag es el hash del contenido serializado, así que cambia cua
 Un combo viaja ENTERO o no viaja (`ArmadorDeInstantanea.ArmarCombos`): uno parcial haría creer al dispositivo que puede
 armarlo. Se descarta si algún componente no se puede vender con esta instantánea: un componente artículo tiene que figurar
 en ella (activo y con precio en alguna lista; un artículo dado de baja ya no figura) y su unidad de venta tiene que admitir la
-cantidad del componente (entera para `Unidad`, hasta 3 decimales para `Peso`, como en la venta online); un componente
+cantidad del componente (entera para `Unidad`, hasta 3 decimales para `Peso`, como en la venta online; un artículo por
+`Importe`, que figura en la instantánea sin precios, nunca es un componente vendible); un componente
 familia necesita al menos un artículo vendible de esa familia en la instantánea cuya unidad admita la cantidad (la misma
 regla de emparejamiento que la venta online, que compara la familia del artículo; una familia dada de baja deja de contar
 cuando sus artículos dejan de figurar). Es la
@@ -1343,12 +1346,12 @@ que una ausente, y como el motor del dispositivo necesita el conjunto completo, 
 componente.
 
 **Venta offline (`POST /api/ventas` con `NumeroPreasignado`).** `LineaDeVenta` suma tres campos opcionales, válidos solo
-junto al precio offline de la línea: `unidadesConsumidasPorCombo` (entero por unidad, hasta 3 decimales por peso), `ahorroDeCombo` (importe de línea) e `idCombo`. El
+junto al precio offline de la línea: `unidadesConsumidasPorCombo` (entero por unidad, hasta 3 decimales por peso, nunca en un artículo por importe), `ahorroDeCombo` (importe de línea) e `idCombo`. El
 servidor los graba tal cual: el descuento de la línea es `round(descuentoUnitario × (cantidad − unidadesConsumidasPorCombo)) +
 ahorroDeCombo` (`CalculadorDeTotales`) y el combo queda en `items_comprobante_venta.id_combo`; una línea con todas sus
 unidades en el combo no lleva `id_oferta`, una con unidades fuera del combo conserva la oferta. Validación
 (`ExigirPreciosOfflineValidos`): sin `precioUnitario` en la línea `400 combo_offline_no_admitido`; los tres o ninguno
-(`400 combo_offline_incompleto`); unidades mayores a cero, hasta la cantidad de la línea y admitidas por la unidad de venta del artículo, ahorro entre 0 y el bruto de las unidades
+(`400 combo_offline_incompleto`); unidades mayores a cero, hasta la cantidad de la línea y admitidas por la unidad de venta del artículo (ninguna si se vende por importe), ahorro entre 0 y el bruto de las unidades
 consumidas con a lo sumo dos decimales, e id positivo (`400 combo_offline_invalido`); una nota de crédito no admite combos
 (`400 combo_offline_no_admitido`). El camino online
 nunca los admite: sin precio offline son siempre un rechazo.
@@ -1363,7 +1366,7 @@ nunca los admite: sin precio offline son siempre un rechazo.
   dispositivo no lo detectó, la parte no coincide, o el combo ya no existe o está inactivo para el servidor). Cada item auditado
   en `venta.discrepancia` suma `combo_cobrado` y `combo_esperado` (`{ unidades, ahorro, id_combo, inexistente }`, `null` si no hay).
   Se compara el neto, no el id: dos combos que dan el mismo neto no son una discrepancia. Cuesta UNA consulta de candidatos más
-  en la venta offline, salvo que todas las líneas sean de unidad `Unidad` y sumen menos de 2 (la misma de la venta online). `CombosConsultasTests` fija el costo de la venta
+  en la venta offline, salvo que todas las líneas que entran a combos sean de unidad `Unidad` y sumen menos de 2 (la misma de la venta online). `CombosConsultasTests` fija el costo de la venta
   offline: sin datos de combo, 19 consultas con una unidad y 20 con dos (las 16 de la venta online de una línea más 3 propias
   del camino de dispositivo con número pre-asignado, y los candidatos); con datos de combo en un carrito de dos unidades, 21
   (los candidatos y la lectura de ids).
@@ -1373,8 +1376,8 @@ nunca los admite: sin precio offline son siempre un rechazo.
   de la venta ni la bloquea.
 - **Dispositivo (POS web y de escritorio).** El dispositivo porta el mismo motor a TypeScript (`pos/motorDeCombos.ts`, con
   los casos de `ResolvedorDeCombosTests` espejados) y lo aplica sobre `combos[]` de la instantánea DESPUÉS de resolver el
-  precio vigente de cada línea, con las exclusiones del servidor: cualquier artículo, con una cantidad que admita su unidad de venta (una unidad ausente en una
-  instantánea vieja cuenta como pesable), y sin las líneas sin precio. La vista previa, el payload
+  precio vigente de cada línea, con las exclusiones del servidor: cualquier artículo por unidad o por peso, con una cantidad que admita su unidad de venta (una unidad ausente en una
+  instantánea vieja cuenta como pesable), sin las líneas por importe y sin las líneas sin precio. La vista previa, el payload
   encolado y el ticket sintético salen de una única función (`resolverDocumentoOffline`); el payload se arma al encolar y se
   reenvía literal, nunca se recalcula al drenar. Una instantánea guardada sin `combos` sigue siendo válida; una con `combos`
   malformado también lo es: la instantánea no se descarta, se sanea al adoptarla o leerla (cada combo malformado se descarta,
@@ -1411,7 +1414,8 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   `combo_componente_duplicado`, `combo_unidades_insuficientes`, `combo_componentes_excedidos`), `activo_requerido`
   (solo PUT), `combo_codigo_invalido`, `nombre_requerido`,
   `nombre_muy_largo` (150), `referencia_invalida` (artículo, familia o empresa que no existe, está dada de baja o es de
-  otro tenant) y `combo_cantidad_no_admitida` (la cantidad de un componente no la admite la unidad de venta del artículo, o la de
+  otro tenant), `combo_componente_por_importe` (un componente es un artículo que se vende por importe, o una familia con algún
+  miembro vivo que se vende por importe; va antes que el siguiente y no depende de la cantidad) y `combo_cantidad_no_admitida` (la cantidad de un componente no la admite la unidad de venta del artículo, o la de
   algún miembro vivo de la familia; los servicios, `es_producto = false`, sí se aceptan). `409`: `combo_codigo_duplicado` (código en
   uso por otro combo vivo) y `combo_codigo_agotado` (alta sin código con el 999.999 ya ocupado).
 - Toda escritura toma un lock advisory por tenant como primera sentencia de su transacción: serializa la asignación del
@@ -1434,7 +1438,7 @@ tiene un componente con `disponible = false`. El formulario valida en el cliente
 nombre obligatorio (150), precio mayor a cero con hasta dos decimales, código entero entre 1 y 999.999 si se informa,
 cantidades de 1 a 999.999 (enteras para un artículo por unidad, hasta 3 decimales para uno pesable), al menos dos componentes (o uno solo con cantidad de 2 o más), hasta 50 componentes, ningún artículo ni familia repetidos
 y ningún componente `disponible = false` (hay que quitarlo o reemplazarlo antes de guardar). El buscador de artículos
-ofrece todos los artículos activos, los pesables rotulados; una cantidad que la unidad de venta de un artículo, o de algún
+ofrece los artículos activos y a la venta que se venden por unidad o por peso, los pesables rotulados (los que se venden por importe no se ofrecen); una cantidad que la unidad de venta de un artículo, o de algún
 miembro de una familia, no admite solo la rechaza el servidor (`combo_cantidad_no_admitida`), que sigue siendo la autoridad: cada código de error de arriba se traduce a un mensaje junto
 al campo o a la sección de componentes que corresponde.
 
@@ -1481,7 +1485,7 @@ de los componentes que no necesitaban elegir.
 
 Fuente de datos: con una instantánea utilizable del punto de venta (POS de escritorio) la lista, la búsqueda por código y
 los candidatos salen de la instantánea, también sin conexión: un candidato es un artículo cuya unidad de venta admite la cantidad del componente (una unidad ausente es
-`Peso`) con precio en la lista del cliente, y los miembros de una familia se buscan por el `idFamilia` de cada artículo.
+`Peso`; un artículo por `Importe` nunca lo es) con precio en la lista del cliente, y los miembros de una familia se buscan por el `idFamilia` de cada artículo.
 Sin instantánea (web) salen de la API: `GET /api/combos` para la lista y el endpoint de abajo para los candidatos.
 
 La instantánea no es la última palabra cuando hay conexión. Un combo creado después de la última sincronización no está en
@@ -1502,8 +1506,8 @@ la API el servidor no mira el precio y lo resuelve el carrito, igual que al esca
 excepciones de `SuperficieDeAutorizacionTests`): devuelve `{ id, codigo, nombre, precio, componentes[] }` con cada
 componente `{ idArticulo, idFamilia, nombre, cantidad, candidatos[] }` en el orden en que se armó el combo. Un candidato
 tiene la forma del escaneo (`ArticuloEscaneado` con `cantidad = 1` y sin código de barra): para un componente de artículo,
-ese artículo; para uno de familia, sus miembros vivos y activos cuya unidad de venta admite la cantidad del componente, ordenados por nombre. Es lo que el
-escaneo resuelve (artículo vivo y activo) más esa unidad; no mira el precio, que se resuelve aparte como en
+ese artículo; para uno de familia, sus miembros vivos, activos y disponibles a la venta cuya unidad de venta admite la cantidad del componente, ordenados por nombre. Es lo que el
+escaneo resuelve (artículo vivo, activo y disponible a la venta) más esa unidad, que además tiene que entrar a combos (un artículo que pasó a venderse por importe deja de ser candidato); no mira el precio, que se resuelve aparte como en
 cualquier línea. Un componente colgante (artículo o familia dada de baja, artículo inactivo o cuya unidad no admite la cantidad, familia sin miembros
 vendibles) vuelve con `candidatos = []` y el cliente muestra el combo como no cargable. `404 no_encontrado` para un id
 inexistente, dado de baja, inactivo, de otro tenant o de una empresa distinta de `idEmpresa` (sin `idEmpresa` solo vale un

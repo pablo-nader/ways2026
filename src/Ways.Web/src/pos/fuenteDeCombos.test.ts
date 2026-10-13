@@ -91,6 +91,25 @@ describe('fuenteDesdeInstantanea', () => {
     expect(combo.componentes[1].etiqueta).toBe('Pesable / Sin unidad')
   })
 
+  // Sin lista (`null`) no se filtra por precio: lo único que deja afuera al artículo por importe, que viaja sin precios,
+  // es su unidad de venta.
+  it('un artículo por importe no es candidato de un componente, ni como artículo ni como miembro de una familia', async () => {
+    const fiambreria = articuloDeInstantanea(7, 'Fiambrería', { idFamilia: 9, unidadVenta: 'Importe' }, [])
+    const fuente = fuenteDesdeInstantanea(
+      instantanea(
+        [...ARTICULOS, fiambreria],
+        [{ idCombo: 10, codigo: 3, nombre: 'C', precio: 1, componentes: [{ idArticulo: 7, cantidad: 1 }, { idFamilia: 9, cantidad: 1 }] }],
+      ),
+      null,
+    )
+
+    const combo = await fuente.cargar(10)
+
+    expect(combo.componentes[0].candidatos).toEqual([])
+    expect(combo.componentes[1].candidatos.map((c) => c.idArticulo)).toEqual([3, 4, 5, 6, 2])
+    expect((await fuente.listar())[0].motivoNoCargable).toBe('No hay artículos disponibles para «Fiambrería».')
+  })
+
   it('un componente sin artículos vendibles deja el combo como no cargable, con el motivo', async () => {
     const fuente = fuenteDesdeInstantanea(
       instantanea(ARTICULOS, [

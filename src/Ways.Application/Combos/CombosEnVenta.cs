@@ -42,7 +42,7 @@ public static class CombosEnVenta
     /// Detecta combos en las líneas de una venta, en el orden dado. Quedan fuera de la detección, sin consumir ni
     /// ser consumidas: las líneas sin precio vigente y las con un descuento de oferta negativo (el motor supone
     /// descuentos de oferta no negativos). La unidad de venta de cada línea viaja al motor, que es quien decide con
-    /// ella qué cantidades valen (<see cref="ResolvedorDeCombos"/>). Qué documentos detectan combos (no las notas de
+    /// ella si la línea entra y qué cantidades valen (<see cref="ResolvedorDeCombos"/>: una línea por importe no entra). Qué documentos detectan combos (no las notas de
     /// crédito, no lo congelado) lo decide quien llama. La clave del resultado es la posición de la línea en
     /// <paramref name="lineas"/>; solo figuran las líneas con cantidad consumida.
     /// </summary>
@@ -86,18 +86,20 @@ public static class CombosEnVenta
     /// <summary>
     /// Camino único de la detección con base de datos, compartido por la venta online y por la vista previa del
     /// carrito: cuesta UNA consulta (<see cref="ServicioDeCombos.CargarCandidatosParaVentaAsync"/>, candidatos
-    /// pre-filtrados por los artículos y familias de las líneas) y ninguna si todas las líneas son de artículos por
-    /// unidad y el documento suma menos de dos unidades: un combo pide al menos dos componentes, o uno solo con
-    /// cantidad dos o más, y de una línea por unidad cada componente toma al menos una unidad entera. Con una línea
-    /// pesable esa cuenta no vale (0,400 kg completan dos componentes de 0,200) y la consulta se paga. Es solo una
-    /// optimización: qué líneas entran a la detección lo decide <see cref="Detectar"/>. <paramref name="idEmpresa"/>
+    /// pre-filtrados por los artículos y familias de las líneas que entran a combos) y ninguna si todas esas líneas
+    /// son de artículos por unidad y suman menos de dos unidades: un combo pide al menos dos componentes, o uno solo
+    /// con cantidad dos o más, y de una línea por unidad cada componente toma al menos una unidad entera. Con una
+    /// línea pesable esa cuenta no vale (0,400 kg completan dos componentes de 0,200) y la consulta se paga. Las
+    /// líneas de artículos por importe no cuentan ni buscan candidatos (<see cref="ReglaDeCombos.ParticipaEnCombos"/>).
+    /// Es solo una optimización: qué líneas entran a la detección lo decide <see cref="Detectar"/>. <paramref name="idEmpresa"/>
     /// <c>null</c> deja solo los combos de todo el tenant.
     /// </summary>
     public static async Task<DeteccionDeCombosEnVenta> DetectarAsync(
         IWaysDbContext db, int? idEmpresa, IReadOnlyList<LineaDeVentaParaCombos> lineas, CancellationToken ct = default)
     {
-        if (lineas.All(l => l.UnidadVenta == UnidadVenta.Unidad)
-            && lineas.Sum(l => l.Cantidad) < ReglaDeCombos.CantidadMinimaDeUnComponenteUnico)
+        var participantes = lineas.Where(l => ReglaDeCombos.ParticipaEnCombos(l.UnidadVenta)).ToList();
+        if (participantes.All(l => l.UnidadVenta == UnidadVenta.Unidad)
+            && participantes.Sum(l => l.Cantidad) < ReglaDeCombos.CantidadMinimaDeUnComponenteUnico)
         {
             return DeteccionDeCombosEnVenta.Vacia;
         }
@@ -105,8 +107,8 @@ public static class CombosEnVenta
         var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(
             db,
             idEmpresa,
-            [.. lineas.Select(l => l.IdArticulo).Distinct()],
-            [.. lineas.Where(l => l.IdFamilia.HasValue).Select(l => l.IdFamilia!.Value).Distinct()],
+            [.. participantes.Select(l => l.IdArticulo).Distinct()],
+            [.. participantes.Where(l => l.IdFamilia.HasValue).Select(l => l.IdFamilia!.Value).Distinct()],
             ct);
 
         return Detectar(lineas, candidatos);

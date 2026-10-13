@@ -3,6 +3,7 @@ import { calcularTotalesDeLinea } from '../api/ajusteManual'
 import type { UnidadVenta } from '../api/tipos'
 import { redondearImporte } from '../formato/importes'
 import {
+  participaEnCombos,
   resolverCombos,
   tieneMasDeDosDecimales,
   type ComboCandidato,
@@ -608,6 +609,41 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
   it('sin líneas o sin combos la resolución es vacía', () => {
     expect(resolverCombos([], [combo(1, 5000, art(PANCHO), art(COCA))]).combos).toEqual([])
     expect(resolverCombos([linea(0, PANCHO, 3000)], []).lineas).toEqual([])
+  })
+})
+
+describe('artículos por importe — espejo de ResolvedorDeCombosTests', () => {
+  it('una línea de un artículo por importe no consume un combo y la misma línea por unidad sí', () => {
+    const candidato = combo(1, 5000, art(PANCHO), art(COCA))
+
+    const porImporte = resolverCombos([linea(0, PANCHO, 3000, { unidad: 'Importe' }), linea(1, COCA, 2500)], [candidato])
+    const porUnidad = resolverCombos([linea(0, PANCHO, 3000), linea(1, COCA, 2500)], [candidato])
+
+    expect(porImporte).toEqual({ lineas: [], combos: [] })
+    expect(porUnidad.lineas).toHaveLength(2)
+  })
+
+  it('un miembro por importe de una familia no es candidato del componente familia', () => {
+    const resolucion = resolverCombos(
+      [
+        linea(0, PANCHO, 3000),
+        linea(1, COCA, 2500, { idFamilia: FAMILIA_BEBIDAS, unidad: 'Importe' }),
+        linea(2, SPRITE, 2500, { idFamilia: FAMILIA_BEBIDAS }),
+      ],
+      [combo(1, 5000, art(PANCHO), fam(FAMILIA_BEBIDAS))],
+    )
+
+    expect(resolucion.lineas.map((l) => l.indice)).toEqual([0, 2])
+  })
+
+  it.each([
+    ['Unidad', true],
+    ['Peso', true],
+    [null, true],
+    [undefined, true],
+    ['Importe', false],
+  ] as const)('participaEnCombos(%s) es %s', (unidad, esperado) => {
+    expect(participaEnCombos(unidad)).toBe(esperado)
   })
 })
 

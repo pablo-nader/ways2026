@@ -606,6 +606,40 @@ public class ResolvedorDeCombosTests
         Assert.Equal(1m, DeLinea(resolucion, 1).UnidadesConsumidas);
     }
 
+    /// <summary>Cláusula: una línea de un artículo por importe no se detecta, aunque su cantidad (siempre 1) sea una
+    /// que la regla de cantidades admite. La misma línea, por unidad, completa el combo.</summary>
+    [Fact]
+    public void UnaLineaDeUnArticuloPorImporteNoConsumeUnComboYLaMismaLineaPorUnidadSi()
+    {
+        var combo = Combo(1, 5000m, Art(Pancho), Art(Coca));
+
+        var porImporte = Resolver([Linea(0, Pancho, 3000m, unidad: UnidadVenta.Importe), Linea(1, Coca, 2500m)], combo);
+        var porUnidad = Resolver([Linea(0, Pancho, 3000m), Linea(1, Coca, 2500m)], combo);
+
+        Assert.Empty(porImporte.Lineas);
+        Assert.Empty(porImporte.Combos);
+        Assert.Equal(2, porUnidad.Lineas.Count);
+    }
+
+    /// <summary>Cláusula: un miembro por importe de una familia no es candidato del componente familia, aunque esté
+    /// antes en el documento y la cantidad del componente sea 1: lo completa el miembro siguiente y la línea por importe
+    /// queda sin consumo.</summary>
+    [Fact]
+    public void UnMiembroPorImporteDeUnaFamiliaNoEsCandidatoDelComponenteFamilia()
+    {
+        var combo = Combo(1, 5000m, Art(Pancho), Fam(FamiliaBebidas));
+
+        var resolucion = Resolver(
+            [
+                Linea(0, Pancho, 3000m),
+                Linea(1, Coca, 2500m, idFamilia: FamiliaBebidas, unidad: UnidadVenta.Importe),
+                Linea(2, Sprite, 2500m, idFamilia: FamiliaBebidas)
+            ],
+            combo);
+
+        Assert.Equal([0, 2], resolucion.Lineas.Select(l => l.Indice));
+    }
+
     [Fact]
     public void UnSoloComponentePesableDeDosKilosOMasSeAplicaYUnoMenorNo()
     {

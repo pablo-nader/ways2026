@@ -59,6 +59,12 @@ public class ParidadDeCombosConElMotorWebTests
         Verificar([Linea(0, 1, 3000m), Linea(1, 2, 2500m)], Combo(7, 5000m, 1, 2), [2727m, 2273m], [273m, 227m]);
 
     [Fact]
+    public void UnaLineaDeUnArticuloPorImporteNoConsumeElComboYLasDosLineasQuedanAPrecioDeLista() =>
+        Verificar(
+            [Linea(0, 1, 3000m, unidad: UnidadVenta.Importe), Linea(1, 2, 2500m)], Combo(7, 5000m, 1, 2),
+            [3000m, 2500m], [0m, 0m]);
+
+    [Fact]
     public void TresLineasIgualesDejanElRestoEnLaUltima() =>
         Verificar(
             [Linea(0, 1, 1000m), Linea(1, 2, 1000m), Linea(2, 3, 1000m)], Combo(7, 2000m, 1, 2, 3),

@@ -153,4 +153,33 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
   - D5 of `odd/tasks/combos.md` carries a one-line amendment pointing here.
   - Checks: `tsc -b` exit 0; `npm run lint` exit 0; `vitest run` 5895/5895 (206 files). 18 mutations killed.
 
+- Merge with `origin/main` (`daa2c0ee`) — merge commit `eef6a72b`, plus a follow-up commit with the engine rule, the tests and
+  `docs/10`. Route: delegated writer. main brought a third unit of sale (`UnidadVenta.Importe`, quantity always 1, the cashier
+  types the amount), articles not available for sale / online availability and the rounded public combo price.
+  - **Decision (parent, 2026-10-12):** an article sold by amount is never a combo component and its lines never consume a
+    combo, exactly as on main (which only allowed `Unidad`). Only `Unidad` and `Peso` take part. It had to be made explicit
+    because `ReglaDeCantidadDeVenta.EsCantidadAdmitida(Importe, 1)` is true: with our "the unit admits the quantity" rule an
+    amount article became a candidate of any component of quantity 1.
+  - Where the rule lives: `ReglaDeCombos.ParticipaEnCombos` / `AdmiteComoComponente` (domain) and `participaEnCombos` in
+    `pos/motorDeCombos.ts`. Used by `ResolvedorDeCombos.MilesimasDetectables` and its TypeScript mirror (an amount line is not
+    detectable, so it is never a candidate either), `ServicioDeCombos.CargarParaPosAsync`, `ArmadorDeInstantanea.ArmarCombos`
+    (an amount article travels in the snapshot without prices), `ServicioDeVentas.ExigirUnidadesDeComboOfflineAdmitidas`
+    (`combo_offline_invalido`), `fuenteDeCombos.ts` and `esArticuloElegibleParaCombo` (the back-office picker hides it).
+  - ABM: main's code `combo_componente_por_importe` is kept and now runs BEFORE `combo_cantidad_no_admitida`, from the single
+    read of units (main's two extra `AnyAsync` are gone): an amount article with quantity 2 no longer gets the "integer
+    quantity" message.
+  - `CombosEnVenta.DetectarAsync`: the short-circuit counts only the lines that take part, so one unit plus an amount line
+    still pays no candidates query.
+  - main's rules kept: `DisponibleVenta` on the POS candidates, `soloVendibles=true` in the picker, the `importe` exclusion in
+    `resolverDocumentoOffline` (it covers an amount line whose article is stale in the snapshot).
+  - Not reconciled, outside the edit surface: `ConsultaDeCombosPublicos` (online store) still offers only combos whose
+    components are all `Unidad`, and its doc-comment still says that is the only unit the sale engine accepts. `docs/10` now
+    states the real behavior; the code comment and the decision (offer weighable combos online or not) are pending.
+  - The merge commit carries the nine conflicted files plus the four files they need to compile and pass
+    (`ReglaDeCombos.cs`, `combosAbm.ts`, `SelectorDeArticuloDeCombo.tsx`, `motorDeCombos.ts`); it was not verified on its own.
+  - Checks on the final tree: no conflict markers; `dotnet build Ways.slnx` 0 errors; Domain 1686/1686; Application 916/916;
+    `tsc -b` exit 0; `npm run lint` exit 0; `vitest run` 7070/7070 (232 files); Integration 4207/4207 (full, unfiltered,
+    45 m 39 s with another session sharing the Docker daemon; no environmental failure). 9 mutations killed (6 C#, 3
+    TypeScript), one test rewritten because it survived (family member by amount, C# side).
+
 Next step: T4.

@@ -70,6 +70,10 @@ describe('paridad de combos con el servidor', () => {
     verificar([linea(0, 1, 3000), linea(1, 2, 2500)], combo(7, 5000, 1, 2), [2727, 2273], [273, 227])
   })
 
+  it('una línea de un artículo por importe no consume el combo y las dos líneas quedan a precio de lista', () => {
+    verificar([linea(0, 1, 3000, 1, 0, 'Importe'), linea(1, 2, 2500)], combo(7, 5000, 1, 2), [3000, 2500], [0, 0])
+  })
+
   it('tres líneas iguales dejan el resto en la última', () => {
     verificar([linea(0, 1, 1000), linea(1, 2, 1000), linea(2, 3, 1000)], combo(7, 2000, 1, 2, 3), [667, 667, 666], [333, 333, 334])
   })

@@ -153,6 +153,39 @@ public class CombosCargablesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal([jamon], despues.Componentes[1].Candidatos.Select(c => c.IdArticulo));
     }
 
+    /// <summary>Cláusula: un artículo que pasó a venderse por importe después de guardado el combo deja de ser
+    /// candidato, como artículo y como miembro de una familia, aunque la cantidad del componente sea 1 (la única que
+    /// su unidad admite).</summary>
+    [Fact]
+    public async Task UnArticuloQuePasoAVendersePorImporteDejaDeSerCandidato()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnArticuloQuePasoAVendersePorImporteDejaDeSerCandidato));
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Gaseosas");
+        var coca = await ArticuloAsync(e, "coca", idFamilia: familia);
+        var sprite = await ArticuloAsync(e, "sprite", idFamilia: familia);
+        var pancho = await ArticuloAsync(e, "pancho");
+        var id = await ComboAsync(e.Admin, [Art(pancho), Fam(familia)]);
+
+        var antes = await LeerAsync(await CargableAsync(e.Admin, id, e.IdEmpresa));
+        Assert.Equal([pancho], antes.Componentes[0].Candidatos.Select(c => c.IdArticulo));
+        Assert.Equal([coca, sprite], antes.Componentes[1].Candidatos.Select(c => c.IdArticulo));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            foreach (var articulo in db.Articulos.Where(a => a.Id == pancho || a.Id == sprite))
+            {
+                articulo.UnidadVenta = UnidadVenta.Importe;
+                articulo.AcumulaEnVenta = false;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var despues = await LeerAsync(await CargableAsync(e.Admin, id, e.IdEmpresa));
+        Assert.Empty(despues.Componentes[0].Candidatos);
+        Assert.Equal([coca], despues.Componentes[1].Candidatos.Select(c => c.IdArticulo));
+    }
+
     [Fact]
     public async Task UnArticuloComponenteInactivoODadoDeBajaQuedaSinCandidatosYElComponenteSigueEnElCombo()
     {

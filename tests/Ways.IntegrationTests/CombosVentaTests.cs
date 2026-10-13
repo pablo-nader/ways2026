@@ -513,6 +513,37 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.All(emitido.Items, i => Assert.Null(i.IdCombo));
     }
 
+    /// <summary>Cláusula: una línea de un artículo por importe no consume un combo. El ABM no deja guardar ese combo,
+    /// pero el artículo pudo pasar a venderse por importe después: la venta cobra el importe tipeado y el otro
+    /// componente a precio de lista. Antes del cambio de unidad el mismo carrito cobra el combo.</summary>
+    [Fact]
+    public async Task UnArticuloQuePasoAVendersePorImporteNoConsumeElCombo()
+    {
+        var ctx = await PrepararAsync(nameof(UnArticuloQuePasoAVendersePorImporteNoConsumeElCombo));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        var conCombo = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+        Assert.All(conCombo.Items, i => Assert.Equal(combo, i.IdCombo));
+
+        await using (var db = Db(ctx.IdTenant))
+        {
+            await db.Articulos.Where(a => a.Id == pancho).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.UnidadVenta, UnidadVenta.Importe)
+                .SetProperty(a => a.AcumulaEnVenta, false));
+        }
+
+        var emitido = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 5500m, new LineaDeVenta(pancho, 1m, null, Importe: 3000m), new LineaDeVenta(coca, 1m, null)));
+
+        Assert.Equal(5500m, emitido.Total);
+        Assert.Equal(0m, emitido.DescuentoTotal);
+        Assert.All(emitido.Items, i => Assert.Null(i.IdCombo));
+    }
+
     private async Task<(Contexto Ctx, int Jamon, int Queso, int Combo)> JamonYQuesoAsync(string nombre)
     {
         var ctx = await PrepararAsync(nombre);

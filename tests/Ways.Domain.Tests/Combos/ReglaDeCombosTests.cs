@@ -1,3 +1,4 @@
+using Ways.Domain.Articulos;
 using Ways.Domain.Combos;
 using Ways.Domain.Common;
 
@@ -158,5 +159,31 @@ public class ReglaDeCombosTests
         var error = Assert.Throws<ErrorDominio>(() => ReglaDeCombos.ValidarCodigo(codigo));
         Assert.Equal("combo_codigo_invalido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData(UnidadVenta.Unidad, true)]
+    [InlineData(UnidadVenta.Peso, true)]
+    [InlineData(UnidadVenta.Importe, false)]
+    public void SoloLosArticulosPorUnidadYPorPesoEntranACombos(UnidadVenta unidad, bool esperado)
+    {
+        Assert.Equal(esperado, ReglaDeCombos.ParticipaEnCombos(unidad));
+    }
+
+    /// <summary>Cláusula: un artículo cubre un componente si su unidad entra a combos Y admite la cantidad. La unidad
+    /// por importe admite la cantidad 1 y aun así no cubre ningún componente.</summary>
+    [Theory]
+    [InlineData(UnidadVenta.Unidad, "1", true)]
+    [InlineData(UnidadVenta.Unidad, "0.5", false)]
+    [InlineData(UnidadVenta.Peso, "0.200", true)]
+    [InlineData(UnidadVenta.Peso, "0.2001", false)]
+    [InlineData(UnidadVenta.Importe, "1", false)]
+    [InlineData(UnidadVenta.Importe, "2", false)]
+    public void UnArticuloCubreUnComponenteSiSuUnidadEntraACombosYAdmiteLaCantidad(
+        UnidadVenta unidad, string cantidad, bool esperado)
+    {
+        var valor = decimal.Parse(cantidad, System.Globalization.CultureInfo.InvariantCulture);
+
+        Assert.Equal(esperado, ReglaDeCombos.AdmiteComoComponente(unidad, valor));
     }
 }

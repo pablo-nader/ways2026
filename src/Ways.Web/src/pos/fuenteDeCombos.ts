@@ -5,6 +5,8 @@
  */
 import { ErrorApi } from '../api/cliente'
 import { respetaGranularidad } from '../api/cantidadPorUnidad'
+import type { UnidadVenta } from '../api/tipos'
+import { participaEnCombos } from './motorDeCombos'
 import { clienteDeCombos } from '../api/combos'
 import type {
   ArticuloDeInstantanea,
@@ -186,6 +188,11 @@ function aCandidato(articulo: ArticuloDeInstantanea): ArticuloEscaneado {
   }
 }
 
+/** Espejo de `ReglaDeCombos.AdmiteComoComponente`: la unidad entra a combos (nunca `Importe`) y admite la cantidad. */
+function admiteComoComponente(unidadVenta: UnidadVenta | null | undefined, cantidad: number): boolean {
+  return participaEnCombos(unidadVenta) && respetaGranularidad(unidadVenta, cantidad)
+}
+
 function etiquetaDeFamilia(candidatos: readonly ArticuloEscaneado[]): string {
   if (candidatos.length === 0) return 'Familia sin artículos disponibles'
   const nombres = candidatos.slice(0, 3).map((c) => c.nombre)
@@ -195,7 +202,7 @@ function etiquetaDeFamilia(candidatos: readonly ArticuloEscaneado[]): string {
 /**
  * Combos de la instantánea y sus candidatos, calculados sobre la instantánea misma. Un candidato de un componente es un
  * artículo cuya unidad de venta admite la cantidad del componente (por unidad, solo una cantidad entera; por peso, o con la
- * unidad ausente, también kilos con decimales: la regla de `api/cantidadPorUnidad`) y, con una lista
+ * unidad ausente, también kilos con decimales: la regla de `api/cantidadPorUnidad`; por importe, nunca) y, con una lista
  * de precios conocida, con precio en ella: la misma regla con que el carrito offline decide qué líneas puede cotizar. Sin
  * lista (`null`, el cliente todavía no se resolvió) no se filtra por precio. Los miembros de una familia se buscan por el
  * `idFamilia` de cada artículo.
@@ -238,10 +245,10 @@ export function fuenteDesdeInstantanea(instantanea: InstantaneaDePos, idListaPre
             idFamilia: null,
             etiqueta: vendible?.nombre ?? todosPorId.get(c.idArticulo)?.nombre ?? ARTICULO_NO_DISPONIBLE,
             cantidad: c.cantidad,
-            candidatos: vendible && respetaGranularidad(vendible.unidadVenta, c.cantidad) ? [aCandidato(vendible)] : [],
+            candidatos: vendible && admiteComoComponente(vendible.unidadVenta, c.cantidad) ? [aCandidato(vendible)] : [],
           }
         }
-        const candidatos = (c.idFamilia != null ? (porFamilia.get(c.idFamilia) ?? []) : []).filter((m) => respetaGranularidad(m.unidadVenta, c.cantidad))
+        const candidatos = (c.idFamilia != null ? (porFamilia.get(c.idFamilia) ?? []) : []).filter((m) => admiteComoComponente(m.unidadVenta, c.cantidad))
         return {
           idArticulo: null,
           idFamilia: c.idFamilia ?? null,

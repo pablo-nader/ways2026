@@ -73,6 +73,29 @@ public class CombosDeInstantaneaTests
             Assert.Single(combos!).Componentes);
     }
 
+    /// <summary>Cláusula: un artículo por importe figura en la instantánea (viaja sin precios) pero no es un componente
+    /// vendible, aunque la cantidad del componente sea 1. El mismo combo con ese artículo por unidad sí viaja.</summary>
+    [Fact]
+    public void UnComboConUnArticuloPorImporteNoViajaYConEseArticuloPorUnidadSi()
+    {
+        ComboCandidato[] candidatos = [Combo(7, PorArticulo(1), PorArticulo(2))];
+
+        Assert.Null(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), Articulo(2, UnidadVenta.Importe)]));
+        Assert.Single(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), Articulo(2)])!);
+    }
+
+    /// <summary>Cláusula: una familia cuyo único artículo de la instantánea se vende por importe no se puede completar;
+    /// con otro miembro por unidad, sí.</summary>
+    [Fact]
+    public void UnaFamiliaSoloConArticulosPorImporteNoCuentaYConUnMiembroPorUnidadSi()
+    {
+        ComboCandidato[] candidatos = [Combo(7, PorArticulo(1), PorFamilia(40))];
+        var porImporte = Articulo(2, UnidadVenta.Importe, idFamilia: 40);
+
+        Assert.Null(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), porImporte]));
+        Assert.Single(ArmadorDeInstantanea.ArmarCombos(candidatos, [Articulo(1), porImporte, Articulo(3, idFamilia: 40)])!);
+    }
+
     [Fact]
     public void UnaFamiliaSoloConArticulosPesablesCuenta()
     {

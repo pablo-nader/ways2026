@@ -68,6 +68,18 @@ public class CombosEnVentaTests
         Assert.Equal([0, 1], resultado.Keys.Order());
     }
 
+    /// <summary>Cláusula: la unidad de venta por importe viaja al motor y la línea no consume el combo, aunque traiga
+    /// precio (el importe tipeado) y cantidad 1.</summary>
+    [Fact]
+    public void UnaLineaDeUnArticuloPorImporteNoConsumeElCombo()
+    {
+        var resultado = CombosEnVenta.Detectar(
+            [Linea(Pancho, 1m, 3000m, unidad: UnidadVenta.Importe), Linea(Coca, 1m, 2500m)], [PanchoYCoca()]);
+
+        Assert.Empty(resultado.Lineas);
+        Assert.Empty(resultado.Combos);
+    }
+
     [Fact]
     public void UnaLineaSinPrecioVigenteNoEntraALaDeteccion()
     {

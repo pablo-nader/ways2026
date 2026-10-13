@@ -31,7 +31,9 @@ namespace Ways.Domain.Combos;
 /// lo que sobra queda fuera del combo y la línea nunca se parte. Qué cantidades valen lo decide la unidad de venta de
 /// la línea (<see cref="ReglaDeCantidadDeVenta"/>), nunca la forma del número: una línea cuya cantidad su unidad no
 /// admite no se detecta, una línea solo es candidata de un componente cuya cantidad su unidad admite, y de una línea
-/// por unidad solo se toman unidades enteras. Las cuentas de cantidad se hacen en milésimas enteras.</para>
+/// por unidad solo se toman unidades enteras. Solo entran las líneas por unidad y por peso
+/// (<see cref="ReglaDeCombos.ParticipaEnCombos"/>): una línea de un artículo por importe no se detecta. Las cuentas
+/// de cantidad se hacen en milésimas enteras.</para>
 /// </summary>
 public static class ResolvedorDeCombos
 {
@@ -125,13 +127,14 @@ public static class ResolvedorDeCombos
 
     private static decimal ACantidad(long milesimas) => (decimal)milesimas / MilesimasPorUnidad;
 
-    /// <summary>La cantidad de la línea en milésimas, o cero si la línea no se detecta: cantidad no positiva, que su
-    /// unidad de venta no admite, o fuera de tope. El tope es <see cref="int.MaxValue"/> unidades para una línea por
+    /// <summary>La cantidad de la línea en milésimas, o cero si la línea no se detecta: de un artículo por importe,
+    /// cantidad no positiva, que su unidad de venta no admite, o fuera de tope. El tope es <see cref="int.MaxValue"/> unidades para una línea por
     /// unidad y <see cref="int.MaxValue"/> milésimas para una pesable; así las veces que se aplica un combo en una
     /// vuelta caben en un entero de 32 bits.</summary>
     private static long MilesimasDetectables(LineaParaCombos linea)
     {
-        if (linea.Cantidad <= 0
+        if (!ReglaDeCombos.ParticipaEnCombos(linea.UnidadVenta)
+            || linea.Cantidad <= 0
             || linea.Cantidad > int.MaxValue
             || !ReglaDeCantidadDeVenta.EsCantidadAdmitida(linea.UnidadVenta, linea.Cantidad))
         {

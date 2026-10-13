@@ -17,7 +17,7 @@ public readonly record struct ComboCandidato(
 /// Línea del documento para detectar combos. El orden de entrada es el orden del documento;
 /// <see cref="Indice"/> solo identifica la línea en la salida. <see cref="DescuentoUnitarioDeOferta"/> es el
 /// descuento por unidad que las ofertas ya resolvieron para esa línea. <see cref="UnidadVenta"/> es la del artículo
-/// y decide qué cantidades de la línea y de un componente valen para ella.
+/// y decide qué cantidades de la línea y de un componente valen para ella; una línea por importe no se detecta.
 /// </summary>
 public readonly record struct LineaParaCombos(
     int Indice,

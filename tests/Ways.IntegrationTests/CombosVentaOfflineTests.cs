@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Ventas;
+using Ways.Domain.Articulos;
 using Ways.Domain.Organizacion;
 using static Ways.IntegrationTests.CombosApoyo;
 
@@ -462,6 +463,31 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         var linea = Offline(jamon, 0.215m, 10000m, unidades: 0.2001m, ahorro: 333m, idCombo: combo);
 
         Assert.Equal("combo_offline_invalido", await CodigoDeRechazoAsync(ctx, Venta(ctx, 1, 1817m, "TX", linea)));
+    }
+
+    /// <summary>Cláusula: un artículo por importe no entra a combos, así que sus unidades de combo se rechazan aunque
+    /// valgan 1, la única cantidad que su unidad admite. La línea trae precio offline y no importe (con importe y sin
+    /// precio la rechaza antes <c>combo_offline_no_admitido</c>, probado en <c>VentaPorImporteTests</c>). La misma
+    /// venta, con el artículo todavía por unidad, se admite.</summary>
+    [Fact]
+    public async Task LasUnidadesDeComboDeUnArticuloPorImporteSeRechazan()
+    {
+        var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(LasUnidadesDeComboDeUnArticuloPorImporteSeRechazan));
+
+        SolicitudDeVenta Solicitud(long numero) => Venta(ctx, numero, 5000m, "TX",
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo));
+
+        await EmitirAsync(ctx, Solicitud(1));
+
+        await using (var db = apoyo.Db(ctx.IdTenant))
+        {
+            await db.Articulos.Where(a => a.Id == pancho).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.UnidadVenta, UnidadVenta.Importe)
+                .SetProperty(a => a.AcumulaEnVenta, false));
+        }
+
+        Assert.Equal("combo_offline_invalido", await CodigoDeRechazoAsync(ctx, Solicitud(2)));
     }
 
     /// <summary>Cláusula: el bruto de las unidades consumidas se calcula DESPUÉS de acotar las unidades a 1..cantidad. Con
