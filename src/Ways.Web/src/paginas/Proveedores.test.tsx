@@ -704,3 +704,111 @@ describe('Proveedores — error y foco de la modal', () => {
     expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
   })
 })
+
+function diferido<T>() {
+  let resolver!: (valor: T) => void
+  let rechazar!: (motivo: unknown) => void
+  const promesa = new Promise<T>((res, rej) => {
+    resolver = res
+    rechazar = rej
+  })
+
+  return { promesa, resolver, rechazar }
+}
+
+function lecturasDelListado(): string[] {
+  return apiGetMock.mock.calls.map((c) => String(c[0])).filter((r) => r === '/proveedores' || r.startsWith('/proveedores?'))
+}
+
+describe('Proveedores — lectura en vuelo al guardar y término aplicado', () => {
+  /** Cláusula bajo prueba: la relectura de la rama de fallo de `guardar` (`habiaLecturaEnVuelo`). */
+  it('un guardado rechazado con la lectura inicial en vuelo no deja la tabla en el spinner', async () => {
+    const inicial = diferido<PaginaDe<ProveedorListado>>()
+    const post = diferido<ProveedorListado>()
+    let lecturas = 0
+    mockearRutasBase((ruta) => {
+      if (ruta === '/proveedores') {
+        return ++lecturas === 1 ? inicial.promesa : Promise.resolve(paginaFixture([proveedorFixture()]))
+      }
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([CONDICION_RI])
+      return undefined
+    })
+    apiPostMock.mockReturnValue(post.promesa)
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByRole('option', { name: 'Responsable Inscripto' })
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await act(async () => {
+      inicial.resolver(paginaFixture([proveedorFixture()]))
+      await inicial.promesa
+    })
+    await act(async () => {
+      post.rechazar(new ErrorApi(409, 'cuit_duplicado', 'Ya existe un proveedor con ese CUIT.'))
+      await post.promesa.catch(() => {})
+    })
+
+    expect(await screen.findByText('Proveedor Uno SA')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(lecturas).toBe(2)
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo proveedor' })
+    expect(within(dialogo).getByText('Ya existe un proveedor con ese CUIT.')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`. Con el listado ya en pantalla, un
+   * rechazo no lo vuelve a pedir. */
+  it('un guardado rechazado con el listado ya cargado no lo vuelve a pedir', async () => {
+    mockearConCondicion()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cuit_duplicado', 'Ya existe un proveedor con ese CUIT.'))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Ya existe un proveedor con ese CUIT.')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled())
+    expect(lecturasDelListado()).toHaveLength(1)
+    expect(screen.getByText('Proveedor Uno SA')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `terminoVigente` en el refresco posterior a la escritura. El texto tipeado
+   * y todavía no enviado no viaja; el último término enviado, sí. */
+  it.each([
+    { enviado: '', tipeado: 'zzz', esperada: '/proveedores' },
+    { enviado: 'uno', tipeado: 'uno zzz', esperada: '/proveedores?busqueda=uno' },
+  ])('el refresco tras guardar recarga con el término aplicado "$enviado", no con "$tipeado"', async ({ enviado, tipeado, esperada }) => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/proveedores' || ruta.startsWith('/proveedores?')) return Promise.resolve(paginaFixture([proveedorFixture()]))
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([CONDICION_RI])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockResolvedValue(proveedorFixture({ id: 2 }))
+    const usuario = userEvent.setup()
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+    if (enviado) {
+      await usuario.type(screen.getByRole('searchbox'), enviado)
+      await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+      await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(esperada))
+    }
+    await usuario.clear(screen.getByRole('searchbox'))
+    await usuario.type(screen.getByRole('searchbox'), tipeado)
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByRole('option', { name: 'Responsable Inscripto' })
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    const antes = lecturasDelListado().length
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(lecturasDelListado()).toHaveLength(antes + 1))
+    expect(lecturasDelListado().at(-1)).toBe(esperada)
+    expect(lecturasDelListado().some((r) => r.includes('zzz'))).toBe(false)
+  })
+})
