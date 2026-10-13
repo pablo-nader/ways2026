@@ -56,6 +56,8 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   const [idCuenta, setIdCuenta] = useState<number | null>(null)
   // `null` = el rango por defecto, que se recalcula en cada carga (los últimos siete días hasta hoy); una edición del usuario lo fija.
   const [rangoElegido, setRangoElegido] = useState<{ desde: string; hasta: string } | null>(null)
+  // Se calcula una vez por carga y de ahí salen tanto la consulta como los campos de fecha: no pueden discrepar al pasar la medianoche.
+  const [rangoPorDefecto, setRangoPorDefecto] = useState(rangoUltimosSieteDias)
   const desdeElegido = rangoElegido?.desde ?? null
   const hastaElegido = rangoElegido?.hasta ?? null
   const [pagina, setPagina] = useState(1)
@@ -124,7 +126,9 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
     setCargandoLibro(true)
     setErrorLibro('')
 
-    const rango = desdeElegido === null || hastaElegido === null ? rangoUltimosSieteDias() : { desde: desdeElegido, hasta: hastaElegido }
+    const porDefecto = rangoUltimosSieteDias()
+    setRangoPorDefecto(porDefecto)
+    const rango = desdeElegido === null || hastaElegido === null ? porDefecto : { desde: desdeElegido, hasta: hastaElegido }
 
     clienteDeReportes
       .libroDeCuenta(idCuenta, { desde: rango.desde, hasta: rango.hasta, pagina, tamanio: TAMANIO_DE_PAGINA })
@@ -153,7 +157,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   }
 
   function cambiarRango(cambios: Partial<{ desde: string; hasta: string }>) {
-    setRangoElegido((previo) => ({ ...(previo ?? rangoUltimosSieteDias()), ...cambios }))
+    setRangoElegido((previo) => ({ ...(previo ?? rangoPorDefecto), ...cambios }))
     setPagina(1)
   }
 
@@ -165,10 +169,12 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   function alAjustar(resultado: ResultadoDeAjusteDeCuenta) {
     setModalAbierto(false)
     setAvisoIncierto('')
-    const fuera = rangoElegido !== null && instanteFueraDelRango(resultado.movimiento.fecha, rangoElegido)
+    // El rango que se va a mostrar tras el refresco: el elegido o el de los últimos siete días hasta hoy. Con fechas monótonas el
+    // ajuste puede llevar una fecha futura (si la cola de la cuenta la tiene) y quedar fuera también del rango por defecto.
+    const fuera = instanteFueraDelRango(resultado.movimiento.fecha, rangoElegido ?? rangoUltimosSieteDias())
     setConfirmacion(
       `Ajuste registrado. Saldo de ${cuentaElegida?.nombre ?? 'la cuenta'}: ${moneda(resultado.saldoActual)}.` +
-        (fuera ? ' El ajuste quedó fuera del rango elegido: ampliá las fechas para verlo en el libro.' : ''),
+        (fuera ? ' El ajuste quedó fuera del rango mostrado: ampliá las fechas para verlo en el libro.' : ''),
     )
     refrescar()
   }
@@ -283,7 +289,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
                   <CampoFecha
                     id="cuentas-desde"
                     className="form-control"
-                    value={rangoElegido?.desde ?? rangoUltimosSieteDias().desde}
+                    value={rangoElegido?.desde ?? rangoPorDefecto.desde}
                     onChange={(valor) => cambiarRango({ desde: valor })}
                   />
                 </div>
@@ -294,7 +300,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
                   <CampoFecha
                     id="cuentas-hasta"
                     className="form-control"
-                    value={rangoElegido?.hasta ?? rangoUltimosSieteDias().hasta}
+                    value={rangoElegido?.hasta ?? rangoPorDefecto.hasta}
                     onChange={(valor) => cambiarRango({ hasta: valor })}
                   />
                 </div>
@@ -421,8 +427,9 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
         </>
       )}
 
-      {modalAbierto && cuentaElegida && (
+      {modalAbierto && cuentaElegida && idEmpresa !== null && (
         <ModalDeAjusteDeCuenta
+          idEmpresa={idEmpresa}
           cuenta={cuentaElegida}
           onCerrar={() => setModalAbierto(false)}
           onAjustado={alAjustar}

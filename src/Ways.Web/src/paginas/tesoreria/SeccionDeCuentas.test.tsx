@@ -435,22 +435,24 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
     const usuario = userEvent.setup()
     montar()
     const antesCuentas = () => llamadasA('/reportes/tesoreria/cuentas?').length
-    // El modal relee el saldo con tamanio=1: no es una recarga del libro de la pantalla.
-    const antesLibro = () => llamadasA('/reportes/tesoreria/cuentas/1/libro').filter((c) => !(c[0] as string).includes('tamanio=1')).length
+    const antesLibro = () => llamadasA('/reportes/tesoreria/cuentas/1/libro').length
 
     await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
     await screen.findByLabelText('Totales del período')
     const cuentasAntes = antesCuentas()
     const libroAntes = antesLibro()
 
+    const cuentasConLista = cuentasAntes
     await usuario.click(screen.getByRole('button', { name: 'Ajustar saldo' }))
+    // El modal relee el saldo por la lectura de cuentas (no por el libro).
+    await waitFor(() => expect(antesCuentas()).toBe(cuentasConLista + 1))
     await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1750')
     await usuario.type(screen.getByLabelText('Concepto'), 'Conciliación')
     await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     expect(await screen.findByText('Ajuste registrado. Saldo de Mercado Pago: $ 1.750,00.')).toBeInTheDocument()
     expect(screen.queryByRole('radio', { name: 'Tengo el saldo real' })).not.toBeInTheDocument()
-    await waitFor(() => expect(antesCuentas()).toBe(cuentasAntes + 1))
+    await waitFor(() => expect(antesCuentas()).toBe(cuentasConLista + 2))
     await waitFor(() => expect(antesLibro()).toBe(libroAntes + 1))
     expect(apiPostMock).toHaveBeenCalledWith('/cuentas-tesoreria/1/ajustes', { concepto: 'Conciliación', saldoObjetivo: 1750 })
   })
@@ -478,9 +480,9 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
     montar()
     await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
     await screen.findByLabelText('Totales del período')
-    const cuentasAntes = llamadasA('/reportes/tesoreria/cuentas?').length
-
     await usuario.click(screen.getByRole('button', { name: 'Ajustar saldo' }))
+    await waitFor(() => expect(llamadasA('/reportes/tesoreria/cuentas?').length).toBe(2))
+    const cuentasAntes = llamadasA('/reportes/tesoreria/cuentas?').length
     await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1750')
     await usuario.type(screen.getByLabelText('Concepto'), 'Conciliación')
     await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
@@ -536,7 +538,7 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
 
     await waitFor(() => expect(ultimoLibro()).toContain('hasta=2026-10-13T23:59:59.999'))
     expect(ultimoLibro()).toContain('desde=2026-10-07T00:00:00')
-    expect(screen.queryByText(/quedó fuera del rango elegido/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/quedó fuera del rango mostrado/)).not.toBeInTheDocument()
   })
 
   it('con el rango editado se respeta y, si el ajuste cae fuera, se avisa', async () => {
@@ -556,8 +558,26 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
     vi.setSystemTime(new Date(2026, 9, 13, 0, 10))
     await ajustar(usuario)
 
-    expect(await screen.findByText(/El ajuste quedó fuera del rango elegido/)).toBeInTheDocument()
+    expect(await screen.findByText(/El ajuste quedó fuera del rango mostrado/)).toBeInTheDocument()
     await waitFor(() => expect(ultimoLibro()).toContain('hasta=2026-10-12T23:59:59.999'))
+  })
+
+  it('con el rango por defecto, un ajuste fechado después de hoy (cola futura) avisa que quedó fuera', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 12, 12, 0))
+    mockearConLibro()
+    apiPostMock.mockResolvedValue({
+      saldoActual: 1750,
+      movimiento: fila({ id: 99, tipo: 'Ajuste', fecha: new Date(2026, 9, 15, 9, 0).toISOString(), final: 1750 }),
+    })
+    const usuario = userEvent.setup()
+    montar()
+
+    await usuario.click(await screen.findByRole('button', { name: /Mercado Pago/ }))
+    await screen.findByLabelText('Totales del período')
+    await ajustar(usuario)
+
+    expect(await screen.findByText(/El ajuste quedó fuera del rango mostrado/)).toBeInTheDocument()
   })
 
   it('con el rango editado que sí incluye el ajuste no hay aviso', async () => {
@@ -575,6 +595,6 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
     await ajustar(usuario)
 
     expect(await screen.findByText(/Ajuste registrado/)).toBeInTheDocument()
-    expect(screen.queryByText(/quedó fuera del rango elegido/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/quedó fuera del rango mostrado/)).not.toBeInTheDocument()
   })
 })

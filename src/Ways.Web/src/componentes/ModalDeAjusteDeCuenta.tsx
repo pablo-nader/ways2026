@@ -19,6 +19,8 @@ import { CampoImporte } from './CampoImporte'
 import { Modal } from './Modal'
 
 type Props = {
+  /** Empresa de la cuenta: con ella se relee el saldo por la lectura barata de cuentas, sin recorrer el libro. */
+  idEmpresa: number
   cuenta: { id: number; nombre: string; saldoActual: number }
   onCerrar: () => void
   /** Se llama una sola vez con el ajuste ya registrado; quien abrió el modal lo cierra y refresca. */
@@ -37,11 +39,12 @@ type Props = {
  * puede reemplazar ni reabrir lo que escribe. El ajuste no lleva clave de idempotencia, así que nunca se reintenta solo y un
  * resultado incierto (red cortada, 5xx) no deja el formulario abierto para reenviar a ciegas: se avisa al llamador.
  */
-export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto }: Props) {
+export function ModalDeAjusteDeCuenta({ idEmpresa, cuenta, onCerrar, onAjustado, onIncierto }: Props) {
   const [formulario, setFormulario] = useState<FormularioDeAjuste>(formularioDeAjusteVacio)
   const [error, setError] = useState<ErrorDeAjuste | null>(null)
   // El saldo que llega por props sale de un listado que pudo quedar viejo: se relee al abrir y la vista previa parte de ese.
   const [saldoActual, setSaldoActual] = useState(cuenta.saldoActual)
+  const [saldoDesactualizado, setSaldoDesactualizado] = useState(false)
   const [ajustando, setAjustando] = useState(false)
   const ajustandoRef = useRef(false)
   const vigenteRef = useRef(true)
@@ -56,18 +59,26 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
   useEffect(() => {
     let vigente = true
     clienteDeReportes
-      .libroDeCuenta(cuenta.id, { desde: '', hasta: '', pagina: 1, tamanio: 1 })
-      .then((libro) => {
-        if (vigente) setSaldoActual(libro.saldoActual)
+      .cuentasDeTesoreria(idEmpresa)
+      .then((datos) => {
+        if (!vigente) return
+        const fresca = datos.cuentas.find((c) => c.id === cuenta.id)
+        if (fresca) {
+          setSaldoActual(fresca.saldoActual)
+          setSaldoDesactualizado(false)
+        } else {
+          setSaldoDesactualizado(true)
+        }
       })
       .catch(() => {
-        // Sin lectura fresca la vista previa sigue con el saldo conocido; el servidor decide igual.
+        // Sin lectura fresca la estimación sigue con el saldo conocido, marcado como posiblemente viejo; el servidor decide igual.
+        if (vigente) setSaldoDesactualizado(true)
       })
 
     return () => {
       vigente = false
     }
-  }, [cuenta.id])
+  }, [cuenta.id, idEmpresa])
 
   function cambiar(cambios: Partial<FormularioDeAjuste>) {
     setFormulario((previo) => ({ ...previo, ...cambios }))
@@ -126,6 +137,7 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
 
       <div className="small text-muted mb-3">
         Saldo actual de la cuenta: <strong>{formatearImporte(saldoActual, { simbolo: true })}</strong>
+        {saldoDesactualizado && <span className="text-warning ms-1">(posiblemente desactualizado: no se pudo releer)</span>}
       </div>
 
       <fieldset disabled={ajustando} className="border-0 p-0 m-0">
@@ -167,10 +179,9 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
             {errorDe('saldoObjetivo') && <div className="text-danger small mt-1">{errorDe('saldoObjetivo')}</div>}
             {importe !== null && (
               <div className="small mt-2">
-                Diferencia (vista previa): <strong>{formatearImporteConSigno(importe, { simbolo: true })}</strong>
+                Diferencia (estimación): <strong>{formatearImporteConSigno(importe, { simbolo: true })}</strong>
                 <div className="text-muted">
-                  Es una estimación con el saldo que ves ahora: al registrar, el servidor la vuelve a calcular con el saldo
-                  vigente de la cuenta.
+                  Estimación: el sistema recalcula la diferencia al guardar, con el saldo vigente de la cuenta.
                 </div>
               </div>
             )}
@@ -190,7 +201,8 @@ export function ModalDeAjusteDeCuenta({ cuenta, onCerrar, onAjustado, onIncierto
             {errorDe('importe') && <div className="text-danger small mt-1">{errorDe('importe')}</div>}
             {saldoResultante !== null && importe !== null && importe !== 0 && (
               <div className="small mt-2">
-                Saldo resultante (vista previa): <strong>{formatearImporte(saldoResultante, { simbolo: true })}</strong>
+                Saldo resultante (estimación): <strong>{formatearImporte(saldoResultante, { simbolo: true })}</strong>
+                <div className="text-muted">Estimación: el sistema recalcula el saldo al guardar.</div>
               </div>
             )}
           </div>

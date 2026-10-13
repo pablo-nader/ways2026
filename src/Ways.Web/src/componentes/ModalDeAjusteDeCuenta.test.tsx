@@ -52,6 +52,14 @@ function resultado(saldoActual = 1250): ResultadoDeAjusteDeCuenta {
   }
 }
 
+function cuentasConSaldo(saldoActual: number) {
+  return {
+    idEmpresa: 1,
+    mediosSinCuenta: [],
+    cuentas: [{ id: 7, nombre: 'Mercado Pago', activo: true, saldoInicial: 0, saldoActual, fechaUltimoMovimiento: null }],
+  }
+}
+
 function diferido<T>() {
   let resolver!: (valor: T) => void
   let rechazar!: (motivo: unknown) => void
@@ -68,7 +76,7 @@ function montar() {
   const onAjustado = vi.fn()
   const onIncierto = vi.fn()
   const vista = render(
-    <ModalDeAjusteDeCuenta cuenta={cuenta} onCerrar={onCerrar} onAjustado={onAjustado} onIncierto={onIncierto} />,
+    <ModalDeAjusteDeCuenta idEmpresa={1} cuenta={cuenta} onCerrar={onCerrar} onAjustado={onAjustado} onIncierto={onIncierto} />,
   )
 
   return { onCerrar, onAjustado, onIncierto, ...vista }
@@ -77,7 +85,7 @@ function montar() {
 beforeEach(() => {
   apiPostMock.mockReset()
   apiGetMock.mockReset()
-  apiGetMock.mockResolvedValue({ saldoActual: cuenta.saldoActual })
+  apiGetMock.mockResolvedValue(cuentasConSaldo(cuenta.saldoActual))
 })
 
 describe('ModalDeAjusteDeCuenta', () => {
@@ -87,7 +95,7 @@ describe('ModalDeAjusteDeCuenta', () => {
     expect(screen.getByRole('radio', { name: 'Tengo el saldo real' })).toBeChecked()
     expect(screen.getByRole('radio', { name: 'Sumar o restar un importe' })).not.toBeChecked()
     expect(screen.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 1.000,00')
-    expect(screen.queryByText(/Diferencia \(vista previa\)/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Diferencia \(estimación\)/)).not.toBeInTheDocument()
   })
 
   it('el saldo real muestra la diferencia como vista previa que el servidor recalcula', async () => {
@@ -96,8 +104,8 @@ describe('ModalDeAjusteDeCuenta', () => {
 
     await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1250')
 
-    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 250,00')
-    expect(screen.getByText(/el servidor la vuelve a calcular/)).toBeInTheDocument()
+    expect(screen.getByText(/Diferencia \(estimación\)/)).toHaveTextContent('+$ 250,00')
+    expect(screen.getByText(/el sistema recalcula la diferencia al guardar/)).toBeInTheDocument()
   })
 
   it('el modo importe muestra el saldo resultante como vista previa y acepta un importe negativo', async () => {
@@ -107,7 +115,7 @@ describe('ModalDeAjusteDeCuenta', () => {
     await usuario.click(screen.getByRole('radio', { name: 'Sumar o restar un importe' }))
     await usuario.type(screen.getByLabelText(/Importe/), '-300,5')
 
-    expect(screen.getByText(/Saldo resultante \(vista previa\)/)).toHaveTextContent('$ 699,50')
+    expect(screen.getByText(/Saldo resultante \(estimación\)/)).toHaveTextContent('$ 699,50')
     expect(screen.queryByLabelText('Saldo real de la plataforma')).not.toBeInTheDocument()
   })
 
@@ -123,7 +131,7 @@ describe('ModalDeAjusteDeCuenta', () => {
   })
 
   it('un saldo real igual al que mostraba la lista SÍ se envía: el servidor decide con el saldo vigente', async () => {
-    apiGetMock.mockResolvedValue({ saldoActual: 1200 })
+    apiGetMock.mockResolvedValue(cuentasConSaldo(1200))
     apiPostMock.mockResolvedValue(resultado(1000))
     const usuario = userEvent.setup()
     const { onAjustado } = montar()
@@ -152,20 +160,20 @@ describe('ModalDeAjusteDeCuenta', () => {
   })
 
   it('al abrir relee el saldo de la cuenta y la vista previa se actualiza cuando llega', async () => {
-    const fresco = diferido<{ saldoActual: number }>()
+    const fresco = diferido<ReturnType<typeof cuentasConSaldo>>()
     apiGetMock.mockReturnValue(fresco.promesa)
     const usuario = userEvent.setup()
     montar()
 
-    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('/reportes/tesoreria/cuentas/7/libro?'))
+    expect(apiGetMock).toHaveBeenCalledWith('/reportes/tesoreria/cuentas?idEmpresa=1')
     await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1250')
-    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 250,00')
+    expect(screen.getByText(/Diferencia \(estimación\)/)).toHaveTextContent('+$ 250,00')
 
     await act(async () => {
-      fresco.resolver({ saldoActual: 1100 })
+      fresco.resolver(cuentasConSaldo(1100))
     })
 
-    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 150,00')
+    expect(screen.getByText(/Diferencia \(estimación\)/)).toHaveTextContent('+$ 150,00')
     expect(screen.getByText(/Saldo actual de la cuenta/)).toHaveTextContent('$ 1.100,00')
   })
 
@@ -176,7 +184,16 @@ describe('ModalDeAjusteDeCuenta', () => {
 
     await usuario.type(screen.getByLabelText('Saldo real de la plataforma'), '1250')
 
-    expect(screen.getByText(/Diferencia \(vista previa\)/)).toHaveTextContent('+$ 250,00')
+    expect(screen.getByText(/Diferencia \(estimación\)/)).toHaveTextContent('+$ 250,00')
+    expect(screen.getByText(/posiblemente desactualizado/)).toBeInTheDocument()
+    expect(screen.getByText(/el sistema recalcula la diferencia al guardar/)).toBeInTheDocument()
+  })
+
+  it('con la relectura exitosa el saldo no se marca como desactualizado', async () => {
+    montar()
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(/posiblemente desactualizado/)).not.toBeInTheDocument()
   })
 
   it('por saldo real manda SOLO saldoObjetivo y el concepto recortado, y avisa una vez al llamador', async () => {
