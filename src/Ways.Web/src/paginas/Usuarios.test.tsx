@@ -1579,3 +1579,159 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     expect(screen.queryByText(/7 ventas a su nombre/)).not.toBeInTheDocument()
   })
 })
+
+describe('Usuarios — lectura en vuelo al guardar', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'usuario_duplicado', 'Ya existe un usuario con ese nombre.'))
+  })
+
+  function diferido<T>() {
+    let resolver!: (valor: T) => void
+    let rechazar!: (motivo: unknown) => void
+    const promesa = new Promise<T>((res, rej) => {
+      resolver = res
+      rechazar = rej
+    })
+
+    return { promesa, resolver, rechazar }
+  }
+
+  function paginaDe(items: UsuarioListado[]): PaginaDe<UsuarioListado> {
+    return { items, total: items.length, pagina: 1, tamanio: 20 }
+  }
+
+  function rutasDeUsuarios() {
+    return apiGetMock.mock.calls.map(([ruta]) => ruta as string).filter((r) => r.startsWith('/usuarios'))
+  }
+
+  /** `respuestas[n]` contesta el pedido n-ésimo del listado (base 0); los pedidos que no figuran se resuelven con la fila. */
+  function montarConListados(respuestas: Array<Promise<PaginaDe<UsuarioListado>>>) {
+    let pedidos = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta.startsWith('/usuarios')) return respuestas[pedidos++] ?? Promise.resolve(paginaDe([cuentaDeTenant]))
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    return render(<Usuarios />)
+  }
+
+  async function completarYGuardar(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.type(screen.getByLabelText('Usuario'), 'nuevo.admin')
+    await usuario.type(screen.getByLabelText('Mail'), 'nuevo.admin@ways.test')
+    await usuario.type(screen.getByLabelText('Contraseña'), 'unaClaveLarga')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+  }
+
+  /** Cláusula bajo prueba: la relectura de la rama de fallo de `guardar` (`habiaLecturaEnVuelo`), con la lectura inicial en vuelo. */
+  it('un alta rechazada con la lectura inicial en vuelo no deja la tabla en el spinner', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PaginaDe<UsuarioListado>>()
+    montarConListados([inicial.promesa])
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await completarYGuardar(usuario)
+    await act(async () => {
+      inicial.resolver(paginaDe([cuentaDeTenant]))
+      await inicial.promesa
+    })
+
+    expect(await screen.findByText('vendedor.sur')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios'])
+    expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Usuario')).toHaveValue('nuevo.admin')
+  })
+
+  /** Cláusula bajo prueba: la misma, con una búsqueda en vuelo y el formulario ya abierto; la relectura usa el término aplicado. */
+  it('un alta rechazada con una búsqueda en vuelo relee con el término aplicado, no con el tipeado', async () => {
+    const usuario = userEvent.setup()
+    const busqueda = diferido<PaginaDe<UsuarioListado>>()
+    montarConListados([Promise.resolve(paginaDe([cuentaDeTenant])), busqueda.promesa])
+    await screen.findByText('vendedor.sur')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
+    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+    await waitFor(() => expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios?busqueda=sur']))
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'zzz')
+    await completarYGuardar(usuario)
+    await act(async () => {
+      busqueda.resolver(paginaDe([cuentaDeTenant]))
+      await busqueda.promesa
+    })
+
+    expect(await screen.findByText('vendedor.sur')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios?busqueda=sur', '/usuarios?busqueda=sur'])
+    expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `conservarError` de la relectura; reabrir el formulario mientras relee no deja el rechazo viejo. */
+  it('reabrir el formulario mientras la relectura está en vuelo no resucita el rechazo anterior', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PaginaDe<UsuarioListado>>()
+    const relectura = diferido<PaginaDe<UsuarioListado>>()
+    montarConListados([inicial.promesa, relectura.promesa])
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await completarYGuardar(usuario)
+    await act(async () => {
+      inicial.resolver(paginaDe([cuentaDeTenant]))
+      await inicial.promesa
+    })
+    await waitFor(() => expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios']))
+    expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await act(async () => {
+      relectura.resolver(paginaDe([cuentaDeTenant]))
+      await relectura.promesa
+    })
+
+    expect(await screen.findByText('vendedor.sur')).toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un usuario con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la relectura que falla deja su propio mensaje de carga, no el del rechazo de la escritura. */
+  it('una relectura que falla tras un alta rechazada muestra el fallo de la carga', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PaginaDe<UsuarioListado>>()
+    const relectura = diferido<PaginaDe<UsuarioListado>>()
+    montarConListados([inicial.promesa, relectura.promesa])
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await completarYGuardar(usuario)
+    await act(async () => {
+      inicial.resolver(paginaDe([cuentaDeTenant]))
+      await inicial.promesa
+    })
+    await waitFor(() => expect(rutasDeUsuarios()).toEqual(['/usuarios', '/usuarios']))
+    await act(async () => {
+      relectura.rechazar(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      await relectura.promesa.catch(() => {})
+    })
+
+    expect(await screen.findByText('Se cayó.')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un usuario con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el listado ya cargado, un rechazo no relee. */
+  it('un alta rechazada con el listado ya cargado no vuelve a pedirlo', async () => {
+    const usuario = userEvent.setup()
+    montarConListados([])
+    await screen.findByText('vendedor.sur')
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await completarYGuardar(usuario)
+
+    expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+    expect(rutasDeUsuarios()).toEqual(['/usuarios'])
+  })
+})

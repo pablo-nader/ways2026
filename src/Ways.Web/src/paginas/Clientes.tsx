@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
@@ -129,8 +129,11 @@ export function Clientes() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  // Último término pedido: el refresco posterior a una escritura recarga con ese, no con el texto de la caja sin enviar.
+  const terminoVigente = useRef('')
 
   const cargar = useCallback(async (termino: string) => {
+    terminoVigente.current = termino
     setCargando(true)
     setError('')
     try {
@@ -169,7 +172,7 @@ export function Clientes() {
       }
 
       setFormulario(null)
-      await cargar(busqueda)
+      await cargar(terminoVigente.current)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
     } finally {
@@ -186,7 +189,7 @@ export function Clientes() {
     try {
       await clienteDeClientes.eliminar(c.id)
       setAviso(`Cliente "${c.nombre}" dado de baja.`)
-      await cargar(busqueda)
+      await cargar(terminoVigente.current)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
     }

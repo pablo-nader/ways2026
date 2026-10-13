@@ -862,6 +862,56 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
   })
 })
 
+describe('PaginaCatalogo — lectura en vuelo al guardar', () => {
+  function diferido<T>() {
+    let resolver!: (valor: T) => void
+    const promesa = new Promise<T>((res) => {
+      resolver = res
+    })
+
+    return { promesa, resolver }
+  }
+
+  /** Cláusula bajo prueba: la relectura de la rama de fallo de `guardar` (`habiaLecturaEnVuelo`). */
+  it('un guardado rechazado con la lectura inicial en vuelo no deja la tabla en el spinner', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<MarcaListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => (++lecturas === 1 ? inicial.promesa : Promise.resolve([marcaFixture()])))
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await act(async () => {
+      inicial.resolver([marcaFixture()])
+      await inicial.promesa
+    })
+
+    expect(await screen.findByRole('cell', { name: 'Nike' })).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(lecturas).toBe(2)
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva marca' })
+    expect(within(dialogo).getByText('Ya existe una marca con ese nombre.')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el listado ya cargado, un rechazo no relee. */
+  it('un guardado rechazado con el listado ya cargado no vuelve a pedirlo', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Ya existe una marca con ese nombre.')).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 // La edición devuelve la empresa de la fila: mandar null convertiría una fila de una empresa en una de todo el tenant.
 describe('PaginaCatalogo — empresa de la fila al guardar', () => {
   it('editar una marca de una empresa manda la empresa de la fila en el PUT', async () => {

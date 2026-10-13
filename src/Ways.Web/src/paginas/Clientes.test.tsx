@@ -1,30 +1,39 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Clientes } from './Clientes'
 import type { ClienteListado, PaginaDe } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
-  ErrorApi: class ErrorApiMock extends Error {},
+  ErrorApi: class ErrorApiMock extends Error {
+    estado: number
+    codigo: string
+    constructor(estado: number, codigo: string, mensaje: string) {
+      super(mensaje)
+      this.estado = estado
+      this.codigo = codigo
+    }
+  },
 }))
 
 function clienteFixture(sobrescribir: Partial<ClienteListado> = {}): ClienteListado {
   return {
-    id: 2,
-    numero: 2,
-    nombre: 'Ana',
-    apellido: null,
+    id: 7,
+    numero: 7,
+    nombre: 'Luis',
+    apellido: 'Pérez',
     razonSocial: null,
     tipoDocumento: null,
     numeroDocumento: null,
@@ -46,80 +55,100 @@ function clienteFixture(sobrescribir: Partial<ClienteListado> = {}): ClienteList
   }
 }
 
-function responder(clientes: ClienteListado[]) {
-  apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta.startsWith('/clientes')) {
-      const pagina: PaginaDe<ClienteListado> = { items: clientes, total: clientes.length, pagina: 1, tamanio: 25 }
-      return Promise.resolve(pagina)
-    }
-    if (ruta === '/catalogos-fiscales/condiciones-fiscales') {
-      return Promise.resolve([{ id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true }])
-    }
-    if (ruta === '/listas-precio') return Promise.resolve([{ id: 1, nombre: 'Minorista', esDefault: true }])
-    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-  })
+function paginaFixture(items: ClienteListado[]): PaginaDe<ClienteListado> {
+  return { items, total: items.length, pagina: 1, tamanio: 25 }
 }
 
 function renderClientes() {
   return render(<Clientes />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
+function rutasDeClientes() {
+  return apiGetMock.mock.calls.map(([ruta]) => String(ruta)).filter((r) => r.startsWith('/clientes'))
+}
+
+const BUSCADOR = 'Buscar por nombre, apellido, razón social o documento…'
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
+  apiGetMock.mockImplementation((ruta: string) => {
+    if (ruta.startsWith('/clientes')) return Promise.resolve(paginaFixture([clienteFixture()]))
+    if (ruta === '/catalogos-fiscales/condiciones-fiscales') {
+      return Promise.resolve([{ id: 1, codigo: 'CF', nombre: 'Consumidor final', codigoAfip: 5, activo: true }])
+    }
+    if (ruta === '/listas-precio') return Promise.resolve([{ id: 1, nombre: 'Minorista', esDefault: true }])
+
+    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+  apiPostMock.mockResolvedValue(clienteFixture({ id: 8 }))
+  apiDeleteMock.mockResolvedValue(undefined)
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
-describe('Clientes — empresa de la fila al guardar', () => {
-  async function abrirEdicion(usuario: ReturnType<typeof userEvent.setup>) {
-    await screen.findByText('Ana')
-    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    await screen.findByRole('option', { name: 'Responsable Inscripto' })
-    await screen.findByRole('option', { name: 'Minorista (default)' })
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('Clientes — el refresco tras una escritura usa el término aplicado', () => {
+  /** Deja la pantalla con `enviado` aplicado (o sin búsqueda) y `tipeado` escrito en la caja sin enviar. */
+  async function prepararBusqueda(usuario: ReturnType<typeof userEvent.setup>, enviado: string, tipeado: string) {
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    if (enviado) {
+      await usuario.type(screen.getByPlaceholderText(BUSCADOR), enviado)
+      await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+      await waitFor(() => expect(rutasDeClientes().at(-1)).toBe(`/clientes?busqueda=${enviado}`))
+      await screen.findByText('Luis Pérez')
+    }
+    await usuario.clear(screen.getByPlaceholderText(BUSCADOR))
+    await usuario.type(screen.getByPlaceholderText(BUSCADOR), tipeado)
   }
 
-  it('editar un cliente de una empresa manda la empresa de la fila en el PUT', async () => {
-    const usuario = userEvent.setup()
-    responder([clienteFixture({ idEmpresa: 5 })])
-    apiPutMock.mockResolvedValue(clienteFixture())
-    renderClientes()
+  const casos = [
+    { enviado: '', tipeado: 'zzz', esperada: '/clientes' },
+    { enviado: 'luis', tipeado: 'luis zzz', esperada: '/clientes?busqueda=luis' },
+  ]
 
-    await abrirEdicion(usuario)
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+  /** Cláusula bajo prueba: el término del refresco de `guardar`. El texto tipeado y no enviado no viaja. */
+  it.each(casos)(
+    'tras guardar recarga con el término aplicado "$enviado", no con "$tipeado"',
+    async ({ enviado, tipeado, esperada }) => {
+      const usuario = userEvent.setup()
+      await prepararBusqueda(usuario, enviado, tipeado)
+      await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+      await usuario.type(await screen.findByLabelText('Nombre'), 'Ana')
+      const condicion = screen.getByLabelText('Condición fiscal')
+      await within(condicion).findByRole('option', { name: 'Consumidor final' })
+      await usuario.selectOptions(condicion, '1')
+      await waitFor(() => expect(screen.getByLabelText('Lista de precios')).toHaveValue('1'))
+      const antes = rutasDeClientes().length
 
-    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
-    expect(apiPutMock.mock.calls[0][0]).toBe('/clientes/2')
-    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 5 })
-  })
+      await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-  it('editar un cliente de todo el tenant manda null', async () => {
-    const usuario = userEvent.setup()
-    responder([clienteFixture({ idEmpresa: null })])
-    apiPutMock.mockResolvedValue(clienteFixture())
-    renderClientes()
+      await waitFor(() => expect(rutasDeClientes()).toHaveLength(antes + 1))
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+      expect(rutasDeClientes().at(-1)).toBe(esperada)
+      expect(rutasDeClientes().some((r) => r.includes('zzz'))).toBe(false)
+    },
+  )
 
-    await abrirEdicion(usuario)
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+  /** Cláusula bajo prueba: el término del refresco de `eliminar`. */
+  it.each(casos)(
+    'tras dar de baja recarga con el término aplicado "$enviado", no con "$tipeado"',
+    async ({ enviado, tipeado, esperada }) => {
+      const usuario = userEvent.setup()
+      await prepararBusqueda(usuario, enviado, tipeado)
+      const antes = rutasDeClientes().length
 
-    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
-    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: null })
-  })
+      await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
 
-  it('un alta manda null aunque antes se haya abierto la edición de un cliente de una empresa', async () => {
-    const usuario = userEvent.setup()
-    responder([clienteFixture({ idEmpresa: 5 })])
-    apiPostMock.mockResolvedValue(clienteFixture())
-    renderClientes()
-
-    await abrirEdicion(usuario)
-    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
-    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
-    await screen.findByRole('option', { name: 'Minorista (default)' })
-    await usuario.type(screen.getByLabelText('Nombre'), 'Luis')
-    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
-    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
-
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Luis', idEmpresa: null })
-  })
+      await waitFor(() => expect(rutasDeClientes()).toHaveLength(antes + 1))
+      expect(apiDeleteMock).toHaveBeenCalledWith('/clientes/7')
+      expect(rutasDeClientes().at(-1)).toBe(esperada)
+      expect(rutasDeClientes().some((r) => r.includes('zzz'))).toBe(false)
+    },
+  )
 })

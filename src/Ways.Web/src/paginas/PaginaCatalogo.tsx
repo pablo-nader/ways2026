@@ -183,6 +183,9 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     if (!formulario || ocupadoRef.current) return
 
     const datos = formulario
+    // Una lectura en vuelo queda invalidada por el token de esta escritura: no va a dejar datos ni a
+    // bajar `cargando`. Si la escritura falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setGuardando(true)
@@ -198,7 +201,10 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           await api.put(`/catalogos/${recurso}/${datos.id}`, alta)
         }
       } catch (e) {
-        if (generacion.current === token) setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        if (generacion.current === token) {
+          setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, incluirInactivos)
+        }
 
         return
       }

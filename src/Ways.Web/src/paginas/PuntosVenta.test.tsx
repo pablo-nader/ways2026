@@ -1134,3 +1134,177 @@ describe('PuntosVenta — alta', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 })
+
+describe('PuntosVenta — lectura en vuelo al crear', () => {
+  const empresaSur = {
+    id: 20,
+    idTenant: 2,
+    razonSocial: 'Sur SRL',
+    nombreFantasia: null,
+    cuit: null,
+    nombreTenant: 'Comercio Sur',
+    alicuotaPercepcionIibb: null,
+    alicuotaPercepcionIva: null,
+  }
+
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  function diferido<T>() {
+    let resolver!: (valor: T) => void
+    let rechazar!: (motivo: unknown) => void
+    const promesa = new Promise<T>((res, rej) => {
+      resolver = res
+      rechazar = rej
+    })
+
+    return { promesa, resolver, rechazar }
+  }
+
+  /** Monta la pantalla con el listado inicial a cargo del test y cuenta cuántas veces se lo pidió. */
+  function montarConListadoInicial(inicial: Promise<PuntoVentaListado[]> | null) {
+    const pedidos = { listados: 0 }
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      pedidos.listados += 1
+
+      return pedidos.listados === 1 && inicial ? inicial : Promise.resolve([pvSurCentro])
+    })
+    render(<PuntosVenta />)
+
+    return pedidos
+  }
+
+  async function completarYEnviar(usuario: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => expect(within(screen.getByLabelText('Empresa destino')).getByRole('option', { name: 'Sur SRL (Comercio Sur)' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Empresa destino')).toBeEnabled())
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '20')
+    await usuario.type(screen.getByLabelText('Nombre'), 'PV Norte')
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Web')
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+  }
+
+  /** Cláusula bajo prueba: la relectura de la rama de fallo de `guardarAlta` (`habiaLecturaEnVuelo`). */
+  it('un alta rechazada con el listado inicial en vuelo no deja la tabla en el spinner', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PuntoVentaListado[]>()
+    const post = diferido<PuntoVentaListado>()
+    apiPostMock.mockReturnValue(post.promesa)
+    const pedidos = montarConListadoInicial(inicial.promesa)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await completarYEnviar(usuario)
+    await act(async () => {
+      inicial.resolver([pvSurCentro])
+      await inicial.promesa
+    })
+    await act(async () => {
+      post.rechazar(new ErrorApi(409, 'nombre_duplicado', 'Ya existe un punto de venta con ese nombre.'))
+      await post.promesa.catch(() => {})
+    })
+
+    expect(await screen.findByText('PV Centro')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(pedidos.listados).toBe(2)
+    expect(screen.getByText('Ya existe un punto de venta con ese nombre.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Empresa destino')).toBeInTheDocument()
+  })
+
+  /** Monta con el primer y el segundo pedido del listado a cargo del test; los siguientes resuelven con la fila. */
+  function montarConDosListados(primero: Promise<PuntoVentaListado[]>, segundo: Promise<PuntoVentaListado[]>) {
+    const pedidos = { listados: 0 }
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      pedidos.listados += 1
+      if (pedidos.listados === 1) return primero
+      if (pedidos.listados === 2) return segundo
+
+      return Promise.resolve([pvSurCentro])
+    })
+    render(<PuntosVenta />)
+
+    return pedidos
+  }
+
+  /** Cláusula bajo prueba: `conservarError` de la relectura; reabrir el formulario mientras relee no deja el rechazo viejo. */
+  it('reabrir el formulario mientras la relectura está en vuelo no resucita el rechazo anterior', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PuntoVentaListado[]>()
+    const relectura = diferido<PuntoVentaListado[]>()
+    const post = diferido<PuntoVentaListado>()
+    apiPostMock.mockReturnValue(post.promesa)
+    const pedidos = montarConDosListados(inicial.promesa, relectura.promesa)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await completarYEnviar(usuario)
+    await act(async () => {
+      inicial.resolver([pvSurCentro])
+      await inicial.promesa
+    })
+    await act(async () => {
+      post.rechazar(new ErrorApi(409, 'nombre_duplicado', 'Ya existe un punto de venta con ese nombre.'))
+      await post.promesa.catch(() => {})
+    })
+    await waitFor(() => expect(pedidos.listados).toBe(2))
+    expect(screen.getByText('Ya existe un punto de venta con ese nombre.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await act(async () => {
+      relectura.resolver([pvSurCentro])
+      await relectura.promesa
+    })
+
+    expect(await screen.findByText('PV Centro')).toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un punto de venta con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la relectura que falla deja su propio mensaje de carga, no el del rechazo de la escritura. */
+  it('una relectura que falla tras un alta rechazada muestra el fallo de la carga', async () => {
+    const usuario = userEvent.setup()
+    const inicial = diferido<PuntoVentaListado[]>()
+    const relectura = diferido<PuntoVentaListado[]>()
+    const post = diferido<PuntoVentaListado>()
+    apiPostMock.mockReturnValue(post.promesa)
+    const pedidos = montarConDosListados(inicial.promesa, relectura.promesa)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await completarYEnviar(usuario)
+    await act(async () => {
+      inicial.resolver([pvSurCentro])
+      await inicial.promesa
+    })
+    await act(async () => {
+      post.rechazar(new ErrorApi(409, 'nombre_duplicado', 'Ya existe un punto de venta con ese nombre.'))
+      await post.promesa.catch(() => {})
+    })
+    await waitFor(() => expect(pedidos.listados).toBe(2))
+    await act(async () => {
+      relectura.rechazar(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      await relectura.promesa.catch(() => {})
+    })
+
+    expect(await screen.findByText('Se cayó.')).toBeInTheDocument()
+    expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ya existe un punto de venta con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el listado ya cargado, un rechazo no relee. */
+  it('un alta rechazada con el listado ya cargado no vuelve a pedirlo', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe un punto de venta con ese nombre.'))
+    const pedidos = montarConListadoInicial(null)
+    await screen.findByText('PV Centro')
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await completarYEnviar(usuario)
+
+    expect(await screen.findByText('Ya existe un punto de venta con ese nombre.')).toBeInTheDocument()
+    expect(pedidos.listados).toBe(1)
+  })
+})
