@@ -692,4 +692,24 @@ describe('CuentasTesoreria — respuestas tardías del listado', () => {
     expect(screen.queryByText('Vieja')).not.toBeInTheDocument()
     expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
   })
+
+  /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo || rechazoDeSaldo || yaNoExiste` de esa relectura.
+   * Con el listado ya cargado y un rechazo que no es 404 ni `saldo_inicial_con_movimientos`, los tres disyuntos
+   * son falsos y el listado no se vuelve a pedir. */
+  it('un guardado rechazado con el listado ya cargado no lo vuelve a pedir', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cuenta_tesoreria_duplicada', 'x'))
+    const usuarioEvento = userEvent.setup()
+    renderPagina()
+    await abrirAlta(usuarioEvento)
+    await usuarioEvento.type(screen.getByLabelText('Nombre'), 'Mercado Pago')
+    const antes = llamadasAlListado()
+
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Ya existe una cuenta de tesorería con ese nombre en esta empresa.')
+    await act(async () => {})
+    expect(antes).toBe(1)
+    expect(llamadasAlListado()).toBe(antes)
+    expect(screen.getByText('Mercado Pago')).toBeInTheDocument()
+  })
 })
