@@ -397,7 +397,7 @@ decisión en `pendiente` y mueve el acumulado.
   mientras decide una candidata, esa interrupción no es un fallo de la venta: no se anota (ni intento ni espera), el barrido termina y
   deja una sola línea de nivel debug; la candidata sigue debida y la decide una llamada posterior. Se distingue por el token del
   presupuesto del barrido: cualquier falla de una candidata con ese token ya cancelado cuenta como corte, y toda otra falla se anota
-  como siempre. El presupuesto de la decisión de la venta actual no se comporta así: su vencimiento sí se anota como fallo. El índice `ix_comprobantes_venta_decision_debida
+  como siempre. Limitación: una candidata que consume el presupuesto entero en cada barrido (por ejemplo, esperando una fila del acumulado retenida por otra sesión) no se anota ni se posterga, sigue primera por id y demora hasta 3 segundos cada venta de ese punto de venta mientras dure la causa, sin que el barrido llegue a las que la siguen. El presupuesto de la decisión de la venta actual no se comporta así: su vencimiento sí se anota como fallo. El índice `ix_comprobantes_venta_decision_debida
   (id_punto_venta, id_comprobante_venta) WHERE facturacion_decidida_en IS NULL AND id_venta_origen IS NULL` entrega esas filas ya
   ordenadas; la condición de la espera se evalúa sobre sus filas, así que las ventas que esperan se recorren (sin transacción) hasta
   reunir los candidatos. El punto de venta pertenece a un solo tenant (RLS agrega el filtro de tenant) y la lista que el barrido pide es
@@ -414,7 +414,7 @@ decisión en `pendiente` y mueve el acumulado.
   `ResolverAmbiente` cae a homologación con cualquier texto desconocido, así que un `produccion` mal escrito lo provocaría), el servicio
   deja un aviso en el log, con nivel de advertencia, que nombra la empresa y el ambiente configurado, para que se note un ambiente mal
   configurado; la venta se marca igual. El aviso se limita a uno por empresa y por hora y por proceso (un mapa en memoria, con
-  candado, medido con el reloj del servicio; se avisa de nuevo al cumplirse la hora) y se escribe después de marcar la venta. Una venta sin pagos
+  candado, medido con el reloj del servicio; se avisa de nuevo al cumplirse la hora). Una venta sin pagos
   (o con importe neto cero) no tiene medio al que imputar: se marca y no mueve nada. Un pago con monto neto cero o negativo
   (`importe − vuelto ≤ 0`) no cuenta. Varios pagos del mismo medio suman en una sola fila del acumulado, y un medio de cuenta corriente
   acumula como cualquier otro según su `porcentaje_facturacion`: la decisión no mira el comportamiento del medio.

@@ -65,7 +65,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 - [x] **T3 — Esquema y no doble conteo.** Enlace, `factura_forzada`, las dos tablas, RLS,
   predicado compartido en reportes y listado. Checks: integración con espejo sembrado,
   guardas estructurales, prueba de mutación del predicado. Ruta: delegada.
-- [ ] **T4 — Decisión al ingerir.** Servicio de decisión, `ForzarFactura` en la solicitud y en
+- [x] **T4 — Decisión al ingerir.** Servicio de decisión, `ForzarFactura` en la solicitud y en
   `ExigirMismoContenido`, estado fiscal en la respuesta. Depende de T1–T3.
 - [ ] **T5 — Emisión del espejo y procesador.** `EmitirDesdeVentaAsync` en dos transacciones,
   endpoint `procesar`, intento en línea. Antes: confirmar con un test que hoy un timeout de
@@ -153,6 +153,42 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   Para T4/T5: escribir `acumulados_de_facturacion` solo con SQL crudo; test de carrera de los
   tres 409 nuevos; el espejo va sin turno, pagos, stock ni cuenta corriente.
 
+- 2026-10-13 — T4 hecha. Ruta: delegada (un escritor y tres rondas de corrección).
+  `ServicioDeDecisionDeFacturacion`: tras el commit de la venta, en transacción propia, bloquea
+  la venta, lee pagos (`importe − vuelto`) con el porcentaje vigente, deriva el mes de la fecha
+  del comprobante en la zona del punto de venta, bloquea los acumulados en orden de medio con
+  SQL crudo, aplica la política y deja la decisión `pendiente`. `ForzarFactura` viaja en la
+  solicitud, se guarda y entra en `ExigirMismoContenido`; en una devolución se rechaza.
+  Esquema agregado: `facturacion_decidida_en` (NULL = decisión adeudada; la migración deja lo
+  existente como decidido sin reescribir la tabla), `facturacion_intentos`,
+  `facturacion_proximo_intento_en` e índice parcial `ix_comprobantes_venta_decision_debida`.
+  Autocuración: cada venta barre hasta 5 adeudadas de su punto de venta; un fallo suma intento
+  y posterga (1 min que se duplica, tope 4 h); presupuesto de 3 s para la venta en curso y 3 s
+  para el barrido.
+  Decisiones del dueño (2026-10-13): sin certificado activo del ambiente configurado la venta
+  queda como no aplicable, definitivo y sin facturación retroactiva (con certificado de otro
+  ambiente, un aviso por empresa por hora en el log); el corte por presupuesto del barrido no
+  cuenta como fallo.
+  Checks sobre el código final: `dotnet build` sin errores; dominio 1689/1689; aplicación
+  950/950; integración completa 4308/4308. Sin test-first estricto: la evidencia de cada
+  cláusula son las mutaciones (certificado, idempotencia, locks, período, barrido, tope,
+  backoff, presupuesto, aviso), todas en rojo. Sin test de comportamiento: que un corte del
+  cliente no cancela la decisión (solo chequeos de texto) y que el presupuesto corta los
+  reintentos de la estrategia.
+  Judgment-day: ronda 1, un crítico confirmado (decisión sin camino de recuperación) y
+  corregido; re-juicio 1, tres advertencias nuevas confirmadas y corregidas; re-juicio 2,
+  ESCALATED por un crítico introducido en la ronda 2 (regla de certificado); el dueño eligió
+  la regla y autorizó una ronda extra; re-juicio 3: todo resuelto, sin críticos.
+  JUDGMENT: APPROVED tras la ronda extra autorizada.
+  Limitaciones aceptadas: anular una venta decidida no devuelve el cupo ni cancela la decisión
+  pendiente (T8; una decisión "no se factura" no guarda sus aportes, así que hoy no se puede
+  revertir exacta); una candidata que agota el presupuesto del barrido en cada llamada no se
+  posterga y demora la caja mientras dure la causa; el mes es el de ingestión en el servidor;
+  cuenta corriente acumula como cualquier medio según su porcentaje; un ambiente mal
+  configurado solo se nota por el log.
+  Para T5: no emitir si la venta está anulada (cancelar la decisión); el estado fiscal en la
+  respuesta ya prevé `aprobado`/`rechazado`.
+
 ## Próximo paso
 
-T4.
+T5.
