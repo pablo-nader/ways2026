@@ -15,10 +15,24 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             // PostgreSQL lo evalúa una sola vez en el ALTER y guarda ese valor como "faltante" de la columna (solo metadata).
             // Quitar el valor por defecto después no toca las filas existentes y hace que las nuevas nazcan en NULL
             // (decisión debida). El modelo de EF describe una columna nullable sin valor por defecto.
+            // Las columnas de intentos fallidos también son solo metadata: un entero con DEFAULT constante y un nullable.
             migrationBuilder.Sql(
                 "ALTER TABLE comprobantes_venta ADD COLUMN facturacion_decidida_en timestamp with time zone NULL DEFAULT now();");
             migrationBuilder.Sql(
                 "ALTER TABLE comprobantes_venta ALTER COLUMN facturacion_decidida_en DROP DEFAULT;");
+
+            migrationBuilder.AddColumn<int>(
+                name: "facturacion_intentos",
+                table: "comprobantes_venta",
+                type: "integer",
+                nullable: false,
+                defaultValue: 0);
+
+            migrationBuilder.AddColumn<DateTimeOffset>(
+                name: "facturacion_proximo_intento_en",
+                table: "comprobantes_venta",
+                type: "timestamp with time zone",
+                nullable: true);
 
             migrationBuilder.CreateIndex(
                 name: "ix_comprobantes_venta_decision_debida",
@@ -36,6 +50,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
             migrationBuilder.DropColumn(
                 name: "facturacion_decidida_en",
+                table: "comprobantes_venta");
+
+            migrationBuilder.DropColumn(
+                name: "facturacion_intentos",
+                table: "comprobantes_venta");
+
+            migrationBuilder.DropColumn(
+                name: "facturacion_proximo_intento_en",
                 table: "comprobantes_venta");
         }
     }

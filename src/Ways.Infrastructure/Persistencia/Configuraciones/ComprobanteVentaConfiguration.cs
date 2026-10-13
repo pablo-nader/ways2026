@@ -99,6 +99,13 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         // en NULL (decisión debida).
         builder.Property(c => c.FacturacionDecididaEn).HasColumnName("facturacion_decidida_en");
 
+        // Contabilidad de los intentos fallidos de decidir la venta: el contador arranca en 0 y la fecha en NULL.
+        builder.Property(c => c.FacturacionIntentos)
+            .HasColumnName("facturacion_intentos")
+            .HasDefaultValue(0)
+            .IsRequired();
+        builder.Property(c => c.FacturacionProximoIntentoEn).HasColumnName("facturacion_proximo_intento_en");
+
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
 

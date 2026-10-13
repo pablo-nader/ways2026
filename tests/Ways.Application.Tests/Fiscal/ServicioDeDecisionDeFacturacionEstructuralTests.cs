@@ -93,7 +93,7 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
 
         Assert.Matches(
             new Regex(
-                @"estrategia\.ExecuteAsync\(async \(\) =>\s*\{\s*db\.ChangeTracker\.Clear\(\);",
+                @"estrategia\.ExecuteAsync\(async _ =>\s*\{\s*db\.ChangeTracker\.Clear\(\);",
                 RegexOptions.None,
                 TimeSpan.FromSeconds(5)),
             CuerpoDeDecidir());
@@ -104,15 +104,16 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
     {
         var fuente = Servicio;
         var decidirTras = Entre(fuente, "public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(", "public async Task SanearDecisionesDebidasAsync(");
-        var barrido = Entre(fuente, "public async Task SanearDecisionesDebidasAsync(", "public async Task<EstadoFiscalDeVenta> DecidirAsync(");
+        var barrido = Entre(fuente, "public async Task SanearDecisionesDebidasAsync(", "private async Task RegistrarFalloAsync(");
+        var decidirYSanear = Entre(fuente, "public async Task<EstadoFiscalDeVenta> DecidirYSanearAsync(", "public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(");
 
         Assert.Contains("catch (Exception ex)", decidirTras, StringComparison.Ordinal);
         Assert.Contains("catch (Exception ex)", barrido, StringComparison.Ordinal);
-        Assert.Contains("DecidirAsync(idComprobanteVenta, CancellationToken.None)", decidirTras, StringComparison.Ordinal);
+        Assert.Contains("DecidirAsync(idComprobanteVenta, presupuesto.Token)", decidirTras, StringComparison.Ordinal);
         Assert.Contains("new CancellationTokenSource(PresupuestoDeBarrido)", barrido, StringComparison.Ordinal);
 
         // Las firmas públicas no tienen un CancellationToken que el endpoint pudiera llenar con el de la solicitud.
-        foreach (var firma in new[] { decidirTras, barrido })
+        foreach (var firma in new[] { decidirTras, barrido, decidirYSanear })
         {
             var linea = firma[..firma.IndexOf(')')];
             Assert.DoesNotContain("CancellationToken", linea, StringComparison.Ordinal);
@@ -120,23 +121,31 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
     }
 
     [Fact]
-    public void ElTextoDelEndpointLlamaALaDecisionYAlBarridoDespuesDeEmitirSinPasarElTokenDeLaSolicitud()
+    public void ElTextoDelEndpointLlamaALaDecisionConBarridoDespuesDeEmitirSinPasarElTokenDeLaSolicitud()
     {
         var endpoint = Fuente("Ways.Api/Endpoints/VentasEndpoints.cs");
         var emision = endpoint.IndexOf("await servicio.EmitirAsync(solicitud, ct)", StringComparison.Ordinal);
         Assert.True(emision >= 0, "No se encontró la emisión de la venta.");
-        var decision = endpoint.IndexOf("decision.DecidirTrasLaVentaAsync(", emision, StringComparison.Ordinal);
+        var decision = endpoint.IndexOf("decision.DecidirYSanearAsync(", emision, StringComparison.Ordinal);
         Assert.True(decision > emision, "La decisión corre después de emitir la venta.");
-        var barrido = endpoint.IndexOf("decision.SanearDecisionesDebidasAsync(", decision, StringComparison.Ordinal);
-        Assert.True(barrido > decision, "El barrido corre después de decidir la venta actual.");
 
         var llamadas = Regex.Matches(
             endpoint[decision..],
-            @"decision\.(DecidirTrasLaVentaAsync|SanearDecisionesDebidasAsync)\(([^)]*)\)",
+            @"decision\.(DecidirTrasLaVentaAsync|SanearDecisionesDebidasAsync|DecidirYSanearAsync)\(([^)]*)\)",
             RegexOptions.None,
             TimeSpan.FromSeconds(5));
-        Assert.Equal(2, llamadas.Count);
+        Assert.Single(llamadas);
         Assert.All(llamadas, l => Assert.DoesNotMatch(new Regex(@"\bct\b", RegexOptions.None, TimeSpan.FromSeconds(5)), l.Groups[2].Value));
+    }
+
+    [Fact]
+    public void ElTextoDeDecidirYSanearSaltaElBarridoCuandoLaDecisionTerminoSinDecidirYLoCorreDespuesDeDecidir()
+    {
+        var cuerpo = Entre(Servicio, "public async Task<EstadoFiscalDeVenta> DecidirYSanearAsync(", "public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(");
+        var decidir = cuerpo.IndexOf("DecidirTrasLaVentaAsync(idComprobanteVenta)", StringComparison.Ordinal);
+        var condicion = cuerpo.IndexOf("estado.Estado != EstadosFiscalesDeVenta.SinDecidir", StringComparison.Ordinal);
+        var barrido = cuerpo.IndexOf("SanearDecisionesDebidasAsync(idPuntoVenta, idComprobanteVenta)", StringComparison.Ordinal);
+        Assert.True(decidir >= 0 && condicion > decidir && barrido > condicion, "Decidir, condición y barrido, en ese orden.");
     }
 
     private static int Contar(string texto, string marca)

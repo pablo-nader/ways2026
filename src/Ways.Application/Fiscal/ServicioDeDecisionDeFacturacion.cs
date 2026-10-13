@@ -22,10 +22,12 @@ namespace Ways.Application.Fiscal;
 /// decisión) y la fila de decisión hacen que la segunda llamada devuelva lo ya decidido sin tocar saldos.
 ///
 /// La marca en <c>NULL</c> significa una sola cosa: la decisión está debida. Toda venta que la decisión examina queda
-/// marcada, se facture o no (no es un ticket, está anulada, la empresa no tenía certificado activo, no cobró nada); solo
-/// los espejos fiscales, que nunca se deciden, quedan fuera. Las ventas anteriores a la función nacieron marcadas por la
-/// migración. Una decisión que falla deja la marca en <c>NULL</c> y la completa <see cref="SanearDecisionesDebidasAsync"/>
-/// desde la siguiente venta del mismo punto de venta.
+/// marcada, se facture o no (no es un ticket, está anulada, la empresa no tiene ningún certificado activo, no cobró
+/// nada); solo los espejos fiscales, que nunca se deciden, quedan fuera. Los comprobantes que nunca son un ticket y se
+/// crean por otros escritores (consolidación de remitos, recibos de cuenta corriente, emisión fiscal directa) nacen ya
+/// marcados. Las ventas anteriores a la función nacieron marcadas por la migración. Una decisión que falla deja la marca
+/// en <c>NULL</c>, suma un intento fallido con espera creciente (ver <see cref="RegistrarFalloAsync"/>) y la completa
+/// <see cref="SanearDecisionesDebidasAsync"/> desde la siguiente venta del mismo punto de venta, cuando vence la espera.
 ///
 /// Orden de locks de la transacción: 1) la fila del comprobante (FOR UPDATE), que serializa todo lo que decide o anula
 /// esa venta; 2) las filas del acumulado de la venta, por <c>id_medio_pago</c> ascendente. El acumulado solo se escribe
@@ -52,46 +54,94 @@ public class ServicioDeDecisionDeFacturacion(
     /// <summary>Tiempo total que puede ocupar un barrido; vencido, las ventas que faltan esperan al siguiente.</summary>
     public static readonly TimeSpan PresupuestoDeBarrido = TimeSpan.FromSeconds(3);
 
+    /// <summary>Tiempo total que puede ocupar la decisión de la venta recién emitida, con todos los reintentos de la
+    /// estrategia de ejecución adentro; vencido, la venta responde <c>sin_decidir</c> y queda debida.</summary>
+    public static readonly TimeSpan PresupuestoDeDecision = TimeSpan.FromSeconds(3);
+
+    /// <summary>Tiempo máximo para anotar un intento fallido. Si otra sesión tiene tomada la fila de la venta, la
+    /// anotación espera ese tiempo y se omite: la venta sigue debida, solo que sin espera creciente.</summary>
+    public static readonly TimeSpan PresupuestoDeRegistroDeFallo = TimeSpan.FromSeconds(1);
+
+    /// <summary>Espera tras el primer fallo; se duplica con cada fallo siguiente (1 min, 2, 4, 8…).</summary>
+    public static readonly TimeSpan EsperaInicialTrasFallo = TimeSpan.FromMinutes(1);
+
+    /// <summary>Tope de la espera creciente: una venta que no se puede decidir se reintenta cada 4 horas como máximo.</summary>
+    public static readonly TimeSpan EsperaMaximaTrasFallo = TimeSpan.FromHours(4);
+
+    /// <summary>Desde este intento fallido la venta se registra con nivel de error para que una venta trabada sea visible.</summary>
+    public const int IntentosParaRegistrarComoError = 5;
+
     private static readonly JsonSerializerOptions OpcionesDeAportes = new(JsonSerializerDefaults.Web);
 
-    /// <summary>Lo que llama el endpoint de ventas después del commit de la venta. Nunca lanza: la venta ya está
-    /// registrada y la caja no puede frenarse por la decisión fiscal. Si falla, responde
-    /// <see cref="EstadosFiscalesDeVenta.SinDecidir"/> y la marca <c>facturacion_decidida_en</c> sigue en <c>NULL</c>:
-    /// <see cref="SanearDecisionesDebidasAsync"/> la completa en una venta posterior. No recibe el token de la solicitud
-    /// a propósito: la venta ya está comiteada y que el cliente corte la conexión no debe dejar la decisión a medias.</summary>
+    /// <summary>La empresa tiene un certificado activo, pero ninguno del ambiente configurado: una anomalía de
+    /// configuración (p. ej. un ambiente mal escrito), no un negocio que no factura. La venta no se marca.</summary>
+    private sealed class AmbienteSinCertificadoException(int idEmpresa, AmbienteFiscal ambiente) : Exception(
+        $"La empresa {idEmpresa} tiene un certificado fiscal activo, pero ninguno del ambiente configurado '{ambiente}'.")
+    {
+        public int IdEmpresa { get; } = idEmpresa;
+
+        public AmbienteFiscal Ambiente { get; } = ambiente;
+    }
+
+    /// <summary>Lo que llama el endpoint de ventas: decide la venta recién emitida y, salvo que esa decisión haya
+    /// terminado en <see cref="EstadosFiscalesDeVenta.SinDecidir"/> (la base probablemente no está sana), sanea las
+    /// ventas debidas del mismo punto de venta. Nunca lanza.</summary>
+    public async Task<EstadoFiscalDeVenta> DecidirYSanearAsync(int idComprobanteVenta, int idPuntoVenta)
+    {
+        var estado = await DecidirTrasLaVentaAsync(idComprobanteVenta);
+        if (estado.Estado != EstadosFiscalesDeVenta.SinDecidir)
+        {
+            await SanearDecisionesDebidasAsync(idPuntoVenta, idComprobanteVenta);
+        }
+
+        return estado;
+    }
+
+    /// <summary>Decide la venta recién comiteada. Nunca lanza: la venta ya está registrada y la caja no puede frenarse por
+    /// la decisión fiscal. Corre con su propio presupuesto de <see cref="PresupuestoDeDecision"/>, que se pasa como token a la
+    /// estrategia de ejecución y a cada comando. Si falla o el presupuesto vence, la transacción se deshace, el intento
+    /// se anota (<see cref="RegistrarFalloAsync"/>), responde <see cref="EstadosFiscalesDeVenta.SinDecidir"/> y la marca
+    /// <c>facturacion_decidida_en</c> sigue en <c>NULL</c>: <see cref="SanearDecisionesDebidasAsync"/> la completa en una
+    /// venta posterior. No recibe el token de la solicitud a propósito: la venta ya está comiteada y que el cliente corte
+    /// la conexión no debe dejar la decisión a medias.</summary>
     public async Task<EstadoFiscalDeVenta> DecidirTrasLaVentaAsync(int idComprobanteVenta)
     {
         try
         {
-            return await DecidirAsync(idComprobanteVenta, CancellationToken.None);
+            using var presupuesto = new CancellationTokenSource(PresupuestoDeDecision);
+            return await DecidirAsync(idComprobanteVenta, presupuesto.Token);
         }
         catch (Exception ex)
         {
-            log.LogWarning(
-                ex, "No se pudo decidir la facturación de la venta {IdComprobanteVenta}; queda debida.", idComprobanteVenta);
+            await RegistrarFalloAsync(idComprobanteVenta, ex);
             return EstadoFiscalDeVenta.SinDecidir;
         }
     }
 
-    /// <summary>Decide hasta <see cref="LimiteDeBarrido"/> ventas debidas del punto de venta, las más viejas primero, cada
-    /// una en su propia transacción. Es la forma en que una decisión que falló se completa sola. Nunca lanza, no recibe el
-    /// token de la solicitud y se corta a los <see cref="PresupuestoDeBarrido"/>. Una venta que falla se registra y el
-    /// barrido sigue con la siguiente; cada candidata se intenta una sola vez por llamada. <paramref name="idExcluida"/> es
-    /// la venta que el llamador acaba de decidir, para no reintentarla en la misma llamada.</summary>
+    /// <summary>Decide hasta <see cref="LimiteDeBarrido"/> ventas debidas del punto de venta cuya espera ya venció, las más
+    /// viejas primero, cada una en su propia transacción. Es la forma en que una decisión que falló se completa sola. Nunca
+    /// lanza, no recibe el token de la solicitud y se corta a los <see cref="PresupuestoDeBarrido"/>. Una venta que falla
+    /// se anota con su espera creciente y el barrido sigue con la siguiente; cada candidata se intenta una sola vez por
+    /// llamada. <paramref name="idExcluida"/> es la venta que el llamador acaba de decidir, para no reintentarla en la
+    /// misma llamada.</summary>
     public async Task SanearDecisionesDebidasAsync(int idPuntoVenta, int idExcluida)
     {
         try
         {
             using var presupuesto = new CancellationTokenSource(PresupuestoDeBarrido);
             var ct = presupuesto.Token;
+            var ahora = reloj.Ahora;
 
-            // Ventas del punto de venta que nadie decidió: sin marca y que no son espejos (que nunca se deciden). Las más
-            // viejas primero por id; el índice parcial ix_comprobantes_venta_decision_debida entrega ese orden.
+            // Ventas del punto de venta que nadie decidió: sin marca y que no son espejos (que nunca se deciden), salvo las
+            // que fallaron hace poco y todavía esperan (facturacion_proximo_intento_en en el futuro). Las más viejas
+            // primero por id; el índice parcial ix_comprobantes_venta_decision_debida entrega ese orden y la espera se
+            // filtra sobre sus filas.
             var debidas = await db.Database.SqlQuery<int>(
                 $"""
                 SELECT id_comprobante_venta AS "Value" FROM comprobantes_venta
                 WHERE id_punto_venta = {idPuntoVenta} AND facturacion_decidida_en IS NULL AND id_venta_origen IS NULL
                 AND id_comprobante_venta <> {idExcluida}
+                AND (facturacion_proximo_intento_en IS NULL OR facturacion_proximo_intento_en <= {ahora})
                 ORDER BY id_comprobante_venta
                 LIMIT {LimiteDeBarrido}
                 """).ToListAsync(ct);
@@ -109,8 +159,7 @@ public class ServicioDeDecisionDeFacturacion(
                 }
                 catch (Exception ex)
                 {
-                    log.LogWarning(
-                        ex, "El barrido no pudo decidir la facturación de la venta {IdComprobanteVenta}; sigue debida.", idDebida);
+                    await RegistrarFalloAsync(idDebida, ex);
                 }
             }
         }
@@ -120,11 +169,77 @@ public class ServicioDeDecisionDeFacturacion(
         }
     }
 
+    /// <summary>Anota un intento fallido de decidir la venta, FUERA de la transacción que falló: suma uno al contador y
+    /// fija la espera <c>EsperaInicialTrasFallo × 2^(intentos−1)</c> con tope <see cref="EsperaMaximaTrasFallo"/>, contada
+    /// desde el reloj del servicio. Nunca lanza; tiene su propio presupuesto
+    /// (<see cref="PresupuestoDeRegistroDeFallo"/>) para no quedar atado a un token vencido ni a una fila bloqueada.
+    /// Registra el fallo con nivel de advertencia, y de error cuando es una anomalía de configuración o la venta ya
+    /// acumula <see cref="IntentosParaRegistrarComoError"/> intentos.</summary>
+    private async Task RegistrarFalloAsync(int idComprobanteVenta, Exception causa)
+    {
+        int? intentos = null;
+        try
+        {
+            using var presupuesto = new CancellationTokenSource(PresupuestoDeRegistroDeFallo);
+            var ct = presupuesto.Token;
+
+            await db.Database.OpenConnectionAsync(ct);
+            try
+            {
+                await using var comando = db.Database.GetDbConnection().CreateCommand();
+                comando.CommandText =
+                    "UPDATE comprobantes_venta SET facturacion_intentos = facturacion_intentos + 1, " +
+                    "facturacion_proximo_intento_en = $2::timestamptz + " +
+                    "make_interval(secs => LEAST($3::double precision * power(2, LEAST(facturacion_intentos, 30)), " +
+                    "$4::double precision)) " +
+                    "WHERE id_comprobante_venta = $1 " +
+                    "RETURNING facturacion_intentos";
+                ParametrosDeComando.Agregar(comando, idComprobanteVenta);
+                ParametrosDeComando.Agregar(comando, reloj.Ahora);
+                ParametrosDeComando.Agregar(comando, EsperaInicialTrasFallo.TotalSeconds);
+                ParametrosDeComando.Agregar(comando, EsperaMaximaTrasFallo.TotalSeconds);
+                intentos = await comando.ExecuteScalarAsync(ct) as int?;
+            }
+            finally
+            {
+                await db.Database.CloseConnectionAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(
+                ex, "No se pudo anotar el intento fallido de la decisión de la venta {IdComprobanteVenta}.", idComprobanteVenta);
+        }
+
+        if (causa is AmbienteSinCertificadoException anomalia)
+        {
+            log.LogError(
+                causa,
+                "La empresa {IdEmpresa} tiene un certificado fiscal activo pero ninguno del ambiente configurado {Ambiente}: " +
+                "la venta {IdComprobanteVenta} queda debida (intento {Intentos}).",
+                anomalia.IdEmpresa, anomalia.Ambiente, idComprobanteVenta, intentos);
+        }
+        else if (intentos >= IntentosParaRegistrarComoError)
+        {
+            log.LogError(
+                causa,
+                "La decisión de facturación de la venta {IdComprobanteVenta} lleva {Intentos} intentos fallidos; sigue debida.",
+                idComprobanteVenta, intentos);
+        }
+        else
+        {
+            log.LogWarning(
+                causa,
+                "No se pudo decidir la facturación de la venta {IdComprobanteVenta} (intento {Intentos}); queda debida.",
+                idComprobanteVenta, intentos);
+        }
+    }
+
     public async Task<EstadoFiscalDeVenta> DecidirAsync(int idComprobanteVenta, CancellationToken ct = default)
     {
         var estrategia = db.Database.CreateExecutionStrategy();
 
-        return await estrategia.ExecuteAsync(async () =>
+        return await estrategia.ExecuteAsync(async _ =>
         {
             db.ChangeTracker.Clear();
 
@@ -172,14 +287,23 @@ public class ServicioDeDecisionDeFacturacion(
                 return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
             }
 
-            // Sin certificado activo la empresa no puede facturar: la venta se decide como no aplicable y queda marcada,
-            // así que un certificado cargado después no la factura retroactivamente.
+            // Una empresa sin ningún certificado activo no factura: la venta se decide como no aplicable y queda marcada,
+            // así que un certificado cargado después no la factura retroactivamente. Si TIENE certificado activo pero no
+            // del ambiente configurado, es una anomalía de configuración (ResolverAmbiente cae a homologación con
+            // cualquier texto desconocido): la venta no se marca y el intento falla, así se decide cuando se corrija.
             var ambiente = opciones.Value.ResolverAmbiente();
-            var hayCertificadoActivo = await db.CertificadosFiscales.AsNoTracking()
-                .AnyAsync(c => c.IdEmpresa == venta.IdEmpresa && c.Ambiente == ambiente && c.Activo, ct);
-            if (!hayCertificadoActivo)
+            var ambientesActivos = await db.CertificadosFiscales.AsNoTracking()
+                .Where(c => c.IdEmpresa == venta.IdEmpresa && c.Activo)
+                .Select(c => c.Ambiente)
+                .ToListAsync(ct);
+            if (ambientesActivos.Count == 0)
             {
                 return await CerrarSinMovimientoAsync(EstadoFiscalDeVenta.NoCorresponde);
+            }
+
+            if (!ambientesActivos.Contains(ambiente))
+            {
+                throw new AmbienteSinCertificadoException(venta.IdEmpresa, ambiente);
             }
 
             var pagos = await LeerPagosAsync(conexion, transaccionCruda, idComprobanteVenta, ct);
@@ -226,7 +350,7 @@ public class ServicioDeDecisionDeFacturacion(
             await MarcarDecididaAsync(conexion, transaccionCruda, idComprobanteVenta, ahora, ct);
             await transaccion.CommitAsync(ct);
             return resultado;
-        });
+        }, ct);
     }
 
     // ---- Lecturas -------------------------------------------------------------------------------

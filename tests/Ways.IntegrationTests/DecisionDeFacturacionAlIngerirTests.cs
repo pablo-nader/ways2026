@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -31,12 +33,15 @@ namespace Ways.IntegrationTests;
 /// Se ejercita por <c>POST /api/ventas</c> (siempre con un cajero de dispositivo, que además puede reenviar con número
 /// pre-asignado) y, para fechas fijas y concurrencia, llamando al servicio sobre ventas sembradas.
 ///
-/// Una decisión que falla deja la venta debida (marca en <c>NULL</c>) y la completa el barrido que corre con la venta
-/// siguiente del mismo punto de venta (<c>SanearDecisionesDebidasAsync</c>).
+/// Una decisión que falla deja la venta debida (marca en <c>NULL</c>), anota el intento con una espera creciente y la
+/// completa el barrido que corre con una venta siguiente del mismo punto de venta cuando la espera venció
+/// (<c>SanearDecisionesDebidasAsync</c>).
 ///
-/// Mutation-proof-tests: las cláusulas bajo prueba son el gate del certificado, la marca de idempotencia, el
-/// <c>FOR UPDATE</c> del acumulado, la derivación del período, <c>ForzarFactura</c> en <c>ExigirMismoContenido</c>, el
-/// barrido (llamada desde el endpoint, límite, orden, aislamiento de fallas) y la marca de las ventas sin certificado.
+/// Mutation-proof-tests: las cláusulas bajo prueba son el gate del certificado (ausencia total frente a anomalía de
+/// ambiente), la marca de idempotencia, el <c>FOR UPDATE</c> del acumulado, la derivación del período,
+/// <c>ForzarFactura</c> en <c>ExigirMismoContenido</c>, el barrido (llamada desde el endpoint, límite, orden, aislamiento de
+/// fallas, filtro por la espera), la anotación de cada fallo y su espera creciente, el presupuesto de la decisión y el
+/// salto del barrido tras una decisión sin decidir.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -199,13 +204,13 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         return cajero;
     }
 
-    private async Task AgregarCertificadoAsync(Escenario e)
+    private async Task AgregarCertificadoAsync(Escenario e, AmbienteFiscal ambiente = AmbienteFiscal.Homologacion)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
         db.CertificadosFiscales.Add(new CertificadoFiscal
         {
-            IdTenant = e.IdTenant, IdEmpresa = e.IdEmpresa, Ambiente = AmbienteFiscal.Homologacion,
+            IdTenant = e.IdTenant, IdEmpresa = e.IdEmpresa, Ambiente = ambiente,
             Alias = "Homo agregado", CuitTitular = "20111111112", CertificadoPem = "pem",
             ClavePrivadaCifrada = new byte[48], Nonce = new byte[12], TagAutenticacion = new byte[16],
             IdClaveMaestra = "v1", HuellaSha256 = new string('b', 64), VigenciaDesde = ahora.AddDays(-1),
@@ -322,16 +327,93 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         return comprobante.Id;
     }
 
-    private (ServicioDeDecisionDeFacturacion Servicio, WaysDbContext Db) CrearServicio(Escenario e)
+    private (ServicioDeDecisionDeFacturacion Servicio, WaysDbContext Db) CrearServicio(
+        Escenario e, IRelojDelSistema? relojDelServicio = null, OpcionesFiscales? opciones = null,
+        ILogger<ServicioDeDecisionDeFacturacion>? log = null)
     {
         var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant));
         var reloj = new RelojDelSistema();
         var parametros = new ServicioDeParametros(db, reloj, new ServicioDeLotes(db, reloj, new ContextoFijo(e.IdTenant, e.IdEmpleado)));
         var servicio = new ServicioDeDecisionDeFacturacion(
-            db, reloj, Options.Create(new OpcionesFiscales()), parametros,
-            NullLogger<ServicioDeDecisionDeFacturacion>.Instance);
+            db, relojDelServicio ?? reloj, Options.Create(opciones ?? new OpcionesFiscales()), parametros,
+            log ?? NullLogger<ServicioDeDecisionDeFacturacion>.Instance);
         return (servicio, db);
     }
+
+    /// <summary>Reloj que el test mueve a mano: la espera de los intentos fallidos se prueba sin dormir.</summary>
+    private sealed class RelojControlable(DateTimeOffset inicio) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; set; } = inicio;
+    }
+
+    private sealed class RegistroDeLog : ILogger<ServicioDeDecisionDeFacturacion>
+    {
+        private readonly List<(LogLevel Nivel, string Mensaje)> _entradas = [];
+
+        public IReadOnlyList<(LogLevel Nivel, string Mensaje)> Entradas
+        {
+            get
+            {
+                lock (_entradas)
+                {
+                    return [.. _entradas];
+                }
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_entradas)
+            {
+                _entradas.Add((logLevel, formatter(state, exception)));
+            }
+        }
+    }
+
+    private static readonly DateTimeOffset InicioDelReloj = new(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
+
+    private sealed record ContabilidadDeIntentos(int Intentos, DateTimeOffset? ProximoIntento, DateTimeOffset? Marca);
+
+    private async Task<ContabilidadDeIntentos> LeerContabilidadAsync(int idTenant, int idComprobante)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "SELECT facturacion_intentos, facturacion_proximo_intento_en, facturacion_decidida_en " +
+            "FROM comprobantes_venta WHERE id_comprobante_venta = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        await using var lector = await comando.ExecuteReaderAsync();
+        Assert.True(await lector.ReadAsync());
+        return new ContabilidadDeIntentos(
+            lector.GetInt32(0),
+            lector.IsDBNull(1) ? null : lector.GetFieldValue<DateTimeOffset>(1),
+            lector.IsDBNull(2) ? null : lector.GetFieldValue<DateTimeOffset>(2));
+    }
+
+    private async Task FijarContabilidadAsync(int idTenant, int idComprobante, int intentos, DateTimeOffset? proximo)
+    {
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "UPDATE comprobantes_venta SET facturacion_intentos = $2, facturacion_proximo_intento_en = $3 " +
+            "WHERE id_comprobante_venta = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = intentos });
+        comando.Parameters.Add(new NpgsqlParameter { Value = (object?)proximo ?? DBNull.Value });
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+    }
+
+    /// <summary>Siembra una venta en efectivo por el máximo de <c>numeric(14,2)</c>: si el acumulado del mes de
+    /// <paramref name="fecha"/> ya tiene un monto vendido, sumarla desborda <c>total_vendido</c> y su decisión falla en cada
+    /// intento. Quien la use decide antes otro ticket del mismo mes.</summary>
+    private async Task<int> SembrarVentaQueSiempreFallaAsync(Escenario e, DateTimeOffset fecha) =>
+        await SembrarVentaAsync(e, fecha, e.IdEfectivo, importe: 999_999_999_999.99m);
 
     private async Task<EstadoFiscalDeVenta> DecidirAsync(Escenario e, int idComprobante)
     {
@@ -692,17 +774,25 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         await DefinirZonaHorariaAsync(e, null);
         var siguiente = await VenderAsync(e, Venta(e, PorTransferencia(e)));
 
+        // La fallida espera su turno (un minuto tras el primer fallo): la venta siguiente no la barre todavía.
         Assert.Equal(EstadosFiscalesDeVenta.Pendiente, siguiente.Fiscal!.Estado);
+        Assert.Null(await LeerMarcaDeDecisionAsync(e.IdTenant, fallida.Id));
+        Assert.Equal(siguiente.Id, Assert.Single(await LeerDecisionesAsync(e.IdTenant)).IdComprobanteVenta);
+
+        // Vencida la espera (se adelanta la fecha en la base, sin dormir), la venta siguiente la completa.
+        await FijarContabilidadAsync(e.IdTenant, fallida.Id, intentos: 1, proximo: DateTimeOffset.UtcNow.AddMinutes(-1));
+        var tercera = await VenderAsync(e, Venta(e, PorTransferencia(e)));
+
         Assert.NotNull(await LeerMarcaDeDecisionAsync(e.IdTenant, fallida.Id));
         Assert.Equal(
-            [fallida.Id, siguiente.Id],
+            [fallida.Id, siguiente.Id, tercera.Id],
             (await LeerDecisionesAsync(e.IdTenant)).Select(d => d.IdComprobanteVenta).Order().ToArray());
-        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 200m, facturado: 200m);
-
-        // Una tercera venta no vuelve a contar ninguna de las dos anteriores.
-        await VenderAsync(e, Venta(e, PorTransferencia(e)));
-        Assert.Equal(3, (await LeerDecisionesAsync(e.IdTenant)).Count);
         AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 300m, facturado: 300m);
+
+        // Una cuarta venta no vuelve a contar ninguna de las anteriores.
+        await VenderAsync(e, Venta(e, PorTransferencia(e)));
+        Assert.Equal(4, (await LeerDecisionesAsync(e.IdTenant)).Count);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 400m, facturado: 400m);
     }
 
     [Fact]
@@ -792,6 +882,309 @@ public class DecisionDeFacturacionAlIngerirTests(WaysApiFixture fixture) : IClas
         await VenderAsync(e, Venta(e, PorTransferencia(e)));
         var despues = await LeerMarcasAsync(e.IdTenant);
         Assert.All(new[] { ticket, devolucion, anulada, sinPagos }, id => Assert.Equal(antes[id], despues[id]));
+    }
+
+    // ---- Intentos fallidos con espera creciente --------------------------------------------------------------
+
+    [Fact]
+    public async Task CincoVentasDebidasQueFallanSiempreNoHambreanALaVentaSanaQueLasSigue()
+    {
+        var e = await PrepararAsync(nameof(CincoVentasDebidasQueFallanSiempreNoHambreanALaVentaSanaQueLasSigue));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 1m);
+
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+        var hoy = DateTimeOffset.UtcNow;
+        var venenosas = new List<int>();
+        for (var i = 0; i < ServicioDeDecisionDeFacturacion.LimiteDeBarrido; i++)
+        {
+            venenosas.Add(await SembrarVentaQueSiempreFallaAsync(e, hoy));
+        }
+
+        var sana = await SembrarVentaAsync(e, hoy, e.IdEfectivo);
+
+        // El barrido toma las cinco más viejas, que son las venenosas: todas fallan y la sana queda fuera del límite.
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+        var marcas = await LeerMarcasAsync(e.IdTenant);
+        Assert.All(venenosas, id => Assert.Null(marcas[id]));
+        Assert.Null(marcas[sana]);
+        foreach (var id in venenosas)
+        {
+            var contabilidad = await LeerContabilidadAsync(e.IdTenant, id);
+            Assert.Equal(1, contabilidad.Intentos);
+            Assert.NotNull(contabilidad.ProximoIntento);
+        }
+
+        // Las venenosas esperan: el barrido siguiente llega a la sana y no vuelve a tocar a las venenosas.
+        await VenderAsync(e, Venta(e, EnEfectivo(e)));
+        marcas = await LeerMarcasAsync(e.IdTenant);
+        Assert.NotNull(marcas[sana]);
+        Assert.All(venenosas, id => Assert.Null(marcas[id]));
+        foreach (var id in venenosas)
+        {
+            Assert.Equal(1, (await LeerContabilidadAsync(e.IdTenant, id)).Intentos);
+        }
+    }
+
+    [Fact]
+    public async Task CadaFalloSumaUnIntentoYDuplicaLaEsperaYAlQuintoSeRegistraComoErrorSinLoguearLasSalteadas()
+    {
+        var e = await PrepararAsync(nameof(CadaFalloSumaUnIntentoYDuplicaLaEsperaYAlQuintoSeRegistraComoErrorSinLoguearLasSalteadas));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await DefinirZonaHorariaAsync(e, "Nowhere/Land");
+        var id = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var reloj = new RelojControlable(InicioDelReloj);
+        var log = new RegistroDeLog();
+        var (servicio, db) = CrearServicio(e, reloj, log: log);
+        await using var __ = db;
+
+        var espera = TimeSpan.FromMinutes(1);
+        for (var intento = 1; intento <= ServicioDeDecisionDeFacturacion.IntentosParaRegistrarComoError; intento++)
+        {
+            await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+
+            var contabilidad = await LeerContabilidadAsync(e.IdTenant, id);
+            Assert.Equal(intento, contabilidad.Intentos);
+            Assert.Equal(reloj.Ahora + espera, contabilidad.ProximoIntento);
+            Assert.Null(contabilidad.Marca);
+
+            reloj.Ahora = contabilidad.ProximoIntento!.Value;
+            espera *= 2;
+        }
+
+        // Cuatro advertencias y, al llegar al umbral, un error con la venta y la cantidad de intentos.
+        Assert.Equal(
+            [LogLevel.Warning, LogLevel.Warning, LogLevel.Warning, LogLevel.Warning, LogLevel.Error],
+            log.Entradas.Select(x => x.Nivel));
+        Assert.Contains($"venta {id} lleva 5 intentos", log.Entradas[^1].Mensaje, StringComparison.Ordinal);
+
+        // Una candidata que todavía espera no se intenta, no cambia su contabilidad y no deja rastro en el log.
+        var proximo = (await LeerContabilidadAsync(e.IdTenant, id)).ProximoIntento!.Value;
+        reloj.Ahora = proximo - TimeSpan.FromSeconds(1);
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+        Assert.Equal(5, (await LeerContabilidadAsync(e.IdTenant, id)).Intentos);
+        Assert.Equal(5, log.Entradas.Count);
+    }
+
+    [Fact]
+    public async Task LaEsperaTrasUnFalloTieneTopeYElContadorGrandeNoDesborda()
+    {
+        var e = await PrepararAsync(nameof(LaEsperaTrasUnFalloTieneTopeYElContadorGrandeNoDesborda));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await DefinirZonaHorariaAsync(e, "Nowhere/Land");
+        var id = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        await FijarContabilidadAsync(e.IdTenant, id, intentos: 40, proximo: null);
+        var reloj = new RelojControlable(InicioDelReloj);
+        var (servicio, db) = CrearServicio(e, reloj);
+        await using var __ = db;
+
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+
+        var contabilidad = await LeerContabilidadAsync(e.IdTenant, id);
+        Assert.Equal(41, contabilidad.Intentos);
+        Assert.Equal(InicioDelReloj + ServicioDeDecisionDeFacturacion.EsperaMaximaTrasFallo, contabilidad.ProximoIntento);
+    }
+
+    [Fact]
+    public async Task LaVentaQueFalloSeDecideUnaSolaVezCuandoVenceLaEsperaTrasCorregirLaCausa()
+    {
+        var e = await PrepararAsync(nameof(LaVentaQueFalloSeDecideUnaSolaVezCuandoVenceLaEsperaTrasCorregirLaCausa));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await DefinirZonaHorariaAsync(e, "Nowhere/Land");
+        var id = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var reloj = new RelojControlable(InicioDelReloj);
+        var (servicio, db) = CrearServicio(e, reloj);
+        await using var __ = db;
+
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+        Assert.Equal(1, (await LeerContabilidadAsync(e.IdTenant, id)).Intentos);
+
+        // La causa ya está corregida pero la espera sigue corriendo: el barrido no la toca.
+        await DefinirZonaHorariaAsync(e, null);
+        reloj.Ahora = InicioDelReloj + TimeSpan.FromSeconds(30);
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+        Assert.Null((await LeerContabilidadAsync(e.IdTenant, id)).Marca);
+        Assert.Empty(await LeerDecisionesAsync(e.IdTenant));
+
+        // Vencida la espera, se decide: una fila, un movimiento del acumulado y el contador queda como historia.
+        reloj.Ahora = InicioDelReloj + TimeSpan.FromSeconds(61);
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+
+        var contabilidad = await LeerContabilidadAsync(e.IdTenant, id);
+        Assert.Equal(reloj.Ahora, contabilidad.Marca);
+        Assert.Equal(1, contabilidad.Intentos);
+        Assert.Equal(id, Assert.Single(await LeerDecisionesAsync(e.IdTenant)).IdComprobanteVenta);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 100m, facturado: 100m);
+    }
+
+    // ---- Presupuesto de la decisión de la venta recién emitida -----------------------------------------------
+
+    [Fact]
+    public async Task UnaDecisionBloqueadaPorUnLockDeLaVentaRespondeSinDecidirSinEsperarAlLockYLaVentaSeDecideDespues()
+    {
+        var e = await PrepararAsync(
+            nameof(UnaDecisionBloqueadaPorUnLockDeLaVentaRespondeSinDecidirSinEsperarAlLockYLaVentaSeDecideDespues));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        var bloqueada = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var otra = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var (servicio, db) = CrearServicio(e);
+        await using var __ = db;
+
+        // Otra sesión tiene tomada la fila de la venta. Se libera sola a los 20 s para que el test termine aunque el
+        // servicio no respetara su presupuesto.
+        var yaBloqueada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var titular = Task.Run(async () =>
+        {
+            await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+            await using var transaccion = await conexion.BeginTransactionAsync();
+            await using (var comando = conexion.CreateCommand())
+            {
+                comando.Transaction = transaccion;
+                comando.CommandText = "SELECT 1 FROM comprobantes_venta WHERE id_comprobante_venta = $1 FOR UPDATE";
+                comando.Parameters.Add(new NpgsqlParameter { Value = bloqueada });
+                await comando.ExecuteScalarAsync();
+            }
+
+            yaBloqueada.SetResult();
+            await Task.WhenAny(liberar.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+            await transaccion.RollbackAsync();
+        });
+        await yaBloqueada.Task;
+
+        var cronometro = Stopwatch.StartNew();
+        var estado = await servicio.DecidirTrasLaVentaAsync(bloqueada);
+        cronometro.Stop();
+        liberar.SetResult();
+        await titular;
+
+        Assert.Equal(EstadoFiscalDeVenta.SinDecidir, estado);
+        Assert.True(
+            cronometro.Elapsed < ServicioDeDecisionDeFacturacion.PresupuestoDeDecision
+                + ServicioDeDecisionDeFacturacion.PresupuestoDeRegistroDeFallo + TimeSpan.FromSeconds(5),
+            $"La decisión tardó {cronometro.Elapsed}.");
+        Assert.Null((await LeerContabilidadAsync(e.IdTenant, bloqueada)).Marca);
+        Assert.Empty(await LeerDecisionesAsync(e.IdTenant));
+        Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
+
+        // La misma instancia (mismo DbContext y conexión) sigue sana y decide la venta, y otra más, una sola vez cada una.
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, (await servicio.DecidirTrasLaVentaAsync(bloqueada)).Estado);
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, (await servicio.DecidirTrasLaVentaAsync(otra)).Estado);
+        Assert.Equal(2, (await LeerDecisionesAsync(e.IdTenant)).Count);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 200m, facturado: 200m);
+    }
+
+    [Fact]
+    public async Task SiLaDecisionDeLaVentaActualTerminoSinDecidirElBarridoNoCorreEnEsaLlamada()
+    {
+        var e = await PrepararAsync(nameof(SiLaDecisionDeLaVentaActualTerminoSinDecidirElBarridoNoCorreEnEsaLlamada));
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdEfectivo, 1m);
+        // Un ticket ya decidido deja el acumulado del mes con monto vendido; la venta actual lo desborda y siempre falla.
+        await DecidirAsync(e, await SembrarVentaAsync(e, Mayo, e.IdEfectivo));
+        var sana = await SembrarVentaAsync(e, Mayo, e.IdEfectivo);
+        var actual = await SembrarVentaQueSiempreFallaAsync(e, Mayo);
+        var (servicio, db) = CrearServicio(e);
+        await using var __ = db;
+
+        var estado = await servicio.DecidirYSanearAsync(actual, e.IdPuntoVenta);
+
+        Assert.Equal(EstadoFiscalDeVenta.SinDecidir, estado);
+        Assert.Null((await LeerContabilidadAsync(e.IdTenant, sana)).Marca);
+        Assert.Equal(1, (await LeerContabilidadAsync(e.IdTenant, actual)).Intentos);
+
+        // La sana se podía decidir: solo el barrido omitido la dejó debida.
+        await servicio.SanearDecisionesDebidasAsync(e.IdPuntoVenta, actual);
+        Assert.NotNull((await LeerContabilidadAsync(e.IdTenant, sana)).Marca);
+    }
+
+    // ---- Certificado: ausencia total frente a anomalía de ambiente --------------------------------------------------
+
+    [Fact]
+    public async Task SinNingunCertificadoActivoLaVentaSeMarcaComoNoAplicableSinAnotarFalloNiLoguear()
+    {
+        var e = await PrepararAsync(
+            nameof(SinNingunCertificadoActivoLaVentaSeMarcaComoNoAplicableSinAnotarFalloNiLoguear), conCertificado: false);
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        var id = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var log = new RegistroDeLog();
+        var (servicio, db) = CrearServicio(e, log: log);
+        await using var __ = db;
+
+        var estado = await servicio.DecidirTrasLaVentaAsync(id);
+
+        Assert.Equal(EstadoFiscalDeVenta.NoCorresponde, estado);
+        var contabilidad = await LeerContabilidadAsync(e.IdTenant, id);
+        Assert.NotNull(contabilidad.Marca);
+        Assert.Equal(0, contabilidad.Intentos);
+        Assert.Empty(log.Entradas);
+        Assert.Empty(await LeerDecisionesAsync(e.IdTenant));
+        Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
+    }
+
+    [Fact]
+    public async Task UnCertificadoActivoSoloDeOtroAmbienteNoMarcaLaVentaLaAnotaComoFalloYLoguea()
+    {
+        var e = await PrepararAsync(
+            nameof(UnCertificadoActivoSoloDeOtroAmbienteNoMarcaLaVentaLaAnotaComoFalloYLoguea), conCertificado: false);
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await AgregarCertificadoAsync(e, AmbienteFiscal.Produccion);
+        var id = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var reloj = new RelojControlable(InicioDelReloj);
+        var log = new RegistroDeLog();
+        // Un ambiente mal escrito cae a homologación.
+        var (servicio, db) = CrearServicio(e, reloj, new OpcionesFiscales { Ambiente = "producion" }, log);
+        await using var __ = db;
+
+        var estado = await servicio.DecidirTrasLaVentaAsync(id);
+
+        Assert.Equal(EstadoFiscalDeVenta.SinDecidir, estado);
+        var contabilidad = await LeerContabilidadAsync(e.IdTenant, id);
+        Assert.Null(contabilidad.Marca);
+        Assert.Equal(1, contabilidad.Intentos);
+        Assert.Equal(InicioDelReloj + ServicioDeDecisionDeFacturacion.EsperaInicialTrasFallo, contabilidad.ProximoIntento);
+        var entrada = Assert.Single(log.Entradas);
+        Assert.Equal(LogLevel.Error, entrada.Nivel);
+        Assert.Contains($"empresa {e.IdEmpresa}", entrada.Mensaje, StringComparison.Ordinal);
+        Assert.Contains(nameof(AmbienteFiscal.Homologacion), entrada.Mensaje, StringComparison.Ordinal);
+        Assert.Empty(await LeerDecisionesAsync(e.IdTenant));
+        Assert.Empty(await LeerAcumuladosAsync(e.IdTenant));
+    }
+
+    [Fact]
+    public async Task CorregidoElAmbienteLaVentaQueEstabaDebidaSeDecideCuandoVenceLaEspera()
+    {
+        var e = await PrepararAsync(
+            nameof(CorregidoElAmbienteLaVentaQueEstabaDebidaSeDecideCuandoVenceLaEspera), conCertificado: false);
+        using var _ = e.Cajero;
+        await FijarPorcentajeAsync(e, e.IdTransferencia, 100m);
+        await AgregarCertificadoAsync(e, AmbienteFiscal.Produccion);
+        var id = await SembrarVentaAsync(e, Mayo, e.IdTransferencia);
+        var reloj = new RelojControlable(InicioDelReloj);
+        var (conError, dbConError) = CrearServicio(e, reloj, new OpcionesFiscales { Ambiente = "producion" });
+        await using var __ = dbConError;
+        Assert.Equal(EstadoFiscalDeVenta.SinDecidir, await conError.DecidirTrasLaVentaAsync(id));
+
+        var (corregido, dbCorregido) = CrearServicio(e, reloj, new OpcionesFiscales { Ambiente = "produccion" });
+        await using var ___ = dbCorregido;
+
+        reloj.Ahora = InicioDelReloj + TimeSpan.FromSeconds(30);
+        await corregido.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+        Assert.Null((await LeerContabilidadAsync(e.IdTenant, id)).Marca);
+
+        reloj.Ahora = InicioDelReloj + TimeSpan.FromSeconds(61);
+        await corregido.SanearDecisionesDebidasAsync(e.IdPuntoVenta, 0);
+
+        Assert.Equal(reloj.Ahora, (await LeerContabilidadAsync(e.IdTenant, id)).Marca);
+        Assert.Equal(id, Assert.Single(await LeerDecisionesAsync(e.IdTenant)).IdComprobanteVenta);
+        AfirmarAcumulado(await LeerAcumuladosAsync(e.IdTenant), e.IdTransferencia, saldo: 0m, vendido: 100m, facturado: 100m);
     }
 
     // ---- Composición de pagos de un ticket ---------------------------------------------------------------

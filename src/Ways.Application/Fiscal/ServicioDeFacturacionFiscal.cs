@@ -206,6 +206,7 @@ public class ServicioDeFacturacionFiscal(
                 Observaciones = solicitud.Observaciones,
                 Estado = EstadoComprobante.Emitido,
                 ResultadoFiscal = ResultadoFiscal.Pendiente,
+                FacturacionDecididaEn = momento,
                 CreatedAt = momento,
                 UpdatedAt = momento
             };

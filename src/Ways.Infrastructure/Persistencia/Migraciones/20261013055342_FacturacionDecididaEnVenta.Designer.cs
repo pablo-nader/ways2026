@@ -25,7 +25,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.Infrastructure.Persistencia.Migraciones
 {
     [DbContext(typeof(WaysDbContext))]
-    [Migration("20261013045607_FacturacionDecididaEnVenta")]
+    [Migration("20261013055342_FacturacionDecididaEnVenta")]
     partial class FacturacionDecididaEnVenta
     {
         /// <inheritdoc />
@@ -4883,6 +4883,16 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<DateTimeOffset?>("FacturacionDecididaEn")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("facturacion_decidida_en");
+
+                    b.Property<int>("FacturacionIntentos")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("facturacion_intentos");
+
+                    b.Property<DateTimeOffset?>("FacturacionProximoIntentoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("facturacion_proximo_intento_en");
 
                     b.Property<DateTimeOffset>("Fecha")
                         .HasColumnType("timestamp with time zone")

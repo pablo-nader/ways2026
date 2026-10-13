@@ -32,7 +32,7 @@ namespace Ways.IntegrationTests;
 public class FacturacionDecididaEnVentaMigracionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string MigracionAnterior = "20261013020847_FacturacionPorMedioDePagoEsquema";
-    private const string MigracionBajoPrueba = "20261013045607_FacturacionDecididaEnVenta";
+    private const string MigracionBajoPrueba = "20261013055342_FacturacionDecididaEnVenta";
 
     private static DbContextOptions<WaysDbContext> ConstruirOpciones(string cadena) =>
         new DbContextOptionsBuilder<WaysDbContext>()
@@ -157,6 +157,36 @@ public class FacturacionDecididaEnVentaMigracionTests(WaysApiFixture fixture) : 
                     cruda,
                     "SELECT atthasmissing FROM pg_attribute WHERE attrelid = 'comprobantes_venta'::regclass " +
                     "AND attname = 'facturacion_decidida_en'"));
+
+            // Las columnas de intentos fallidos: toda fila (vieja o nueva) arranca en 0 intentos y sin espera, y el contador
+            // es NOT NULL con valor por defecto 0 (el modelo de EF lo describe igual).
+            foreach (var id in new[] { idViejo1, idViejo2, idNuevo })
+            {
+                Assert.Equal(
+                    0,
+                    await ScalarAsync(cruda, $"SELECT facturacion_intentos FROM comprobantes_venta WHERE id_comprobante_venta = {id}"));
+                Assert.Null(await ScalarAsync(
+                    cruda, $"SELECT facturacion_proximo_intento_en FROM comprobantes_venta WHERE id_comprobante_venta = {id}"));
+            }
+
+            Assert.Equal(
+                true,
+                await ScalarAsync(
+                    cruda,
+                    "SELECT attnotnull FROM pg_attribute WHERE attrelid = 'comprobantes_venta'::regclass " +
+                    "AND attname = 'facturacion_intentos'"));
+            Assert.Equal(
+                "integer",
+                await ScalarAsync(
+                    cruda,
+                    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = 'comprobantes_venta'::regclass " +
+                    "AND attname = 'facturacion_intentos'"));
+            Assert.Equal(
+                "timestamp with time zone",
+                await ScalarAsync(
+                    cruda,
+                    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = 'comprobantes_venta'::regclass " +
+                    "AND attname = 'facturacion_proximo_intento_en'"));
 
             // El índice parcial de las ventas debidas existe, es válido y filtra por la marca y por los espejos.
             var predicado = (string)(await ScalarAsync(

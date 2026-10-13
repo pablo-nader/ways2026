@@ -72,9 +72,21 @@ public class ComprobanteVenta : EntidadTenant
     /// <summary>Cuándo el servidor decidió si este ticket se factura (con o sin fila de decisión). <c>NULL</c> =
     /// decisión adeudada; un espejo fiscal no se decide y queda siempre en <c>NULL</c>. Es la marca de idempotencia: una
     /// venta que no se factura no tiene fila en <c>facturaciones_de_venta</c>, así que sin esta marca decidirla dos
-    /// veces la contaría dos veces en el acumulado. La escribe solo <c>ServicioDeDecisionDeFacturacion</c>, con SQL
-    /// crudo y bajo el lock de esta fila.</summary>
+    /// veces la contaría dos veces en el acumulado. La escribe <c>ServicioDeDecisionDeFacturacion</c>, con SQL crudo y
+    /// bajo el lock de esta fila, y los escritores de comprobantes que nunca son un ticket (TXR, RC y la emisión fiscal
+    /// directa) la fijan al crear la fila para que no figuren como adeudados. Ver también
+    /// <see cref="FacturacionIntentos"/> y <see cref="FacturacionProximoIntentoEn"/>.</summary>
     public DateTimeOffset? FacturacionDecididaEn { get; set; }
+
+    /// <summary>Cuántas veces falló un intento de decidir esta venta (la propia o la de un barrido). Solo crece: una
+    /// decisión lograda deja el contador como historia y no lo limpia. La escribe <c>ServicioDeDecisionDeFacturacion</c>
+    /// con SQL crudo, fuera de la transacción que falló.</summary>
+    public int FacturacionIntentos { get; set; }
+
+    /// <summary>Antes de este instante el barrido no vuelve a intentar esta venta (retroceso exponencial tras un fallo).
+    /// <c>NULL</c> = sin fallos pendientes de espera. Solo restringe al barrido: la decisión de la venta recién emitida
+    /// y la llamada directa a <c>DecidirAsync</c> no lo miran.</summary>
+    public DateTimeOffset? FacturacionProximoIntentoEn { get; set; }
 
     public decimal Subtotal { get; set; }
     public decimal DescuentoTotal { get; set; }

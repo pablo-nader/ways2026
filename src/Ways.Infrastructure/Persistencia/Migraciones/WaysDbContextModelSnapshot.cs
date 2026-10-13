@@ -4881,6 +4881,16 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("facturacion_decidida_en");
 
+                    b.Property<int>("FacturacionIntentos")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("facturacion_intentos");
+
+                    b.Property<DateTimeOffset?>("FacturacionProximoIntentoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("facturacion_proximo_intento_en");
+
                     b.Property<DateTimeOffset>("Fecha")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha");
