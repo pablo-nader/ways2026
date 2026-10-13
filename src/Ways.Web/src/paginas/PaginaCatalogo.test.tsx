@@ -861,3 +861,49 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     expect(within(cuenta).getByRole('option', { name: 'Segunda lectura' })).toBeInTheDocument()
   })
 })
+
+// La edición devuelve la empresa de la fila: mandar null convertiría una fila de una empresa en una de todo el tenant.
+describe('PaginaCatalogo — empresa de la fila al guardar', () => {
+  it('editar una marca de una empresa manda la empresa de la fila en el PUT', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture({ idEmpresa: 5 })])
+    apiPutMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/catalogos/marcas/1')
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 5 })
+  })
+
+  it('editar una marca de todo el tenant manda null', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture({ idEmpresa: null })])
+    apiPutMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: null })
+  })
+
+  it('un alta manda null aunque antes se haya abierto la edición de una fila de una empresa', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture({ idEmpresa: 5 })])
+    apiPostMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Puma', idEmpresa: null })
+  })
+})
