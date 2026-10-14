@@ -132,6 +132,8 @@ export type ParametrosDeSincronizacionOffline = {
   sincronizarAntesDeVender?: boolean
 }
 
+type PruebaDeServidor = { respondio: boolean }
+
 export type EstadoDeColaLocal = { pendientes: number; conError: number }
 
 export type ResultadoDeSincronizacionOffline = {
@@ -177,7 +179,8 @@ export type ResultadoDeSincronizacionOffline = {
   drenarAhora: () => Promise<EstadoDeColaLocal>
   /** Pide al servidor procesar las facturaciones pendientes del punto de venta, sin esperar ni propagar
    * fallos (ver `crearDisparadorDeLote`). El drenado ya lo pide solo al terminar cada pasada; esto es
-   * para una venta que salió sin pasar por el outbox. Sin conexión o sin punto de venta no hace nada. */
+   * para una venta que salió sin pasar por el outbox, así que se llama después de que el servidor
+   * respondió y no consulta `enLinea`. Sin punto de venta no hace nada. */
   procesarFacturaciones: () => void
   /** Con cuenta corriente, antes de tomar un número consulta el cliente al servidor (tope
    * `TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS`): si el pago supera el límite, o el servidor
@@ -368,7 +371,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
    * nuevas del cajero hasta que el servidor responda. Solo la lectura de la cabeza y la salida (o
    * el archivado) de la venta van bajo el candado; nadie más que esta pasada saca ventas del
    * outbox (`drenarOutbox` la mantiene única), así que la cabeza leída no cambia mientras tanto. */
-  async function drenarUnaPasada(): Promise<void> {
+  async function drenarUnaPasada(prueba: PruebaDeServidor): Promise<void> {
     for (;;) {
       const primera = await encolarOperacion(async () => (await leerOutbox(almacenRef.current))[0] ?? null)
       if (!primera || !montadoRef.current) return
@@ -386,6 +389,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         asentarRespuesta(primera.idLocal, null)
         continue
       }
+      prueba.respondio = true
       asentarRespuesta(primera.idLocal, respuesta)
 
       // La venta ya llegó al servidor: si su salida del outbox no se puede confirmar, se corta la
@@ -409,21 +413,26 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   // cuando la pasada en curso terminaba no espere al próximo ciclo.
   const drenadoEnCursoRef = useRef<Promise<void> | null>(null)
   const otraVueltaDeDrenadoRef = useRef(false)
+  // Si el último drenado completo recibió al menos una respuesta de venta: el servidor es alcanzable aunque `enLinea` todavía no lo diga.
+  const drenadoProboElServidorRef = useRef(false)
   function drenarOutbox(): Promise<void> {
     if (drenadoEnCursoRef.current) {
       otraVueltaDeDrenadoRef.current = true
       return drenadoEnCursoRef.current
     }
     const drenado = (async () => {
+      const prueba: PruebaDeServidor = { respondio: false }
       try {
         do {
           otraVueltaDeDrenadoRef.current = false
-          await drenarUnaPasada()
+          await drenarUnaPasada(prueba)
         } while (otraVueltaDeDrenadoRef.current)
       } finally {
         drenadoEnCursoRef.current = null
-        // Con la cola ya enviada (o cortada), el servidor tiene las ventas: es el momento de facturar las pendientes.
-        if (montadoRef.current) dispararLoteDeFacturacion(idPuntoVenta)
+        drenadoProboElServidorRef.current = prueba.respondio
+        // Con la cola ya enviada (o cortada), el servidor tiene las ventas: es el momento de facturar las pendientes. Una venta
+        // enviada con éxito prueba la conexión: en el ciclo de reconexión `enLinea` recién se corrige después del drenado.
+        if (montadoRef.current) dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: prueba.respondio })
       }
     })()
     drenadoEnCursoRef.current = drenado
@@ -649,8 +658,12 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     const enCurso = (async () => {
       try {
         await drenarOutbox()
+        const loteYaPedido = drenadoProboElServidorRef.current
+        const estabaEnLinea = enLineaRef.current
         const conSenal = await refrescarInstantaneaSiHaySenal()
         if (conSenal) {
+          // Reconexión sin ventas por drenar: el drenado no pudo pedir el lote (seguía sin conexión) y el refresco prueba que la hay.
+          if (!estabaEnLinea && !loteYaPedido && montadoRef.current) dispararLoteDeFacturacion(idPv, { servidorAlcanzable: true })
           await reponerBloque(idPv)
         }
         // Último paso del ciclo: lo que se declara tiene que reflejar el outbox YA drenado y el
@@ -1009,7 +1022,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizacionInicialPendiente,
     sincronizarAhora,
     drenarAhora,
-    procesarFacturaciones: () => dispararLoteDeFacturacion(idPuntoVenta),
+    procesarFacturaciones: () => dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: true }),
     encolarVentaOffline,
     esperarRespuesta,
     consumoPendienteDeCuentaCorriente,

@@ -523,6 +523,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}
         // Sin factura aprobada en la respuesta no se imprime nada: un ticket en su lugar pasaría por la factura.
         const factura = comprobante.fiscal?.estado === 'aprobado' ? comprobante.fiscal.comprobante : null
         if (!factura) {
+          setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, estadoFiscal: comprobante.fiscal?.estado } : v)))
           setErroresReimprimir((prev) => ({ ...prev, [id]: MENSAJE_FACTURA_NO_DISPONIBLE }))
           return
         }

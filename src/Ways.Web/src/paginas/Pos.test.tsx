@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TIEMPO_LIMITE_DE_RED_MS } from '../pos/tiempoLimite'
+import { reiniciarLotesDeFacturacionParaTests } from '../pos/loteDeFacturacion'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -582,6 +583,7 @@ function borrarAlmacenOffline(): Promise<void> {
 beforeEach(async () => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  reiniciarLotesDeFacturacionParaTests()
   procesarLoteMock.mockReset()
   procesarLoteMock.mockResolvedValue({})
   usuarioActual = usuarioFixture()
@@ -4833,13 +4835,36 @@ describe('Pos — lote de facturación tras la venta (T6c, camino directo sin co
     expect(screen.queryByText('No se pudo registrar la venta.')).not.toBeInTheDocument()
   })
 
-  it('sin conexión no pide el lote', async () => {
+  it('con la bandera de conexión en falso, una venta que el servidor sí aceptó igual pide el lote: la respuesta prueba que hay conexión', async () => {
     const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
     try {
       await armarVentaLista()
+      procesarLoteMock.mockClear()
 
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
       await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+      expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+    } finally {
+      enLinea.mockRestore()
+    }
+  })
+
+  it('si la venta online falla, ni siquiera con la bandera en falso se pide el lote', async () => {
+    const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      await armarVentaLista()
+      procesarLoteMock.mockClear()
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+          return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        }
+        return Promise.reject(new Error('falló la emisión'))
+      })
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await screen.findByText('No se pudo registrar la venta.')
 
       expect(procesarLoteMock).not.toHaveBeenCalled()
     } finally {

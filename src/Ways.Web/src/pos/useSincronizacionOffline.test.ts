@@ -19,6 +19,7 @@ import {
   type VentaEnCola,
 } from './outboxOffline'
 import { ErrorDeTiempoAgotado, TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
+import { reiniciarLotesDeFacturacionParaTests } from './loteDeFacturacion'
 import { guardarInstantaneaLocal, leerInstantaneaLocal, purgarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -167,6 +168,7 @@ function bloqueFixture(sobrescribir: Partial<BloqueDeNumeracionLocal> = {}): Blo
 }
 
 beforeEach(() => {
+  reiniciarLotesDeFacturacionParaTests()
   emitirMock.mockReset()
   reservarNumeracionMock.mockReset()
   obtenerInstantaneaMock.mockReset()
@@ -2814,6 +2816,79 @@ describe('useSincronizacionOffline — lote de facturación tras el drenado', ()
     } finally {
       enLinea.mockRestore()
     }
+  })
+
+  it('remontar el hook con otro lote todavía en vuelo para el mismo punto de venta no pide un segundo lote', async () => {
+    const almacen = await almacenConUnaVenta()
+    emitirMock.mockResolvedValue({ id: 1 })
+    procesarLoteMock.mockImplementation(() => new Promise(() => {}))
+
+    const primero = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    primero.unmount()
+
+    const segundo = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(segundo.result.current.sincronizacionInicialPendiente).toBe(false))
+    await act(async () => {
+      await segundo.result.current.drenarAhora()
+    })
+
+    expect(procesarLoteMock).toHaveBeenCalledTimes(1)
+  })
+
+  describe('reconexión: enLinea sigue en falso cuando termina el drenado', () => {
+    async function conSenalDeRed<T>(prueba: () => Promise<T>) {
+      const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        return await prueba()
+      } finally {
+        enLinea.mockRestore()
+      }
+    }
+
+    it('una pasada con una venta enviada con éxito prueba el servidor y pide el lote, una sola vez en el ciclo', async () => {
+      const almacen = await almacenConUnaVenta()
+      emitirMock.mockResolvedValue({ id: 1 })
+      obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+
+      await conSenalDeRed(async () => {
+        const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+        await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+        await waitFor(() => expect(result.current.enLinea).toBe(true))
+      })
+
+      expect(procesarLoteMock).toHaveBeenCalledTimes(1)
+      expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+    })
+
+    it('una pasada solo con fallos y sin señal en la instantánea no pide el lote', async () => {
+      const almacen = await almacenConUnaVenta()
+      emitirMock.mockRejectedValue(new ErrorApi(503, 'resultado_incierto', 'incierto'))
+
+      await conSenalDeRed(async () => {
+        const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+        await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+        await act(async () => {
+          await result.current.drenarAhora()
+        })
+        expect(result.current.enLinea).toBe(false)
+      })
+
+      expect(procesarLoteMock).not.toHaveBeenCalled()
+    })
+
+    it('sin nada para drenar, si el refresco de la instantánea prueba que hay señal, el ciclo pide el lote', async () => {
+      const almacen = almacenFake()
+      obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+
+      await conSenalDeRed(async () => {
+        const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+        await waitFor(() => expect(result.current.enLinea).toBe(true))
+        await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+      })
+
+      expect(procesarLoteMock).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('un fallo del lote no afecta al drenado ni a su resultado', async () => {
