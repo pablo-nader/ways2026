@@ -77,7 +77,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   (hoy descarta el que esté guardado, y dos llamadas simultáneas pueden pisarse). Depende de T5a.
 - [x] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
   comprobante en la respuesta de la venta. Depende de T5b.
-- [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
+- [x] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
   respuesta del drenaje. Depende de T4 y T5. Reglas del dueño (2026-10-14) en "Reglas de T6".
   - [x] **T6a — Estado fiscal en las lecturas.** `GET /api/ventas/{id}` informa `fiscal`
     (con los datos del comprobante para reimprimir) y `GET /api/ventas/por-turno/{id}` informa
@@ -85,7 +85,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   - [x] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
     espera de hasta 5 s solo si la venta seguro se factura y hay conexión; factura aprobada en
     lugar del ticket. Ruta: delegada.
-  - [ ] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
+  - [x] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
     sincronización; estado fiscal por venta y reimpresión. Ruta: delegada.
   - Release del POS (bump de Ways.Desktop + tag `pos-v*`): no antes de T7 (la factura impresa
     necesita el QR), y siempre avisando al dueño antes.
@@ -486,9 +486,24 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   mapa no se limpia al cerrar sesión (una vuelta pendiente puede salir con la sesión
   siguiente); el tope de 75 s queda corto si se sube `PresupuestoDeLoteSegundos` o
   `TimeoutDeWsaaSegundos`.
-- Pregunta abierta al dueño: el lote tras cada venta puede ocupar la serie hasta 20 s y la
-  venta siguiente con factura sale con ticket.
+- [x] **T6e — Lote tras la venta solo si queda pendiente.** El lote tras cada venta podía
+  ocupar la serie hasta 20 s y la venta siguiente con factura salía con ticket. Decisión
+  (2026-10-14, delegada por el dueño: "lo que te parezca mejor"): después de una venta el
+  lote sale solo si alguna venta enviada quedó con estado fiscal `pendiente` o `sin_decidir`
+  (o sin estado); los ciclos periódicos, el arranque y la reconexión lo piden siempre. Ruta:
+  delegada.
+  2026-10-14 — hecha. Commit `e3ff22b8`, apilado sobre T6d. `ventaNecesitaElLote` en
+  `pos/loteDeFacturacion.ts`; `drenarOutbox(siempreElLote)` con `loteSiempreRef` (un pedido
+  que se suma a un drenaje en curso solo puede subirlo); `procesarFacturaciones(fiscal)` tras
+  la venta directa. El drenaje del cierre de turno sigue la regla de tras-la-venta (aceptado:
+  los ciclos lo cubren).
+  Checks: `tsc -b` limpio; lint sin errores; Vitest completo 7358/7359 con un intermitente
+  ajeno (`GrillaDeItemsDeCompra.test.tsx`, 124/124 solo); archivos tocados re-corridos por el
+  orquestador 660/660. Sin RED previo: cinco mutaciones en rojo.
+  Judgment-day ronda 1: un juez sin hallazgos y otro con una sugerencia (comentario de
+  `procesarFacturaciones` desactualizado), corregida después, solo comentario. JUDGMENT:
+  APPROVED.
 
 ## Próximo paso
 
-PR de T6d; respuesta del dueño sobre la contención de la serie; después T7.
+T7 (QR de ARCA en la factura impresa); después el release del POS, avisando al dueño antes.
