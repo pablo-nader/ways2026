@@ -155,6 +155,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeDecisionDeFacturacion>();
         services.AddScoped<ServicioDeFacturacionDeVentas>();
         services.AddScoped<ProcesadorDeFacturacionesPorLote>();
+        services.AddScoped<EmisionEnLineaAlCobrar>();
 
         // El presupuesto de tiempo del procesador por lote nace de este reloj, para que un test pueda avanzarlo sin esperar.
         services.TryAddSingleton(TimeProvider.System);

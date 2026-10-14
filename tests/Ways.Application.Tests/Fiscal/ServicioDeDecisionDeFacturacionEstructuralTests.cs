@@ -121,21 +121,71 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
     }
 
     [Fact]
-    public void ElTextoDelEndpointLlamaALaDecisionConBarridoDespuesDeEmitirSinPasarElTokenDeLaSolicitud()
+    public void ElTextoDelEndpointDeVentasLlamaUnaSolaVezALaEmisionEnLineaDespuesDeEmitirSinPasarleElTokenDeLaSolicitud()
     {
         var endpoint = Fuente("Ways.Api/Endpoints/VentasEndpoints.cs");
         var emision = endpoint.IndexOf("await servicio.EmitirAsync(solicitud, ct)", StringComparison.Ordinal);
         Assert.True(emision >= 0, "No se encontró la emisión de la venta.");
-        var decision = endpoint.IndexOf("decision.DecidirYSanearAsync(", emision, StringComparison.Ordinal);
-        Assert.True(decision > emision, "La decisión corre después de emitir la venta.");
+        var fiscal = endpoint.IndexOf("emisionEnLinea.DecidirEmitirYSanearAsync(", emision, StringComparison.Ordinal);
+        Assert.True(fiscal > emision, "Lo fiscal corre después de emitir la venta.");
 
+        // Ningún otro punto de entrada fiscal se llama desde el endpoint: lo demás lo orquesta EmisionEnLineaAlCobrar.
         var llamadas = Regex.Matches(
-            endpoint[decision..],
-            @"decision\.(DecidirTrasLaVentaAsync|SanearDecisionesDebidasAsync|DecidirYSanearAsync)\(([^)]*)\)",
+            endpoint[fiscal..],
+            @"(emisionEnLinea|decision|facturacion)\.(\w+)\(([^)]*)\)",
             RegexOptions.None,
             TimeSpan.FromSeconds(5));
-        Assert.Single(llamadas);
-        Assert.All(llamadas, l => Assert.DoesNotMatch(new Regex(@"\bct\b", RegexOptions.None, TimeSpan.FromSeconds(5)), l.Groups[2].Value));
+        var propia = Assert.Single(llamadas);
+        Assert.Equal("DecidirEmitirYSanearAsync", propia.Groups[2].Value);
+        Assert.DoesNotMatch(new Regex(@"\bct\b", RegexOptions.None, TimeSpan.FromSeconds(5)), propia.Groups[3].Value);
+    }
+
+    private static string EmisionEnLinea => Fuente("Ways.Application/Fiscal/EmisionEnLineaAlCobrar.cs");
+
+    [Fact]
+    public void ElTextoDeLaEmisionEnLineaTieneEnEseOrdenDecidirLaCondicionDePendienteElIntentoLaCondicionDeSinDecidirElTiempoRestanteYElBarridoConElMinimoDeLoQueQueda()
+    {
+        var cuerpo = Entre(EmisionEnLinea, "public async Task<EstadoFiscalDeVenta> DecidirEmitirYSanearAsync(", "private TimeSpan Restante(");
+        var decidir = cuerpo.IndexOf("decision.DecidirTrasLaVentaAsync(idComprobanteVenta)", StringComparison.Ordinal);
+        var pendiente = cuerpo.IndexOf("decidido.Estado == EstadosFiscalesDeVenta.Pendiente", StringComparison.Ordinal);
+        var intento = cuerpo.IndexOf("IntentarEmitirAsync(decidido,", StringComparison.Ordinal);
+        var sinDecidir = cuerpo.IndexOf("decidido.Estado != EstadosFiscalesDeVenta.SinDecidir", StringComparison.Ordinal);
+        var restante = cuerpo.IndexOf("Restante(inicio)", sinDecidir, StringComparison.Ordinal);
+        var barrido = cuerpo.IndexOf("decision.SanearDecisionesDebidasAsync(idPuntoVenta, idComprobanteVenta, presupuesto.Token)", StringComparison.Ordinal);
+        Assert.True(
+            decidir >= 0 && pendiente > decidir && intento > pendiente && sinDecidir > intento && restante > sinDecidir && barrido > restante,
+            "Decidir, condición de pendiente, intento, condición de sin_decidir, tiempo restante y barrido, en ese orden.");
+        Assert.Contains(
+            "Minimo(ServicioDeDecisionDeFacturacion.PresupuestoDeBarrido, restante)", cuerpo, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ElTextoDelIntentoEnLineaTieneEnEseOrdenElPresupuestoMinimoLaPreguntaPorElTicketCacheadoYElProcesamientoYNoMencionaLaFirmaDelTicket()
+    {
+        var cuerpo = Entre(EmisionEnLinea, "private async Task<EstadoFiscalDeVenta> IntentarEmitirAsync(", "/// <summary>El estado actual");
+        var presupuesto = cuerpo.IndexOf("Minimo(PresupuestoDeIntento, restante)", StringComparison.Ordinal);
+        var ticket = cuerpo.IndexOf("fiscal.HayTicketVigenteAsync(", StringComparison.Ordinal);
+        var procesar = cuerpo.IndexOf("facturacion.ProcesarDecisionAsync(idFacturacion, ct)", StringComparison.Ordinal);
+        Assert.True(presupuesto >= 0 && ticket > presupuesto && procesar > ticket, "Presupuesto, ticket cacheado y procesamiento, en ese orden.");
+        Assert.DoesNotContain("ObtenerTicketAsync", EmisionEnLinea, StringComparison.Ordinal);
+        Assert.DoesNotContain("ObtenerOFirmarAsync", EmisionEnLinea, StringComparison.Ordinal);
+    }
+
+    /// <summary>Solo fija el texto. Que un corte no sume intento ni posterga, y que un error de dominio pasado el corte sí se
+    /// anote, lo prueban <c>UnCorteDelPresupuestoDelIntentoRespondePendienteSinAnotarIntento…</c> y
+    /// <c>UnErrorDeDominioQueLlegaConElPresupuestoDelIntentoVencido…</c> en <c>FacturacionDeVentasEnLineaTests</c>.</summary>
+    [Fact]
+    public void ElTextoDeLaEmisionEnLineaNoRecibeUnTokenNiMencionaPostergarYElCatchDelCorteNoLlamaARegistrarElFalloMientrasOtroCatchDelIntentoSi()
+    {
+        var fuente = EmisionEnLinea;
+        var firma = fuente[fuente.IndexOf("public async Task<EstadoFiscalDeVenta> DecidirEmitirYSanearAsync(", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("CancellationToken", firma[..firma.IndexOf(')')], StringComparison.Ordinal);
+        Assert.DoesNotContain("PostergarPorCorteDeLoteAsync", fuente, StringComparison.Ordinal);
+
+        var cuerpo = Entre(fuente, "private async Task<EstadoFiscalDeVenta> IntentarEmitirAsync(", "/// <summary>El estado actual");
+        var corte = Entre(cuerpo, "catch (Exception ex) when (ct.IsCancellationRequested && ex is not ErrorDominio)", "catch (Exception ex)\n");
+        Assert.DoesNotContain("RegistrarFalloInesperadoAsync", corte, StringComparison.Ordinal);
+        Assert.Contains("RegistrarFalloInesperadoAsync", cuerpo, StringComparison.Ordinal);
     }
 
     [Fact]

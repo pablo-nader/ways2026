@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -356,7 +357,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         int IdAlicuota105, int IdClienteRi, int IdClienteRiSinCuit, int IdClienteCf, int IdClienteNoResp,
         int IdEfectivo, int IdTransferencia, int IdTurno, HttpClient Admin, HttpClient Vendedor, HttpClient Root,
         string MailAdmin, string PasswordAdmin, EspiaWsaa Wsaa, EspiaWsfe Wsfe, RelojControlable Reloj,
-        RegistroDeLogs Logs, Action<IServiceCollection> Servicios);
+        RegistroDeLogs Logs, Action<IServiceCollection> Servicios, WebApplicationFactory<Program> Fabrica);
 
     private sealed record Venta(int IdVenta, int IdFacturacion, DateOnly Periodo);
 
@@ -370,7 +371,8 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         return (certificado.Export(X509ContentType.Pkcs12, password), password);
     }
 
-    private async Task<Ctx> PrepararAsync(string nombre)
+    private async Task<Ctx> PrepararAsync(
+        string nombre, ModoPuntoVenta modo = ModoPuntoVenta.Web, Action<IServiceCollection>? extra = null)
     {
         var wsaa = new EspiaWsaa(LoginCmsGolden());
         var wsfe = new EspiaWsfe { Solicitar = Responde(FecaeAprobado()), Consultar = Responde(ConsultarNoEncontrado()) };
@@ -390,7 +392,11 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
                 .ConfigurePrimaryHttpMessageHandler(() => wsfe);
         }
 
-        var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(Servicios));
+        var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            Servicios(services);
+            extra?.Invoke(services);
+        }));
 
         var root = factory.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
@@ -400,7 +406,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         var mailAdmin = $"{unico}@ways.test";
         var alta = await root.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(unico, $"{unico} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web));
+            new SolicitudDeAprovisionamiento(unico, $"{unico} SA", "Local 1", mailAdmin, modo));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         var resultado = (await alta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
 
@@ -487,7 +493,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         return new Ctx(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin, idArea, idLista,
             idAlicuota21, idAlicuota105, idRi, idRiSinCuit, idCf, idNoResp, idEfectivo, idTransferencia, idTurno,
-            admin, vendedor, root, mailAdmin, resultado.PasswordTemporal, wsaa, wsfe, reloj, logs, Servicios);
+            admin, vendedor, root, mailAdmin, resultado.PasswordTemporal, wsaa, wsfe, reloj, logs, Servicios, factory);
     }
 
     private static Cliente SembrarCliente(

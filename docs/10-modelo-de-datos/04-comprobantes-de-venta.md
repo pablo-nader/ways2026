@@ -384,13 +384,13 @@ decisión en `pendiente` y mueve el acumulado.
   actual termina en `sin_decidir`, sea cual sea la causa. Un test
   prueba el caso de una fila de la venta tomada por otra sesión (responde `sin_decidir` dentro del tope y la misma conexión sigue sana);
   que el token corte también los reintentos transitorios de la estrategia no tiene un test. El reenvío de una venta con número pre-asignado pasa por el mismo endpoint y vuelve a llamarla. La respuesta
-  (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar), `no_corresponde` o `sin_decidir`. Una lectura por id no
+  (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar), `no_corresponde` o `sin_decidir`; desde T5c puede decir también `aprobado`, `rechazado` o `cancelado` (ver "Emisión en línea al cobrar (T5c)", que explica cuándo aparece cada estado). Una lectura por id no
   consulta el estado fiscal (`fiscal` viene `null`).
 - **Autocuración (barrido).** Si la decisión falla, el error se registra, la venta responde igual con `sin_decidir`, la marca queda en
-  `NULL` y el fallo se anota (ver "Intentos fallidos"). Si la decisión de la venta actual terminó bien, el endpoint llama a
+  `NULL` y el fallo se anota (ver "Intentos fallidos"). Si la decisión de la venta actual terminó bien, el endpoint (a través de `EmisionEnLineaAlCobrar`, T5c) llama a
   `SanearDecisionesDebidasAsync`: toma las ventas del mismo punto de venta con la marca en `NULL`, `id_venta_origen` nulo y la espera
   vencida (`facturacion_proximo_intento_en IS NULL OR <= ahora`), las más viejas primero (por id), como máximo 5 por llamada
-  (`LimiteDeBarrido`) y con un presupuesto total de 3 segundos, y decide cada una en su propia transacción con el mismo código que la
+  (`LimiteDeBarrido`) y con un presupuesto total de 3 segundos (o lo que quede del tope de 8 segundos de T5c, si es menos), y decide cada una en su propia transacción con el mismo código que la
   venta recién emitida. Una venta que falla se anota con su espera y el barrido sigue con la siguiente; cada candidata se intenta una sola
   vez por llamada y la venta recién decidida se excluye. Una venta que falla siempre sale de los candidatos hasta que vence su espera
   (y la espera crece hasta 4 horas), de modo que no desplaza a las posteriores. Si el propio presupuesto de 3 segundos del barrido vence
@@ -446,7 +446,7 @@ decisión en `pendiente` y mueve el acumulado.
 **Emisión del espejo (T5a): implementada.** `ServicioDeFacturacionDeVentas.ProcesarDecisionAsync(idFacturacion)`, expuesto como
 `POST /api/fiscal/facturaciones/{id}/procesar` (política `OperacionDePos`, sin cuerpo; una decisión inexistente o de otro tenant
 es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador por lote y la espera entre intentos son T5b
-(ver "Procesador por lote (T5b)" más abajo); la emisión en línea desde la venta es T5c.
+(ver "Procesador por lote (T5b)" más abajo); la emisión en línea desde la venta es T5c (ver "Emisión en línea al cobrar (T5c)" más abajo).
 
 - **Qué escribe el espejo.** Una fila de `comprobantes_venta` con `id_venta_origen` = la venta, `resultado_fiscal` `pendiente`
   al nacer, sin turno, `fecha` = el instante de emisión (no el de la venta), empleado, cliente y subtotales de la venta, totales
@@ -568,7 +568,7 @@ es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador
   como siempre. La nota de crédito es T8.
 - **La espera registrada.** `proximo_intento_en` se escribe (30 s duplicándose hasta 10 min; 5 min hasta 4 h para una
   compuerta). Este servicio y su endpoint procesan la decisión que se les pide aunque la espera no haya vencido; la respeta el
-  procesador por lote (T5b). Tampoco hay todavía quién llame a ninguno de los dos endpoints por sí solo.
+  procesador por lote (T5b). Tampoco hay todavía quién llame a ninguno de los dos endpoints por sí solo (la emisión en línea de T5c usa el servicio, no el endpoint).
 - **Limitaciones aceptadas.** La autorización es `OperacionDePos`, sin una política más angosta. Una lectura idempotente recalcula el QR y
   el punto de venta desde la configuración actual. Al volver a pedir un espejo preexistente, la letra se recalcula desde la
   configuración actual y no desde la del momento en que se creó. Un espejo `rechazado` que quedó por la guarda del contador detiene la
@@ -691,6 +691,83 @@ que se dice de ARCA está probado solo contra espías, no contra homologación.
   mientras hay uno vigente. Ahora, si el ticket ya fue reemplazado, la invalidación no hace nada y la llamada reutiliza el fresco
   por `ObtenerOFirmarAsync`; en total se firma una sola vez. `SolicitarCaeConReintentoDeTicketAsync` y
   `ConsultarConReintentoDeTicketAsync` pasan el ticket con el que ARCA respondió `600`.
+
+**Emisión en línea al cobrar (T5c): implementada.** `EmisionEnLineaAlCobrar.DecidirEmitirYSanearAsync(idVenta, idPuntoVenta)`,
+que llama `POST /api/ventas` después del commit de la venta (reemplaza a la llamada directa a `DecidirYSanearAsync`, que queda
+solo para los tests de la decisión). Intenta UNA vez emitir la factura espejo antes de responder, para que con conexión la caja
+reciba CAE, número y QR en la respuesta de la propia venta. La venta nunca falla ni se frena por esto y ningún paso recibe el token
+de la solicitud (la venta ya está comiteada). **El POS todavía no lee esta respuesta (T6) y todo lo que se dice de ARCA está
+probado solo contra espías, no contra homologación.**
+
+- **Tres pasos y un tope de 8 s.** El tiempo se cuenta desde que la venta se confirma, con el `TimeProvider` inyectado
+  (`TimeProvider.System` en producción): (a) la decisión (`DecidirTrasLaVentaAsync`, sin cambios, con su presupuesto propio de 3 s);
+  (b) solo si la decisión quedó `pendiente`, un intento de emisión con `min(4 s, lo que queda de los 8 s)`; (c) el barrido de las
+  decisiones debidas con `min(3 s, lo que queda)`. Si no queda tiempo, ni el intento ni el barrido empiezan; el barrido tampoco corre
+  cuando la decisión terminó `sin_decidir`, como antes. Una decisión `no_corresponde` o `sin_decidir` no hace ninguna llamada a ARCA.
+- **Sin firmar en la caja.** La firma del ticket de acceso ante WSAA no se interrumpe una vez en vuelo y puede tardar hasta 30 s
+  (T5b), así que el intento corre SOLO si el emisor ya tiene un ticket vigente en el cache
+  (`ServicioDeFacturacionFiscal.HayTicketVigenteAsync`: `IRepositorioDeTicketDeAcceso.ObtenerVigenteAsync` con la clave empresa +
+  ambiente configurado + `wsfe`, la misma que usa la emisión). Sin ticket cacheado el intento se salta entero: no se crea espejo,
+  no se toma número, no se anota intento y la venta responde `pendiente`; el procesador por lote firma y emite después. Un ticket
+  dentro del margen de seguridad de 10 minutos de su vencimiento cuenta como no cacheado. El cache es en memoria de cada
+  proceso: con más de una instancia de la API el intento en línea solo corre en la que tiene el ticket; tras un reinicio, o cuando el
+  ticket entra en su margen de seguridad, el intento no corre y la respuesta no da ningún motivo (`pendiente`, con a lo sumo un error viejo de la decisión), hasta que
+  alguien lo firme. Hoy nadie llama al lote (T6), así que
+  hasta entonces el intento en línea solo corre si otra llamada (la emisión directa o los endpoints de procesamiento) dejó el ticket
+  cacheado.
+- **Lo que no impide la regla del ticket.** Con el ticket cacheado un instante antes, `ProcesarDecisionAsync` todavía podría firmar
+  en dos caminos, y ahí la firma no se interrumpe: si el ticket cruza el margen entre la verificación y el pedido de ese servicio, o
+  si ARCA responde `600` (ticket inválido) a la solicitud o a la consulta y el servicio lo descarta y firma uno nuevo. Es una
+  limitación aceptada: no se reestructuró el servicio para evitarlo.
+- **Qué lleva la respuesta (`fiscal`).** `fiscal.estado` es uno de seis: `no_corresponde` (al ticket no le corresponde factura),
+  `sin_decidir` (la decisión falló y se completa en un reenvío o en el barrido), `pendiente` (se decidió facturar y la factura no
+  está emitida), `aprobado`, `rechazado` y `cancelado` (la venta se anuló antes de procesarse su facturación: se ve en un reenvío
+  de la venta, o si la anulación llega durante el cobro). Emitida: `aprobado` con `comprobante` (tipo, letra, punto de venta
+  fiscal, número, fecha, CAE, vencimiento, QR y observaciones; las mismas que las de la fila del espejo). Rechazada por ARCA:
+  `rechazado` con `error`; la venta no se toca, el espejo se borra y el número vuelve a la serie (T5a). Sin respuesta definitiva,
+  compuerta que falla, serie ocupada o bloqueada: `pendiente` con el `error` del servicio, y lo que el servicio anota (intento,
+  espera) queda como él lo anota. Sin intento (sin ticket, sin tiempo): `pendiente` con el último error ya anotado de la decisión,
+  si lo hay.
+- **`fiscal.error` es solo un código.** El texto que se anota en `ultimo_error` puede traer el mensaje crudo de una excepción
+  (HTTP, Npgsql, WSAA, certificados, configuración) o los mensajes de ARCA, y la respuesta de la venta llega a cualquier cajero, en
+  cada venta y en cada reenvío. Por eso `EmisionEnLineaAlCobrar.CodigoDeError` se aplica a todo lo que esa clase devuelve (el
+  resultado del intento, el estado leído en un reenvío o sin intento, y la excepción): se queda con lo que está antes del primer
+  `:` si son solo minúsculas, dígitos y `_` (o con todo el texto si es solo eso), y en cualquier otro caso informa
+  `error_inesperado`. Ejemplos: `arca_no_definitivo: HTTP 500 ...` pasa a `arca_no_definitivo`; `serie_bloqueada: ...` a
+  `serie_bloqueada`; `HttpRequestException: ...` a `error_inesperado`; un rechazo de ARCA anotado como
+  `10015: Rechazado por el receptor.; 10016: ...` a `10015` (solo el primer código; el cajero ve el estado `rechazado` y el
+  detalle queda en la base). Un rechazo anotado sin errores (`ARCA rechazó el comprobante.`) también se informa como
+  `error_inesperado`. **El endpoint de procesamiento de una decisión y el del lote siguen devolviendo el texto anotado tal cual**
+  (fuera de alcance de este cambio).
+- **Un corte no es un fallo.** Si el presupuesto del intento vence con la llamada en vuelo, la respuesta es `pendiente` sin `error`,
+  no se suma ningún intento ni se anota error, y un espejo ya creado queda `pendiente` con su número: el próximo procesamiento lo
+  resuelve consultando antes de pedir. El corte también puede caer después de que ARCA respondió y antes del commit local: el
+  espejo queda `pendiente` aunque ARCA ya tenga el CAE, y el próximo procesamiento lo adopta consultando primero (no se pide un
+  segundo CAE). La decisión NO se posterga (a diferencia del lote): lo que sigue en la caja es justamente el
+  lote, y una espera de un minuto solo haría que se la saltee. Un error de dominio que llega pasado el corte sí se anota como
+  intento fallido, como en el lote.
+- **Consecuencia aceptada: un espejo pendiente bloquea la serie.** Tras un corte (o cualquier resultado no definitivo) con el
+  espejo ya creado, ese espejo conserva su número `pendiente`. Mientras siga así, el intento en línea de toda venta posterior del
+  mismo punto de venta y tipo fiscal encuentra la serie ocupada o bloqueada (`serie_ocupada` / `serie_bloqueada`), responde
+  `pendiente` con ese código y no anota nada, y el barrido no resuelve espejos. Solo lo libera el procesador por lote, el endpoint de
+  procesamiento de una decisión o el reenvío de esa misma venta. Hasta que el POS llame al lote (T6) nadie lo llama. Es el
+  compromiso buscado: la caja nunca se bloquea y esos tickets se facturan después.
+- **Una excepción no falla la venta.** Cualquier excepción del intento responde `201` con `pendiente` y `error` = el código del
+  error de dominio o `error_inesperado`, y se anota como intento fallido (`RegistrarFalloInesperadoAsync`, con su espera de un
+  fallo no definitivo), igual que el lote. El detalle va solo al log.
+- **Reenvío (mismo número pre-asignado).** El endpoint devuelve la venta ya registrada y vuelve a llamar a la emisión en línea: una
+  decisión ya resuelta (`aprobado`, `rechazado`, `cancelado`) se informa tal como está, con los datos de la factura si está emitida,
+  sin ninguna llamada a ARCA (`ServicioDeFacturacionDeVentas.LeerEstadoAsync`, que ni siquiera resuelve un espejo pendiente
+  que conserve una decisión ya cerrada). Una decisión todavía `pendiente` vuelve a intentar bajo las mismas reglas (ticket
+  cacheado, presupuesto y tope), consultando antes de pedir si ya hay un espejo: nunca un segundo espejo ni un segundo número.
+- **Lo que puede pasarse del tope de 8 s.** La decisión (su presupuesto de 3 s y la anotación de su fallo, de hasta 1 s, usan reloj real
+  y no se recortan), la anotación del fallo de un intento y la lectura final del estado (1 s como máximo cada una, aunque el tope
+  ya se haya agotado), la anotación de cada fallo del barrido (1 s de reloj real por venta que falla, sin recortar al tope; el barrido
+  puede anotar varias en una pasada mientras su propio token no venza) y una firma de WSAA que arranque dentro del intento (hasta el
+  timeout de WSAA, 30 s), que no se interrumpe: por un `600` de ARCA al ticket cacheado o porque el ticket cruce su margen entre la
+  verificación y el uso.
+- **Fuera de alcance.** `GET /api/ventas/{id}` sigue sin informar el estado fiscal (`fiscal` viene `null`). Tampoco cambia lo que
+  `ProcesarDecisionAsync` anota, ni la autorización.
 
 ### Presupuestos (Etapa 17)
 

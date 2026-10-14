@@ -92,6 +92,16 @@ public class ServicioDeFacturacionDeVentas(
         return await ProcesarAsync(idFacturacion, idTenant, ct);
     }
 
+    /// <summary>El estado actual de la decisión tal como lo proyecta <see cref="ProcesarDecisionAsync"/> para una decisión que no
+    /// está pendiente (con los datos de la factura si está emitida), pero sin avanzarla: no toma locks, no escribe ni llama a
+    /// ARCA, tampoco cuando la decisión conserva un espejo pendiente. Una decisión inexistente o de otro tenant es un 404.</summary>
+    public async Task<EstadoFiscalDeVenta> LeerEstadoAsync(int idFacturacion, CancellationToken ct = default)
+    {
+        var decision = await LeerDecisionAsync(idFacturacion, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la facturación {idFacturacion}.");
+        return await ProyectarAsync(decision, null, ct);
+    }
+
     /// <summary>Evalúa el estado actual y lo avanza. Se vuelve a llamar a sí mismo ("reevaluar") solo cuando otra llamada
     /// comiteó un cambio entre las lecturas sin lock y el lock; cada reevaluación presupone una transición nueva y comiteada
     /// de otra llamada, así que no hay un ciclo sin otro escritor.</summary>
