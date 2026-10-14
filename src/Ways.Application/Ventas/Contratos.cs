@@ -115,12 +115,14 @@ public sealed record SolicitudDeVenta(
 /// camino online no los admite nunca (el servidor detecta los combos).
 ///
 /// <see cref="Importe"/> es el monto que el cajero tipea para un artículo que se vende por importe
-/// (<c>UnidadVenta.Importe</c>): es el precio unitario de la línea (cantidad siempre 1), sin lista, ofertas ni combos; el
-/// ajuste manual se aplica encima. Obligatorio en ese artículo (400 <c>importe_requerido</c>) y rechazado en cualquier otro
+/// (<c>UnidadVenta.Importe</c>): es la base del precio unitario de la línea (cantidad siempre 1): con una lista derivada del cliente
+/// el servidor le aplica el porcentaje (tipeado 1500 a -10 % queda en 1350), con una fija queda igual; nunca hay ofertas ni
+/// combos. El ajuste manual se aplica encima. Obligatorio en ese artículo (400 <c>importe_requerido</c>) y rechazado en cualquier otro
 /// (400 <c>importe_no_admitido</c>); mayor a cero, de a lo sumo dos decimales y dentro de <c>numeric(14,2)</c> (400
 /// <c>importe_invalido</c>). Nunca viaja junto a <see cref="PrecioUnitario"/> (400 <c>importe_con_precio_no_admitido</c>): en
 /// una venta offline la línea por importe lleva solo su importe y queda fuera del todas-o-ninguna del precio de las demás.
-/// En una nota de crédito asociada es el importe con que se vendió la línea que se devuelve.</summary>
+/// En una nota de crédito asociada es el precio unitario con que se vendió la línea que se devuelve (el que ya lleva el
+/// porcentaje de la lista): el servidor lo toma tal cual y no lo aplica de nuevo.</summary>
 public sealed record LineaDeVenta(
     int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null,
     decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null, decimal? AjusteManualPorcentaje = null,

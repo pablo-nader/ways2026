@@ -189,8 +189,12 @@ public class ServicioDeVentas(
         var lineasDeResolucion = lineas
             .Select(l => new LineaDeResolucion(l.IdArticulo, puntoVenta.IdEmpresa, cliente.IdListaPrecio, l.Cantidad, l.Importe))
             .ToList();
+        // La devolución reembolsa el importe de la línea por importe tal cual: el precio de la venta original ya lleva
+        // el porcentaje de la lista derivada y aplicarlo otra vez reembolsaría menos de lo cobrado.
         var resolucion = presupuestoOrigen is null
-            ? await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
+            ? tipo.Signo < 0
+                ? await servicioDeOfertas.ResolverDocumentoConImporteCobradoAsync(lineasDeResolucion, momento, ct)
+                : await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
             : null;
 
         // 2 consultas: snapshot de articulos + alicuotas (design: The Sale Transaction). Sin

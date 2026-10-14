@@ -233,6 +233,53 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static SolicitudDeVenta Devolucion(Contexto ctx, int? idAsociado, params LineaDeVenta[] lineas) =>
         new(ctx.IdPuntoVenta, null, "NCX", idAsociado, lineas, [], null, null);
 
+    /// <summary>Cliente con una lista propia: <c>Fija</c> sin precios, o <c>Derivada</c> de la default con el porcentaje
+    /// pedido. Devuelve el cliente y su lista.</summary>
+    private async Task<(int IdCliente, int IdLista)> SembrarClienteConListaAsync(
+        int idTenant, ModoLista modo, decimal? porcentaje)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idListaDefault = await db.ListasPrecio.Where(l => l.EsDefault).Select(l => l.Id).FirstAsync();
+
+        var lista = new ListaPrecio
+        {
+            IdTenant = idTenant,
+            Nombre = $"Lista-{Guid.NewGuid():N}"[..12],
+            Modo = modo,
+            IdListaBase = modo == ModoLista.Derivada ? idListaDefault : null,
+            Porcentaje = porcentaje,
+            Activo = true,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(lista);
+        await db.SaveChangesAsync();
+
+        var cliente = new Ways.Domain.Clientes.Cliente
+        {
+            IdTenant = idTenant,
+            Numero = 1000 + Random.Shared.Next(1, 100_000),
+            Nombre = "Cliente con lista",
+            IdCondicionFiscal = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync(),
+            IdListaPrecio = lista.Id,
+            LimiteCredito = 1_000_000m,
+            Activo = true,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Clientes.Add(cliente);
+        await db.SaveChangesAsync();
+        return (cliente.Id, lista.Id);
+    }
+
+    private static SolicitudDeVenta VentaDeCliente(Contexto ctx, int idCliente, decimal pagado, params LineaDeVenta[] lineas) =>
+        new(ctx.IdPuntoVenta, idCliente, "TX", null, lineas,
+            [new PagoDeVenta(ctx.IdMedioEfectivo, pagado, null, 0m)], null, null);
+
+    private static SolicitudDeVenta DevolucionDeCliente(Contexto ctx, int idCliente, int idAsociado, params LineaDeVenta[] lineas) =>
+        new(ctx.IdPuntoVenta, idCliente, "NCX", idAsociado, lineas, [], null, null);
+
     private static async Task<ComprobanteEmitido> EmitirOkAsync(HttpClient cliente, SolicitudDeVenta solicitud)
     {
         var respuesta = await cliente.PostAsJsonAsync("/api/ventas", solicitud);
@@ -369,6 +416,113 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var item = Assert.Single(emitido.Items);
         Assert.Equal((150.50m, 0m, 151m), (item.PrecioUnitario, item.Descuento, item.Total));
         Assert.Equal(151m, emitido.Total);
+    }
+
+    /// <summary>El cliente de una lista derivada paga el importe tipeado con el porcentaje de su lista: 1500 a -10 % son
+    /// 1350, y esa cifra es el precio unitario, sin descuento de línea. Con una lista fija el importe queda como se tipeó.</summary>
+    [Fact]
+    public async Task ElImporteLlevaElPorcentajeDeLaListaDerivadaDelClienteYUnaFijaLoDejaIgual()
+    {
+        var ctx = await PrepararOnlineAsync(nameof(ElImporteLlevaElPorcentajeDeLaListaDerivadaDelClienteYUnaFijaLoDejaIgual));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+        var (mayorista, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Fija, null);
+
+        var conDescuento = await EmitirOkAsync(
+            ctx.Cliente, VentaDeCliente(ctx, empleado, 1350m, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m)));
+        var itemDerivado = Assert.Single(conDescuento.Items);
+        Assert.Equal((1350m, 0m, 1350m, 1350m), (itemDerivado.PrecioUnitario, itemDerivado.Descuento, itemDerivado.Total, conDescuento.Total));
+        var guardados = await LeerItemsAsync(ctx.IdTenant, conDescuento.Id);
+        Assert.Equal((1350m, true), (guardados[0].PrecioUnitario, guardados[0].PorImporte));
+
+        var sinDescuento = await EmitirOkAsync(
+            ctx.Cliente, VentaDeCliente(ctx, mayorista, 1500m, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m)));
+        Assert.Equal((1500m, 1500m), (Assert.Single(sinDescuento.Items).PrecioUnitario, sinDescuento.Total));
+    }
+
+    /// <summary>El precio unitario derivado conserva los centavos (10,05 a -10 % es 9,045 y sube a 9,05) y el total de la
+    /// línea va al peso entero.</summary>
+    [Fact]
+    public async Task ElImporteDerivadoConservaCentavosEnElPrecioUnitarioYElTotalVaAlPesoEntero()
+    {
+        var ctx = await PrepararOnlineAsync(nameof(ElImporteDerivadoConservaCentavosEnElPrecioUnitarioYElTotalVaAlPesoEntero));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente, VentaDeCliente(ctx, empleado, 9m, new LineaDeVenta(fiambreria, 1m, null, Importe: 10.05m)));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal((9.05m, 9m), (item.PrecioUnitario, item.Total));
+    }
+
+    /// <summary>La nota de crédito de esa venta devuelve lo cobrado: su importe es el precio unitario guardado (1350), que
+    /// coincide con la venta y NO se vuelve a rebajar (daría 1215). Una devolución con el importe tipeado original (1500) no
+    /// coincide con la venta y se rechaza.</summary>
+    [Fact]
+    public async Task LaDevolucionDeUnImporteConListaDerivadaReembolsaLoCobradoSinReaplicarElPorcentaje()
+    {
+        var ctx = await PrepararOnlineAsync(nameof(LaDevolucionDeUnImporteConListaDerivadaReembolsaLoCobradoSinReaplicarElPorcentaje));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+        var venta = await EmitirOkAsync(
+            ctx.Cliente, VentaDeCliente(ctx, empleado, 1350m, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m)));
+
+        Assert.Equal(
+            "importe_devolucion_inexistente",
+            await CodigoDeRechazoAsync(
+                ctx.Cliente, DevolucionDeCliente(ctx, empleado, venta.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m))));
+
+        var nota = await EmitirOkAsync(
+            ctx.Cliente, DevolucionDeCliente(ctx, empleado, venta.Id, new LineaDeVenta(fiambreria, 1m, null, Importe: 1350m)));
+
+        var item = Assert.Single(nota.Items);
+        Assert.Equal((-1m, 1350m, -1350m), (item.Cantidad, item.PrecioUnitario, item.Total));
+        Assert.Equal(-1350m, nota.Total);
+    }
+
+    /// <summary>La venta que un dispositivo cobró offline manda solo el importe tipeado: el servidor lo resuelve con la
+    /// lista del cliente igual que el POS offline, así que el precio guardado es el mismo y no hay discrepancia.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineDeUnImporteConListaDerivadaGuardaElPrecioConElPorcentaje()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineDeUnImporteConListaDerivadaGuardaElPrecioConElPorcentaje));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOffline(ctx, 1350m, 1, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m)) with { IdCliente = empleado });
+
+        Assert.Equal((1350m, 1350m), (Assert.Single(emitido.Items).PrecioUnitario, emitido.Total));
+        Assert.Equal(0, await ContarDiscrepanciasAsync(ctx.IdTenant));
+    }
+
+    /// <summary>La vista previa cotiza el importe con la lista derivada de la línea y con la fija lo deja igual, por las tres rutas.</summary>
+    [Theory]
+    [InlineData("/api/ofertas/resolver", false)]
+    [InlineData("/api/ofertas/resolver", true)]
+    [InlineData("/api/ofertas/resolver-con-combos", false)]
+    public async Task LaVistaPreviaAplicaLaListaDerivadaAlImporte(string ruta, bool porLinea)
+    {
+        var ctx = await PrepararOnlineAsync(nameof(LaVistaPreviaAplicaLaListaDerivadaAlImporte) + ruta.Length + porLinea);
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (_, listaDerivada) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+        var (_, listaFija) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Fija, null);
+
+        foreach (var (idLista, esperado) in new[] { (listaDerivada, 1350m), (listaFija, 1500m) })
+        {
+            var respuesta = await ctx.Cliente.PostAsJsonAsync(ruta, new SolicitudDeResolucion(
+                [new LineaDeResolucion(fiambreria, null, idLista, 1m, Importe: 1500m)],
+                Agregacion: porLinea ? AgregacionDeResolucion.PorLinea : AgregacionDeResolucion.Documento));
+
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.IsSuccessStatusCode, cuerpo);
+            using var documento = JsonDocument.Parse(cuerpo);
+            var linea = (ruta.EndsWith("con-combos") ? documento.RootElement.GetProperty("lineas") : documento.RootElement)[0];
+            Assert.Equal(esperado, linea.GetProperty("precioOriginal").GetDecimal());
+            Assert.Equal(esperado, linea.GetProperty("precioFinal").GetDecimal());
+        }
     }
 
     /// <summary>La falta de precio de lista solo frena a un artículo que se vende por lista.</summary>
@@ -798,6 +952,30 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Empty(articulos[conPrecioViejo].GetProperty("preciosPorLista").EnumerateArray());
         Assert.Single(articulos[comun].GetProperty("preciosPorLista").EnumerateArray());
         Assert.DoesNotContain(sinPrecio, articulos.Keys);
+    }
+
+    /// <summary>La instantánea lleva las listas con su modo y porcentaje: es lo que el POS offline necesita para cotizar el
+    /// importe de un cliente de lista derivada. El formato original no las lleva.</summary>
+    [Fact]
+    public async Task LaInstantaneaLlevaElModoYElPorcentajeDeLasListas()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(LaInstantaneaLlevaElModoYElPorcentajeDeLasListas));
+        var (_, listaDerivada) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+        var (_, listaFija) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Fija, null);
+
+        var respuesta = await ctx.Cliente.GetAsync("/api/pos/instantanea?version=2");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.IsSuccessStatusCode, cuerpo);
+        var listas = JsonDocument.Parse(cuerpo).RootElement.GetProperty("listas").EnumerateArray()
+            .ToDictionary(l => l.GetProperty("idListaPrecio").GetInt32());
+
+        Assert.Equal("Derivada", listas[listaDerivada].GetProperty("modo").GetString());
+        Assert.Equal(-10m, listas[listaDerivada].GetProperty("porcentaje").GetDecimal());
+        Assert.Equal("Fija", listas[listaFija].GetProperty("modo").GetString());
+        Assert.Equal(JsonValueKind.Null, listas[listaFija].GetProperty("porcentaje").ValueKind);
+
+        var original = await ctx.Cliente.GetAsync("/api/pos/instantanea");
+        Assert.False(JsonDocument.Parse(await original.Content.ReadAsStringAsync()).RootElement.TryGetProperty("listas", out _));
     }
 
     // ---- presupuestos y remitos ----------------------------------------------------------------
