@@ -197,8 +197,10 @@ export type ResultadoDeSincronizacionOffline = {
     interesadoEnLaRespuesta?: boolean
   }) => Promise<EncoladoOffline>
   /** Espera hasta `ms` la respuesta de `POST /api/ventas` de una venta encolada con `interesadoEnLaRespuesta`.
-   * Resuelve `null` al vencer el tope, si el servidor la rechazó, o si no hay nada que esperar; nunca rechaza.
-   * Al resolver (o vencer) la entrada se borra: una respuesta posterior no queda guardada. */
+   * Resuelve `null` al vencer el tope, si el servidor la rechazó (la venta queda archivada), si el envío de la
+   * cabeza falló de forma transitoria (red, tiempo agotado o 5xx: la venta sigue en el outbox y se reintenta, sin
+   * archivarse), o si no hay nada que esperar; nunca rechaza. Al resolver (o vencer) la entrada se borra: una
+   * respuesta posterior no queda guardada. */
   esperarRespuesta: (idLocal: string, ms: number) => Promise<ComprobanteEmitido | null>
   /** Cuenta corriente de las ventas de este cliente que siguen en el outbox: el saldo del servidor todavía no la incluye. */
   consumoPendienteDeCuentaCorriente: (idCliente: number) => Promise<number>
@@ -353,7 +355,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         respuesta = await conTiempoLimite((senal) => clienteDeVentas.emitir(primera.solicitud, senal))
       } catch (e) {
         const archivada = await encolarOperacion(() => archivarRechazoSiEsPermanente(primera, e))
-        if (!archivada) return
+        if (!archivada) {
+          // Un fallo transitorio no archiva nada: la venta se reintenta en el próximo ciclo, pero quien la espera no tiene por qué agotar su tope.
+          if (esFalloTransitorio(e)) asentarRespuesta(primera.idLocal, null)
+          return
+        }
         asentarRespuesta(primera.idLocal, null)
         continue
       }
@@ -399,6 +405,10 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     return drenado
   }
 
+  function esFalloTransitorio(e: unknown): boolean {
+    return e instanceof ErrorDeRed || e instanceof ErrorDeTiempoAgotado || (e instanceof ErrorApi && e.estado >= 500)
+  }
+
   /** `true` si la venta se archivó como rechazada y salió del outbox (la pasada puede seguir con
    * la próxima); `false` si el error es transitorio o el archivado no se pudo confirmar (la pasada
    * se corta y el próximo ciclo reintenta desde el mismo punto). */
@@ -411,9 +421,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // `ExigirMismoContenido` dedupean por eso). Mismo criterio que `ErrorDeRed`: sigue sin señal
     // clara, se reintenta TODO en el próximo ciclo, nunca se descarta ni se saca nada del outbox.
     // Un tope vencido (`ErrorDeTiempoAgotado`) es el mismo caso: la venta pudo haber llegado.
-    if (e instanceof ErrorDeRed || e instanceof ErrorDeTiempoAgotado || (e instanceof ErrorApi && e.estado >= 500)) {
-      return false
-    }
+    if (esFalloTransitorio(e)) return false
     // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo — un 4xx real (ej.
     // `numero_preasignado_con_otro_contenido`, `turno_no_abierto`, una validación) — nunca se
     // descarta (la venta es real, con ticket ya entregado): se archiva como "necesita atención"

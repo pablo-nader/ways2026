@@ -7478,13 +7478,6 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
-  /**
-   * Venta local a un cliente identificado (José Gómez, #30, lista 2) con cuenta corriente. El
-   * artículo vale 100 en la lista 1 y 80 en la 2, y `/ofertas/resolver` devuelve 100: $ 80 solo
-   * sale de la vista previa local con la lista del cliente. `/clientes/30` contesta dos veces: al
-   * elegir el cliente (dato fresco, con `saldoAlElegir`) y en la consulta del límite antes de
-   * encolar, que resuelve `consulta`.
-   */
   describe('facturación al cobrar: espera acotada de la factura (T6b)', () => {
     const NUMERO_DE_LA_VENTA = '0007-00000500'
 
@@ -7544,6 +7537,23 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(comprobante.fiscal).toEqual(fiscalFixture('aprobado'))
       expect(comprobante.numeroVisible).toBe(NUMERO_DE_LA_VENTA)
       expect(screen.queryByText('Guardada en este dispositivo')).not.toBeInTheDocument()
+    })
+
+    it('con la factura aprobada, alEmitir recibe el comprobante del servidor y no el sintético local', async () => {
+      const responder = ventaPendienteDeRespuesta()
+      const alEmitir = vi.fn()
+
+      await cargarYCobrar({ facturar: true }, alEmitir)
+      await screen.findByRole('button', { name: 'Facturando…' })
+      await act(async () => {
+        responder({ ...ventaAprobada(), id: 9001, total: 123, subtotal: 123 })
+      })
+
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
+      expect(comprobante.id).toBe(9001)
+      expect(comprobante.total).toBe(123)
+      expect(comprobante.fiscal).toEqual(fiscalFixture('aprobado'))
     })
 
     it('un medio al 100 % también espera, sin forzar', async () => {
@@ -7619,6 +7629,13 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
+  /**
+   * Venta local a un cliente identificado (José Gómez, #30, lista 2) con cuenta corriente. El
+   * artículo vale 100 en la lista 1 y 80 en la 2, y `/ofertas/resolver` devuelve 100: $ 80 solo
+   * sale de la vista previa local con la lista del cliente. `/clientes/30` contesta dos veces: al
+   * elegir el cliente (dato fresco, con `saldoAlElegir`) y en la consulta del límite antes de
+   * encolar, que resuelve `consulta`.
+   */
   describe('checkout local de un cliente identificado con cuenta corriente', () => {
     const joseGomez = clienteFixture({
       id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false,

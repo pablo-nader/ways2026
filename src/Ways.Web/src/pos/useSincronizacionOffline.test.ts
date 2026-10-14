@@ -18,7 +18,7 @@ import {
   type BloqueDeNumeracionLocal,
   type VentaEnCola,
 } from './outboxOffline'
-import { TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
+import { ErrorDeTiempoAgotado, TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
 import { guardarInstantaneaLocal, leerInstantaneaLocal, purgarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -2702,6 +2702,35 @@ describe('useSincronizacionOffline — esperarRespuesta de una venta encolada', 
     })
 
     await expect(espera).resolves.toBeNull()
+  })
+
+  it.each([
+    ['red', () => new ErrorDeRed(new TypeError('Failed to fetch'))],
+    ['tiempo agotado', () => new ErrorDeTiempoAgotado(10_000)],
+    ['5xx', () => new ErrorApi(503, 'resultado_incierto', 'Resultado incierto')],
+  ])('un fallo transitorio (%s) resuelve null enseguida y la venta sigue en el outbox', async (_nombre, crearError) => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockRejectedValue(crearError())
+    const idLocal = await encolar(hook, true)
+
+    const espera = hook.result.current.esperarRespuesta(idLocal, 60_000)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(Promise.race([espera, new Promise((resolver) => setTimeout(() => resolver('vencio'), 1_000))])).resolves.toBeNull()
+    expect(hook.result.current.ventasConError).toEqual([])
+    expect(hook.result.current.outboxCount).toBe(1)
+  })
+
+  it('con tope 0 se suelta el interés: la entrada se borra y un nuevo pedido no espera', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    const idLocal = await encolar(hook, true)
+
+    await expect(hook.result.current.esperarRespuesta(idLocal, 0)).resolves.toBeNull()
+
+    const nuevaEspera = hook.result.current.esperarRespuesta(idLocal, 60_000)
+    await expect(Promise.race([nuevaEspera, new Promise((resolver) => setTimeout(() => resolver('vencio'), 1_000))])).resolves.toBeNull()
   })
 
   it('sin interés declarado al encolar, no guarda la respuesta', async () => {

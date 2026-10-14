@@ -3230,7 +3230,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         instantanea: InstantaneaDePos,
       ): Promise<
         | { tipo: 'encolada'; idLocal: string; comprobante: ComprobanteEmitido; avisoLimiteDeCredito: string | null }
-        | { tipo: 'sinComprobante'; numeroVisible: string; avisoLimiteDeCredito: string | null }
+        | { tipo: 'sinComprobante'; idLocal: string; numeroVisible: string; avisoLimiteDeCredito: string | null }
         | { tipo: 'rechazada'; motivo: MotivoRechazoOffline }
       > => {
         const resultado = await sincronizacionOffline.encolarVentaOffline({
@@ -3256,7 +3256,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         })
         // Defensa en profundidad: `ok: true` ya exigió que todas las líneas tengan precio en esta
         // misma instantánea, que es lo único que puede dejar al comprobante sin armar.
-        if (!comprobante) return { tipo: 'sinComprobante', numeroVisible: resultado.numeroVisible, avisoLimiteDeCredito }
+        if (!comprobante) return { tipo: 'sinComprobante', idLocal: resultado.idLocal, numeroVisible: resultado.numeroVisible, avisoLimiteDeCredito }
         return { tipo: 'encolada', idLocal: resultado.idLocal, comprobante, avisoLimiteDeCredito }
       }
 
@@ -3276,6 +3276,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           }
           void sincronizacionOffline.drenarAhora().catch(() => undefined)
           if (local.tipo === 'sinComprobante') {
+            // Nadie va a esperar la respuesta: con tope 0 el hook borra el interés declarado al encolar.
+            void sincronizacionOffline.esperarRespuesta(local.idLocal, 0)
             // react-async-state regla 6: la venta ya se guardó, nunca se reporta como un fallo.
             setErrorCobro(
               [
@@ -3297,8 +3299,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           } finally {
             setFacturando(false)
           }
+          // Con la factura aprobada se imprime el comprobante del servidor entero (ítems, totales, pagos y fiscal); sin ella, el sintético.
+          const delServidor = respuesta ? conFiscalSoloSiSeguroSeFactura(respuesta, seguroSeFactura) : null
           return {
-            emitido: conFiscalSoloSiSeguroSeFactura({ ...local.comprobante, fiscal: respuesta?.fiscal }, seguroSeFactura),
+            emitido: delServidor?.fiscal ? delServidor : { ...local.comprobante, fiscal: undefined },
             pendienteDeSincronizar: respuesta === null,
             avisoLimiteDeCredito: local.avisoLimiteDeCredito,
           }
