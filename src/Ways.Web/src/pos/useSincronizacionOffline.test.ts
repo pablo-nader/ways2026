@@ -18,7 +18,7 @@ import {
   type BloqueDeNumeracionLocal,
   type VentaEnCola,
 } from './outboxOffline'
-import { TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
+import { ErrorDeTiempoAgotado, TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
 import { guardarInstantaneaLocal, leerInstantaneaLocal, purgarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -738,7 +738,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       })
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
+    expect(resultado).toEqual({ ok: true, idLocal: expect.any(String), numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
     await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture({ proximo: 151, hasta: 200 }))
     const outbox = await leerOutbox(almacen)
     expect(outbox).toHaveLength(1)
@@ -1459,7 +1459,7 @@ describe('useSincronizacionOffline — el drenado nunca bloquea el encolado de u
       })
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
+    expect(resultado).toEqual({ ok: true, idLocal: expect.any(String), numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
     expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([149, 150])
   })
 
@@ -1562,7 +1562,7 @@ describe('useSincronizacionOffline — reposición del bloque en segundo plano',
     expect(reservarNumeracionMock).toHaveBeenCalledTimes(1)
     await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
     const r = await encolarUna(result)
-    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300', limiteDeCreditoNoValidado: false })
+    expect(r).toEqual({ ok: true, idLocal: expect.any(String), numero: 300, numeroVisible: '0007-00000300', limiteDeCreditoNoValidado: false })
   })
 
   it('rinde el bloque vivo con pendientes = 0 ANTES de reservar (su rendición queda congelada al abandonarlo)', async () => {
@@ -1637,7 +1637,7 @@ describe('useSincronizacionOffline — reposición del bloque en segundo plano',
     await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
 
     const r = await encolarUna(result)
-    expect(r).toEqual({ ok: true, numero: 195, numeroVisible: '0007-00000195', limiteDeCreditoNoValidado: false })
+    expect(r).toEqual({ ok: true, idLocal: expect.any(String), numero: 195, numeroVisible: '0007-00000195', limiteDeCreditoNoValidado: false })
   })
 })
 
@@ -1676,7 +1676,7 @@ describe('useSincronizacionOffline — topes de red', () => {
     reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
     const r = await encolarUna(result)
 
-    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300', limiteDeCreditoNoValidado: false })
+    expect(r).toEqual({ ok: true, idLocal: expect.any(String), numero: 300, numeroVisible: '0007-00000300', limiteDeCreditoNoValidado: false })
   })
 
   it('con los dos bloques agotados y la reserva colgada, el encolado espera solo hasta el tope y rechaza sin_numeracion', async () => {
@@ -2144,7 +2144,7 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
       resultado = await encolar(result, [{ comportamiento: 'Efectivo', importe: 230 }])
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
+    expect(resultado).toEqual({ ok: true, idLocal: expect.any(String), numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
     const [venta] = await leerOutbox(almacen)
     expect(venta.solicitud.idCliente).toBe(ID_CLIENTE)
     expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 250, descuentoUnitario: 20 })
@@ -2179,7 +2179,7 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
       resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
+    expect(resultado).toEqual({ ok: true, idLocal: expect.any(String), numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
     const [venta] = await leerOutbox(almacen)
     expect(venta.solicitud.limiteDeCreditoNoValidado).toBe(false)
     expect(venta.solicitud.numeroPreasignado).toBe(150)
@@ -2194,7 +2194,7 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
       resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: true })
+    expect(resultado).toEqual({ ok: true, idLocal: expect.any(String), numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: true })
     const [venta] = await leerOutbox(almacen)
     expect(venta.solicitud.limiteDeCreditoNoValidado).toBe(true)
     expect(emitirMock).not.toHaveBeenCalled()
@@ -2618,5 +2618,152 @@ describe('useSincronizacionOffline — encolarVentaOffline con artículo por imp
 
     expect(resultado).toEqual({ ok: false, motivo: 'linea_sin_precio' })
     expect(outbox).toEqual([])
+  })
+})
+
+describe('useSincronizacionOffline — esperarRespuesta de una venta encolada', () => {
+  const RESPUESTA = { id: 77, numeroVisible: '0007-00000150', fiscal: { estado: 'aprobado' } }
+
+  async function hookConVentaListaParaEncolar() {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture())
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const hook = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(hook.result.current.instantanea).not.toBeNull())
+    await waitFor(() => expect(hook.result.current.sincronizacionInicialPendiente).toBe(false))
+    return { ...hook, almacen }
+  }
+
+  async function encolar(hook: Awaited<ReturnType<typeof hookConVentaListaParaEncolar>>, interesadoEnLaRespuesta: boolean) {
+    let encolado
+    await act(async () => {
+      encolado = await hook.result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture(),
+        esConsumidorFinal: true,
+        idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+        interesadoEnLaRespuesta,
+      })
+    })
+    if (!encolado || !(encolado as { ok: boolean }).ok) throw new Error('la venta no se encoló')
+    return (encolado as { idLocal: string }).idLocal
+  }
+
+  it('resuelve con la respuesta que el drenado recibió de ESA venta', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockResolvedValue(RESPUESTA)
+    const idLocal = await encolar(hook, true)
+
+    const espera = hook.result.current.esperarRespuesta(idLocal, 2_000)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(espera).resolves.toEqual(RESPUESTA)
+  })
+
+  it('si la respuesta llegó antes de pedirla, la entrega y no la guarda más', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockResolvedValue(RESPUESTA)
+    const idLocal = await encolar(hook, true)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(hook.result.current.esperarRespuesta(idLocal, 2_000)).resolves.toEqual(RESPUESTA)
+    await expect(hook.result.current.esperarRespuesta(idLocal, 2_000)).resolves.toBeNull()
+  })
+
+  it('al vencer el tope resuelve null y una respuesta tardía ya no queda guardada', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    const envio = promesaControlada<unknown>()
+    emitirMock.mockReturnValue(envio.promesa)
+    const idLocal = await encolar(hook, true)
+    void hook.result.current.drenarAhora()
+    await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+
+    await expect(hook.result.current.esperarRespuesta(idLocal, 30)).resolves.toBeNull()
+
+    await act(async () => {
+      envio.resolver(RESPUESTA)
+      await Promise.resolve()
+    })
+    await expect(hook.result.current.esperarRespuesta(idLocal, 2_000)).resolves.toBeNull()
+  })
+
+  it('un rechazo permanente del servidor resuelve null enseguida, sin esperar el tope', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockRejectedValue(new ErrorApi(409, 'numero_preasignado_con_otro_contenido', 'Contenido distinto'))
+    const idLocal = await encolar(hook, true)
+
+    const espera = hook.result.current.esperarRespuesta(idLocal, 60_000)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(espera).resolves.toBeNull()
+  })
+
+  it.each([
+    ['red', () => new ErrorDeRed(new TypeError('Failed to fetch'))],
+    ['tiempo agotado', () => new ErrorDeTiempoAgotado(10_000)],
+    ['5xx', () => new ErrorApi(503, 'resultado_incierto', 'Resultado incierto')],
+  ])('un fallo transitorio (%s) resuelve null enseguida y la venta sigue en el outbox', async (_nombre, crearError) => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockRejectedValue(crearError())
+    const idLocal = await encolar(hook, true)
+
+    const espera = hook.result.current.esperarRespuesta(idLocal, 60_000)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(Promise.race([espera, new Promise((resolver) => setTimeout(() => resolver('vencio'), 1_000))])).resolves.toBeNull()
+    expect(hook.result.current.ventasConError).toEqual([])
+    expect(hook.result.current.outboxCount).toBe(1)
+  })
+
+  it('un fallo transitorio de la cabeza libera también a la venta encolada detrás, que esta pasada no envía', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+    await encolar(hook, false)
+    const idLocalNueva = await encolar(hook, true)
+
+    const espera = hook.result.current.esperarRespuesta(idLocalNueva, 60_000)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(Promise.race([espera, new Promise((resolver) => setTimeout(() => resolver('vencio'), 1_000))])).resolves.toBeNull()
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.ventasConError).toEqual([])
+    expect(hook.result.current.outboxCount).toBe(2)
+  })
+
+  it('con tope 0 se suelta el interés: la entrada se borra y un nuevo pedido no espera', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    const idLocal = await encolar(hook, true)
+
+    await expect(hook.result.current.esperarRespuesta(idLocal, 0)).resolves.toBeNull()
+
+    const nuevaEspera = hook.result.current.esperarRespuesta(idLocal, 60_000)
+    await expect(Promise.race([nuevaEspera, new Promise((resolver) => setTimeout(() => resolver('vencio'), 1_000))])).resolves.toBeNull()
+  })
+
+  it('sin interés declarado al encolar, no guarda la respuesta', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockResolvedValue(RESPUESTA)
+    const idLocal = await encolar(hook, false)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(hook.result.current.esperarRespuesta(idLocal, 2_000)).resolves.toBeNull()
+  })
+
+  it('un id que no existe resuelve null sin esperar', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+
+    await expect(hook.result.current.esperarRespuesta('inexistente', 60_000)).resolves.toBeNull()
   })
 })

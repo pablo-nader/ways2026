@@ -195,6 +195,8 @@ export function aSolicitudDeVenta(params: {
   pagos: PagoDeVenta[]
   direccionEntrega: string | null
   observaciones: string | null
+  /** Solo `true` viaja: apagado se omite, como en cualquier venta que no lo pidió. */
+  forzarFactura?: boolean
 }): SolicitudDeVenta & { idCliente: number; lineas: LineaDeVenta[] } {
   const lineasDeVenta: LineaDeVenta[] = params.lineas.map((l) => ({
     idArticulo: l.idArticulo,
@@ -214,6 +216,7 @@ export function aSolicitudDeVenta(params: {
     pagos: params.pagos,
     direccionEntrega: params.direccionEntrega,
     observaciones: params.observaciones,
+    ...(params.forzarFactura ? { forzarFactura: true } : {}),
   }
 }
 

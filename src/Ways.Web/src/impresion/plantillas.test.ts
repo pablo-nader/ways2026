@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
-import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
+import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
 
@@ -958,5 +958,59 @@ describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () =>
    */
   it('NUNCA pulsa el cajón (el pulso ya ocurrió en su propio trabajo previo)', () => {
     expect(contieneComandoDeCajon(cierreDeTurno(resumenCierreFixture(), CONTEXTO))).toBe(false)
+  })
+})
+
+describe('facturaDeVenta', () => {
+  const datosDeFactura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+  }
+  const medios = [medioFixture()]
+
+  it('lleva letra, número con ceros, fecha, CAE y vencimiento, y no el aviso de ticket', () => {
+    const texto = textoPlano(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios))
+
+    expect(texto).toContain('FACTURA B')
+    expect(texto).toContain('Nro 00003-00000012')
+    expect(texto).toContain('Fecha: 14/10/2026')
+    expect(texto).toContain('CAE 70123456789012')
+    expect(texto).toContain('Vto. CAE 24/10/2026')
+    expect(texto).not.toContain('COMPROBANTE NO VALIDO COMO FACTURA')
+  })
+
+  it('reusa el cuerpo del ticket: ítems, total y pagos', () => {
+    const texto = textoPlano(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios))
+
+    expect(texto).toContain('2 x Coca Cola 1L')
+    expect(texto).toContain('TOTAL')
+    expect(texto).toContain('Pagos:')
+    expect(texto).toContain('Efectivo')
+  })
+
+  it('sin vencimiento de CAE no imprime esa línea', () => {
+    const texto = textoPlano(facturaDeVenta(comprobanteFixture(), { ...datosDeFactura, caeVencimiento: null }, CONTEXTO, medios))
+
+    expect(texto).not.toContain('Vto. CAE')
+  })
+
+  it('pulsa el cajón con un pago en efectivo, como el ticket', () => {
+    expect(contieneComandoDeCajon(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios))).toBe(true)
+  })
+
+  it('el ticket de venta sigue diciendo que no es una factura y no lleva CAE', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, medios))
+
+    expect(texto).toContain('COMPROBANTE NO VALIDO COMO FACTURA')
+    expect(texto).not.toContain('CAE')
+    expect(texto).toContain('Comprobante: 0001-00000001')
   })
 })
