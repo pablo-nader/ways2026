@@ -713,6 +713,9 @@ export type TeclaAtajo = 'F5' | 'F6' | 'F7' | 'F8'
 
 export const TECLAS_ATAJO: readonly TeclaAtajo[] = ['F5', 'F6', 'F7', 'F8']
 
+/** Un artículo por importe con tecla de función, tal como lo muestra el encabezado de la venta. Respuesta de `GET /api/articulos/atajos-de-importe`. */
+export type AtajoDeImporte = { teclaAtajo: TeclaAtajo; idArticulo: number; codigoInterno: string; nombre: string }
+
 /** A qué se refiere el costo de lista que se cargó: a una unidad o a un bulto entero. */
 export type CostoListaPor = 'Unidad' | 'Bulto'
 

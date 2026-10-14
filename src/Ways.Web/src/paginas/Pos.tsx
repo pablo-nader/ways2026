@@ -66,6 +66,7 @@ import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api
 import { puedeForzarCierreSinRendicion } from '../api/tipos'
 import type {
   ArticuloEscaneado,
+  AtajoDeImporte,
   ClienteListado,
   ComprobanteEmitido,
   ComboAplicadoEnPrevia,
@@ -125,6 +126,7 @@ import {
   buscarClientesOffline,
   formatearVejezDeInstantanea,
   lineasConImporteDeArticuloOrdinario,
+  resolverAtajoEnLinea,
   resolverAtajoOffline,
   resolverEscaneoOffline,
   resolverPreviaOffline,
@@ -1126,8 +1128,44 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       ? sincronizacionOffline.instantanea
       : null
 
-  // Los atajos F5 a F8 salen de la misma instantánea: es lo único que trae la tecla de cada artículo por importe.
-  const atajosDeImporte = useMemo(() => (instantaneaDelPuntoVenta ? atajosDeImporteOffline(instantaneaDelPuntoVenta) : []), [instantaneaDelPuntoVenta])
+  // Los atajos F5 a F8 salen de la instantánea; sin ella (la sesión de un navegador no puede pedirla, y el escritorio no la tiene antes de
+  // su primera sincronización) salen de una lectura aparte del servidor, que no exige un dispositivo y se pide una vez por punto de venta.
+  // Hasta leer la copia persistida no se sabe si hay instantánea: pedirla antes sería una lectura de más en cada arranque del escritorio.
+  const idPuntoVentaDeLosAtajosEnLinea =
+    !modoPresupuesto && sincronizacionOffline.copiaLocalLeida && instantaneaDelPuntoVenta === null ? (puntoVentaSeleccionada?.id ?? null) : null
+  const [atajosEnLinea, setAtajosEnLinea] = useState<{ idPuntoVenta: number; atajos: AtajoDeImporte[] } | null>(null)
+  // Generación de la lectura de atajos: la invalida el cambio de punto de venta, la llegada de la instantánea y el desmontaje, para que
+  // una respuesta tardía no pise el mapa vigente. `leyendoAtajosRef` evita pedirla dos veces a la vez.
+  const generacionDeAtajosRef = useRef(0)
+  const leyendoAtajosRef = useRef(false)
+  function leerAtajosEnLinea(idPuntoVenta: number) {
+    const token = (generacionDeAtajosRef.current += 1)
+    leyendoAtajosRef.current = true
+    clienteDeArticulos
+      .atajosDeImporte()
+      .then((atajos) => {
+        if (generacionDeAtajosRef.current === token) setAtajosEnLinea({ idPuntoVenta, atajos })
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (generacionDeAtajosRef.current === token) leyendoAtajosRef.current = false
+      })
+  }
+  useEffect(() => {
+    if (idPuntoVentaDeLosAtajosEnLinea === null) return
+    leerAtajosEnLinea(idPuntoVentaDeLosAtajosEnLinea)
+    return () => {
+      generacionDeAtajosRef.current += 1
+      leyendoAtajosRef.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idPuntoVentaDeLosAtajosEnLinea])
+  const atajosEnLineaVigentes =
+    idPuntoVentaDeLosAtajosEnLinea !== null && atajosEnLinea?.idPuntoVenta === idPuntoVentaDeLosAtajosEnLinea ? atajosEnLinea.atajos : null
+  const atajosDeImporte = useMemo(
+    () => (instantaneaDelPuntoVenta ? atajosDeImporteOffline(instantaneaDelPuntoVenta) : (atajosEnLineaVigentes ?? [])),
+    [instantaneaDelPuntoVenta, atajosEnLineaVigentes],
+  )
   // Opciones del selector de cliente y su búsqueda en la copia local: estables entre renders para que la
   // lista no recalcule el filtro de todos los clientes en cada cambio de la pantalla.
   const opcionesDeCliente = useMemo(
@@ -2490,11 +2528,35 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || bloqueadoPorTurno) return
     if (buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada !== null || confirmandoCobro || cajaDeEscritorioOcupada) return
 
+    const texto = entradaEscaneo.trim()
     if (!instantaneaDelPuntoVenta) {
-      setErrorEscaneo(MENSAJE_DE_ATAJO_SIN_DATOS)
+      if (atajosEnLineaVigentes === null) {
+        // Sin ninguna de las dos fuentes: si la lectura no está en vuelo (falló), esta tecla la vuelve a pedir.
+        if (idPuntoVentaDeLosAtajosEnLinea !== null && !leyendoAtajosRef.current) leerAtajosEnLinea(idPuntoVentaDeLosAtajosEnLinea)
+        setErrorEscaneo(MENSAJE_DE_ATAJO_SIN_DATOS)
+        return
+      }
+      const atajo = atajosEnLineaVigentes.find((a) => a.teclaAtajo === tecla)
+      if (!atajo) {
+        setErrorEscaneo(mensajeDeAtajoSinArticulo(tecla))
+        return
+      }
+      if (texto === '') {
+        setErrorEscaneo(mensajeDeAtajoSinImporte(tecla))
+        return
+      }
+      const enLinea = resolverAtajoEnLinea(atajo, texto)
+      if (enLinea.tipo === 'importeInvalido') {
+        setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+        return
+      }
+      if (enLinea.tipo === 'articulo' && agregarEscaneado(enLinea.articulo)) {
+        setEntradaEscaneo('')
+        setErrorEscaneo('')
+      }
+      focoPendienteRef.current = true
       return
     }
-    const texto = entradaEscaneo.trim()
     const resultado = resolverAtajoOffline(instantaneaDelPuntoVenta, tecla, texto)
     if (resultado.tipo === 'sinArticulo') {
       setErrorEscaneo(mensajeDeAtajoSinArticulo(tecla))
