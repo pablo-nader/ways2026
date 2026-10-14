@@ -8,6 +8,7 @@ import { terminarSesionLocalDelPos } from './finDeSesionLocal'
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  DatosDeFacturaFiscal,
   MedioPagoListado,
   PuntoVentaListado,
   ResumenDeCierrePorRetiro,
@@ -361,6 +362,14 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     )
   }
 
+  /** "Reimprimir factura" de "Ventas del turno": la misma cola FIFO y la misma marca de reimpresión que el ticket. */
+  function alReimprimirFacturaDeVenta(comprobante: ComprobanteEmitido, factura: DatosDeFacturaFiscal, medios: MedioPagoListado[]) {
+    encolarImpresion(
+      `la reimpresión de la factura ${comprobante.numeroVisible}`,
+      facturaDeVenta(comprobante, factura, contextoDeImpresion, medios, { reimpresion: true }),
+    )
+  }
+
   /** "Imprimir" de "Cierres de caja": el mismo `cierreDeTurno` y la misma cola
    * FIFO que el cierre del turno. */
   function alReimprimirCierre(resumen: ResumenDeCierrePorRetiro) {
@@ -431,7 +440,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                 <main className="flex-grow-1" inert={instalandoActualizacion}>
                   <Routes>
                     <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
-                    <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
+                    <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} alReimprimirFactura={alReimprimirFacturaDeVenta} />} />
                     <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
                     <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
                     <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />

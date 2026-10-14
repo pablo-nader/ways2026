@@ -1163,6 +1163,47 @@ describe('ShellPos — "Imprimir" de Ventas del turno pasa por la MISMA cola FIF
   })
 })
 
+describe('ShellPos — "Reimprimir factura" de Ventas del turno', () => {
+  const datosDeFactura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+  }
+
+  it('encola la factura del comprobante del servidor con la marca de reimpresión, por la misma cola', async () => {
+    const comprobante: ComprobanteEmitido = {
+      ...comprobanteEmitidoFixture(),
+      fiscal: { estado: 'aprobado', motivo: 'forzada', idFacturacion: 4, error: null, comprobante: datosDeFactura },
+    }
+    mockearRutasDePos((ruta) => {
+      if (ruta.startsWith('/ventas/por-turno/')) {
+        return Promise.resolve<VentaDeTurnoListado[]>([{ ...ventaDeTurnoDesdeComprobante(comprobante), estadoFiscal: 'aprobado' }])
+      }
+      if (ruta === `/ventas/${comprobante.id}`) return Promise.resolve<ComprobanteEmitido>(comprobante)
+      return undefined
+    })
+    imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
+    renderShell()
+
+    await elegirDeMenu('Caja', 'Ventas del turno')
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir factura' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock).toHaveBeenCalledWith(
+      facturaDeVenta(comprobante, datosDeFactura, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: true }),
+    )
+    expect(await screen.findByText('No se pudo imprimir la reimpresión de la factura 0007-00000001: sin papel')).toBeInTheDocument()
+  })
+})
+
 describe('ShellPos — "Cierres" reimprime el ticket de cierre por la MISMA cola FIFO que el cierre del turno', () => {
   const RUTA_LISTA_DE_CIERRES = '/caja/turnos?idPuntoVenta=7&estado=Cerrado&pagina=1&tamanio=10'
 

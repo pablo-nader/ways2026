@@ -1672,6 +1672,8 @@ export type VentaDeTurnoListado = {
   descuentoManualTotal: number
   recargoManualTotal: number
   mediosDePago: MedioDeVentaNeto[]
+  /** Estado de facturación de la venta; ausente en un servidor anterior al campo. */
+  estadoFiscal?: EstadoFiscalDeVenta
 }
 
 /** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de

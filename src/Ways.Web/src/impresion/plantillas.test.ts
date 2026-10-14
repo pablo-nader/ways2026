@@ -1006,6 +1006,23 @@ describe('facturaDeVenta', () => {
     expect(contieneComandoDeCajon(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios))).toBe(true)
   })
 
+  it('con { reimpresion: true } la factura lleva la marca REIMPRESION antes del título y conserva letra, número y CAE', () => {
+    const texto = textoPlano(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios, { reimpresion: true }))
+
+    expect(texto).toContain('REIMPRESION')
+    expect(texto.indexOf('REIMPRESION')).toBeLessThan(texto.indexOf('FACTURA B'))
+    expect(texto).toContain('Nro 00003-00000012')
+    expect(texto).toContain('CAE 70123456789012')
+  })
+
+  it('la factura original no lleva la marca REIMPRESION', () => {
+    expect(textoPlano(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios))).not.toContain('REIMPRESION')
+  })
+
+  it('la reimpresión de la factura no pulsa el cajón aunque haya un pago en efectivo', () => {
+    expect(contieneComandoDeCajon(facturaDeVenta(comprobanteFixture(), datosDeFactura, CONTEXTO, medios, { reimpresion: true }))).toBe(false)
+  })
+
   it('el ticket de venta sigue diciendo que no es una factura y no lleva CAE', () => {
     const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, medios))
 

@@ -31,6 +31,11 @@ const reservarNumeracionMock = vi.fn()
 const obtenerInstantaneaMock = vi.fn()
 const rendirColaMock = vi.fn()
 const obtenerClienteMock = vi.fn()
+const procesarLoteMock = vi.fn()
+
+vi.mock('../api/facturacionFiscal', () => ({
+  clienteDeFacturacionFiscal: { procesarLote: (...args: unknown[]) => procesarLoteMock(...args) },
+}))
 
 vi.mock('../api/clientes', () => ({
   clienteDeClientes: { obtener: (...args: unknown[]) => obtenerClienteMock(...args) },
@@ -167,6 +172,8 @@ beforeEach(() => {
   obtenerInstantaneaMock.mockReset()
   rendirColaMock.mockReset()
   obtenerClienteMock.mockReset()
+  procesarLoteMock.mockReset()
+  procesarLoteMock.mockResolvedValue({})
   // default: la rendición llega bien (204) — cada test que necesite el fallo la sobrescribe.
   rendirColaMock.mockResolvedValue(undefined)
   // default: sin servidor (ErrorDeRed) — cada test que necesite señal la sobrescribe.
@@ -2765,5 +2772,83 @@ describe('useSincronizacionOffline — esperarRespuesta de una venta encolada', 
     const hook = await hookConVentaListaParaEncolar()
 
     await expect(hook.result.current.esperarRespuesta('inexistente', 60_000)).resolves.toBeNull()
+  })
+})
+
+describe('useSincronizacionOffline — lote de facturación tras el drenado', () => {
+  async function almacenConUnaVenta() {
+    const almacen = almacenFake()
+    await agregarAOutbox(almacen, {
+      idLocal: 'a',
+      numeroPreasignado: 100,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: solicitudFixture({ numeroPreasignado: 100 }),
+    })
+    return almacen
+  }
+
+  it('al terminar la pasada de drenado pide el lote del punto de venta, con la venta ya enviada', async () => {
+    const almacen = await almacenConUnaVenta()
+    emitirMock.mockResolvedValue({ id: 1 })
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+    expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    expect(emitirMock.mock.invocationCallOrder[0]).toBeLessThan(procesarLoteMock.mock.invocationCallOrder[0])
+  })
+
+  it('sin conexión no pide el lote', async () => {
+    const almacen = await almacenConUnaVenta()
+    const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await act(async () => {
+        await result.current.drenarAhora()
+      })
+
+      expect(result.current.enLinea).toBe(false)
+      expect(procesarLoteMock).not.toHaveBeenCalled()
+    } finally {
+      enLinea.mockRestore()
+    }
+  })
+
+  it('un fallo del lote no afecta al drenado ni a su resultado', async () => {
+    const almacen = await almacenConUnaVenta()
+    emitirMock.mockResolvedValue({ id: 1 })
+    procesarLoteMock.mockRejectedValue(new ErrorApi(500, 'error', 'boom'))
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.outboxCount).toBe(0))
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+
+    await expect(act(async () => result.current.drenarAhora())).resolves.not.toThrow()
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+  })
+
+  it('procesarFacturaciones pide el lote del punto de venta sin pasar por el outbox', async () => {
+    const almacen = almacenFake()
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000, sincronizarAntesDeVender: false }))
+    await waitFor(() => expect(result.current.verificacionesConElServidor).toBe(1))
+    await waitFor(() => expect(result.current.sincronizando).toBe(false))
+    procesarLoteMock.mockClear()
+
+    act(() => result.current.procesarFacturaciones())
+
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+  })
+
+  it('sin punto de venta procesarFacturaciones no hace nada', async () => {
+    const almacen = almacenFake()
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: null, activo: true, almacen }))
+
+    act(() => result.current.procesarFacturaciones())
+
+    expect(procesarLoteMock).not.toHaveBeenCalled()
   })
 })
