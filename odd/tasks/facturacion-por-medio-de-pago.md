@@ -85,7 +85,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   - [x] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
     espera de hasta 5 s solo si la venta seguro se factura y hay conexión; factura aprobada en
     lugar del ticket. Ruta: delegada.
-  - [ ] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
+  - [x] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
     sincronización; estado fiscal por venta y reimpresión. Ruta: delegada.
   - Release del POS (bump de Ways.Desktop + tag `pos-v*`): no antes de T7 (la factura impresa
     necesita el QR), y siempre avisando al dueño antes.
