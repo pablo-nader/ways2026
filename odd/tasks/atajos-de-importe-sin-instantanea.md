@@ -24,6 +24,9 @@ sincronización tiene éxito.
   única por tenant, así que no hay filtro de empresa.
 - Web: con instantánea el mapa sale de ella; sin instantánea (y fuera de presupuesto) sale de
   la lectura online, cargada una vez por punto de venta con token de generación.
+- La lectura espera a `copiaLocalLeida` (campo nuevo de `useSincronizacionOffline`): hasta leer
+  la copia persistida no se sabe si hay instantánea, y pedirla antes sería una lectura de más
+  en cada arranque del escritorio. Una tecla sin datos y sin lectura en vuelo la vuelve a pedir.
 - Con el mapa online la tecla resuelve por el camino de escaneo online enviando
   `${importe}*${codigoInterno}`, igual que tipearlo.
 - `MENSAJE_DE_ATAJO_SIN_DATOS` queda solo para cuando ninguna fuente está disponible.
@@ -34,9 +37,9 @@ sincronización tiene éxito.
 
 ## Tareas
 
-- [ ] T1 Endpoint `atajos-de-importe` + test de integración (aislamiento, solo activos y vendibles por importe con tecla, rol).
-- [ ] T2 Cliente web y estado en `Pos.tsx` (mapa `instantánea ?? online`, botones y tecla), tests de `Pos.test.tsx`.
-- [ ] T3 Verificación: guardas estructurales, vitest, tsc, lint.
+- [x] T1 Endpoint `atajos-de-importe` + test de integración (aislamiento, solo activos y vendibles por importe con tecla, rol).
+- [x] T2 Cliente web y estado en `Pos.tsx` (mapa `instantánea ?? online`, botones y tecla), tests de `Pos.test.tsx`.
+- [x] T3 Verificación: guardas estructurales, vitest, tsc, lint.
 
 ## Checks
 
@@ -46,3 +49,11 @@ sincronización tiene éxito.
 ## Progreso
 
 Ruta: escritor delegado único (backend y web son un mismo slice de ~250 líneas).
+
+- T1: `ServicioDeEscaneo.ListarAtajosDeImporteAsync` + `GET /api/articulos/atajos-de-importe`;
+  4 tests de integración en `EscaneoEndpointsTests` (filtros, aislamiento, Vendedor, 401).
+- T2: RED observado (8 de 9 tests nuevos fallaban), GREEN con 492/492 en `Pos.test.tsx`;
+  mutaciones comprobadas: quitar `copiaLocalLeida` o `instantaneaDelPuntoVenta === null` de la
+  condición de lectura mata la prueba "con la instantánea no pide la lectura".
+- T3: `Ways.Application.Tests` 1026/1026; `SuperficieDeAutorizacion` + escaneo 19/19;
+  `src/pos` 856/856; `tsc -b` limpio; oxlint sin hallazgos nuevos.

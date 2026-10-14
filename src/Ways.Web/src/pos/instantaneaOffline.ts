@@ -10,6 +10,7 @@
 import type { AlmacenClaveValor, AlmacenDeClavesMultiples } from './almacenPos'
 import type {
   ArticuloDeInstantanea,
+  AtajoDeImporte,
   ArticuloEscaneado,
   ClienteDeInstantanea,
   ClienteListado,
@@ -275,9 +276,6 @@ function escaneadoPorImporte(articulo: ArticuloDeInstantanea, codigoBarra: strin
     ...(importe !== undefined ? { importe } : {}),
   }
 }
-
-/** Un artículo por importe con tecla de función, tal como lo muestra el encabezado de la venta. */
-export type AtajoDeImporte = { teclaAtajo: TeclaAtajo; idArticulo: number; codigoInterno: string; nombre: string }
 
 const ORDEN_DE_TECLAS: readonly string[] = ['F5', 'F6', 'F7', 'F8']
 

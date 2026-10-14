@@ -10,6 +10,7 @@ import type {
   AltaCodigoProveedor,
   ArticuloEscaneado,
   ArticuloListado,
+  AtajoDeImporte,
   CodigoBarraListado,
   CodigoProveedorListado,
   EdicionArticulo,
@@ -104,4 +105,7 @@ export const clienteDeArticulos = {
    * precio (design decisión 7). `entrada` viaja tal cual la tipeó/leyó el lector — el parseo de
    * `N*codigo` es responsabilidad del servidor (`ParserDeEscaneo`). */
   escanear: (entrada: string) => api.get<ArticuloEscaneado>(`/articulos/escaneo?entrada=${encodeURIComponent(entrada)}`),
+  /** Los artículos por importe con tecla F5 a F8, ordenados por tecla. A diferencia de la instantánea no exige un dispositivo: es la
+   * fuente de los atajos del POS cuando todavía no hay instantánea (web, o escritorio antes de la primera sincronización). */
+  atajosDeImporte: () => api.get<AtajoDeImporte[]>('/articulos/atajos-de-importe'),
 }
