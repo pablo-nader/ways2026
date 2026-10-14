@@ -47,8 +47,9 @@ public static class VentasEndpoints
             return comprobante with { Fiscal = await facturacion.LeerEstadoDeVentaAsync(id, ct) };
         })
         .WithSummary(
-            "Reimpresión: lee el snapshot del comprobante, nunca re-joinea el catálogo, e informa su estado fiscal " +
-            "(con la factura si está aprobada).");
+            "Reimpresión: lee el snapshot del comprobante sin re-joinear el catálogo e informa su estado fiscal. " +
+            "Con la factura aprobada, sus datos se leen del catálogo aunque esté dado de baja; si no se pueden leer, " +
+            "el estado fiscal va sin ellos.");
 
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): RequiereDispositivo apilado
         // sobre OperacionDePos (AND) — solo una sesión de dispositivo puede reservar un bloque

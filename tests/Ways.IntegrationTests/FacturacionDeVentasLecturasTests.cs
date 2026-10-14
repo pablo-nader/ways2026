@@ -56,6 +56,48 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Single(await LeerEspejosAsync(t.C));
     }
 
+    /// <summary>Cláusula bajo prueba: <c>IgnoreQueryFilters(["BajaLogica"])</c> en las lecturas de catálogo de la factura. Se
+    /// estampa <c>deleted_at</c> sobre el cliente referenciado (la baja por la API la rechaza la guarda de referencias).</summary>
+    [Fact]
+    public async Task LaLecturaPorIdDeUnaVentaAprobadaSigueInformandoLaFacturaAunqueSuClienteSeDioDeBaja()
+    {
+        var t = await PrepararCobroAsync("lecturaclientebaja");
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteRi, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        var espejo = Assert.Single(await LeerEspejosAsync(t.C));
+        Assert.Equal(t.C.IdClienteRi, espejo.IdCliente);
+        await EjecutarComoOwnerAsync("UPDATE clientes SET deleted_at = now() WHERE id_cliente = $1", t.C.IdClienteRi);
+        t.C.Wsfe.Reiniciar();
+
+        var leido = await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, leido.Fiscal!.Estado);
+        Assert.Equal(venta.IdFacturacion, leido.Fiscal.IdFacturacion);
+        Assert.Equal("70123456789012", leido.Fiscal.Comprobante!.Cae);
+        Assert.Equal(espejo.Id, leido.Fiscal.Comprobante.IdComprobante);
+        Assert.Empty(t.C.Wsfe.Operaciones);
+    }
+
+    /// <summary>Cláusula bajo prueba: el <c>catch</c> de <c>LeerEstadoDeVentaAsync</c> que informa el estado de la decisión sin
+    /// la factura cuando no se pueden proyectar sus datos (acá, un CUIT de empresa no numérico).</summary>
+    [Fact]
+    public async Task LaLecturaPorIdDeUnaVentaAprobadaInformaElEstadoSinLaFacturaSiSusDatosNoSePuedenProyectar()
+    {
+        var t = await PrepararCobroAsync("lecturacuitroto");
+        var emitido = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t));
+        await EjecutarComoOwnerAsync("UPDATE empresas SET cuit = 'no-numerico' WHERE id_empresa = $1", t.C.IdEmpresa);
+        t.C.Wsfe.Reiniciar();
+
+        var leido = await LeerVentaPorIdAsync(t.Cajero, emitido.Id);
+
+        Assert.Equal(emitido.Total, leido.Total);
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, leido.Fiscal!.Estado);
+        Assert.Equal(emitido.Fiscal!.IdFacturacion, leido.Fiscal.IdFacturacion);
+        Assert.Null(leido.Fiscal.Comprobante);
+        Assert.Empty(t.C.Wsfe.Operaciones);
+    }
+
     [Fact]
     public async Task LaLecturaPorIdInformaSoloElCodigoDelErrorAnotadoEnUnaVentaRechazadaYEnUnaPendiente()
     {
