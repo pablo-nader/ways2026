@@ -418,8 +418,10 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Empty(t.C.Wsfe.Operaciones);
     }
 
-    /// <summary>JD1-W1. Cláusula bajo prueba: al volver a pedir un espejo pendiente, <c>EvaluarCompuertasAsync</c> toma el documento
-    /// del receptor del snapshot. Mutación: armar el pedido con el cliente actual envía 20999999995 y deja el test en rojo.</summary>
+    /// <summary>JD1-W1, JD2-W1. Cláusula bajo prueba: al volver a pedir un espejo pendiente, <c>EvaluarCompuertasAsync</c> toma del
+    /// snapshot el documento y la condición IVA del receptor. Con el cliente editado a Monotributo, el pedido sigue llevando
+    /// DocTipo 80, el DocNro y la CondicionIVAReceptorId congelados (RI). Mutaciones: tomar el documento del cliente actual envía
+    /// 20999999995; tomar la condición actual envía el código de Monotributo; ambas dejan el test en rojo.</summary>
     [Fact]
     public async Task ElPedidoAArcaDeUnEspejoPendienteUsaElDocumentoCongeladoAunqueElClienteSeHayaEditado()
     {
@@ -431,7 +433,12 @@ public partial class FacturacionDeVentasEmisionTests
             c, "SELECT datos_legales_fiscales->'receptor'->>'numeroDocumento' FROM comprobantes_venta WHERE id_venta_origen = $1",
             l => l.GetString(0), venta.IdVenta));
         Assert.Equal("20222222223", congelado);
+        var condicionCongelada = Assert.Single(await ConsultarAsync(
+            c, "SELECT datos_legales_fiscales->>'condicionIvaReceptor' FROM comprobantes_venta WHERE id_venta_origen = $1",
+            l => l.GetString(0), venta.IdVenta));
         await EditarClienteYEmpresaTrasLaEmisionAsync(c);
+        var condicionEditada = Assert.Single(await ConsultarAsync(
+            c, "SELECT codigo_afip::text FROM condiciones_fiscales WHERE codigo = 'MONOTRIBUTO'", l => l.GetString(0)));
 
         c.Wsfe.Reiniciar();
         c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
@@ -441,6 +448,8 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
         var cuerpo = Assert.Single(c.Wsfe.CuerposDeSolicitud);
         Assert.Equal(("80", congelado), (CampoDelCuerpo(cuerpo, "DocTipo"), CampoDelCuerpo(cuerpo, "DocNro")));
+        Assert.Equal(condicionCongelada, CampoDelCuerpo(cuerpo, "CondicionIVAReceptorId"));
+        Assert.NotEqual(condicionEditada, CampoDelCuerpo(cuerpo, "CondicionIVAReceptorId"));
         var qr = DecodificarQr(estado.Comprobante!.PayloadQr);
         Assert.Equal(congelado, qr.GetProperty("nroDocRec").GetInt64().ToString(CultureInfo.InvariantCulture));
         Assert.Equal(20222222223L, estado.Comprobante.Receptor.NumeroDocumento);

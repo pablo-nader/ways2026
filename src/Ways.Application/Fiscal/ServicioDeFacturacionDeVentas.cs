@@ -344,6 +344,10 @@ public class ServicioDeFacturacionDeVentas(
         var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == origen.IdPuntoVenta, ct);
         var empresa = await db.Empresas.AsNoTracking().FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
 
+        // Un espejo con datos legales congelados vuelve a pedir con el emisor y el receptor con que se emitió (documento,
+        // condición IVA, CUIT y letra del propio espejo), no con las filas actuales de cliente y empresa.
+        var congelados = origenEsEspejo ? DatosLegalesDeFacturaFiscal.Leer(origen.DatosLegalesFiscales) : null;
+
         if (empresa.IdCondicionFiscal is not { } idCondicionEmisor)
         {
             return FallaCon("empresa_sin_condicion_fiscal", "La empresa no tiene cargada su condición fiscal ARCA.");
@@ -358,11 +362,20 @@ public class ServicioDeFacturacionDeVentas(
         var condicionEmisor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == idCondicionEmisor, ct);
         var condicionReceptor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == cliente.IdCondicionFiscal, ct);
 
-        if (condicionReceptor.Codigo == "NO_RESP" || condicionReceptor.CodigoAfip is null)
+        short condicionIvaReceptor;
+        if (congelados?.CondicionIvaReceptor is { } condicionCongelada)
+        {
+            condicionIvaReceptor = condicionCongelada;
+        }
+        else if (condicionReceptor.Codigo == "NO_RESP" || condicionReceptor.CodigoAfip is null)
         {
             return FallaCon(
                 "condicion_fiscal_receptor_no_mapeada",
                 $"La condición fiscal del receptor ('{condicionReceptor.Codigo}') no tiene mapeo ARCA confirmado.");
+        }
+        else
+        {
+            condicionIvaReceptor = condicionReceptor.CodigoAfip.Value;
         }
 
         var hayCertificadoActivo = await db.CertificadosFiscales.AsNoTracking()
@@ -375,24 +388,28 @@ public class ServicioDeFacturacionDeVentas(
         string cuitEmisor;
         try
         {
-            cuitEmisor = ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa);
+            cuitEmisor = congelados?.Emisor.Cuit is { } cuitCongelado
+                ? ServicioDeFacturacionFiscal.ExigirCuitNumerico(cuitCongelado)
+                : ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa);
         }
         catch (ErrorDominio ex) when (ex.Codigo == "empresa_sin_cuit_valido")
         {
             return FallaCon(ex.Codigo, ex.Message);
         }
 
-        var letra = ResolvedorDeLetraComprobante.Resolver(
-            ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionEmisor.Codigo),
-            ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionReceptor.Codigo));
-
         TipoComprobante? tipo;
+        char letra;
         if (origenEsEspejo)
         {
             tipo = await db.TiposComprobante.AsNoTracking().FirstAsync(t => t.Id == origen.IdTipoComprobante, ct);
+            letra = tipo.Letra ?? ' ';
         }
         else
         {
+            letra = ResolvedorDeLetraComprobante.Resolver(
+                ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionEmisor.Codigo),
+                ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionReceptor.Codigo));
+
             // La factura de la letra: FA, FB o FC. Las notas de débito comparten letra y signo con la factura, así que la
             // letra sola no alcanza para elegir el tipo.
             var codigoDeFactura = $"F{letra}";
@@ -408,14 +425,13 @@ public class ServicioDeFacturacionDeVentas(
             return FallaCon("tipo_fiscal_invalido", $"No hay un tipo de factura fiscal activo para la letra '{letra}'.");
         }
 
-        // Un espejo con datos legales congelados vuelve a pedir con el documento con que se emitió, no con el actual del cliente.
-        var congelados = origenEsEspejo ? DatosLegalesDeFacturaFiscal.Leer(origen.DatosLegalesFiscales) : null;
         var (tipoDoc, nroDoc) = congelados is { } fijos
             ? (fijos.Receptor.CodigoTipoDocumento, fijos.Receptor.NumeroDocumento)
             : ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);
         var datosLegales = congelados ?? new DatosLegalesDeFacturaFiscal(
             EmisorDeFacturaFiscal.De(empresa, puntoVenta, condicionEmisor.Nombre),
-            ReceptorDeFacturaFiscal.De(cliente, tipoDoc, nroDoc, condicionReceptor.Nombre));
+            ReceptorDeFacturaFiscal.De(cliente, tipoDoc, nroDoc, condicionReceptor.Nombre),
+            condicionIvaReceptor);
         const short DocumentoCuit = 80;
         if (letra == 'A' && tipoDoc != DocumentoCuit)
         {
@@ -442,7 +458,7 @@ public class ServicioDeFacturacionDeVentas(
 
         return new Evaluacion(
             new Plan(
-                puntoVenta, empresa, tipo, letra, cuitEmisor, condicionReceptor.CodigoAfip.Value, tipoDoc, nroDoc,
+                puntoVenta, empresa, tipo, letra, cuitEmisor, condicionIvaReceptor, tipoDoc, nroDoc,
                 totales, ambiente, datosLegales),
             null);
     }

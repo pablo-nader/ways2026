@@ -607,15 +607,17 @@ public class ServicioDeFacturacionFiscal(
         return TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
     }
 
-    internal static string ExigirCuitNumerico(Empresa empresa)
+    internal static string ExigirCuitNumerico(Empresa empresa) => ExigirCuitNumerico(empresa.Cuit);
+
+    internal static string ExigirCuitNumerico(string? cuit)
     {
-        if (string.IsNullOrWhiteSpace(empresa.Cuit) || !long.TryParse(empresa.Cuit, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        if (string.IsNullOrWhiteSpace(cuit) || !long.TryParse(cuit, NumberStyles.None, CultureInfo.InvariantCulture, out _))
         {
             throw ErrorDominio.Conflicto(
                 "empresa_sin_cuit_valido", "La empresa no tiene un CUIT numérico válido cargado.");
         }
 
-        return empresa.Cuit;
+        return cuit;
     }
 
     internal static string? ConstruirQrSiCorresponde(

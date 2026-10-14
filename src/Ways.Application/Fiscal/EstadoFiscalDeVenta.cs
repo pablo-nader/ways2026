@@ -98,8 +98,11 @@ public sealed record EmisorDeFacturaFiscal(
 }
 
 /// <summary>Emisor y receptor congelados en el espejo fiscal en la transacción que lo inserta (columna
-/// <c>datos_legales_fiscales</c>): la factura impresa y el QR salen de acá y no de las filas actuales de empresa y cliente.</summary>
-public sealed record DatosLegalesDeFacturaFiscal(EmisorDeFacturaFiscal Emisor, ReceptorDeFacturaFiscal Receptor)
+/// <c>datos_legales_fiscales</c>): la factura impresa, el QR y el reintento del pedido a ARCA salen de acá y no de las filas
+/// actuales de empresa y cliente. <see cref="CondicionIvaReceptor"/> es el código ARCA de la condición IVA del receptor que
+/// viajó (o viajará) en el pedido; <c>null</c> en un snapshot que no lo trae, que lo toma de la fila actual.</summary>
+public sealed record DatosLegalesDeFacturaFiscal(
+    EmisorDeFacturaFiscal Emisor, ReceptorDeFacturaFiscal Receptor, short? CondicionIvaReceptor = null)
 {
     private static readonly JsonSerializerOptions Opciones = new(JsonSerializerDefaults.Web);
 
