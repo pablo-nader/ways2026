@@ -53,6 +53,12 @@ public static class ArticulosEndpoints
             "Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo vendible. Con "
             + "incluirNoVendibles=true también resuelve uno de uso interno (devoluciones).");
 
+        grupo.MapGet("/atajos-de-importe", (ServicioDeEscaneo servicio, CancellationToken ct) =>
+            servicio.ListarAtajosDeImporteAsync(ct))
+        .WithSummary(
+            "Lista los artículos por importe vivos y disponibles a la venta que tienen tecla de atajo (F5 a F8), "
+            + "ordenados por tecla. Es la fuente de los atajos del POS cuando no hay instantánea del punto de venta.");
+
         // stage-articulos-grilla-api: grilla del back-office con filtros por columna (Código,
         // Nombre, Precio, Proveedor, Estado) — segmento literal, no colisiona con "/{id:int}" de
         // abajo. Mismo read policy que "/" (hereda Politicas.OperacionDePos del grupo): esta
