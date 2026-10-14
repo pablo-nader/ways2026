@@ -27,14 +27,17 @@ public interface IRepositorioDeTicketDeAcceso
     /// <summary>Si hay un TA vigente lo devuelve sin invocar <paramref name="obtenerNuevo"/>; si no,
     /// orquesta el cache+single-flight de la implementación concreta (double-checked locking) antes
     /// de invocar el factory — pedidos concurrentes que rondan al primero no vuelven a llamar WSAA
-    /// (target 33, D8).</summary>
+    /// (target 33, D8). La firma en vuelo NO se cancela con <paramref name="ct"/>: <paramref name="obtenerNuevo"/> recibe un
+    /// token que el llamador no puede cancelar, el ticket se guarda y recién después se lanza la cancelación del llamador.
+    /// <paramref name="ct"/> solo corta la espera del cerrojo.</summary>
     Task<TicketDeAcceso> ObtenerOFirmarAsync(
         ClaveDeTicket clave, Func<CancellationToken, Task<TicketDeAcceso>> obtenerNuevo, CancellationToken ct);
 
-    /// <summary>Descarta el TA cacheado de <paramref name="clave"/> (judgment 19a-slice-5 ronda 2 juez
-    /// A — WARNING): el WSFE <c>600</c> lo llama para que el re-firmado post-600 vuelva a pasar por
-    /// <see cref="ObtenerOFirmarAsync"/> — su single-flight — en vez de firmar directo por fuera del
-    /// cerrojo, de modo que dos emisiones concurrentes con el mismo TA invalidado compartan UNA sola
-    /// re-firma. Idempotente: invalidar una clave sin ticket cacheado es un no-op.</summary>
-    Task InvalidarAsync(ClaveDeTicket clave, CancellationToken ct);
+    /// <summary>Descarta el TA cacheado de <paramref name="clave"/> SOLO si es <paramref name="fallido"/>, el que WSFE
+    /// rechazó con <c>600</c> (comparar y descartar): si entre el pedido y la invalidación otra llamada ya lo reemplazó por
+    /// uno fresco, no hace nada y la llamada obtiene ese fresco con <see cref="ObtenerOFirmarAsync"/>. WSAA no emite un TA
+    /// nuevo mientras hay uno vigente, así que descartar el fresco de otro dejaba a ambas sin poder re-firmar. El re-firmado
+    /// post-600 sigue pasando por el single-flight de <see cref="ObtenerOFirmarAsync"/> (judgment 19a-slice-5 ronda 2 juez
+    /// A — WARNING). Idempotente: invalidar una clave sin ticket cacheado, o con otro ticket, es un no-op.</summary>
+    Task InvalidarAsync(ClaveDeTicket clave, TicketDeAcceso fallido, CancellationToken ct);
 }

@@ -219,6 +219,114 @@ public class ClienteWsfeTests
         Assert.Equal(solicitudesTrasElPrimerFallo, handler.Solicitudes); // CERO requests nuevos
     }
 
+    // ---- Timeout de la llamada vs. cancelación del llamador ------------------------------------
+
+    private sealed class HttpMessageHandlerQueEspera : HttpMessageHandler
+    {
+        public int Solicitudes { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Solicitudes++;
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("No llega: la espera solo termina cancelada.");
+        }
+    }
+
+    private static ClienteWsfe ConstruirConTimeout(
+        HttpMessageHandler handler, IEsperador esperador, int umbralDeAperturaDeCircuito = 10) =>
+        new(
+            new HttpClient(handler) { BaseAddress = new Uri("https://wsfe.mock.test/"), Timeout = TimeSpan.FromMilliseconds(50) },
+            new RelojFijo(new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero)),
+            esperador, 3, TimeSpan.FromMilliseconds(1), umbralDeAperturaDeCircuito, TimeSpan.FromMinutes(1));
+
+    /// <summary>Después de un timeout ARCA pudo haber procesado el pedido: reenviar el mismo FECAESolicitar puede dar un error de
+    /// numeración en lugar del CAE. El timeout es de inmediato no definitivo, con UN solo intento y sin backoff.</summary>
+    [Fact]
+    public async Task UnTimeoutDelHttpClientEsNoDefinitivoDeInmediatoYNoSeReintenta()
+    {
+        var handler = new HttpMessageHandlerQueEspera();
+        var esperador = new EsperadorFalso();
+        var cliente = ConstruirConTimeout(handler, esperador);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
+        Assert.Equal(503, error.EstadoHttp);
+        Assert.Equal(1, handler.Solicitudes);
+        Assert.Empty(esperador.Esperas);
+    }
+
+    [Fact]
+    public async Task UnTimeoutDeLaConsultaTampocoSeReintenta()
+    {
+        var handler = new HttpMessageHandlerQueEspera();
+        var cliente = ConstruirConTimeout(handler, new EsperadorFalso());
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.ConsultarAsync(Ticket, Cuit, Serie, 105, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
+        Assert.Equal(1, handler.Solicitudes);
+    }
+
+    /// <summary>Para el circuito un timeout es una llamada fallida más: con umbral 1 la abre, y la llamada siguiente no sale.</summary>
+    [Fact]
+    public async Task UnTimeoutCuentaComoUnaLlamadaFallidaParaElCircuito()
+    {
+        var handler = new HttpMessageHandlerQueEspera();
+        var cliente = ConstruirConTimeout(handler, new EsperadorFalso(), umbralDeAperturaDeCircuito: 1);
+
+        await Assert.ThrowsAsync<ErrorDominio>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, CancellationToken.None));
+        Assert.Equal(1, handler.Solicitudes);
+
+        var conCircuitoAbierto = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", conCircuitoAbierto.Codigo);
+        Assert.Equal(1, handler.Solicitudes);
+    }
+
+    /// <summary>Los demás fallos transitorios conservan el reintento acotado con backoff: un 5xx se reenvía tres veces.</summary>
+    [Fact]
+    public async Task UnaRespuestaHttp5xxSigueReintentandoseConBackoff()
+    {
+        var handler = new HttpMessageHandlerFalso(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var esperador = new EsperadorFalso();
+        var cliente = Construir(handler, esperador, intentosMaximos: 3, umbralDeAperturaDeCircuito: 10);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, CancellationToken.None));
+
+        Assert.Equal("arca_no_definitivo", error.Codigo);
+        Assert.Equal(3, handler.Solicitudes);
+        Assert.Equal([TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(2)], esperador.Esperas);
+    }
+
+    [Fact]
+    public async Task LaCancelacionDelLlamadorSePropagaSinReintentarNiTocarElCircuito()
+    {
+        var handler = new HttpMessageHandlerQueEspera();
+        var cliente = new ClienteWsfe(
+            new HttpClient(handler) { BaseAddress = new Uri("https://wsfe.mock.test/") },
+            new RelojFijo(new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero)),
+            new EsperadorFalso(), 3, TimeSpan.FromMilliseconds(1), 1, TimeSpan.FromMinutes(1));
+        using var cancelacion = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, cancelacion.Token));
+        Assert.Equal(1, handler.Solicitudes);
+
+        // El circuito (umbral 1) quedó cerrado: una llamada siguiente sale a la red en vez de rebotar con el circuito abierto.
+        using var otraCancelacion = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cliente.SolicitarCaeAsync(
+            Ticket, Cuit, Permiso, SolicitudDeReferencia, otraCancelacion.Token));
+        Assert.Equal(2, handler.Solicitudes);
+    }
+
     // ---- FECompConsultar / FECompUltimoAutorizado ----------------------------------------------
 
     [Fact]

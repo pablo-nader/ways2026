@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
@@ -117,6 +119,8 @@ public static class DependencyInjection
             {
                 http.BaseAddress = new Uri(url);
             }
+
+            http.Timeout = sp.GetRequiredService<IOptions<OpcionesFiscales>>().Value.TimeoutDeWsaa;
         });
 
         // stage-19a-slice5 (task 5.7): primer registro de IClienteWsfe — sin caller de producción
@@ -129,6 +133,8 @@ public static class DependencyInjection
             {
                 http.BaseAddress = new Uri(url);
             }
+
+            http.Timeout = sp.GetRequiredService<IOptions<OpcionesFiscales>>().Value.TimeoutDeLlamada;
         });
 
         // stage-19a-slice5: tensión de la slice 2 resuelta (judgment ronda 2 juez A) —
@@ -148,6 +154,10 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeFacturacionFiscal>();
         services.AddScoped<ServicioDeDecisionDeFacturacion>();
         services.AddScoped<ServicioDeFacturacionDeVentas>();
+        services.AddScoped<ProcesadorDeFacturacionesPorLote>();
+
+        // El presupuesto de tiempo del procesador por lote nace de este reloj, para que un test pueda avanzarlo sin esperar.
+        services.TryAddSingleton(TimeProvider.System);
 
         return services;
     }

@@ -120,9 +120,10 @@ public class RepositorioEnMemoriaDeTicketDeAccesoTests
     {
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
         var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
-        await repositorio.GuardarAsync(Clave, new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12)), CancellationToken.None);
+        var viejo = new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12));
+        await repositorio.GuardarAsync(Clave, viejo, CancellationToken.None);
 
-        await repositorio.InvalidarAsync(Clave, CancellationToken.None);
+        await repositorio.InvalidarAsync(Clave, viejo, CancellationToken.None);
 
         Assert.Null(await repositorio.ObtenerVigenteAsync(Clave, CancellationToken.None));
 
@@ -137,7 +138,8 @@ public class RepositorioEnMemoriaDeTicketDeAccesoTests
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
         var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
 
-        await repositorio.InvalidarAsync(Clave, CancellationToken.None); // idempotente, no revienta
+        await repositorio.InvalidarAsync(
+            Clave, new TicketDeAcceso("inexistente", "sig", reloj.Ahora.AddHours(12)), CancellationToken.None); // idempotente, no revienta
 
         Assert.Null(await repositorio.ObtenerVigenteAsync(Clave, CancellationToken.None));
     }
@@ -152,8 +154,9 @@ public class RepositorioEnMemoriaDeTicketDeAccesoTests
     {
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
         var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
-        await repositorio.GuardarAsync(Clave, new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12)), CancellationToken.None);
-        await repositorio.InvalidarAsync(Clave, CancellationToken.None);
+        var viejo = new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12));
+        await repositorio.GuardarAsync(Clave, viejo, CancellationToken.None);
+        await repositorio.InvalidarAsync(Clave, viejo, CancellationToken.None);
 
         var reFirmas = 0;
 
@@ -171,5 +174,120 @@ public class RepositorioEnMemoriaDeTicketDeAccesoTests
 
         Assert.Equal(1, reFirmas);
         Assert.All(resultados, r => Assert.Equal("fresco", r.Token));
+    }
+
+    // --- Comparar y descartar: dos llamadas con el mismo ticket viejo (los dos recibieron un 600 con él) ---
+
+    /// <summary>La primera invalida y re-firma; la segunda llega con el MISMO ticket viejo después: su invalidación no toca el
+    /// fresco y reutiliza lo que ya está en el cache, así que en total se firma una sola vez. Sin comparar, la segunda borraba el
+    /// fresco y firmaba otra vez (y WSAA no emite un ticket nuevo mientras hay uno vigente).</summary>
+    [Fact]
+    public async Task LaInvalidacionDeUnTicketYaReemplazadoNoDescartaElFresco()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+        var viejo = new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12));
+        await repositorio.GuardarAsync(Clave, viejo, CancellationToken.None);
+        var firmas = 0;
+
+        Task<TicketDeAcceso> Fabricar(CancellationToken ct)
+        {
+            firmas++;
+            return Task.FromResult(new TicketDeAcceso($"fresco{firmas}", "sig", reloj.Ahora.AddHours(12)));
+        }
+
+        await repositorio.InvalidarAsync(Clave, viejo, CancellationToken.None);
+        var primera = await repositorio.ObtenerOFirmarAsync(Clave, Fabricar, CancellationToken.None);
+
+        await repositorio.InvalidarAsync(Clave, viejo, CancellationToken.None);
+        var segunda = await repositorio.ObtenerOFirmarAsync(Clave, Fabricar, CancellationToken.None);
+
+        Assert.Equal(1, firmas);
+        Assert.Equal("fresco1", primera.Token);
+        Assert.Equal("fresco1", segunda.Token);
+        Assert.Equal(primera, await repositorio.ObtenerVigenteAsync(Clave, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task InvalidarUnTicketDistintoDelCacheadoNoLoDescarta()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+        var vigente = new TicketDeAcceso("vigente", "sig", reloj.Ahora.AddHours(12));
+        await repositorio.GuardarAsync(Clave, vigente, CancellationToken.None);
+
+        await repositorio.InvalidarAsync(Clave, new TicketDeAcceso("otro", "sig", reloj.Ahora.AddHours(12)), CancellationToken.None);
+
+        Assert.Equal(vigente, await repositorio.ObtenerVigenteAsync(Clave, CancellationToken.None));
+    }
+
+    // --- La firma en vuelo no se abandona con el token del llamador (el presupuesto de un lote) ---
+
+    /// <summary>WSAA no emite un ticket nuevo mientras hay uno vigente: una firma cuya respuesta se pierde porque el llamador se
+    /// cortó dejaría al emisor sin facturar hasta que el ticket venza. La firma recibe un token que el llamador no cancela, el
+    /// ticket se guarda y la cancelación del llamador se lanza después; la llamada siguiente lo encuentra sin volver a firmar.</summary>
+    [Fact]
+    public async Task UnaCancelacionDelLlamadorDuranteLaFirmaNoLaAbandonaYElTicketQuedaGuardado()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+        var firmaEmpezo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberarFirma = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firmas = 0;
+        var firmaVioCancelacion = false;
+
+        async Task<TicketDeAcceso> Fabricar(CancellationToken ct)
+        {
+            Interlocked.Increment(ref firmas);
+            firmaEmpezo.TrySetResult();
+            await liberarFirma.Task;
+            firmaVioCancelacion = ct.IsCancellationRequested;
+            return new TicketDeAcceso("firmado", "sig", reloj.Ahora.AddHours(12));
+        }
+
+        using var presupuesto = new CancellationTokenSource();
+        var llamada = repositorio.ObtenerOFirmarAsync(Clave, Fabricar, presupuesto.Token);
+        await firmaEmpezo.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
+        await presupuesto.CancelAsync();
+        liberarFirma.TrySetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => llamada);
+        Assert.False(firmaVioCancelacion);
+        Assert.Equal(1, firmas);
+
+        var siguiente = await repositorio.ObtenerOFirmarAsync(Clave, Fabricar, CancellationToken.None);
+        Assert.Equal("firmado", siguiente.Token);
+        Assert.Equal(1, firmas);
+    }
+
+    [Fact]
+    public async Task UnaCancelacionDelLlamadorMientrasEsperaElCerrojoSiLoCancela()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+        var firmaEmpezo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberarFirma = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firmas = 0;
+
+        async Task<TicketDeAcceso> Fabricar(CancellationToken ct)
+        {
+            Interlocked.Increment(ref firmas);
+            firmaEmpezo.TrySetResult();
+            await liberarFirma.Task;
+            return new TicketDeAcceso("firmado", "sig", reloj.Ahora.AddHours(12));
+        }
+
+        var primera = repositorio.ObtenerOFirmarAsync(Clave, Fabricar, CancellationToken.None);
+        await firmaEmpezo.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
+        using var presupuesto = new CancellationTokenSource();
+        var espera = repositorio.ObtenerOFirmarAsync(Clave, Fabricar, presupuesto.Token);
+        await presupuesto.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => espera);
+
+        liberarFirma.TrySetResult();
+        Assert.Equal("firmado", (await primera).Token);
+        Assert.Equal(1, firmas);
     }
 }

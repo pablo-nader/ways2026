@@ -31,8 +31,18 @@ public sealed class ClienteWsaa(HttpClient http, GeneradorDeTra generadorDeTra) 
         mensaje.Headers.TryAddWithoutValidation(
             "SOAPAction", SobreSoap.AccionDe(SobreSoap.EspacioWsaa, Operacion));
 
-        using var respuestaHttp = await http.SendAsync(mensaje, ct);
-        var textoRespuesta = await respuestaHttp.Content.ReadAsStringAsync(ct);
+        string textoRespuesta;
+        try
+        {
+            using var respuestaHttp = await http.SendAsync(mensaje, ct);
+            textoRespuesta = await respuestaHttp.Content.ReadAsStringAsync(ct);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Con el token del llamador sin cancelar es el timeout del HttpClient: no es una cancelación del llamador.
+            throw new ErrorDominio("arca_no_definitivo", "WSAA no respondió dentro del tiempo configurado.", 503);
+        }
+
         var respuesta = SobreSoap.Leer(textoRespuesta);
 
         if (respuesta.Fault is { } fault)

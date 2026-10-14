@@ -50,7 +50,7 @@ namespace Ways.IntegrationTests;
 /// <c>ReintentarAsync</c>. Los pasos de una misma llamada se pausan con interceptores de transacción, sin esperas por tiempo.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
@@ -87,6 +87,10 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         /// <summary>Se ejecuta en cada pedido, antes de contestar: simula que algo cambia mientras el servicio espera el ticket.</summary>
         public Func<Task>? AntesDeResponder { get; set; }
 
+        /// <summary>Como <see cref="AntesDeResponder"/>, pero recibe el token del pedido, para que la espera la corte la
+        /// cancelación igual que la de un handler real.</summary>
+        public Func<CancellationToken, Task>? AntesDeResponderConToken { get; set; }
+
         /// <summary>Si está, arma la respuesta de cada firma a partir de su número de orden (1, 2, …): permite distinguir qué
         /// ticket viajó en cada pedido a WSFE.</summary>
         public Func<int, string>? CuerpoPorFirma { get; set; }
@@ -97,6 +101,11 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
             if (AntesDeResponder is not null)
             {
                 await AntesDeResponder();
+            }
+
+            if (AntesDeResponderConToken is not null)
+            {
+                await AntesDeResponderConToken(ct);
             }
 
             return Falla
@@ -117,8 +126,15 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
         public Func<HttpRequestMessage, Task<HttpResponseMessage>> Solicitar { get; set; } =
             _ => throw new InvalidOperationException("EspiaWsfe.Solicitar no configurado.");
 
+        /// <summary>Si está, atiende los <c>FECAESolicitar</c> con el token del pedido (el que cancela el HttpClient por su timeout o
+        /// el llamador) en lugar de <see cref="Solicitar"/>.</summary>
+        public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? SolicitarConToken { get; set; }
+
         public Func<HttpRequestMessage, Task<HttpResponseMessage>> Consultar { get; set; } =
             _ => throw new InvalidOperationException("EspiaWsfe.Consultar no configurado.");
+
+        /// <summary>Si está, atiende los <c>FECompConsultar</c> con el token del pedido en lugar de <see cref="Consultar"/>.</summary>
+        public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? ConsultarConToken { get; set; }
 
         public IReadOnlyList<string> Operaciones
         {
@@ -166,7 +182,7 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
                     _cuerpos.Add(cuerpo);
                 }
 
-                return await Solicitar(request);
+                return SolicitarConToken is { } conToken ? await conToken(request, ct) : await Solicitar(request);
             }
 
             if (accion.Contains("FECompConsultar", StringComparison.Ordinal))
@@ -176,7 +192,7 @@ public class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : IClassFix
                     _operaciones.Add("FECompConsultar");
                 }
 
-                return await Consultar(request);
+                return ConsultarConToken is { } conToken ? await conToken(request, ct) : await Consultar(request);
             }
 
             throw new InvalidOperationException($"Operación WSFE no soportada por el espía: '{accion}'.");
