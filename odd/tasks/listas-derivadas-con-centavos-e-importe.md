@@ -83,3 +83,16 @@
     `LaDevolucionDeUnImporteConListaDerivadaReembolsaLoCobradoSinReaplicarElPorcentaje`.
   - Risk: a desktop POS still running the previous bundle (no `listas` logic) charges the typed amount offline while
     the server now records the discounted price on sync; the POS release must go out with this change.
+
+- 2026-10-14 judgment-day round 1 — commit `5bde41e1`. Fixes JD1 (offline sale re-derived a by-amount price with today's
+  list) and JD2 (idempotent resend compared against a re-derived price).
+  - Offline origin = `NumeroPreasignado is not null` (only a device may send it; web/online sales keep the T2
+    derived-list behavior). `importe` + `precioUnitario` is accepted only there (online keeps
+    `importe_con_precio_no_admitido`): the device price is stored as-is and audited against the derived price; an
+    `importe`-only offline line (previous bundle) is stored at the typed amount with no list and no audit. Credit notes
+    unchanged. Web: the queued by-amount line carries `precioUnitario` from `precioDeLineaPorImporte`.
+  - Resend compares charged prices, so it no longer depends on the current list percentage; `ExigirMismoContenido`,
+    `ItemEmitido`, `LineaDeVenta` docs and doc 10 state what is stored/compared.
+  - Evidence: integration `VentaPorImporteTests` 49 + touched sale/offline/offer/authorization classes 373 green;
+    mutation (offline branch off + list always applied) fails the (a) offline-without-price test and the (d) resend test.
+    Domain 1695, Application 1036, web vitest src/pos 871 and src/api 1599, tsc clean.
