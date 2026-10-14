@@ -110,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fragmento: [1, 2]
+        fragmento: [1, 2, 3]
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
