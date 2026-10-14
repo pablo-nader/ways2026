@@ -49,6 +49,11 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             t.HasCheckConstraint(
                 "ck_comprobantes_venta_espejo_sin_turno",
                 "id_venta_origen IS NULL OR id_turno_caja IS NULL");
+
+            // Los datos legales congelados solo existen en un espejo fiscal.
+            t.HasCheckConstraint(
+                "ck_comprobantes_venta_datos_legales_espejo",
+                "datos_legales_fiscales IS NULL OR id_venta_origen IS NOT NULL");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_comprobantes_venta");
@@ -146,6 +151,8 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         // jsonb — precedente Auditoria.cs:40-45/AuditoriaConfiguration.cs:42-43: string ya
         // serializado, nunca la respuesta cruda de ARCA (persistiría Token/Sign sin cifrado).
         builder.Property(c => c.ObservacionesFiscales).HasColumnName("observaciones_fiscales").HasColumnType("jsonb");
+
+        builder.Property(c => c.DatosLegalesFiscales).HasColumnName("datos_legales_fiscales").HasColumnType("jsonb");
 
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();

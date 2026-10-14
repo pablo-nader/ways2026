@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ways.Domain.Clientes;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Organizacion;
@@ -79,7 +80,8 @@ public sealed record DatosDeFacturaFiscal(
     ReceptorDeFacturaFiscal Receptor,
     TotalesDeFacturaFiscal Totales);
 
-/// <summary>Quién emite la factura. <see cref="Domicilio"/> es el del punto de venta; <see cref="CondicionFiscal"/> el nombre
+/// <summary>Quién emite la factura, tal como estaba al emitirla (congelado en el espejo; un espejo anterior a esa columna lo
+/// toma de las filas actuales). <see cref="Domicilio"/> es el del punto de venta; <see cref="CondicionFiscal"/> el nombre
 /// de la condición de la empresa (<c>null</c> si no tiene).</summary>
 public sealed record EmisorDeFacturaFiscal(
     string RazonSocial,
@@ -95,9 +97,26 @@ public sealed record EmisorDeFacturaFiscal(
         empresa.InicioActividades, puntoVenta.Domicilio);
 }
 
-/// <summary>A quién se factura. <see cref="TipoDocumento"/> es la etiqueta del documento tal como viajó a ARCA
+/// <summary>Emisor y receptor congelados en el espejo fiscal en la transacción que lo inserta (columna
+/// <c>datos_legales_fiscales</c>): la factura impresa y el QR salen de acá y no de las filas actuales de empresa y cliente.</summary>
+public sealed record DatosLegalesDeFacturaFiscal(EmisorDeFacturaFiscal Emisor, ReceptorDeFacturaFiscal Receptor)
+{
+    private static readonly JsonSerializerOptions Opciones = new(JsonSerializerDefaults.Web);
+
+    public string Serializar() => JsonSerializer.Serialize(this, Opciones);
+
+    /// <summary><c>null</c> cuando el espejo es anterior a la columna (no hay snapshot).</summary>
+    public static DatosLegalesDeFacturaFiscal? Leer(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<DatosLegalesDeFacturaFiscal>(json, Opciones)
+                ?? throw new InvalidOperationException("Los datos legales fiscales del espejo no se pudieron leer.");
+}
+
+/// <summary>A quién se factura. <see cref="TipoDocumento"/> es la etiqueta del documento que viajó a ARCA
 /// (<see cref="CodigoTipoDocumento"/>: 80 CUIT, 86 CUIL, 96 DNI, 94 Pasaporte, 99 sin identificar) y
-/// <see cref="NumeroDocumento"/> el número enviado (0 con 99).</summary>
+/// <see cref="NumeroDocumento"/> el número enviado (0 con 99). Todos los campos son los de la emisión, congelados en el
+/// espejo; solo un espejo anterior a esa columna los toma de la fila actual del cliente.</summary>
 public sealed record ReceptorDeFacturaFiscal(
     string Nombre,
     string TipoDocumento,

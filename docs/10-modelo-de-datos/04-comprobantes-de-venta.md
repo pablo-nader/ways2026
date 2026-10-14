@@ -26,6 +26,7 @@ comprobantes_venta (          -- [operativa]
     cae_vencimiento        date        NULL,
     resultado_fiscal       resultado_fiscal NULL,  -- enum: pendiente|aprobado|aprobado_con_observaciones|rechazado
     observaciones_fiscales jsonb       NULL,        -- [{ "codigo": int, "mensaje": string }]
+    datos_legales_fiscales jsonb       NULL,        -- solo espejo fiscal: emisor + receptor congelados al emitir
     -- Facturación por medio de pago: espejo fiscal y bandera del cajero
     id_venta_origen        integer     NULL,        -- espejo fiscal → la venta (TX) que factura
     factura_forzada        boolean     NOT NULL DEFAULT false, -- el cajero pidió facturar este ticket
@@ -322,6 +323,15 @@ acumulados_de_facturacion (     -- [operativa] id_tenant + id_empresa, PK-only s
 **Estado (facturación por medio de pago, T3): implementada**, migración `FacturacionPorMedioDePagoEsquema`. Solo DDL (las
 dos tablas nacen vacías y las columnas nuevas de `comprobantes_venta` tienen valor por defecto, así que no hay backfill).
 RLS estándar (`ENABLE` + `FORCE`) en ambas tablas, creada en la misma migración.
+
+**Datos legales congelados del espejo (`datos_legales_fiscales`, migración `DatosLegalesCongeladosEnEspejoFiscal`).**
+`jsonb NULL` con `{ emisor, receptor }` (razón social, fantasía, CUIT, condición, IIBB, inicio de actividades y domicilio del
+punto de venta del emisor; nombre, documento ARCA —tipo y número que viajaron a ARCA y entraron al QR—, condición y domicilio
+del receptor). Se escribe una sola vez, en la transacción A que inserta el espejo, con las mismas lecturas con que se armó el
+pedido a ARCA, y no se vuelve a tocar: la reimpresión (`GET /api/ventas/{id}`), el QR y el reintento del pedido usan estos datos
+y no las filas actuales de empresa y cliente. `ck_comprobantes_venta_datos_legales_espejo` lo limita a un espejo
+(`id_venta_origen IS NOT NULL`). Sin backfill: `NULL` significa "usar las filas actuales" y es el estado de toda venta y de los
+espejos anteriores a la columna.
 
 **Bloqueo de la migración.** Los CHECK (`ck_comprobantes_venta_espejo_fiscal`, `ck_comprobantes_venta_espejo_sin_turno`), la FK
 autorreferente (`fk_comprobantes_venta_venta_origen`) y el índice único (`ux_comprobantes_venta_venta_origen`) sobre

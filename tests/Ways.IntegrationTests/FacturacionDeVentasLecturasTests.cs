@@ -88,6 +88,10 @@ public partial class FacturacionDeVentasEmisionTests
     {
         var t = await PrepararCobroAsync("lecturacuitroto");
         var emitido = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t));
+        // Con datos legales congelados el CUIT sale del espejo y un CUIT actual roto ya no impide proyectar: el camino que lee la
+        // empresa actual (y falla con ese CUIT) es el de un espejo anterior a la columna.
+        await EjecutarComoOwnerAsync(
+            "UPDATE comprobantes_venta SET datos_legales_fiscales = NULL WHERE id_venta_origen = $1", emitido.Id);
         await EjecutarComoOwnerAsync("UPDATE empresas SET cuit = 'no-numerico' WHERE id_empresa = $1", t.C.IdEmpresa);
         t.C.Wsfe.Reiniciar();
 
@@ -351,10 +355,118 @@ public partial class FacturacionDeVentasEmisionTests
         var sinRazonSocial = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Receptor;
         await EjecutarComoOwnerAsync(
             "UPDATE clientes SET razon_social = 'Gómez Hnos. SRL' WHERE id_cliente = $1", t.C.IdClienteRi);
+        var trasEditarElCliente = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Receptor;
+        // Editar el cliente ya no cambia la factura emitida (los datos legales están congelados). La regla del nombre a imprimir se
+        // observa por el único camino que lee el cliente actual: un espejo anterior a la columna (snapshot NULL).
+        await EjecutarComoOwnerAsync(
+            "UPDATE comprobantes_venta SET datos_legales_fiscales = NULL WHERE id_venta_origen = $1", venta.IdVenta);
         var conRazonSocial = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Receptor;
 
         Assert.Equal("Juana Gómez", sinRazonSocial.Nombre);
+        Assert.Equal("Juana Gómez", trasEditarElCliente.Nombre);
         Assert.Equal("Gómez Hnos. SRL", conRazonSocial.Nombre);
+    }
+
+    private static JsonElement DecodificarQr(string? payload)
+    {
+        Assert.NotNull(payload);
+        var base64 = payload[(payload.IndexOf("p=", StringComparison.Ordinal) + 2)..];
+        using var documento = JsonDocument.Parse(Convert.FromBase64String(base64));
+        return documento.RootElement.Clone();
+    }
+
+    private async Task EditarClienteYEmpresaTrasLaEmisionAsync(Ctx c)
+    {
+        await EjecutarComoOwnerAsync(
+            "UPDATE clientes SET numero_documento = '20999999995', razon_social = 'Receptor Editado SRL', " +
+            "id_condicion_fiscal = (SELECT id_condicion_fiscal FROM condiciones_fiscales WHERE codigo = 'MONOTRIBUTO') " +
+            "WHERE id_cliente = $1", c.IdClienteRi);
+        await EjecutarComoOwnerAsync(
+            "UPDATE empresas SET razon_social = 'Emisor Editado SA', ingresos_brutos = 'CM 000-111' WHERE id_empresa = $1",
+            c.IdEmpresa);
+    }
+
+    /// <summary>JD1-W1. Cláusula bajo prueba: <c>LeerFacturaAsync</c> arma emisor, receptor y el documento del QR desde
+    /// <c>datos_legales_fiscales</c> del espejo y no desde las filas actuales. Mutación: leer empresa y cliente actuales en vez del
+    /// snapshot deja este test en rojo.</summary>
+    [Fact]
+    public async Task LaFacturaAprobadaSeLeeConElEmisorYElReceptorDeLaEmisionAunqueLuegoSeEditenElClienteYLaEmpresa()
+    {
+        var t = await PrepararCobroAsync("lecturacongelada");
+        await CargarDatosLegalesDeLaEmpresaAsync(t.C);
+        await EjecutarComoOwnerAsync(
+            "UPDATE clientes SET razon_social = 'Receptor Original SA', domicilio = 'Calle Falsa 123' WHERE id_cliente = $1",
+            t.C.IdClienteRi);
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteRi, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        var original = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!;
+        await EditarClienteYEmpresaTrasLaEmisionAsync(t.C);
+        t.C.Wsfe.Reiniciar();
+
+        var reimpresa = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!;
+
+        Assert.Equal(JsonSerializer.Serialize(original, OpcionesJson), JsonSerializer.Serialize(reimpresa, OpcionesJson));
+        Assert.Equal("Emisor Legal SA", reimpresa.Emisor.RazonSocial);
+        Assert.Equal("CM 901-555", reimpresa.Emisor.IngresosBrutos);
+        Assert.Equal("Receptor Original SA", reimpresa.Receptor.Nombre);
+        Assert.Equal(
+            ((short)80, 20222222223L, await NombreDeCondicionAsync(t.C, "RI")),
+            (reimpresa.Receptor.CodigoTipoDocumento, reimpresa.Receptor.NumeroDocumento, reimpresa.Receptor.CondicionFiscal));
+        var qr = DecodificarQr(reimpresa.PayloadQr);
+        Assert.Equal((80, 20222222223L), (qr.GetProperty("tipoDocRec").GetInt32(), qr.GetProperty("nroDocRec").GetInt64()));
+        Assert.Empty(t.C.Wsfe.Operaciones);
+    }
+
+    /// <summary>JD1-W1. Cláusula bajo prueba: al volver a pedir un espejo pendiente, <c>EvaluarCompuertasAsync</c> toma el documento
+    /// del receptor del snapshot. Mutación: armar el pedido con el cliente actual envía 20999999995 y deja el test en rojo.</summary>
+    [Fact]
+    public async Task ElPedidoAArcaDeUnEspejoPendienteUsaElDocumentoCongeladoAunqueElClienteSeHayaEditado()
+    {
+        var c = await PrepararAsync("congeladapedido");
+        var venta = await SembrarVentaDecididaAsync(c, c.IdClienteRi);
+        c.Wsfe.Solicitar = RespondeHttp500();
+        await ProcesarAsync(c.Admin, venta.IdFacturacion);
+        var congelado = Assert.Single(await ConsultarAsync(
+            c, "SELECT datos_legales_fiscales->'receptor'->>'numeroDocumento' FROM comprobantes_venta WHERE id_venta_origen = $1",
+            l => l.GetString(0), venta.IdVenta));
+        Assert.Equal("20222222223", congelado);
+        await EditarClienteYEmpresaTrasLaEmisionAsync(c);
+
+        c.Wsfe.Reiniciar();
+        c.Wsfe.Consultar = Responde(ConsultarNoEncontrado());
+        c.Wsfe.Solicitar = Responde(FecaeAprobado("70666666666666"));
+        var estado = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
+        var cuerpo = Assert.Single(c.Wsfe.CuerposDeSolicitud);
+        Assert.Equal(("80", congelado), (CampoDelCuerpo(cuerpo, "DocTipo"), CampoDelCuerpo(cuerpo, "DocNro")));
+        var qr = DecodificarQr(estado.Comprobante!.PayloadQr);
+        Assert.Equal(congelado, qr.GetProperty("nroDocRec").GetInt64().ToString(CultureInfo.InvariantCulture));
+        Assert.Equal(20222222223L, estado.Comprobante.Receptor.NumeroDocumento);
+    }
+
+    /// <summary>JD1-W1. Un espejo anterior a la columna (snapshot NULL) se lee de las filas actuales de empresa, cliente y punto de
+    /// venta.</summary>
+    [Fact]
+    public async Task UnEspejoSinDatosLegalesCongeladosSeLeeDeLasFilasActuales()
+    {
+        var t = await PrepararCobroAsync("lecturasinsnapshot");
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteRi, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        await EjecutarComoOwnerAsync(
+            "UPDATE comprobantes_venta SET datos_legales_fiscales = NULL WHERE id_venta_origen = $1", venta.IdVenta);
+        await EditarClienteYEmpresaTrasLaEmisionAsync(t.C);
+
+        var factura = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!;
+
+        Assert.Equal("Emisor Editado SA", factura.Emisor.RazonSocial);
+        Assert.Equal("CM 000-111", factura.Emisor.IngresosBrutos);
+        Assert.Equal("Receptor Editado SRL", factura.Receptor.Nombre);
+        Assert.Equal(20999999995L, factura.Receptor.NumeroDocumento);
+        Assert.Equal(await NombreDeCondicionAsync(t.C, "MONOTRIBUTO"), factura.Receptor.CondicionFiscal);
+        Assert.Equal(20999999995L, DecodificarQr(factura.PayloadQr).GetProperty("nroDocRec").GetInt64());
     }
 
     [Fact]

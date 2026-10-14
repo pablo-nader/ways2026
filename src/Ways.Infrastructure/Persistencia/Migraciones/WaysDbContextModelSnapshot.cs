@@ -4858,6 +4858,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("DatosLegalesFiscales")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("datos_legales_fiscales");
+
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
@@ -5034,6 +5038,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("comprobantes_venta", null, t =>
                         {
                             t.HasCheckConstraint("ck_comprobantes_venta_cae_digitos", "cae IS NULL OR cae ~ '^[0-9]{14}$'");
+
+                            t.HasCheckConstraint("ck_comprobantes_venta_datos_legales_espejo", "datos_legales_fiscales IS NULL OR id_venta_origen IS NOT NULL");
 
                             t.HasCheckConstraint("ck_comprobantes_venta_espejo_fiscal", "id_venta_origen IS NULL OR resultado_fiscal IS NOT NULL");
 
