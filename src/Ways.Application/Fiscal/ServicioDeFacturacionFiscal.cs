@@ -485,6 +485,11 @@ public class ServicioDeFacturacionFiscal(
             claveDeTicket, token => FirmarTicketNuevoAsync(empresa, ambiente, token), ct);
     }
 
+    /// <summary>Si la empresa tiene en el cache un ticket de acceso vigente del ambiente configurado, con la misma clave que usa
+    /// <see cref="ObtenerTicketAsync"/>. Nunca firma ni llama a WSAA.</summary>
+    internal async Task<bool> HayTicketVigenteAsync(int idEmpresa, CancellationToken ct) =>
+        await repositorioDeTicket.ObtenerVigenteAsync(new ClaveDeTicket(idEmpresa, ResolverAmbiente(), ServicioWsfe), ct) is not null;
+
     private Task<TicketDeAcceso> FirmarTicketNuevoAsync(Empresa empresa, AmbienteFiscal ambiente, CancellationToken ct)
     {
         var claveDeTicket = new ClaveDeTicket(empresa.Id, ambiente, ServicioWsfe);

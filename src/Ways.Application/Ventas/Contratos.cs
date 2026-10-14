@@ -208,7 +208,9 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 ///
 /// <see cref="FacturaForzada"/> es el round-trip de <see cref="SolicitudDeVenta.ForzarFactura"/>. <see cref="Fiscal"/>
 /// es lo que el servidor decidió sobre la facturación del ticket: solo la respuesta de la emisión (y de su reenvío)
-/// lo completa; una lectura por id (reimpresión) lo devuelve <c>null</c>, o sea "no consultado", no "no corresponde".</summary>
+/// lo completa; una lectura por id (reimpresión) lo devuelve <c>null</c>, o sea "no consultado", no "no corresponde". Si el
+/// servidor alcanzó a emitir la factura antes de responder (o ya estaba emitida en un reenvío), <c>Fiscal.Estado</c> es
+/// <c>aprobado</c> y <c>Fiscal.Comprobante</c> lleva sus datos (<see cref="EmisionEnLineaAlCobrar"/>).</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,

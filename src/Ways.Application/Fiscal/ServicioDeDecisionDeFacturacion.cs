@@ -126,10 +126,17 @@ public class ServicioDeDecisionDeFacturacion(
     /// misma llamada.</summary>
     public async Task SanearDecisionesDebidasAsync(int idPuntoVenta, int idExcluida)
     {
+        using var presupuesto = new CancellationTokenSource(PresupuestoDeBarrido);
+        await SanearDecisionesDebidasAsync(idPuntoVenta, idExcluida, presupuesto.Token);
+    }
+
+    /// <summary>El mismo barrido con un presupuesto que fija el llamador (<see cref="EmisionEnLineaAlCobrar"/> lo recorta a lo
+    /// que queda de su tope total). Solo lo llama código de la aplicación: el endpoint no tiene forma de pasarle el token de la
+    /// solicitud. El corte de ese token se trata igual que el del presupuesto propio.</summary>
+    internal async Task SanearDecisionesDebidasAsync(int idPuntoVenta, int idExcluida, CancellationToken ct)
+    {
         try
         {
-            using var presupuesto = new CancellationTokenSource(PresupuestoDeBarrido);
-            var ct = presupuesto.Token;
             var ahora = reloj.Ahora;
 
             // Ventas del punto de venta que nadie decidió: sin marca y que no son espejos (que nunca se deciden), salvo las

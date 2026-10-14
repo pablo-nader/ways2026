@@ -23,16 +23,16 @@ public static class VentasEndpoints
         // GestionDeCatalogo en POST /api/stock/ajustes"). Un Vendedor tiene que poder vender.
         //
         // Facturación por medio de pago: con la venta ya comiteada, el servidor decide en una transacción propia si el
-        // ticket se factura. La decisión nunca hace fallar la venta (DecidirTrasLaVentaAsync no lanza) y no recibe el token
-        // de la solicitud: la venta ya está comiteada y un corte del cliente no debe dejarla sin decidir. Después
-        // decide las ventas debidas del mismo punto de venta que una falla anterior dejó sin decidir, salvo que la
-        // decisión de esta venta haya terminado en sin_decidir (DecidirYSanearAsync).
+        // ticket se factura. Nada de lo fiscal hace fallar la venta (DecidirEmitirYSanearAsync no lanza) ni recibe el token
+        // de la solicitud: la venta ya está comiteada y un corte del cliente no debe dejarla sin decidir. Decide, si el
+        // ticket quedó pendiente intenta emitir la factura con un presupuesto corto y, con lo que quede del tope, decide
+        // las ventas debidas del mismo punto de venta (salvo que esta decisión haya terminado en sin_decidir).
         grupo.MapPost("/", async (
-            ServicioDeVentas servicio, ServicioDeDecisionDeFacturacion decision, SolicitudDeVenta solicitud,
+            ServicioDeVentas servicio, EmisionEnLineaAlCobrar emisionEnLinea, SolicitudDeVenta solicitud,
             CancellationToken ct) =>
         {
             var emitido = await servicio.EmitirAsync(solicitud, ct);
-            var fiscal = await decision.DecidirYSanearAsync(emitido.Id, emitido.IdPuntoVenta);
+            var fiscal = await emisionEnLinea.DecidirEmitirYSanearAsync(emitido.Id, emitido.IdPuntoVenta);
             return Results.Created($"/api/ventas/{emitido.Id}", emitido with { Fiscal = fiscal });
         })
         .WithSummary("Emite un comprobante de venta (checkout). Todo el dinero se recalcula server-side.");
