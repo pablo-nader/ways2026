@@ -2564,9 +2564,9 @@ describe('useSincronizacionOffline — encolarVentaOffline con artículo por imp
     }
   }
 
-  async function encolar(solicitudBase: SolicitudDeVenta) {
+  async function encolar(solicitudBase: SolicitudDeVenta, listas?: InstantaneaDePos['listas']) {
     const almacen = almacenFake()
-    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 100, precioFinal: 90, descuentoUnitario: 10 }), articuloPorImporte()] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 100, precioFinal: 90, descuentoUnitario: 10 }), articuloPorImporte()], ...(listas ? { listas } : {}) }))
     await guardarBloque(almacen, bloqueFixture())
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -2592,18 +2592,32 @@ describe('useSincronizacionOffline — encolarVentaOffline con artículo por imp
     ...extra,
   })
 
-  it('una venta solo de líneas por importe se encola con el importe y sin precios', async () => {
+  // judgment-day ronda 1 (JD1): el servidor no re-deriva con la lista de hoy lo que la caja ya cobró, así que la línea por
+  // importe encolada lleva el precio cobrado (el importe con el porcentaje de la lista derivada) junto a su importe tipeado.
+  it('una venta solo de líneas por importe se encola con el importe y el precio cobrado, sin descuento', async () => {
     const { resultado, outbox } = await encolar(solicitudFixture({ lineas: [lineaImporte(150.5), lineaImporte(80)] }))
 
     expect(resultado).toMatchObject({ ok: true })
-    expect(outbox[0].solicitud.lineas).toEqual([lineaImporte(150.5), lineaImporte(80)])
+    expect(outbox[0].solicitud.lineas).toEqual([
+      lineaImporte(150.5, { precioUnitario: 150.5 }),
+      lineaImporte(80, { precioUnitario: 80 }),
+    ])
     for (const linea of outbox[0].solicitud.lineas ?? []) {
-      expect(linea).not.toHaveProperty('precioUnitario')
       expect(linea).not.toHaveProperty('descuentoUnitario')
     }
   })
 
-  it('una venta mixta lleva precio de lista en las comunes y solo importe en la línea por importe', async () => {
+  it('con una lista derivada la línea por importe encolada lleva el importe tipeado y el precio con el porcentaje', async () => {
+    const { resultado, outbox } = await encolar(
+      solicitudFixture({ lineas: [lineaImporte(1500)] }),
+      [{ idListaPrecio: LISTA_CF, modo: 'Derivada', porcentaje: -10 }],
+    )
+
+    expect(resultado).toMatchObject({ ok: true })
+    expect(outbox[0].solicitud.lineas).toEqual([lineaImporte(1500, { precioUnitario: 1350 })])
+  })
+
+  it('una venta mixta lleva precio de lista en las comunes y importe más precio cobrado en la línea por importe', async () => {
     const { resultado, outbox } = await encolar(
       solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null }, lineaImporte(150, { ajusteManualPorcentaje: -10 })] }),
     )
@@ -2612,7 +2626,7 @@ describe('useSincronizacionOffline — encolarVentaOffline con artículo por imp
     const [comun, porImporte] = outbox[0].solicitud.lineas ?? []
     expect(comun).toMatchObject({ idArticulo: 1, precioUnitario: 100, descuentoUnitario: 10 })
     expect(comun).not.toHaveProperty('importe')
-    expect(porImporte).toEqual(lineaImporte(150, { ajusteManualPorcentaje: -10 }))
+    expect(porImporte).toEqual(lineaImporte(150, { ajusteManualPorcentaje: -10, precioUnitario: 150 }))
   })
 
   it('el importe encolado es el mismo que se reenvía al sincronizar', async () => {

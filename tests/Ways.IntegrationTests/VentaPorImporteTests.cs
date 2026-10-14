@@ -481,21 +481,88 @@ public class VentaPorImporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(-1350m, nota.Total);
     }
 
-    /// <summary>La venta que un dispositivo cobró offline manda solo el importe tipeado: el servidor lo resuelve con la
-    /// lista del cliente igual que el POS offline, así que el precio guardado es el mismo y no hay discrepancia.</summary>
+    /// <summary>JD1 (a): un dispositivo con el paquete anterior manda solo el importe tipeado y cobró eso mismo (1500). El
+    /// servidor no le aplica la lista de hoy: guarda 1500, los pagos (1500) cubren el total y no hay discrepancia.</summary>
     [Fact]
-    public async Task UnaVentaOfflineDeUnImporteConListaDerivadaGuardaElPrecioConElPorcentaje()
+    public async Task UnaVentaOfflineDeUnImporteSinPrecioDeUnPaqueteAnteriorSeRegistraPorElImporteTipeadoAunqueLaListaSeaDerivada()
     {
-        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineDeUnImporteConListaDerivadaGuardaElPrecioConElPorcentaje));
+        var ctx = await PrepararOfflineAsync("OfflineImporteSinPrecio");
         var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
         var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
 
         var emitido = await EmitirOkAsync(
             ctx.Cliente,
-            VentaOffline(ctx, 1350m, 1, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m)) with { IdCliente = empleado });
+            VentaOffline(ctx, 1500m, 1, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m)) with { IdCliente = empleado });
+
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal((1500m, 1500m, true), (item.PrecioUnitario, emitido.Total, item.PorImporte));
+        Assert.False(item.PrecioDiscrepante);
+        Assert.Equal(0, await ContarDiscrepanciasAsync(ctx.IdTenant));
+    }
+
+    /// <summary>JD1 (b): el paquete nuevo manda el importe tipeado y el precio que cobró (1350): se graba tal cual y, como
+    /// coincide con lo que el servidor derivaría, no es una discrepancia.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineDeUnImporteConElPrecioCobradoPorLaCajaGuardaEsePrecio()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineDeUnImporteConElPrecioCobradoPorLaCajaGuardaEsePrecio));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOffline(ctx, 1350m, 1, new LineaDeVenta(fiambreria, 1m, null, PrecioUnitario: 1350m, Importe: 1500m))
+                with { IdCliente = empleado });
 
         Assert.Equal((1350m, 1350m), (Assert.Single(emitido.Items).PrecioUnitario, emitido.Total));
         Assert.Equal(0, await ContarDiscrepanciasAsync(ctx.IdTenant));
+    }
+
+    /// <summary>JD1 (c): si la caja cobró un precio distinto del que el servidor derivaría hoy (porcentaje viejo en su
+    /// instantánea), se honra lo cobrado y la diferencia queda en la auditoría de discrepancias.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineDeUnImporteConUnPrecioDistintoDelDerivadoSeHonraYQuedaAuditada()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineDeUnImporteConUnPrecioDistintoDelDerivadoSeHonraYQuedaAuditada));
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, _) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOffline(ctx, 1200m, 1, new LineaDeVenta(fiambreria, 1m, null, PrecioUnitario: 1200m, Importe: 1500m))
+                with { IdCliente = empleado });
+
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal((1200m, 1200m, true), (item.PrecioUnitario, emitido.Total, item.PrecioDiscrepante));
+        Assert.Equal(1, await ContarDiscrepanciasAsync(ctx.IdTenant));
+    }
+
+    /// <summary>JD2 (d): el reenvío de una venta offline ya emitida se compara contra lo que cobró la caja, nunca contra un
+    /// precio re-derivado: aunque el porcentaje de la lista cambie entre el primer envío y el reenvío, devuelve el mismo
+    /// comprobante (los dos formatos: con el precio cobrado y solo con el importe).</summary>
+    [Fact]
+    public async Task ElReenvioDeUnaVentaOfflineConImporteDevuelveElMismoComprobanteAunqueCambieElPorcentajeDeLaLista()
+    {
+        var ctx = await PrepararOfflineAsync("ReenvioOfflineImporte");
+        var (fiambreria, _) = await SembrarAsync(ctx.IdTenant, UnidadVenta.Importe, precio: null);
+        var (empleado, lista) = await SembrarClienteConListaAsync(ctx.IdTenant, ModoLista.Derivada, -10m);
+
+        var conPrecio = VentaOffline(ctx, 1350m, 1, new LineaDeVenta(fiambreria, 1m, null, PrecioUnitario: 1350m, Importe: 1500m))
+            with { IdCliente = empleado };
+        var soloImporte = VentaOffline(ctx, 1500m, 2, new LineaDeVenta(fiambreria, 1m, null, Importe: 1500m))
+            with { IdCliente = empleado };
+        var primeraConPrecio = await EmitirOkAsync(ctx.Cliente, conPrecio);
+        var primeraSoloImporte = await EmitirOkAsync(ctx.Cliente, soloImporte);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            await db.ListasPrecio.Where(l => l.Id == lista)
+                .ExecuteUpdateAsync(set => set.SetProperty(l => l.Porcentaje, -20m));
+        }
+
+        Assert.Equal(primeraConPrecio.Id, (await EmitirOkAsync(ctx.Cliente, conPrecio)).Id);
+        Assert.Equal(primeraSoloImporte.Id, (await EmitirOkAsync(ctx.Cliente, soloImporte)).Id);
+        Assert.Equal(2, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
     /// <summary>La vista previa cotiza el importe con la lista derivada de la línea y con la fija lo deja igual, por las tres rutas.</summary>

@@ -119,8 +119,11 @@ public sealed record SolicitudDeVenta(
 /// el servidor le aplica el porcentaje (tipeado 1500 a -10 % queda en 1350), con una fija queda igual; nunca hay ofertas ni
 /// combos. El ajuste manual se aplica encima. Obligatorio en ese artículo (400 <c>importe_requerido</c>) y rechazado en cualquier otro
 /// (400 <c>importe_no_admitido</c>); mayor a cero, de a lo sumo dos decimales y dentro de <c>numeric(14,2)</c> (400
-/// <c>importe_invalido</c>). Nunca viaja junto a <see cref="PrecioUnitario"/> (400 <c>importe_con_precio_no_admitido</c>): en
-/// una venta offline la línea por importe lleva solo su importe y queda fuera del todas-o-ninguna del precio de las demás.
+/// <c>importe_invalido</c>). Solo viaja junto a <see cref="PrecioUnitario"/> en una venta offline (con número pre-asignado;
+/// en cualquier otra, 400 <c>importe_con_precio_no_admitido</c>): ahí es el precio que cobró el dispositivo y el servidor
+/// lo graba tal cual, auditando la diferencia contra el precio que derivaría hoy. Una línea por importe offline sin precio
+/// (paquete anterior de la caja) se registra por el importe tipeado, sin lista; en ambos casos queda fuera del
+/// todas-o-ninguna del precio de las demás.
 /// En una nota de crédito asociada es el precio unitario con que se vendió la línea que se devuelve (el que ya lleva el
 /// porcentaje de la lista): el servidor lo toma tal cual y no lo aplica de nuevo.</summary>
 public sealed record LineaDeVenta(
@@ -166,7 +169,9 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// afecta. Un item de un <c>TXR</c> siempre lo lleva en <c>null</c>.
 ///
 /// <see cref="PorImporte"/> sí se persiste (<c>items_comprobante_venta.por_importe</c>): la línea se vendió por el importe que tipeó el
-/// cajero, y <see cref="PrecioUnitario"/> es ese importe. Un item de un <c>TXR</c> siempre lo lleva en <c>false</c>.</summary>
+/// cajero, y <see cref="PrecioUnitario"/> es el precio con que se cobró: el importe con el porcentaje de la lista derivada
+/// del cliente si la venta fue online, o lo que cobró el dispositivo (su precio, o el importe tipeado si no mandó
+/// uno) si fue offline. Un item de un <c>TXR</c> siempre lo lleva en <c>false</c>.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,

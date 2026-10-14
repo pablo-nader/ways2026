@@ -88,7 +88,7 @@ public class ServicioDeVentas(
         // dto-contract-honesty regla 1) — el valor REAL (los items del presupuesto) se resuelve
         // más abajo, en la rama del snapshot (p6), reasignando esta misma variable.
         var lineas = solicitud.IdPresupuestoOrigen is null
-            ? ExigirLineasValidas(solicitud.Lineas)
+            ? ExigirLineasValidas(solicitud.Lineas, solicitud.NumeroPreasignado)
             : ExigirSinLineas(solicitud.Lineas);
         var pagos = solicitud.Pagos ?? [];
 
@@ -190,11 +190,16 @@ public class ServicioDeVentas(
             .Select(l => new LineaDeResolucion(l.IdArticulo, puntoVenta.IdEmpresa, cliente.IdListaPrecio, l.Cantidad, l.Importe))
             .ToList();
         // La devolución reembolsa el importe de la línea por importe tal cual: el precio de la venta original ya lleva
-        // el porcentaje de la lista derivada y aplicarlo otra vez reembolsaría menos de lo cobrado.
+        // el porcentaje de la lista derivada y aplicarlo otra vez reembolsaría menos de lo cobrado. La venta offline tampoco
+        // re-deriva con la lista de hoy lo que el dispositivo ya cobró: solo aplica la lista (para auditar la discrepancia)
+        // cuando la línea por importe trae el precio que cobró la caja.
+        var aplicarListaAlImporte = tipo.Signo > 0
+            && (solicitud.NumeroPreasignado is null
+                || lineas.Any(l => l.Importe is not null && l.PrecioUnitario is not null));
         var resolucion = presupuestoOrigen is null
-            ? tipo.Signo < 0
-                ? await servicioDeOfertas.ResolverDocumentoConImporteCobradoAsync(lineasDeResolucion, momento, ct)
-                : await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
+            ? aplicarListaAlImporte
+                ? await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
+                : await servicioDeOfertas.ResolverDocumentoConImporteCobradoAsync(lineasDeResolucion, momento, ct)
             : null;
 
         // 2 consultas: snapshot de articulos + alicuotas (design: The Sale Transaction). Sin
@@ -272,7 +277,7 @@ public class ServicioDeVentas(
         var (items, totales, lineaDeItem) = presupuestoOrigen is null
             ? MaterializarItems(
                 tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio,
-                combosDetectados, combosOfflineExistentes, devolucionesDeCombo)
+                combosDetectados, combosOfflineExistentes, devolucionesDeCombo, solicitud.NumeroPreasignado is not null)
             : ConLineaDeOrigenIdentidad(MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId));
 
         // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
@@ -673,14 +678,15 @@ public class ServicioDeVentas(
     /// NumeroPreasignado — sin esto, un reenvío bajo el mismo número pre-asignado con un carrito,
     /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
     /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero derivado: el conjunto
-    /// (idArticulo, cantidad, ajusteManualPorcentaje, importe si es por importe) de líneas, idCliente, idComprobanteAsociado y
+    /// (idArticulo, cantidad, ajusteManualPorcentaje, precio unitario si es por importe) de líneas, idCliente, idComprobanteAsociado y
     /// la composición de pagos (idMedioPago, importe, referencia) — nunca el total ni el precio de
-    /// ningún item (ver el comentario dentro del método), y tampoco <c>Observaciones</c> (idem, ver
+    /// ningún item de lista (ver el comentario dentro del método), y tampoco <c>Observaciones</c> (idem, ver
     /// el comentario dentro del método: es metadata, no identidad). El porcentaje de ajuste manual
     /// SÍ entra: lo tipeó el operador, no lo deriva el servidor, y dos envíos con porcentajes
-    /// distintos son dos ventas distintas; lo mismo el importe de una línea por importe, que también lo tipeó el
-    /// operador (el precio de una línea de lista, en cambio, se deriva y no entra). Compara contra los propios
-    /// items/pagos ya persistidos del comprobante encontrado.</summary>
+    /// distintos son dos ventas distintas; lo mismo el precio de una línea por importe, que en una venta con número
+    /// pre-asignado es el que cobró la caja (el que mandó el dispositivo, o el importe tipeado si no mandó precio) y nunca
+    /// se vuelve a derivar con la lista de hoy (el precio de una línea de lista, en cambio, se deriva y no entra).
+    /// Compara contra los propios items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
     {
         var lineasExistentes = existente.Items
@@ -2070,7 +2076,8 @@ public class ServicioDeVentas(
             int idListaPrecio,
             IReadOnlyDictionary<int, ComboEnLinea> combosDetectados,
             IReadOnlySet<int> combosOfflineExistentes,
-            IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo)
+            IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo,
+            bool ventaOffline)
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
         var origenes = new List<(int Linea, TramoDeDevolucion? Tramo)>(lineas.Count);
@@ -2094,6 +2101,17 @@ public class ServicioDeVentas(
                 lineasParaCalcular.Add(new LineaParaCalcular(
                     cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m, linea.AjusteManualPorcentaje,
                     linea.UnidadesConsumidasPorCombo ?? 0m, linea.AhorroDeCombo ?? 0m));
+                origenes.Add((i, null));
+                continue;
+            }
+
+            // Línea por importe de una venta offline que llega sin precio (un dispositivo con un paquete anterior a la
+            // lista derivada): se cobró por el importe tipeado, sin lista, y así se registra. No es una línea con precio
+            // offline: no se audita contra el precio de hoy.
+            if (ventaOffline && signoTipoComprobante > 0 && linea.Importe is { } importeCobrado)
+            {
+                lineasParaCalcular.Add(new LineaParaCalcular(
+                    cantidadConSigno, importeCobrado, 0m, linea.AjusteManualPorcentaje, 0m, 0m));
                 origenes.Add((i, null));
                 continue;
             }
@@ -2376,7 +2394,8 @@ public class ServicioDeVentas(
     /// largo llegue a <c>items_comprobante_venta.codigo_barra</c>.</summary>
     private const int LongitudMaximaCodigoBarra = 64;
 
-    private static IReadOnlyList<LineaDeVenta> ExigirLineasValidas(IReadOnlyList<LineaDeVenta>? lineas)
+    private static IReadOnlyList<LineaDeVenta> ExigirLineasValidas(
+        IReadOnlyList<LineaDeVenta>? lineas, long? numeroPreasignado)
     {
         if (lineas is null || lineas.Count == 0)
         {
@@ -2409,12 +2428,12 @@ public class ServicioDeVentas(
 
             ReglaDeAjusteManual.Validar(linea.AjusteManualPorcentaje);
 
-            if (linea.Importe is not null && linea.PrecioUnitario is not null)
+            if (linea.Importe is not null && linea.PrecioUnitario is not null && numeroPreasignado is null)
             {
                 throw new ErrorDominio(
                     "importe_con_precio_no_admitido",
-                    "Una línea por importe lleva su importe y nunca un precio unitario: el precio de lista no tiene " +
-                    "destino en ella.",
+                    "Una línea por importe solo lleva un precio unitario en una venta offline (con número pre-asignado), " +
+                    "que es el precio que cobró el dispositivo; en cualquier otro caso el servidor lo deriva del importe.",
                     400);
             }
         }
@@ -2536,7 +2555,8 @@ public class ServicioDeVentas(
     /// <c>precio_offline_incompleto</c>) — una mezcla dejaría media venta al precio de HOY y media
     /// al precio congelado del dispositivo, sin ningún significado económico ni una regla que
     /// diga cuál de las dos mitades es la verdad. Las líneas por importe (<see cref="LineaDeVenta.Importe"/>)
-    /// quedan fuera de esa cuenta: llevan su importe y nunca un precio, y el resto de la venta sigue siendo todo o nada. Un <c>descuentoUnitario</c> sin
+    /// quedan fuera de esa cuenta: pueden traer el precio que cobró la caja o no (un paquete anterior de la caja lo omite y
+    /// se registran por el importe tipeado), y el resto de la venta sigue siendo todo o nada. Un <c>descuentoUnitario</c> sin
     /// <c>precioUnitario</c> tampoco tiene destino (dto-contract-honesty regla 1): mismo código,
     /// se rechaza en vez de ignorarse. Negativo en cualquiera de los dos ⇒ 400
     /// <c>precio_offline_invalido</c>.
@@ -2582,8 +2602,8 @@ public class ServicioDeVentas(
                 400);
         }
 
-        // La línea por importe nunca trae precio de lista (su importe es el dato del cajero), así que el todas-o-ninguna
-        // se mide solo sobre las demás.
+        // La línea por importe puede traer o no el precio que cobró la caja (un paquete anterior a la lista derivada no lo
+        // manda: se registra por el importe tipeado), así que el todas-o-ninguna se mide solo sobre las demás.
         var deLista = lineas.Where(l => l.Importe is null).ToList();
 
         if (deLista.Any(l => l.PrecioUnitario is null))
@@ -2594,8 +2614,8 @@ public class ServicioDeVentas(
                 400);
         }
 
-        if (deLista.Any(l => l.PrecioUnitario!.Value < 0 || (l.DescuentoUnitario ?? 0m) < 0
-                || (l.DescuentoUnitario ?? 0m) > l.PrecioUnitario!.Value))
+        if (lineas.Any(l => l.PrecioUnitario is { } precio
+                && (precio < 0 || (l.DescuentoUnitario ?? 0m) < 0 || (l.DescuentoUnitario ?? 0m) > precio)))
         {
             throw new ErrorDominio(
                 "precio_offline_invalido",
