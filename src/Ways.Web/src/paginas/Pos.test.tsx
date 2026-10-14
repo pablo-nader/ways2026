@@ -10299,7 +10299,7 @@ describe('Pos — artículos por importe', () => {
       expect(noPrevenido).toBe(false)
       await screen.findByText('Fiambrería', { selector: 'td' })
       await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
-      expect(entradasEscaneadas()).toEqual(['150*500'])
+      expect(entradasEscaneadas()).toEqual([])
       expect(campoDeCodigo()).toHaveValue('')
     })
 
@@ -10311,7 +10311,30 @@ describe('Pos — artículos por importe', () => {
       await userEvent.click(await screen.findByRole('button', { name: /^Verdulería/ }))
 
       await screen.findByText('Verdulería', { selector: 'td' })
-      expect(entradasEscaneadas()).toEqual(['99.5*501'])
+      expect(entradasEscaneadas()).toEqual([])
+      await waitFor(() => expect(within(screen.getByRole('table')).getByText('$ 99,50')).toBeInTheDocument())
+    })
+
+    it('un código interno de 7 o más caracteres agrega el artículo del atajo y no el que tiene ese código como código de barras', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta === RUTA_DE_ATAJOS) return Promise.resolve([{ teclaAtajo: 'F5', idArticulo: FIAMBRERIA, codigoInterno: '5000001', nombre: 'Fiambrería' }])
+        if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 999, codigoInterno: 'OTRO', nombre: 'Otro artículo', codigoBarra: '5000001' }))
+        return undefined
+      })
+      apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; importe?: number }[] }) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion(cuerpo.lineas.map((l) => ({ idArticulo: l.idArticulo, idListaPrecio: 1, precioOriginal: l.importe ?? 100, precioFinal: l.importe ?? 100, descuentoUnitario: 0, aplicadas: [] }))))
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(screen.queryByText('Otro artículo', { selector: 'td' })).not.toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
     })
 
     it('con el campo vacío avisa que falta el importe y no escanea', async () => {
@@ -10365,7 +10388,7 @@ describe('Pos — artículos por importe', () => {
       expect(llamadasDeAtajos()).toHaveLength(2)
       fireEvent.keyDown(document, { key: 'F5' })
       await screen.findByText('Fiambrería', { selector: 'td' })
-      expect(entradasEscaneadas()).toEqual(['150*500'])
+      expect(entradasEscaneadas()).toEqual([])
     })
 
     it('mientras la lectura sigue en vuelo avisa que faltan los datos y no la duplica', async () => {

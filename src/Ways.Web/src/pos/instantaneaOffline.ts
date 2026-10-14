@@ -263,7 +263,9 @@ export function resolverEscaneoOffline(instantanea: InstantaneaDePos, entradaCru
 }
 
 /** El artículo por importe como lo responde el escaneo del servidor: cantidad 1, sin acumular, con `importe` solo si se tipeó. */
-function escaneadoPorImporte(articulo: ArticuloDeInstantanea, codigoBarra: string | null, importe?: number): ArticuloEscaneado {
+function escaneadoPorImporte(
+  articulo: Pick<ArticuloDeInstantanea, 'idArticulo' | 'codigoInterno' | 'nombre' | 'teclaAtajo'>,
+  codigoBarra: string | null, importe?: number): ArticuloEscaneado {
   return {
     idArticulo: articulo.idArticulo,
     codigoInterno: articulo.codigoInterno,
@@ -304,6 +306,13 @@ export function resolverAtajoOffline(instantanea: InstantaneaDePos, tecla: Tecla
 
   const importe = leerImporteTipeado(textoImporte)
   return importe === null ? { tipo: 'importeInvalido' } : { tipo: 'articulo', articulo: escaneadoPorImporte(articulo, null, importe) }
+}
+
+/** Lo mismo con los atajos que sirve el servidor: el artículo sale del registro de la tecla, nunca de reinterpretar su código
+ * como `importe*código` (un código de 7 o más caracteres se leería como código de barras). */
+export function resolverAtajoEnLinea(atajo: AtajoDeImporte, textoImporte: string): ResultadoDeAtajoOffline {
+  const importe = leerImporteTipeado(textoImporte)
+  return importe === null ? { tipo: 'importeInvalido' } : { tipo: 'articulo', articulo: escaneadoPorImporte(atajo, null, importe) }
 }
 
 /** Precio del artículo en la lista pedida; `null` si el artículo no tiene precio en esa lista. */

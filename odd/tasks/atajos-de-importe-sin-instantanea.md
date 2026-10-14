@@ -57,3 +57,4 @@ Ruta: escritor delegado único (backend y web son un mismo slice de ~250 líneas
   condición de lectura mata la prueba "con la instantánea no pide la lectura".
 - T3: `Ways.Application.Tests` 1026/1026; `SuperficieDeAutorizacion` + escaneo 19/19;
   `src/pos` 856/856; `tsc -b` limpio; oxlint sin hallazgos nuevos.
+- JD1 (judgment-day): la rama en línea de F5-F8 ya no arma `importe*código` (un código de 7+ caracteres se leía como código de barras); resuelve por id con `resolverAtajoEnLinea` y agrega sin escanear. Mutación (restaurar `escanear`) mata 5 pruebas; `Pos.test.tsx` 493/493, `src/pos` 856/856, `tsc -b` limpio.

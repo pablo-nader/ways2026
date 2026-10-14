@@ -29,7 +29,6 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import {
   entradaConPuntoDecimal,
   esTeclaDeAtajo,
-  leerImporteTipeado,
   MENSAJE_DE_ATAJO_SIN_DATOS,
   MENSAJE_DE_CANTIDAD_DE_IMPORTE,
   MENSAJE_DE_IMPORTE_INVALIDO,
@@ -127,6 +126,7 @@ import {
   buscarClientesOffline,
   formatearVejezDeInstantanea,
   lineasConImporteDeArticuloOrdinario,
+  resolverAtajoEnLinea,
   resolverAtajoOffline,
   resolverEscaneoOffline,
   resolverPreviaOffline,
@@ -2545,13 +2545,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         setErrorEscaneo(mensajeDeAtajoSinImporte(tecla))
         return
       }
-      const importe = leerImporteTipeado(texto)
-      if (importe === null) {
+      const enLinea = resolverAtajoEnLinea(atajo, texto)
+      if (enLinea.tipo === 'importeInvalido') {
         setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
         return
       }
-      // Mismo camino que tipear `importe*código`: el servidor resuelve el artículo y el importe, y el aviso de un rechazo es el del escaneo.
-      void escanear(`${importe}*${atajo.codigoInterno}`)
+      if (enLinea.tipo === 'articulo' && agregarEscaneado(enLinea.articulo)) {
+        setEntradaEscaneo('')
+        setErrorEscaneo('')
+      }
+      focoPendienteRef.current = true
       return
     }
     const resultado = resolverAtajoOffline(instantaneaDelPuntoVenta, tecla, texto)
