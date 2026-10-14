@@ -6,7 +6,7 @@ namespace Ways.Domain.Fiscal;
 /// <summary>
 /// El QR fiscal de la RG 4291 (proposal.md §75-76, design.md:366, spec comprobante-fiscal: "The RG
 /// 4291 QR Payload Uses A Synthetic codAut In 19a"). Los 13 campos exactos del payload JSON,
-/// codificados a base64 y embebidos en <c>https://www.afip.gob.ar/fe/qr/?p=&lt;base64&gt;</c>.
+/// codificados a base64 y embebidos en <c>https://www.arca.gob.ar/fe/qr/?p=&lt;base64&gt;</c>.
 ///
 /// <c>codAut</c> es "sintético" en 19a en el sentido de la spec: es el CAE que devuelve el MOCK de
 /// WSFE (nunca uno emitido por un servidor ARCA real, invariante I4/OD1), pero estructuralmente
@@ -21,7 +21,7 @@ namespace Ways.Domain.Fiscal;
 /// </summary>
 public static class PayloadQrFiscal
 {
-    private const string UrlBase = "https://www.afip.gob.ar/fe/qr/?p=";
+    private const string UrlBase = "https://www.arca.gob.ar/fe/qr/?p=";
 
     /// <summary><c>tipoCodAut</c> siempre <c>"E"</c> (CAE por webservice) — 19a nunca emite CAEA
     /// (proposal decisión 4, OD1: CAEA es contingencia, 19c).</summary>
