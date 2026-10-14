@@ -139,6 +139,7 @@ import { useRegistroDeAccionesDePos } from '../pos/AccionesDePosContext'
 import type { EstadoDeAccionesDePos } from '../pos/AccionesDePosContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
+import { conFiscalSoloSiSeguroSeFactura, ESPERA_DE_LA_FACTURA_MS, ventaSeguroSeFactura } from '../pos/facturacionAlCobrar'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
@@ -894,6 +895,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const cobrandoRef = useRef(false)
   const generacionCobroRef = useRef(0)
   const [errorCobro, setErrorCobro] = useState('')
+  // "Facturar": apagado por defecto y se apaga solo al terminar cada venta; no viaja bajo un presupuesto.
+  // `facturando` solo marca la espera acotada de la factura dentro de `cobrar()`, que ya mantiene la pantalla inerte.
+  const [facturar, setFacturar] = useState(false)
+  const [facturando, setFacturando] = useState(false)
 
   // stage-pos-atajos-cobro: F9 con el pago ya cubierto abre esta puerta antes de cobrar de
   // verdad ("¿Finalizar venta?") — clickear "Cobrar" directamente NUNCA pasa por acá (sigue
@@ -3171,6 +3176,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     cobrandoRef.current = true
     setCobrando(true)
     setErrorCobro('')
+    const inicioDelCobro = Date.now()
+    const forzarFactura = !modoPresupuesto && facturar
 
     try {
       // stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "post {
@@ -3178,6 +3185,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // pagos }"): bajo `?idPresupuesto=` NUNCA se manda `lineas` ni `idCliente` — el precio y el
       // cliente salen congelados server-side del presupuesto, jamás de lo que esta pantalla
       // pudiera mostrar.
+      const pagosDeLaVenta = aPagosDeVenta(pagosConVuelto)
+      const seguroSeFactura = ventaSeguroSeFactura({ forzarFactura, pagos: pagosDeLaVenta, medioPorId })
       const solicitud =
         modoPresupuesto && idPresupuesto !== null
           ? aSolicitudDeVentaDesdePresupuesto(puntoVentaSeleccionada.id, idPresupuesto, aPagosDeVenta(pagosConVuelto))
@@ -3193,10 +3202,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               // Toda línea viaja sin lote elegido: el servidor resuelve FEFO solo (camino feliz de
               // cero tecleo, design decisión 19 de stage-12-lotes-vencimientos).
               lotesSeleccionados: {},
-              pagos: aPagosDeVenta(pagosConVuelto),
+              pagos: pagosDeLaVenta,
               direccionEntrega: null,
               observaciones: null,
+              forzarFactura,
             })
+
+      // Solo una venta que seguro se factura y tiene conexión espera la respuesta fiscal; el resto imprime el ticket al instante.
+      const esperarLaFactura = seguroSeFactura && sincronizacionOffline.enLinea
 
       /** Texto del aviso de una venta con cuenta corriente encolada sin respuesta del servidor
        * sobre el límite. Los datos de la instantánea solo agregan una pista, nunca bloquean. */
@@ -3216,7 +3229,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       const encolarLocal = async (
         instantanea: InstantaneaDePos,
       ): Promise<
-        | { tipo: 'encolada'; comprobante: ComprobanteEmitido; avisoLimiteDeCredito: string | null }
+        | { tipo: 'encolada'; idLocal: string; comprobante: ComprobanteEmitido; avisoLimiteDeCredito: string | null }
         | { tipo: 'sinComprobante'; numeroVisible: string; avisoLimiteDeCredito: string | null }
         | { tipo: 'rechazada'; motivo: MotivoRechazoOffline }
       > => {
@@ -3226,6 +3239,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           idListaPrecio: clienteSeleccionado.idListaPrecio,
           pagos: pagosConVuelto,
           instantaneaCongelada: instantanea,
+          interesadoEnLaRespuesta: esperarLaFactura,
         })
         if (!resultado.ok) return { tipo: 'rechazada', motivo: resultado.motivo }
         const avisoLimiteDeCredito = resultado.limiteDeCreditoNoValidado ? avisoDeLimiteNoValidado(instantanea) : null
@@ -3243,7 +3257,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // Defensa en profundidad: `ok: true` ya exigió que todas las líneas tengan precio en esta
         // misma instantánea, que es lo único que puede dejar al comprobante sin armar.
         if (!comprobante) return { tipo: 'sinComprobante', numeroVisible: resultado.numeroVisible, avisoLimiteDeCredito }
-        return { tipo: 'encolada', comprobante, avisoLimiteDeCredito }
+        return { tipo: 'encolada', idLocal: resultado.idLocal, comprobante, avisoLimiteDeCredito }
       }
 
       /** Comprobante a mostrar (del servidor o sintético) o `null` si ya se informó por qué no
@@ -3255,7 +3269,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       } | null> => {
         // Una venta encolada (con o sin comprobante para mostrar) dispara el envío en segundo
         // plano — el cajero nunca lo espera.
-        const resolverEncolado = (local: Awaited<ReturnType<typeof encolarLocal>>) => {
+        const resolverEncolado = async (local: Awaited<ReturnType<typeof encolarLocal>>) => {
           if (local.tipo === 'rechazada') {
             setErrorCobro(mensajeDeRechazoOffline(local.motivo))
             return null
@@ -3273,7 +3287,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )
             return null
           }
-          return { emitido: local.comprobante, pendienteDeSincronizar: true, avisoLimiteDeCredito: local.avisoLimiteDeCredito }
+          if (!esperarLaFactura) return { emitido: local.comprobante, pendienteDeSincronizar: true, avisoLimiteDeCredito: local.avisoLimiteDeCredito }
+          // Espera acotada de la respuesta de ESTA venta: sin ella (o sin factura aprobada) se imprime el ticket y la
+          // factura queda para después. Nunca falla la venta, que ya está guardada.
+          setFacturando(true)
+          let respuesta: ComprobanteEmitido | null
+          try {
+            respuesta = await sincronizacionOffline.esperarRespuesta(local.idLocal, Math.max(0, ESPERA_DE_LA_FACTURA_MS - (Date.now() - inicioDelCobro)))
+          } finally {
+            setFacturando(false)
+          }
+          return {
+            emitido: conFiscalSoloSiSeguroSeFactura({ ...local.comprobante, fiscal: respuesta?.fiscal }, seguroSeFactura),
+            pendienteDeSincronizar: respuesta === null,
+            avisoLimiteDeCredito: local.avisoLimiteDeCredito,
+          }
         }
 
         // Venta local primero: si la vista previa salió de la instantánea (congelada en
@@ -3286,11 +3314,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         if (instantaneaDeLaPrevia !== null) {
           const local = await encolarLocal(instantaneaDeLaPrevia)
           if (generacionCobroRef.current !== miGeneracion) return null
-          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo)) return resolverEncolado(local)
+          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo)) return await resolverEncolado(local)
         }
 
         try {
-          return { emitido: await clienteDeVentas.emitir(solicitud), pendienteDeSincronizar: false, avisoLimiteDeCredito: null }
+          const emitidoOnline = await clienteDeVentas.emitir(solicitud)
+          return { emitido: conFiscalSoloSiSeguroSeFactura(emitidoOnline, seguroSeFactura), pendienteDeSincronizar: false, avisoLimiteDeCredito: null }
         } catch (e) {
           if (generacionCobroRef.current !== miGeneracion) return null
 
@@ -3354,6 +3383,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setAjustesEnEdicion({})
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
+      setFacturar(false)
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
       setErrorEscaneo('')
@@ -4252,6 +4282,22 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </div>
             )}
 
+            {!modoPresupuesto && (
+              <div className="form-check mb-2">
+                <input
+                  id="pos-facturar"
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={facturar}
+                  disabled={pantallaCobroInerte}
+                  onChange={(e) => setFacturar(e.target.checked)}
+                />
+                <label className="form-check-label" htmlFor="pos-facturar">
+                  Facturar
+                </label>
+              </div>
+            )}
+
             <button
               type="button"
               className="btn btn-success w-100"
@@ -4259,7 +4305,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               aria-keyshortcuts="F9"
               onClick={cobrar}
             >
-              {cobrando ? (
+              {facturando ? (
+                'Facturando…'
+              ) : cobrando ? (
                 'Cobrando…'
               ) : (
                 <>

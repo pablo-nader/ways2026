@@ -52,7 +52,7 @@ import { clienteDeVentas } from '../api/ventas'
 import { clienteDeClientes } from '../api/clientes'
 import { consumoCuentaCorriente, superaLimiteDeCredito } from '../api/pagos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
-import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
+import type { ComportamientoMedioPago, ComprobanteEmitido, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
 
 /** Tope de espera del ciclo de arranque antes de habilitar la venta: con una red que cuelga, la
  * venta se habilita igual con la instantánea que haya y el ciclo sigue en segundo plano. */
@@ -109,7 +109,7 @@ export const INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR =
 /** `limiteDeCreditoNoValidado` es `true` solo para una venta con cuenta corriente que se encoló sin
  * respuesta del servidor sobre el límite; `false` en cualquier otro caso. */
 export type EncoladoOffline =
-  | { ok: true; numeroVisible: string; numero: number; limiteDeCreditoNoValidado: boolean }
+  | { ok: true; idLocal: string; numeroVisible: string; numero: number; limiteDeCreditoNoValidado: boolean }
   | { ok: false; motivo: MotivoRechazoOffline }
 
 export type ParametrosDeSincronizacionOffline = {
@@ -192,7 +192,14 @@ export type ResultadoDeSincronizacionOffline = {
      * estado interno del hook — comportamiento preexistente intacto para quien no tenga una vista
      * previa propia que congelar (p. ej. los tests de este mismo hook). */
     instantaneaCongelada?: InstantaneaDePos | null
+    /** `true` si el llamador va a pedir `esperarRespuesta` de esta venta: el drenado guarda su respuesta
+     * hasta que se la pide o vence el tope. Sin esto no se guarda nada. */
+    interesadoEnLaRespuesta?: boolean
   }) => Promise<EncoladoOffline>
+  /** Espera hasta `ms` la respuesta de `POST /api/ventas` de una venta encolada con `interesadoEnLaRespuesta`.
+   * Resuelve `null` al vencer el tope, si el servidor la rechazó, o si no hay nada que esperar; nunca rechaza.
+   * Al resolver (o vencer) la entrada se borra: una respuesta posterior no queda guardada. */
+  esperarRespuesta: (idLocal: string, ms: number) => Promise<ComprobanteEmitido | null>
   /** Cuenta corriente de las ventas de este cliente que siguen en el outbox: el saldo del servidor todavía no la incluye. */
   consumoPendienteDeCuentaCorriente: (idCliente: number) => Promise<number>
   /** judgment-day ronda 2 (WARNING): la salida real que `ventasConError` prometía y no tenía —
@@ -293,6 +300,44 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     return resultado
   }
 
+  // Respuestas de las ventas encoladas con interés declarado (`interesadoEnLaRespuesta`), por `idLocal`. La entrada
+  // nace al encolar, recibe la respuesta del drenado y se borra al entregarla o al vencer el tope de quien espera.
+  const respuestasRef = useRef(new Map<string, { respuesta: ComprobanteEmitido | null | undefined; entregar: ((respuesta: ComprobanteEmitido | null) => void) | null }>())
+  useEffect(() => {
+    const respuestas = respuestasRef.current
+    return () => respuestas.clear()
+  }, [])
+
+  function asentarRespuesta(idLocal: string, respuesta: ComprobanteEmitido | null): void {
+    const entrada = respuestasRef.current.get(idLocal)
+    if (!entrada) return
+    if (!entrada.entregar) {
+      entrada.respuesta = respuesta
+      return
+    }
+    respuestasRef.current.delete(idLocal)
+    entrada.entregar(respuesta)
+  }
+
+  function esperarRespuesta(idLocal: string, ms: number): Promise<ComprobanteEmitido | null> {
+    const entrada = respuestasRef.current.get(idLocal)
+    if (!entrada) return Promise.resolve(null)
+    if (entrada.respuesta !== undefined) {
+      respuestasRef.current.delete(idLocal)
+      return Promise.resolve(entrada.respuesta)
+    }
+    return new Promise((resolver) => {
+      const tope = setTimeout(() => {
+        respuestasRef.current.delete(idLocal)
+        resolver(null)
+      }, ms)
+      entrada.entregar = (respuesta) => {
+        clearTimeout(tope)
+        resolver(respuesta)
+      }
+    })
+  }
+
   /** Una pasada de drenado, EN ORDEN. El `emitir` de cada venta corre FUERA de `encolarOperacion`:
    * con una red lenta, retener el candado durante la request bloquearía el encolado de las ventas
    * nuevas del cajero hasta que el servidor responda. Solo la lectura de la cabeza y la salida (o
@@ -303,13 +348,16 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       const primera = await encolarOperacion(async () => (await leerOutbox(almacenRef.current))[0] ?? null)
       if (!primera || !montadoRef.current) return
 
+      let respuesta: ComprobanteEmitido
       try {
-        await conTiempoLimite((senal) => clienteDeVentas.emitir(primera.solicitud, senal))
+        respuesta = await conTiempoLimite((senal) => clienteDeVentas.emitir(primera.solicitud, senal))
       } catch (e) {
         const archivada = await encolarOperacion(() => archivarRechazoSiEsPermanente(primera, e))
         if (!archivada) return
+        asentarRespuesta(primera.idLocal, null)
         continue
       }
+      asentarRespuesta(primera.idLocal, respuesta)
 
       // La venta ya llegó al servidor: si su salida del outbox no se puede confirmar, se corta la
       // pasada y la próxima la reenvía con el mismo número y contenido, que el servidor reconoce
@@ -758,6 +806,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     idListaPrecio: number
     pagos: readonly { comportamiento: ComportamientoMedioPago; importe: number }[]
     instantaneaCongelada?: InstantaneaDePos | null
+    interesadoEnLaRespuesta?: boolean
   }): Promise<EncoladoOffline> {
     // judgment-day ronda 1 (WARNING): usa la instantánea CONGELADA que el llamador pasa (la
     // misma que ya resolvió la vista previa en pantalla) cuando la pasa — nunca el estado
@@ -829,9 +878,12 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       // (`Pos.tsx`) recién construye el comprobante sintético cuando esta función devuelve
       // `ok: true`, nunca antes.
       let nuevoOutbox: VentaEnCola[]
+      const idLocal = generarIdLocal()
+      // El interés se declara antes de que la venta entre al outbox: el drenado no puede ganarle y perder la respuesta.
+      if (paramsVenta.interesadoEnLaRespuesta) respuestasRef.current.set(idLocal, { respuesta: undefined, entregar: null })
       try {
         nuevoOutbox = await agregarAOutbox(almacenRef.current, {
-          idLocal: generarIdLocal(),
+          idLocal,
           numeroPreasignado: tomado.numero,
           idPuntoVenta: paramsVenta.solicitudBase.idPuntoVenta,
           creadoEn: new Date().toISOString(),
@@ -839,6 +891,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
           ...(consumoCc > 0 ? { consumoCuentaCorriente: consumoCc } : {}),
         })
       } catch (e) {
+        respuestasRef.current.delete(idLocal)
         if (!(e instanceof ErrorDePersistenciaOffline)) throw e
         return { ok: false, motivo: 'error_al_guardar' }
       }
@@ -846,6 +899,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
       return {
         ok: true,
+        idLocal,
         numeroVisible: construirNumeroVisible(paramsVenta.solicitudBase.idPuntoVenta, tomado.numero),
         numero: tomado.numero,
         limiteDeCreditoNoValidado,
@@ -923,6 +977,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizarAhora,
     drenarAhora,
     encolarVentaOffline,
+    esperarRespuesta,
     consumoPendienteDeCuentaCorriente,
     reintentarVentaConError,
     descartarVentaConError,

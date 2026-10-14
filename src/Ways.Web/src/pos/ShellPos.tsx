@@ -22,7 +22,7 @@ import type { CajaDeEscritorio, SaldoParaTicket } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
-import { cierreDeTurno, ticketDeVenta } from '../impresion/plantillas'
+import { cierreDeTurno, facturaDeVenta, ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { MenuDeAcciones } from '../componentes/MenuDeAcciones'
 import type { ItemDeMenuDeAcciones } from '../componentes/MenuDeAcciones'
@@ -340,6 +340,13 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     // No bloqueante y sin cambiar el resultado de la venta, que ya se confirmó en el servidor —
     // una falla queda como su propio aviso persistente del shell + "Reimprimir", nunca silenciosa
     // ni descartada por otro trabajo de impresión que esté (o quede) en vuelo.
+    // `Pos.tsx` deja `fiscal` en el comprobante solo cuando la venta seguro se facturaba y la factura se aprobó a
+    // tiempo (`conFiscalSoloSiSeguroSeFactura`); sin eso se imprime el ticket de siempre.
+    const factura = comprobante.fiscal?.comprobante ?? null
+    if (factura) {
+      encolarImpresion('la factura de venta', facturaDeVenta(comprobante, factura, contextoDeImpresion, medios, opciones))
+      return
+    }
     encolarImpresion('el ticket de venta', ticketDeVenta(comprobante, contextoDeImpresion, medios, opciones))
   }
 

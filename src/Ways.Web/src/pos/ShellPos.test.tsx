@@ -6,11 +6,13 @@ import { ShellPos } from './ShellPos'
 import { ErrorApi } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
-import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta, ticketDeVenta } from '../impresion/plantillas'
+import { cierreDeTurno, facturaDeVenta, pulsoDeCajon, ticketDePagoACuenta, ticketDeVenta } from '../impresion/plantillas'
 import type {
   ArticuloEscaneado,
   ClienteListado,
   ComprobanteEmitido,
+  DatosDeFacturaFiscal,
+  FiscalDeVenta,
   MedioPagoListado,
   PaginaDe,
   ParametroResuelto,
@@ -316,7 +318,7 @@ async function esperarAlConsumidorFinal() {
 
 /** Deja una venta completa emitida en pantalla (`/vender`, medio Efectivo por el total) — punto de
  * partida de los tests de impresión del ticket de venta (Fix judgment-day W1/W2). */
-async function completarVenta() {
+async function completarVenta({ facturar = false }: { facturar?: boolean } = {}) {
   await esperarAlConsumidorFinal()
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
   await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -324,6 +326,7 @@ async function completarVenta() {
   await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
   const importe = await screen.findByLabelText('Importe de Efectivo (fila 1)')
   await userEvent.type(importe, '100')
+  if (facturar) await userEvent.click(screen.getByRole('checkbox', { name: 'Facturar' }))
   await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
   await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
   await screen.findByText(/Venta 0007-00000001/)
@@ -699,6 +702,65 @@ describe('ShellPos — ticket de venta de un cliente identificado', () => {
 
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
     expect(imprimirMock.mock.calls[0][0]).toEqual(ticketDeVenta(comprobanteEmitidoFixture(), CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente]))
+  })
+})
+
+describe('ShellPos — factura en lugar del ticket', () => {
+  const datosDeFactura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+  }
+
+  function conFiscal(estado: FiscalDeVenta['estado'], comprobante: DatosDeFacturaFiscal | null): ComprobanteEmitido {
+    return { ...comprobanteEmitidoFixture(), fiscal: { estado, motivo: 'forzada', idFacturacion: 4, error: null, comprobante } }
+  }
+
+  it('una venta forzada con factura aprobada imprime la factura y no el ticket', async () => {
+    escritorioMock = true
+    mockearRutasDePos()
+    const comprobante = conFiscal('aprobado', datosDeFactura)
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await completarVenta({ facturar: true })
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(facturaDeVenta(comprobante, datosDeFactura, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo]))
+    expect(imprimirMock.mock.calls[0][0]).not.toEqual(ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo]))
+  })
+
+  it.each(['pendiente', 'rechazado', 'sin_decidir'] as const)('con la factura en estado %s imprime el ticket', async (estado) => {
+    escritorioMock = true
+    mockearRutasDePos()
+    const comprobante = conFiscal(estado, datosDeFactura)
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await completarVenta({ facturar: true })
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo]))
+  })
+
+  it('una venta que no seguro se factura imprime el ticket aunque el servidor ya haya aprobado la factura', async () => {
+    escritorioMock = true
+    mockearRutasDePos()
+    const comprobante = conFiscal('aprobado', datosDeFactura)
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await completarVenta()
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(ticketDeVenta({ ...comprobante, fiscal: undefined }, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo]))
   })
 })
 

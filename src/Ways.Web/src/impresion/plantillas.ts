@@ -7,7 +7,7 @@ import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import { tieneDesgloseDeCierre } from '../api/caja'
 import { calcularImporteAplicado } from '../api/cuentaCorriente'
-import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
+import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
 
@@ -107,6 +107,37 @@ export function ticketDeVenta(
   medios: MedioPagoListado[],
   opciones: OpcionesDeTicketDeVenta = {},
 ): Uint8Array {
+  return armarComprobanteDeVenta(comprobante, null, contexto, medios, opciones)
+}
+
+/** `yyyy-MM-dd` (un `DateOnly` del servidor) → `dd/mm/yyyy`, sin pasar por `Date` para no correr el día por zona horaria. */
+function fechaDeFactura(fecha: string): string {
+  const [anio, mes, dia] = fecha.split('-')
+  return `${dia}/${mes}/${anio}`
+}
+
+/**
+ * Factura de una venta aprobada por ARCA: el mismo cuerpo que `ticketDeVenta` (ítems, totales, pagos, cajón),
+ * con "FACTURA {letra}", número fiscal, fecha, CAE y su vencimiento en lugar de la leyenda de ticket no válido.
+ * Sin QR de ARCA todavía. Sin tildes en los avisos, igual que el ticket.
+ */
+export function facturaDeVenta(
+  comprobante: ComprobanteEmitido,
+  factura: DatosDeFacturaFiscal,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta = {},
+): Uint8Array {
+  return armarComprobanteDeVenta(comprobante, factura, contexto, medios, opciones)
+}
+
+function armarComprobanteDeVenta(
+  comprobante: ComprobanteEmitido,
+  factura: DatosDeFacturaFiscal | null,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta,
+): Uint8Array {
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
 
@@ -123,16 +154,21 @@ export function ticketDeVenta(
   const recargoManual = comprobante.recargoManualTotal ?? 0
   const clienteConSaldo = opciones.reimpresion ? undefined : opciones.cliente
 
-  ticket.alinear('centro').negrita(true).linea('COMPROBANTE NO VALIDO COMO FACTURA')
+  ticket.alinear('centro').negrita(true).linea(factura ? `FACTURA ${factura.letra}` : 'COMPROBANTE NO VALIDO COMO FACTURA')
   if (descuentoManual !== 0) ticket.linea('*** CON DESCUENTO MANUAL ***')
   if (recargoManual !== 0) ticket.linea('*** CON RECARGO MANUAL ***')
 
-  ticket
-    .negrita(false)
-    .alinear('izquierda')
-    .linea(`Comprobante: ${comprobante.numeroVisible}`)
-    .linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
-    .linea(`Cajero: ${contexto.cajero}`)
+  ticket.negrita(false).alinear('izquierda')
+  if (factura) {
+    ticket
+      .linea(`Nro ${String(factura.puntoDeVentaFiscal).padStart(5, '0')}-${String(factura.numero).padStart(8, '0')}`)
+      .linea(`Fecha: ${fechaDeFactura(factura.fecha)}`)
+    if (factura.cae) ticket.linea(`CAE ${factura.cae}`)
+    if (factura.caeVencimiento) ticket.linea(`Vto. CAE ${fechaDeFactura(factura.caeVencimiento)}`)
+  } else {
+    ticket.linea(`Comprobante: ${comprobante.numeroVisible}`).linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
+  }
+  ticket.linea(`Cajero: ${contexto.cajero}`)
   if (clienteConSaldo) ticket.linea(lineaDeCliente(clienteConSaldo))
   ticket.lineaDeGuiones()
 

@@ -10,6 +10,7 @@ import {
   opcionDeLote,
   previaDeLinea,
 } from './ventas'
+import { aSolicitudDeVentaDesdePresupuesto } from './presupuestos'
 import type { ArticuloEscaneado, LoteListado, PagoDeVenta, ResultadoDeResolucion } from './tipos'
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
@@ -323,6 +324,33 @@ describe('calcularAjustesManualesPrevia', () => {
     const lineas = [lineaFixture({ idArticulo: 1, ajusteManualPorcentaje: -10 }), lineaFixture({ idArticulo: 9, ajusteManualPorcentaje: -50 })]
 
     expect(calcularAjustesManualesPrevia(lineas, precios)).toEqual({ descuentoManualTotal: 20, recargoManualTotal: 0 })
+  })
+})
+
+describe('aSolicitudDeVenta — forzarFactura', () => {
+  const base = {
+    idPuntoVenta: 7,
+    idCliente: 1,
+    codigoTipoComprobante: 'TX' as const,
+    idComprobanteAsociado: null,
+    lineas: [lineaFixture()],
+    lotesSeleccionados: {},
+    pagos: [{ idMedioPago: 1, importe: 180, referencia: null, vuelto: 0 }] as PagoDeVenta[],
+    direccionEntrega: null,
+    observaciones: null,
+  }
+
+  it('con el forzado encendido manda forzarFactura: true', () => {
+    expect(aSolicitudDeVenta({ ...base, forzarFactura: true }).forzarFactura).toBe(true)
+  })
+
+  it('apagado o ausente omite la clave en vez de mandar false', () => {
+    expect(aSolicitudDeVenta({ ...base, forzarFactura: false })).not.toHaveProperty('forzarFactura')
+    expect(aSolicitudDeVenta(base)).not.toHaveProperty('forzarFactura')
+  })
+
+  it('la solicitud de conversión de un presupuesto nunca lo lleva', () => {
+    expect(aSolicitudDeVentaDesdePresupuesto(7, 12, base.pagos)).not.toHaveProperty('forzarFactura')
   })
 })
 

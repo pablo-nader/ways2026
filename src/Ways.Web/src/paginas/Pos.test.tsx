@@ -28,7 +28,9 @@ import type {
   ComboCargableDeApi,
   ComboListado,
   ComprobanteEmitido,
+  DatosDeFacturaFiscal,
   EstadoDeCuenta,
+  FiscalDeVenta,
   InstantaneaDePos,
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
@@ -472,6 +474,19 @@ let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 /** Mock PARCIAL de `outboxOffline`: todo real salvo `leerOutbox`, que un test puede hacer fallar
  * (`controlDeOutbox.fallarLectura`) para simular un almacén caído a mitad de un drenado — el
  * almacén real (`almacenPos.ts`) nunca rechaza, así que no hay otra forma de llegar a ese camino. */
+/** El tope de espera de la factura se maneja por test: por defecto es larguísimo, así que cualquier espera que no
+ * debía existir cuelga el test en vez de pasar. El de 5 s lo prueba `facturacionAlCobrar.test.ts`. */
+const controlDeFactura = vi.hoisted(() => ({ esperaMs: 60_000 }))
+vi.mock('../pos/facturacionAlCobrar', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('../pos/facturacionAlCobrar')>()
+  return {
+    ...real,
+    get ESPERA_DE_LA_FACTURA_MS() {
+      return controlDeFactura.esperaMs
+    },
+  }
+})
+
 const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false }))
 vi.mock('../pos/outboxOffline', async (importarOriginal) => {
   const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
@@ -580,6 +595,7 @@ beforeEach(async () => {
   establecerTokenDeSesionBearer(null)
   controlDeOutbox.fallarLectura = false
   controlDeOutbox.colgarLectura = false
+  controlDeFactura.esperaMs = 60_000
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -4054,6 +4070,26 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(llamada[1]).not.toHaveProperty('lineas')
   })
 
+  it('bajo ?idPresupuesto= no ofrece "Facturar" y la solicitud nunca lleva forzarFactura', async () => {
+    mockearApiGetPresupuesto()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ idPresupuestoOrigen: 1, total: 200, subtotal: 200 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    renderPos('/pos?idPresupuesto=1')
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '200')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    expect(screen.queryByRole('checkbox', { name: 'Facturar' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ventas', expect.anything()))
+    const llamada = apiPostMock.mock.calls.find(([ruta]) => ruta === '/ventas') as [string, Record<string, unknown>]
+    expect(llamada[1]).not.toHaveProperty('forzarFactura')
+  })
+
   it('"Aceptar" del modal "Venta finalizada" bajo `?idPresupuesto=` navega a `/pos` y remonta la pantalla entera: el ticket de la venta convertida NO queda pegado (judgment-day slice-7 ronda 1 juez B, MAJOR)', async () => {
     mockearApiGetPresupuesto()
     apiPostMock.mockImplementation((ruta: string) => {
@@ -4229,6 +4265,138 @@ describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
     await screen.findByText('No se pudo registrar la venta.')
 
     expect(alEmitir).not.toHaveBeenCalled()
+  })
+})
+
+const facturaAprobadaFixture: DatosDeFacturaFiscal = {
+  idComprobante: 12,
+  codigoTipoComprobante: 'FB',
+  letra: 'B',
+  puntoDeVentaFiscal: 3,
+  numero: 12,
+  fecha: '2026-10-14',
+  cae: '70123456789012',
+  caeVencimiento: '2026-10-24',
+  payloadQr: null,
+  observaciones: [],
+}
+
+function fiscalFixture(estado: FiscalDeVenta['estado']): FiscalDeVenta {
+  return { estado, motivo: 'forzada', idFacturacion: 3, error: null, comprobante: estado === 'aprobado' ? facturaAprobadaFixture : null }
+}
+
+describe('Pos — botón "Facturar" (T6b, camino directo sin copia local)', () => {
+  function responderVentaCon(comprobante: ComprobanteEmitido) {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+        return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+      }
+      if (ruta === '/ventas') return Promise.resolve(comprobante)
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  function mediosConPorcentaje(porcentajeFacturacion: number) {
+    mockearApiGet((ruta) =>
+      ruta === '/catalogos/medios-pago' ? Promise.resolve<MedioPagoListado[]>([{ ...medioEfectivo, porcentajeFacturacion }, medioTarjeta, medioCuentaCorriente]) : undefined,
+    )
+  }
+
+  function solicitudPosteada(): Record<string, unknown> {
+    const llamada = apiPostMock.mock.calls.find(([ruta]) => ruta === '/ventas') as [string, Record<string, unknown>]
+    return llamada[1]
+  }
+
+  it('arranca apagado y la solicitud no lleva forzarFactura', async () => {
+    await armarVentaLista()
+
+    expect(screen.getByRole('checkbox', { name: 'Facturar' })).not.toBeChecked()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(solicitudPosteada()).not.toHaveProperty('forzarFactura')
+  })
+
+  it('encendido, la solicitud lleva forzarFactura: true', async () => {
+    await armarVentaLista()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Facturar' }))
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(solicitudPosteada()).toMatchObject({ forzarFactura: true })
+  })
+
+  it('se apaga solo después de cada venta', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Facturar' }))
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+    await userEvent.click(screen.getByRole('button', { name: /Aceptar/ }))
+
+    expect(screen.getByRole('checkbox', { name: 'Facturar' })).not.toBeChecked()
+  })
+
+  it('queda inerte mientras el cobro está en vuelo', async () => {
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_RESOLVER_DEL_CARRITO
+        ? Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        : new Promise(() => {}),
+    )
+    await armarVentaLista()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Facturar' })).toBeDisabled())
+  })
+
+  it('forzado y con la factura aprobada en la respuesta, alEmitir recibe el estado fiscal para imprimir la factura', async () => {
+    responderVentaCon(comprobanteEmitidoFixture({ fiscal: fiscalFixture('aprobado') }))
+    const alEmitir = vi.fn()
+    await armarVentaLista({ alEmitir })
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Facturar' }))
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).fiscal).toEqual(fiscalFixture('aprobado'))
+  })
+
+  it('un medio al 100 % factura sin tocar Facturar: la factura aprobada llega a alEmitir', async () => {
+    mediosConPorcentaje(100)
+    responderVentaCon(comprobanteEmitidoFixture({ fiscal: fiscalFixture('aprobado') }))
+    const alEmitir = vi.fn()
+    await armarVentaLista({ alEmitir })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(solicitudPosteada()).not.toHaveProperty('forzarFactura')
+    expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).fiscal?.estado).toBe('aprobado')
+  })
+
+  it('con un porcentaje parcial la factura aprobada nunca llega a alEmitir: se imprime el ticket', async () => {
+    mediosConPorcentaje(40)
+    responderVentaCon(comprobanteEmitidoFixture({ fiscal: fiscalFixture('aprobado') }))
+    const alEmitir = vi.fn()
+    await armarVentaLista({ alEmitir })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).fiscal).toBeUndefined()
+  })
+
+  it('forzado pero con la factura todavía pendiente, alEmitir no recibe una factura aprobada', async () => {
+    responderVentaCon(comprobanteEmitidoFixture({ fiscal: fiscalFixture('pendiente') }))
+    const alEmitir = vi.fn()
+    await armarVentaLista({ alEmitir })
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Facturar' }))
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).fiscal).toBeUndefined()
   })
 })
 
@@ -7317,6 +7485,140 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
    * elegir el cliente (dato fresco, con `saldoAlElegir`) y en la consulta del límite antes de
    * encolar, que resuelve `consulta`.
    */
+  describe('facturación al cobrar: espera acotada de la factura (T6b)', () => {
+    const NUMERO_DE_LA_VENTA = '0007-00000500'
+
+    function ventaAprobada(estado: FiscalDeVenta['estado'] = 'aprobado'): ComprobanteEmitido {
+      return comprobanteEmitidoFixture({ numeroVisible: NUMERO_DE_LA_VENTA, numero: 500, fiscal: fiscalFixture(estado) })
+    }
+
+    /** El POST de la venta lo controla el test: sin resolver, ni la espera ni el drenado terminan. */
+    function ventaPendienteDeRespuesta() {
+      let responder!: (comprobante: ComprobanteEmitido) => void
+      const respuesta = new Promise<ComprobanteEmitido>((resolver) => {
+        responder = resolver
+      })
+      apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? respuesta : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))))
+      return responder
+    }
+
+    function mediosConPorcentaje(porcentajeFacturacion: number) {
+      mockearApiGet((ruta) =>
+        ruta === '/catalogos/medios-pago' ? Promise.resolve<MedioPagoListado[]>([{ ...medioEfectivo, porcentajeFacturacion }, medioTarjeta, medioCuentaCorriente]) : undefined,
+      )
+    }
+
+    async function cargarYCobrar({ facturar }: { facturar: boolean }, alEmitir: ReturnType<typeof vi.fn>) {
+      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      renderPos('/pos', { alEmitir: alEmitir as NonNullable<ComponentProps<typeof Pos>>['alEmitir'] })
+      await esperarAlConsumidorFinal()
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('100')
+      if (facturar) await userEvent.click(screen.getByRole('checkbox', { name: 'Facturar' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    }
+
+    it('forzado y en línea: espera la respuesta de ESA venta y le pasa la factura aprobada a alEmitir', async () => {
+      const responder = ventaPendienteDeRespuesta()
+      const alEmitir = vi.fn()
+
+      await cargarYCobrar({ facturar: true }, alEmitir)
+
+      expect(await screen.findByRole('button', { name: 'Facturando…' })).toBeDisabled()
+      expect(alEmitir).not.toHaveBeenCalled()
+      expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument()
+      await waitFor(() => expect(llamadasPost('/ventas')).toHaveLength(1))
+      expect(llamadasPost('/ventas')[0][1]).toMatchObject({ forzarFactura: true, numeroPreasignado: 500 })
+
+      await act(async () => {
+        responder(ventaAprobada())
+      })
+
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
+      expect(comprobante.fiscal).toEqual(fiscalFixture('aprobado'))
+      expect(comprobante.numeroVisible).toBe(NUMERO_DE_LA_VENTA)
+      expect(screen.queryByText('Guardada en este dispositivo')).not.toBeInTheDocument()
+    })
+
+    it('un medio al 100 % también espera, sin forzar', async () => {
+      mediosConPorcentaje(100)
+      const responder = ventaPendienteDeRespuesta()
+      const alEmitir = vi.fn()
+
+      await cargarYCobrar({ facturar: false }, alEmitir)
+
+      expect(await screen.findByRole('button', { name: 'Facturando…' })).toBeInTheDocument()
+      expect(alEmitir).not.toHaveBeenCalled()
+      await act(async () => {
+        responder(ventaAprobada())
+      })
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      expect(llamadasPost('/ventas')[0][1]).not.toHaveProperty('forzarFactura')
+    })
+
+    it('sin respuesta a tiempo: imprime el ticket (sin factura aprobada) y la venta queda guardada', async () => {
+      controlDeFactura.esperaMs = 150
+      ventaPendienteDeRespuesta()
+      const alEmitir = vi.fn()
+
+      await cargarYCobrar({ facturar: true }, alEmitir)
+
+      expect(await screen.findByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument()
+      expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).fiscal).toBeUndefined()
+      expect(screen.getByText('Guardada en este dispositivo')).toBeInTheDocument()
+      await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toHaveLength(1)
+    })
+
+    it('con la respuesta a tiempo pero la factura todavía pendiente, imprime el ticket', async () => {
+      const responder = ventaPendienteDeRespuesta()
+      const alEmitir = vi.fn()
+
+      await cargarYCobrar({ facturar: true }, alEmitir)
+      await screen.findByRole('button', { name: 'Facturando…' })
+      await act(async () => {
+        responder(ventaAprobada('pendiente'))
+      })
+
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      expect((alEmitir.mock.calls[0][0] as ComprobanteEmitido).fiscal).toBeUndefined()
+    })
+
+    it('con un porcentaje parcial no espera: el ticket sale al instante y el envío sigue en segundo plano', async () => {
+      mediosConPorcentaje(40)
+      ventaPendienteDeRespuesta()
+      const alEmitir = vi.fn()
+
+      await cargarYCobrar({ facturar: false }, alEmitir)
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect(alEmitir).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('button', { name: 'Facturando…' })).not.toBeInTheDocument()
+      await waitFor(() => expect(llamadasPost('/ventas')).toHaveLength(1))
+    })
+
+    it('sin conexión no espera, aunque la venta sea forzada', async () => {
+      const sinRed = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+      try {
+        ventaPendienteDeRespuesta()
+        const alEmitir = vi.fn()
+
+        await cargarYCobrar({ facturar: true }, alEmitir)
+
+        expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+        expect(alEmitir).toHaveBeenCalledTimes(1)
+        expect(screen.queryByRole('button', { name: 'Facturando…' })).not.toBeInTheDocument()
+      } finally {
+        sinRed.mockRestore()
+      }
+    })
+  })
+
   describe('checkout local de un cliente identificado con cuenta corriente', () => {
     const joseGomez = clienteFixture({
       id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false,

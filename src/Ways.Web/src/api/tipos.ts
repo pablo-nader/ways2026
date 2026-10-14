@@ -2080,6 +2080,9 @@ export type SolicitudDeVenta = {
    * límite de crédito al servidor y la registró igual; `false` si el servidor confirmó que cabía.
    * El servidor lo rechaza sin `numeroPreasignado`. */
   limiteDeCreditoNoValidado?: boolean
+  /** Solo se manda en `true`: el cajero pidió facturar este ticket sí o sí (espejo de
+   * `SolicitudDeVenta.ForzarFactura`). Se fija al encolar y viaja dentro de la solicitud de la cola. */
+  forzarFactura?: boolean
 }
 
 // --- POS: reserva de numeración offline (stage-pos-reserva-de-numeracion) ---
@@ -2108,6 +2111,37 @@ export type SolicitudDeRendicionDeCola = {
 }
 
 export type EstadoComprobante = 'Emitido' | 'Anulado'
+
+/** Estado fiscal de una venta — espejo de `EstadosFiscalesDeVenta`. */
+export type EstadoFiscalDeVenta = 'no_corresponde' | 'pendiente' | 'sin_decidir' | 'aprobado' | 'rechazado' | 'cancelado'
+
+/** Observación de ARCA sobre un comprobante — espejo de `ObservacionArca`. */
+export type ObservacionArca = { codigo: number; mensaje: string }
+
+/** Factura aprobada de una venta — espejo de `DatosDeFacturaFiscal`. `letra` viaja como texto de un
+ * carácter; `fecha` y `caeVencimiento` como `yyyy-MM-dd`. */
+export type DatosDeFacturaFiscal = {
+  idComprobante: number
+  codigoTipoComprobante: string
+  letra: string
+  puntoDeVentaFiscal: number
+  numero: number
+  fecha: string
+  cae: string | null
+  caeVencimiento: string | null
+  payloadQr: string | null
+  observaciones: ObservacionArca[]
+}
+
+/** Lo que la respuesta de una venta dice de su facturación — espejo de `EstadoFiscalDeVenta`
+ * (`Ways.Application.Fiscal`). `comprobante` solo viene con la factura aprobada. */
+export type FiscalDeVenta = {
+  estado: EstadoFiscalDeVenta
+  motivo: string | null
+  idFacturacion: number | null
+  error: string | null
+  comprobante: DatosDeFacturaFiscal | null
+}
 
 /** Item ya emitido — snapshot inmutable (espejo de `ItemEmitido`). */
 export type ItemEmitido = {
@@ -2180,6 +2214,8 @@ export type ComprobanteEmitido = {
   items: ItemEmitido[]
   pagos: PagoEmitido[]
   idPresupuestoOrigen: number | null
+  /** Ausente en un comprobante sintético de una venta encolada o de un servidor anterior al campo. */
+  fiscal?: FiscalDeVenta | null
 }
 
 // --- Cuenta corriente: estado de cuenta y pago a cuenta (stage-7-cuenta-corriente, Slice 5) ---
