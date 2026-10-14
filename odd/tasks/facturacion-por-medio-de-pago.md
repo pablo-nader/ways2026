@@ -504,6 +504,21 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   `procesarFacturaciones` desactualizado), corregida después, solo comentario. JUDGMENT:
   APPROVED.
 
+## T7 (2026-10-14)
+
+Decisión del dueño: la factura impresa lleva todo lo exigible ahora (QR, emisor, receptor, IVA
+discriminado, ingresos brutos, inicio de actividades, leyenda de transparencia fiscal), con las
+columnas nuevas que haga falta. `VistaDeTicket` no aplica: solo imprime el cierre web; las
+facturas salen por ESC/POS en el POS de escritorio.
+
+- [ ] **T7a — Comando QR en ESC/POS.** `GS ( k` modelo 2 en `ConstructorDeTicket`. Ruta: delegada.
+- [ ] **T7b — Servidor: datos legales.** `ingresos_brutos` e `inicio_actividades` en
+  `empresas` (migración, ABM y descriptor web) y `DatosDeFacturaFiscal` con emisor, receptor e
+  IVA discriminado. Ruta: delegada.
+- [ ] **T7c — POS: factura legal.** `facturaDeVenta` con encabezado legal, receptor, IVA, leyenda
+  y QR; reimpresión igual. Ruta: delegada.
+- Release del POS después de T7c, avisando al dueño antes.
+
 ## Próximo paso
 
-T7 (QR de ARCA en la factura impresa); después el release del POS, avisando al dueño antes.
+T7a en curso; T7b cuando lleguen el mapa del servidor y la verificación normativa.

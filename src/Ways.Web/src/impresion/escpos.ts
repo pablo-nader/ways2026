@@ -73,7 +73,11 @@ export function dosColumnas(izquierda: string, derecha: string, ancho = COLUMNAS
   return izquierdaTruncada + ' '.repeat(relleno) + derecha
 }
 
-type Alineacion = 'izquierda' | 'centro' | 'derecha'
+const TAMANIO_MODULO_QR_POR_DEFECTO = 5
+/** Capacidad del QR versión 40, corrección M, modo byte. */
+const CAPACIDAD_QR_BYTES = 2331
+
+type Alineacion ='izquierda' | 'centro' | 'derecha'
 
 const CODIGO_ALINEACION: Record<Alineacion, number> = { izquierda: 0, centro: 1, derecha: 2 }
 
@@ -158,6 +162,34 @@ export class ConstructorDeTicket {
   /** `ESC p 0 25 250` — pulso del cajón de dinero conectado al puerto 0 de la impresora. */
   abrirCajon(): this {
     return this.agregar(0x1b, 0x70, 0x00, 25, 250)
+  }
+
+  /**
+   * QR nativo (`GS ( k`, modelo 2, corrección M). Lanza si el contenido no es ASCII imprimible o
+   * excede la capacidad de un QR en modo byte con corrección M, para no emitir un QR ilegible.
+   * En la vista previa queda como la línea "[QR]".
+   */
+  qr(contenido: string, opciones: { tamanioDeModulo?: number } = {}): this {
+    const tamanio = opciones.tamanioDeModulo ?? TAMANIO_MODULO_QR_POR_DEFECTO
+    if (!Number.isInteger(tamanio) || tamanio < 1 || tamanio > 16) {
+      throw new RangeError('El tamaño de módulo del QR debe ser un entero entre 1 y 16')
+    }
+    if (contenido.length === 0 || contenido.length > CAPACIDAD_QR_BYTES) {
+      throw new RangeError(`El contenido del QR debe tener entre 1 y ${CAPACIDAD_QR_BYTES} caracteres`)
+    }
+    const datos: number[] = []
+    for (let i = 0; i < contenido.length; i++) {
+      const codigo = contenido.charCodeAt(i)
+      if (codigo < 0x20 || codigo > 0x7e) throw new RangeError('El contenido del QR debe ser ASCII imprimible')
+      datos.push(codigo)
+    }
+    const longitud = datos.length + 3
+    this.lineasEmitidas.push({ texto: '[QR]', alineacion: this.alineacionVigente, negrita: this.negritaVigente })
+    return this.agregar(0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00)
+      .agregar(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, tamanio)
+      .agregar(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31)
+      .agregar(0x1d, 0x28, 0x6b, longitud & 0xff, longitud >> 8, 0x31, 0x50, 0x30, ...datos)
+      .agregar(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30)
   }
 
   bytes(): Uint8Array {
