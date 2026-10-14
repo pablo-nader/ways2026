@@ -79,7 +79,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   comprobante en la respuesta de la venta. Depende de T5b.
 - [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
   respuesta del drenaje. Depende de T4 y T5. Reglas del dueño (2026-10-14) en "Reglas de T6".
-  - [ ] **T6a — Estado fiscal en las lecturas.** `GET /api/ventas/{id}` informa `fiscal`
+  - [x] **T6a — Estado fiscal en las lecturas.** `GET /api/ventas/{id}` informa `fiscal`
     (con los datos del comprobante para reimprimir) y `GET /api/ventas/por-turno/{id}` informa
     el estado por venta con una lectura en lote. Error como código estable. Ruta: delegada.
   - [ ] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
@@ -399,7 +399,28 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   códigos llega al cajero como `error_inesperado` y uno de nivel de llamada como `0`; los
   endpoints de lote y de una decisión siguen devolviendo el texto completo del error.
 
+- 2026-10-14 — T6a hecha. Ruta: delegada (un escritor y una ronda de corrección). Commits
+  `0aa6ef5a` (feat) y `90e7221a` (fix). `ServicioDeFacturacionDeVentas.LeerEstadoDeVentaAsync`:
+  con decisión reutiliza `LeerEstadoAsync`; sin decisión, espejo o `facturacion_decidida_en`
+  ⇒ `no_corresponde`, si no `sin_decidir` (`EstadosFiscalesDeVenta.SinFila`). `GET /{id}` lo
+  agrega en el endpoint (la anulación sigue con `fiscal` nulo); `por-turno` suma
+  `EstadoFiscal` con una consulta en lote. Error como código estable (`CodigoDeError`).
+  Checks: `dotnet build` sin errores; aplicación 1014/1014; dominio 1691/1691; integración
+  filtrada 615/615 (antes de un renombre de variable) y 368/368 tras la corrección; la suite
+  completa queda al CI. Sin RED previo: la evidencia son mutaciones en rojo (lectura sin
+  `fiscal`, regla `sin_decidir`, conjunción del espejo, `CodigoDeError`, mapeo del lote,
+  filtro de baja y respaldo ante fallo).
+  Dos tests estructurales ajustados: la guarda del POST corta en su `.WithSummary(` y la
+  lista permitida de lectores suma la lectura por id.
+  Judgment-day: ronda 1, un crítico confirmado por los dos jueces (reimprimir una venta
+  facturada daba 500 si el cliente, punto de venta, empresa o tipo estaba dado de baja, y 409
+  si el CUIT dejó de ser numérico), corregido: el catálogo de la factura ignora solo la baja
+  lógica y, si no se puede proyectar, el estado sale sin comprobante. Re-juicio: resuelto,
+  sin hallazgos. JUDGMENT: APPROVED.
+  Información sin corregir: el test de otro tenant no ejercita la consulta nueva (el 404 sale
+  antes); ninguna guarda estructural fija que las lecturas no emitan; ningún test cuenta las
+  consultas del lote.
+
 ## Próximo paso
 
-T6a en `pnader/t6a-estado-fiscal-en-lecturas` (desde main `629a962b`; #442 mergeada con CI
-verde, incluidos los 30 tests del script de fragmentación).
+PR de T6a; después T6b en rama nueva desde main.
