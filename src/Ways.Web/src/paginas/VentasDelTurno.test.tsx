@@ -1497,6 +1497,32 @@ describe('VentasDelTurno — estado fiscal y "Reimprimir factura"', () => {
     expect(alReimprimir).not.toHaveBeenCalled()
   })
 
+  it('si el comprobante fresco ya no está aprobado, la fila actualiza su marca y deja de ofrecer "Reimprimir factura"', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 46, numeroVisible: '0007-00000046', estadoFiscal: 'aprobado' })],
+      comprobantes: {
+        46: comprobanteFixture({
+          id: 46,
+          numeroVisible: '0007-00000046',
+          fiscal: { estado: 'pendiente', motivo: 'forzada', idFacturacion: 4, error: null, comprobante: null },
+        }),
+      },
+    })
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={vi.fn()} />)
+    await esperarFila('0007-00000046')
+    const fila = () => screen.getByText('0007-00000046').closest('tr') as HTMLElement
+    expect(within(fila()).getByText('Facturada')).toBeInTheDocument()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    expect(await screen.findByText('La factura de esta venta no está disponible para reimprimir.')).toBeInTheDocument()
+    expect(within(fila()).getByText('Pendiente')).toBeInTheDocument()
+    expect(within(fila()).queryByText('Facturada')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reimprimir factura' })).not.toBeInTheDocument()
+  })
+
   it('un comprobante fresco con datos de factura pero con estado fiscal no aprobado tampoco se imprime como factura', async () => {
     mockearRutas({
       turno: turnoFixture(),

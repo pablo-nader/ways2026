@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
-import { crearDisparadorDeLote } from './loteDeFacturacion'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  PEOR_CASO_DEL_LOTE_EN_EL_SERVIDOR_MS,
+  TIEMPO_LIMITE_DEL_LOTE_DE_FACTURACION_MS,
+  crearDisparadorDeLote,
+  reiniciarLotesDeFacturacionParaTests,
+} from './loteDeFacturacion'
 
 /** Una llamada que el test resuelve o rechaza cuando quiere. */
 function llamadaControlable() {
@@ -14,6 +19,10 @@ function llamadaControlable() {
 }
 
 const vaciarMicrotareas = () => new Promise<void>((r) => setTimeout(r, 0))
+
+beforeEach(() => {
+  reiniciarLotesDeFacturacionParaTests()
+})
 
 describe('crearDisparadorDeLote', () => {
   it('llama una vez con el punto de venta recibido', () => {
@@ -124,6 +133,89 @@ describe('crearDisparadorDeLote', () => {
       expect(llamadas[0].senal.aborted).toBe(true)
       disparar(7)
       expect(procesar).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('crearDisparadorDeLote — estado compartido por punto de venta entre instancias (remontajes)', () => {
+  it('dos instancias del mismo punto de venta nunca tienen dos llamadas en vuelo, y sus pedidos se juntan en una sola vuelta', async () => {
+    const { procesar, llamadas } = llamadaControlable()
+    const primera = crearDisparadorDeLote({ procesar, estaEnLinea: () => true })
+    const segunda = crearDisparadorDeLote({ procesar, estaEnLinea: () => true })
+
+    primera(7)
+    segunda(7)
+    segunda(7)
+    expect(procesar).toHaveBeenCalledTimes(1)
+
+    llamadas[0].resolver()
+    await vaciarMicrotareas()
+    expect(procesar).toHaveBeenCalledTimes(2)
+
+    llamadas[1].resolver()
+    await vaciarMicrotareas()
+    expect(procesar).toHaveBeenCalledTimes(2)
+  })
+
+  it('puntos de venta distintos son independientes', () => {
+    const { procesar } = llamadaControlable()
+    const primera = crearDisparadorDeLote({ procesar, estaEnLinea: () => true })
+    const segunda = crearDisparadorDeLote({ procesar, estaEnLinea: () => true })
+
+    primera(7)
+    segunda(8)
+
+    expect(procesar).toHaveBeenCalledTimes(2)
+    expect(procesar.mock.calls.map(([id]) => id)).toEqual([7, 8])
+  })
+
+  it('la vuelta pendiente pedida por la instancia nueva respeta SU chequeo de conexión', async () => {
+    const { procesar, llamadas } = llamadaControlable()
+    const vieja = crearDisparadorDeLote({ procesar, estaEnLinea: () => true })
+    let nuevaEnLinea = true
+    const nueva = crearDisparadorDeLote({ procesar, estaEnLinea: () => nuevaEnLinea })
+
+    vieja(7)
+    nueva(7)
+    nuevaEnLinea = false
+    llamadas[0].resolver()
+    await vaciarMicrotareas()
+
+    expect(procesar).toHaveBeenCalledTimes(1)
+  })
+
+  it('un pedido con el servidor ya alcanzado sale aunque la bandera de conexión siga en falso', () => {
+    const { procesar } = llamadaControlable()
+    const disparar = crearDisparadorDeLote({ procesar, estaEnLinea: () => false })
+
+    disparar(7, { servidorAlcanzable: true })
+
+    expect(procesar).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('crearDisparadorDeLote — tiempo límite', () => {
+  it('el tope por defecto está por encima del peor caso del servidor (20 s de presupuesto + 30 s de WSAA + 5 s + 5 s de cierres)', () => {
+    expect(PEOR_CASO_DEL_LOTE_EN_EL_SERVIDOR_MS).toBe(60_000)
+    expect(TIEMPO_LIMITE_DEL_LOTE_DE_FACTURACION_MS).toBeGreaterThan(PEOR_CASO_DEL_LOTE_EN_EL_SERVIDOR_MS)
+  })
+
+  it('sin tiempoLimiteMs explícito la llamada se corta recién al vencer el tope por defecto', async () => {
+    vi.useFakeTimers()
+    try {
+      const { procesar, llamadas } = llamadaControlable()
+      const disparar = crearDisparadorDeLote({ procesar, estaEnLinea: () => true })
+
+      disparar(7)
+      await vi.advanceTimersByTimeAsync(PEOR_CASO_DEL_LOTE_EN_EL_SERVIDOR_MS)
+      expect(llamadas[0].senal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DEL_LOTE_DE_FACTURACION_MS - PEOR_CASO_DEL_LOTE_EN_EL_SERVIDOR_MS - 1)
+      expect(llamadas[0].senal.aborted).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(llamadas[0].senal.aborted).toBe(true)
     } finally {
       vi.useRealTimers()
     }
