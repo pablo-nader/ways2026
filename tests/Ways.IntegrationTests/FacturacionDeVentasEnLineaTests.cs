@@ -11,6 +11,7 @@ using Ways.Application.Fiscal;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
+using Ways.Domain.Common;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
@@ -43,9 +44,24 @@ public partial class FacturacionDeVentasEmisionTests
     /// <c>SELECT</c> de certificados (la decisión) avanza el reloj de la prueba, el segundo (las compuertas del intento) puede
     /// hacerse fallar, y cada barrido (la consulta de las ventas debidas)
     /// se cuenta y, si se pidió, queda retenido hasta que su token se cancele.</summary>
-    private sealed class InterceptorDelCobro(FakeTimeProvider tiempo) : DbCommandInterceptor
+    private sealed class InterceptorDelCobro(FakeTimeProvider tiempo) : DbCommandInterceptor, IDbTransactionInterceptor
     {
+        /// <summary>La decisión de una venta reenviada no lee certificados: su primera transacción es la que abre la decisión
+        /// (el reenvío no abre ninguna antes), y ahí avanza el reloj por <see cref="ConsumoAlDecidirUnReenvio"/>.</summary>
+        public ValueTask<InterceptionResult<DbTransaction>> TransactionStartingAsync(
+            DbConnection connection, TransactionStartingEventData eventData, InterceptionResult<DbTransaction> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armado && Interlocked.Increment(ref _transacciones) == 1)
+            {
+                tiempo.Advance(ConsumoAlDecidirUnReenvio);
+            }
+
+            return new ValueTask<InterceptionResult<DbTransaction>>(result);
+        }
+
         private int _decisiones;
+        private int _transacciones;
         private int _barridos;
 
         public bool Armado { get; set; }
@@ -56,9 +72,22 @@ public partial class FacturacionDeVentasEmisionTests
 
         public bool FallarEnLasCompuertas { get; set; }
 
+        /// <summary>Con <see cref="FallarEnLasCompuertas"/>: lanza un error de dominio con este código en vez de una excepción
+        /// cualquiera.</summary>
+        public string? CodigoDeDominioAlFallar { get; set; }
+
+        /// <summary>Con <see cref="FallarEnLasCompuertas"/>: antes de lanzar avanza el reloj lo bastante para vencer el
+        /// presupuesto del intento, o sea que el error llega con el token del intento ya cancelado.</summary>
+        public bool VencerElIntentoAlFallar { get; set; }
+
         public TaskCompletionSource Barriendo { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int Barridos => Volatile.Read(ref _barridos);
+
+        public TimeSpan ConsumoAlDecidirUnReenvio { get; set; }
+
+        /// <summary>Vuelve a esperar la primera transacción posterior, que es donde la decisión de un reenvío consume tiempo.</summary>
+        public void ReiniciarTransacciones() => Interlocked.Exchange(ref _transacciones, 0);
 
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
@@ -76,7 +105,14 @@ public partial class FacturacionDeVentasEmisionTests
                     }
                     else if (lectura == 2 && FallarEnLasCompuertas)
                     {
-                        throw new InvalidOperationException("Falla simulada en las compuertas del intento.");
+                        if (VencerElIntentoAlFallar)
+                        {
+                            tiempo.Advance(Cuatro);
+                        }
+
+                        throw CodigoDeDominioAlFallar is { } codigo
+                            ? new ErrorDominio(codigo, "Falla de dominio simulada en las compuertas del intento.")
+                            : new InvalidOperationException("Falla simulada en las compuertas del intento.");
                     }
                 }
 
@@ -304,13 +340,14 @@ public partial class FacturacionDeVentasEmisionTests
 
         Assert.Equal(EstadosFiscalesDeVenta.Rechazado, emitido.Fiscal!.Estado);
         Assert.Null(emitido.Fiscal.Comprobante);
-        Assert.Contains("10015: Rechazado por el receptor.", emitido.Fiscal.Error);
+        Assert.Equal("10015", emitido.Fiscal.Error);
         Assert.Equal(EstadoComprobante.Emitido, emitido.Estado);
         Assert.Equal(default, await LeerResultadoFiscalDeLaVentaAsync(t.C, emitido.Id));
         Assert.Empty(await LeerEspejosAsync(t.C));
         Assert.Equal(1L, await LeerProximoAsync(t.C, CodigoFacturaB));
         var decision = await LeerDecisionAsync(t.C, emitido.Fiscal.IdFacturacion!.Value);
-        Assert.Equal(("rechazada", emitido.Fiscal.Error), (decision.Estado, decision.UltimoError));
+        Assert.Equal("rechazada", decision.Estado);
+        Assert.Contains("10015: Rechazado por el receptor.", decision.UltimoError);
         Assert.Equal(1, (await InstantaneaAsync(t.C, emitido.Id)).Items);
     }
 
@@ -323,13 +360,14 @@ public partial class FacturacionDeVentasEmisionTests
         var emitido = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t));
 
         Assert.Equal(EstadosFiscalesDeVenta.Pendiente, emitido.Fiscal!.Estado);
-        Assert.StartsWith("arca_no_definitivo", emitido.Fiscal.Error, StringComparison.Ordinal);
+        Assert.Equal("arca_no_definitivo", emitido.Fiscal.Error);
         Assert.Null(emitido.Fiscal.Comprobante);
         var espejo = Assert.Single(await LeerEspejosAsync(t.C));
         Assert.Equal(("pendiente", 1L), (espejo.Resultado, espejo.Numero));
         var decision = await LeerDecisionAsync(t.C, emitido.Fiscal.IdFacturacion!.Value);
         Assert.Equal(("pendiente", 1), (decision.Estado, decision.Intentos));
-        Assert.Equal(emitido.Fiscal.Error, decision.UltimoError);
+        // Lo anotado conserva el detalle; la respuesta de la venta, no.
+        Assert.StartsWith("arca_no_definitivo: ", decision.UltimoError, StringComparison.Ordinal);
         Assert.Equal(
             t.C.Reloj.Ahora.Add(ServicioDeFacturacionDeVentas.EsperaInicialNoDefinitiva), decision.ProximoIntento);
     }
@@ -359,6 +397,10 @@ public partial class FacturacionDeVentasEmisionTests
         // Un corte no es un fallo: ni intento ni error ni espera, y la decisión no se posterga.
         var decision = await LeerDecisionAsync(t.C, emitido.Fiscal.IdFacturacion!.Value);
         Assert.Equal(("pendiente", 0, null, null), (decision.Estado, decision.Intentos, decision.UltimoError, decision.ProximoIntento));
+
+        // Quedaban 4 s del tope: tras el corte el barrido corrió dentro de la misma solicitud y llegó a emitir su consulta.
+        // El interceptor cuenta el comando antes de ejecutarlo, así que esto prueba que el barrido arrancó, no que terminó.
+        Assert.Equal(1, t.Interceptor.Barridos);
 
         t.C.Wsfe.SolicitarConToken = null;
         t.C.Wsfe.Reiniciar();
@@ -407,6 +449,35 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal(0, t.Interceptor.Barridos);
         var decision = await LeerDecisionAsync(t.C, emitido.Fiscal.IdFacturacion!.Value);
         Assert.Equal(("pendiente", 0), (decision.Estado, decision.Intentos));
+    }
+
+    [Fact]
+    public async Task ConElTopeAgotadoJustoALaMedidaNiElIntentoNiElBarridoArrancanYSeInformaElEstadoLeidoConSuCodigo()
+    {
+        var t = await PrepararCobroAsync("cobrocero");
+        t.C.Wsfe.Solicitar = RespondeHttp500();
+        var primera = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, numero: 1));
+        Assert.Equal("arca_no_definitivo", primera.Fiscal!.Error);
+        t.C.Wsfe.Reiniciar();
+        var barridosAntes = t.Interceptor.Barridos;
+
+        // La decisión del reenvío consume exactamente los 8 s: no queda nada (ni un tick) del tope.
+        t.Interceptor.ReiniciarTransacciones();
+        t.Interceptor.ConsumoAlDecidirUnReenvio = EmisionEnLineaAlCobrar.TopeTotal;
+        var segunda = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, numero: 1));
+
+        // Con `< Zero` el intento arrancaría con un presupuesto de cero, se cortaría y devolvería lo que la decisión ya sabía,
+        // que no trae el error: leer el estado actual es lo único que lo informa.
+        Assert.Equal(primera.Id, segunda.Id);
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, segunda.Fiscal!.Estado);
+        Assert.Equal("arca_no_definitivo", segunda.Fiscal.Error);
+        Assert.Empty(t.C.Wsfe.Operaciones);
+        Assert.Equal(1, (await LeerDecisionAsync(t.C, segunda.Fiscal.IdFacturacion!.Value)).Intentos);
+
+        // Con `>= Zero` el barrido arrancaría con un presupuesto de cero: EF ni siquiera emite la consulta (el interceptor no la
+        // ve), pero el barrido cancelado deja su advertencia en el log.
+        Assert.Equal(barridosAntes, t.Interceptor.Barridos);
+        Assert.DoesNotContain(t.C.Logs.Entradas, e => e.Mensaje.Contains("El barrido de decisiones", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -510,6 +581,56 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal(("pendiente", 1, EmisionEnLineaAlCobrar.ErrorInesperado), (decision.Estado, decision.Intentos, decision.UltimoError));
         Assert.Empty(await LeerEspejosAsync(t.C));
         Assert.Equal(default, await LeerResultadoFiscalDeLaVentaAsync(t.C, emitido.Id));
+    }
+
+    [Fact]
+    public async Task UnErrorDeDominioQueLlegaConElPresupuestoDelIntentoVencidoSeAnotaComoIntentoFallidoYNoComoCorte()
+    {
+        var t = await PrepararCobroAsync("cobrodomvenc");
+        t.Interceptor.FallarEnLasCompuertas = true;
+        t.Interceptor.VencerElIntentoAlFallar = true;
+        t.Interceptor.CodigoDeDominioAlFallar = "codigo_de_prueba";
+
+        var emitido = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t));
+
+        // Un corte respondería sin error y no sumaría intento: acá el error de dominio llegó pasado el corte y sí se anota.
+        Assert.Equal(EstadosFiscalesDeVenta.Pendiente, emitido.Fiscal!.Estado);
+        Assert.Equal("codigo_de_prueba", emitido.Fiscal.Error);
+        var decision = await LeerDecisionAsync(t.C, emitido.Fiscal.IdFacturacion!.Value);
+        Assert.Equal(("pendiente", 1, "codigo_de_prueba"), (decision.Estado, decision.Intentos, decision.UltimoError));
+        Assert.Empty(await LeerEspejosAsync(t.C));
+
+        // Quedaban 4 s del tope: el barrido todavía corre.
+        Assert.Equal(1, t.Interceptor.Barridos);
+    }
+
+    [Fact]
+    public async Task LaRespuestaInformaSoloElCodigoDelErrorAnotadoAunqueTraigaTextoLibreEnElReenvioDeUnaDecisionPendienteOCerrada()
+    {
+        var t = await PrepararCobroAsync("cobrocodigo", conTicket: false);
+        var pendiente = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, numero: 1));
+        var cerrada = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, numero: 2));
+
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET ultimo_error = $2 WHERE id_facturacion_venta = $1",
+            pendiente.Fiscal!.IdFacturacion!.Value, "HttpRequestException: Connection refused (10.0.0.5:443) clave=hunter2");
+        await EjecutarComoOwnerAsync(
+            "UPDATE facturaciones_de_venta SET estado = 'rechazada', ultimo_error = $2 WHERE id_facturacion_venta = $1",
+            cerrada.Fiscal!.IdFacturacion!.Value, "10015: Rechazado por el receptor.; 10016: otro texto de ARCA");
+
+        var reenvioPendiente = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, numero: 1));
+        var reenvioCerrada = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t, numero: 2));
+
+        Assert.Equal(
+            (EstadosFiscalesDeVenta.Pendiente, EmisionEnLineaAlCobrar.ErrorInesperado),
+            (reenvioPendiente.Fiscal!.Estado, reenvioPendiente.Fiscal.Error));
+        Assert.Equal((EstadosFiscalesDeVenta.Rechazado, "10015"), (reenvioCerrada.Fiscal!.Estado, reenvioCerrada.Fiscal.Error));
+        Assert.Empty(t.C.Wsfe.Operaciones);
+
+        // Lo anotado no se toca: solo cambia lo que la respuesta informa.
+        Assert.StartsWith(
+            "HttpRequestException: ", (await LeerDecisionAsync(t.C, pendiente.Fiscal.IdFacturacion!.Value)).UltimoError,
+            StringComparison.Ordinal);
     }
 
     [Fact]

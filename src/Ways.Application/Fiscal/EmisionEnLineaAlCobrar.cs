@@ -25,8 +25,12 @@ namespace Ways.Application.Fiscal;
 /// intento, o un error de dominio que llega pasado el corte, se anota como intento fallido igual que lo hace el lote.
 ///
 /// Lo que puede pasar del tope: la decisión (su presupuesto y la anotación de su fallo corren con reloj real y no se recortan), la
-/// anotación de un fallo del intento y la lectura final del estado (<see cref="PresupuestoDeCierre"/> cada una), y una firma de
-/// WSAA que arranque dentro del intento, que no se interrumpe una vez en vuelo (ver el servicio de emisión).
+/// anotación de un fallo del intento y la lectura final del estado (<see cref="PresupuestoDeCierre"/> cada una), la anotación de
+/// cada fallo del barrido (1 s de reloj real por venta, sin recortar al tope) y una firma de WSAA que arranque dentro del intento,
+/// que no se interrumpe una vez en vuelo (ver el servicio de emisión).
+///
+/// La respuesta de la venta informa del error anotado solo su código (<see cref="CodigoDeError"/>): el texto anotado puede traer
+/// mensajes de excepciones y de ARCA que no son para el cajero.
 /// </summary>
 public class EmisionEnLineaAlCobrar(
     ServicioDeDecisionDeFacturacion decision,
@@ -73,7 +77,25 @@ public class EmisionEnLineaAlCobrar(
             }
         }
 
-        return estado;
+        return estado with { Error = CodigoDeError(estado.Error) };
+    }
+
+    /// <summary>Lo único del error anotado que la respuesta de la venta informa: el código inicial (minúsculas, dígitos y
+    /// guion bajo, hasta el primer <c>:</c> o todo el texto si es solo eso). Un rechazo de ARCA anotado como
+    /// <c>10015: mensaje; 10016: mensaje</c> queda con su primer código (<c>10015</c>). Todo lo demás, por ejemplo
+    /// <c>HttpRequestException: texto</c>, se informa como <see cref="ErrorInesperado"/>; sin error, <c>null</c>.</summary>
+    public static string? CodigoDeError(string? anotado)
+    {
+        if (string.IsNullOrWhiteSpace(anotado))
+        {
+            return null;
+        }
+
+        var separador = anotado.IndexOf(':', StringComparison.Ordinal);
+        var codigo = (separador < 0 ? anotado : anotado[..separador]).Trim();
+        return codigo.Length > 0 && codigo.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_')
+            ? codigo
+            : ErrorInesperado;
     }
 
     private TimeSpan Restante(long inicio) => TopeTotal - tiempo.GetElapsedTime(inicio);

@@ -143,7 +143,7 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
     private static string EmisionEnLinea => Fuente("Ways.Application/Fiscal/EmisionEnLineaAlCobrar.cs");
 
     [Fact]
-    public void ElTextoDeLaEmisionEnLineaDecideLuegoIntentaSoloConLaDecisionPendienteYAlFinalBarreConLoQueQuedaDelTope()
+    public void ElTextoDeLaEmisionEnLineaTieneEnEseOrdenDecidirLaCondicionDePendienteElIntentoLaCondicionDeSinDecidirElTiempoRestanteYElBarridoConElMinimoDeLoQueQueda()
     {
         var cuerpo = Entre(EmisionEnLinea, "public async Task<EstadoFiscalDeVenta> DecidirEmitirYSanearAsync(", "private TimeSpan Restante(");
         var decidir = cuerpo.IndexOf("decision.DecidirTrasLaVentaAsync(idComprobanteVenta)", StringComparison.Ordinal);
@@ -160,7 +160,7 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
     }
 
     [Fact]
-    public void ElTextoDelIntentoEnLineaExigeUnTicketCacheadoAntesDeProcesarYSuPresupuestoEsElMinimoConLoQueQuedaDelTope()
+    public void ElTextoDelIntentoEnLineaTieneEnEseOrdenElPresupuestoMinimoLaPreguntaPorElTicketCacheadoYElProcesamientoYNoMencionaLaFirmaDelTicket()
     {
         var cuerpo = Entre(EmisionEnLinea, "private async Task<EstadoFiscalDeVenta> IntentarEmitirAsync(", "/// <summary>El estado actual");
         var presupuesto = cuerpo.IndexOf("Minimo(PresupuestoDeIntento, restante)", StringComparison.Ordinal);
@@ -171,8 +171,11 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
         Assert.DoesNotContain("ObtenerOFirmarAsync", EmisionEnLinea, StringComparison.Ordinal);
     }
 
+    /// <summary>Solo fija el texto. Que un corte no sume intento ni posterga, y que un error de dominio pasado el corte sí se
+    /// anote, lo prueban <c>UnCorteDelPresupuestoDelIntentoRespondePendienteSinAnotarIntento…</c> y
+    /// <c>UnErrorDeDominioQueLlegaConElPresupuestoDelIntentoVencido…</c> en <c>FacturacionDeVentasEnLineaTests</c>.</summary>
     [Fact]
-    public void ElTextoDeLaEmisionEnLineaNoDeclaraUnTokenNiPostergaYSoloAnotaElFalloDeLasExcepciones()
+    public void ElTextoDeLaEmisionEnLineaNoRecibeUnTokenNiMencionaPostergarYElCatchDelCorteNoLlamaARegistrarElFalloMientrasOtroCatchDelIntentoSi()
     {
         var fuente = EmisionEnLinea;
         var firma = fuente[fuente.IndexOf("public async Task<EstadoFiscalDeVenta> DecidirEmitirYSanearAsync(", StringComparison.Ordinal)..];

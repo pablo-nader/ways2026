@@ -210,7 +210,10 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 /// es lo que el servidor decidió sobre la facturación del ticket: solo la respuesta de la emisión (y de su reenvío)
 /// lo completa; una lectura por id (reimpresión) lo devuelve <c>null</c>, o sea "no consultado", no "no corresponde". Si el
 /// servidor alcanzó a emitir la factura antes de responder (o ya estaba emitida en un reenvío), <c>Fiscal.Estado</c> es
-/// <c>aprobado</c> y <c>Fiscal.Comprobante</c> lleva sus datos (<see cref="EmisionEnLineaAlCobrar"/>).</summary>
+/// <c>aprobado</c> y <c>Fiscal.Comprobante</c> lleva sus datos (<see cref="EmisionEnLineaAlCobrar"/>). <c>Fiscal.Estado</c> es
+/// uno de: <c>no_corresponde</c> (no se factura), <c>sin_decidir</c> (la decisión falló y se completa después), <c>pendiente</c>
+/// (se decidió facturar y la factura no está emitida), <c>aprobado</c>, <c>rechazado</c> (ARCA rechazó) o <c>cancelado</c> (la
+/// venta se anuló antes de procesarse su facturación; se ve en un reenvío o si la anulación llega durante el cobro). <c>Fiscal.Error</c> es solo un código, nunca texto libre.</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,
