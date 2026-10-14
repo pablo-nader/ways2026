@@ -297,7 +297,9 @@ public class ServicioDeOrganizacion(
                 .Select(t => t.Nombre)
                 .FirstOrDefault(),
             e.AlicuotaPercepcionIibb,
-            e.AlicuotaPercepcionIva);
+            e.AlicuotaPercepcionIva,
+            e.IngresosBrutos,
+            e.InicioActividades);
 
     public async Task<IReadOnlyList<EmpresaListado>> ListarEmpresasAsync(CancellationToken ct = default) =>
         await db.Empresas
@@ -329,6 +331,7 @@ public class ServicioDeOrganizacion(
         var razonSocial = Normalizar(datos.RazonSocial, "razon_social", "razón social", 150);
         var nombreFantasia = NormalizarOpcional(datos.NombreFantasia, "nombre_fantasia", "nombre de fantasía", 150);
         var cuit = NormalizarOpcional(datos.Cuit, "cuit", "CUIT", 13);
+        var ingresosBrutos = NormalizarOpcional(datos.IngresosBrutos, "ingresos_brutos", "ingresos brutos", 30);
         ExigirAlicuotaDePercepcionValida(datos.AlicuotaPercepcionIibb, "IIBB");
         ExigirAlicuotaDePercepcionValida(datos.AlicuotaPercepcionIva, "IVA");
 
@@ -339,6 +342,8 @@ public class ServicioDeOrganizacion(
             empresa.Cuit = cuit;
             empresa.AlicuotaPercepcionIibb = datos.AlicuotaPercepcionIibb;
             empresa.AlicuotaPercepcionIva = datos.AlicuotaPercepcionIva;
+            empresa.IngresosBrutos = ingresosBrutos;
+            empresa.InicioActividades = datos.InicioActividades;
             empresa.UpdatedAt = reloj.Ahora;
 
             await db.SaveChangesAsync(ct);

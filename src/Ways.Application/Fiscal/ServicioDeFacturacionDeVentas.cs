@@ -1329,10 +1329,22 @@ public class ServicioDeFacturacionDeVentas(
             fechaFiscal, ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa), puntoVenta.NumeroFiscal!.Value,
             tipo.CodigoAfip!.Value, espejo.Numero, espejo.Total, tipoDoc, nroDoc);
 
+        var idsCondicion = new[] { empresa.IdCondicionFiscal, cliente.IdCondicionFiscal }.OfType<int>().Distinct().ToList();
+        var condiciones = await db.CondicionesFiscales.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
+            .Where(c => idsCondicion.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Nombre, ct);
+        var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(espejo.Id, ct, incluirBajasDeCatalogo: true);
+
         return new DatosDeFacturaFiscal(
             espejo.Id, tipo.Codigo, tipo.Letra!.Value, puntoVenta.NumeroFiscal.Value, espejo.Numero, fechaFiscal,
-            espejo.Cae, espejo.CaeVencimiento, qr, LeerObservaciones(espejo.ObservacionesFiscales));
+            espejo.Cae, espejo.CaeVencimiento, qr, LeerObservaciones(espejo.ObservacionesFiscales),
+            EmisorDeFacturaFiscal.De(empresa, puntoVenta, NombreDeCondicion(condiciones, empresa.IdCondicionFiscal)),
+            ReceptorDeFacturaFiscal.De(cliente, tipoDoc, nroDoc, NombreDeCondicion(condiciones, cliente.IdCondicionFiscal)),
+            TotalesDeFacturaFiscal.De(lineas));
     }
+
+    private static string? NombreDeCondicion(Dictionary<int, string> condiciones, int? idCondicion) =>
+        idCondicion is { } id && condiciones.TryGetValue(id, out var nombre) ? nombre : null;
 
     private static IReadOnlyList<ObservacionArca> LeerObservaciones(string? json)
     {

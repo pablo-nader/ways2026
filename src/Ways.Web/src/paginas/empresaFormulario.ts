@@ -9,7 +9,13 @@ export type FormularioDeEmpresa = {
   cuit: string
   alicuotaPercepcionIibb: string
   alicuotaPercepcionIva: string
+  /** Texto libre de la factura impresa (`''` = sin informar). */
+  ingresosBrutos: string
+  /** `yyyy-MM-dd` del input de fecha (`''` = sin informar). */
+  inicioActividades: string
 }
+
+export const LARGO_MAXIMO_INGRESOS_BRUTOS = 30
 
 export const MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA =
   'Las alícuotas de percepción tienen que estar entre 0 y 100, con hasta 3 decimales.'
@@ -22,6 +28,8 @@ export function aFormularioDeEmpresa(e: EmpresaListado): FormularioDeEmpresa {
     cuit: e.cuit ?? '',
     alicuotaPercepcionIibb: e.alicuotaPercepcionIibb === null ? '' : String(e.alicuotaPercepcionIibb),
     alicuotaPercepcionIva: e.alicuotaPercepcionIva === null ? '' : String(e.alicuotaPercepcionIva),
+    ingresosBrutos: e.ingresosBrutos ?? '',
+    inicioActividades: e.inicioActividades ?? '',
   }
 }
 
@@ -51,5 +59,7 @@ export function aEdicionDeEmpresa(f: FormularioDeEmpresa): EmpresaEdicion {
     cuit: f.cuit || null,
     alicuotaPercepcionIibb: aAlicuota(f.alicuotaPercepcionIibb) ?? null,
     alicuotaPercepcionIva: aAlicuota(f.alicuotaPercepcionIva) ?? null,
+    ingresosBrutos: f.ingresosBrutos.trim() || null,
+    inicioActividades: f.inicioActividades || null,
   }
 }

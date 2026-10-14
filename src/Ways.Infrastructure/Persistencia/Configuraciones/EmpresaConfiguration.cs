@@ -59,6 +59,15 @@ public class EmpresaConfiguration : IEntityTypeConfiguration<Empresa>
             .HasColumnName("alicuota_percepcion_iva")
             .HasColumnType("numeric(6,3)");
 
+        builder.Property(e => e.IngresosBrutos)
+            .HasColumnName("ingresos_brutos")
+            .HasColumnType("citext")
+            .HasMaxLength(30);
+
+        builder.Property(e => e.InicioActividades)
+            .HasColumnName("inicio_actividades")
+            .HasColumnType("date");
+
         builder.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(e => e.DeletedAt).HasColumnName("deleted_at");

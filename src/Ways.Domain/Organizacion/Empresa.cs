@@ -32,4 +32,12 @@ public class Empresa : EntidadTenant
     /// <summary>Porcentaje de percepción de IVA que los proveedores le aplican a esta empresa.
     /// <c>NULL</c> = no se conoce.</summary>
     public decimal? AlicuotaPercepcionIva { get; set; }
+
+    /// <summary>Texto libre que la factura impresa muestra como "Ingresos Brutos": un número de
+    /// inscripción, "Exento" o el número de Convenio Multilateral. <c>NULL</c> = no cargado.</summary>
+    public string? IngresosBrutos { get; set; }
+
+    /// <summary>Fecha de inicio de actividades que la factura impresa muestra junto al CUIT.
+    /// <c>NULL</c> = no cargada.</summary>
+    public DateOnly? InicioActividades { get; set; }
 }

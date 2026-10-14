@@ -17,6 +17,8 @@ function empresa(sobrescribir: Partial<EmpresaListado> = {}): EmpresaListado {
     nombreTenant: 'Comercio Sur',
     alicuotaPercepcionIibb: null,
     alicuotaPercepcionIva: null,
+    ingresosBrutos: null,
+    inicioActividades: null,
     ...sobrescribir,
   }
 }
@@ -29,6 +31,8 @@ function formulario(sobrescribir: Partial<FormularioDeEmpresa> = {}): Formulario
     cuit: '',
     alicuotaPercepcionIibb: '',
     alicuotaPercepcionIva: '',
+    ingresosBrutos: '',
+    inicioActividades: '',
     ...sobrescribir,
   }
 }
@@ -39,6 +43,13 @@ describe('aFormularioDeEmpresa', () => {
     expect(
       aFormularioDeEmpresa(empresa({ alicuotaPercepcionIibb: 3.5, alicuotaPercepcionIva: 0 })),
     ).toMatchObject({ alicuotaPercepcionIibb: '3.5', alicuotaPercepcionIva: '0' })
+  })
+
+  it('los datos fiscales sin informar quedan vacíos y los informados se copian tal cual', () => {
+    expect(aFormularioDeEmpresa(empresa())).toMatchObject({ ingresosBrutos: '', inicioActividades: '' })
+    expect(
+      aFormularioDeEmpresa(empresa({ ingresosBrutos: 'Exento', inicioActividades: '2015-03-01' })),
+    ).toMatchObject({ ingresosBrutos: 'Exento', inicioActividades: '2015-03-01' })
   })
 })
 
@@ -56,7 +67,16 @@ describe('aEdicionDeEmpresa', () => {
       cuit: '20-1',
       alicuotaPercepcionIibb: null,
       alicuotaPercepcionIva: null,
+      ingresosBrutos: null,
+      inicioActividades: null,
     })
+  })
+
+  it('ingresos brutos va sin espacios de los bordes y vacío o en blanco es null; la fecha vacía es null', () => {
+    expect(aEdicionDeEmpresa(formulario({ ingresosBrutos: '  901-123456-7 ' })).ingresosBrutos).toBe('901-123456-7')
+    expect(aEdicionDeEmpresa(formulario({ ingresosBrutos: '   ' })).ingresosBrutos).toBeNull()
+    expect(aEdicionDeEmpresa(formulario({ inicioActividades: '2015-03-01' })).inicioActividades).toBe('2015-03-01')
+    expect(aEdicionDeEmpresa(formulario({ inicioActividades: '' })).inicioActividades).toBeNull()
   })
 })
 

@@ -1,4 +1,6 @@
+using Ways.Domain.Clientes;
 using Ways.Domain.Fiscal;
+using Ways.Domain.Organizacion;
 
 namespace Ways.Application.Fiscal;
 
@@ -59,7 +61,9 @@ public static class EstadosFiscalesDeVenta
 }
 
 /// <summary>La factura fiscal aprobada de una venta: lo que el POS necesita para imprimirla. <see cref="Fecha"/> es el día
-/// de emisión (la fecha del comprobante en ARCA), no el de la venta.</summary>
+/// de emisión (la fecha del comprobante en ARCA), no el de la venta. <see cref="Emisor"/>, <see cref="Receptor"/> y
+/// <see cref="Totales"/> llevan los datos legales de la factura impresa y se agregan al final, sin cambiar los campos
+/// que ya existían.</summary>
 public sealed record DatosDeFacturaFiscal(
     int IdComprobante,
     string CodigoTipoComprobante,
@@ -70,4 +74,83 @@ public sealed record DatosDeFacturaFiscal(
     string? Cae,
     DateOnly? CaeVencimiento,
     string? PayloadQr,
-    IReadOnlyList<ObservacionArca> Observaciones);
+    IReadOnlyList<ObservacionArca> Observaciones,
+    EmisorDeFacturaFiscal Emisor,
+    ReceptorDeFacturaFiscal Receptor,
+    TotalesDeFacturaFiscal Totales);
+
+/// <summary>Quién emite la factura. <see cref="Domicilio"/> es el del punto de venta; <see cref="CondicionFiscal"/> el nombre
+/// de la condición de la empresa (<c>null</c> si no tiene).</summary>
+public sealed record EmisorDeFacturaFiscal(
+    string RazonSocial,
+    string? NombreFantasia,
+    string? Cuit,
+    string? CondicionFiscal,
+    string? IngresosBrutos,
+    DateOnly? InicioActividades,
+    string? Domicilio)
+{
+    public static EmisorDeFacturaFiscal De(Empresa empresa, PuntoVenta puntoVenta, string? condicionFiscal) => new(
+        empresa.RazonSocial, empresa.NombreFantasia, empresa.Cuit, condicionFiscal, empresa.IngresosBrutos,
+        empresa.InicioActividades, puntoVenta.Domicilio);
+}
+
+/// <summary>A quién se factura. <see cref="TipoDocumento"/> es la etiqueta del documento tal como viajó a ARCA
+/// (<see cref="CodigoTipoDocumento"/>: 80 CUIT, 86 CUIL, 96 DNI, 94 Pasaporte, 99 sin identificar) y
+/// <see cref="NumeroDocumento"/> el número enviado (0 con 99).</summary>
+public sealed record ReceptorDeFacturaFiscal(
+    string Nombre,
+    string TipoDocumento,
+    short CodigoTipoDocumento,
+    long NumeroDocumento,
+    string? CondicionFiscal,
+    string? Domicilio)
+{
+    public static ReceptorDeFacturaFiscal De(Cliente cliente, short tipoDoc, long nroDoc, string? condicionFiscal) => new(
+        NombreAImprimir(cliente), EtiquetaDeTipoDocumento(tipoDoc), tipoDoc, nroDoc, condicionFiscal, cliente.Domicilio);
+
+    /// <summary>La razón social si hay; si no, nombre y apellido.</summary>
+    public static string NombreAImprimir(Cliente cliente) =>
+        !string.IsNullOrWhiteSpace(cliente.RazonSocial)
+            ? cliente.RazonSocial.Trim()
+            : string.Join(
+                ' ', new[] { cliente.Nombre, cliente.Apellido }.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!.Trim()));
+
+    public static string EtiquetaDeTipoDocumento(short tipoDoc) => tipoDoc switch
+    {
+        80 => "CUIT",
+        86 => "CUIL",
+        96 => "DNI",
+        94 => "Pasaporte",
+        _ => "Sin identificar"
+    };
+}
+
+/// <summary>Los importes que ARCA recibió, recompuestos del snapshot de las líneas del comprobante con la misma composición
+/// que la emisión. Con ImpTrib en cero, ImpTotal es ImpNeto + ImpIVA + ImpOpEx + ImpTotConc.</summary>
+public sealed record TotalesDeFacturaFiscal(
+    decimal ImpNeto,
+    decimal ImpIva,
+    decimal ImpOpEx,
+    decimal ImpTotConc,
+    decimal ImpTrib,
+    decimal ImpTotal,
+    IReadOnlyList<AlicuotaDeFacturaFiscal> Alicuotas)
+{
+    public static TotalesDeFacturaFiscal De(IReadOnlyList<LineaFiscal> lineas)
+    {
+        var totales = ComposicionDeTotalesFiscales.Componer(lineas);
+        var porcentajes = ComposicionDeTotalesFiscales.PorcentajesDeIva(lineas);
+        if (porcentajes.Count != totales.Iva.Count)
+        {
+            throw new InvalidOperationException("Los porcentajes de IVA no coinciden con las alícuotas compuestas.");
+        }
+
+        return new TotalesDeFacturaFiscal(
+            totales.ImpNeto, totales.ImpIVA, totales.ImpOpEx, totales.ImpTotConc, totales.ImpTrib, totales.ImpTotal,
+            [.. totales.Iva.Select((item, i) => new AlicuotaDeFacturaFiscal(porcentajes[i], item.BaseImp, item.Importe))]);
+    }
+}
+
+/// <summary>Una alícuota gravada de la factura: porcentaje, neto (base imponible) e IVA.</summary>
+public sealed record AlicuotaDeFacturaFiscal(decimal Porcentaje, decimal Neto, decimal Iva);

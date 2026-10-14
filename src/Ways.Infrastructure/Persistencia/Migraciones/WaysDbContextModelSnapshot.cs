@@ -3766,6 +3766,15 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
 
+                    b.Property<string>("IngresosBrutos")
+                        .HasMaxLength(30)
+                        .HasColumnType("citext")
+                        .HasColumnName("ingresos_brutos");
+
+                    b.Property<DateOnly?>("InicioActividades")
+                        .HasColumnType("date")
+                        .HasColumnName("inicio_actividades");
+
                     b.Property<string>("NombreFantasia")
                         .HasMaxLength(150)
                         .HasColumnType("citext")

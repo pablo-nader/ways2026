@@ -519,6 +519,31 @@ facturas salen por ESC/POS en el POS de escritorio.
   y QR; reimpresión igual. Ruta: delegada.
 - Release del POS después de T7c, avisando al dueño antes.
 
+### Contenido legal verificado (fuentes primarias ARCA/AFIP, 2026-10-14)
+
+- Formato ticket permitido: RG 4291 art. 15 (modelo Tique-Factura de la RG 3561, CAE al pie).
+- Emisor (RG 1415 Anexo II A I a): razón social, domicilio comercial, CUIT, ingresos brutos,
+  leyenda de condición frente al IVA, "INICIO DE ACTIVIDADES" con la fecha.
+- Comprobante: letra, "Código Nº" del tipo, PV (5) y número (8), fecha; "C.A.E. N°" y
+  "Fecha de Vto." al pie. Sin datos de imprenta ni ORIGINAL/DUPLICADO (RG 4291 art. 14 d).
+- Receptor (A II): consumidor final → "A CONSUMIDOR FINAL"; identificación con DNI/CUIL/CDI
+  desde $10.000.000 (RG 5700 y RG 5866/2026), nombre y domicilio pueden ir "NR"; resto →
+  nombre, domicilio, CUIT y condición de IVA (RG 5616/2024 exige la condición del receptor).
+- Condición de venta (A III / B e).
+- Transparencia fiscal (RG 5614; RG 1415 B g; RG 4291 art. 15): en el ticket, bajo
+  "OTRAS LEYENDAS", título "TRANSPARENCIA FISCAL", "IVA Contenido" y "Otros Impuestos
+  Nacionales Indirectos". La norma de diseño no distingue letra.
+- QR (RG 4892 y especificación vigente): base `https://www.arca.gob.ar/fe/qr/`; el host de
+  afip sigue redirigiendo. Sin tamaño ni nivel de corrección fijados. No reemplaza datos.
+- Fuentes: biblioteca.afip.gob.ar/dcp/REAG01001415_2003_01_07,
+  biblioteca.afip.gob.ar/dcp/REAG01004291_2018_08_02, RG 4892 (REAG01004892_2020_12_22),
+  arca.gob.ar/fe/qr/documentos/QRespecificaciones.pdf, Boletín Oficial RG 5614/5616/5700/5866.
+
+Decisiones de T7c: la leyenda de transparencia va en todas las letras (A y B con el IVA de
+ARCA, C con $0,00: la norma no fija el importe para monotributo y prohíbe discriminar IVA, a
+confirmar con el contador); condición de venta "Cuenta corriente" si algún pago es a cuenta
+corriente, si no "Contado"; el servidor pasa a `www.arca.gob.ar` en el QR.
+
 ## Próximo paso
 
 T7a en curso; T7b cuando lleguen el mapa del servidor y la verificación normativa.

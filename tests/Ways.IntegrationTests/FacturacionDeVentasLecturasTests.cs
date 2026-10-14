@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Ways.Application.Fiscal;
 using Ways.Application.Ventas;
 
@@ -258,5 +260,185 @@ public partial class FacturacionDeVentasEmisionTests
         var otro = await PrepararCobroAsync("lecturaturnob");
 
         Assert.Empty(await LeerVentasDelTurnoAsync(otro.Cajero, t.C.IdTurno));
+    }
+
+    // ---- T7b: datos legales de la factura impresa ----------------------------------------------------------
+
+    private static List<(short Id, decimal Base, decimal Importe)> AlicuotasDelCuerpo(string cuerpo) =>
+    [
+        .. Regex.Matches(
+                cuerpo,
+                @"<(?:\w+:)?AlicIva>\s*<(?:\w+:)?Id>(\d+)</(?:\w+:)?Id>\s*<(?:\w+:)?BaseImp>([\d.]+)</(?:\w+:)?BaseImp>\s*<(?:\w+:)?Importe>([\d.]+)</",
+                RegexOptions.None, TimeSpan.FromSeconds(5))
+            .Select(m => (short.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture),
+                decimal.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
+                decimal.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture)))
+    ];
+
+    private async Task CargarDatosLegalesDeLaEmpresaAsync(Ctx c)
+    {
+        await EjecutarComoOwnerAsync(
+            "UPDATE empresas SET razon_social = 'Emisor Legal SA', nombre_fantasia = 'Legal Mercado', " +
+            "ingresos_brutos = 'CM 901-555', inicio_actividades = '2012-04-02' WHERE id_empresa = $1", c.IdEmpresa);
+        await EjecutarComoOwnerAsync(
+            "UPDATE puntos_venta SET domicilio = 'Av. Siempre Viva 742' WHERE id_punto_venta = $1", c.IdPuntoVenta);
+    }
+
+    private async Task<string> NombreDeCondicionAsync(Ctx c, string codigo) => Assert.Single(await ConsultarAsync(
+        c, "SELECT nombre FROM condiciones_fiscales WHERE codigo = $1", l => l.GetString(0), codigo));
+
+    /// <summary>Cláusulas bajo prueba: el emisor sale de empresa y punto de venta (con el nombre de la condición), el receptor
+    /// con el documento tal como viajó a ARCA y los totales se recomponen del snapshot de las líneas del espejo: las dos
+    /// alícuotas coinciden con las que el espía de WSFE recibió.</summary>
+    [Fact]
+    public async Task LaLecturaPorIdDeUnaVentaAprobadaTraeEmisorReceptorYTotalesIgualesAlPedidoQueViajoAArca()
+    {
+        var t = await PrepararCobroAsync("lecturalegal");
+        await CargarDatosLegalesDeLaEmpresaAsync(t.C);
+        await EjecutarComoOwnerAsync(
+            "UPDATE clientes SET apellido = 'Pérez', domicilio = 'Calle Falsa 123' WHERE id_cliente = $1", t.C.IdClienteRi);
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteRi, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        var cuerpo = Assert.Single(t.C.Wsfe.CuerposDeSolicitud);
+        t.C.Wsfe.Reiniciar();
+
+        var factura = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!;
+
+        Assert.Equal(
+            new EmisorDeFacturaFiscal(
+                "Emisor Legal SA", "Legal Mercado", "20111111112", await NombreDeCondicionAsync(t.C, "RI"), "CM 901-555",
+                new DateOnly(2012, 4, 2), "Av. Siempre Viva 742"),
+            factura.Emisor);
+        var receptor = factura.Receptor;
+        Assert.Equal(
+            ("CUIT", (short)80, 20222222223L, await NombreDeCondicionAsync(t.C, "RI"), "Calle Falsa 123"),
+            (receptor.TipoDocumento, receptor.CodigoTipoDocumento, receptor.NumeroDocumento, receptor.CondicionFiscal, receptor.Domicilio));
+        Assert.EndsWith(" Pérez", receptor.Nombre, StringComparison.Ordinal);
+        Assert.Equal(short.Parse(CampoDelCuerpo(cuerpo, "DocTipo"), CultureInfo.InvariantCulture), receptor.CodigoTipoDocumento);
+        Assert.Equal(long.Parse(CampoDelCuerpo(cuerpo, "DocNro"), CultureInfo.InvariantCulture), receptor.NumeroDocumento);
+
+        var totales = factura.Totales;
+        var enviadas = AlicuotasDelCuerpo(cuerpo);
+        Assert.Equal(2, enviadas.Count);
+        Assert.Equal(
+            [(21m, 100m, 21m), (10.5m, 99.55m, 10.45m)],
+            totales.Alicuotas.Select(a => (a.Porcentaje, a.Neto, a.Iva)));
+        Assert.Equal(enviadas.Select(a => (a.Base, a.Importe)), totales.Alicuotas.Select(a => (a.Neto, a.Iva)));
+        Assert.Equal(
+            (decimal.Parse(CampoDelCuerpo(cuerpo, "ImpNeto"), CultureInfo.InvariantCulture),
+                decimal.Parse(CampoDelCuerpo(cuerpo, "ImpIVA"), CultureInfo.InvariantCulture),
+                decimal.Parse(CampoDelCuerpo(cuerpo, "ImpOpEx"), CultureInfo.InvariantCulture),
+                decimal.Parse(CampoDelCuerpo(cuerpo, "ImpTotConc"), CultureInfo.InvariantCulture),
+                decimal.Parse(CampoDelCuerpo(cuerpo, "ImpTrib"), CultureInfo.InvariantCulture),
+                decimal.Parse(CampoDelCuerpo(cuerpo, "ImpTotal"), CultureInfo.InvariantCulture)),
+            (totales.ImpNeto, totales.ImpIva, totales.ImpOpEx, totales.ImpTotConc, totales.ImpTrib, totales.ImpTotal));
+        Assert.Equal(231m, totales.ImpTotal);
+        Assert.Empty(t.C.Wsfe.Operaciones);
+    }
+
+    /// <summary>Cláusula bajo prueba: el nombre a imprimir es la razón social si hay y, si no, nombre y apellido.</summary>
+    [Fact]
+    public async Task ElReceptorImprimeLaRazonSocialSiLaTieneYSiNoNombreYApellido()
+    {
+        var t = await PrepararCobroAsync("lecturanombre");
+        await EjecutarComoOwnerAsync(
+            "UPDATE clientes SET nombre = 'Juana', apellido = 'Gómez' WHERE id_cliente = $1", t.C.IdClienteRi);
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteRi, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+
+        var sinRazonSocial = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Receptor;
+        await EjecutarComoOwnerAsync(
+            "UPDATE clientes SET razon_social = 'Gómez Hnos. SRL' WHERE id_cliente = $1", t.C.IdClienteRi);
+        var conRazonSocial = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Receptor;
+
+        Assert.Equal("Juana Gómez", sinRazonSocial.Nombre);
+        Assert.Equal("Gómez Hnos. SRL", conRazonSocial.Nombre);
+    }
+
+    [Fact]
+    public async Task ElReceptorConsumidorFinalSeInformaSinIdentificarConDocumentoCero()
+    {
+        var t = await PrepararCobroAsync("lecturacf");
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteCf, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+
+        var receptor = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Receptor;
+
+        Assert.Equal(
+            ("Sin identificar", (short)99, 0L, await NombreDeCondicionAsync(t.C, "CF")),
+            (receptor.TipoDocumento, receptor.CodigoTipoDocumento, receptor.NumeroDocumento, receptor.CondicionFiscal));
+    }
+
+    /// <summary>Con una línea exenta el desglose por alícuota solo trae la gravada y el importe exento va a ImpOpEx, igual que lo
+    /// que viajó a ARCA.</summary>
+    [Fact]
+    public async Task UnaLineaExentaVaAImpOpExYNoApareceEnLasAlicuotasDeLaFactura()
+    {
+        var t = await PrepararCobroAsync("lecturaexento");
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteCf, sembrarAcumulados: false);
+        await EjecutarComoOwnerAsync(
+            "UPDATE items_comprobante_venta SET porcentaje_iva = 0, id_alicuota_iva = " +
+            "(SELECT id_alicuota_iva FROM alicuotas_iva WHERE nombre = 'Exento') " +
+            "WHERE id_comprobante_venta = $1 AND orden = 2", venta.IdVenta);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        var cuerpo = Assert.Single(t.C.Wsfe.CuerposDeSolicitud);
+
+        var totales = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Totales;
+
+        Assert.Equal("110.00", CampoDelCuerpo(cuerpo, "ImpOpEx"));
+        Assert.Equal((100m, 21m, 110m, 0m, 231m), (totales.ImpNeto, totales.ImpIva, totales.ImpOpEx, totales.ImpTotConc, totales.ImpTotal));
+        var gravada = Assert.Single(totales.Alicuotas);
+        Assert.Equal((21m, 100m, 21m), (gravada.Porcentaje, gravada.Neto, gravada.Iva));
+    }
+
+    /// <summary>Cláusula bajo prueba: los totales salen del snapshot de las líneas del espejo, no del catálogo ni del precio actual.
+    /// Cambiar el porcentaje de la alícuota del catálogo no mueve lo informado.</summary>
+    [Fact]
+    public async Task LosTotalesDeLaFacturaSalenDelSnapshotDeLasLineasAunqueElCatalogoDeAlicuotasCambie()
+    {
+        var t = await PrepararCobroAsync("lecturasnapshot");
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteCf, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        var antes = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Totales;
+        await EjecutarComoOwnerAsync("UPDATE alicuotas_iva SET porcentaje = 27 WHERE codigo_afip = 5");
+
+        try
+        {
+            var despues = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante!.Totales;
+
+            Assert.Equal(JsonSerializer.Serialize(antes, OpcionesJson), JsonSerializer.Serialize(despues, OpcionesJson));
+            Assert.Equal(21m, despues.Alicuotas[0].Porcentaje);
+        }
+        finally
+        {
+            await EjecutarComoOwnerAsync("UPDATE alicuotas_iva SET porcentaje = 21 WHERE codigo_afip = 5");
+        }
+    }
+
+    [Fact]
+    public async Task LaFacturaSigueInformandoSusTotalesAunqueLaAlicuotaDeLaLineaSeDioDeBaja()
+    {
+        var t = await PrepararCobroAsync("lecturaalicuotabaja");
+        var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteCf, sembrarAcumulados: false);
+        t.C.Wsfe.Solicitar = Responde(FecaeAprobado());
+        Assert.Equal(1, (await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta)).Emitidas);
+        await EjecutarComoOwnerAsync("UPDATE alicuotas_iva SET deleted_at = now() WHERE codigo_afip = 4");
+
+        try
+        {
+            var totales = (await LeerVentaPorIdAsync(t.Cajero, venta.IdVenta)).Fiscal!.Comprobante?.Totales;
+
+            Assert.NotNull(totales);
+            Assert.Equal(2, totales.Alicuotas.Count);
+        }
+        finally
+        {
+            await EjecutarComoOwnerAsync("UPDATE alicuotas_iva SET deleted_at = NULL WHERE codigo_afip = 4");
+        }
     }
 }
