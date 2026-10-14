@@ -467,10 +467,28 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   la serie y la venta siguiente sale con ticket aunque se pidió factura; el botón de
   reimprimir no refresca la fila si la factura ya no está aprobada. Van a T6d.
 
-- [ ] **T6d — Seguimiento del lote.** Un lote de a uno por punto de venta en el proceso (no
+- [x] **T6d — Seguimiento del lote.** Un lote de a uno por punto de venta en el proceso (no
   por montaje), tope de la caja por encima del peor caso del servidor, lote de la
   reconexión, refresco de la fila al reimprimir. Ruta: delegada.
+  2026-10-14 — hecha. Commit `1943b85f`, apilado sobre T6c. Estado del lote en un mapa del
+  módulo por punto de venta; peor caso del servidor 60 s con la configuración por defecto
+  (20 s de lote + 30 s de firma WSAA + 5 s de cierre + 5 s de conteo) y tope de la caja
+  75 s; una pasada con algún envío exitoso o una venta directa aceptada prueban que el
+  servidor responde y piden el lote aunque `enLinea` siga falso; un ciclo con la cola vacía
+  pide uno después de refrescar si estaba sin conexión; reimprimir una factura ya no aprobada
+  actualiza la fila.
+  Checks: `tsc -b` limpio; lint sin errores; Vitest completo 7331/7331; los archivos tocados
+  re-corridos por el orquestador 223/223. Sin RED previo: nueve mutaciones en rojo.
+  Judgment-day ronda 1: ningún hallazgo severo confirmado por los dos jueces. JUDGMENT:
+  APPROVED. Confirmada por los dos (sugerencia): un comentario prometía "la instancia viva
+  más reciente"; corregido después del juicio, solo comentarios. Sospechosos de un solo juez:
+  ningún test mata la guarda que evita el doble lote en un ciclo normal con conexión; el
+  mapa no se limpia al cerrar sesión (una vuelta pendiente puede salir con la sesión
+  siguiente); el tope de 75 s queda corto si se sube `PresupuestoDeLoteSegundos` o
+  `TimeoutDeWsaaSegundos`.
+- Pregunta abierta al dueño: el lote tras cada venta puede ocupar la serie hasta 20 s y la
+  venta siguiente con factura sale con ticket.
 
 ## Próximo paso
 
-PR de T6c; después T6d.
+PR de T6d; respuesta del dueño sobre la contención de la serie; después T7.

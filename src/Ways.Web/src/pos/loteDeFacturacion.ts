@@ -19,7 +19,7 @@ export const TIEMPO_LIMITE_DEL_LOTE_DE_FACTURACION_MS = PEOR_CASO_DEL_LOTE_EN_EL
 
 export type ParametrosDelDisparadorDeLote = {
   procesar: (idPuntoVenta: number, senal: AbortSignal) => Promise<unknown>
-  /** Se consulta al pedir y otra vez antes de la vuelta pendiente: la conexión puede cambiar en el medio. */
+  /** Se consulta al pedir y otra vez antes de la vuelta pendiente, salvo en un pedido con `servidorAlcanzable`. */
   estaEnLinea: () => boolean
   tiempoLimiteMs?: number
 }
@@ -64,7 +64,7 @@ async function correr(estado: EstadoDelPunto, pedido: Pedido): Promise<void> {
   }
   const siguiente = estado.vueltaPendiente
   estado.vueltaPendiente = null
-  // La vuelta corre con los parámetros de quien la pidió (la instancia viva más reciente), y su chequeo de conexión.
+  // La vuelta corre con los parámetros del último que la pidió, aunque esa instancia ya se haya desmontado.
   if (siguiente !== null && hayConexion(siguiente)) await correr(estado, siguiente)
 }
 
