@@ -306,14 +306,13 @@ function pieLegal(ticket: ConstructorDeTicket, factura: DatosDeFacturaFiscal): v
     ticket.lineaDeGuiones()
   }
   ticket.alinear('izquierda')
-  if (factura.cae) ticket.linea(`CAE N°: ${factura.cae}`)
-  if (factura.caeVencimiento) ticket.linea(`Vto. CAE: ${fechaDeFactura(factura.caeVencimiento)}`)
+  if (factura.cae) ticket.linea(`C.A.E. N°: ${factura.cae}`)
+  if (factura.caeVencimiento) ticket.linea(`Fecha de Vto.: ${fechaDeFactura(factura.caeVencimiento)}`)
   if (factura.payloadQr) {
     try {
       ticket.alinear('centro').qr(factura.payloadQr)
-    } catch (error) {
-      // Un QR no imprimible no puede tirar abajo la factura: se omite y el resto sigue.
-      if (!(error instanceof RangeError)) throw error
+    } catch {
+      // Un QR no imprimible (qr() solo lanza RangeError) no puede tirar abajo la factura: se omite.
     }
   }
 }

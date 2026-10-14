@@ -982,8 +982,8 @@ describe('facturaDeVenta', () => {
     expect(texto).toContain('FACTURA B')
     expect(texto).toContain('Nro 00003-00000012')
     expect(texto).toContain('Fecha: 14/10/2026')
-    expect(texto).toContain('CAE N°: 70123456789012')
-    expect(texto).toContain('Vto. CAE: 24/10/2026')
+    expect(texto).toContain('C.A.E. N°: 70123456789012')
+    expect(texto).toContain('Fecha de Vto.: 24/10/2026')
     expect(texto).not.toContain('COMPROBANTE NO VALIDO COMO FACTURA')
   })
 
@@ -999,7 +999,7 @@ describe('facturaDeVenta', () => {
   it('sin vencimiento de CAE no imprime esa línea', () => {
     const texto = textoPlano(facturaDeVenta(comprobanteFixture(), { ...datosDeFactura, caeVencimiento: null }, CONTEXTO, medios))
 
-    expect(texto).not.toContain('Vto. CAE')
+    expect(texto).not.toContain('Fecha de Vto.')
   })
 
   it('pulsa el cajón con un pago en efectivo, como el ticket', () => {
@@ -1012,7 +1012,7 @@ describe('facturaDeVenta', () => {
     expect(texto).toContain('REIMPRESION')
     expect(texto.indexOf('REIMPRESION')).toBeLessThan(texto.indexOf('FACTURA B'))
     expect(texto).toContain('Nro 00003-00000012')
-    expect(texto).toContain('CAE N°: 70123456789012')
+    expect(texto).toContain('C.A.E. N°: 70123456789012')
   })
 
   it('la factura original no lleva la marca REIMPRESION', () => {
@@ -1108,8 +1108,8 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
       'OTRAS LEYENDAS',
       'TRANSPARENCIA FISCAL',
       'Otros Impuestos Nacionales Indirectos',
-      'CAE N°: 70123456789012',
-      'Vto. CAE: 24/10/2026',
+      'C.A.E. N°: 70123456789012',
+      'Fecha de Vto.: 24/10/2026',
     ]) {
       expect(texto).toContain(esperado)
     }
@@ -1125,7 +1125,7 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
     const inicioDelQr = Array.from(bytes).findIndex((_, i) => bytes[i] === 0x1d && bytes[i + 1] === 0x28 && bytes[i + 2] === 0x6b)
 
     expect(inicioDelQr).toBeGreaterThan(-1)
-    expect(textoPlano(bytes.slice(0, inicioDelQr))).toContain('Vto. CAE: 24/10/2026')
+    expect(textoPlano(bytes.slice(0, inicioDelQr))).toContain('Fecha de Vto.: 24/10/2026')
     expect(textoPlano(bytes.slice(inicioDelQr))).toContain('Gracias por su compra')
   })
 
@@ -1136,18 +1136,21 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
       receptor: receptorResponsable,
       totales: {
         impNeto: 1000,
-        impIva: 157.4,
+        impIva: 157.5,
         impOpEx: 50,
         impTotConc: 20,
         impTrib: 0,
-        impTotal: 1227.4,
+        impTotal: 1227.5,
         alicuotas: [
           { porcentaje: 21, neto: 500, iva: 105 },
-          { porcentaje: 10.5, neto: 500, iva: 52.4 },
+          { porcentaje: 10.5, neto: 500, iva: 52.5 },
         ],
       },
     }
-    const texto = textoPlano(imprimir(factura))
+    const t = factura.totales!
+    const sumaDelDesglose = t.impNeto + t.alicuotas.reduce((s, a) => s + a.iva, 0) + t.impOpEx + t.impTotConc
+    expect(sumaDelDesglose).toBeCloseTo(t.impTotal, 2)
+    const texto = textoPlano(imprimir(factura, comprobanteFixture({ total: t.impTotal })))
 
     expect(texto).toContain('FACTURA A')
     expect(texto).toContain('Codigo N° 001')
@@ -1157,10 +1160,11 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
     expect(texto).not.toContain('A CONSUMIDOR FINAL')
     expect(texto).toMatch(/Neto gravado\s+\$ ?1\.000,00/)
     expect(texto).toMatch(/IVA 21%\s+\$ ?105,00/)
-    expect(texto).toMatch(/IVA 10,5%\s+\$ ?52,40/)
+    expect(texto).toMatch(/IVA 10,5%\s+\$ ?52,50/)
     expect(texto).toMatch(/Exento\s+\$ ?50,00/)
     expect(texto).toMatch(/No gravado\s+\$ ?20,00/)
-    expect(texto).toMatch(/IVA Contenido\s+\$ ?157,40/)
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?157,50/)
+    expect(texto).toMatch(/TOTAL\s+\$ ?1\.227,50/)
   })
 
   it('A sin exento ni no gravado no imprime esas líneas', () => {
@@ -1183,6 +1187,14 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
     expect(texto).toContain('TRANSPARENCIA FISCAL')
     expect(texto).toMatch(/IVA Contenido\s+\$ ?0,00/)
     expect(texto).not.toContain('Neto gravado')
+  })
+
+  it('sin documento (código 99) se imprime como consumidor final aunque la condición fiscal falte', () => {
+    const receptor = { ...receptorConsumidorFinal, condicionFiscal: null }
+    const texto = textoPlano(imprimir({ ...base, receptor }))
+
+    expect(texto).toContain('A CONSUMIDOR FINAL')
+    expect(texto).not.toContain('Sin identificar')
   })
 
   it('un consumidor final con documento (DNI) imprime la leyenda y el documento', () => {
@@ -1215,7 +1227,7 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
     expect(texto).not.toMatch(/undefined|null|NaN/)
     expect(texto).toContain('Local Centro')
     expect(texto).toContain('FACTURA B')
-    expect(texto).toContain('CAE N°: 70123456789012')
+    expect(texto).toContain('C.A.E. N°: 70123456789012')
     expect(texto).not.toContain('TRANSPARENCIA FISCAL')
     expect(texto).not.toContain('A CONSUMIDOR FINAL')
     expect(contieneQrAlmacenado(bytes, PAYLOAD)).toBe(true)
@@ -1245,7 +1257,7 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
     const bytes = imprimir({ ...base, payloadQr })
 
     expect(contieneImpresionDeQr(bytes)).toBe(false)
-    expect(textoPlano(bytes)).toContain('CAE N°: 70123456789012')
+    expect(textoPlano(bytes)).toContain('C.A.E. N°: 70123456789012')
   })
 
   it('la reimpresión conserva marca, contenido legal y QR, y no pulsa el cajón', () => {
