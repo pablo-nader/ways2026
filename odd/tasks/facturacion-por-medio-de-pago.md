@@ -82,7 +82,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   - [x] **T6a — Estado fiscal en las lecturas.** `GET /api/ventas/{id}` informa `fiscal`
     (con los datos del comprobante para reimprimir) y `GET /api/ventas/por-turno/{id}` informa
     el estado por venta con una lectura en lote. Error como código estable. Ruta: delegada.
-  - [ ] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
+  - [x] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
     espera de hasta 5 s solo si la venta seguro se factura y hay conexión; factura aprobada en
     lugar del ticket. Ruta: delegada.
   - [ ] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
@@ -421,6 +421,31 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   antes); ninguna guarda estructural fija que las lecturas no emitan; ningún test cuenta las
   consultas del lote.
 
+  PR: pablo-nader/ways2026#443, mergeada.
+
+- 2026-10-14 — T6b hecha. Ruta: delegada (un escritor y dos rondas de corrección). Commits
+  `a9e26b89` (feat), `2a113775` y `18f3711d` (fix). Botón "Facturar" (apagado por defecto,
+  se apaga tras cada venta, oculto en presupuesto) que viaja como `forzarFactura` en la venta
+  encolada. `ventaSeguroSeFactura` (forzada o algún medio al 100 %) en
+  `pos/facturacionAlCobrar.ts`. Si seguro se factura y hay conexión, la caja espera hasta 5 s
+  la respuesta de esa venta (`esperarRespuesta` en `useSincronizacionOffline`); aprobada,
+  imprime `facturaDeVenta` (letra, número, fecha, CAE y vencimiento, sin QR) con el
+  comprobante del servidor; si no, el ticket común, que no cambió. Con porcentaje parcial
+  nunca se imprime factura, en ningún camino.
+  Checks: `tsc -b` limpio; lint sin errores; Vitest completo 7265/7265 sobre el código final.
+  RED observado en helper, plantillas, ShellPos y cola; los tests de `Pos` nacieron verdes y
+  su evidencia son mutaciones (umbral del 100 %, reset del botón, condición de conexión,
+  factura sin aprobar, cuerpo del servidor), todas en rojo.
+  Judgment-day: ronda 1, sin críticos; confirmadas por los dos jueces y corregidas: un fallo
+  transitorio agotaba los 5 s, la factura salía con los montos locales y no con los del
+  servidor, una respuesta sin espera quedaba en memoria, un JSDoc desplazado. Re-juicio 1:
+  resueltas; los dos jueces confirmaron que el fallo transitorio solo liberaba a la cabeza de
+  la cola, corregido en la ronda 2. Re-juicio 2: resuelto, sin hallazgos. JUDGMENT: APPROVED.
+  Información sin corregir: un cambio de cobro durante el encolado puede dejar una respuesta
+  en memoria (acotado); la liberación en la rama `sinComprobante` se prueba solo en el hook;
+  el cartel de venta finalizada ya no dice "Guardada en este dispositivo" si el servidor
+  respondió a tiempo. Sin release del POS hasta T7.
+
 ## Próximo paso
 
-PR de T6a; después T6b en rama nueva desde main.
+PR de T6b; después T6c (lote y "Ventas del turno") en rama nueva desde main.
