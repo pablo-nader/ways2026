@@ -37,9 +37,18 @@ public static class VentasEndpoints
         })
         .WithSummary("Emite un comprobante de venta (checkout). Todo el dinero se recalcula server-side.");
 
-        grupo.MapGet("/{id:int}", (ServicioDeVentas servicio, int id, CancellationToken ct) =>
-            servicio.ObtenerAsync(id, ct))
-        .WithSummary("Reimpresión: lee el snapshot del comprobante, nunca re-joinea el catálogo.");
+        // La lectura informa el estado fiscal igual que la emisión (con los datos de la factura si está aprobada, para
+        // reimprimirla), pero solo lo lee: no decide, no emite ni llama a ARCA. Va acá y no en ObtenerAsync porque la
+        // anulación también lo usa.
+        grupo.MapGet("/{id:int}", async (
+            ServicioDeVentas servicio, ServicioDeFacturacionDeVentas facturacion, int id, CancellationToken ct) =>
+        {
+            var comprobante = await servicio.ObtenerAsync(id, ct);
+            return comprobante with { Fiscal = await facturacion.LeerEstadoDeVentaAsync(id, ct) };
+        })
+        .WithSummary(
+            "Reimpresión: lee el snapshot del comprobante, nunca re-joinea el catálogo, e informa su estado fiscal " +
+            "(con la factura si está aprobada).");
 
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): RequiereDispositivo apilado
         // sobre OperacionDePos (AND) — solo una sesión de dispositivo puede reservar un bloque
@@ -61,7 +70,8 @@ public static class VentasEndpoints
         // sobre un parámetro), pero se declara acá al lado por lectura.
         grupo.MapGet("/por-turno/{idTurno:int}", (ServicioDeVentas servicio, int idTurno, CancellationToken ct) =>
             servicio.ListarPorTurnoAsync(idTurno, ct))
-        .WithSummary("Ventas de un turno (incluye anuladas), con cliente y medios de pago — pantalla Ventas del turno.");
+        .WithSummary(
+            "Ventas de un turno (incluye anuladas), con cliente, medios de pago y estado fiscal — pantalla Ventas del turno.");
 
         // stage-5-pos-ventas (Slice 5, task 5.2, design: API Surface): POST, no DELETE — produce
         // filas (movimientos inversos + contramovimiento CC), no elimina ninguna. Sin

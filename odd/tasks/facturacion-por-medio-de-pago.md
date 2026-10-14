@@ -78,7 +78,17 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 - [x] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
   comprobante en la respuesta de la venta. Depende de T5b.
 - [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
-  respuesta del drenaje. Depende de T4 y T5.
+  respuesta del drenaje. Depende de T4 y T5. Reglas del dueño (2026-10-14) en "Reglas de T6".
+  - [ ] **T6a — Estado fiscal en las lecturas.** `GET /api/ventas/{id}` informa `fiscal`
+    (con los datos del comprobante para reimprimir) y `GET /api/ventas/por-turno/{id}` informa
+    el estado por venta con una lectura en lote. Error como código estable. Ruta: delegada.
+  - [ ] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
+    espera de hasta 5 s solo si la venta seguro se factura y hay conexión; factura aprobada en
+    lugar del ticket. Ruta: delegada.
+  - [ ] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
+    sincronización; estado fiscal por venta y reimpresión. Ruta: delegada.
+  - Release del POS (bump de Ways.Desktop + tag `pos-v*`): no antes de T7 (la factura impresa
+    necesita el QR), y siempre avisando al dueño antes.
 - [ ] **T7 — Impresión.** Factura con CAE y QR en `VistaDeTicket` y en el POS de escritorio,
   reimpresión. Depende de T5.
 - [ ] **T8 — Anulación y nota de crédito de una venta facturada.** `CbtesAsoc`, espejo de NC,
@@ -178,6 +188,20 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
 - En línea: tras decidir `pendiente`, la venta intenta emitir con 4 s de presupuesto antes
   del barrido. `EstadoFiscalDeVenta` suma `Error` y los datos del comprobante (tipo, letra,
   punto de venta fiscal, número, fecha, CAE, vencimiento, QR, observaciones).
+
+## Reglas de T6 (dueño, 2026-10-14)
+
+1. La caja espera la respuesta fiscal solo si la venta seguro se factura (forzada o con un
+   medio al 100 %) y hay conexión, hasta 5 s. Aprobada: imprime la factura en lugar del
+   ticket. Sin respuesta a tiempo: ticket común y la factura queda para después.
+2. Porcentajes parciales: no espera, ticket común al instante; si termina facturada, la
+   factura queda para reimprimir.
+3. Botón "Facturar" en el panel de cobro, para todo cajero, apagado por defecto y que se apaga
+   tras cada venta; viaja como `forzarFactura`, fijado al encolar. No aplica en presupuesto.
+4. El POS dispara `POST /api/fiscal/facturaciones/procesar` solo, en cada sincronización y
+   tras cada venta; sin botón en caja.
+5. "Ventas del turno" muestra por venta facturada, pendiente o rechazada y permite reimprimir.
+6. El QR de ARCA en la factura impresa va en T7.
 
 ## Supuestos pendientes de confirmación del dueño
 
@@ -377,4 +401,5 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
 
 ## Próximo paso
 
-T6.
+T6a en `pnader/t6a-estado-fiscal-en-lecturas` (desde main `629a962b`; #442 mergeada con CI
+verde, incluidos los 30 tests del script de fragmentación).

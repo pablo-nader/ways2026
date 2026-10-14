@@ -9,6 +9,7 @@ using Ways.Application.Caja;
 using Ways.Application.Combos;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
+using Ways.Application.Fiscal;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Stock;
@@ -1008,8 +1009,9 @@ public class ServicioDeVentas(
     /// <summary>Ventas de UN turno para la pantalla "Ventas del turno" del POS de escritorio —
     /// <see cref="VentaDeTurnoListado"/>, no <see cref="ComprobanteListado"/>: acá sí hace falta
     /// cliente/medios de pago, y el conjunto está acotado por turno (nunca sin cota, a diferencia
-    /// de <see cref="ListarAsync"/>), así que dos consultas extra indexadas por los ids ya traídos
-    /// —NUNCA una por fila— no son un N+1. Incluye anulados (orden newest-first) para que el
+    /// de <see cref="ListarAsync"/>), así que las consultas extra indexadas por los ids ya traídos
+    /// —NUNCA una por fila— no son un N+1; una de ellas trae el estado fiscal de cada venta
+    /// (<see cref="VentaDeTurnoListado.EstadoFiscal"/>). Incluye anulados (orden newest-first) para que el
     /// cajero vea que la anulación surtió efecto sin salir de la pantalla. Tenant scoping es
     /// implícito (mismo criterio que <see cref="ListarAsync"/>): <see cref="IWaysDbContext"/> ya
     /// filtra por tenant, acá no hace falta un <c>idTenant</c> explícito.</summary>
@@ -1021,7 +1023,8 @@ public class ServicioDeVentas(
             .Select(c => new
             {
                 c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total,
-                c.DescuentoManualTotal, c.RecargoManualTotal
+                c.DescuentoManualTotal, c.RecargoManualTotal,
+                c.IdVentaOrigen, c.FacturacionDecididaEn
             })
             .ToListAsync(ct);
 
@@ -1042,6 +1045,10 @@ public class ServicioDeVentas(
             .Where(p => idsComprobante.Contains(p.IdComprobanteVenta))
             .Select(p => new { p.IdComprobanteVenta, p.IdMedioPago, p.Importe, p.Vuelto })
             .ToListAsync(ct);
+
+        var estadoDeDecision = await db.FacturacionesDeVenta.AsNoTracking()
+            .Where(f => idsComprobante.Contains(f.IdComprobanteVenta))
+            .ToDictionaryAsync(f => f.IdComprobanteVenta, f => f.Estado, ct);
 
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
         var nombrePorMedioPago = await db.MediosPago.AsNoTracking()
@@ -1070,7 +1077,10 @@ public class ServicioDeVentas(
                 c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
                 c.IdCliente, nombrePorCliente.GetValueOrDefault(c.IdCliente, "-"), c.Total,
                 c.DescuentoManualTotal, c.RecargoManualTotal,
-                mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<MedioDeVentaNeto>)[])))
+                mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<MedioDeVentaNeto>)[]),
+                estadoDeDecision.TryGetValue(c.Id, out var estadoFiscal)
+                    ? EstadosFiscalesDeVenta.De(estadoFiscal)
+                    : EstadosFiscalesDeVenta.SinFila(c.IdVentaOrigen, c.FacturacionDecididaEn)))
             .ToList();
     }
 

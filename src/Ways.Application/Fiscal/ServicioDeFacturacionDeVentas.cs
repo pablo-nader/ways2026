@@ -102,6 +102,30 @@ public class ServicioDeFacturacionDeVentas(
         return await ProyectarAsync(decision, null, ct);
     }
 
+    /// <summary>El estado fiscal de una venta tal como lo informa su respuesta (<see cref="EmisionEnLineaAlCobrar"/>), leído por
+    /// el id de la venta: con fila de decisión, el de <see cref="LeerEstadoAsync"/> con el error reducido a su código; sin fila,
+    /// <see cref="EstadosFiscalesDeVenta.SinFila"/>. No toma locks, no escribe ni llama a ARCA. Una venta inexistente o de otro
+    /// tenant es un 404.</summary>
+    public async Task<EstadoFiscalDeVenta> LeerEstadoDeVentaAsync(int idVenta, CancellationToken ct = default)
+    {
+        await using (var comando = await NuevoComandoAsync(
+            "SELECT id_facturacion_venta FROM facturaciones_de_venta WHERE id_comprobante_venta = $1", ct, idVenta))
+        {
+            if (await comando.ExecuteScalarAsync(ct) is int idFacturacion)
+            {
+                var estado = await LeerEstadoAsync(idFacturacion, ct);
+                return estado with { Error = EmisionEnLineaAlCobrar.CodigoDeError(estado.Error) };
+            }
+        }
+
+        var marcas = await db.ComprobantesVenta.AsNoTracking()
+            .Where(c => c.Id == idVenta)
+            .Select(c => new { c.IdVentaOrigen, c.FacturacionDecididaEn })
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el comprobante {idVenta}.");
+        return new EstadoFiscalDeVenta(EstadosFiscalesDeVenta.SinFila(marcas.IdVentaOrigen, marcas.FacturacionDecididaEn));
+    }
+
     /// <summary>Evalúa el estado actual y lo avanza. Se vuelve a llamar a sí mismo ("reevaluar") solo cuando otra llamada
     /// comiteó un cambio entre las lecturas sin lock y el lock; cada reevaluación presupone una transición nueva y comiteada
     /// de otra llamada, así que no hay un ciclo sin otro escritor.</summary>

@@ -129,9 +129,12 @@ public class ServicioDeDecisionDeFacturacionEstructuralTests
         var fiscal = endpoint.IndexOf("emisionEnLinea.DecidirEmitirYSanearAsync(", emision, StringComparison.Ordinal);
         Assert.True(fiscal > emision, "Lo fiscal corre después de emitir la venta.");
 
-        // Ningún otro punto de entrada fiscal se llama desde el endpoint: lo demás lo orquesta EmisionEnLineaAlCobrar.
+        // Ningún otro punto de entrada fiscal se llama desde el endpoint de la emisión: lo demás lo orquesta EmisionEnLineaAlCobrar.
+        // El recorte llega hasta el cierre de ese endpoint (su WithSummary): las lecturas de más abajo tienen su propia regla.
+        var finDelEndpoint = endpoint.IndexOf(".WithSummary(", fiscal, StringComparison.Ordinal);
+        Assert.True(finDelEndpoint > fiscal, "No se encontró el final del endpoint de la emisión.");
         var llamadas = Regex.Matches(
-            endpoint[fiscal..],
+            endpoint[fiscal..finDelEndpoint],
             @"(emisionEnLinea|decision|facturacion)\.(\w+)\(([^)]*)\)",
             RegexOptions.None,
             TimeSpan.FromSeconds(5));
