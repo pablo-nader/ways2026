@@ -446,6 +446,31 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   el cartel de venta finalizada ya no dice "Guardada en este dispositivo" si el servidor
   respondió a tiempo. Sin release del POS hasta T7.
 
+  PR: pablo-nader/ways2026#444.
+
+- 2026-10-14 — T6c hecha. Ruta: delegada (un escritor). Commit `234e558c`, apilado sobre T6b.
+  `crearDisparadorDeLote` (`pos/loteDeFacturacion.ts`): `POST /fiscal/facturaciones/procesar`
+  solo con conexión y punto de venta, de a uno, con a lo sumo una vuelta pendiente, errores
+  tragados y tope de 30 s en la caja; se dispara al terminar cada pasada de drenaje y tras
+  cada venta directa. "Ventas del turno": Facturada / Pendiente (`pendiente` y
+  `sin_decidir`) / Rechazada, y "Reimprimir factura" para las aprobadas y no anuladas, con
+  `facturaDeVenta` de reimpresión desde la lectura por id (sin datos: error, nunca ticket).
+  Checks: `tsc -b` limpio; lint sin errores; Vitest completo 7319/7319. Sin RED previo:
+  mutaciones en rojo (vuelta pendiente, de a uno, sin conexión, re-chequeo de conexión,
+  disparo tras el drenaje, venta directa, `sin_decidir`, botón para no aprobadas, estado de
+  la lectura por id).
+  Judgment-day ronda 1: ningún hallazgo severo confirmado por los dos jueces. JUDGMENT:
+  APPROVED. Confirmada por los dos (sugerencia): el tope de 30 s libera la caja mientras el
+  lote del servidor sigue y puede superponer otro. Sospechosos de un solo juez: el "de a
+  uno" vive por montaje del POS (salir y volver a la pantalla dispara otro lote); el lote de
+  la reconexión se saltea porque `enLinea` todavía es falso; un lote en curso puede ocupar
+  la serie y la venta siguiente sale con ticket aunque se pidió factura; el botón de
+  reimprimir no refresca la fila si la factura ya no está aprobada. Van a T6d.
+
+- [ ] **T6d — Seguimiento del lote.** Un lote de a uno por punto de venta en el proceso (no
+  por montaje), tope de la caja por encima del peor caso del servidor, lote de la
+  reconexión, refresco de la fila al reimprimir. Ruta: delegada.
+
 ## Próximo paso
 
-PR de T6b; después T6c (lote y "Ventas del turno") en rama nueva desde main.
+PR de T6c; después T6d.
