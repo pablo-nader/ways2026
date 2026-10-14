@@ -478,6 +478,12 @@ export type EmpresaListado = {
    * `null` = no informado: la compra no pre-carga la percepción. */
   alicuotaPercepcionIibb: number | null
   alicuotaPercepcionIva: number | null
+  /** Texto libre impreso en la factura: número de inscripción, "Exento" o Convenio Multilateral.
+   * Opcional en el tipo solo para no obligar a cada fixture ajeno a la pantalla de empresas; el
+   * servidor siempre lo informa (`null` = no cargado). */
+  ingresosBrutos?: string | null
+  /** `yyyy-MM-dd`; mismo criterio de opcionalidad que `ingresosBrutos`. */
+  inicioActividades?: string | null
 }
 
 export type EmpresaEdicion = {
@@ -486,6 +492,8 @@ export type EmpresaEdicion = {
   cuit: string | null
   alicuotaPercepcionIibb: number | null
   alicuotaPercepcionIva: number | null
+  ingresosBrutos: string | null
+  inicioActividades: string | null
 }
 
 /** stage-desktop-pos (DB CHANGE GATE aprobado): invariante "una PC-caja = un punto de venta" —
@@ -2133,7 +2141,50 @@ export type DatosDeFacturaFiscal = {
   caeVencimiento: string | null
   payloadQr: string | null
   observaciones: ObservacionArca[]
+  /** Datos legales de la factura impresa. Opcionales en el tipo porque una factura guardada en el
+   * POS antes de T7b (reimpresión sin conexión) no los trae: quien imprime tiene que tolerar su
+   * ausencia. El servidor siempre los informa. */
+  emisor?: EmisorDeFacturaFiscal
+  receptor?: ReceptorDeFacturaFiscal
+  totales?: TotalesDeFacturaFiscal
 }
+
+/** Quién emite la factura — espejo de `EmisorDeFacturaFiscal`. `domicilio` es el del punto de venta e
+ * `inicioActividades` viaja como `yyyy-MM-dd`. */
+export type EmisorDeFacturaFiscal = {
+  razonSocial: string
+  nombreFantasia: string | null
+  cuit: string | null
+  condicionFiscal: string | null
+  ingresosBrutos: string | null
+  inicioActividades: string | null
+  domicilio: string | null
+}
+
+/** A quién se factura — espejo de `ReceptorDeFacturaFiscal`. El documento es el que viajó a ARCA:
+ * 80 CUIT, 86 CUIL, 96 DNI, 94 Pasaporte, 99 sin identificar (número 0). */
+export type ReceptorDeFacturaFiscal = {
+  nombre: string
+  tipoDocumento: string
+  codigoTipoDocumento: number
+  numeroDocumento: number
+  condicionFiscal: string | null
+  domicilio: string | null
+}
+
+/** Importes de la factura — espejo de `TotalesDeFacturaFiscal`. */
+export type TotalesDeFacturaFiscal = {
+  impNeto: number
+  impIva: number
+  impOpEx: number
+  impTotConc: number
+  impTrib: number
+  impTotal: number
+  alicuotas: AlicuotaDeFacturaFiscal[]
+}
+
+/** Una alícuota gravada de la factura — espejo de `AlicuotaDeFacturaFiscal`. */
+export type AlicuotaDeFacturaFiscal = { porcentaje: number; neto: number; iva: number }
 
 /** Lo que la respuesta de una venta dice de su facturación — espejo de `EstadoFiscalDeVenta`
  * (`Ways.Application.Fiscal`). `comprobante` solo viene con la factura aprobada. */

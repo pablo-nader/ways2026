@@ -607,15 +607,17 @@ public class ServicioDeFacturacionFiscal(
         return TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
     }
 
-    internal static string ExigirCuitNumerico(Empresa empresa)
+    internal static string ExigirCuitNumerico(Empresa empresa) => ExigirCuitNumerico(empresa.Cuit);
+
+    internal static string ExigirCuitNumerico(string? cuit)
     {
-        if (string.IsNullOrWhiteSpace(empresa.Cuit) || !long.TryParse(empresa.Cuit, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        if (string.IsNullOrWhiteSpace(cuit) || !long.TryParse(cuit, NumberStyles.None, CultureInfo.InvariantCulture, out _))
         {
             throw ErrorDominio.Conflicto(
                 "empresa_sin_cuit_valido", "La empresa no tiene un CUIT numérico válido cargado.");
         }
 
-        return empresa.Cuit;
+        return cuit;
     }
 
     internal static string? ConstruirQrSiCorresponde(
@@ -701,10 +703,16 @@ public class ServicioDeFacturacionFiscal(
     /// judgment 19a-slice-5 ronda 2 juez A CRITICAL — nunca diverja en el criterio de resolución de
     /// <see cref="AlicuotaIva.Nombre"/>/<see cref="AlicuotaIva.CodigoAfip"/>).</summary>
     private async Task<IReadOnlyDictionary<int, AlicuotaIva>> ObtenerAlicuotasAsync(
-        IEnumerable<int> idsAlicuota, CancellationToken ct)
+        IEnumerable<int> idsAlicuota, CancellationToken ct, bool incluirBajas = false)
     {
         var ids = idsAlicuota.Distinct().ToList();
-        return await db.AlicuotasIva.AsNoTracking()
+        var alicuotas = db.AlicuotasIva.AsNoTracking();
+        if (incluirBajas)
+        {
+            alicuotas = alicuotas.IgnoreQueryFilters(["BajaLogica"]);
+        }
+
+        return await alicuotas
             .Where(a => ids.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, ct);
     }
@@ -720,7 +728,7 @@ public class ServicioDeFacturacionFiscal(
     /// el snapshot congelado de la línea — SOLO <see cref="AlicuotaIva.Nombre"/>/
     /// <see cref="AlicuotaIva.CodigoAfip"/> vienen del catálogo (el ítem no los snapshotea).</summary>
     internal async Task<IReadOnlyList<LineaFiscal>> ComponerLineasFiscalesDesdeItemsAsync(
-        int idComprobante, CancellationToken ct)
+        int idComprobante, CancellationToken ct, bool incluirBajasDeCatalogo = false)
     {
         var items = await db.ItemsComprobanteVenta.AsNoTracking()
             .Where(i => i.IdComprobanteVenta == idComprobante)
@@ -733,7 +741,7 @@ public class ServicioDeFacturacionFiscal(
                 "fiscal en el reintento.");
         }
 
-        var alicuotas = await ObtenerAlicuotasAsync(items.Select(i => i.IdAlicuotaIva), ct);
+        var alicuotas = await ObtenerAlicuotasAsync(items.Select(i => i.IdAlicuotaIva), ct, incluirBajasDeCatalogo);
 
         var lineasFiscales = new List<LineaFiscal>(items.Count);
         foreach (var item in items)

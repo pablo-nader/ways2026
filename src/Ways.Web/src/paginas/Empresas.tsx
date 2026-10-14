@@ -20,6 +20,7 @@ import {
   aEdicionDeEmpresa,
   aFormularioDeEmpresa,
   alicuotasDePercepcionValidas,
+  LARGO_MAXIMO_INGRESOS_BRUTOS,
   MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA,
   type FormularioDeEmpresa,
 } from './empresaFormulario'
@@ -276,6 +277,35 @@ export function Empresas() {
                 maxLength={13}
                 value={formulario.cuit}
                 onChange={(e) => setFormulario({ ...formulario, cuit: e.target.value })}
+                disabled={bloqueado}
+              />
+            </div>
+            <div className="col-12">
+              <strong>Datos fiscales</strong>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="e-ingresos-brutos">
+                Ingresos brutos
+              </label>
+              <input
+                id="e-ingresos-brutos"
+                className="form-control"
+                maxLength={LARGO_MAXIMO_INGRESOS_BRUTOS}
+                value={formulario.ingresosBrutos}
+                onChange={(e) => setFormulario({ ...formulario, ingresosBrutos: e.target.value })}
+                disabled={bloqueado}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label" htmlFor="e-inicio-actividades">
+                Inicio de actividades
+              </label>
+              <input
+                id="e-inicio-actividades"
+                type="date"
+                className="form-control"
+                value={formulario.inicioActividades}
+                onChange={(e) => setFormulario({ ...formulario, inicioActividades: e.target.value })}
                 disabled={bloqueado}
               />
             </div>

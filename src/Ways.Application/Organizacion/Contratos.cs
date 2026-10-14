@@ -56,16 +56,23 @@ public record EmpresaListado(
     string? Cuit,
     string? NombreTenant,
     decimal? AlicuotaPercepcionIibb,
-    decimal? AlicuotaPercepcionIva);
+    decimal? AlicuotaPercepcionIva,
+    string? IngresosBrutos = null,
+    DateOnly? InicioActividades = null);
 
 /// <summary>Edición completa: las dos alícuotas de percepción (porcentajes entre 0 y 100, hasta 3
-/// decimales) se reemplazan con lo que llegue, y <c>null</c> las deja sin informar.</summary>
+/// decimales), <paramref name="IngresosBrutos"/> (texto libre, hasta 30 caracteres) e
+/// <paramref name="InicioActividades"/> se reemplazan con lo que llegue, y <c>null</c> (o el campo
+/// ausente, que el binding no distingue de <c>null</c>) los deja sin informar: un PUT sin estos
+/// campos los borra, igual que a las alícuotas. El formulario siempre manda todo.</summary>
 public record EmpresaEdicion(
     string RazonSocial,
     string? NombreFantasia,
     string? Cuit,
     decimal? AlicuotaPercepcionIibb = null,
-    decimal? AlicuotaPercepcionIva = null);
+    decimal? AlicuotaPercepcionIva = null,
+    string? IngresosBrutos = null,
+    DateOnly? InicioActividades = null);
 
 /// <summary>Los dos nombres de dueño son nullable por el mismo criterio que
 /// <see cref="EmpresaListado.NombreTenant"/> (design D13); <paramref name="IdTenant"/> e

@@ -26,6 +26,7 @@ comprobantes_venta (          -- [operativa]
     cae_vencimiento        date        NULL,
     resultado_fiscal       resultado_fiscal NULL,  -- enum: pendiente|aprobado|aprobado_con_observaciones|rechazado
     observaciones_fiscales jsonb       NULL,        -- [{ "codigo": int, "mensaje": string }]
+    datos_legales_fiscales jsonb       NULL,        -- solo espejo fiscal: emisor + receptor congelados al emitir
     -- Facturación por medio de pago: espejo fiscal y bandera del cajero
     id_venta_origen        integer     NULL,        -- espejo fiscal → la venta (TX) que factura
     factura_forzada        boolean     NOT NULL DEFAULT false, -- el cajero pidió facturar este ticket
@@ -322,6 +323,15 @@ acumulados_de_facturacion (     -- [operativa] id_tenant + id_empresa, PK-only s
 **Estado (facturación por medio de pago, T3): implementada**, migración `FacturacionPorMedioDePagoEsquema`. Solo DDL (las
 dos tablas nacen vacías y las columnas nuevas de `comprobantes_venta` tienen valor por defecto, así que no hay backfill).
 RLS estándar (`ENABLE` + `FORCE`) en ambas tablas, creada en la misma migración.
+
+**Datos legales congelados del espejo (`datos_legales_fiscales`, migración `DatosLegalesCongeladosEnEspejoFiscal`).**
+`jsonb NULL` con `{ emisor, receptor }` (razón social, fantasía, CUIT, condición, IIBB, inicio de actividades y domicilio del
+punto de venta del emisor; nombre, documento ARCA —tipo y número que viajaron a ARCA y entraron al QR—, condición y domicilio
+del receptor). Se escribe una sola vez, en la transacción A que inserta el espejo, con las mismas lecturas con que se armó el
+pedido a ARCA, y no se vuelve a tocar: la reimpresión (`GET /api/ventas/{id}`), el QR y el reintento del pedido usan estos datos
+y no las filas actuales de empresa y cliente. `ck_comprobantes_venta_datos_legales_espejo` lo limita a un espejo
+(`id_venta_origen IS NOT NULL`). Sin backfill: `NULL` significa "usar las filas actuales" y es el estado de toda venta y de los
+espejos anteriores a la columna.
 
 **Bloqueo de la migración.** Los CHECK (`ck_comprobantes_venta_espejo_fiscal`, `ck_comprobantes_venta_espejo_sin_turno`), la FK
 autorreferente (`fk_comprobantes_venta_venta_origen`) y el índice único (`ux_comprobantes_venta_venta_origen`) sobre
@@ -780,6 +790,19 @@ Las dos lecturas del POS informan el estado fiscal sin decidir, emitir ni llamar
   respuesta de una anulación sigue con `fiscal` en `null`, "no consultado"). Con fila de decisión informa lo que informaría
   `LeerEstadoAsync`; sin fila, `sin_decidir` si la venta no tiene la marca `facturacion_decidida_en` y no es un espejo, y
   `no_corresponde` en cualquier otro caso (decidida sin facturar, o la propia factura espejo, que nunca se decide).
+- **Datos legales de la factura (T7b).** `comprobante` (`DatosDeFacturaFiscal`) agrega al final, sin tocar lo anterior, `emisor`,
+  `receptor` y `totales`, para que la factura impresa lleve todo lo legal:
+  - `emisor`: razón social, nombre de fantasía y CUIT de la empresa, el nombre de su condición fiscal (`null` si no tiene),
+    `ingresosBrutos`, `inicioActividades` y el `domicilio` del punto de venta.
+  - `receptor`: nombre a imprimir (la razón social del cliente si la tiene; si no, nombre y apellido), el documento tal como viajó
+    a ARCA (`codigoTipoDocumento` 80 CUIT, 86 CUIL, 96 DNI, 94 Pasaporte, 99 sin identificar con número 0, y su etiqueta en
+    `tipoDocumento`), el nombre de su condición fiscal y su domicilio.
+  - `totales`: `impNeto`, `impIva`, `impOpEx`, `impTotConc`, `impTrib`, `impTotal` y `alicuotas` (porcentaje, neto e IVA de cada
+    alícuota gravada). Se recomponen con `ComposicionDeTotalesFiscales.Componer` sobre las líneas del snapshot del espejo
+    (`items_comprobante_venta`), la misma composición que la emisión, así que coinciden con lo que se mandó a ARCA; la
+    alícuota del catálogo solo aporta nombre y código AFIP, y se lee aunque esté dada de baja.
+  Siguen valiendo las lecturas que ignoran solo la baja lógica y el filtro de tenant, y el respaldo de T6a: si armar cualquiera de
+  estos datos falla, la lectura informa el estado de la decisión sin `comprobante`.
 - **`GET /api/ventas/por-turno/{idTurno}`.** Cada fila lleva `estadoFiscal`: solo el estado (`no_corresponde`, `pendiente`,
   `sin_decidir`, `aprobado`, `rechazado` o `cancelado`), sin la factura ni el error, que se piden por id. Se calcula con una única consulta
   por las decisiones de todas las ventas del turno (`id_comprobante_venta IN (...)`) y la misma regla de mapeo para las ventas sin fila.

@@ -59,6 +59,8 @@ const empresaSur: EmpresaListado = {
   nombreTenant: 'Comercio Sur',
   alicuotaPercepcionIibb: null,
   alicuotaPercepcionIva: null,
+  ingresosBrutos: null,
+  inicioActividades: null,
 }
 
 const empresaAnexo: EmpresaListado = {
@@ -70,6 +72,8 @@ const empresaAnexo: EmpresaListado = {
   nombreTenant: 'Comercio Sur',
   alicuotaPercepcionIibb: null,
   alicuotaPercepcionIva: null,
+  ingresosBrutos: null,
+  inicioActividades: null,
 }
 
 const empresaEste: EmpresaListado = {
@@ -81,6 +85,8 @@ const empresaEste: EmpresaListado = {
   nombreTenant: 'Almacén Este',
   alicuotaPercepcionIibb: null,
   alicuotaPercepcionIva: null,
+  ingresosBrutos: null,
+  inicioActividades: null,
 }
 
 function montar(items: EmpresaListado[] = [empresaSur, empresaAnexo, empresaEste]) {
@@ -609,7 +615,37 @@ describe('Empresas — alícuotas de percepción', () => {
       cuit: null,
       alicuotaPercepcionIibb: 3.5,
       alicuotaPercepcionIva: null,
+      ingresosBrutos: null,
+      inicioActividades: null,
     })
+  })
+
+  it('el formulario trae los datos fiscales guardados y guardar manda los editados', async () => {
+    const usuario = userEvent.setup()
+    await abrirEdicionDeSur(usuario, { ...empresaSur, ingresosBrutos: 'Exento', inicioActividades: '2015-03-01' })
+
+    expect(screen.getByLabelText('Ingresos brutos')).toHaveValue('Exento')
+    expect(screen.getByLabelText('Inicio de actividades')).toHaveValue('2015-03-01')
+
+    await usuario.clear(screen.getByLabelText('Ingresos brutos'))
+    await usuario.type(screen.getByLabelText('Ingresos brutos'), ' CM 901-555 ')
+    fireEvent.change(screen.getByLabelText('Inicio de actividades'), { target: { value: '2018-07-15' } })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ ingresosBrutos: 'CM 901-555', inicioActividades: '2018-07-15' })
+  })
+
+  it('con los datos fiscales vacíos guardar manda null y no los inventa', async () => {
+    const usuario = userEvent.setup()
+    await abrirEdicionDeSur(usuario, { ...empresaSur, ingresosBrutos: 'Exento', inicioActividades: '2015-03-01' })
+
+    await usuario.clear(screen.getByLabelText('Ingresos brutos'))
+    fireEvent.change(screen.getByLabelText('Inicio de actividades'), { target: { value: '' } })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ ingresosBrutos: null, inicioActividades: null })
   })
 
   it('cero es una alícuota válida y se manda como 0, no como ausencia', async () => {

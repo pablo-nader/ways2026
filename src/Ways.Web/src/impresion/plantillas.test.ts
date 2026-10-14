@@ -9,7 +9,7 @@ import { fechaHoraATexto } from '../formato/fechas'
  * pretende ser un decoder CP858 real (eso ya lo prueba `escpos.test.ts`). */
 function textoPlano(bytes: Uint8Array): string {
   return Array.from(bytes)
-    .map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : b === 0x0a ? '\n' : ''))
+    .map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : b === 0x0a ? '\n' : b === 0xf8 ? '°' : ''))
     .join('')
 }
 
@@ -982,8 +982,8 @@ describe('facturaDeVenta', () => {
     expect(texto).toContain('FACTURA B')
     expect(texto).toContain('Nro 00003-00000012')
     expect(texto).toContain('Fecha: 14/10/2026')
-    expect(texto).toContain('CAE 70123456789012')
-    expect(texto).toContain('Vto. CAE 24/10/2026')
+    expect(texto).toContain('C.A.E. N°: 70123456789012')
+    expect(texto).toContain('Fecha de Vto.: 24/10/2026')
     expect(texto).not.toContain('COMPROBANTE NO VALIDO COMO FACTURA')
   })
 
@@ -999,7 +999,7 @@ describe('facturaDeVenta', () => {
   it('sin vencimiento de CAE no imprime esa línea', () => {
     const texto = textoPlano(facturaDeVenta(comprobanteFixture(), { ...datosDeFactura, caeVencimiento: null }, CONTEXTO, medios))
 
-    expect(texto).not.toContain('Vto. CAE')
+    expect(texto).not.toContain('Fecha de Vto.')
   })
 
   it('pulsa el cajón con un pago en efectivo, como el ticket', () => {
@@ -1012,7 +1012,7 @@ describe('facturaDeVenta', () => {
     expect(texto).toContain('REIMPRESION')
     expect(texto.indexOf('REIMPRESION')).toBeLessThan(texto.indexOf('FACTURA B'))
     expect(texto).toContain('Nro 00003-00000012')
-    expect(texto).toContain('CAE 70123456789012')
+    expect(texto).toContain('C.A.E. N°: 70123456789012')
   })
 
   it('la factura original no lleva la marca REIMPRESION', () => {
@@ -1029,5 +1029,251 @@ describe('facturaDeVenta', () => {
     expect(texto).toContain('COMPROBANTE NO VALIDO COMO FACTURA')
     expect(texto).not.toContain('CAE')
     expect(texto).toContain('Comprobante: 0001-00000001')
+  })
+})
+
+describe('facturaDeVenta — contenido legal (T7c)', () => {
+  const emisor = {
+    razonSocial: 'Almacen Demo SA',
+    nombreFantasia: 'El Almacen',
+    cuit: '30-71234567-8',
+    condicionFiscal: 'IVA Responsable Inscripto',
+    ingresosBrutos: '901-123456-7',
+    inicioActividades: '2020-03-01',
+    domicilio: 'Av. Siempreviva 742',
+  }
+  const receptorConsumidorFinal = {
+    nombre: 'Consumidor Final',
+    tipoDocumento: 'Sin identificar',
+    codigoTipoDocumento: 99,
+    numeroDocumento: 0,
+    condicionFiscal: 'Consumidor Final',
+    domicilio: null,
+  }
+  const receptorResponsable = {
+    nombre: 'Distribuidora Norte SRL',
+    tipoDocumento: 'CUIT',
+    codigoTipoDocumento: 80,
+    numeroDocumento: 30712345678,
+    condicionFiscal: 'IVA Responsable Inscripto',
+    domicilio: 'Calle Falsa 123',
+  }
+  const PAYLOAD = 'https://www.arca.gob.ar/fe/qr/?p=eyJ2ZXIiOjF9'
+  const base: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: PAYLOAD,
+    observaciones: [],
+    emisor,
+    receptor: receptorConsumidorFinal,
+    totales: { impNeto: 826.45, impIva: 173.55, impOpEx: 0, impTotConc: 0, impTrib: 0, impTotal: 1000, alicuotas: [{ porcentaje: 21, neto: 826.45, iva: 173.55 }] },
+  }
+  const medios = [medioFixture()]
+  const imprimir = (factura: DatosDeFacturaFiscal, comprobante = comprobanteFixture(), opciones = {}) =>
+    facturaDeVenta(comprobante, factura, CONTEXTO, medios, opciones)
+
+  /** Secuencia `GS ( k` de almacenamiento del QR (`31 50 30` + datos) con el contenido dado. */
+  function contieneQrAlmacenado(bytes: Uint8Array, contenido: string): boolean {
+    const longitud = contenido.length + 3
+    const esperado = [0x1d, 0x28, 0x6b, longitud & 0xff, longitud >> 8, 0x31, 0x50, 0x30, ...Array.from(contenido, (c) => c.charCodeAt(0))]
+    return Array.from(bytes).some((_, i) => esperado.every((valor, j) => bytes[i + j] === valor))
+  }
+  const contieneImpresionDeQr = (bytes: Uint8Array) =>
+    Array.from(bytes).some((_, i) => bytes[i] === 0x1d && bytes[i + 1] === 0x28 && bytes[i + 2] === 0x6b && bytes[i + 6] === 0x51)
+
+  it('B a consumidor final: emisor completo, comprobante con código 006, receptor, transparencia con el IVA y QR', () => {
+    const bytes = imprimir(base)
+    const texto = textoPlano(bytes)
+
+    for (const esperado of [
+      'Almacen Demo SA',
+      'El Almacen',
+      'Av. Siempreviva 742',
+      'CUIT: 30-71234567-8',
+      'Ing. Brutos: 901-123456-7',
+      'IVA Responsable Inscripto',
+      'Inicio de actividades: 01/03/2020',
+      'FACTURA B',
+      'Codigo N° 006',
+      'Nro 00003-00000012',
+      'Fecha: 14/10/2026',
+      'Condicion de venta: Contado',
+      'A CONSUMIDOR FINAL',
+      'OTRAS LEYENDAS',
+      'TRANSPARENCIA FISCAL',
+      'Otros Impuestos Nacionales Indirectos',
+      'C.A.E. N°: 70123456789012',
+      'Fecha de Vto.: 24/10/2026',
+    ]) {
+      expect(texto).toContain(esperado)
+    }
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?173,55/)
+    expect(texto).not.toContain('Sin identificar')
+    expect(texto).not.toContain('Neto gravado')
+    expect(contieneQrAlmacenado(bytes, PAYLOAD)).toBe(true)
+    expect(contieneImpresionDeQr(bytes)).toBe(true)
+  })
+
+  it('el QR va después del CAE y antes del agradecimiento', () => {
+    const bytes = imprimir(base)
+    const inicioDelQr = Array.from(bytes).findIndex((_, i) => bytes[i] === 0x1d && bytes[i + 1] === 0x28 && bytes[i + 2] === 0x6b)
+
+    expect(inicioDelQr).toBeGreaterThan(-1)
+    expect(textoPlano(bytes.slice(0, inicioDelQr))).toContain('Fecha de Vto.: 24/10/2026')
+    expect(textoPlano(bytes.slice(inicioDelQr))).toContain('Gracias por su compra')
+  })
+
+  it('A a un responsable inscripto: nombre, CUIT, condición y domicilio, y el IVA discriminado por alícuota', () => {
+    const factura: DatosDeFacturaFiscal = {
+      ...base,
+      letra: 'A',
+      receptor: receptorResponsable,
+      totales: {
+        impNeto: 1000,
+        impIva: 157.5,
+        impOpEx: 50,
+        impTotConc: 20,
+        impTrib: 0,
+        impTotal: 1227.5,
+        alicuotas: [
+          { porcentaje: 21, neto: 500, iva: 105 },
+          { porcentaje: 10.5, neto: 500, iva: 52.5 },
+        ],
+      },
+    }
+    const t = factura.totales!
+    const sumaDelDesglose = t.impNeto + t.alicuotas.reduce((s, a) => s + a.iva, 0) + t.impOpEx + t.impTotConc
+    expect(sumaDelDesglose).toBeCloseTo(t.impTotal, 2)
+    const texto = textoPlano(imprimir(factura, comprobanteFixture({ total: t.impTotal })))
+
+    expect(texto).toContain('FACTURA A')
+    expect(texto).toContain('Codigo N° 001')
+    expect(texto).toContain('Distribuidora Norte SRL')
+    expect(texto).toContain('CUIT: 30712345678')
+    expect(texto).toContain('Calle Falsa 123')
+    expect(texto).not.toContain('A CONSUMIDOR FINAL')
+    expect(texto).toMatch(/Neto gravado\s+\$ ?1\.000,00/)
+    expect(texto).toMatch(/IVA 21%\s+\$ ?105,00/)
+    expect(texto).toMatch(/IVA 10,5%\s+\$ ?52,50/)
+    expect(texto).toMatch(/Exento\s+\$ ?50,00/)
+    expect(texto).toMatch(/No gravado\s+\$ ?20,00/)
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?157,50/)
+    expect(texto).toMatch(/TOTAL\s+\$ ?1\.227,50/)
+  })
+
+  it('A sin exento ni no gravado no imprime esas líneas', () => {
+    const texto = textoPlano(imprimir({ ...base, letra: 'A', receptor: receptorResponsable }))
+
+    expect(texto).toContain('Neto gravado')
+    expect(texto).not.toContain('Exento')
+    expect(texto).not.toContain('No gravado')
+  })
+
+  it('C imprime la leyenda de transparencia con 0,00 y no discrimina IVA', () => {
+    const factura: DatosDeFacturaFiscal = {
+      ...base,
+      letra: 'C',
+      totales: { impNeto: 1000, impIva: 0, impOpEx: 0, impTotConc: 0, impTrib: 0, impTotal: 1000, alicuotas: [] },
+    }
+    const texto = textoPlano(imprimir(factura))
+
+    expect(texto).toContain('Codigo N° 011')
+    expect(texto).toContain('TRANSPARENCIA FISCAL')
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?0,00/)
+    expect(texto).not.toContain('Neto gravado')
+  })
+
+  it('sin documento (código 99) se imprime como consumidor final aunque la condición fiscal falte', () => {
+    const receptor = { ...receptorConsumidorFinal, condicionFiscal: null }
+    const texto = textoPlano(imprimir({ ...base, receptor }))
+
+    expect(texto).toContain('A CONSUMIDOR FINAL')
+    expect(texto).not.toContain('Sin identificar')
+  })
+
+  it('un consumidor final con documento (DNI) imprime la leyenda y el documento', () => {
+    const receptor = { ...receptorConsumidorFinal, tipoDocumento: 'DNI', codigoTipoDocumento: 96, numeroDocumento: 12345678 }
+    const texto = textoPlano(imprimir({ ...base, receptor }))
+
+    expect(texto).toContain('A CONSUMIDOR FINAL')
+    expect(texto).toContain('DNI: 12345678')
+  })
+
+  it('condición de venta: Cuenta corriente si algún pago mueve el saldo, Contado si no', () => {
+    const comprobante = comprobanteFixture({
+      pagos: [
+        { idMedioPago: 1, importe: 400, referencia: null, vuelto: 0 },
+        { idMedioPago: 2, importe: 600, referencia: null, vuelto: 0 },
+      ],
+    })
+    const conCuenta = [medioFixture(), medioFixture({ id: 2, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente' })]
+    const sinCuenta = [medioFixture(), medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico' })]
+
+    expect(textoPlano(facturaDeVenta(comprobante, base, CONTEXTO, conCuenta))).toContain('Condicion de venta: Cuenta corriente')
+    expect(textoPlano(facturaDeVenta(comprobante, base, CONTEXTO, sinCuenta))).toContain('Condicion de venta: Contado')
+  })
+
+  it('datos sin emisor, receptor ni totales (reimpresión sin conexión): imprime sin romper y sin "undefined" ni "null"', () => {
+    const { emisor: _e, receptor: _r, totales: _t, ...antigua } = base
+    const bytes = imprimir(antigua, comprobanteFixture(), { reimpresion: true })
+    const texto = textoPlano(bytes)
+
+    expect(texto).not.toMatch(/undefined|null|NaN/)
+    expect(texto).toContain('Local Centro')
+    expect(texto).toContain('FACTURA B')
+    expect(texto).toContain('C.A.E. N°: 70123456789012')
+    expect(texto).not.toContain('TRANSPARENCIA FISCAL')
+    expect(texto).not.toContain('A CONSUMIDOR FINAL')
+    expect(contieneQrAlmacenado(bytes, PAYLOAD)).toBe(true)
+  })
+
+  it('sin totales la letra C igual imprime la transparencia con 0,00', () => {
+    const { totales: _t, ...sinTotales } = base
+    const texto = textoPlano(imprimir({ ...sinTotales, letra: 'C' }))
+
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?0,00/)
+  })
+
+  it('emisor con datos opcionales ausentes omite esas líneas', () => {
+    const minimo = { razonSocial: 'Solo Razon', nombreFantasia: null, cuit: null, condicionFiscal: null, ingresosBrutos: null, inicioActividades: null, domicilio: null }
+    const texto = textoPlano(imprimir({ ...base, emisor: minimo }))
+
+    expect(texto).toContain('Solo Razon')
+    expect(texto).not.toMatch(/CUIT:|Ing\. Brutos|Inicio de actividades|undefined|null/)
+  })
+
+  it.each([
+    ['ausente', null],
+    ['con un carácter fuera de ASCII', 'https://www.arca.gob.ar/fe/qr/?p=ñ'],
+    ['vacío', ''],
+    ['demasiado largo', 'x'.repeat(5000)],
+  ])('QR %s: no imprime QR y no lanza', (_nombre, payloadQr) => {
+    const bytes = imprimir({ ...base, payloadQr })
+
+    expect(contieneImpresionDeQr(bytes)).toBe(false)
+    expect(textoPlano(bytes)).toContain('C.A.E. N°: 70123456789012')
+  })
+
+  it('la reimpresión conserva marca, contenido legal y QR, y no pulsa el cajón', () => {
+    const bytes = imprimir(base, comprobanteFixture(), { reimpresion: true })
+    const texto = textoPlano(bytes)
+
+    expect(texto).toContain('REIMPRESION')
+    expect(texto).toContain('TRANSPARENCIA FISCAL')
+    expect(contieneQrAlmacenado(bytes, PAYLOAD)).toBe(true)
+    expect(contieneComandoDeCajon(bytes)).toBe(false)
+  })
+
+  it('el ticket de venta no lleva nada del bloque legal', () => {
+    const bytes = ticketDeVenta(comprobanteFixture(), CONTEXTO, medios)
+
+    expect(textoPlano(bytes)).not.toMatch(/TRANSPARENCIA|Condicion de venta|Codigo N|CAE/)
+    expect(contieneImpresionDeQr(bytes)).toBe(false)
   })
 })

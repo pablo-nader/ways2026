@@ -7,7 +7,7 @@ import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import { tieneDesgloseDeCierre } from '../api/caja'
 import { calcularImporteAplicado } from '../api/cuentaCorriente'
-import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
+import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, EmisorDeFacturaFiscal, MedioPagoListado, ReceptorDeFacturaFiscal, TotalesDeFacturaFiscal, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
 
@@ -116,10 +116,15 @@ function fechaDeFactura(fecha: string): string {
   return `${dia}/${mes}/${anio}`
 }
 
+/** Código ARCA del tipo de comprobante según la letra de la factura (A 001, B 006, C 011); el contrato no trae el número. */
+const CODIGO_ARCA_POR_LETRA: Record<string, string> = { A: '001', B: '006', C: '011' }
+
 /**
- * Factura de una venta aprobada por ARCA: el mismo cuerpo que `ticketDeVenta` (ítems, totales, pagos, cajón),
- * con "FACTURA {letra}", número fiscal, fecha, CAE y su vencimiento en lugar de la leyenda de ticket no válido.
- * Sin QR de ARCA todavía. Sin tildes en los avisos, igual que el ticket.
+ * Factura de una venta aprobada por ARCA, en el modelo de tique-factura de la RG 4291 art. 15: emisor, letra y
+ * código, número, fecha, condición de venta, receptor, el cuerpo del ticket (ítems, totales, pagos, cajón), el IVA
+ * discriminado en la letra A, la leyenda de transparencia fiscal, CAE con su vencimiento y el QR de ARCA.
+ * `emisor`, `receptor` y `totales` son opcionales (una factura guardada antes de T7b no los trae): lo que falta se
+ * omite, nunca se imprime "undefined". Sin tildes en los avisos fijos, igual que el ticket.
  */
 export function facturaDeVenta(
   comprobante: ComprobanteEmitido,
@@ -141,7 +146,8 @@ function armarComprobanteDeVenta(
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
 
-  encabezado(ticket, contexto)
+  if (factura?.emisor) encabezadoLegal(ticket, factura.emisor)
+  else encabezado(ticket, contexto)
 
   if (opciones.reimpresion) {
     // Sin tilde a propósito: mismo criterio que "COMPROBANTE NO VALIDO COMO FACTURA" de abajo —
@@ -155,6 +161,8 @@ function armarComprobanteDeVenta(
   const clienteConSaldo = opciones.reimpresion ? undefined : opciones.cliente
 
   ticket.alinear('centro').negrita(true).linea(factura ? `FACTURA ${factura.letra}` : 'COMPROBANTE NO VALIDO COMO FACTURA')
+  const codigoArca = factura ? CODIGO_ARCA_POR_LETRA[factura.letra] : undefined
+  if (codigoArca) ticket.linea(`Codigo N° ${codigoArca}`)
   if (descuentoManual !== 0) ticket.linea('*** CON DESCUENTO MANUAL ***')
   if (recargoManual !== 0) ticket.linea('*** CON RECARGO MANUAL ***')
 
@@ -163,14 +171,14 @@ function armarComprobanteDeVenta(
     ticket
       .linea(`Nro ${String(factura.puntoDeVentaFiscal).padStart(5, '0')}-${String(factura.numero).padStart(8, '0')}`)
       .linea(`Fecha: ${fechaDeFactura(factura.fecha)}`)
-    if (factura.cae) ticket.linea(`CAE ${factura.cae}`)
-    if (factura.caeVencimiento) ticket.linea(`Vto. CAE ${fechaDeFactura(factura.caeVencimiento)}`)
+    ticket.linea(`Condicion de venta: ${condicionDeVenta(comprobante, medioPorId)}`)
   } else {
     ticket.linea(`Comprobante: ${comprobante.numeroVisible}`).linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
   }
   ticket.linea(`Cajero: ${contexto.cajero}`)
   if (clienteConSaldo) ticket.linea(lineaDeCliente(clienteConSaldo))
   ticket.lineaDeGuiones()
+  if (factura?.receptor) bloqueDeReceptor(ticket, factura.receptor)
 
   for (const item of comprobante.items) {
     ticket.lineaDeColumnas(`${item.cantidad} x ${item.descripcion}`, formatearMoneda(item.total))
@@ -200,6 +208,8 @@ function armarComprobanteDeVenta(
   ticket.lineaDeColumnas('TOTAL', formatearMoneda(comprobante.total))
   ticket.tamanioDoble(false).negrita(false)
 
+  if (factura?.letra === 'A' && factura.totales) bloqueDeIvaDiscriminado(ticket, factura.totales)
+
   ticket.lineaDeGuiones()
   ticket.linea('Pagos:')
   for (const pago of comprobante.pagos) {
@@ -216,6 +226,8 @@ function armarComprobanteDeVenta(
     lineaDeSaldo(ticket, 'Saldo actual', clienteConSaldo.saldoDespues, clienteConSaldo.estimado ?? false)
   }
 
+  if (factura) pieLegal(ticket, factura)
+
   ticket.alinear('centro').avanzar(1).linea('¡Gracias por su compra!')
 
   // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
@@ -231,6 +243,78 @@ function armarComprobanteDeVenta(
   ticket.avanzar(2).cortar()
 
   return ticket.bytes()
+}
+
+/** `Cuenta corriente` si algún pago mueve el saldo del cliente (comportamiento del medio), si no `Contado`. */
+function condicionDeVenta(comprobante: ComprobanteEmitido, medioPorId: Map<number, MedioPagoListado>): string {
+  const aCuentaCorriente = comprobante.pagos.some((pago) => medioPorId.get(pago.idMedioPago)?.comportamiento === 'CuentaCorriente')
+  return aCuentaCorriente ? 'Cuenta corriente' : 'Contado'
+}
+
+/** Bloque del emisor (RG 1415 Anexo II A I a): los datos que faltan se omiten. */
+function encabezadoLegal(ticket: ConstructorDeTicket, emisor: EmisorDeFacturaFiscal): void {
+  ticket.inicializar().codificarPagina().alinear('centro').negrita(true).linea(emisor.razonSocial).negrita(false)
+  if (emisor.nombreFantasia) ticket.linea(emisor.nombreFantasia)
+  if (emisor.domicilio) ticket.linea(emisor.domicilio)
+  if (emisor.cuit) ticket.linea(`CUIT: ${emisor.cuit}`)
+  if (emisor.ingresosBrutos) ticket.linea(`Ing. Brutos: ${emisor.ingresosBrutos}`)
+  if (emisor.condicionFiscal) ticket.linea(emisor.condicionFiscal)
+  if (emisor.inicioActividades) ticket.linea(`Inicio de actividades: ${fechaDeFactura(emisor.inicioActividades)}`)
+  ticket.lineaDeGuiones()
+}
+
+const DOCUMENTO_SIN_IDENTIFICAR = 99
+
+/** Receptor (RG 1415 Anexo II A II): el consumidor final sin documento se imprime solo como tal. */
+function bloqueDeReceptor(ticket: ConstructorDeTicket, receptor: ReceptorDeFacturaFiscal): void {
+  const sinDocumento = receptor.codigoTipoDocumento === DOCUMENTO_SIN_IDENTIFICAR
+  const consumidorFinal = sinDocumento || /consumidor final/i.test(receptor.condicionFiscal ?? '')
+  ticket.alinear('izquierda')
+  if (consumidorFinal) {
+    ticket.linea('A CONSUMIDOR FINAL')
+    if (!sinDocumento) ticket.linea(`${receptor.tipoDocumento}: ${receptor.numeroDocumento}`)
+  } else {
+    ticket.linea(receptor.nombre).linea(`${receptor.tipoDocumento}: ${receptor.numeroDocumento}`)
+    if (receptor.condicionFiscal) ticket.linea(receptor.condicionFiscal)
+    if (receptor.domicilio) ticket.linea(receptor.domicilio)
+  }
+  ticket.lineaDeGuiones()
+}
+
+/** IVA discriminado de la letra A: neto gravado, un renglón por alícuota y los conceptos exento / no gravado. */
+function bloqueDeIvaDiscriminado(ticket: ConstructorDeTicket, totales: TotalesDeFacturaFiscal): void {
+  ticket.lineaDeGuiones()
+  ticket.lineaDeColumnas('Neto gravado', formatearMoneda(totales.impNeto))
+  for (const alicuota of totales.alicuotas) {
+    ticket.lineaDeColumnas(`IVA ${String(alicuota.porcentaje).replace('.', ',')}%`, formatearMoneda(alicuota.iva))
+  }
+  if (totales.impOpEx > 0) ticket.lineaDeColumnas('Exento', formatearMoneda(totales.impOpEx))
+  if (totales.impTotConc > 0) ticket.lineaDeColumnas('No gravado', formatearMoneda(totales.impTotConc))
+}
+
+/**
+ * Pie legal: leyenda de transparencia fiscal (RG 5614; en todas las letras), CAE con su vencimiento y QR de ARCA.
+ * Sin `totales` la leyenda se omite en A y B, porque no hay IVA que informar; la C imprime 0,00 igual.
+ */
+function pieLegal(ticket: ConstructorDeTicket, factura: DatosDeFacturaFiscal): void {
+  const ivaContenido = factura.totales ? factura.totales.impIva : factura.letra === 'C' ? 0 : null
+  ticket.lineaDeGuiones()
+  if (ivaContenido !== null) {
+    ticket.alinear('centro').negrita(true).linea('OTRAS LEYENDAS').linea('TRANSPARENCIA FISCAL').negrita(false).alinear('izquierda')
+    ticket.lineaDeColumnas('IVA Contenido', formatearMoneda(ivaContenido))
+    ticket.lineaDeColumnas('Otros Impuestos Nacionales Indirectos', formatearMoneda(0))
+    ticket.lineaDeGuiones()
+  }
+  ticket.alinear('izquierda')
+  if (factura.cae) ticket.linea(`C.A.E. N°: ${factura.cae}`)
+  if (factura.caeVencimiento) ticket.linea(`Fecha de Vto.: ${fechaDeFactura(factura.caeVencimiento)}`)
+  if (factura.payloadQr) {
+    try {
+      ticket.alinear('centro').qr(factura.payloadQr)
+    } catch {
+      // Un QR no imprimible (qr() solo lanza RangeError) no puede tirar abajo la factura: se omite.
+    }
+  }
 }
 
 /** Datos del recibo de un pago a cuenta. `saldoAnterior - total pagado = saldoNuevo`: quien lo arma

@@ -169,3 +169,47 @@ describe('ConstructorDeTicket.lineas', () => {
     expect(lineas[0].texto).toHaveLength(COLUMNAS_FUENTE_A)
   })
 })
+
+describe('ConstructorDeTicket.qr', () => {
+  const GS_K = [0x1d, 0x28, 0x6b]
+
+  it('emite modelo 2, módulo, corrección M, datos e impresión con los bytes exactos', () => {
+    expect(Array.from(new ConstructorDeTicket().qr('ABC').bytes())).toEqual([
+      ...GS_K, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00,
+      ...GS_K, 0x03, 0x00, 0x31, 0x43, 5,
+      ...GS_K, 0x03, 0x00, 0x31, 0x45, 0x31,
+      ...GS_K, 0x06, 0x00, 0x31, 0x50, 0x30, 0x41, 0x42, 0x43,
+      ...GS_K, 0x03, 0x00, 0x31, 0x51, 0x30,
+    ])
+  })
+
+  it('pL/pH codifican k+3 en little-endian para contenido de más de 252 caracteres', () => {
+    const contenido = 'a'.repeat(300)
+    const bytes = Array.from(new ConstructorDeTicket().qr(contenido).bytes())
+    const inicio = bytes.findIndex((b, i) => b === 0x31 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x30)
+    expect(bytes[inicio - 2]).toBe(303 & 0xff)
+    expect(bytes[inicio - 1]).toBe(1)
+    expect(bytes.slice(inicio + 3, inicio + 3 + 300)).toEqual(Array(300).fill(0x61))
+  })
+
+  it('usa el módulo por defecto y la opción lo reemplaza', () => {
+    const modulo = (b: Uint8Array) => Array.from(b)[Array.from(b).indexOf(0x43) + 1]
+    expect(modulo(new ConstructorDeTicket().qr('x').bytes())).toBe(5)
+    expect(modulo(new ConstructorDeTicket().qr('x', { tamanioDeModulo: 8 }).bytes())).toBe(8)
+  })
+
+  it('lanza ante contenido no ASCII, vacío, demasiado largo o módulo inválido, sin emitir bytes', () => {
+    const t = new ConstructorDeTicket()
+    expect(() => t.qr('ñandú')).toThrow(RangeError)
+    expect(() => t.qr('')).toThrow(RangeError)
+    expect(() => t.qr('a'.repeat(2332))).toThrow(RangeError)
+    expect(() => t.qr('a', { tamanioDeModulo: 0 })).toThrow(RangeError)
+    expect(t.bytes()).toHaveLength(0)
+    expect(() => t.qr('a'.repeat(2331))).not.toThrow()
+  })
+
+  it('en la vista previa deja una línea "[QR]" con el estilo vigente', () => {
+    const lineas = new ConstructorDeTicket().alinear('centro').qr('x').lineas()
+    expect(lineas).toEqual([{ texto: '[QR]', alineacion: 'centro', negrita: false }])
+  })
+})

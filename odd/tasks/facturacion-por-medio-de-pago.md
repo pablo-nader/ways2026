@@ -89,7 +89,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
     sincronización; estado fiscal por venta y reimpresión. Ruta: delegada.
   - Release del POS (bump de Ways.Desktop + tag `pos-v*`): no antes de T7 (la factura impresa
     necesita el QR), y siempre avisando al dueño antes.
-- [ ] **T7 — Impresión.** Factura con CAE y QR en `VistaDeTicket` y en el POS de escritorio,
+- [x] **T7 — Impresión.** Factura con CAE y QR en `VistaDeTicket` y en el POS de escritorio,
   reimpresión. Depende de T5.
 - [ ] **T8 — Anulación y nota de crédito de una venta facturada.** `CbtesAsoc`, espejo de NC,
   reversión del acumulado. Depende de T5.
@@ -504,6 +504,77 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   `procesarFacturaciones` desactualizado), corregida después, solo comentario. JUDGMENT:
   APPROVED.
 
+## T7 (2026-10-14)
+
+Decisión del dueño: la factura impresa lleva todo lo exigible ahora (QR, emisor, receptor, IVA
+discriminado, ingresos brutos, inicio de actividades, leyenda de transparencia fiscal), con las
+columnas nuevas que haga falta. `VistaDeTicket` no aplica: solo imprime el cierre web; las
+facturas salen por ESC/POS en el POS de escritorio.
+
+- [x] **T7a — Comando QR en ESC/POS.** `GS ( k` modelo 2 en `ConstructorDeTicket`. Ruta: delegada.
+- [x] **T7b — Servidor: datos legales.** `ingresos_brutos` e `inicio_actividades` en
+  `empresas` (migración, ABM y descriptor web) y `DatosDeFacturaFiscal` con emisor, receptor e
+  IVA discriminado. Ruta: delegada.
+- [x] **T7c — POS: factura legal.** `facturaDeVenta` con encabezado legal, receptor, IVA, leyenda
+  y QR; reimpresión igual. Ruta: delegada.
+- Release del POS después de T7c, avisando al dueño antes.
+
+### Contenido legal verificado (fuentes primarias ARCA/AFIP, 2026-10-14)
+
+- Formato ticket permitido: RG 4291 art. 15 (modelo Tique-Factura de la RG 3561, CAE al pie).
+- Emisor (RG 1415 Anexo II A I a): razón social, domicilio comercial, CUIT, ingresos brutos,
+  leyenda de condición frente al IVA, "INICIO DE ACTIVIDADES" con la fecha.
+- Comprobante: letra, "Código Nº" del tipo, PV (5) y número (8), fecha; "C.A.E. N°" y
+  "Fecha de Vto." al pie. Sin datos de imprenta ni ORIGINAL/DUPLICADO (RG 4291 art. 14 d).
+- Receptor (A II): consumidor final → "A CONSUMIDOR FINAL"; identificación con DNI/CUIL/CDI
+  desde $10.000.000 (RG 5700 y RG 5866/2026), nombre y domicilio pueden ir "NR"; resto →
+  nombre, domicilio, CUIT y condición de IVA (RG 5616/2024 exige la condición del receptor).
+- Condición de venta (A III / B e).
+- Transparencia fiscal (RG 5614; RG 1415 B g; RG 4291 art. 15): en el ticket, bajo
+  "OTRAS LEYENDAS", título "TRANSPARENCIA FISCAL", "IVA Contenido" y "Otros Impuestos
+  Nacionales Indirectos". La norma de diseño no distingue letra.
+- QR (RG 4892 y especificación vigente): base `https://www.arca.gob.ar/fe/qr/`; el host de
+  afip sigue redirigiendo. Sin tamaño ni nivel de corrección fijados. No reemplaza datos.
+- Fuentes: biblioteca.afip.gob.ar/dcp/REAG01001415_2003_01_07,
+  biblioteca.afip.gob.ar/dcp/REAG01004291_2018_08_02, RG 4892 (REAG01004892_2020_12_22),
+  arca.gob.ar/fe/qr/documentos/QRespecificaciones.pdf, Boletín Oficial RG 5614/5616/5700/5866.
+
+Decisiones de T7c: la leyenda de transparencia va en todas las letras (A y B con el IVA de
+ARCA, C con $0,00: la norma no fija el importe para monotributo y prohíbe discriminar IVA, a
+confirmar con el contador); condición de venta "Cuenta corriente" si algún pago es a cuenta
+corriente, si no "Contado"; el servidor pasa a `www.arca.gob.ar` en el QR.
+
+### Evidencia de T7 (2026-10-14)
+
+Ruta: delegada (tres escritores, dos de ellos en worktrees aislados, y tres arreglos).
+Commits: `f358ebeb` (T7a), `13c27507` (T7b), `770c58ed` y `b95d8102` (correcciones de T7b),
+`90a3229d` (T7c), `3ba76831` (corrección de T7c).
+- T7a: `ConstructorDeTicket.qr` (GS ( k modelo 2, corrección M, módulo 5), rechaza contenido
+  que no sea ASCII imprimible o exceda 2331 bytes antes de emitir bytes.
+- T7b: `empresas.ingresos_brutos` (citext 30) e `inicio_actividades` (date), migración
+  `DatosLegalesDeEmpresaParaFactura`; PUT de empresa sigue siendo reemplazo completo (como las
+  alícuotas de percepción). `DatosDeFacturaFiscal` suma Emisor, Receptor y Totales
+  (`ComposicionDeTotalesFiscales.Componer` sobre los ítems guardados).
+- Corrección: `comprobantes_venta.datos_legales_fiscales` (jsonb, solo en espejos), migración
+  `DatosLegalesCongeladosEnEspejoFiscal`; se escribe en la transacción A con emisor, receptor,
+  documento y condición de IVA enviados a ARCA; el pedido, el reintento, el QR y la lectura
+  salen de esa foto; NULL (espejos anteriores) lee las filas actuales.
+- T7c: factura en modelo ticket con el contenido verificado, leyenda de transparencia en todas
+  las letras, "C.A.E. N°" / "Fecha de Vto." y QR al pie; QR con base `www.arca.gob.ar`.
+Checks: `dotnet build` limpio; aplicación 1026/1026; integración fiscal filtrada 276/276 sobre
+el código final del servidor; Vitest completo 7384/7384 antes de la corrección de T7c e
+impresión + ShellPos 197/197 después. Sin RED previo: mutaciones en rojo en cada tramo.
+Judgment-day: T7a+T7b ronda 1, advertencia confirmada (datos legales leídos en vivo),
+corregida; re-juicio, advertencia confirmada (el reintento mezclaba datos congelados y
+vivos), corregida en la ronda 2; re-juicio final resuelto. T7c ronda 1 sin severos; la
+sugerencia confirmada (spec con host viejo) y cuatro de un solo juez corregidas; re-juicio
+final resuelto. JUDGMENT: APPROVED.
+Información sin corregir: ningún test mata el congelado del CUIT del emisor; la consulta de un
+espejo existente usa el CUIT actual; los totales usan código y nombre vivos de la alícuota;
+"Codigo N°" se deduce de la letra (el DTO no trae el código de ARCA); `impTrib` no se imprime
+(hoy siempre 0); la leyenda en la C de monotributo con $0,00 queda a confirmar con el contador.
+
 ## Próximo paso
 
-T7 (QR de ARCA en la factura impresa); después el release del POS, avisando al dueño antes.
+PR de T7; después el release del POS (bump de Ways.Desktop + tag `pos-v*`), avisando antes al
+dueño. Siguen T8 y T9.

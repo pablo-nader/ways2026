@@ -475,7 +475,7 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(ResultadoFiscal.Aprobado, emitido.ResultadoFiscal);
         Assert.NotNull(emitido.Cae);
         Assert.NotNull(emitido.PayloadQr);
-        Assert.StartsWith("https://www.afip.gob.ar/fe/qr/?p=", emitido.PayloadQr);
+        Assert.StartsWith("https://www.arca.gob.ar/fe/qr/?p=", emitido.PayloadQr);
         Assert.Single(espiaWsfe.Operaciones); // un solo FECAESolicitar, cero FECompConsultar
 
         // target 75 — D12's declared gap, el trip-wire de 19c: CERO filas en las tres tablas que

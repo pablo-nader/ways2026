@@ -102,7 +102,7 @@ NEVER appear in `Iva[]` (decision 11). `ImpTotal` MUST equal
 
 The QR payload MUST contain the 13 RG 4291 fields (`ver`, `fecha`, `cuit`, `ptoVta`, `tipoCmp`,
 `nroCmp`, `importe`, `moneda`, `ctz`, `tipoDocRec`, `nroDocRec`, `tipoCodAut`, `codAut`), base64-
-encoded into `https://www.afip.gob.ar/fe/qr/?p=<base64>`. Because no real CAE exists until 19b,
+encoded into `https://www.arca.gob.ar/fe/qr/?p=<base64>`. Because no real CAE exists until 19b,
 `codAut` MUST be synthetic, structurally correct in shape.
 
 #### Scenario: The QR payload matches a hand-computed vector

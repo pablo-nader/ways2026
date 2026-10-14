@@ -276,7 +276,7 @@ public class ServicioDeFacturacionDeVentas(
     private sealed record Plan(
         PuntoVenta PuntoVenta, Empresa Empresa, TipoComprobante Tipo, char Letra, string CuitEmisor,
         short CondicionIvaReceptor, short TipoDocReceptor, long NroDocReceptor, TotalesFiscales Totales,
-        AmbienteFiscal Ambiente)
+        AmbienteFiscal Ambiente, DatosLegalesDeFacturaFiscal DatosLegales)
     {
         public ClaveDeSerie Serie => new(PuntoVenta.NumeroFiscal!.Value, Tipo.CodigoAfip!.Value);
 
@@ -344,6 +344,10 @@ public class ServicioDeFacturacionDeVentas(
         var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == origen.IdPuntoVenta, ct);
         var empresa = await db.Empresas.AsNoTracking().FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
 
+        // Un espejo con datos legales congelados vuelve a pedir con el emisor y el receptor con que se emitió (documento,
+        // condición IVA, CUIT y letra del propio espejo), no con las filas actuales de cliente y empresa.
+        var congelados = origenEsEspejo ? DatosLegalesDeFacturaFiscal.Leer(origen.DatosLegalesFiscales) : null;
+
         if (empresa.IdCondicionFiscal is not { } idCondicionEmisor)
         {
             return FallaCon("empresa_sin_condicion_fiscal", "La empresa no tiene cargada su condición fiscal ARCA.");
@@ -358,11 +362,20 @@ public class ServicioDeFacturacionDeVentas(
         var condicionEmisor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == idCondicionEmisor, ct);
         var condicionReceptor = await db.CondicionesFiscales.AsNoTracking().FirstAsync(c => c.Id == cliente.IdCondicionFiscal, ct);
 
-        if (condicionReceptor.Codigo == "NO_RESP" || condicionReceptor.CodigoAfip is null)
+        short condicionIvaReceptor;
+        if (congelados?.CondicionIvaReceptor is { } condicionCongelada)
+        {
+            condicionIvaReceptor = condicionCongelada;
+        }
+        else if (condicionReceptor.Codigo == "NO_RESP" || condicionReceptor.CodigoAfip is null)
         {
             return FallaCon(
                 "condicion_fiscal_receptor_no_mapeada",
                 $"La condición fiscal del receptor ('{condicionReceptor.Codigo}') no tiene mapeo ARCA confirmado.");
+        }
+        else
+        {
+            condicionIvaReceptor = condicionReceptor.CodigoAfip.Value;
         }
 
         var hayCertificadoActivo = await db.CertificadosFiscales.AsNoTracking()
@@ -375,24 +388,28 @@ public class ServicioDeFacturacionDeVentas(
         string cuitEmisor;
         try
         {
-            cuitEmisor = ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa);
+            cuitEmisor = congelados?.Emisor.Cuit is { } cuitCongelado
+                ? ServicioDeFacturacionFiscal.ExigirCuitNumerico(cuitCongelado)
+                : ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa);
         }
         catch (ErrorDominio ex) when (ex.Codigo == "empresa_sin_cuit_valido")
         {
             return FallaCon(ex.Codigo, ex.Message);
         }
 
-        var letra = ResolvedorDeLetraComprobante.Resolver(
-            ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionEmisor.Codigo),
-            ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionReceptor.Codigo));
-
         TipoComprobante? tipo;
+        char letra;
         if (origenEsEspejo)
         {
             tipo = await db.TiposComprobante.AsNoTracking().FirstAsync(t => t.Id == origen.IdTipoComprobante, ct);
+            letra = tipo.Letra ?? ' ';
         }
         else
         {
+            letra = ResolvedorDeLetraComprobante.Resolver(
+                ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionEmisor.Codigo),
+                ServicioDeFacturacionFiscal.MapearCondicionFiscal(condicionReceptor.Codigo));
+
             // La factura de la letra: FA, FB o FC. Las notas de débito comparten letra y signo con la factura, así que la
             // letra sola no alcanza para elegir el tipo.
             var codigoDeFactura = $"F{letra}";
@@ -408,7 +425,13 @@ public class ServicioDeFacturacionDeVentas(
             return FallaCon("tipo_fiscal_invalido", $"No hay un tipo de factura fiscal activo para la letra '{letra}'.");
         }
 
-        var (tipoDoc, nroDoc) = ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);
+        var (tipoDoc, nroDoc) = congelados is { } fijos
+            ? (fijos.Receptor.CodigoTipoDocumento, fijos.Receptor.NumeroDocumento)
+            : ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);
+        var datosLegales = congelados ?? new DatosLegalesDeFacturaFiscal(
+            EmisorDeFacturaFiscal.De(empresa, puntoVenta, condicionEmisor.Nombre),
+            ReceptorDeFacturaFiscal.De(cliente, tipoDoc, nroDoc, condicionReceptor.Nombre),
+            condicionIvaReceptor);
         const short DocumentoCuit = 80;
         if (letra == 'A' && tipoDoc != DocumentoCuit)
         {
@@ -435,8 +458,8 @@ public class ServicioDeFacturacionDeVentas(
 
         return new Evaluacion(
             new Plan(
-                puntoVenta, empresa, tipo, letra, cuitEmisor, condicionReceptor.CodigoAfip.Value, tipoDoc, nroDoc,
-                totales, ambiente),
+                puntoVenta, empresa, tipo, letra, cuitEmisor, condicionIvaReceptor, tipoDoc, nroDoc,
+                totales, ambiente, datosLegales),
             null);
     }
 
@@ -462,6 +485,7 @@ public class ServicioDeFacturacionDeVentas(
     {
         var momento = reloj.Ahora;
         var codigoAfip = plan.Tipo.CodigoAfip!.Value;
+        var datosLegales = plan.DatosLegales.Serializar();
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
@@ -521,6 +545,7 @@ public class ServicioDeFacturacionDeVentas(
                 IvaTotal = plan.Totales.ImpIVA,
                 Estado = EstadoComprobante.Emitido,
                 ResultadoFiscal = ResultadoFiscal.Pendiente,
+                DatosLegalesFiscales = datosLegales,
                 FacturacionDecididaEn = null,
                 CreatedAt = momento,
                 UpdatedAt = momento
@@ -1309,7 +1334,9 @@ public class ServicioDeFacturacionDeVentas(
     }
 
     /// <summary>Los catálogos que referencia la factura ya emitida se leen aunque estén dados de baja (solo se ignora la baja
-    /// lógica; el filtro de tenant sigue aplicando): una baja posterior no esconde una factura aprobada.</summary>
+    /// lógica; el filtro de tenant sigue aplicando): una baja posterior no esconde una factura aprobada. Emisor, receptor y el
+    /// documento del QR vienen de los datos legales congelados en el espejo al emitir; solo un espejo con esa columna en NULL
+    /// (anterior a la migración) los toma de las filas actuales de empresa, cliente y punto de venta.</summary>
     private async Task<DatosDeFacturaFiscal> LeerFacturaAsync(int idEspejo, CancellationToken ct)
     {
         var espejo = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idEspejo, ct);
@@ -1322,17 +1349,46 @@ public class ServicioDeFacturacionDeVentas(
         var tipo = await db.TiposComprobante.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
             .FirstAsync(t => t.Id == espejo.IdTipoComprobante, ct);
 
+        // Los datos legales salen del espejo (congelados al emitir); solo un espejo anterior a la columna usa las filas actuales.
+        var congelados = DatosLegalesDeFacturaFiscal.Leer(espejo.DatosLegalesFiscales);
+        DatosLegalesDeFacturaFiscal datosLegales;
+        if (congelados is not null)
+        {
+            datosLegales = congelados;
+        }
+        else
+        {
+            var idsCondicion = new[] { empresa.IdCondicionFiscal, cliente.IdCondicionFiscal }.OfType<int>().Distinct().ToList();
+            var condiciones = await db.CondicionesFiscales.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
+                .Where(c => idsCondicion.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, c => c.Nombre, ct);
+            var (docActual, nroActual) = ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);
+            datosLegales = new DatosLegalesDeFacturaFiscal(
+                EmisorDeFacturaFiscal.De(empresa, puntoVenta, NombreDeCondicion(condiciones, empresa.IdCondicionFiscal)),
+                ReceptorDeFacturaFiscal.De(
+                    cliente, docActual, nroActual, NombreDeCondicion(condiciones, cliente.IdCondicionFiscal)));
+        }
+
         var fechaFiscal = await fiscal.ResolverFechaFiscalAsync(empresa.Id, espejo.Fecha, ct);
-        var (tipoDoc, nroDoc) = ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);
+        var cuitEmisor = congelados is null
+            ? ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa)
+            : datosLegales.Emisor.Cuit ?? throw new InvalidOperationException(
+                $"El espejo {espejo.Id} tiene datos legales congelados sin CUIT del emisor.");
         var qr = ServicioDeFacturacionFiscal.ConstruirQrSiCorresponde(
             new RespuestaCae(espejo.ResultadoFiscal ?? ResultadoFiscal.Pendiente, espejo.Cae, espejo.CaeVencimiento, [], []),
-            fechaFiscal, ServicioDeFacturacionFiscal.ExigirCuitNumerico(empresa), puntoVenta.NumeroFiscal!.Value,
-            tipo.CodigoAfip!.Value, espejo.Numero, espejo.Total, tipoDoc, nroDoc);
+            fechaFiscal, cuitEmisor, puntoVenta.NumeroFiscal!.Value, tipo.CodigoAfip!.Value, espejo.Numero, espejo.Total,
+            datosLegales.Receptor.CodigoTipoDocumento, datosLegales.Receptor.NumeroDocumento);
+
+        var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(espejo.Id, ct, incluirBajasDeCatalogo: true);
 
         return new DatosDeFacturaFiscal(
             espejo.Id, tipo.Codigo, tipo.Letra!.Value, puntoVenta.NumeroFiscal.Value, espejo.Numero, fechaFiscal,
-            espejo.Cae, espejo.CaeVencimiento, qr, LeerObservaciones(espejo.ObservacionesFiscales));
+            espejo.Cae, espejo.CaeVencimiento, qr, LeerObservaciones(espejo.ObservacionesFiscales),
+            datosLegales.Emisor, datosLegales.Receptor, TotalesDeFacturaFiscal.De(lineas));
     }
+
+    private static string? NombreDeCondicion(Dictionary<int, string> condiciones, int? idCondicion) =>
+        idCondicion is { } id && condiciones.TryGetValue(id, out var nombre) ? nombre : null;
 
     private static IReadOnlyList<ObservacionArca> LeerObservaciones(string? json)
     {

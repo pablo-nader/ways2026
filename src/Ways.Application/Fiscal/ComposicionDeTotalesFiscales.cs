@@ -88,6 +88,11 @@ public static class ComposicionDeTotalesFiscales
         return new TotalesFiscales(impNeto, impIva, impOpEx, impTotConc, ImpTribSinPercepciones, impTotal, itemsIva);
     }
 
+    /// <summary>El porcentaje de cada alícuota gravada, en el mismo orden que <see cref="TotalesFiscales.Iva"/> (los dos
+    /// agrupan por <c>IdAlicuotaIva</c> y descartan las líneas sin código AFIP).</summary>
+    public static IReadOnlyList<decimal> PorcentajesDeIva(IReadOnlyList<LineaFiscal> lineas) =>
+        [.. lineas.Where(l => l.CodigoAfip is not null).GroupBy(l => l.IdAlicuotaIva).Select(g => g.First().PorcentajeIva)];
+
     /// <summary>La única definición de qué es Exento y qué es No gravado: una alícuota con
     /// <c>codigo_afip</c> es gravada (incluido el 0% real); sin código, el nombre decide. Una
     /// alícuota sin código que no sea ninguna de las dos es un dato de catálogo sin mapeo AFIP

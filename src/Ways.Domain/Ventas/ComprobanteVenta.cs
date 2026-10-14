@@ -132,4 +132,10 @@ public class ComprobanteVenta : EntidadTenant
     /// Nunca la respuesta cruda: eso persistiría <c>Token</c>/<c>Sign</c>, una credencial
     /// portadora, en una tabla sin camino de cifrado.</summary>
     public string? ObservacionesFiscales { get; set; }
+
+    /// <summary>Documento jsonb con el emisor y el receptor tal como se emitió el espejo fiscal (incluido el documento ARCA
+    /// del receptor que viajó a ARCA y entró al QR). Se escribe una sola vez, en la transacción que inserta el espejo, y no
+    /// se vuelve a tocar. <c>NULL</c> en toda venta y en los espejos anteriores a la columna: esos se leen de las filas
+    /// actuales de empresa, cliente y punto de venta.</summary>
+    public string? DatosLegalesFiscales { get; set; }
 }

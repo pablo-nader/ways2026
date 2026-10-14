@@ -1,4 +1,7 @@
+using System.Text.Json;
+using Ways.Domain.Clientes;
 using Ways.Domain.Fiscal;
+using Ways.Domain.Organizacion;
 
 namespace Ways.Application.Fiscal;
 
@@ -59,7 +62,9 @@ public static class EstadosFiscalesDeVenta
 }
 
 /// <summary>La factura fiscal aprobada de una venta: lo que el POS necesita para imprimirla. <see cref="Fecha"/> es el día
-/// de emisión (la fecha del comprobante en ARCA), no el de la venta.</summary>
+/// de emisión (la fecha del comprobante en ARCA), no el de la venta. <see cref="Emisor"/>, <see cref="Receptor"/> y
+/// <see cref="Totales"/> llevan los datos legales de la factura impresa y se agregan al final, sin cambiar los campos
+/// que ya existían.</summary>
 public sealed record DatosDeFacturaFiscal(
     int IdComprobante,
     string CodigoTipoComprobante,
@@ -70,4 +75,104 @@ public sealed record DatosDeFacturaFiscal(
     string? Cae,
     DateOnly? CaeVencimiento,
     string? PayloadQr,
-    IReadOnlyList<ObservacionArca> Observaciones);
+    IReadOnlyList<ObservacionArca> Observaciones,
+    EmisorDeFacturaFiscal Emisor,
+    ReceptorDeFacturaFiscal Receptor,
+    TotalesDeFacturaFiscal Totales);
+
+/// <summary>Quién emite la factura, tal como estaba al emitirla (congelado en el espejo; un espejo anterior a esa columna lo
+/// toma de las filas actuales). <see cref="Domicilio"/> es el del punto de venta; <see cref="CondicionFiscal"/> el nombre
+/// de la condición de la empresa (<c>null</c> si no tiene).</summary>
+public sealed record EmisorDeFacturaFiscal(
+    string RazonSocial,
+    string? NombreFantasia,
+    string? Cuit,
+    string? CondicionFiscal,
+    string? IngresosBrutos,
+    DateOnly? InicioActividades,
+    string? Domicilio)
+{
+    public static EmisorDeFacturaFiscal De(Empresa empresa, PuntoVenta puntoVenta, string? condicionFiscal) => new(
+        empresa.RazonSocial, empresa.NombreFantasia, empresa.Cuit, condicionFiscal, empresa.IngresosBrutos,
+        empresa.InicioActividades, puntoVenta.Domicilio);
+}
+
+/// <summary>Emisor y receptor congelados en el espejo fiscal en la transacción que lo inserta (columna
+/// <c>datos_legales_fiscales</c>): la factura impresa, el QR y el reintento del pedido a ARCA salen de acá y no de las filas
+/// actuales de empresa y cliente. <see cref="CondicionIvaReceptor"/> es el código ARCA de la condición IVA del receptor que
+/// viajó (o viajará) en el pedido; <c>null</c> en un snapshot que no lo trae, que lo toma de la fila actual.</summary>
+public sealed record DatosLegalesDeFacturaFiscal(
+    EmisorDeFacturaFiscal Emisor, ReceptorDeFacturaFiscal Receptor, short? CondicionIvaReceptor = null)
+{
+    private static readonly JsonSerializerOptions Opciones = new(JsonSerializerDefaults.Web);
+
+    public string Serializar() => JsonSerializer.Serialize(this, Opciones);
+
+    /// <summary><c>null</c> cuando el espejo es anterior a la columna (no hay snapshot).</summary>
+    public static DatosLegalesDeFacturaFiscal? Leer(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<DatosLegalesDeFacturaFiscal>(json, Opciones)
+                ?? throw new InvalidOperationException("Los datos legales fiscales del espejo no se pudieron leer.");
+}
+
+/// <summary>A quién se factura. <see cref="TipoDocumento"/> es la etiqueta del documento que viajó a ARCA
+/// (<see cref="CodigoTipoDocumento"/>: 80 CUIT, 86 CUIL, 96 DNI, 94 Pasaporte, 99 sin identificar) y
+/// <see cref="NumeroDocumento"/> el número enviado (0 con 99). Todos los campos son los de la emisión, congelados en el
+/// espejo; solo un espejo anterior a esa columna los toma de la fila actual del cliente.</summary>
+public sealed record ReceptorDeFacturaFiscal(
+    string Nombre,
+    string TipoDocumento,
+    short CodigoTipoDocumento,
+    long NumeroDocumento,
+    string? CondicionFiscal,
+    string? Domicilio)
+{
+    public static ReceptorDeFacturaFiscal De(Cliente cliente, short tipoDoc, long nroDoc, string? condicionFiscal) => new(
+        NombreAImprimir(cliente), EtiquetaDeTipoDocumento(tipoDoc), tipoDoc, nroDoc, condicionFiscal, cliente.Domicilio);
+
+    /// <summary>La razón social si hay; si no, nombre y apellido.</summary>
+    public static string NombreAImprimir(Cliente cliente) =>
+        !string.IsNullOrWhiteSpace(cliente.RazonSocial)
+            ? cliente.RazonSocial.Trim()
+            : string.Join(
+                ' ', new[] { cliente.Nombre, cliente.Apellido }.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!.Trim()));
+
+    public static string EtiquetaDeTipoDocumento(short tipoDoc) => tipoDoc switch
+    {
+        80 => "CUIT",
+        86 => "CUIL",
+        96 => "DNI",
+        94 => "Pasaporte",
+        _ => "Sin identificar"
+    };
+}
+
+/// <summary>Los importes que ARCA recibió, recompuestos del snapshot de las líneas del comprobante con la misma composición
+/// que la emisión. Con ImpTrib en cero, ImpTotal es ImpNeto + ImpIVA + ImpOpEx + ImpTotConc.</summary>
+public sealed record TotalesDeFacturaFiscal(
+    decimal ImpNeto,
+    decimal ImpIva,
+    decimal ImpOpEx,
+    decimal ImpTotConc,
+    decimal ImpTrib,
+    decimal ImpTotal,
+    IReadOnlyList<AlicuotaDeFacturaFiscal> Alicuotas)
+{
+    public static TotalesDeFacturaFiscal De(IReadOnlyList<LineaFiscal> lineas)
+    {
+        var totales = ComposicionDeTotalesFiscales.Componer(lineas);
+        var porcentajes = ComposicionDeTotalesFiscales.PorcentajesDeIva(lineas);
+        if (porcentajes.Count != totales.Iva.Count)
+        {
+            throw new InvalidOperationException("Los porcentajes de IVA no coinciden con las alícuotas compuestas.");
+        }
+
+        return new TotalesDeFacturaFiscal(
+            totales.ImpNeto, totales.ImpIVA, totales.ImpOpEx, totales.ImpTotConc, totales.ImpTrib, totales.ImpTotal,
+            [.. totales.Iva.Select((item, i) => new AlicuotaDeFacturaFiscal(porcentajes[i], item.BaseImp, item.Importe))]);
+    }
+}
+
+/// <summary>Una alícuota gravada de la factura: porcentaje, neto (base imponible) e IVA.</summary>
+public sealed record AlicuotaDeFacturaFiscal(decimal Porcentaje, decimal Neto, decimal Iva);

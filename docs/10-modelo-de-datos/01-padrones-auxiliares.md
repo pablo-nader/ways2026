@@ -271,6 +271,18 @@ empresas (
 );
 -- CHECK ck_empresas_alicuotas_percepcion_rango: cada una NULL o entre 0 y 100.
 ```
+- `empresas` gana los datos legales que la factura impresa lleva (T7b, ver "Lecturas de una venta"
+  en §4). Las dos columnas son opcionales y el `PUT /api/empresas/{id}` es un reemplazo completo,
+  igual que con las alícuotas: un campo ausente o `null` las borra:
+
+```sql
+empresas (
+    ...,
+    ingresos_brutos     citext NULL,   -- texto libre, hasta 30: un número, "Exento" o Convenio
+                                       -- Multilateral; el servicio lo recorta y vacío es NULL
+    inicio_actividades  date   NULL
+);
+```
 - El legacy completo mapea a: ticket X (`tipo=1`), nota de crédito X (`tipo=2`).
 
 ### Medios de pago

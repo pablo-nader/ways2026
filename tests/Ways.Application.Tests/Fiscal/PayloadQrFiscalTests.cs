@@ -31,7 +31,7 @@ public class PayloadQrFiscalTests
             "\"nroCmp\":42,\"importe\":1250.50,\"moneda\":\"PES\",\"ctz\":1.00,\"tipoDocRec\":80," +
             "\"nroDocRec\":20222222223,\"tipoCodAut\":\"E\",\"codAut\":12345678901234}";
         var base64Esperado = Convert.ToBase64String(Encoding.UTF8.GetBytes(jsonEsperado));
-        var urlEsperada = "https://www.afip.gob.ar/fe/qr/?p=" + base64Esperado;
+        var urlEsperada = "https://www.arca.gob.ar/fe/qr/?p=" + base64Esperado;
 
         Assert.Equal(urlEsperada, url);
     }
@@ -42,7 +42,7 @@ public class PayloadQrFiscalTests
         var url = PayloadQrFiscal.Construir(
             new DateOnly(2026, 1, 1), 20000000001, 1, 6, 1, 100.00m, 96, 30111111119, 1);
 
-        Assert.StartsWith("https://www.afip.gob.ar/fe/qr/?p=", url);
+        Assert.StartsWith("https://www.arca.gob.ar/fe/qr/?p=", url);
     }
 
     [Fact]

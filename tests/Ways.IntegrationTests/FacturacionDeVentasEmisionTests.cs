@@ -881,7 +881,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         Assert.Equal(FechaFiscalDe(c.Reloj.Ahora), factura.Fecha);
         Assert.Equal("70123456789012", factura.Cae);
         Assert.Equal(new DateOnly(2026, 1, 25), factura.CaeVencimiento);
-        Assert.StartsWith("https://www.afip.gob.ar/fe/qr/?p=", factura.PayloadQr);
+        Assert.StartsWith("https://www.arca.gob.ar/fe/qr/?p=", factura.PayloadQr);
         Assert.Empty(factura.Observaciones);
 
         // Lo que viajó a ARCA: un solo pedido, número 1, fecha de HOY (no la de la venta) y el documento del receptor.
