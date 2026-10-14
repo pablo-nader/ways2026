@@ -6,9 +6,10 @@ namespace Ways.Application.Fiscal;
 /// Lo que la respuesta de una venta dice de su facturación. <see cref="Estado"/> es uno de
 /// <see cref="EstadosFiscalesDeVenta"/>; <see cref="Motivo"/> es la etiqueta de <c>motivo_facturacion</c> con la que
 /// se decidió facturar (solo con una fila de decisión) y <see cref="IdFacturacion"/> el id de esa fila. La emisión del
-/// espejo agrega, al final y sin cambiar los campos que ya existían, <see cref="Error"/> (el último motivo por el que la
-/// decisión sigue pendiente, o los errores de ARCA si la rechazó) y <see cref="Comprobante"/> (la factura, solo cuando
-/// está aprobada).
+/// espejo agrega, al final y sin cambiar los campos que ya existían, <see cref="Error"/> y <see cref="Comprobante"/> (la
+/// factura, solo cuando está aprobada). En la respuesta de la venta <see cref="Error"/> es solo un código estable; los
+/// endpoints de procesamiento por lote y de una decisión devuelven el texto guardado completo (el último motivo por el
+/// que la decisión sigue pendiente, o los errores de ARCA si la rechazó).
 /// </summary>
 public sealed record EstadoFiscalDeVenta(
     string Estado,

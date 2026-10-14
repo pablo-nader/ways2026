@@ -75,7 +75,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   intentos, orden por serie, concurrencia. Incluye lo que T5a dejó anotado: tope de tiempo de
   las llamadas a WSFE y que invalidar el ticket de acceso solo descarte el ticket que falló
   (hoy descarta el que esté guardado, y dos llamadas simultáneas pueden pisarse). Depende de T5a.
-- [ ] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
+- [x] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
   comprobante en la respuesta de la venta. Depende de T5b.
 - [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
   respuesta del drenaje. Depende de T4 y T5.
@@ -353,6 +353,28 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   puede postergar ni anotar; un fallo del lote pierde de la respuesta lo ya emitido; todo
   probado contra simuladores. Nada llama al lote todavía (lo hará el POS en T6).
 
+- 2026-10-14 — T5c hecha. Ruta: delegada (un escritor y una ronda de corrección).
+  `EmisionEnLineaAlCobrar.DecidirEmitirYSanearAsync`, llamado por POST /api/ventas tras el
+  commit: decide (3 s), y solo si queda `pendiente` y hay un ticket de acceso vigente
+  guardado hace un intento de emitir con min(4 s, lo que quede de 8 s); después el barrido
+  con el resto. En la caja nunca se firma un ticket. La respuesta trae el estado fiscal (seis
+  estados, incluido `cancelado`), un código de error estable y, si salió, los datos del
+  comprobante; un reenvío informa el estado actual sin volver a emitir.
+  Checks sobre el código final: `dotnet build` sin errores; dominio 1691/1691; aplicación
+  1014/1014; integración completa 4439/4439 (una corrida anterior se descartó por errores de
+  Docker compartido con otra sesión). Sin test-first estricto; mutaciones en rojo.
+  Judgment-day: ronda 1, sin críticos; confirmadas por los dos jueces y corregidas: el error
+  de la respuesta mostraba texto interno, la documentación omitía `cancelado` y el bloqueo de
+  serie, tests faltantes; re-juicio: todo resuelto, sin críticos ni advertencias.
+  JUDGMENT: APPROVED. Después, solo comentarios de documentación (el tipo compartido y las
+  observaciones de ARCA).
+  Limitaciones aceptadas: hasta que algo firme un ticket (el lote, que todavía nadie llama)
+  el intento al cobrar no corre; el ticket vive en la memoria de cada proceso; un corte en
+  la caja bloquea la emisión en línea de su serie hasta que corra un lote; si ARCA rechaza
+  el ticket guardado, la caja puede esperar la firma completa; un rechazo de ARCA sin
+  códigos llega al cajero como `error_inesperado` y uno de nivel de llamada como `0`; los
+  endpoints de lote y de una decisión siguen devolviendo el texto completo del error.
+
 ## Próximo paso
 
-T5c.
+T6.

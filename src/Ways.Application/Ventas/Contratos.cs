@@ -213,7 +213,7 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 /// <c>aprobado</c> y <c>Fiscal.Comprobante</c> lleva sus datos (<see cref="EmisionEnLineaAlCobrar"/>). <c>Fiscal.Estado</c> es
 /// uno de: <c>no_corresponde</c> (no se factura), <c>sin_decidir</c> (la decisión falló y se completa después), <c>pendiente</c>
 /// (se decidió facturar y la factura no está emitida), <c>aprobado</c>, <c>rechazado</c> (ARCA rechazó) o <c>cancelado</c> (la
-/// venta se anuló antes de procesarse su facturación; se ve en un reenvío o si la anulación llega durante el cobro). <c>Fiscal.Error</c> es solo un código, nunca texto libre.</summary>
+/// venta se anuló antes de procesarse su facturación; se ve en un reenvío o si la anulación llega durante el cobro). <c>Fiscal.Error</c> es solo un código, nunca texto libre; las observaciones de ARCA de una factura aprobada (<c>Fiscal.Comprobante.Observaciones</c>) sí viajan con su texto, porque son las que se imprimen en el comprobante.</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,
