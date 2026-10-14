@@ -180,7 +180,7 @@ export type ResultadoDeSincronizacionOffline = {
    * descargar la instantánea. Devuelve lo que queda pendiente según el almacén. */
   drenarAhora: () => Promise<EstadoDeColaLocal>
   /** Pide al servidor procesar las facturaciones pendientes del punto de venta, sin esperar ni propagar
-   * fallos (ver `crearDisparadorDeLote`). El drenado ya lo pide solo al terminar cada pasada; esto es
+   * fallos (ver `crearDisparadorDeLote`). El drenado lo pide solo al terminar (siempre en un ciclo; tras una venta, si quedó algo por facturar); esto es
    * para una venta que salió sin pasar por el outbox, así que se llama después de que el servidor
    * respondió y no consulta `enLinea`. Recibe el estado fiscal de ESA respuesta y solo pide el lote si quedó
    * por procesar (`ventaNecesitaElLote`): con la factura ya resuelta, el lote ocuparía la serie fiscal para
