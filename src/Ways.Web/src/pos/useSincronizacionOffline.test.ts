@@ -2904,7 +2904,7 @@ describe('useSincronizacionOffline — lote de facturación tras el drenado', ()
     await expect(leerOutbox(almacen)).resolves.toEqual([])
   })
 
-  it('procesarFacturaciones pide el lote del punto de venta sin pasar por el outbox', async () => {
+  it('procesarFacturaciones con una venta sin estado fiscal pide el lote del punto de venta sin pasar por el outbox', async () => {
     const almacen = almacenFake()
     obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000, sincronizarAntesDeVender: false }))
@@ -2912,18 +2912,151 @@ describe('useSincronizacionOffline — lote de facturación tras el drenado', ()
     await waitFor(() => expect(result.current.sincronizando).toBe(false))
     procesarLoteMock.mockClear()
 
-    act(() => result.current.procesarFacturaciones())
+    act(() => result.current.procesarFacturaciones(undefined))
 
     await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
     expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+  })
+
+  it.each(['pendiente', 'sin_decidir'] as const)('procesarFacturaciones con una venta %s pide el lote', async (estado) => {
+    const almacen = almacenFake()
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000, sincronizarAntesDeVender: false }))
+    await waitFor(() => expect(result.current.sincronizando).toBe(false))
+    procesarLoteMock.mockClear()
+
+    act(() => result.current.procesarFacturaciones({ estado }))
+
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+  })
+
+  it.each(['aprobado', 'rechazado', 'no_corresponde', 'cancelado'] as const)('procesarFacturaciones con una venta %s no pide el lote', async (estado) => {
+    const almacen = almacenFake()
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000, sincronizarAntesDeVender: false }))
+    await waitFor(() => expect(result.current.sincronizando).toBe(false))
+    procesarLoteMock.mockClear()
+
+    act(() => result.current.procesarFacturaciones({ estado }))
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(procesarLoteMock).not.toHaveBeenCalled()
   })
 
   it('sin punto de venta procesarFacturaciones no hace nada', async () => {
     const almacen = almacenFake()
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: null, activo: true, almacen }))
 
-    act(() => result.current.procesarFacturaciones())
+    act(() => result.current.procesarFacturaciones(undefined))
 
     expect(procesarLoteMock).not.toHaveBeenCalled()
+  })
+
+  describe('lote tras una venta: solo si quedó pendiente', () => {
+    const agregarVenta = (almacen: ReturnType<typeof almacenFake>) =>
+      agregarAOutbox(almacen, { idLocal: 'b', numeroPreasignado: 101, idPuntoVenta: 7, creadoEn: '2026-09-20T09:01:00.000Z', solicitud: solicitudFixture({ numeroPreasignado: 101 }) })
+
+    async function conHookEnReposo() {
+      const almacen = almacenFake()
+      obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+      const hook = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000, sincronizarAntesDeVender: false }))
+      await waitFor(() => expect(hook.result.current.sincronizando).toBe(false))
+      await waitFor(() => expect(hook.result.current.verificacionesConElServidor).toBe(1))
+      procesarLoteMock.mockClear()
+      return { almacen, result: hook.result }
+    }
+
+    it('el drenado pedido tras la venta con respuesta aprobada no pide el lote', async () => {
+      const { almacen, result } = await conHookEnReposo()
+      await agregarVenta(almacen)
+      emitirMock.mockResolvedValue({ id: 1, fiscal: { estado: 'aprobado' } })
+
+      await act(async () => {
+        await result.current.drenarAhora()
+      })
+      await new Promise((r) => setTimeout(r, 20))
+
+      expect(emitirMock).toHaveBeenCalledTimes(1)
+      expect(procesarLoteMock).not.toHaveBeenCalled()
+    })
+
+    it('el drenado pedido tras la venta con respuesta pendiente pide el lote', async () => {
+      const { almacen, result } = await conHookEnReposo()
+      await agregarVenta(almacen)
+      emitirMock.mockResolvedValue({ id: 1, fiscal: { estado: 'pendiente' } })
+
+      await act(async () => {
+        await result.current.drenarAhora()
+      })
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    })
+
+    it('con varias ventas en la pasada alcanza una pendiente para pedir el lote', async () => {
+      const { almacen, result } = await conHookEnReposo()
+      await agregarVenta(almacen)
+      await agregarAOutbox(almacen, { idLocal: 'c', numeroPreasignado: 102, idPuntoVenta: 7, creadoEn: '2026-09-20T09:02:00.000Z', solicitud: solicitudFixture({ numeroPreasignado: 102 }) })
+      emitirMock.mockResolvedValueOnce({ id: 1, fiscal: { estado: 'aprobado' } }).mockResolvedValueOnce({ id: 2, fiscal: { estado: 'pendiente' } })
+
+      await act(async () => {
+        await result.current.drenarAhora()
+      })
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    })
+
+    it('el drenado tras la venta sin nada que enviar no pide el lote', async () => {
+      const { result } = await conHookEnReposo()
+
+      await act(async () => {
+        await result.current.drenarAhora()
+      })
+      await new Promise((r) => setTimeout(r, 20))
+
+      expect(emitirMock).not.toHaveBeenCalled()
+      expect(procesarLoteMock).not.toHaveBeenCalled()
+    })
+
+    it('un ciclo con el outbox vacío sigue pidiendo el lote', async () => {
+      const { result } = await conHookEnReposo()
+
+      await act(async () => {
+        await result.current.sincronizarAhora()
+      })
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    })
+
+    it('un ciclo con una venta aprobada sigue pidiendo el lote, una sola vez', async () => {
+      const { almacen, result } = await conHookEnReposo()
+      await agregarVenta(almacen)
+      emitirMock.mockResolvedValue({ id: 1, fiscal: { estado: 'aprobado' } })
+
+      await act(async () => {
+        await result.current.sincronizarAhora()
+      })
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    })
+
+    it.each(['tras la venta primero', 'ciclo primero'] as const)('un drenado compartido por la venta y un ciclo (%s) pide el lote aunque la venta quedó aprobada', async (orden) => {
+      const { almacen, result } = await conHookEnReposo()
+      await agregarVenta(almacen)
+      let responder: (respuesta: unknown) => void = () => undefined
+      emitirMock.mockImplementation(() => new Promise((resolver) => (responder = resolver)))
+
+      let pedidos: Promise<unknown>[] = []
+      await act(async () => {
+        pedidos =
+          orden === 'tras la venta primero'
+            ? [result.current.drenarAhora(), result.current.sincronizarAhora()]
+            : [result.current.sincronizarAhora(), result.current.drenarAhora()]
+        await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+        responder({ id: 1, fiscal: { estado: 'aprobado' } })
+        await Promise.all(pedidos)
+      })
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    })
   })
 })

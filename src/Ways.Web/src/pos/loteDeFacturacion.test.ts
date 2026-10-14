@@ -4,6 +4,7 @@ import {
   TIEMPO_LIMITE_DEL_LOTE_DE_FACTURACION_MS,
   crearDisparadorDeLote,
   reiniciarLotesDeFacturacionParaTests,
+  ventaNecesitaElLote,
 } from './loteDeFacturacion'
 
 /** Una llamada que el test resuelve o rechaza cuando quiere. */
@@ -219,5 +220,19 @@ describe('crearDisparadorDeLote — tiempo límite', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('ventaNecesitaElLote', () => {
+  it.each(['pendiente', 'sin_decidir'] as const)('con estado %s pide el lote', (estado) => {
+    expect(ventaNecesitaElLote({ estado })).toBe(true)
+  })
+
+  it.each(['aprobado', 'rechazado', 'no_corresponde', 'cancelado'] as const)('con estado %s no lo pide', (estado) => {
+    expect(ventaNecesitaElLote({ estado })).toBe(false)
+  })
+
+  it.each([undefined, null])('sin estado fiscal (%s) lo pide', (fiscal) => {
+    expect(ventaNecesitaElLote(fiscal)).toBe(true)
   })
 })

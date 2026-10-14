@@ -486,9 +486,13 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   mapa no se limpia al cerrar sesión (una vuelta pendiente puede salir con la sesión
   siguiente); el tope de 75 s queda corto si se sube `PresupuestoDeLoteSegundos` o
   `TimeoutDeWsaaSegundos`.
-- Pregunta abierta al dueño: el lote tras cada venta puede ocupar la serie hasta 20 s y la
-  venta siguiente con factura sale con ticket.
+- [ ] **T6e — Lote tras la venta solo si queda pendiente.** El lote tras cada venta podía
+  ocupar la serie hasta 20 s y la venta siguiente con factura salía con ticket. Decisión
+  (2026-10-14, delegada por el dueño: "lo que te parezca mejor"): después de una venta el
+  lote sale solo si alguna venta enviada quedó con estado fiscal `pendiente` o `sin_decidir`
+  (o sin estado); los ciclos periódicos, el arranque y la reconexión lo piden siempre. Ruta:
+  delegada.
 
 ## Próximo paso
 
-PR de T6d; respuesta del dueño sobre la contención de la serie; después T7.
+T6e; después T7.

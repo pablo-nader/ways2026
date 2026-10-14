@@ -3323,8 +3323,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
         try {
           const emitidoOnline = await clienteDeVentas.emitir(solicitud)
-          // Esta venta no pasó por el outbox, así que ninguna pasada de drenado va a pedir su facturación.
-          sincronizacionOffline.procesarFacturaciones()
+          // Esta venta no pasó por el outbox, así que ninguna pasada de drenado va a pedir su facturación; solo se pide si la respuesta la dejó pendiente.
+          sincronizacionOffline.procesarFacturaciones(emitidoOnline.fiscal)
           return { emitido: conFiscalSoloSiSeguroSeFactura(emitidoOnline, seguroSeFactura), pendienteDeSincronizar: false, avisoLimiteDeCredito: null }
         } catch (e) {
           if (generacionCobroRef.current !== miGeneracion) return null

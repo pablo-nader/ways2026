@@ -46,7 +46,7 @@ import {
 } from './outboxOffline'
 import { INTERVALO_DE_SINCRONIZACION_MS } from './intervaloDeSincronizacion'
 import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
-import { crearDisparadorDeLote } from './loteDeFacturacion'
+import { crearDisparadorDeLote, ventaNecesitaElLote } from './loteDeFacturacion'
 import { mensajeDeRechazoDeAjusteManualAlDrenar } from '../api/ajusteManual'
 import { clienteDePos } from '../api/pos'
 import { clienteDeFacturacionFiscal } from '../api/facturacionFiscal'
@@ -54,7 +54,7 @@ import { clienteDeVentas } from '../api/ventas'
 import { clienteDeClientes } from '../api/clientes'
 import { consumoCuentaCorriente, superaLimiteDeCredito } from '../api/pagos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
-import type { ComportamientoMedioPago, ComprobanteEmitido, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
+import type { ComportamientoMedioPago, ComprobanteEmitido, FiscalDeVenta, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
 
 /** Tope de espera del ciclo de arranque antes de habilitar la venta: con una red que cuelga, la
  * venta se habilita igual con la instantánea que haya y el ciclo sigue en segundo plano. */
@@ -132,7 +132,9 @@ export type ParametrosDeSincronizacionOffline = {
   sincronizarAntesDeVender?: boolean
 }
 
-type PruebaDeServidor = { respondio: boolean }
+/** Lo que una pasada aprendió del servidor: `respondio` si alguna venta recibió respuesta (prueba de conexión) y
+ * `necesitaLote` si alguna de esas respuestas dejó una facturación por procesar (`ventaNecesitaElLote`). */
+type PruebaDeServidor = { respondio: boolean; necesitaLote: boolean }
 
 export type EstadoDeColaLocal = { pendientes: number; conError: number }
 
@@ -180,8 +182,10 @@ export type ResultadoDeSincronizacionOffline = {
   /** Pide al servidor procesar las facturaciones pendientes del punto de venta, sin esperar ni propagar
    * fallos (ver `crearDisparadorDeLote`). El drenado ya lo pide solo al terminar cada pasada; esto es
    * para una venta que salió sin pasar por el outbox, así que se llama después de que el servidor
-   * respondió y no consulta `enLinea`. Sin punto de venta no hace nada. */
-  procesarFacturaciones: () => void
+   * respondió y no consulta `enLinea`. Recibe el estado fiscal de ESA respuesta y solo pide el lote si quedó
+   * por procesar (`ventaNecesitaElLote`): con la factura ya resuelta, el lote ocuparía la serie fiscal para
+   * nada. Sin punto de venta no hace nada. */
+  procesarFacturaciones: (fiscal: Pick<FiscalDeVenta, 'estado'> | null | undefined) => void
   /** Con cuenta corriente, antes de tomar un número consulta el cliente al servidor (tope
    * `TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS`): si el pago supera el límite, o el servidor
    * rechaza la consulta, no encola nada ni consume número; sin respuesta, encola igual con
@@ -390,6 +394,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         continue
       }
       prueba.respondio = true
+      if (ventaNecesitaElLote(respuesta.fiscal)) prueba.necesitaLote = true
       asentarRespuesta(primera.idLocal, respuesta)
 
       // La venta ya llegó al servidor: si su salida del outbox no se puede confirmar, se corta la
@@ -415,13 +420,20 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const otraVueltaDeDrenadoRef = useRef(false)
   // Si el último drenado completo recibió al menos una respuesta de venta: el servidor es alcanzable aunque `enLinea` todavía no lo diga.
   const drenadoProboElServidorRef = useRef(false)
-  function drenarOutbox(): Promise<void> {
+  // Si algún pedido del drenado en curso exige el lote pase lo que pase (ciclo periódico, de arranque, de reconexión): un
+  // drenado compartido por varios pedidos lo pide si cualquiera de ellos lo haría.
+  const loteSiempreRef = useRef(false)
+  /** `siempreElLote`: el ciclo lo pide aunque no se haya enviado nada; el drenado que sigue a una venta solo lo pide si alguna
+   * respuesta de la pasada dejó una facturación por procesar (`PruebaDeServidor.necesitaLote`). */
+  function drenarOutbox(siempreElLote: boolean): Promise<void> {
     if (drenadoEnCursoRef.current) {
       otraVueltaDeDrenadoRef.current = true
+      if (siempreElLote) loteSiempreRef.current = true
       return drenadoEnCursoRef.current
     }
+    loteSiempreRef.current = siempreElLote
     const drenado = (async () => {
-      const prueba: PruebaDeServidor = { respondio: false }
+      const prueba: PruebaDeServidor = { respondio: false, necesitaLote: false }
       try {
         do {
           otraVueltaDeDrenadoRef.current = false
@@ -432,7 +444,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         drenadoProboElServidorRef.current = prueba.respondio
         // Con la cola ya enviada (o cortada), el servidor tiene las ventas: es el momento de facturar las pendientes. Una venta
         // enviada con éxito prueba la conexión: en el ciclo de reconexión `enLinea` recién se corrige después del drenado.
-        if (montadoRef.current) dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: prueba.respondio })
+        if (montadoRef.current && (loteSiempreRef.current || prueba.necesitaLote)) {
+          dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: prueba.respondio })
+        }
       }
     })()
     drenadoEnCursoRef.current = drenado
@@ -657,7 +671,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     setSincronizando(true)
     const enCurso = (async () => {
       try {
-        await drenarOutbox()
+        await drenarOutbox(true)
         const loteYaPedido = drenadoProboElServidorRef.current
         const estabaEnLinea = enLineaRef.current
         const conSenal = await refrescarInstantaneaSiHaySenal()
@@ -694,7 +708,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   async function drenarAhora(): Promise<EstadoDeColaLocal> {
     if (!activo || idPuntoVenta === null) return leerEstadoDeColaLocal()
-    await drenarOutbox()
+    await drenarOutbox(false)
     const despuesDelDrenado = await leerEstadoDeColaLocal()
     // Recién drenado es cuando el outbox está vacío y la reposición puede rotar el bloque sin
     // congelar ventas pendientes en el que abandona (ver `reponerBloque`).
@@ -1022,7 +1036,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizacionInicialPendiente,
     sincronizarAhora,
     drenarAhora,
-    procesarFacturaciones: () => dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: true }),
+    procesarFacturaciones: (fiscal) => {
+      if (ventaNecesitaElLote(fiscal)) dispararLoteDeFacturacion(idPuntoVenta, { servidorAlcanzable: true })
+    },
     encolarVentaOffline,
     esperarRespuesta,
     consumoPendienteDeCuentaCorriente,

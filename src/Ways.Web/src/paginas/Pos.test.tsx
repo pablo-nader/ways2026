@@ -4799,6 +4799,38 @@ describe('Pos — lote de facturación tras la venta (T6c, camino directo sin co
     expect(apiPostMock.mock.calls.some(([ruta]) => ruta === '/ventas')).toBe(true)
   })
 
+  function responderVentaConFiscal(estado: FiscalDeVenta['estado'] | undefined) {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+        return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+      }
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture(estado ? { fiscal: fiscalFixture(estado) } : {}))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  it.each(['aprobado', 'rechazado', 'no_corresponde', 'cancelado'] as const)('una venta emitida directo con estado fiscal %s no pide el lote', async (estado) => {
+    await armarVentaConElArranqueAsentado()
+    responderVentaConFiscal(estado)
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(procesarLoteMock).not.toHaveBeenCalled()
+  })
+
+  it.each(['pendiente', 'sin_decidir'] as const)('una venta emitida directo con estado fiscal %s pide el lote', async (estado) => {
+    await armarVentaConElArranqueAsentado()
+    responderVentaConFiscal(estado)
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalledTimes(1))
+    expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+  })
+
   it('el lote sale después de que la venta se emitió en el servidor', async () => {
     await armarVentaConElArranqueAsentado()
 

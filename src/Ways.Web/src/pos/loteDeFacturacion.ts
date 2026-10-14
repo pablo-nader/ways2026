@@ -6,7 +6,17 @@
  * tanto). Sin conexión o sin punto de venta no llama, y cualquier fallo se descarta: no puede
  * afectar la venta, el drenaje ni la pantalla.
  */
+import type { FiscalDeVenta } from '../api/tipos'
 import { conTiempoLimite } from './tiempoLimite'
+
+/** Una venta recién respondida necesita el lote si su facturación quedó sin resolver (`pendiente`, `sin_decidir`) o si el
+ * servidor no informó estado fiscal (versión anterior o desconocido: ante la duda se pide). `aprobado`, `rechazado`,
+ * `no_corresponde` y `cancelado` ya no tienen nada que procesar, y pedir el lote igual ocuparía la serie fiscal hasta 20 s
+ * y haría que la venta siguiente saliera con ticket. */
+export function ventaNecesitaElLote(fiscal: Pick<FiscalDeVenta, 'estado'> | null | undefined): boolean {
+  if (!fiscal) return true
+  return fiscal.estado === 'pendiente' || fiscal.estado === 'sin_decidir'
+}
 
 /** Peor caso del servidor (`ProcesadorDeFacturacionesPorLote`, valores por defecto de `OpcionesFiscales`): el presupuesto del
  * lote (20 s), más una firma de WSAA que arrancó justo antes de vencerlo y no se interrumpe (hasta su timeout de 30 s), más el
