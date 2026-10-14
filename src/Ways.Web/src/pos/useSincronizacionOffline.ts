@@ -198,8 +198,8 @@ export type ResultadoDeSincronizacionOffline = {
   }) => Promise<EncoladoOffline>
   /** Espera hasta `ms` la respuesta de `POST /api/ventas` de una venta encolada con `interesadoEnLaRespuesta`.
    * Resuelve `null` al vencer el tope, si el servidor la rechazó (la venta queda archivada), si el envío de la
-   * cabeza falló de forma transitoria (red, tiempo agotado o 5xx: la venta sigue en el outbox y se reintenta, sin
-   * archivarse), o si no hay nada que esperar; nunca rechaza. Al resolver (o vencer) la entrada se borra: una
+   * cabeza falló de forma transitoria (red, tiempo agotado o 5xx: las ventas siguen en el outbox y se reintentan, sin
+   * archivarse; también resuelven null las encoladas detrás de la cabeza, que esa pasada ya no envía), o si no hay nada que esperar; nunca rechaza. Al resolver (o vencer) la entrada se borra: una
    * respuesta posterior no queda guardada. */
   esperarRespuesta: (idLocal: string, ms: number) => Promise<ComprobanteEmitido | null>
   /** Cuenta corriente de las ventas de este cliente que siguen en el outbox: el saldo del servidor todavía no la incluye. */
@@ -321,6 +321,12 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     entrada.entregar(respuesta)
   }
 
+  function asentarPendientesSinRespuesta(): void {
+    for (const [idLocal, entrada] of [...respuestasRef.current]) {
+      if (entrada.respuesta === undefined) asentarRespuesta(idLocal, null)
+    }
+  }
+
   function esperarRespuesta(idLocal: string, ms: number): Promise<ComprobanteEmitido | null> {
     const entrada = respuestasRef.current.get(idLocal)
     if (!entrada) return Promise.resolve(null)
@@ -356,8 +362,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       } catch (e) {
         const archivada = await encolarOperacion(() => archivarRechazoSiEsPermanente(primera, e))
         if (!archivada) {
-          // Un fallo transitorio no archiva nada: la venta se reintenta en el próximo ciclo, pero quien la espera no tiene por qué agotar su tope.
-          if (esFalloTransitorio(e)) asentarRespuesta(primera.idLocal, null)
+          // Un fallo transitorio no archiva nada: las ventas se reintentan en el próximo ciclo, pero ninguna de las que esperan (la cabeza ni las encoladas detrás, que esta pasada ya no envía) tiene por qué agotar su tope.
+          if (esFalloTransitorio(e)) asentarPendientesSinRespuesta()
           return
         }
         asentarRespuesta(primera.idLocal, null)

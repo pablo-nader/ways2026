@@ -2723,6 +2723,23 @@ describe('useSincronizacionOffline — esperarRespuesta de una venta encolada', 
     expect(hook.result.current.outboxCount).toBe(1)
   })
 
+  it('un fallo transitorio de la cabeza libera también a la venta encolada detrás, que esta pasada no envía', async () => {
+    const hook = await hookConVentaListaParaEncolar()
+    emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+    await encolar(hook, false)
+    const idLocalNueva = await encolar(hook, true)
+
+    const espera = hook.result.current.esperarRespuesta(idLocalNueva, 60_000)
+    await act(async () => {
+      await hook.result.current.drenarAhora()
+    })
+
+    await expect(Promise.race([espera, new Promise((resolver) => setTimeout(() => resolver('vencio'), 1_000))])).resolves.toBeNull()
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.ventasConError).toEqual([])
+    expect(hook.result.current.outboxCount).toBe(2)
+  })
+
   it('con tope 0 se suelta el interés: la entrada se borra y un nuevo pedido no espera', async () => {
     const hook = await hookConVentaListaParaEncolar()
     const idLocal = await encolar(hook, true)
