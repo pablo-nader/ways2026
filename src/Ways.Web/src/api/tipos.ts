@@ -1392,7 +1392,13 @@ export type InstantaneaDePos = {
   toleranciaPago: number
   /** Ausente cuando no hay combos y en una instantánea guardada antes de que existieran: se cotiza como siempre. */
   combos?: ComboDeInstantanea[]
+  /** Modo y porcentaje de las listas que la instantánea resuelve, para cotizar sin red el importe de un artículo por importe.
+   * Ausente en una instantánea guardada antes de este campo: esas líneas se cotizan online. */
+  listas?: ListaDeInstantanea[]
 }
+
+/** Espejo de `ListaDeInstantanea`: `porcentaje` es el de una lista `Derivada` (negativo descuenta) y `null` en una `Fija`. */
+export type ListaDeInstantanea = { idListaPrecio: number; modo: 'Fija' | 'Derivada'; porcentaje: number | null }
 
 // --- Caja: turnos, movimientos y resumen (stage-6-turnos-caja, Slice 6) ---
 // Espejo de `Ways.Application.Caja.Contratos` — apertura, movimientos físicos fuera de la venta

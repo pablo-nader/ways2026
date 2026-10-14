@@ -403,6 +403,7 @@ function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): Insta
     clientes: [clienteDeInstantaneaFixture()],
     mediosDePago: [],
     toleranciaPago: 0,
+    listas: [{ idListaPrecio: 1, modo: 'Fija', porcentaje: null }],
     ...sobrescribir,
   }
 }
@@ -9861,9 +9862,13 @@ describe('Pos — artículos por importe', () => {
 
   /** Monta `Pos` con la instantánea del almacén ya cargada: el botón "Sincronizar ahora" solo existe con la instantánea en
    * memoria, así que esperarlo es esperar el DATO (los atajos y el escaneo local salen de ella). */
-  async function montarConInstantanea(articulos: ArticuloDeInstantanea[] = [fiambreriaDeInstantanea(), verduleriaDeInstantanea()], bloque = true) {
+  async function montarConInstantanea(
+    articulos: ArticuloDeInstantanea[] = [fiambreriaDeInstantanea(), verduleriaDeInstantanea()],
+    bloque = true,
+    sobrescribirInstantanea: Partial<InstantaneaDePos> = {},
+  ) {
     await prepararAlmacenOffline({
-      instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), ...articulos] }),
+      instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), ...articulos], ...sobrescribirInstantanea }),
       ...(bloque ? { bloque: { desde: 500, hasta: 599, proximo: 500 } } : {}),
     })
     renderPos()
@@ -9892,6 +9897,31 @@ describe('Pos — artículos por importe', () => {
       expect(screen.getByLabelText('Cantidad de Fiambrería')).toHaveValue(1)
       expect(within(screen.getByRole('table')).getAllByText('$ 150,00')).toHaveLength(2)
       expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('con la lista derivada del Consumidor Final, "1500*500" cotiza 1350 sin salir a la red', async () => {
+      await montarConInstantanea(undefined, true, { listas: [{ idListaPrecio: 1, modo: 'Derivada', porcentaje: -10 }] })
+
+      await escanear('1500*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 1.350,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(apiPostMock).not.toHaveBeenCalledWith(RUTA_RESOLVER_DEL_CARRITO, expect.anything())
+    })
+
+    it('una instantánea guardada sin `listas` no cotiza el importe a ciegas: pide el precio al servidor y cobra lo que éste resolvió', async () => {
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion([{ idArticulo: FIAMBRERIA, idListaPrecio: 1, precioOriginal: 1350, precioFinal: 1350, descuentoUnitario: 0, aplicadas: [] }]))
+          : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+      )
+      await montarConInstantanea(undefined, true, { listas: undefined })
+
+      await escanear('1500*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 1.350,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(apiPostMock).toHaveBeenCalledWith(RUTA_RESOLVER_DEL_CARRITO, expect.objectContaining({ lineas: [expect.objectContaining({ idArticulo: FIAMBRERIA, importe: 1500 })] }))
     })
 
     it('la cantidad de una línea por importe no se edita', async () => {

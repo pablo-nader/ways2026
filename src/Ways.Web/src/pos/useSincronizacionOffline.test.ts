@@ -145,6 +145,7 @@ function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): Insta
     clientes: [],
     mediosDePago: [],
     toleranciaPago: 0,
+    listas: [{ idListaPrecio: LISTA_CF, modo: 'Fija', porcentaje: null }],
     ...sobrescribir,
   }
 }

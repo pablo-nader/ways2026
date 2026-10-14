@@ -1165,7 +1165,14 @@ function articuloPorImporteFixture(sobrescribir: Partial<ArticuloDeInstantanea> 
 }
 
 function instantaneaConImporte(sobrescribir: Partial<InstantaneaDePos> = {}): InstantaneaDePos {
-  return instantaneaFixture({ articulos: [articuloFixture(), articuloPorImporteFixture()], ...sobrescribir })
+  return instantaneaFixture({
+    articulos: [articuloFixture(), articuloPorImporteFixture()],
+    listas: [
+      { idListaPrecio: LISTA, modo: 'Fija', porcentaje: null },
+      { idListaPrecio: OTRA_LISTA, modo: 'Fija', porcentaje: null },
+    ],
+    ...sobrescribir,
+  })
 }
 
 const lineaPorImporte = (importe: number, idLinea = `f-${importe}`) =>
@@ -1296,6 +1303,40 @@ describe('precio offline de una línea por importe', () => {
     expect(precios).toEqual({ precioOriginal: 150.5, precioFinal: 150.5, descuentoUnitario: 0, aplicadas: [] })
   })
 
+  it('una lista derivada aplica su porcentaje al importe: 1500 a -10 % cotiza 1350', () => {
+    const instantanea = instantaneaConImporte({ listas: [{ idListaPrecio: LISTA, modo: 'Derivada', porcentaje: -10 }] })
+
+    expect(preciosVigentesDeLasLineas([lineaPorImporte(1500)], instantanea, LISTA)[0]).toEqual({
+      precioOriginal: 1350,
+      precioFinal: 1350,
+      descuentoUnitario: 0,
+      aplicadas: [],
+    })
+  })
+
+  // Espejo de ResolvedorDePrecios.ResolverPrecioDerivado: 2 decimales, el empate se aleja de cero y el producto es decimal exacto.
+  it.each([
+    [10.05, -10, 9.05],
+    [0.05, -10, 0.05],
+    [1, -10, 0.9],
+    [100, 12.5, 112.5],
+    [0.7, 15, 0.81],
+    [19.99, 33.33, 26.65],
+    [1500, 0, 1500],
+    [1000, 11.6666, 1116.67],
+    [233.33, -12.35, 204.51],
+  ])('el importe %s con el porcentaje %s da %s, como el servidor', (importe, porcentaje, esperado) => {
+    const instantanea = instantaneaConImporte({ listas: [{ idListaPrecio: LISTA, modo: 'Derivada', porcentaje }] })
+
+    expect(preciosVigentesDeLasLineas([lineaPorImporte(importe)], instantanea, LISTA)[0]?.precioFinal).toBe(esperado)
+  })
+
+  it('una lista que la instantánea no conoce no cotiza el importe: no se cobra sin el porcentaje que el servidor aplicaría', () => {
+    const instantanea = instantaneaConImporte({ listas: [{ idListaPrecio: OTRA_LISTA, modo: 'Fija', porcentaje: null }] })
+
+    expect(preciosVigentesDeLasLineas([lineaPorImporte(1500)], instantanea, LISTA)).toEqual([null])
+  })
+
   it('cotiza al importe aunque el artículo tenga un precio de lista (lo ignora)', () => {
     const instantanea = instantaneaConImporte({ articulos: [articuloPorImporteFixture({ preciosPorLista: [precioFixture({ precioOriginal: 999, precioFinal: 999 })] })] })
 
@@ -1336,8 +1377,22 @@ describe('precio offline de una línea por importe', () => {
 })
 
 describe('todasLasLineasTienenPrecioOffline — artículo por importe', () => {
-  it('una línea por importe no necesita precio de lista', () => {
+  it('una línea por importe no necesita precio de lista, pero sí que la instantánea conozca la lista del cliente', () => {
     expect(todasLasLineasTienenPrecioOffline([lineaPorImporte(150)], instantaneaConImporte(), LISTA)).toBe(true)
+    expect(todasLasLineasTienenPrecioOffline([lineaPorImporte(150)], instantaneaConImporte({ listas: [] }), LISTA)).toBe(false)
+  })
+
+  it('una instantánea guardada sin `listas` manda las líneas por importe al servidor', () => {
+    const { listas: _sinListas, ...vieja } = instantaneaConImporte()
+
+    expect(todasLasLineasTienenPrecioOffline([lineaPorImporte(150)], vieja, LISTA)).toBe(false)
+    expect(esInstantaneaValida(vieja)).toBe(true)
+  })
+
+  it('una lista derivada sin porcentaje numérico no sirve para cotizar', () => {
+    const malformada = instantaneaConImporte({ listas: [{ idListaPrecio: LISTA, modo: 'Derivada', porcentaje: null }] })
+
+    expect(todasLasLineasTienenPrecioOffline([lineaPorImporte(150)], malformada, LISTA)).toBe(false)
   })
 
   it('una venta mixta pasa si las demás líneas tienen precio', () => {
