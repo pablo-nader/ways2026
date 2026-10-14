@@ -384,8 +384,8 @@ decisión en `pendiente` y mueve el acumulado.
   actual termina en `sin_decidir`, sea cual sea la causa. Un test
   prueba el caso de una fila de la venta tomada por otra sesión (responde `sin_decidir` dentro del tope y la misma conexión sigue sana);
   que el token corte también los reintentos transitorios de la estrategia no tiene un test. El reenvío de una venta con número pre-asignado pasa por el mismo endpoint y vuelve a llamarla. La respuesta
-  (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar), `no_corresponde` o `sin_decidir`; desde T5c puede decir también `aprobado`, `rechazado` o `cancelado` (ver "Emisión en línea al cobrar (T5c)", que explica cuándo aparece cada estado). Una lectura por id no
-  consulta el estado fiscal (`fiscal` viene `null`).
+  (`ComprobanteEmitido.fiscal.estado`) dice `pendiente` (se decidió facturar), `no_corresponde` o `sin_decidir`; desde T5c puede decir también `aprobado`, `rechazado` o `cancelado` (ver "Emisión en línea al cobrar (T5c)", que explica cuándo aparece cada estado). Las lecturas también lo informan, sin decidir ni emitir (T6a): `GET /api/ventas/{id}` devuelve el mismo `fiscal` que la emisión (con los datos de la factura si está
+  aprobada, y `error` como código) y `GET /api/ventas/por-turno/{idTurno}` agrega a cada fila solo `estadoFiscal` (ver "Lecturas de una venta (T6a)").
 - **Autocuración (barrido).** Si la decisión falla, el error se registra, la venta responde igual con `sin_decidir`, la marca queda en
   `NULL` y el fallo se anota (ver "Intentos fallidos"). Si la decisión de la venta actual terminó bien, el endpoint (a través de `EmisionEnLineaAlCobrar`, T5c) llama a
   `SanearDecisionesDebidasAsync`: toma las ventas del mismo punto de venta con la marca en `NULL`, `id_venta_origen` nulo y la espera
@@ -766,8 +766,23 @@ probado solo contra espías, no contra homologación.**
   puede anotar varias en una pasada mientras su propio token no venza) y una firma de WSAA que arranque dentro del intento (hasta el
   timeout de WSAA, 30 s), que no se interrumpe: por un `600` de ARCA al ticket cacheado o porque el ticket cruce su margen entre la
   verificación y el uso.
-- **Fuera de alcance.** `GET /api/ventas/{id}` sigue sin informar el estado fiscal (`fiscal` viene `null`). Tampoco cambia lo que
-  `ProcesarDecisionAsync` anota, ni la autorización.
+- **Fuera de alcance.** Tampoco cambia lo que `ProcesarDecisionAsync` anota, ni la autorización. Las lecturas de una venta se
+  describen en "Lecturas de una venta (T6a)".
+
+#### Lecturas de una venta (T6a)
+
+Las dos lecturas del POS informan el estado fiscal sin decidir, emitir ni llamar a ARCA: no toman locks y no escriben.
+
+- **`GET /api/ventas/{id}` (reimpresión).** Devuelve `ComprobanteEmitido` con `fiscal` completo, igual que la emisión: el estado, el motivo, el
+  id de la decisión y, si está `aprobado`, `comprobante` con los datos para reimprimir la factura. `error` es solo el código
+  (`EmisionEnLineaAlCobrar.CodigoDeError`), nunca el texto anotado. Se completa en el endpoint con
+  `ServicioDeFacturacionDeVentas.LeerEstadoDeVentaAsync`, no en `ServicioDeVentas.ObtenerAsync`, que también usa la anulación (la
+  respuesta de una anulación sigue con `fiscal` en `null`, "no consultado"). Con fila de decisión informa lo que informaría
+  `LeerEstadoAsync`; sin fila, `sin_decidir` si la venta no tiene la marca `facturacion_decidida_en` y no es un espejo, y
+  `no_corresponde` en cualquier otro caso (decidida sin facturar, o la propia factura espejo, que nunca se decide).
+- **`GET /api/ventas/por-turno/{idTurno}`.** Cada fila lleva `estadoFiscal`: solo el estado (`no_corresponde`, `pendiente`,
+  `sin_decidir`, `aprobado`, `rechazado` o `cancelado`), sin la factura ni el error, que se piden por id. Se calcula con una única consulta
+  por las decisiones de todas las ventas del turno (`id_comprobante_venta IN (...)`) y la misma regla de mapeo para las ventas sin fila.
 
 ### Presupuestos (Etapa 17)
 

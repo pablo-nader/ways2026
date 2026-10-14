@@ -95,6 +95,9 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "var venta = await db.ComprobantesVenta.AsNoTracking()")] =
                 (1, PorId),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
+                "var marcas = await db.ComprobantesVenta.AsNoTracking()")] =
+                (1, PorId),
+            [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "var espejo = await db.ComprobantesVenta.AsNoTracking()")] =
                 (1, "Busca el espejo de UNA venta por id_venta_origen: tiene que verlo para saber si la venta ya está facturada."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",

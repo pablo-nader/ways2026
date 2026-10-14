@@ -102,6 +102,49 @@ public class ServicioDeFacturacionDeVentas(
         return await ProyectarAsync(decision, null, ct);
     }
 
+    /// <summary>El estado fiscal de una venta tal como lo informa su respuesta (<see cref="EmisionEnLineaAlCobrar"/>), leído por
+    /// el id de la venta: con fila de decisión, el de <see cref="LeerEstadoAsync"/> con el error reducido a su código; sin fila,
+    /// <see cref="EstadosFiscalesDeVenta.SinFila"/>. No toma locks, no escribe ni llama a ARCA. Una venta inexistente o de otro
+    /// tenant es un 404. Esta lectura no falla por los datos de la factura: si no se pueden proyectar, informa el estado de la
+    /// decisión sin <see cref="EstadoFiscalDeVenta.Comprobante"/>.</summary>
+    public async Task<EstadoFiscalDeVenta> LeerEstadoDeVentaAsync(int idVenta, CancellationToken ct = default)
+    {
+        int? idDecision = null;
+        await using (var comando = await NuevoComandoAsync(
+            "SELECT id_facturacion_venta FROM facturaciones_de_venta WHERE id_comprobante_venta = $1", ct, idVenta))
+        {
+            if (await comando.ExecuteScalarAsync(ct) is int idFacturacion)
+            {
+                idDecision = idFacturacion;
+            }
+        }
+
+        if (idDecision is int id)
+        {
+            EstadoFiscalDeVenta estado;
+            try
+            {
+                estado = await LeerEstadoAsync(id, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogWarning(ex, "No se pudo proyectar la factura de la decisión {IdFacturacion}; se informa sin ella.", id);
+                var decision = await LeerDecisionAsync(id, ct)
+                    ?? throw ErrorDominio.NoEncontrado($"No existe la facturación {id}.");
+                estado = await ProyectarAsync(decision, null, ct, conFactura: false);
+            }
+
+            return estado with { Error = EmisionEnLineaAlCobrar.CodigoDeError(estado.Error) };
+        }
+
+        var marcas = await db.ComprobantesVenta.AsNoTracking()
+            .Where(c => c.Id == idVenta)
+            .Select(c => new { c.IdVentaOrigen, c.FacturacionDecididaEn })
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el comprobante {idVenta}.");
+        return new EstadoFiscalDeVenta(EstadosFiscalesDeVenta.SinFila(marcas.IdVentaOrigen, marcas.FacturacionDecididaEn));
+    }
+
     /// <summary>Evalúa el estado actual y lo avanza. Se vuelve a llamar a sí mismo ("reevaluar") solo cuando otra llamada
     /// comiteó un cambio entre las lecturas sin lock y el lock; cada reevaluación presupone una transición nueva y comiteada
     /// de otra llamada, así que no hay un ciclo sin otro escritor.</summary>
@@ -1245,7 +1288,7 @@ public class ServicioDeFacturacionDeVentas(
     // ---- Proyección ----------------------------------------------------------------------------------
 
     private async Task<EstadoFiscalDeVenta> ProyectarAsync(
-        FacturacionPendiente decision, string? errorTransitorio, CancellationToken ct)
+        FacturacionPendiente decision, string? errorTransitorio, CancellationToken ct, bool conFactura = true)
     {
         var estado = decision.Estado switch
         {
@@ -1256,7 +1299,7 @@ public class ServicioDeFacturacionDeVentas(
             var otro => throw new InvalidOperationException($"Estado de facturación desconocido: {otro}.")
         };
 
-        var comprobante = estado == EstadoFacturacionDeVenta.Emitida
+        var comprobante = conFactura && estado == EstadoFacturacionDeVenta.Emitida
             ? await LeerFacturaAsync(decision.IdComprobanteFiscal!.Value, ct)
             : null;
 
@@ -1265,13 +1308,19 @@ public class ServicioDeFacturacionDeVentas(
             comprobante);
     }
 
+    /// <summary>Los catálogos que referencia la factura ya emitida se leen aunque estén dados de baja (solo se ignora la baja
+    /// lógica; el filtro de tenant sigue aplicando): una baja posterior no esconde una factura aprobada.</summary>
     private async Task<DatosDeFacturaFiscal> LeerFacturaAsync(int idEspejo, CancellationToken ct)
     {
         var espejo = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idEspejo, ct);
-        var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == espejo.IdPuntoVenta, ct);
-        var empresa = await db.Empresas.AsNoTracking().FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
-        var cliente = await db.Clientes.AsNoTracking().FirstAsync(c => c.Id == espejo.IdCliente, ct);
-        var tipo = await db.TiposComprobante.AsNoTracking().FirstAsync(t => t.Id == espejo.IdTipoComprobante, ct);
+        var puntoVenta = await db.PuntosVenta.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
+            .FirstAsync(p => p.Id == espejo.IdPuntoVenta, ct);
+        var empresa = await db.Empresas.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
+            .FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
+        var cliente = await db.Clientes.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
+            .FirstAsync(c => c.Id == espejo.IdCliente, ct);
+        var tipo = await db.TiposComprobante.AsNoTracking().IgnoreQueryFilters(["BajaLogica"])
+            .FirstAsync(t => t.Id == espejo.IdTipoComprobante, ct);
 
         var fechaFiscal = await fiscal.ResolverFechaFiscalAsync(empresa.Id, espejo.Fecha, ct);
         var (tipoDoc, nroDoc) = ServicioDeFacturacionFiscal.MapearDocumentoArca(cliente);

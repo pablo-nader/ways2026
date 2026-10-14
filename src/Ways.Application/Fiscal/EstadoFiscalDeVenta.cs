@@ -42,6 +42,12 @@ public static class EstadosFiscalesDeVenta
 
     public const string Cancelado = "cancelado";
 
+    /// <summary>El estado de una venta que no tiene fila de decisión: sin la marca <c>facturacion_decidida_en</c> y sin ser un
+    /// espejo, la decisión está debida (<see cref="SinDecidir"/>); en cualquier otro caso (decidida sin facturar, o un espejo,
+    /// que nunca se decide) no le corresponde factura.</summary>
+    public static string SinFila(int? idVentaOrigen, DateTimeOffset? facturacionDecididaEn) =>
+        idVentaOrigen is null && facturacionDecididaEn is null ? SinDecidir : NoCorresponde;
+
     public static string De(EstadoFacturacionDeVenta estado) => estado switch
     {
         EstadoFacturacionDeVenta.Pendiente => Pendiente,

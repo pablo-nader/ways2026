@@ -78,7 +78,17 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 - [x] **T5c — Emisión en línea.** Intento al cobrar con presupuesto corto y datos del
   comprobante en la respuesta de la venta. Depende de T5b.
 - [ ] **T6 — POS.** Toggle de forzado, bandera en la cola, espera acotada, captura de la
-  respuesta del drenaje. Depende de T4 y T5.
+  respuesta del drenaje. Depende de T4 y T5. Reglas del dueño (2026-10-14) en "Reglas de T6".
+  - [x] **T6a — Estado fiscal en las lecturas.** `GET /api/ventas/{id}` informa `fiscal`
+    (con los datos del comprobante para reimprimir) y `GET /api/ventas/por-turno/{id}` informa
+    el estado por venta con una lectura en lote. Error como código estable. Ruta: delegada.
+  - [ ] **T6b — POS: forzado y espera.** Botón "Facturar", `forzarFactura` fijado al encolar,
+    espera de hasta 5 s solo si la venta seguro se factura y hay conexión; factura aprobada en
+    lugar del ticket. Ruta: delegada.
+  - [ ] **T6c — POS: lote y "Ventas del turno".** Lote tras cada venta y en cada
+    sincronización; estado fiscal por venta y reimpresión. Ruta: delegada.
+  - Release del POS (bump de Ways.Desktop + tag `pos-v*`): no antes de T7 (la factura impresa
+    necesita el QR), y siempre avisando al dueño antes.
 - [ ] **T7 — Impresión.** Factura con CAE y QR en `VistaDeTicket` y en el POS de escritorio,
   reimpresión. Depende de T5.
 - [ ] **T8 — Anulación y nota de crédito de una venta facturada.** `CbtesAsoc`, espejo de NC,
@@ -178,6 +188,20 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
 - En línea: tras decidir `pendiente`, la venta intenta emitir con 4 s de presupuesto antes
   del barrido. `EstadoFiscalDeVenta` suma `Error` y los datos del comprobante (tipo, letra,
   punto de venta fiscal, número, fecha, CAE, vencimiento, QR, observaciones).
+
+## Reglas de T6 (dueño, 2026-10-14)
+
+1. La caja espera la respuesta fiscal solo si la venta seguro se factura (forzada o con un
+   medio al 100 %) y hay conexión, hasta 5 s. Aprobada: imprime la factura en lugar del
+   ticket. Sin respuesta a tiempo: ticket común y la factura queda para después.
+2. Porcentajes parciales: no espera, ticket común al instante; si termina facturada, la
+   factura queda para reimprimir.
+3. Botón "Facturar" en el panel de cobro, para todo cajero, apagado por defecto y que se apaga
+   tras cada venta; viaja como `forzarFactura`, fijado al encolar. No aplica en presupuesto.
+4. El POS dispara `POST /api/fiscal/facturaciones/procesar` solo, en cada sincronización y
+   tras cada venta; sin botón en caja.
+5. "Ventas del turno" muestra por venta facturada, pendiente o rechazada y permite reimprimir.
+6. El QR de ARCA en la factura impresa va en T7.
 
 ## Supuestos pendientes de confirmación del dueño
 
@@ -375,6 +399,28 @@ Acumulado: `cancelada` deshace todo lo que aplicó la decisión (aportes, `total
   códigos llega al cajero como `error_inesperado` y uno de nivel de llamada como `0`; los
   endpoints de lote y de una decisión siguen devolviendo el texto completo del error.
 
+- 2026-10-14 — T6a hecha. Ruta: delegada (un escritor y una ronda de corrección). Commits
+  `0aa6ef5a` (feat) y `90e7221a` (fix). `ServicioDeFacturacionDeVentas.LeerEstadoDeVentaAsync`:
+  con decisión reutiliza `LeerEstadoAsync`; sin decisión, espejo o `facturacion_decidida_en`
+  ⇒ `no_corresponde`, si no `sin_decidir` (`EstadosFiscalesDeVenta.SinFila`). `GET /{id}` lo
+  agrega en el endpoint (la anulación sigue con `fiscal` nulo); `por-turno` suma
+  `EstadoFiscal` con una consulta en lote. Error como código estable (`CodigoDeError`).
+  Checks: `dotnet build` sin errores; aplicación 1014/1014; dominio 1691/1691; integración
+  filtrada 615/615 (antes de un renombre de variable) y 368/368 tras la corrección; la suite
+  completa queda al CI. Sin RED previo: la evidencia son mutaciones en rojo (lectura sin
+  `fiscal`, regla `sin_decidir`, conjunción del espejo, `CodigoDeError`, mapeo del lote,
+  filtro de baja y respaldo ante fallo).
+  Dos tests estructurales ajustados: la guarda del POST corta en su `.WithSummary(` y la
+  lista permitida de lectores suma la lectura por id.
+  Judgment-day: ronda 1, un crítico confirmado por los dos jueces (reimprimir una venta
+  facturada daba 500 si el cliente, punto de venta, empresa o tipo estaba dado de baja, y 409
+  si el CUIT dejó de ser numérico), corregido: el catálogo de la factura ignora solo la baja
+  lógica y, si no se puede proyectar, el estado sale sin comprobante. Re-juicio: resuelto,
+  sin hallazgos. JUDGMENT: APPROVED.
+  Información sin corregir: el test de otro tenant no ejercita la consulta nueva (el 404 sale
+  antes); ninguna guarda estructural fija que las lecturas no emitan; ningún test cuenta las
+  consultas del lote.
+
 ## Próximo paso
 
-T6.
+PR de T6a; después T6b en rama nueva desde main.
