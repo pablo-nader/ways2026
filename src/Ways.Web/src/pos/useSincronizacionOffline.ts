@@ -46,8 +46,10 @@ import {
 } from './outboxOffline'
 import { INTERVALO_DE_SINCRONIZACION_MS } from './intervaloDeSincronizacion'
 import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
+import { crearDisparadorDeLote } from './loteDeFacturacion'
 import { mensajeDeRechazoDeAjusteManualAlDrenar } from '../api/ajusteManual'
 import { clienteDePos } from '../api/pos'
+import { clienteDeFacturacionFiscal } from '../api/facturacionFiscal'
 import { clienteDeVentas } from '../api/ventas'
 import { clienteDeClientes } from '../api/clientes'
 import { consumoCuentaCorriente, superaLimiteDeCredito } from '../api/pagos'
@@ -173,6 +175,10 @@ export type ResultadoDeSincronizacionOffline = {
   /** Drena el outbox, repone el bloque si está bajo (`reponerBloque`, solo con la cola vacía) y rinde la cola — sin
    * descargar la instantánea. Devuelve lo que queda pendiente según el almacén. */
   drenarAhora: () => Promise<EstadoDeColaLocal>
+  /** Pide al servidor procesar las facturaciones pendientes del punto de venta, sin esperar ni propagar
+   * fallos (ver `crearDisparadorDeLote`). El drenado ya lo pide solo al terminar cada pasada; esto es
+   * para una venta que salió sin pasar por el outbox. Sin conexión o sin punto de venta no hace nada. */
+  procesarFacturaciones: () => void
   /** Con cuenta corriente, antes de tomar un número consulta el cliente al servidor (tope
    * `TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS`): si el pago supera el límite, o el servidor
    * rechaza la consulta, no encola nada ni consume número; sin respuesta, encola igual con
@@ -284,6 +290,17 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const [outboxCount, setOutboxCount] = useState(0)
   const [ventasConError, setVentasConError] = useState<VentaRechazada[]>([])
   const [enLinea, setEnLinea] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
+  // Los timers y el drenado leen la conexión vigente, no la del render que los creó.
+  const enLineaRef = useRef(enLinea)
+  useEffect(() => {
+    enLineaRef.current = enLinea
+  }, [enLinea])
+  const [dispararLoteDeFacturacion] = useState(() =>
+    crearDisparadorDeLote({
+      procesar: (idPv, senal) => clienteDeFacturacionFiscal.procesarLote(idPv, senal),
+      estaEnLinea: () => enLineaRef.current,
+    }),
+  )
 
   // Fuente de verdad del bloque local — nunca se muestra en pantalla (goal C solo pide mostrar el
   // outbox), así que vive en un ref puro, sin re-render por cada número consumido.
@@ -405,6 +422,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         } while (otraVueltaDeDrenadoRef.current)
       } finally {
         drenadoEnCursoRef.current = null
+        // Con la cola ya enviada (o cortada), el servidor tiene las ventas: es el momento de facturar las pendientes.
+        if (montadoRef.current) dispararLoteDeFacturacion(idPuntoVenta)
       }
     })()
     drenadoEnCursoRef.current = drenado
@@ -990,6 +1009,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizacionInicialPendiente,
     sincronizarAhora,
     drenarAhora,
+    procesarFacturaciones: () => dispararLoteDeFacturacion(idPuntoVenta),
     encolarVentaOffline,
     esperarRespuesta,
     consumoPendienteDeCuentaCorriente,

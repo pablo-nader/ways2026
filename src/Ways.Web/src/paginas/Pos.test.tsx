@@ -108,6 +108,12 @@ function renderPos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const procesarLoteMock = vi.fn()
+
+// El lote de facturación tiene su propio cliente: se reemplaza para que no entre en la cuenta de `apiPostMock`.
+vi.mock('../api/facturacionFiscal', () => ({
+  clienteDeFacturacionFiscal: { procesarLote: (...args: unknown[]) => procesarLoteMock(...args) },
+}))
 
 /** El carrito pide los precios a la ruta con combos; las búsquedas de artículo siguen en `/ofertas/resolver`. */
 const RUTA_RESOLVER_DEL_CARRITO = '/ofertas/resolver-con-combos'
@@ -576,6 +582,8 @@ function borrarAlmacenOffline(): Promise<void> {
 beforeEach(async () => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  procesarLoteMock.mockReset()
+  procesarLoteMock.mockResolvedValue({})
   usuarioActual = usuarioFixture()
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
   mockearApiGet()
@@ -4770,6 +4778,76 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
   })
 })
 
+describe('Pos — lote de facturación tras la venta (T6c, camino directo sin copia local)', () => {
+  /** El ciclo de arranque también drena y pide su lote: se espera ese pedido (el dato) y se parte de cero antes de cobrar. */
+  async function armarVentaConElArranqueAsentado() {
+    await armarVentaLista()
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+    procesarLoteMock.mockClear()
+  }
+
+  it('una venta emitida directo pide el lote del punto de venta', async () => {
+    await armarVentaConElArranqueAsentado()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+    expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+    expect(apiPostMock.mock.calls.some(([ruta]) => ruta === '/ventas')).toBe(true)
+  })
+
+  it('el lote sale después de que la venta se emitió en el servidor', async () => {
+    await armarVentaConElArranqueAsentado()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+
+    const ordenDeLaVenta = apiPostMock.mock.invocationCallOrder[apiPostMock.mock.calls.findIndex(([ruta]) => ruta === '/ventas')]
+    expect(ordenDeLaVenta).toBeLessThan(procesarLoteMock.mock.invocationCallOrder[0])
+  })
+
+  it('si la emisión falla no pide el lote', async () => {
+    await armarVentaConElArranqueAsentado()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+        return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+      }
+      return Promise.reject(new Error('falló la emisión'))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('No se pudo registrar la venta.')
+
+    expect(procesarLoteMock).not.toHaveBeenCalled()
+  })
+
+  it('un fallo del lote no cambia el resultado de la venta: el modal de venta finalizada aparece igual', async () => {
+    await armarVentaConElArranqueAsentado()
+    procesarLoteMock.mockRejectedValue(new Error('lote caído'))
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument()
+    await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+    expect(screen.queryByText('No se pudo registrar la venta.')).not.toBeInTheDocument()
+  })
+
+  it('sin conexión no pide el lote', async () => {
+    const enLinea = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      await armarVentaLista()
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+      expect(procesarLoteMock).not.toHaveBeenCalled()
+    } finally {
+      enLinea.mockRestore()
+    }
+  })
+})
+
 describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () => {
   it('"Cobrar" muestra (F9) como superíndice decorativo y expone el atajo con aria-keyshortcuts, sin tocar el nombre accesible', async () => {
     renderPos()
@@ -7342,6 +7420,27 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /Aceptar/ }))
       expect(await screen.findByText('Sin sincronizar: 1')).toBeInTheDocument()
+    })
+
+    it('una venta encolada pide el lote de facturación recién cuando el drenado la envió al servidor', async () => {
+      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      await montarConInstantanea()
+      // El arranque ya drenó una cola vacía y pidió su lote: se parte de cero para medir lo de esta venta.
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+      procesarLoteMock.mockClear()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('100')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      await waitFor(() => expect(procesarLoteMock).toHaveBeenCalled())
+      expect(procesarLoteMock.mock.calls[0][0]).toBe(7)
+      const ordenDeLaVenta = apiPostMock.mock.invocationCallOrder[apiPostMock.mock.calls.findIndex(([ruta]) => ruta === '/ventas')]
+      expect(ordenDeLaVenta).toBeLessThan(procesarLoteMock.mock.invocationCallOrder[0])
     })
 
     it('con un ajuste manual: encola la línea con el porcentaje y el comprobante sintético trae el ajuste y el total ya ajustado', async () => {

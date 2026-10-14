@@ -3,6 +3,7 @@ import { ROL } from '../api/tipos'
 import type { MedioPagoListado, VentaDeTurnoListado } from '../api/tipos'
 import {
   FILTROS_VACIOS,
+  badgeFiscalDeVenta,
   claseDeBadgeDeEstadoVenta,
   etiquetaDeEstadoVenta,
   filtrarVentas,
@@ -13,6 +14,7 @@ import {
   nombreDeMedio,
   puedeAnular,
   puedeReimprimir,
+  puedeReimprimirFactura,
   tieneDescuentoManual,
   tieneRecargoManual,
   totalesDeVentas,
@@ -335,5 +337,44 @@ describe('mediosDisponibles', () => {
 
   it('una lista vacía da un arreglo vacío', () => {
     expect(mediosDisponibles([])).toEqual([])
+  })
+})
+
+describe('badgeFiscalDeVenta', () => {
+  it.each([
+    ['aprobado', 'Facturada'],
+    ['pendiente', 'Pendiente'],
+    ['sin_decidir', 'Pendiente'],
+    ['rechazado', 'Rechazada'],
+  ])('%s se muestra como %s', (estadoFiscal, etiqueta) => {
+    expect(badgeFiscalDeVenta(estadoFiscal)?.etiqueta).toBe(etiqueta)
+  })
+
+  it.each(['no_corresponde', 'cancelado', 'otro_estado_futuro', ''])('%s no lleva marca', (estadoFiscal) => {
+    expect(badgeFiscalDeVenta(estadoFiscal)).toBeNull()
+  })
+
+  it('un estado ausente (servidor anterior al campo) no lleva marca', () => {
+    expect(badgeFiscalDeVenta(undefined)).toBeNull()
+  })
+
+  it('cada estado visible tiene su propio color', () => {
+    const clases = ['aprobado', 'pendiente', 'rechazado'].map((e) => badgeFiscalDeVenta(e)?.clase)
+    expect(new Set(clases).size).toBe(3)
+    expect(badgeFiscalDeVenta('sin_decidir')?.clase).toBe(badgeFiscalDeVenta('pendiente')?.clase)
+  })
+})
+
+describe('puedeReimprimirFactura', () => {
+  it('solo con la venta emitida y la factura aprobada', () => {
+    expect(puedeReimprimirFactura(ventaFixture({ estado: 'Emitido', estadoFiscal: 'aprobado' }))).toBe(true)
+  })
+
+  it.each(['no_corresponde', 'pendiente', 'sin_decidir', 'rechazado', 'cancelado', undefined] as const)('con estado fiscal %s no', (estadoFiscal) => {
+    expect(puedeReimprimirFactura(ventaFixture({ estado: 'Emitido', estadoFiscal }))).toBe(false)
+  })
+
+  it('una venta anulada no ofrece reimprimir su factura', () => {
+    expect(puedeReimprimirFactura(ventaFixture({ estado: 'Anulado', estadoFiscal: 'aprobado' }))).toBe(false)
   })
 })

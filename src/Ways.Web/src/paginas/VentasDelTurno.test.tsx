@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { VentasDelTurno } from './VentasDelTurno'
 import type {
   ComprobanteEmitido,
+  DatosDeFacturaFiscal,
+  FiscalDeVenta,
   MedioPagoListado,
   PuntoVentaListado,
   TurnoResumen,
@@ -1365,5 +1367,253 @@ describe('VentasDelTurno — reimprimir', () => {
     expect(cantidadDeGets).toBe(1)
     resolverComprobante(comprobante)
     await waitFor(() => expect(alReimprimir).toHaveBeenCalledTimes(1))
+  })
+})
+
+describe('VentasDelTurno — estado fiscal y "Reimprimir factura"', () => {
+  const datosDeFactura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+  }
+
+  const fiscalAprobado: FiscalDeVenta = { estado: 'aprobado', motivo: 'forzada', idFacturacion: 4, error: null, comprobante: datosDeFactura }
+
+  /** Espera a que la fila haya llegado (el dato) y a que el catálogo de medios se haya pedido, antes de tocar nada. */
+  async function esperarFila(numeroVisible: string) {
+    await screen.findByText(numeroVisible)
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/catalogos/medios-pago'))
+  }
+
+  it('cada fila muestra su marca fiscal: Facturada, Pendiente (también sin_decidir), Rechazada, y ninguna para el resto', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001', estadoFiscal: 'aprobado' }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', estadoFiscal: 'pendiente' }),
+        ventaFixture({ id: 3, numeroVisible: '0007-00000003', estadoFiscal: 'sin_decidir' }),
+        ventaFixture({ id: 4, numeroVisible: '0007-00000004', estadoFiscal: 'rechazado' }),
+        ventaFixture({ id: 5, numeroVisible: '0007-00000005', estadoFiscal: 'no_corresponde' }),
+        ventaFixture({ id: 6, numeroVisible: '0007-00000006', estadoFiscal: 'cancelado' }),
+        ventaFixture({ id: 7, numeroVisible: '0007-00000007' }),
+      ],
+    })
+    render(<VentasDelTurno />)
+    await esperarFila('0007-00000007')
+
+    const etiquetasDe = (numeroVisible: string) => {
+      const fila = screen.getByText(numeroVisible).closest('tr') as HTMLElement
+      return ['Facturada', 'Pendiente', 'Rechazada'].filter((t) => within(fila).queryByText(t) !== null)
+    }
+    expect(etiquetasDe('0007-00000001')).toEqual(['Facturada'])
+    expect(etiquetasDe('0007-00000002')).toEqual(['Pendiente'])
+    expect(etiquetasDe('0007-00000003')).toEqual(['Pendiente'])
+    expect(etiquetasDe('0007-00000004')).toEqual(['Rechazada'])
+    expect(etiquetasDe('0007-00000005')).toEqual([])
+    expect(etiquetasDe('0007-00000006')).toEqual([])
+    expect(etiquetasDe('0007-00000007')).toEqual([])
+  })
+
+  it('"Reimprimir factura" aparece solo en la fila con factura aprobada', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001', estadoFiscal: 'aprobado' }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', estadoFiscal: 'pendiente' }),
+        ventaFixture({ id: 3, numeroVisible: '0007-00000003', estadoFiscal: 'rechazado' }),
+        ventaFixture({ id: 4, numeroVisible: '0007-00000004', estadoFiscal: 'no_corresponde' }),
+        ventaFixture({ id: 5, numeroVisible: '0007-00000005' }),
+      ],
+    })
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={vi.fn()} />)
+    await esperarFila('0007-00000005')
+
+    const botones = screen.getAllByRole('button', { name: 'Reimprimir factura' })
+    expect(botones).toHaveLength(1)
+    expect((botones[0].closest('tr') as HTMLElement).textContent).toContain('0007-00000001')
+    // El "Imprimir" del ticket sigue en todas las filas emitidas.
+    expect(screen.getAllByRole('button', { name: 'Imprimir' })).toHaveLength(5)
+  })
+
+  it('sin la prop alReimprimirFactura no se ofrece reimprimir la factura', async () => {
+    mockearRutas({ turno: turnoFixture(), medios: [medioEfectivo], ventas: [ventaFixture({ id: 1, estadoFiscal: 'aprobado' })] })
+    render(<VentasDelTurno alReimprimir={vi.fn()} />)
+    await esperarFila('0007-00000001')
+
+    expect(screen.queryByRole('button', { name: 'Reimprimir factura' })).not.toBeInTheDocument()
+  })
+
+  it('al hacer click pide el comprobante por id y llama a la prop con su comprobante, la factura y los medios; no imprime el ticket', async () => {
+    const comprobante = comprobanteFixture({ id: 42, numeroVisible: '0007-00000042', fiscal: fiscalAprobado })
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 42, numeroVisible: '0007-00000042', estadoFiscal: 'aprobado' })],
+      comprobantes: { 42: comprobante },
+    })
+    const alReimprimir = vi.fn()
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000042')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    await waitFor(() => expect(alReimprimirFactura).toHaveBeenCalledTimes(1))
+    expect(alReimprimirFactura).toHaveBeenCalledWith(comprobante, datosDeFactura, [medioEfectivo])
+    expect(alReimprimir).not.toHaveBeenCalled()
+    expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/ventas/42')).toHaveLength(1)
+  })
+
+  it('si el comprobante fresco no trae la factura aprobada muestra un error y no imprime nada, ni la factura ni el ticket', async () => {
+    const sinFactura = comprobanteFixture({
+      id: 43,
+      numeroVisible: '0007-00000043',
+      fiscal: { estado: 'pendiente', motivo: 'forzada', idFacturacion: 4, error: null, comprobante: null },
+    })
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 43, numeroVisible: '0007-00000043', estadoFiscal: 'aprobado' })],
+      comprobantes: { 43: sinFactura },
+    })
+    const alReimprimir = vi.fn()
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000043')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    expect(await screen.findByText('La factura de esta venta no está disponible para reimprimir.')).toBeInTheDocument()
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
+    expect(alReimprimir).not.toHaveBeenCalled()
+  })
+
+  it('un comprobante fresco con datos de factura pero con estado fiscal no aprobado tampoco se imprime como factura', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 50, numeroVisible: '0007-00000050', estadoFiscal: 'aprobado' })],
+      comprobantes: {
+        50: comprobanteFixture({ id: 50, numeroVisible: '0007-00000050', fiscal: { ...fiscalAprobado, estado: 'rechazado' } }),
+      },
+    })
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000050')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    expect(await screen.findByText('La factura de esta venta no está disponible para reimprimir.')).toBeInTheDocument()
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
+  })
+
+  it('si el comprobante fresco no trae ningún dato fiscal tampoco imprime', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 44, numeroVisible: '0007-00000044', estadoFiscal: 'aprobado' })],
+      comprobantes: { 44: comprobanteFixture({ id: 44, numeroVisible: '0007-00000044' }) },
+    })
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000044')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    expect(await screen.findByText('La factura de esta venta no está disponible para reimprimir.')).toBeInTheDocument()
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
+  })
+
+  it('si el comprobante fresco dice Anulado no imprime la factura y muestra el aviso de venta anulada', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 47, numeroVisible: '0007-00000047', estadoFiscal: 'aprobado' })],
+      comprobantes: { 47: comprobanteFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Anulado', fiscal: fiscalAprobado }) },
+    })
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000047')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    expect(await screen.findByText('La venta fue anulada, no se puede reimprimir.')).toBeInTheDocument()
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
+  })
+
+  it('un fallo al pedir el comprobante se informa y no imprime', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 48, numeroVisible: '0007-00000048', estadoFiscal: 'aprobado' })],
+      erroresComprobante: { 48: new Error('sin red') },
+    })
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000048')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir factura' }))
+
+    expect(await screen.findByText('No se pudo obtener el comprobante para reimprimir.')).toBeInTheDocument()
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
+  })
+
+  it('un doble click sobre "Reimprimir factura" dispara una sola búsqueda, y el botón queda ocupado hasta que llega', async () => {
+    const comprobante = comprobanteFixture({ id: 45, numeroVisible: '0007-00000045', fiscal: fiscalAprobado })
+    let cantidadDeGets = 0
+    let resolverComprobante: (valor: ComprobanteEmitido) => void = () => undefined
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(turnoFixture())
+      if (ruta.startsWith('/ventas/por-turno/')) return Promise.resolve([ventaFixture({ id: 45, numeroVisible: '0007-00000045', estadoFiscal: 'aprobado' })])
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo])
+      if (ruta === '/ventas/45') {
+        cantidadDeGets += 1
+        return new Promise((resolve) => {
+          resolverComprobante = resolve
+        })
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={vi.fn()} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000045')
+    const boton = await screen.findByRole('button', { name: 'Reimprimir factura' })
+
+    await userEvent.click(boton)
+    await userEvent.click(boton)
+
+    expect(cantidadDeGets).toBe(1)
+    expect(boton).toBeDisabled()
+    resolverComprobante(comprobante)
+    await waitFor(() => expect(alReimprimirFactura).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(boton).toBeEnabled())
+  })
+
+  it('el "Imprimir" del ticket sigue llamando a alReimprimir con el comprobante, aunque la venta esté facturada', async () => {
+    const comprobante = comprobanteFixture({ id: 49, numeroVisible: '0007-00000049', fiscal: fiscalAprobado })
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 49, numeroVisible: '0007-00000049', estadoFiscal: 'aprobado' })],
+      comprobantes: { 49: comprobante },
+    })
+    const alReimprimir = vi.fn()
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} alReimprimirFactura={alReimprimirFactura} />)
+    await esperarFila('0007-00000049')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Imprimir' }))
+
+    await waitFor(() => expect(alReimprimir).toHaveBeenCalledWith(comprobante, [medioEfectivo]))
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
   })
 })

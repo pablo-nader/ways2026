@@ -5,7 +5,7 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeVentas } from '../api/ventas'
 import { ROL } from '../api/tipos'
-import type { ComprobanteEmitido, MedioPagoAlta, MedioPagoListado, TurnoResumen, VentaDeTurnoListado } from '../api/tipos'
+import type { ComprobanteEmitido, DatosDeFacturaFiscal, MedioPagoAlta, MedioPagoListado, TurnoResumen, VentaDeTurnoListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { BotonIcono, Icono } from '../componentes/BotonIcono'
@@ -16,6 +16,7 @@ import { Modal } from '../componentes/Modal'
 import { formatearImporteConSigno } from '../formato/importes'
 import {
   FILTROS_VACIOS,
+  badgeFiscalDeVenta,
   claseDeBadgeDeEstadoVenta,
   etiquetaDeEstadoVenta,
   filtrarVentas,
@@ -26,6 +27,7 @@ import {
   nombreDeMedio,
   puedeAnular,
   puedeReimprimir,
+  puedeReimprimirFactura,
   tieneDescuentoManual,
   tieneRecargoManual,
   totalesDeVentas,
@@ -52,6 +54,12 @@ function mensajeDeErrorReimprimir(e: unknown): string {
 }
 
 const MENSAJE_VENTA_ANULADA_NO_REIMPRIME = 'La venta fue anulada, no se puede reimprimir.'
+function BadgeFiscal({ estadoFiscal }: { estadoFiscal: string | undefined }) {
+  const badge = badgeFiscalDeVenta(estadoFiscal)
+  return badge ? <span className={`badge ${badge.clase} ms-1`}>{badge.etiqueta}</span> : null
+}
+
+const MENSAJE_FACTURA_NO_DISPONIBLE = 'La factura de esta venta no está disponible para reimprimir.'
 
 type PropsModalDetalle = {
   comprobante: ComprobanteEmitido | null
@@ -239,6 +247,9 @@ type Props = {
    * `ticketDeVenta`/`algunPagoEnEfectivo` los necesitan para resolver nombre y comportamiento de
    * cada pago — la propia pantalla ya los tiene cargados para el modal de detalle. */
   alReimprimir?: (comprobante: ComprobanteEmitido, medios: MedioPagoListado[]) => void
+  /** Reimpresión de la factura aprobada de una venta: definido ⇒ las filas con factura aprobada ofrecen "Reimprimir factura".
+   * La factura sale del comprobante que devuelve el servidor al hacer click, nunca de lo que muestre el listado. */
+  alReimprimirFactura?: (comprobante: ComprobanteEmitido, factura: DatosDeFacturaFiscal, medios: MedioPagoListado[]) => void
 }
 
 /**
@@ -257,7 +268,7 @@ type Props = {
  * de arriba: abrir otro detalle o cerrar el modal invalida cualquier respuesta en vuelo del
  * anterior (react-async-state regla 2/3) sin afectar el refresco del listado.
  */
-export function VentasDelTurno({ alReimprimir }: Props = {}) {
+export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}) {
   const { puntoVenta } = usePuntoVenta()
   const { usuario } = useAuth()
   // Rol más restrictivo (Root, que nunca opera el POS) sin sesión resuelta todavía — mismo
@@ -487,8 +498,8 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
    * dice `Anulado`, no se imprime nada: se refresca lo que la pantalla venía mostrando (la fila
    * del listado y, si está abierto, el detalle) para que el botón "Imprimir" desaparezca, y
    * se muestra un error explícito en vez de fallar en silencio. */
-  async function reimprimirVenta(id: number) {
-    if (!alReimprimir) return
+  async function reimprimirVenta(id: number, comoFactura = false) {
+    if (comoFactura ? !alReimprimirFactura : !alReimprimir) return
     if (idsReimprimiendoRef.current.has(id)) return
     idsReimprimiendoRef.current.add(id)
     setIdsReimprimiendo((prev) => new Set(prev).add(id))
@@ -508,7 +519,18 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
         return
       }
 
-      alReimprimir(comprobante, medios)
+      if (comoFactura) {
+        // Sin factura aprobada en la respuesta no se imprime nada: un ticket en su lugar pasaría por la factura.
+        const factura = comprobante.fiscal?.estado === 'aprobado' ? comprobante.fiscal.comprobante : null
+        if (!factura) {
+          setErroresReimprimir((prev) => ({ ...prev, [id]: MENSAJE_FACTURA_NO_DISPONIBLE }))
+          return
+        }
+        alReimprimirFactura?.(comprobante, factura, medios)
+        return
+      }
+
+      alReimprimir?.(comprobante, medios)
     } catch (e) {
       setErroresReimprimir((prev) => ({ ...prev, [id]: mensajeDeErrorReimprimir(e) }))
     } finally {
@@ -688,6 +710,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                         <span className={`badge ${claseDeBadgeDeEstadoVenta(v.estado)}`}>
                           {etiquetaDeEstadoVenta(v.estado)}
                         </span>
+                        <BadgeFiscal estadoFiscal={v.estadoFiscal} />
                         {tieneDescuentoManual(v) && (
                           <span className="badge text-bg-warning ms-1" title={`Descuento manual: ${formatearMoneda(v.descuentoManualTotal)}`}>
                             Desc. manual
@@ -712,6 +735,18 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                               disabled={bloqueado || idsReimprimiendo.has(v.id)}
                               onClick={() => void reimprimirVenta(v.id)}
                             />
+                          )}
+                          {alReimprimirFactura && puedeReimprimirFactura(v) && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1"
+                              aria-busy={idsReimprimiendo.has(v.id) || undefined}
+                              disabled={bloqueado || idsReimprimiendo.has(v.id)}
+                              onClick={() => void reimprimirVenta(v.id, true)}
+                            >
+                              <Icono icono="imprimir" />
+                              Reimprimir factura
+                            </button>
                           )}
                         </div>
                         {erroresReimprimir[v.id] && <div className="small text-danger mt-1">{erroresReimprimir[v.id]}</div>}

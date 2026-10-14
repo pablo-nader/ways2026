@@ -168,3 +168,29 @@ export function mediosDisponibles(ventas: VentaDeTurnoListado[]): MedioDisponibl
     .map(([idMedioPago, nombre]) => ({ idMedioPago, nombre }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 }
+
+// ---- Estado fiscal ------------------------------------------------------------------------
+
+export type BadgeFiscalDeVenta = { etiqueta: 'Facturada' | 'Pendiente' | 'Rechazada'; clase: string }
+
+/** Marca fiscal de una fila: `pendiente` y `sin_decidir` son lo mismo para la caja (todavía no hay factura). Sin marca
+ * para `no_corresponde`, `cancelado`, un valor que este cliente no conoce o un servidor que no manda el campo. */
+export function badgeFiscalDeVenta(estadoFiscal: string | undefined): BadgeFiscalDeVenta | null {
+  switch (estadoFiscal) {
+    case 'aprobado':
+      return { etiqueta: 'Facturada', clase: 'text-bg-success' }
+    case 'pendiente':
+    case 'sin_decidir':
+      return { etiqueta: 'Pendiente', clase: 'text-bg-warning' }
+    case 'rechazado':
+      return { etiqueta: 'Rechazada', clase: 'text-bg-danger' }
+    default:
+      return null
+  }
+}
+
+/** Ofrece "Reimprimir factura" solo con la factura aprobada según el listado y la venta vigente; el comprobante a
+ * imprimir se vuelve a pedir al servidor al hacer click. */
+export function puedeReimprimirFactura(fila: Pick<VentaDeTurnoListado, 'estado' | 'estadoFiscal'>): boolean {
+  return fila.estado === 'Emitido' && fila.estadoFiscal === 'aprobado'
+}
