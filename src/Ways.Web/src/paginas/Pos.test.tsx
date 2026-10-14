@@ -10277,6 +10277,170 @@ describe('Pos — artículos por importe', () => {
     })
   })
 
+  describe('atajos F5 a F8 sin instantánea (lectura en el servidor)', () => {
+    const RUTA_DE_ATAJOS = '/articulos/atajos-de-importe'
+    const atajosDelServidor = () => [
+      { teclaAtajo: 'F5', idArticulo: FIAMBRERIA, codigoInterno: '500', nombre: 'Fiambrería' },
+      { teclaAtajo: 'F6', idArticulo: 501, codigoInterno: '501', nombre: 'Verdulería' },
+    ]
+    const llamadasDeAtajos = () => apiGetMock.mock.calls.filter(([ruta]) => ruta === RUTA_DE_ATAJOS)
+    const entradasEscaneadas = () =>
+      apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/articulos/escaneo?entrada=')).map(([ruta]) => decodeURIComponent(String(ruta).split('entrada=')[1]))
+
+    /** Responde la lectura de atajos y el escaneo por importe como el servidor (`importe*código`). */
+    function servidorConAtajos(lectura: () => Promise<unknown> = () => Promise.resolve(atajosDelServidor())) {
+      mockearApiGet((ruta) => {
+        if (ruta === RUTA_DE_ATAJOS) return lectura()
+        if (!ruta.startsWith('/articulos/escaneo?entrada=')) return undefined
+        const [importe, codigo] = decodeURIComponent(ruta.split('entrada=')[1]).split('*')
+        const nombre = codigo === '500' ? 'Fiambrería' : 'Verdulería'
+        return Promise.resolve(articuloEscaneadoFixture({ idArticulo: Number(codigo), codigoInterno: codigo, nombre, codigoBarra: null, acumulaEnVenta: false, unidadVenta: 'Importe', importe: Number(importe) }))
+      })
+      apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; importe?: number }[] }) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion(cuerpo.lineas.map((l) => ({ idArticulo: l.idArticulo, idListaPrecio: 1, precioOriginal: l.importe ?? 100, precioFinal: l.importe ?? 100, descuentoUnitario: 0, aplicadas: [] }))))
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+    }
+
+    async function montar() {
+      renderPos()
+      await esperarAlConsumidorFinal()
+    }
+
+    it('la barra ofrece un botón por cada artículo con tecla, en orden de tecla', async () => {
+      servidorConAtajos()
+      await montar()
+
+      const botones = await screen.findAllByRole('button', { name: /^(Fiambrería|Verdulería)/ })
+
+      expect(botones.map((b) => b.textContent)).toEqual(['Fiambrería (F5)', 'Verdulería (F6)'])
+      expect(botones[0]).toHaveAttribute('aria-keyshortcuts', 'F5')
+    })
+
+    it('F5 con el importe en el campo escanea "importe*código" y agrega la línea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(noPrevenido).toBe(false)
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(entradasEscaneadas()).toEqual([])
+      expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('el botón del atajo hace lo mismo que la tecla, y el importe con coma viaja con punto', async () => {
+      servidorConAtajos()
+      await montar()
+      await userEvent.type(campoDeCodigo(), '99,50')
+
+      await userEvent.click(await screen.findByRole('button', { name: /^Verdulería/ }))
+
+      await screen.findByText('Verdulería', { selector: 'td' })
+      expect(entradasEscaneadas()).toEqual([])
+      await waitFor(() => expect(within(screen.getByRole('table')).getByText('$ 99,50')).toBeInTheDocument())
+    })
+
+    it('un código interno de 7 o más caracteres agrega el artículo del atajo y no el que tiene ese código como código de barras', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta === RUTA_DE_ATAJOS) return Promise.resolve([{ teclaAtajo: 'F5', idArticulo: FIAMBRERIA, codigoInterno: '5000001', nombre: 'Fiambrería' }])
+        if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 999, codigoInterno: 'OTRO', nombre: 'Otro artículo', codigoBarra: '5000001' }))
+        return undefined
+      })
+      apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; importe?: number }[] }) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion(cuerpo.lineas.map((l) => ({ idArticulo: l.idArticulo, idListaPrecio: 1, precioOriginal: l.importe ?? 100, precioFinal: l.importe ?? 100, descuentoUnitario: 0, aplicadas: [] }))))
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(screen.queryByText('Otro artículo', { selector: 'td' })).not.toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('con el campo vacío avisa que falta el importe y no escanea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(mensajeDeAtajoSinImporte('F5'))).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('un importe inválido avisa y no escanea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '1,500')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+      expect(campoDeCodigo()).toHaveValue('1,500')
+    })
+
+    it('una tecla sin artículo asignado avisa y no escanea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F8' })
+
+      expect(await screen.findByText(mensajeDeAtajoSinArticulo('F8'))).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('si la lectura falla avisa que faltan los datos, y la tecla siguiente la vuelve a pedir', async () => {
+      let intentos = 0
+      servidorConAtajos(() => (++intentos === 1 ? Promise.reject(new Error('sin red')) : Promise.resolve(atajosDelServidor())))
+      await montar()
+      await waitFor(() => expect(llamadasDeAtajos()).toHaveLength(1))
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_ATAJO_SIN_DATOS)).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      expect(llamadasDeAtajos()).toHaveLength(2)
+      fireEvent.keyDown(document, { key: 'F5' })
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('mientras la lectura sigue en vuelo avisa que faltan los datos y no la duplica', async () => {
+      servidorConAtajos(() => new Promise(() => {}))
+      await montar()
+      await waitFor(() => expect(llamadasDeAtajos()).toHaveLength(1))
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_ATAJO_SIN_DATOS)).toBeInTheDocument()
+      expect(llamadasDeAtajos()).toHaveLength(1)
+    })
+
+    it('con la instantánea del punto de venta no pide la lectura del servidor', async () => {
+      await montarConInstantanea()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+
+      expect(llamadasDeAtajos()).toHaveLength(0)
+    })
+  })
+
   describe('cobro sin red', () => {
     async function cobrarConEfectivo(importe: string) {
       await esperarMediosDePago()

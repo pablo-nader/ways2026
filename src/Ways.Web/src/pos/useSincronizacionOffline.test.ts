@@ -204,6 +204,25 @@ describe('useSincronizacionOffline — carga inicial (goal A: sobrevive un resta
     expect(result.current.outboxCount).toBe(1)
   })
 
+  it('copiaLocalLeida pasa a true al terminar la lectura de lo persistido, haya o no instantánea en él', async () => {
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen: almacenFake(), intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.copiaLocalLeida).toBe(true))
+    expect(result.current.instantanea).toBeNull()
+  })
+
+  it('copiaLocalLeida vuelve a false cuando el hook queda inerte', async () => {
+    const almacen = almacenFake()
+    const { result, rerender } = renderHook(({ idPuntoVenta }) => useSincronizacionOffline({ idPuntoVenta, activo: true, almacen, intervaloMs: 60_000 }), {
+      initialProps: { idPuntoVenta: 7 as number | null },
+    })
+    await waitFor(() => expect(result.current.copiaLocalLeida).toBe(true))
+
+    rerender({ idPuntoVenta: null })
+
+    await waitFor(() => expect(result.current.copiaLocalLeida).toBe(false))
+  })
+
   it('sin intervaloMs el ciclo automático se programa cada 10 minutos', async () => {
     const espiaDeIntervalo = vi.spyOn(globalThis, 'setInterval')
     try {
