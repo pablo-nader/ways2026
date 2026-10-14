@@ -33,8 +33,9 @@
   expectations that assumed whole pesos). Route: delegated writer (writer trigger: domain + tests + integration).
 - [x] T2 — By-amount lines apply the derived-list percentage: server resolver, snapshot `listas`, offline engine,
   online preview (`previaDeLinea`, `calcularSubtotalPrevia`), credit-note match, tests. Route: delegated writer.
-- [ ] T3 — F5–F8 fall back to the server when there is no snapshot for the point of sale. Route: delegated writer
-  in its own worktree/branch (independent of T1/T2).
+- [x] T3 — F5–F8 fall back to the server when there is no snapshot for the point of sale. Route: delegated writer
+  in its own worktree/branch (independent of T1/T2). Shipped in PR #449 (`pnader/atajos-importe-sin-instantanea`,
+  feature doc `odd/tasks/atajos-de-importe-sin-instantanea.md`), judgment-day APPROVED.
 
 ## Acceptance criteria
 
