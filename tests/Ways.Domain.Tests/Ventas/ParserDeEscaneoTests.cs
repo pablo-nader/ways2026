@@ -69,6 +69,27 @@ public class ParserDeEscaneoTests
         Assert.Equal("42", resultado.Codigo);
     }
 
+    [Theory]
+    [InlineData("0,5*42", 0.5)]
+    [InlineData("0.5*42", 0.5)]
+    [InlineData("1,250*42", 1.25)]
+    [InlineData("1.250*42", 1.25)]
+    public void LaComaYElPuntoSonIndistintosComoSeparadorDecimal(string entrada, decimal esperada)
+    {
+        var resultado = ParserDeEscaneo.Parsear(entrada);
+
+        Assert.Equal(esperada, resultado.Cantidad);
+        Assert.Equal("42", resultado.Codigo);
+    }
+
+    [Theory]
+    [InlineData("1,2,3*42")]
+    [InlineData("1.234,5*42")]
+    public void UnPrefijoConMasDeUnSeparadorDefaultAUno(string entrada)
+    {
+        Assert.Equal(1m, ParserDeEscaneo.Parsear(entrada).Cantidad);
+    }
+
     [Fact]
     public void UnPrefijoDeCantidadAplicaTambienAUnCodigoInterno()
     {

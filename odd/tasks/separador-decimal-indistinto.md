@@ -42,4 +42,4 @@ T1: `npx tsc -b`: sin errores; `npm run lint`: 0 errores (warnings preexistentes
 
 ## Próximo paso
 
-Seguimiento fuera de alcance: `ParserDeEscaneo` (servidor) lee la coma del prefijo `cantidad*codigo` como miles.
+T3 (inline, 2 archivos mecánicos): `ParserDeEscaneo` acepta "," o "." en el prefijo `cantidad*codigo` (antes "0,5*x" daba 5 y "1,2,3*x" daba 123). RED 3 fallos → GREEN `dotnet test tests/Ways.Domain.Tests`: 1701/1701. Luego judgment-day y PR.
