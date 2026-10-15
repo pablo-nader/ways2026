@@ -591,8 +591,10 @@ con factura rechazada no devolvía el cupo. `CbtesAsoc` según el WSDL de WSFEv1
 opcionales.
 
 - [x] **T8a — Esquema, lectores y `CbtesAsoc`** (sin cambio de comportamiento). Ruta: delegada.
-- [ ] **T8b — Emisión de la NC** (proceso, lote, cupo). Ruta: delegada.
+- [x] **T8b — Emisión de la NC** (proceso, lote, cupo). Ruta: delegada.
 - [ ] **T8c — Anulación, intento en línea, lectura, POS e impresión de la NC.** Ruta: delegada.
+  Obligatorio: la transacción de la anulación invoca `CancelarRechazadaDeVentaAnuladaAsync` cuando la
+  factura de la venta está rechazada (desde T8b el lote ya no la liquida; hasta T8c queda a mano).
 
 ## Próximo paso
 
@@ -617,3 +619,23 @@ comentario). JUDGMENT: APPROVED.
 Información para T8b: varios filtros de tipo factura (búsqueda del espejo en `ProcesarAsync`,
 `ExisteEspejoDeLaVentaAsync`, la decisión, `TieneFacturaVigenteAsync`, cabezas del lote) todavía
 no tienen un test que los distinga; se cubren cuando haya NC reales.
+
+### Evidencia de T8b (2026-10-15)
+
+Commits `b5c9fa0b` (feat) y `7a88dc11` (fix). La decisión de NC se procesa como la factura:
+exige venta `anulado` y factura aprobada (si no, pendiente con `nota_de_credito_venta_no_anulada`
+/ `nota_de_credito_sin_factura_aprobada` y espera de compuerta); espejo NC{letra} con ítems,
+total y datos legales congelados de la factura; `CbtesAsoc` (tipo, PV, número, CUIT congelado,
+fecha fiscal); paso A con la serie NC → venta → decisión; aprobada devuelve todo el cupo de la
+factura; rechazada devuelve el número y no toca el cupo; el lote procesa NC en su propia serie.
+Una factura rechazada de una venta anulada pasa a `cancelada` y termina de devolver el cupo, por
+la decisión suelta (el lote no la toma). La NC compone con alícuotas dadas de baja.
+Checks: build limpio; aplicación 1040/1040; dominio 1695/1695; integración (facturación, NC,
+anulación, guardas) 549/549 sobre `b5c9fa0b` y 550/550 tras la corrección. Sin RED previo: 31
+mutaciones en rojo más la de las alícuotas.
+Judgment-day: ronda 1, confirmado por los dos jueces el candidato del lote para facturas
+rechazadas de ventas anuladas (sin índice, sin espera, ocupa el máximo), quitado; corregido
+también el caso de alícuotas dadas de baja (un juez). Re-juicio: resueltos; los dos señalan que
+hasta T8c esa liquidación queda a mano (anotado como obligatorio en T8c). JUDGMENT: APPROVED.
+Información: una NC cuya factura nunca se aprueba quedaría pendiente (inalcanzable con la regla
+de anulación de T8c).
