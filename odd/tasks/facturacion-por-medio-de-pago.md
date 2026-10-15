@@ -574,7 +574,26 @@ espejo existente usa el CUIT actual; los totales usan código y nombre vivos de 
 "Codigo N°" se deduce de la letra (el DTO no trae el código de ARCA); `impTrib` no se imprime
 (hoy siempre 0); la leyenda en la C de monotributo con $0,00 queda a confirmar con el contador.
 
+## T8 (2026-10-14)
+
+Decisiones del dueño: opción (a), "Anular" una venta con factura aprobada anula el ticket como
+hoy y emite sola una NC fiscal (3/8/13, misma letra) por el total, con `CbtesAsoc` a la
+factura, por el mismo circuito del espejo; mismos roles que la anulación; con la factura en
+trámite, 409 `venta_con_factura_en_tramite`. La caja imprime la NC aprobada y se puede
+reimprimir desde "Ventas del turno". NC parcial por devolución fuera de alcance.
+
+Decisiones técnicas: segunda decisión en `facturaciones_de_venta` (`id_facturacion_origen`);
+espejo NC con `id_venta_origen` = venta e `id_comprobante_asociado` = espejo factura; la
+anulación solo inserta la decisión (nunca toca `numeraciones_fiscales`); cupo devuelto al
+aprobarse la NC; NC rechazada queda para reintento manual (T9); se corrige que anular una venta
+con factura rechazada no devolvía el cupo. `CbtesAsoc` según el WSDL de WSFEv1: después de
+`CondicionIVAReceptorId`, antes de `Tributos`; Tipo/PtoVta/Nro obligatorios, Cuit/CbteFch
+opcionales.
+
+- [ ] **T8a — Esquema, lectores y `CbtesAsoc`** (sin cambio de comportamiento). Ruta: delegada.
+- [ ] **T8b — Emisión de la NC** (proceso, lote, cupo). Ruta: delegada.
+- [ ] **T8c — Anulación, intento en línea, lectura, POS e impresión de la NC.** Ruta: delegada.
+
 ## Próximo paso
 
-PR de T7; después el release del POS (bump de Ways.Desktop + tag `pos-v*`), avisando antes al
-dueño. Siguen T8 y T9.
+T8a en `pnader/t8-nc-esquema`.

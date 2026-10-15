@@ -1047,7 +1047,7 @@ public class ServicioDeVentas(
             .ToListAsync(ct);
 
         var estadoDeDecision = await db.FacturacionesDeVenta.AsNoTracking()
-            .Where(f => idsComprobante.Contains(f.IdComprobanteVenta))
+            .Where(f => idsComprobante.Contains(f.IdComprobanteVenta) && f.IdFacturacionOrigen == null)
             .ToDictionaryAsync(f => f.IdComprobanteVenta, f => f.Estado, ct);
 
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
@@ -1354,7 +1354,8 @@ public class ServicioDeVentas(
         }
     }
 
-    /// <summary>¿La venta tiene una factura espejo aprobada o en trámite? Un espejo rechazado que quedó en pie no cuenta.</summary>
+    /// <summary>¿La venta tiene una factura espejo aprobada o en trámite? Un espejo rechazado que quedó en pie no cuenta, y el
+    /// espejo de una nota de crédito (<c>id_comprobante_asociado</c> con valor) tampoco es la factura.</summary>
     private static async Task<bool> TieneFacturaVigenteAsync(
         DbConnection conexion, DbTransaction? transaccion, int idVenta, CancellationToken ct)
     {
@@ -1362,7 +1363,7 @@ public class ServicioDeVentas(
         comando.Transaction = transaccion;
         comando.CommandText =
             "SELECT EXISTS (SELECT 1 FROM comprobantes_venta " +
-            "WHERE id_venta_origen = $1 AND resultado_fiscal <> 'rechazado')";
+            "WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL AND resultado_fiscal <> 'rechazado')";
 
         ParametrosDeComando.Agregar(comando, idVenta);
 

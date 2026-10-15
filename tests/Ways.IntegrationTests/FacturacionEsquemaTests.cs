@@ -20,7 +20,7 @@ namespace Ways.IntegrationTests;
 /// aislamiento por tenant, bajo el mismo rol. Mismo criterio que <see cref="FiscalSchemaTests"/>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class FacturacionEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public partial class FacturacionEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private sealed record Escenario(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdCliente, int IdEmpleado, int IdMedioPago,
@@ -567,8 +567,11 @@ public class FacturacionEsquemaTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     [Theory]
-    [InlineData("comprobantes_venta", "ux_comprobantes_venta_venta_origen", "UNIQUE INDEX", "btree (id_venta_origen, id_tenant)", "WHERE (id_venta_origen IS NOT NULL)")]
-    [InlineData("facturaciones_de_venta", "ux_facturaciones_de_venta_comprobante", "UNIQUE INDEX", "btree (id_comprobante_venta, id_tenant)", "")]
+    [InlineData("comprobantes_venta", "ux_comprobantes_venta_venta_origen", "UNIQUE INDEX", "btree (id_venta_origen, id_tenant)", "WHERE ((id_venta_origen IS NOT NULL) AND (id_comprobante_asociado IS NULL))")]
+    [InlineData("comprobantes_venta", "ux_comprobantes_venta_nota_credito_espejo", "UNIQUE INDEX", "btree (id_comprobante_asociado, id_tenant)", "WHERE ((id_venta_origen IS NOT NULL) AND (id_comprobante_asociado IS NOT NULL))")]
+    [InlineData("comprobantes_venta", "ix_comprobantes_venta_asociado", "INDEX", "btree (id_comprobante_asociado, id_tenant)", "")]
+    [InlineData("facturaciones_de_venta", "ux_facturaciones_de_venta_comprobante", "UNIQUE INDEX", "btree (id_comprobante_venta, id_tenant)", "WHERE (id_facturacion_origen IS NULL)")]
+    [InlineData("facturaciones_de_venta", "ux_facturaciones_de_venta_origen", "UNIQUE INDEX", "btree (id_facturacion_origen, id_tenant)", "WHERE (id_facturacion_origen IS NOT NULL)")]
     [InlineData("facturaciones_de_venta", "ux_facturaciones_de_venta_comprobante_fiscal", "UNIQUE INDEX", "btree (id_comprobante_fiscal, id_tenant)", "WHERE (id_comprobante_fiscal IS NOT NULL)")]
     [InlineData("facturaciones_de_venta", "ix_facturaciones_de_venta_pendientes", "INDEX", "btree (id_tenant, proximo_intento_en)", "WHERE (estado = 'pendiente'::estado_facturacion_venta)")]
     public async Task LosIndicesNuevosTienenLaDefinicionEsperada(

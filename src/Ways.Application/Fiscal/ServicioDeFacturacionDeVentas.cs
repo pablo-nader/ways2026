@@ -111,7 +111,8 @@ public class ServicioDeFacturacionDeVentas(
     {
         int? idDecision = null;
         await using (var comando = await NuevoComandoAsync(
-            "SELECT id_facturacion_venta FROM facturaciones_de_venta WHERE id_comprobante_venta = $1", ct, idVenta))
+            "SELECT id_facturacion_venta FROM facturaciones_de_venta " +
+            "WHERE id_comprobante_venta = $1 AND id_facturacion_origen IS NULL", ct, idVenta))
         {
             if (await comando.ExecuteScalarAsync(ct) is int idFacturacion)
             {
@@ -157,7 +158,7 @@ public class ServicioDeFacturacionDeVentas(
         var venta = await db.ComprobantesVenta.AsNoTracking()
             .FirstAsync(c => c.Id == decision.IdComprobanteVenta, ct);
         var espejo = await db.ComprobantesVenta.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.IdVentaOrigen == decision.IdComprobanteVenta, ct);
+            .FirstOrDefaultAsync(c => c.IdVentaOrigen == decision.IdComprobanteVenta && c.IdComprobanteAsociado == null, ct);
 
         // Un espejo pendiente se resuelve aunque su decisión ya no lo esté.
         if (espejo is { ResultadoFiscal: ResultadoFiscal.Pendiente })
@@ -620,12 +621,13 @@ public class ServicioDeFacturacionDeVentas(
         return (string?)await comando.ExecuteScalarAsync(ct);
     }
 
-    /// <summary>¿Tiene la venta un espejo, en cualquier estado? El índice único <c>ux_comprobantes_venta_venta_origen</c> admite
-    /// uno solo: esta pregunta, hecha bajo el lock de la venta, evita llegar a él.</summary>
+    /// <summary>¿Tiene la venta un espejo de factura, en cualquier estado? El índice único <c>ux_comprobantes_venta_venta_origen</c>
+    /// admite uno solo: esta pregunta, hecha bajo el lock de la venta, evita llegar a él. El espejo de una nota de crédito
+    /// (<c>id_comprobante_asociado</c> con valor) no cuenta.</summary>
     private async Task<bool> ExisteEspejoDeLaVentaAsync(int idVenta, CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
-            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1)", ct, idVenta);
+            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL)", ct, idVenta);
         return (bool)(await comando.ExecuteScalarAsync(ct))!;
     }
 
@@ -1150,13 +1152,14 @@ public class ServicioDeFacturacionDeVentas(
 
     private sealed record FacturacionPendiente(
         int Id, int IdEmpresa, int IdComprobanteVenta, string Estado, string Motivo, string Aportes, DateOnly Periodo,
-        int? IdComprobanteFiscal, string? UltimoError);
+        int? IdComprobanteFiscal, string? UltimoError, int? IdFacturacionOrigen);
 
     private async Task<FacturacionPendiente?> LeerDecisionAsync(int idFacturacion, CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
             "SELECT id_facturacion_venta, id_empresa, id_comprobante_venta, estado::text, motivo::text, aportes::text, " +
-            "periodo, id_comprobante_fiscal, ultimo_error FROM facturaciones_de_venta WHERE id_facturacion_venta = $1",
+            "periodo, id_comprobante_fiscal, ultimo_error, id_facturacion_origen FROM facturaciones_de_venta " +
+            "WHERE id_facturacion_venta = $1",
             ct, idFacturacion);
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
@@ -1167,7 +1170,7 @@ public class ServicioDeFacturacionDeVentas(
         return new FacturacionPendiente(
             lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetString(3), lector.GetString(4),
             lector.GetString(5), lector.GetFieldValue<DateOnly>(6), lector.IsDBNull(7) ? null : lector.GetInt32(7),
-            lector.IsDBNull(8) ? null : lector.GetString(8));
+            lector.IsDBNull(8) ? null : lector.GetString(8), lector.IsDBNull(9) ? null : lector.GetInt32(9));
     }
 
     private async Task<string?> LeerEstadoDeLaDecisionAsync(int idFacturacion, CancellationToken ct)

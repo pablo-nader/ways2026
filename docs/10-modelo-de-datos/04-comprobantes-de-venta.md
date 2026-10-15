@@ -38,7 +38,12 @@ comprobantes_venta (          -- [operativa]
 --                                                                            ix_comprobantes_venta_decision_debida
 -- UNIQUE (id_punto_venta, id_tipo_comprobante, numero)
 -- FK (id_venta_origen, id_tenant) → comprobantes_venta ON DELETE RESTRICT
--- UNIQUE (id_venta_origen, id_tenant) WHERE id_venta_origen IS NOT NULL  ⇒ a lo sumo un espejo por venta
+-- UNIQUE (id_venta_origen, id_tenant) WHERE id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NULL
+--                                                                            ⇒ a lo sumo un espejo de factura por venta
+-- UNIQUE (id_comprobante_asociado, id_tenant) WHERE id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NOT NULL
+--                                                                            ux_comprobantes_venta_nota_credito_espejo
+--       ⇒ el espejo de una nota de crédito (NC A/B/C) lleva id_venta_origen = la venta e id_comprobante_asociado = el
+--         espejo de la factura que anula; una factura espejo tiene a lo sumo una
 -- CHECK id_venta_origen IS NULL OR resultado_fiscal IS NOT NULL  ⇒ un espejo es siempre fiscal
 -- CHECK id_venta_origen IS NULL OR id_turno_caja IS NULL         ⇒ un espejo no pertenece a ningún turno
 
@@ -287,12 +292,17 @@ facturaciones_de_venta (        -- [operativa] id_tenant + id_empresa NOT NULL, 
     aportes                jsonb NOT NULL,          -- [{ "idMedioPago": int, "aporte": decimal }] aplicados al acumulado
     periodo                date  NOT NULL,          -- primer día del mes al que se aplicaron los aportes
     id_comprobante_fiscal  integer NULL,            -- el espejo, una vez emitido
+    id_facturacion_origen  integer NULL,            -- NULL = decisión de la factura; con valor = la decisión de la nota de
+                                                    -- crédito de esa decisión de factura
     intentos               integer NOT NULL DEFAULT 0,
     ultimo_error           text NULL,
     proximo_intento_en     timestamptz NULL,
     created_at, updated_at, deleted_at
 );
--- UNIQUE (id_comprobante_venta, id_tenant)                                   ux_facturaciones_de_venta_comprobante
+-- UNIQUE (id_comprobante_venta, id_tenant) WHERE id_facturacion_origen IS NULL  ux_facturaciones_de_venta_comprobante
+-- UNIQUE (id_facturacion_origen, id_tenant) WHERE id_facturacion_origen IS NOT NULL  ux_facturaciones_de_venta_origen
+-- UNIQUE (id_facturacion_venta, id_tenant)                                   ak_..._id_facturacion_venta_id_tenant
+-- FK (id_facturacion_origen, id_tenant) → facturaciones_de_venta, RESTRICT   fk_facturaciones_de_venta_origen
 -- UNIQUE (id_comprobante_fiscal, id_tenant) WHERE id_comprobante_fiscal IS NOT NULL  ..._comprobante_fiscal
 -- INDEX  (id_tenant, proximo_intento_en) WHERE estado = 'pendiente'          ix_facturaciones_de_venta_pendientes
 -- FK compuestas (id_empresa|id_comprobante_venta|id_comprobante_fiscal, id_tenant), todas RESTRICT:
@@ -300,7 +310,9 @@ facturaciones_de_venta (        -- [operativa] id_tenant + id_empresa NOT NULL, 
 -- FK id_tenant → tenants, RESTRICT                                           fk_facturaciones_de_venta_tenant
 -- INDEX  (id_empresa, id_tenant) · (id_tenant)                               ix_facturaciones_de_venta_empresa | _tenant
 -- CHECK periodo día 1 · aportes es un arreglo jsonb · intentos >= 0 · motivo <> 'no_requerida' ·
---       estado <> 'emitida' OR id_comprobante_fiscal IS NOT NULL
+--       estado <> 'emitida' OR id_comprobante_fiscal IS NOT NULL ·
+--       id_facturacion_origen IS NULL OR aportes = '[]'::jsonb (una NC no mueve saldos) ·
+--       id_facturacion_origen IS NULL OR id_facturacion_origen <> id_facturacion_venta
 
 acumulados_de_facturacion (     -- [operativa] id_tenant + id_empresa, PK-only sin auditoría
                                 -- (mismo criterio que numeraciones_fiscales)
