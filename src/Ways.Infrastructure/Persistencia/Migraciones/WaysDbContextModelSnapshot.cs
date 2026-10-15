@@ -3244,6 +3244,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
 
+                    b.Property<int?>("IdFacturacionOrigen")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_facturacion_origen");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
@@ -3277,6 +3281,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasKey("Id")
                         .HasName("pk_facturaciones_de_venta");
 
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_facturaciones_de_venta_id_facturacion_venta_id_tenant");
+
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_facturaciones_de_venta_tenant");
 
@@ -3287,14 +3294,23 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdComprobanteVenta", "IdTenant")
                         .IsUnique()
-                        .HasDatabaseName("ux_facturaciones_de_venta_comprobante");
+                        .HasDatabaseName("ux_facturaciones_de_venta_comprobante")
+                        .HasFilter("id_facturacion_origen IS NULL");
 
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_facturaciones_de_venta_empresa");
 
+                    b.HasIndex("IdFacturacionOrigen", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_facturaciones_de_venta_origen")
+                        .HasFilter("id_facturacion_origen IS NOT NULL");
+
                     b.HasIndex("IdTenant", "ProximoIntentoEn")
                         .HasDatabaseName("ix_facturaciones_de_venta_pendientes")
                         .HasFilter("estado = 'pendiente'::estado_facturacion_venta");
+
+                    b.HasIndex(new[] { "IdComprobanteVenta", "IdTenant" }, "ix_facturaciones_de_venta_comprobante")
+                        .HasDatabaseName("ix_facturaciones_de_venta_comprobante");
 
                     b.ToTable("facturaciones_de_venta", null, t =>
                         {
@@ -3305,6 +3321,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_facturaciones_de_venta_intentos_no_negativo", "intentos >= 0");
 
                             t.HasCheckConstraint("ck_facturaciones_de_venta_motivo_requerido", "motivo <> 'no_requerida'::motivo_facturacion");
+
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_nc_sin_aportes", "id_facturacion_origen IS NULL OR aportes = '[]'::jsonb");
+
+                            t.HasCheckConstraint("ck_facturaciones_de_venta_origen_distinto", "id_facturacion_origen IS NULL OR id_facturacion_origen <> id_facturacion_venta");
 
                             t.HasCheckConstraint("ck_facturaciones_de_venta_periodo_dia_uno", "EXTRACT(DAY FROM periodo) = 1");
                         });
@@ -5026,7 +5046,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdVentaOrigen", "IdTenant")
                         .IsUnique()
                         .HasDatabaseName("ux_comprobantes_venta_venta_origen")
-                        .HasFilter("id_venta_origen IS NOT NULL");
+                        .HasFilter("id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NULL");
 
                     b.HasIndex("IdPuntoVenta", "IdTenant", "Fecha")
                         .HasDatabaseName("ix_comprobantes_venta_punto_venta_fecha");
@@ -5034,6 +5054,15 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdPuntoVenta", "IdTipoComprobante", "Numero")
                         .IsUnique()
                         .HasDatabaseName("ux_comprobantes_venta_numero");
+
+                    b.HasIndex(new[] { "IdVentaOrigen", "IdTenant" }, "ix_comprobantes_venta_venta_origen")
+                        .HasDatabaseName("ix_comprobantes_venta_venta_origen")
+                        .HasFilter("id_venta_origen IS NOT NULL");
+
+                    b.HasIndex(new[] { "IdComprobanteAsociado", "IdTenant" }, "ux_comprobantes_venta_nota_credito_espejo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_comprobantes_venta_nota_credito_espejo")
+                        .HasFilter("id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NOT NULL");
 
                     b.ToTable("comprobantes_venta", null, t =>
                         {
@@ -6886,6 +6915,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_facturaciones_de_venta_empresa");
+
+                    b.HasOne("Ways.Domain.Fiscal.FacturacionDeVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdFacturacionOrigen", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_facturaciones_de_venta_origen");
                 });
 
             modelBuilder.Entity("Ways.Domain.Fiscal.NumeracionFiscal", b =>

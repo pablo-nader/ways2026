@@ -333,8 +333,9 @@ public class ProcesadorDeFacturacionesPorLote(
                    f.estado::text AS "Estado", f.proximo_intento_en AS "ProximoIntentoEn", t.codigo_afip AS "CodigoAfip"
             FROM comprobantes_venta e
             JOIN tipos_comprobante t ON t.id_tipo_comprobante = e.id_tipo_comprobante
-            JOIN facturaciones_de_venta f ON f.id_comprobante_venta = e.id_venta_origen
-            WHERE e.id_punto_venta = {idPuntoVenta} AND e.id_venta_origen IS NOT NULL AND e.resultado_fiscal = 'pendiente'
+            JOIN facturaciones_de_venta f ON f.id_comprobante_venta = e.id_venta_origen AND f.id_facturacion_origen IS NULL
+            WHERE e.id_punto_venta = {idPuntoVenta} AND e.id_venta_origen IS NOT NULL AND e.id_comprobante_asociado IS NULL
+              AND e.resultado_fiscal = 'pendiente'
             ORDER BY f.id_facturacion_venta
             """).ToListAsync(ct);
 
@@ -354,7 +355,9 @@ public class ProcesadorDeFacturacionesPorLote(
             WHERE f.estado = 'pendiente'::estado_facturacion_venta AND v.id_punto_venta = {idPuntoVenta}
               AND (f.proximo_intento_en IS NULL OR f.proximo_intento_en <= {ahora})
               AND f.id_facturacion_venta > {cursor}
-              AND NOT EXISTS (SELECT 1 FROM comprobantes_venta e WHERE e.id_venta_origen = f.id_comprobante_venta)
+              AND f.id_facturacion_origen IS NULL
+              AND NOT EXISTS (SELECT 1 FROM comprobantes_venta e
+                              WHERE e.id_venta_origen = f.id_comprobante_venta AND e.id_comprobante_asociado IS NULL)
             ORDER BY f.id_facturacion_venta
             LIMIT {TamanioDePagina}
             """).ToListAsync(ct);
@@ -367,6 +370,7 @@ public class ProcesadorDeFacturacionesPorLote(
             FROM facturaciones_de_venta f
             JOIN comprobantes_venta v ON v.id_comprobante_venta = f.id_comprobante_venta AND v.id_venta_origen IS NULL
             WHERE f.estado = 'pendiente'::estado_facturacion_venta AND v.id_punto_venta = {idPuntoVenta}
+              AND f.id_facturacion_origen IS NULL
             """).SingleAsync(ct);
 
     // ---- Serie de una candidata ---------------------------------------------------------------------------

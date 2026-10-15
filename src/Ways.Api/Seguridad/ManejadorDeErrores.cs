@@ -444,6 +444,15 @@ public class ManejadorDeErrores(
                     "Esta factura ya está asignada a otra decisión de facturación.",
                     "factura_ya_asignada"),
 
+            // Nota de crédito fiscal: una decisión de factura y un espejo de factura tienen a lo sumo una nota de
+            // crédito. Solo las escribe el servidor; el 409 es el respaldo de la carrera entre dos anulaciones.
+            { SqlState: "23505", ConstraintName: string uxNotaDeCredito }
+                when string.Equals(uxNotaDeCredito, "ux_facturaciones_de_venta_origen", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(uxNotaDeCredito, "ux_comprobantes_venta_nota_credito_espejo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Esta factura ya tiene una nota de crédito.",
+                    "nota_de_credito_duplicada"),
+
             // Familias de artículos (db-error-backstops): ux_familias_nombre — nombre único por
             // tenant entre las familias vivas. Tiene que resolverse por nombre EXACTO ANTES del
             // brazo genérico de ClasificarUnicidad: "ux_familias_nombre" contiene "_nombre" y caería

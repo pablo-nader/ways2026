@@ -95,6 +95,17 @@ public static class MapeadorWsfe
         yield return new XElement("MonCotiz", 1);
         yield return new XElement("CondicionIVAReceptorId", s.CondicionIVAReceptorId);
 
+        if (s.CbtesAsoc is { Count: > 0 } asociados)
+        {
+            yield return new XElement("CbtesAsoc", asociados.Select(a =>
+                new XElement("CbteAsoc",
+                    new XElement("Tipo", a.Tipo),
+                    new XElement("PtoVta", a.PtoVta),
+                    new XElement("Nro", a.Nro),
+                    a.Cuit is { } cuit ? new XElement("Cuit", cuit.ToString(CultureInfo.InvariantCulture)) : null,
+                    a.CbteFch is { } fecha ? new XElement("CbteFch", FormatearFecha(fecha)) : null)));
+        }
+
         yield return new XElement("Iva", s.Iva.Select(i =>
             new XElement("AlicIva",
                 new XElement("Id", i.Id),

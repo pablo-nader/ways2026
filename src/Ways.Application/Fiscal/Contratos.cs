@@ -86,7 +86,12 @@ public sealed record SolicitudDeCae(
     IReadOnlyList<ItemIvaFiscal> Iva,
     DateOnly? FchServDesde = null,
     DateOnly? FchServHasta = null,
-    DateOnly? FchVtoPago = null);
+    DateOnly? FchVtoPago = null,
+    IReadOnlyList<ComprobanteAsociadoFiscal>? CbtesAsoc = null);
+
+/// <summary>Un comprobante asociado de <c>CbtesAsoc</c> de WSFE (la factura que corrige una nota de crédito):
+/// <see cref="Cuit"/> y <see cref="CbteFch"/> son opcionales y se omiten del sobre cuando son <c>null</c>.</summary>
+public sealed record ComprobanteAsociadoFiscal(short Tipo, int PtoVta, long Nro, long? Cuit = null, DateOnly? CbteFch = null);
 
 /// <summary>
 /// La respuesta ya parseada de <c>FECAESolicitar</c> (design decisión 14): <see cref="Observaciones"/>

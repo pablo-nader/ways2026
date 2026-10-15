@@ -574,7 +574,46 @@ espejo existente usa el CUIT actual; los totales usan código y nombre vivos de 
 "Codigo N°" se deduce de la letra (el DTO no trae el código de ARCA); `impTrib` no se imprime
 (hoy siempre 0); la leyenda en la C de monotributo con $0,00 queda a confirmar con el contador.
 
+## T8 (2026-10-14)
+
+Decisiones del dueño: opción (a), "Anular" una venta con factura aprobada anula el ticket como
+hoy y emite sola una NC fiscal (3/8/13, misma letra) por el total, con `CbtesAsoc` a la
+factura, por el mismo circuito del espejo; mismos roles que la anulación; con la factura en
+trámite, 409 `venta_con_factura_en_tramite`. La caja imprime la NC aprobada y se puede
+reimprimir desde "Ventas del turno". NC parcial por devolución fuera de alcance.
+
+Decisiones técnicas: segunda decisión en `facturaciones_de_venta` (`id_facturacion_origen`);
+espejo NC con `id_venta_origen` = venta e `id_comprobante_asociado` = espejo factura; la
+anulación solo inserta la decisión (nunca toca `numeraciones_fiscales`); cupo devuelto al
+aprobarse la NC; NC rechazada queda para reintento manual (T9); se corrige que anular una venta
+con factura rechazada no devolvía el cupo. `CbtesAsoc` según el WSDL de WSFEv1: después de
+`CondicionIVAReceptorId`, antes de `Tributos`; Tipo/PtoVta/Nro obligatorios, Cuit/CbteFch
+opcionales.
+
+- [x] **T8a — Esquema, lectores y `CbtesAsoc`** (sin cambio de comportamiento). Ruta: delegada.
+- [ ] **T8b — Emisión de la NC** (proceso, lote, cupo). Ruta: delegada.
+- [ ] **T8c — Anulación, intento en línea, lectura, POS e impresión de la NC.** Ruta: delegada.
+
 ## Próximo paso
 
-PR de T7; después el release del POS (bump de Ways.Desktop + tag `pos-v*`), avisando antes al
-dueño. Siguen T8 y T9.
+PR de T8a; después T8b (emisión de la NC) apilado.
+
+### Evidencia de T8a (2026-10-15)
+
+Commits `cf45be8c` (feat) y `ce1c1565` (fix) más el comentario de la clase. Migración
+`20261015005752_NotaDeCreditoEsquema`: `facturaciones_de_venta.id_facturacion_origen` (FK
+compuesta a sí misma, clave alternativa, únicos parciales factura/NC, CHECKs) y únicos
+parciales del espejo factura/NC en `comprobantes_venta`, con índices comunes de soporte de las
+FK (`ix_comprobantes_venta_venta_origen`, `ix_facturaciones_de_venta_comprobante`); 23505 de
+los únicos nuevos → 409 `nota_de_credito_duplicada`. Lectores por venta eligen la factura
+(lectura por id, por turno, proceso, decisión, lote, anulación). `CbtesAsoc` en `SolicitudDeCae`
+y `MapeadorWsfe` en el orden del WSDL de WSFEv1. Sin cambio de comportamiento.
+Checks: build limpio; aplicación 1030/1030; dominio 1691/1691; integración completa 4483/4483
+sobre `cf45be8c`; tras la corrección, filtro de esquema, NC, migraciones y guardas 98/98.
+Mutaciones en rojo (lectores por turno, por id, candidatos y conteo del lote; índice de soporte).
+Judgment-day: ronda 1, advertencia confirmada (índices únicos parciales dejaban las FK sin
+soporte), corregida; re-juicio: resuelta, quedaba un comentario de clase viejo, corregido (solo
+comentario). JUDGMENT: APPROVED.
+Información para T8b: varios filtros de tipo factura (búsqueda del espejo en `ProcesarAsync`,
+`ExisteEspejoDeLaVentaAsync`, la decisión, `TieneFacturaVigenteAsync`, cabezas del lote) todavía
+no tienen un test que los distinga; se cubren cuando haya NC reales.

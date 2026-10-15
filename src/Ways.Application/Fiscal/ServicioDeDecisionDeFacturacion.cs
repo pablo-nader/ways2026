@@ -430,7 +430,7 @@ public class ServicioDeDecisionDeFacturacion(
         comando.Transaction = transaccion;
         comando.CommandText =
             "SELECT id_facturacion_venta, motivo::text, estado::text FROM facturaciones_de_venta " +
-            "WHERE id_comprobante_venta = $1";
+            "WHERE id_comprobante_venta = $1 AND id_facturacion_origen IS NULL";
         ParametrosDeComando.Agregar(comando, idComprobanteVenta);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
