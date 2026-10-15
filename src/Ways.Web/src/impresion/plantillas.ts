@@ -136,13 +136,41 @@ export function facturaDeVenta(
   return armarComprobanteDeVenta(comprobante, factura, contexto, medios, opciones)
 }
 
+/** Código ARCA de la nota de crédito según la letra (A 003, B 008, C 013); el contrato no trae el número. */
+const CODIGO_ARCA_NC_POR_LETRA: Record<string, string> = { A: '003', B: '008', C: '013' }
+
+/**
+ * Nota de crédito fiscal de una venta anulada (T8c): mismo armado legal que la factura (emisor, receptor, IVA
+ * discriminado en la A, transparencia fiscal, CAE y QR) con título "NOTA DE CREDITO", su código por letra y, si se
+ * conoce, el comprobante asociado (la factura anulada). No lista pagos, saldos ni agradece la compra, y NUNCA pulsa
+ * el cajón: anular no es una venta nueva, ni en la primera impresión ni en la reimpresión.
+ */
+export function notaDeCreditoDeVenta(
+  comprobante: ComprobanteEmitido,
+  notaDeCredito: DatosDeFacturaFiscal,
+  facturaAsociada: DatosDeFacturaFiscal | null,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta = {},
+): Uint8Array {
+  return armarComprobanteDeVenta(comprobante, notaDeCredito, contexto, medios, opciones, { facturaAsociada })
+}
+
+type ModoNotaDeCredito = { facturaAsociada: DatosDeFacturaFiscal | null }
+
+function numeroFiscal(datos: DatosDeFacturaFiscal): string {
+  return `${String(datos.puntoDeVentaFiscal).padStart(5, '0')}-${String(datos.numero).padStart(8, '0')}`
+}
+
 function armarComprobanteDeVenta(
   comprobante: ComprobanteEmitido,
   factura: DatosDeFacturaFiscal | null,
   contexto: ContextoDeImpresion,
   medios: MedioPagoListado[],
   opciones: OpcionesDeTicketDeVenta,
+  notaDeCredito?: ModoNotaDeCredito,
 ): Uint8Array {
+  const esNotaDeCredito = notaDeCredito !== undefined
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
 
@@ -158,10 +186,13 @@ function armarComprobanteDeVenta(
 
   const descuentoManual = comprobante.descuentoManualTotal ?? 0
   const recargoManual = comprobante.recargoManualTotal ?? 0
-  const clienteConSaldo = opciones.reimpresion ? undefined : opciones.cliente
+  const clienteConSaldo = opciones.reimpresion || esNotaDeCredito ? undefined : opciones.cliente
 
-  ticket.alinear('centro').negrita(true).linea(factura ? `FACTURA ${factura.letra}` : 'COMPROBANTE NO VALIDO COMO FACTURA')
-  const codigoArca = factura ? CODIGO_ARCA_POR_LETRA[factura.letra] : undefined
+  ticket
+    .alinear('centro')
+    .negrita(true)
+    .linea(factura ? `${esNotaDeCredito ? 'NOTA DE CREDITO' : 'FACTURA'} ${factura.letra}` : 'COMPROBANTE NO VALIDO COMO FACTURA')
+  const codigoArca = factura ? (esNotaDeCredito ? CODIGO_ARCA_NC_POR_LETRA : CODIGO_ARCA_POR_LETRA)[factura.letra] : undefined
   if (codigoArca) ticket.linea(`Codigo N° ${codigoArca}`)
   if (descuentoManual !== 0) ticket.linea('*** CON DESCUENTO MANUAL ***')
   if (recargoManual !== 0) ticket.linea('*** CON RECARGO MANUAL ***')
@@ -169,8 +200,12 @@ function armarComprobanteDeVenta(
   ticket.negrita(false).alinear('izquierda')
   if (factura) {
     ticket
-      .linea(`Nro ${String(factura.puntoDeVentaFiscal).padStart(5, '0')}-${String(factura.numero).padStart(8, '0')}`)
+      .linea(`Nro ${numeroFiscal(factura)}`)
       .linea(`Fecha: ${fechaDeFactura(factura.fecha)}`)
+    if (notaDeCredito?.facturaAsociada) {
+      const asociada = notaDeCredito.facturaAsociada
+      ticket.linea(`Comprobante asociado: FACTURA ${asociada.letra} ${numeroFiscal(asociada)} del ${fechaDeFactura(asociada.fecha)}`)
+    }
     ticket.linea(`Condicion de venta: ${condicionDeVenta(comprobante, medioPorId)}`)
   } else {
     ticket.linea(`Comprobante: ${comprobante.numeroVisible}`).linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
@@ -210,13 +245,15 @@ function armarComprobanteDeVenta(
 
   if (factura?.letra === 'A' && factura.totales) bloqueDeIvaDiscriminado(ticket, factura.totales)
 
-  ticket.lineaDeGuiones()
-  ticket.linea('Pagos:')
-  for (const pago of comprobante.pagos) {
-    const nombreMedio = medioPorId.get(pago.idMedioPago)?.nombre ?? `Medio #${pago.idMedioPago}`
-    ticket.lineaDeColumnas(nombreMedio, formatearMoneda(pago.importe))
-    if (pago.vuelto > 0) {
-      ticket.lineaDeColumnas('  Vuelto', formatearMoneda(pago.vuelto))
+  if (!esNotaDeCredito) {
+    ticket.lineaDeGuiones()
+    ticket.linea('Pagos:')
+    for (const pago of comprobante.pagos) {
+      const nombreMedio = medioPorId.get(pago.idMedioPago)?.nombre ?? `Medio #${pago.idMedioPago}`
+      ticket.lineaDeColumnas(nombreMedio, formatearMoneda(pago.importe))
+      if (pago.vuelto > 0) {
+        ticket.lineaDeColumnas('  Vuelto', formatearMoneda(pago.vuelto))
+      }
     }
   }
 
@@ -228,7 +265,8 @@ function armarComprobanteDeVenta(
 
   if (factura) pieLegal(ticket, factura)
 
-  ticket.alinear('centro').avanzar(1).linea('¡Gracias por su compra!')
+  ticket.alinear('centro').avanzar(1)
+  if (!esNotaDeCredito) ticket.linea('¡Gracias por su compra!')
 
   // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
   // algún pago es en efectivo se abre antes del corte, para que el cajero lo encuentre abierto
@@ -236,7 +274,8 @@ function armarComprobanteDeVenta(
   // el cajón sin una venta nueva de por medio es un agujero de control de caja — una copia del
   // ticket original no vuelve a mover dinero, así que no vuelve a pulsar el cajón aunque el pago
   // original haya sido en efectivo.
-  if (!opciones.reimpresion && algunPagoEnEfectivo(comprobante, medios)) {
+  // Una nota de crédito tampoco pulsa el cajón: anular no mueve dinero en la caja.
+  if (!esNotaDeCredito && !opciones.reimpresion && algunPagoEnEfectivo(comprobante, medios)) {
     ticket.abrirCajon()
   }
 

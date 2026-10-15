@@ -3,6 +3,7 @@ import { ROL } from '../api/tipos'
 import type { MedioPagoListado, VentaDeTurnoListado } from '../api/tipos'
 import {
   FILTROS_VACIOS,
+  badgeDeNotaDeCredito,
   badgeFiscalDeVenta,
   claseDeBadgeDeEstadoVenta,
   etiquetaDeEstadoVenta,
@@ -15,6 +16,7 @@ import {
   puedeAnular,
   puedeReimprimir,
   puedeReimprimirFactura,
+  puedeReimprimirNotaDeCredito,
   tieneDescuentoManual,
   tieneRecargoManual,
   totalesDeVentas,
@@ -376,5 +378,38 @@ describe('puedeReimprimirFactura', () => {
 
   it('una venta anulada no ofrece reimprimir su factura', () => {
     expect(puedeReimprimirFactura(ventaFixture({ estado: 'Anulado', estadoFiscal: 'aprobado' }))).toBe(false)
+  })
+})
+
+describe('badgeDeNotaDeCredito', () => {
+  it.each([
+    ['aprobado', 'NC emitida'],
+    ['pendiente', 'NC pendiente'],
+    ['rechazado', 'NC rechazada'],
+  ])('%s se rotula %s', (estado, etiqueta) => {
+    expect(badgeDeNotaDeCredito(estado)?.etiqueta).toBe(etiqueta)
+  })
+
+  it.each([null, undefined, '', 'otro_estado_futuro'])('%s no lleva marca', (estado) => {
+    expect(badgeDeNotaDeCredito(estado)).toBeNull()
+  })
+
+  it('cada estado tiene su propio color', () => {
+    const clases = ['aprobado', 'pendiente', 'rechazado'].map((e) => badgeDeNotaDeCredito(e)?.clase)
+    expect(new Set(clases).size).toBe(3)
+  })
+})
+
+describe('puedeReimprimirNotaDeCredito', () => {
+  it('solo con la venta anulada y la NC aprobada', () => {
+    expect(puedeReimprimirNotaDeCredito(ventaFixture({ estado: 'Anulado', estadoNotaDeCredito: 'aprobado' }))).toBe(true)
+  })
+
+  it.each(['pendiente', 'rechazado', null, undefined] as const)('con la NC %s no', (estadoNotaDeCredito) => {
+    expect(puedeReimprimirNotaDeCredito(ventaFixture({ estado: 'Anulado', estadoNotaDeCredito }))).toBe(false)
+  })
+
+  it('una venta emitida no ofrece reimprimir una NC', () => {
+    expect(puedeReimprimirNotaDeCredito(ventaFixture({ estado: 'Emitido', estadoNotaDeCredito: 'aprobado' }))).toBe(false)
   })
 })

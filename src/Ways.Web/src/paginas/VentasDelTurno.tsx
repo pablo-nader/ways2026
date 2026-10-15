@@ -16,6 +16,7 @@ import { Modal } from '../componentes/Modal'
 import { formatearImporteConSigno } from '../formato/importes'
 import {
   FILTROS_VACIOS,
+  badgeDeNotaDeCredito,
   badgeFiscalDeVenta,
   claseDeBadgeDeEstadoVenta,
   etiquetaDeEstadoVenta,
@@ -28,6 +29,7 @@ import {
   puedeAnular,
   puedeReimprimir,
   puedeReimprimirFactura,
+  puedeReimprimirNotaDeCredito,
   tieneDescuentoManual,
   tieneRecargoManual,
   totalesDeVentas,
@@ -40,6 +42,7 @@ const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('me
 function mensajeDeErrorAnulacion(e: unknown): string {
   if (e instanceof ErrorApi) {
     if (e.estado === 403) return 'No tenés permiso para anular esta venta.'
+    if (e.estado === 409 && e.codigo === 'venta_con_factura_en_tramite') return 'La factura está en trámite en ARCA; probá de nuevo en unos minutos.'
     return e.message
   }
   return 'No se pudo anular la venta.'
@@ -60,6 +63,15 @@ function BadgeFiscal({ estadoFiscal }: { estadoFiscal: string | undefined }) {
 }
 
 const MENSAJE_FACTURA_NO_DISPONIBLE = 'La factura de esta venta no está disponible para reimprimir.'
+const MENSAJE_NC_NO_DISPONIBLE = 'La nota de crédito de esta venta no está disponible para reimprimir.'
+const MENSAJE_NC_PENDIENTE = 'La nota de crédito quedó pendiente; se emitirá sola.'
+const MENSAJE_NC_RECHAZADA = 'ARCA rechazó la nota de crédito.'
+const MENSAJE_NC_NO_IMPRIMIBLE = 'La nota de crédito no está disponible para imprimir.'
+
+function BadgeNotaDeCredito({ estado }: { estado: string | null | undefined }) {
+  const badge = badgeDeNotaDeCredito(estado)
+  return badge ? <span className={`badge ${badge.clase} ms-1`}>{badge.etiqueta}</span> : null
+}
 
 type PropsModalDetalle = {
   comprobante: ComprobanteEmitido | null
@@ -250,6 +262,15 @@ type Props = {
   /** Reimpresión de la factura aprobada de una venta: definido ⇒ las filas con factura aprobada ofrecen "Reimprimir factura".
    * La factura sale del comprobante que devuelve el servidor al hacer click, nunca de lo que muestre el listado. */
   alReimprimirFactura?: (comprobante: ComprobanteEmitido, factura: DatosDeFacturaFiscal, medios: MedioPagoListado[]) => void
+  /** Impresión de la nota de crédito aprobada de una venta anulada: al anular (primera impresión) y desde "Reimprimir NC".
+   * Definido ⇒ se imprime sola al anular y las filas con NC aprobada ofrecen "Reimprimir NC". */
+  alImprimirNotaDeCredito?: (
+    comprobante: ComprobanteEmitido,
+    notaDeCredito: DatosDeFacturaFiscal,
+    facturaAsociada: DatosDeFacturaFiscal | null,
+    medios: MedioPagoListado[],
+    opciones: { reimpresion: boolean },
+  ) => void
 }
 
 /**
@@ -268,7 +289,7 @@ type Props = {
  * de arriba: abrir otro detalle o cerrar el modal invalida cualquier respuesta en vuelo del
  * anterior (react-async-state regla 2/3) sin afectar el refresco del listado.
  */
-export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}) {
+export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNotaDeCredito }: Props = {}) {
   const { puntoVenta } = usePuntoVenta()
   const { usuario } = useAuth()
   // Rol más restrictivo (Root, que nunca opera el POS) sin sesión resuelta todavía — mismo
@@ -408,6 +429,19 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}
     setErrorAnular('')
   }
 
+  /** Imprime la NC solo si ARCA ya la aprobó (con la factura anulada como comprobante asociado) y devuelve el aviso que
+   * corresponda; sin NC en la respuesta (venta sin factura, servidor anterior) no hace ni dice nada. */
+  function imprimirNotaDeCreditoDeAnulacion(anulada: ComprobanteEmitido): { error: boolean; texto: string } | null {
+    const nc = anulada.fiscal?.notaDeCredito
+    if (!nc) return null
+    if (nc.estado === 'pendiente') return { error: false, texto: MENSAJE_NC_PENDIENTE }
+    if (nc.estado === 'rechazado') return { error: true, texto: MENSAJE_NC_RECHAZADA }
+    if (nc.estado !== 'aprobado') return null
+    if (!nc.comprobante) return { error: true, texto: MENSAJE_NC_NO_IMPRIMIBLE }
+    alImprimirNotaDeCredito?.(anulada, nc.comprobante, anulada.fiscal?.comprobante ?? null, medios, { reimpresion: false })
+    return null
+  }
+
   async function confirmarAnular() {
     if (anulandoRef.current || !filaAAnular) return
     const fila = filaAAnular
@@ -417,10 +451,18 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}
     const miGeneracion = (generacionRef.current += 1)
 
     try {
-      await clienteDeVentas.anular(fila.id)
+      const anulada = await clienteDeVentas.anular(fila.id)
+      // La NC ya está emitida en el servidor: se imprime aunque la pantalla haya cambiado de listado mientras tanto.
+      const avisoDeNotaDeCredito = imprimirNotaDeCreditoDeAnulacion(anulada)
       if (generacionRef.current !== miGeneracion) {
-        setAvisoDeAnulacion({ error: false, texto: `La venta ${fila.numeroVisible} se anuló.` })
+        setAvisoDeAnulacion({
+          error: avisoDeNotaDeCredito?.error ?? false,
+          texto: `La venta ${fila.numeroVisible} se anuló.${avisoDeNotaDeCredito ? ` ${avisoDeNotaDeCredito.texto}` : ''}`,
+        })
         return
+      }
+      if (avisoDeNotaDeCredito) {
+        setAvisoDeAnulacion({ error: avisoDeNotaDeCredito.error, texto: `La venta ${fila.numeroVisible} se anuló. ${avisoDeNotaDeCredito.texto}` })
       }
       focoPendienteRef.current = true
       setFilaAAnular(null)
@@ -532,6 +574,42 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}
       }
 
       alReimprimir?.(comprobante, medios)
+    } catch (e) {
+      setErroresReimprimir((prev) => ({ ...prev, [id]: mensajeDeErrorReimprimir(e) }))
+    } finally {
+      idsReimprimiendoRef.current.delete(id)
+      setIdsReimprimiendo((prev) => {
+        const siguiente = new Set(prev)
+        siguiente.delete(id)
+        return siguiente
+      })
+    }
+  }
+
+  /** "Reimprimir NC": también vuelve a pedir la venta y solo imprime con la NC aprobada y su comprobante en la respuesta;
+   * nunca imprime un ticket ni una factura en su lugar. Comparte con las demás reimpresiones el bloqueo por fila. */
+  async function reimprimirNotaDeCredito(id: number) {
+    if (!alImprimirNotaDeCredito) return
+    if (idsReimprimiendoRef.current.has(id)) return
+    idsReimprimiendoRef.current.add(id)
+    setIdsReimprimiendo((prev) => new Set(prev).add(id))
+    setErroresReimprimir((prev) => {
+      if (!(id in prev)) return prev
+      const { [id]: _omitido, ...resto } = prev
+      return resto
+    })
+
+    try {
+      const comprobante = await clienteDeVentas.obtener(id)
+      const nc = comprobante.fiscal?.notaDeCredito
+      setVentas((prev) =>
+        prev.map((v) => (v.id === id ? { ...v, estado: comprobante.estado, estadoNotaDeCredito: nc?.estado ?? null } : v)),
+      )
+      if (nc?.estado !== 'aprobado' || !nc.comprobante) {
+        setErroresReimprimir((prev) => ({ ...prev, [id]: MENSAJE_NC_NO_DISPONIBLE }))
+        return
+      }
+      alImprimirNotaDeCredito(comprobante, nc.comprobante, comprobante.fiscal?.comprobante ?? null, medios, { reimpresion: true })
     } catch (e) {
       setErroresReimprimir((prev) => ({ ...prev, [id]: mensajeDeErrorReimprimir(e) }))
     } finally {
@@ -712,6 +790,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}
                           {etiquetaDeEstadoVenta(v.estado)}
                         </span>
                         <BadgeFiscal estadoFiscal={v.estadoFiscal} />
+                        <BadgeNotaDeCredito estado={v.estadoNotaDeCredito} />
                         {tieneDescuentoManual(v) && (
                           <span className="badge text-bg-warning ms-1" title={`Descuento manual: ${formatearMoneda(v.descuentoManualTotal)}`}>
                             Desc. manual
@@ -747,6 +826,18 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura }: Props = {}
                             >
                               <Icono icono="imprimir" />
                               Reimprimir factura
+                            </button>
+                          )}
+                          {alImprimirNotaDeCredito && puedeReimprimirNotaDeCredito(v) && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1"
+                              aria-busy={idsReimprimiendo.has(v.id) || undefined}
+                              disabled={bloqueado || idsReimprimiendo.has(v.id)}
+                              onClick={() => void reimprimirNotaDeCredito(v.id)}
+                            >
+                              <Icono icono="imprimir" />
+                              Reimprimir NC
                             </button>
                           )}
                         </div>

@@ -1691,6 +1691,8 @@ export type VentaDeTurnoListado = {
   mediosDePago: MedioDeVentaNeto[]
   /** Estado de facturación de la venta; ausente en un servidor anterior al campo. */
   estadoFiscal?: EstadoFiscalDeVenta
+  /** Estado de la nota de crédito de una venta anulada que tenía factura; ausente o `null` si no hay NC. */
+  estadoNotaDeCredito?: EstadoDeNotaDeCredito['estado'] | null
 }
 
 /** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
@@ -2203,6 +2205,16 @@ export type FiscalDeVenta = {
   idFacturacion: number | null
   error: string | null
   comprobante: DatosDeFacturaFiscal | null
+  /** Nota de crédito de una venta anulada con factura. `estado` y `comprobante` de arriba siguen describiendo la factura. */
+  notaDeCredito?: EstadoDeNotaDeCredito | null
+}
+
+/** Nota de crédito emitida al anular una venta facturada. `comprobante` es la NC y solo viene con la NC aprobada. */
+export type EstadoDeNotaDeCredito = {
+  estado: 'pendiente' | 'aprobado' | 'rechazado'
+  idFacturacion: number
+  error?: string | null
+  comprobante?: DatosDeFacturaFiscal | null
 }
 
 /** Item ya emitido — snapshot inmutable (espejo de `ItemEmitido`). */

@@ -194,3 +194,26 @@ export function badgeFiscalDeVenta(estadoFiscal: string | undefined): BadgeFisca
 export function puedeReimprimirFactura(fila: Pick<VentaDeTurnoListado, 'estado' | 'estadoFiscal'>): boolean {
   return fila.estado === 'Emitido' && fila.estadoFiscal === 'aprobado'
 }
+
+// ---- Nota de crédito ----------------------------------------------------------------------
+
+export type BadgeDeNotaDeCredito = { etiqueta: 'NC emitida' | 'NC pendiente' | 'NC rechazada'; clase: string }
+
+/** Marca de la nota de crédito de una fila anulada. Sin marca si no hay NC, o si el servidor no manda el campo o manda un valor que este cliente no conoce. */
+export function badgeDeNotaDeCredito(estado: string | null | undefined): BadgeDeNotaDeCredito | null {
+  switch (estado) {
+    case 'aprobado':
+      return { etiqueta: 'NC emitida', clase: 'text-bg-success' }
+    case 'pendiente':
+      return { etiqueta: 'NC pendiente', clase: 'text-bg-warning' }
+    case 'rechazado':
+      return { etiqueta: 'NC rechazada', clase: 'text-bg-danger' }
+    default:
+      return null
+  }
+}
+
+/** Ofrece "Reimprimir NC" solo con la venta anulada y la NC aprobada según el listado; el comprobante a imprimir se vuelve a pedir al servidor al hacer click. */
+export function puedeReimprimirNotaDeCredito(fila: Pick<VentaDeTurnoListado, 'estado' | 'estadoNotaDeCredito'>): boolean {
+  return fila.estado === 'Anulado' && fila.estadoNotaDeCredito === 'aprobado'
+}
