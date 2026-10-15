@@ -546,29 +546,34 @@ describe('artículo por importe', () => {
   })
 
   describe('previaDeLinea', () => {
-    it('el total es el importe al peso entero, sin necesitar precio de lista (150,50 cobra 151)', () => {
-      const previa = previaDeLinea(porImporte(), undefined)
+    const resueltoPorImporte = (precio: number) => resultadoFixture({ idArticulo: 500, precioOriginal: precio, precioFinal: precio, descuentoUnitario: 0 })
+
+    it('cotiza con el precio que resolvió el servidor, al peso entero (150,50 cobra 151)', () => {
+      const previa = previaDeLinea(porImporte(), resueltoPorImporte(150.5))
 
       expect(previa).toEqual({ precioUnitario: 150.5, descuentoUnitario: 0, total: 151, ajusteManual: 0, ahorroDeCombo: 0 })
     })
 
-    it('ignora cualquier precio resuelto por una lista', () => {
-      const previa = previaDeLinea(porImporte({ importe: 150 }), resultadoFixture({ idArticulo: 500, precioOriginal: 999, precioFinal: 999, descuentoUnitario: 0 }))
+    it('con una lista derivada cotiza el importe con su porcentaje, no el tipeado (1500 a -10 % cobra 1350)', () => {
+      const previa = previaDeLinea(porImporte({ importe: 1500 }), resueltoPorImporte(1350))
 
-      expect(previa.precioUnitario).toBe(150)
-      expect(previa.total).toBe(150)
+      expect(previa).toMatchObject({ precioUnitario: 1350, total: 1350 })
     })
 
-    it('el ajuste manual se aplica sobre el importe', () => {
-      const previa = previaDeLinea(porImporte({ importe: 150, ajusteManualPorcentaje: -10 }), undefined)
+    it('sin precio resuelto todavía no tiene total, como cualquier otra línea', () => {
+      expect(previaDeLinea(porImporte(), undefined)).toEqual({ precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0, ahorroDeCombo: 0 })
+    })
 
-      expect(previa).toMatchObject({ total: 135, ajusteManual: -15 })
+    it('el ajuste manual se aplica sobre el precio resuelto', () => {
+      const previa = previaDeLinea(porImporte({ importe: 1500, ajusteManualPorcentaje: -10 }), resueltoPorImporte(1350))
+
+      expect(previa).toMatchObject({ total: 1215, ajusteManual: -135 })
     })
 
     it('el subtotal suma la línea por importe junto con las de lista', () => {
       const lineas = [lineaFixture({ idArticulo: 1, cantidad: 2 }), porImporte({ importe: 150 })]
 
-      expect(calcularSubtotalPrevia(lineas, { 1: resultadoFixture() })).toBe(2 * 90 + 150)
+      expect(calcularSubtotalPrevia(lineas, { 1: resultadoFixture(), f1: resueltoPorImporte(135) })).toBe(2 * 90 + 135)
     })
   })
 
@@ -603,10 +608,16 @@ describe('artículo por importe', () => {
 })
 
 describe('calcularSubtotalPrevia — solo líneas por importe', () => {
-  it('un carrito de líneas por importe tiene subtotal sin esperar ningún precio resuelto', () => {
+  it('un carrito de líneas por importe espera los precios resueltos: con la lista derivada del cliente el subtotal no es la suma de los importes', () => {
     const lineas = [lineaFixture({ idLinea: 'f1', idArticulo: 500, cantidad: 1, importe: 150 }), lineaFixture({ idLinea: 'f2', idArticulo: 500, cantidad: 1, importe: 80 })]
 
-    expect(calcularSubtotalPrevia(lineas, {})).toBe(230)
+    expect(calcularSubtotalPrevia(lineas, {})).toBeNull()
+    expect(
+      calcularSubtotalPrevia(lineas, {
+        f1: resultadoFixture({ idArticulo: 500, precioOriginal: 135, precioFinal: 135, descuentoUnitario: 0 }),
+        f2: resultadoFixture({ idArticulo: 500, precioOriginal: 72, precioFinal: 72, descuentoUnitario: 0 }),
+      }),
+    ).toBe(207)
   })
 
   it('con una línea de lista sin resolver sigue sin haber subtotal', () => {

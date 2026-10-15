@@ -263,22 +263,22 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             PreciosPorNombre(fija));
         Assert.Equal(3, fija.GetProperty("total").GetInt32());
 
-        // Derivadas: el porcentaje sobre el precio de la BASE (no sobre otra lista), redondeado al peso entero lejos de cero, y sin
+        // Derivadas: el porcentaje sobre el precio de la BASE (no sobre otra lista), a 2 decimales lejos de cero (el empate de 0,165 sube a 0,17), y sin
         // precio en la base no hay artículo aunque la derivada no tenga filas propias.
         await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, recargo);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 110m, ["B solo en la default"] = 39m, ["D centavos"] = 0m },
+            new Dictionary<string, decimal> { ["A con todo"] = 110m, ["B solo en la default"] = 38.5m, ["D centavos"] = 0.17m },
             PreciosPorNombre(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente)));
 
         await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, descuento);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 90m, ["B solo en la default"] = 32m, ["D centavos"] = 0m },
+            new Dictionary<string, decimal> { ["A con todo"] = 90m, ["B solo en la default"] = 31.5m, ["D centavos"] = 0.14m },
             PreciosPorNombre(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente)));
 
-        // 35 × 1,5 = 52,5: al peso entero y lejos de cero da 53 (el redondeo bancario daría 52).
+        // 0,15 × 1,5 = 0,225: a 2 decimales y lejos de cero da 0,23 (el redondeo bancario daría 0,22).
         await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, recargoMitad);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 150m, ["B solo en la default"] = 53m, ["D centavos"] = 0m },
+            new Dictionary<string, decimal> { ["A con todo"] = 150m, ["B solo en la default"] = 52.5m, ["D centavos"] = 0.23m },
             PreciosPorNombre(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente)));
     }
 

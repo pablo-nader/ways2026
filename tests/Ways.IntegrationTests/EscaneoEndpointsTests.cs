@@ -99,7 +99,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     private async Task<Articulo> SembrarArticuloAsync(
         int idTenant, int idArea, int idAlicuotaIva, string nombre,
         string codigoInterno, bool activo = true, string? codigoBarra = null, bool acumulaEnVenta = true,
-        UnidadVenta unidadVenta = UnidadVenta.Unidad)
+        UnidadVenta unidadVenta = UnidadVenta.Unidad, TeclaAtajo? teclaAtajo = null, bool disponibleVenta = true)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow;
@@ -115,6 +115,8 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             EsProducto = true,
             Activo = activo,
             AcumulaEnVenta = acumulaEnVenta,
+            TeclaAtajo = teclaAtajo,
+            DisponibleVenta = disponibleVenta,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
@@ -279,5 +281,65 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Equal(HttpStatusCode.NotFound, respuestaCodigoInterno.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, respuestaCodigoBarra.StatusCode);
+    }
+
+    /// <summary>Solo entran los artículos por importe, vivos, a la venta y con tecla; el orden es el de la tecla y no el de alta.</summary>
+    [Fact]
+    public async Task LosAtajosDeImporteSoloTraenLosArticulosPorImporteVivosAVentaYConTecla()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LosAtajosDeImporteSoloTraenLosArticulosPorImporteVivosAVentaYConTecla));
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Verdulería", "501", acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe, teclaAtajo: TeclaAtajo.F6);
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Fiambrería", "500", acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe, teclaAtajo: TeclaAtajo.F5);
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Inactivo", "502", activo: false, acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe, teclaAtajo: TeclaAtajo.F7);
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Uso interno", "503", acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe, teclaAtajo: TeclaAtajo.F8, disponibleVenta: false);
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Sin tecla", "504", acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe);
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Común", "505");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.GetFromJsonAsync<List<AtajoDeImporte>>("/api/articulos/atajos-de-importe", OpcionesJson);
+
+        Assert.NotNull(respuesta);
+        Assert.Equal(["F5:500:Fiambrería", "F6:501:Verdulería"], respuesta!.Select(a => $"{a.TeclaAtajo}:{a.CodigoInterno}:{a.Nombre}"));
+        Assert.All(respuesta, a => Assert.True(a.IdArticulo > 0));
+    }
+
+    [Fact]
+    public async Task LosAtajosDeImporteDeOtroTenantNoSeVen()
+    {
+        var (idTenantA, idAreaA, idAlicuotaIvaA, _, _) =
+            await AprovisionarTenantAsync(nameof(LosAtajosDeImporteDeOtroTenantNoSeVen) + "-A");
+        await SembrarArticuloAsync(idTenantA, idAreaA, idAlicuotaIvaA, "Fiambrería", "500", acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe, teclaAtajo: TeclaAtajo.F5);
+        var (_, _, _, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(LosAtajosDeImporteDeOtroTenantNoSeVen) + "-B");
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+
+        var respuesta = await adminB.GetFromJsonAsync<List<AtajoDeImporte>>("/api/articulos/atajos-de-importe", OpcionesJson);
+
+        Assert.Empty(respuesta!);
+    }
+
+    [Fact]
+    public async Task UnVendedorPuedeLeerLosAtajosDeImporte()
+    {
+        var (idTenant, idArea, idAlicuotaIva, _, _) =
+            await AprovisionarTenantAsync(nameof(UnVendedorPuedeLeerLosAtajosDeImporte));
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Fiambrería", "500", acumulaEnVenta: false, unidadVenta: UnidadVenta.Importe, teclaAtajo: TeclaAtajo.F5);
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeLeerLosAtajosDeImporte));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.GetFromJsonAsync<List<AtajoDeImporte>>("/api/articulos/atajos-de-importe", OpcionesJson);
+
+        Assert.Single(respuesta!);
+    }
+
+    [Fact]
+    public async Task LosAtajosDeImporteExigenSesion()
+    {
+        using var anonimo = fixture.CreateClient();
+
+        var respuesta = await anonimo.GetAsync("/api/articulos/atajos-de-importe");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
     }
 }

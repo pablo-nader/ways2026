@@ -30,6 +30,9 @@ there), reports. No rewrite of existing rows.
   and required for them, on the online sale, the offline sale and the price preview. The server
   still ignores client prices for every other article.
 - D2 — A by-amount line has quantity exactly 1, takes no price-list price, no offer and no combo.
+  Amended 2026-10-14 (owner): the client's derived list still applies its percentage to the typed
+  amount (1500 at -10 % is 1350); a fixed list leaves it unchanged. See
+  `listas-derivadas-con-centavos-e-importe.md`.
   A by-amount article needs no price in any list: `articulo_sin_precio_vigente` does not apply to
   it and the POS snapshot emits it without a price.
 - D3 — The shortcut is a column on the article (`tecla_atajo`, values F5..F8, NULL = none), only
@@ -154,7 +157,8 @@ authored lines; one PR per task T1–T4, T5 as the release PR.
   - Beyond the brief: quotes and delivery notes reject by-amount articles
     (`articulo_por_importe_no_admitido`); publishing one online is rejected; cuenta corriente
     repricing skips by-amount lines; a credit note with an associated sale must match a sold
-    line of the same article and amount.
+    line of the same article and amount (since 2026-10-14 the amount of the credit note is the stored unit
+    price, which already carries the derived-list percentage, and the server takes it as is).
   - Judgment-day round 1 (both judges read the whole diff, tests included): no severe finding.
     Accepted corrections, in progress: C1 repricing must read how the LINE was sold, not the
     article's current unit → new column `items_comprobante_venta.por_importe boolean NOT NULL

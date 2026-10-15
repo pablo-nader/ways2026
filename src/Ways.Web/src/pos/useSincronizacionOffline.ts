@@ -146,6 +146,9 @@ export type ResultadoDeSincronizacionOffline = {
   /** Cuántas veces el servidor respondió el pedido de la instantánea (un `200` o un `304`) desde que
    * montó el hook: cada incremento prueba que hay red. Cargar la copia local no lo mueve. */
   verificacionesConElServidor: number
+  /** `true` cuando ya se leyó la copia persistida de este punto de venta, haya o no una instantánea en ella: antes, un `instantanea` en
+   * `null` todavía puede ser solo una lectura que no terminó. */
+  copiaLocalLeida: boolean
   outboxCount: number
   /** Señal proactiva para la UI (avisar que se vende con la copia local, buscar clientes solo en
    * esa copia) ANTES de un intento, no solo
@@ -248,9 +251,10 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
   for (const [indice, linea] of lineas.entries()) {
     const precios = vigentes[indice]
     if (!precios) return null
-    // La línea por importe viaja con su importe y nunca con precio de lista ni descuento (el servidor rechaza la mezcla).
+    // La línea por importe viaja con su importe y con el precio que cobró la caja (el importe con el porcentaje de la lista
+    // derivada): el servidor no lo re-deriva con la lista de hoy. Sin descuento ni combo: no hay oferta sobre un importe.
     if (linea.importe !== undefined) {
-      enriquecidas.push(linea)
+      enriquecidas.push({ ...linea, precioUnitario: precios.precioOriginal })
       continue
     }
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
@@ -291,6 +295,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const [instantanea, setInstantanea] = useState<InstantaneaDePos | null>(null)
   const [verificadaEn, setVerificadaEn] = useState<string | null>(null)
   const [verificacionesConElServidor, setVerificacionesConElServidor] = useState(0)
+  const [copiaLocalLeida, setCopiaLocalLeida] = useState(false)
   // Última instantánea local conocida (persistida o recién descargada): de acá sale la etiqueta del
   // refresco condicional y lo que se vuelve a persistir con la hora nueva tras un `304`.
   const instantaneaLocalRef = useRef<InstantaneaLocal | null>(null)
@@ -731,6 +736,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     if (!activo || idPuntoVenta === null) {
       setInstantanea(null)
       setVerificadaEn(null)
+      setCopiaLocalLeida(false)
       instantaneaLocalRef.current = null
       setOutboxCount(0)
       setVentasConError([])
@@ -743,6 +749,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // El almacén guarda un solo bloque por dispositivo: el de otro punto de venta (un cambio de
     // punto de venta) nunca se usa para numerar acá — queda descartado hasta reponer uno propio.
     bloqueRef.current = null
+    setCopiaLocalLeida(false)
 
     Promise.all([
       leerInstantaneaLocal(almacenRef.current),
@@ -762,6 +769,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       setOutboxCount(outboxGuardado.length)
       bloqueRef.current = bloqueRef.current ?? (bloqueGuardado?.idPuntoVenta === idPuntoVenta ? bloqueGuardado : null)
       setVentasConError(rechazadasGuardadas)
+      setCopiaLocalLeida(true)
     })
 
     return () => {
@@ -1029,6 +1037,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     instantanea,
     verificadaEn,
     verificacionesConElServidor,
+    copiaLocalLeida,
     outboxCount,
     ventasConError,
     enLinea,

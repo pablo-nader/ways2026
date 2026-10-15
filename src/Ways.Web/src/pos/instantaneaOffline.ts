@@ -10,6 +10,7 @@
 import type { AlmacenClaveValor, AlmacenDeClavesMultiples } from './almacenPos'
 import type {
   ArticuloDeInstantanea,
+  AtajoDeImporte,
   ArticuloEscaneado,
   ClienteDeInstantanea,
   ClienteListado,
@@ -19,6 +20,7 @@ import type {
   EscalonDeCantidad,
   EscalonDeFamilia,
   InstantaneaDePos,
+  ListaDeInstantanea,
   MedioPagoDeInstantanea,
   MedioPagoListado,
   OfertaAplicada,
@@ -29,7 +31,7 @@ import type { LineaCarrito } from '../api/carrito'
 import type { PreciosPorLinea } from '../api/ventas'
 import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
 import { leerImporteTipeado } from '../api/importeDeVenta'
-import { redondearImporte } from '../formato/importes'
+import { productoRedondeado, redondearImporte } from '../formato/importes'
 import { normalizarParaBuscar } from '../formato/texto'
 import { resolverCombos, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
 
@@ -144,6 +146,7 @@ export function esInstantaneaValida(valor: unknown): valor is InstantaneaDePos {
     valor.articulos.every(esArticulo) &&
     Array.isArray(valor.clientes) &&
     valor.clientes.every(esCliente)
+    // `listas` tampoco: su ausencia (copia guardada antes del campo) solo manda a cotizar online las líneas por importe.
     // `combos` NO se valida acá: una malformada no invalida la instantánea (un dispositivo sin copia no
     // podría vender offline y uno con copia se quedaría con una vieja para siempre); se sanea al adoptarla
     // o leerla (`sanearCombosDeInstantanea`).
@@ -262,7 +265,9 @@ export function resolverEscaneoOffline(instantanea: InstantaneaDePos, entradaCru
 }
 
 /** El artículo por importe como lo responde el escaneo del servidor: cantidad 1, sin acumular, con `importe` solo si se tipeó. */
-function escaneadoPorImporte(articulo: ArticuloDeInstantanea, codigoBarra: string | null, importe?: number): ArticuloEscaneado {
+function escaneadoPorImporte(
+  articulo: Pick<ArticuloDeInstantanea, 'idArticulo' | 'codigoInterno' | 'nombre' | 'teclaAtajo'>,
+  codigoBarra: string | null, importe?: number): ArticuloEscaneado {
   return {
     idArticulo: articulo.idArticulo,
     codigoInterno: articulo.codigoInterno,
@@ -275,9 +280,6 @@ function escaneadoPorImporte(articulo: ArticuloDeInstantanea, codigoBarra: strin
     ...(importe !== undefined ? { importe } : {}),
   }
 }
-
-/** Un artículo por importe con tecla de función, tal como lo muestra el encabezado de la venta. */
-export type AtajoDeImporte = { teclaAtajo: TeclaAtajo; idArticulo: number; codigoInterno: string; nombre: string }
 
 const ORDEN_DE_TECLAS: readonly string[] = ['F5', 'F6', 'F7', 'F8']
 
@@ -306,6 +308,13 @@ export function resolverAtajoOffline(instantanea: InstantaneaDePos, tecla: Tecla
 
   const importe = leerImporteTipeado(textoImporte)
   return importe === null ? { tipo: 'importeInvalido' } : { tipo: 'articulo', articulo: escaneadoPorImporte(articulo, null, importe) }
+}
+
+/** Lo mismo con los atajos que sirve el servidor: el artículo sale del registro de la tecla, nunca de reinterpretar su código
+ * como `importe*código` (un código de 7 o más caracteres se leería como código de barras). */
+export function resolverAtajoEnLinea(atajo: AtajoDeImporte, textoImporte: string): ResultadoDeAtajoOffline {
+  const importe = leerImporteTipeado(textoImporte)
+  return importe === null ? { tipo: 'importeInvalido' } : { tipo: 'articulo', articulo: escaneadoPorImporte(atajo, null, importe) }
 }
 
 /** Precio del artículo en la lista pedida; `null` si el artículo no tiene precio en esa lista. */
@@ -384,6 +393,32 @@ export function preciosVigentesOffline(
   }
 }
 
+/** La lista `idListaPrecio` tal como la trae la instantánea, o `null` si falta (copia anterior al campo, lista dada de baja)
+ * o viene malformada. Una derivada sin porcentaje numérico tampoco sirve para cotizar. */
+function listaDeInstantanea(instantanea: InstantaneaDePos, idListaPrecio: number): ListaDeInstantanea | null {
+  if (!Array.isArray(instantanea.listas)) return null
+  const lista = instantanea.listas.find((l) => esObjeto(l) && l.idListaPrecio === idListaPrecio)
+  if (!lista) return null
+  if (lista.modo === 'Fija') return lista
+  return lista.modo === 'Derivada' && typeof lista.porcentaje === 'number' && Number.isFinite(lista.porcentaje) ? lista : null
+}
+
+/**
+ * Precio de una línea por importe en `idListaPrecio`, espejo de `ServicioDeOfertas.ResolverPorImporte`: con una lista derivada el
+ * importe lleva su porcentaje (tipeado 1500 a -10 % es 1350, a 2 decimales y empate lejos de cero), con una fija queda igual.
+ * `null` cuando la instantánea no conoce la lista: no se cotiza a ciegas el importe sin descuento. El factor `1 + porcentaje/100`
+ * se arma como cociente de enteros según los decimales del porcentaje, así su representación más corta es el decimal exacto
+ * y `productoRedondeado` multiplica sin ruido de punto flotante (`importe × 1,116666`, no `importe × 1,1166659999…`).
+ */
+function precioDeLineaPorImporte(importe: number, instantanea: InstantaneaDePos, idListaPrecio: number): number | null {
+  const lista = listaDeInstantanea(instantanea, idListaPrecio)
+  if (!lista) return null
+  if (lista.modo === 'Fija' || lista.porcentaje === null) return importe
+  const decimales = Math.min(String(lista.porcentaje).split('.')[1]?.length ?? 0, 8)
+  const escala = 10 ** decimales
+  return productoRedondeado([importe, (100 * escala + Math.round(lista.porcentaje * escala)) / (100 * escala)], 2)
+}
+
 function indicePorArticulo(instantanea: InstantaneaDePos): Map<number, ArticuloDeInstantanea> {
   return new Map(instantanea.articulos.map((a) => [a.idArticulo, a]))
 }
@@ -398,7 +433,7 @@ function indicePorArticulo(instantanea: InstantaneaDePos): Map<number, ArticuloD
  * si divergieran, el cajero vería un importe y se cobraría otro. La cantidad de familia de cada
  * línea es la suma de las cantidades de TODAS las líneas cuyo artículo comparte su `idFamilia`
  * (una línea sin familia, o de un artículo ausente de la instantánea, solo cuenta la suya). Una línea por importe (`importe`) se
- * cotiza a ese importe, sin lista ni oferta, y no suma a la cantidad de ninguna familia: el servidor tampoco la cuenta.
+ * cotiza a ese importe con el porcentaje de la lista si es derivada (`precioDeLineaPorImporte`), sin oferta, y no suma a la cantidad de ninguna familia: el servidor tampoco la cuenta.
  */
 export function preciosVigentesDeLasLineas(
   lineas: readonly { idArticulo: number; cantidad: number; importe?: number }[],
@@ -419,7 +454,8 @@ export function preciosVigentesDeLasLineas(
 
   return lineas.map((linea) => {
     if (linea.importe !== undefined) {
-      return { precioOriginal: linea.importe, precioFinal: linea.importe, descuentoUnitario: 0, aplicadas: [] }
+      const precio = precioDeLineaPorImporte(linea.importe, instantanea, idListaPrecio)
+      return precio === null ? null : { precioOriginal: precio, precioFinal: precio, descuentoUnitario: 0, aplicadas: [] }
     }
     const articulo = porId.get(linea.idArticulo)
     const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
@@ -529,8 +565,8 @@ export function resolverPreciosOffline(lineas: LineaCarrito[], instantanea: Inst
 
 /** `true` si TODAS las líneas tienen precio en la lista pedida dentro de la instantánea — la
  * precondición de la vista previa local y del checkout offline (todas con precio, o directamente
- * ir por la red en vez de mostrar o vender media venta a precio inventado); una línea por importe cuenta con su importe y no
- * necesita lista. ÚNICO gate para esa
+ * ir por la red en vez de mostrar o vender media venta a precio inventado); una línea por importe necesita que la instantánea conozca la lista del cliente (para
+ * aplicarle su porcentaje; una copia sin `listas` no sirve). ÚNICO gate para esa
  * precondición. Tipo de línea mínimo (`{ idArticulo }`) para validar tanto el carrito en pantalla
  * como un `LineaDeVenta[]` ya armado. */
 export function todasLasLineasTienenPrecioOffline(
@@ -543,8 +579,10 @@ export function todasLasLineasTienenPrecioOffline(
     lineas.length > 0 &&
     lineas.every((l) => {
       const articulo = porId.get(l.idArticulo)
-      // La línea por importe lleva su precio consigo: solo necesita que la instantánea conozca el artículo (para el ticket).
-      return articulo !== undefined && (l.importe !== undefined || precioEnLista(articulo, idListaPrecio) !== null)
+      if (articulo === undefined) return false
+      // La línea por importe se cotiza con la lista del cliente: sin ella no se cobra un importe sin el porcentaje que el servidor aplicaría.
+      if (l.importe !== undefined) return precioDeLineaPorImporte(l.importe, instantanea, idListaPrecio) !== null
+      return precioEnLista(articulo, idListaPrecio) !== null
     })
   )
 }

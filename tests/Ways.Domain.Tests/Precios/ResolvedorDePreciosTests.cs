@@ -38,21 +38,21 @@ public class ResolvedorDePreciosTests
         Assert.Equal(115m, resuelto);
     }
 
-    /// <summary>Un empate exacto de medio peso se redondea AwayFromZero (no bankers' rounding) y
-    /// el precio derivado de venta es siempre un peso entero.</summary>
+    /// <summary>El precio derivado conserva 2 decimales y un empate de medio centavo se redondea
+    /// AwayFromZero (no bankers' rounding): el descuento de una lista no se pierde en artículos baratos.</summary>
     [Theory]
-    [InlineData(100, 12.5, 113)]
-    [InlineData(100, 12.4, 112)]
-    [InlineData(100, -12.5, 88)]
-    [InlineData(1000, 11.6666, 1117)]
-    public void ElPrecioDerivadoSeRedondeaAlPesoEnteroYUnEmpateVaLejosDeCero(
+    [InlineData(1, -10, 0.90)]
+    [InlineData(100, 12.5, 112.5)]
+    [InlineData(100, -12.5, 87.5)]
+    [InlineData(1000, 11.6666, 1116.67)]
+    [InlineData(1.05, -10, 0.945)]
+    [InlineData(0.25, 10, 0.28)]
+    public void ElPrecioDerivadoConservaDosDecimalesYUnEmpateVaLejosDeCero(
         double precioBase, double porcentaje, double esperado)
     {
-        // Filas de empate: 100 con +12.5 % da 112.5 -> 113 (el redondeo bancario daría 112) y
-        // 100 con -12.5 % da 87.5 -> 88 (el redondeo bancario daría 88: el empate de esa fila no lo distingue).
         var resuelto = ResolvedorDePrecios.ResolverPrecioDerivado((decimal)precioBase, (decimal)porcentaje);
 
-        Assert.Equal((decimal)esperado, resuelto);
+        Assert.Equal(Math.Round((decimal)esperado, 2, MidpointRounding.AwayFromZero), resuelto);
     }
 
     /// <summary>(judgment-day, item 4) Un descuento mayor a -100% da un precio derivado

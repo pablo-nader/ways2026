@@ -32,6 +32,10 @@ public record ArticuloEscaneado(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     decimal? Importe = null);
 
+/// <summary>Una tecla de función del POS (F5 a F8) y el artículo por importe que la tiene asignada: lo mínimo para armar la
+/// barra de atajos sin la instantánea del punto de venta.</summary>
+public record AtajoDeImporte(TeclaAtajo TeclaAtajo, int IdArticulo, string CodigoInterno, string Nombre);
+
 /// <summary>
 /// Resolución de escaneo del POS (design decisiones 7 y 10) — servicio de Application dedicado,
 /// distinto de <see cref="Articulos.ServicioDeArticulos"/> (ABM): acá no hay autorización de
@@ -85,6 +89,16 @@ public class ServicioDeEscaneo(IWaysDbContext db)
             articulo.TeclaAtajo,
             importe);
     }
+
+    /// <summary>Los artículos por importe que tienen tecla, con el mismo alcance que el escaneo (vivos y disponibles a la venta, del
+    /// tenant de la sesión), ordenados por tecla. Es la lectura de los atajos del POS cuando no hay instantánea: la instantánea
+    /// exige un dispositivo y la sesión de un navegador no lo es.</summary>
+    public async Task<IReadOnlyList<AtajoDeImporte>> ListarAtajosDeImporteAsync(CancellationToken ct = default) =>
+        await db.Articulos
+            .Where(a => a.Activo && a.DisponibleVenta && a.UnidadVenta == UnidadVenta.Importe && a.TeclaAtajo != null)
+            .OrderBy(a => a.TeclaAtajo)
+            .Select(a => new AtajoDeImporte(a.TeclaAtajo!.Value, a.Id, a.CodigoInterno, a.Nombre))
+            .ToListAsync(ct);
 
     /// <summary>Para un artículo por importe el prefijo no es una cantidad sino el monto, y un prefijo que no es un importe
     /// válido NO cae a "cantidad 1 sin importe" como en los demás artículos: se rechaza (400 <c>importe_invalido</c>),

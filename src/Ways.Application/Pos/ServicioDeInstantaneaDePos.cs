@@ -206,7 +206,9 @@ public class ServicioDeInstantaneaDePos(
             : ArmadorDeInstantanea.ArmarCombos(
                 await ServicioDeCombos.CargarParaInstantaneaAsync(db, idEmpresa, ct), articulosDeInstantanea);
 
+        var listas = soloListaDelConsumidorFinal ? null : ArmadorDeInstantanea.ArmarListas(listasVisibles, idsLista);
+
         return new InstantaneaDePos(
-            momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago, combos);
+            momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago, combos, listas);
     }
 }

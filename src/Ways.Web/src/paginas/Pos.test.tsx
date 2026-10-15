@@ -403,6 +403,7 @@ function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): Insta
     clientes: [clienteDeInstantaneaFixture()],
     mediosDePago: [],
     toleranciaPago: 0,
+    listas: [{ idListaPrecio: 1, modo: 'Fija', porcentaje: null }],
     ...sobrescribir,
   }
 }
@@ -9861,9 +9862,13 @@ describe('Pos — artículos por importe', () => {
 
   /** Monta `Pos` con la instantánea del almacén ya cargada: el botón "Sincronizar ahora" solo existe con la instantánea en
    * memoria, así que esperarlo es esperar el DATO (los atajos y el escaneo local salen de ella). */
-  async function montarConInstantanea(articulos: ArticuloDeInstantanea[] = [fiambreriaDeInstantanea(), verduleriaDeInstantanea()], bloque = true) {
+  async function montarConInstantanea(
+    articulos: ArticuloDeInstantanea[] = [fiambreriaDeInstantanea(), verduleriaDeInstantanea()],
+    bloque = true,
+    sobrescribirInstantanea: Partial<InstantaneaDePos> = {},
+  ) {
     await prepararAlmacenOffline({
-      instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), ...articulos] }),
+      instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), ...articulos], ...sobrescribirInstantanea }),
       ...(bloque ? { bloque: { desde: 500, hasta: 599, proximo: 500 } } : {}),
     })
     renderPos()
@@ -9892,6 +9897,31 @@ describe('Pos — artículos por importe', () => {
       expect(screen.getByLabelText('Cantidad de Fiambrería')).toHaveValue(1)
       expect(within(screen.getByRole('table')).getAllByText('$ 150,00')).toHaveLength(2)
       expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('con la lista derivada del Consumidor Final, "1500*500" cotiza 1350 sin salir a la red', async () => {
+      await montarConInstantanea(undefined, true, { listas: [{ idListaPrecio: 1, modo: 'Derivada', porcentaje: -10 }] })
+
+      await escanear('1500*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 1.350,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(apiPostMock).not.toHaveBeenCalledWith(RUTA_RESOLVER_DEL_CARRITO, expect.anything())
+    })
+
+    it('una instantánea guardada sin `listas` no cotiza el importe a ciegas: pide el precio al servidor y cobra lo que éste resolvió', async () => {
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion([{ idArticulo: FIAMBRERIA, idListaPrecio: 1, precioOriginal: 1350, precioFinal: 1350, descuentoUnitario: 0, aplicadas: [] }]))
+          : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+      )
+      await montarConInstantanea(undefined, true, { listas: undefined })
+
+      await escanear('1500*500')
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 1.350,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(apiPostMock).toHaveBeenCalledWith(RUTA_RESOLVER_DEL_CARRITO, expect.objectContaining({ lineas: [expect.objectContaining({ idArticulo: FIAMBRERIA, importe: 1500 })] }))
     })
 
     it('la cantidad de una línea por importe no se edita', async () => {
@@ -10247,6 +10277,170 @@ describe('Pos — artículos por importe', () => {
     })
   })
 
+  describe('atajos F5 a F8 sin instantánea (lectura en el servidor)', () => {
+    const RUTA_DE_ATAJOS = '/articulos/atajos-de-importe'
+    const atajosDelServidor = () => [
+      { teclaAtajo: 'F5', idArticulo: FIAMBRERIA, codigoInterno: '500', nombre: 'Fiambrería' },
+      { teclaAtajo: 'F6', idArticulo: 501, codigoInterno: '501', nombre: 'Verdulería' },
+    ]
+    const llamadasDeAtajos = () => apiGetMock.mock.calls.filter(([ruta]) => ruta === RUTA_DE_ATAJOS)
+    const entradasEscaneadas = () =>
+      apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/articulos/escaneo?entrada=')).map(([ruta]) => decodeURIComponent(String(ruta).split('entrada=')[1]))
+
+    /** Responde la lectura de atajos y el escaneo por importe como el servidor (`importe*código`). */
+    function servidorConAtajos(lectura: () => Promise<unknown> = () => Promise.resolve(atajosDelServidor())) {
+      mockearApiGet((ruta) => {
+        if (ruta === RUTA_DE_ATAJOS) return lectura()
+        if (!ruta.startsWith('/articulos/escaneo?entrada=')) return undefined
+        const [importe, codigo] = decodeURIComponent(ruta.split('entrada=')[1]).split('*')
+        const nombre = codigo === '500' ? 'Fiambrería' : 'Verdulería'
+        return Promise.resolve(articuloEscaneadoFixture({ idArticulo: Number(codigo), codigoInterno: codigo, nombre, codigoBarra: null, acumulaEnVenta: false, unidadVenta: 'Importe', importe: Number(importe) }))
+      })
+      apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; importe?: number }[] }) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion(cuerpo.lineas.map((l) => ({ idArticulo: l.idArticulo, idListaPrecio: 1, precioOriginal: l.importe ?? 100, precioFinal: l.importe ?? 100, descuentoUnitario: 0, aplicadas: [] }))))
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+    }
+
+    async function montar() {
+      renderPos()
+      await esperarAlConsumidorFinal()
+    }
+
+    it('la barra ofrece un botón por cada artículo con tecla, en orden de tecla', async () => {
+      servidorConAtajos()
+      await montar()
+
+      const botones = await screen.findAllByRole('button', { name: /^(Fiambrería|Verdulería)/ })
+
+      expect(botones.map((b) => b.textContent)).toEqual(['Fiambrería (F5)', 'Verdulería (F6)'])
+      expect(botones[0]).toHaveAttribute('aria-keyshortcuts', 'F5')
+    })
+
+    it('F5 con el importe en el campo escanea "importe*código" y agrega la línea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      const noPrevenido = fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(noPrevenido).toBe(false)
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(entradasEscaneadas()).toEqual([])
+      expect(campoDeCodigo()).toHaveValue('')
+    })
+
+    it('el botón del atajo hace lo mismo que la tecla, y el importe con coma viaja con punto', async () => {
+      servidorConAtajos()
+      await montar()
+      await userEvent.type(campoDeCodigo(), '99,50')
+
+      await userEvent.click(await screen.findByRole('button', { name: /^Verdulería/ }))
+
+      await screen.findByText('Verdulería', { selector: 'td' })
+      expect(entradasEscaneadas()).toEqual([])
+      await waitFor(() => expect(within(screen.getByRole('table')).getByText('$ 99,50')).toBeInTheDocument())
+    })
+
+    it('un código interno de 7 o más caracteres agrega el artículo del atajo y no el que tiene ese código como código de barras', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta === RUTA_DE_ATAJOS) return Promise.resolve([{ teclaAtajo: 'F5', idArticulo: FIAMBRERIA, codigoInterno: '5000001', nombre: 'Fiambrería' }])
+        if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 999, codigoInterno: 'OTRO', nombre: 'Otro artículo', codigoBarra: '5000001' }))
+        return undefined
+      })
+      apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; importe?: number }[] }) =>
+        ruta === RUTA_RESOLVER_DEL_CARRITO
+          ? Promise.resolve(resolucion(cuerpo.lineas.map((l) => ({ idArticulo: l.idArticulo, idListaPrecio: 1, precioOriginal: l.importe ?? 100, precioFinal: l.importe ?? 100, descuentoUnitario: 0, aplicadas: [] }))))
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(screen.queryByText('Otro artículo', { selector: 'td' })).not.toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('con el campo vacío avisa que falta el importe y no escanea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(mensajeDeAtajoSinImporte('F5'))).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('un importe inválido avisa y no escanea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '1,500')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_IMPORTE_INVALIDO)).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+      expect(campoDeCodigo()).toHaveValue('1,500')
+    })
+
+    it('una tecla sin artículo asignado avisa y no escanea', async () => {
+      servidorConAtajos()
+      await montar()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F8' })
+
+      expect(await screen.findByText(mensajeDeAtajoSinArticulo('F8'))).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('si la lectura falla avisa que faltan los datos, y la tecla siguiente la vuelve a pedir', async () => {
+      let intentos = 0
+      servidorConAtajos(() => (++intentos === 1 ? Promise.reject(new Error('sin red')) : Promise.resolve(atajosDelServidor())))
+      await montar()
+      await waitFor(() => expect(llamadasDeAtajos()).toHaveLength(1))
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_ATAJO_SIN_DATOS)).toBeInTheDocument()
+      expect(entradasEscaneadas()).toEqual([])
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+      expect(llamadasDeAtajos()).toHaveLength(2)
+      fireEvent.keyDown(document, { key: 'F5' })
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(entradasEscaneadas()).toEqual([])
+    })
+
+    it('mientras la lectura sigue en vuelo avisa que faltan los datos y no la duplica', async () => {
+      servidorConAtajos(() => new Promise(() => {}))
+      await montar()
+      await waitFor(() => expect(llamadasDeAtajos()).toHaveLength(1))
+      await userEvent.type(campoDeCodigo(), '150')
+
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(await screen.findByText(MENSAJE_DE_ATAJO_SIN_DATOS)).toBeInTheDocument()
+      expect(llamadasDeAtajos()).toHaveLength(1)
+    })
+
+    it('con la instantánea del punto de venta no pide la lectura del servidor', async () => {
+      await montarConInstantanea()
+      await screen.findByRole('button', { name: /^Fiambrería/ })
+
+      expect(llamadasDeAtajos()).toHaveLength(0)
+    })
+  })
+
   describe('cobro sin red', () => {
     async function cobrarConEfectivo(importe: string) {
       await esperarMediosDePago()
@@ -10256,7 +10450,7 @@ describe('Pos — artículos por importe', () => {
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
     }
 
-    it('una venta solo por importe se encola con el importe, sin precios, y el ticket muestra la línea', async () => {
+    it('una venta solo por importe se encola con el importe y el precio cobrado, y el ticket muestra la línea', async () => {
       apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
       await montarConInstantanea()
       await escanear('150,50*500')
@@ -10268,11 +10462,11 @@ describe('Pos — artículos por importe', () => {
       expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
       const outbox = await leerOutbox(crearAlmacenIndexedDb())
       expect(outbox).toHaveLength(1)
-      expect(outbox[0].solicitud.lineas).toEqual([{ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150.5 }])
+      expect(outbox[0].solicitud.lineas).toEqual([{ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150.5, precioUnitario: 150.5 }])
       expect(screen.getByText('Total: $ 151,00')).toBeInTheDocument()
     })
 
-    it('una venta mixta encola precio de lista en la línea común y solo importe en la otra', async () => {
+    it('una venta mixta encola precio de lista en la línea común e importe con su precio cobrado en la otra', async () => {
       apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
       await montarConInstantanea()
       await escanear('7790001234567')
@@ -10287,7 +10481,7 @@ describe('Pos — artículos por importe', () => {
       const [comun, porImporte] = (await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.lineas ?? []
       expect(comun).toMatchObject({ idArticulo: 1, precioUnitario: 100, descuentoUnitario: 0 })
       expect(comun).not.toHaveProperty('importe')
-      expect(porImporte).toEqual({ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150 })
+      expect(porImporte).toEqual({ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150, precioUnitario: 150 })
     })
   })
 

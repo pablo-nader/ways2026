@@ -6,8 +6,10 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Combos;
 using Ways.Application.Precios;
 using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
+using Ways.Domain.Precios;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Ofertas;
@@ -380,7 +382,14 @@ public class ServicioDeOfertas(
     /// </summary>
     public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverDocumentoAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
-        ResolverAsync(lineas, momento, agregarPorFamilia: true, ct);
+        ResolverAsync(lineas, momento, agregarPorFamilia: true, aplicarListaAlImporte: true, ct);
+
+    /// <summary>Igual que <see cref="ResolverDocumentoAsync"/> pero el importe de una línea por importe se toma tal cual,
+    /// aunque la lista del cliente sea derivada: es el de una devolución, que reembolsa exactamente lo que se cobró (el
+    /// precio unitario guardado de la venta ya lleva el porcentaje de la lista) y no puede aplicarlo de nuevo.</summary>
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverDocumentoConImporteCobradoAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
+        ResolverAsync(lineas, momento, agregarPorFamilia: true, aplicarListaAlImporte: false, ct);
 
     /// <summary>Despacha según <see cref="SolicitudDeResolucion.Agregacion"/>. Un valor numérico fuera
     /// del enum (el binding JSON acepta enteros) se rechaza: ningún valor llega al servicio sin uso.</summary>
@@ -399,17 +408,17 @@ public class ServicioDeOfertas(
     /// unidad de UN artículo). Elegir entre las dos es decisión explícita del llamador.</summary>
     public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverPorLineaAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
-        ResolverAsync(lineas, momento, agregarPorFamilia: false, ct);
+        ResolverAsync(lineas, momento, agregarPorFamilia: false, aplicarListaAlImporte: true, ct);
 
     private async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, bool agregarPorFamilia,
-        CancellationToken ct) =>
-        (await ResolverConContextoAsync(lineas, momento, agregarPorFamilia, ct)).Resultados;
+        bool aplicarListaAlImporte, CancellationToken ct) =>
+        (await ResolverConContextoAsync(lineas, momento, agregarPorFamilia, ct, aplicarListaAlImporte)).Resultados;
 
     private async Task<(IReadOnlyList<ResultadoDeResolucion> Resultados, ContextoDeResolucion? Contexto)>
         ResolverConContextoAsync(
             IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, bool agregarPorFamilia,
-            CancellationToken ct)
+            CancellationToken ct, bool aplicarListaAlImporte = true)
     {
         var lineasPedidas = ExigirLineas(lineas);
         if (lineasPedidas.Count == 0)
@@ -417,7 +426,7 @@ public class ServicioDeOfertas(
             return ([], null);
         }
 
-        var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
+        var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct, cargarListasDeLosImportes: aplicarListaAlImporte);
         var cantidadPorFamilia = agregarPorFamilia ? CantidadesPorFamilia(contexto, lineasPedidas) : null;
         var resultado = new List<ResultadoDeResolucion>(lineasPedidas.Count);
 
@@ -425,7 +434,7 @@ public class ServicioDeOfertas(
         {
             if (linea.Importe is { } importe)
             {
-                resultado.Add(ResolverPorImporte(contexto, linea, importe));
+                resultado.Add(ResolverPorImporte(contexto, linea, importe, aplicarListaAlImporte));
                 continue;
             }
 
@@ -641,7 +650,11 @@ public class ServicioDeOfertas(
         IReadOnlyDictionary<(int IdArticulo, int IdListaPrecio), decimal?> Precios,
         DateOnly Fecha,
         TimeOnly Hora,
-        int DiaSemana);
+        int DiaSemana,
+        IReadOnlyDictionary<int, ListaDeImporte> ListasDeLosImportes);
+
+    /// <summary>Modo y porcentaje de una lista de precios, lo único que una línea por importe necesita de ella.</summary>
+    private sealed record ListaDeImporte(ModoLista Modo, decimal? Porcentaje);
 
     /// <summary>
     /// Presupuesto: 1 <c>articulos</c> + 1 <c>categorias</c> (mapa de ancestros completo del
@@ -655,7 +668,8 @@ public class ServicioDeOfertas(
     /// <see cref="OfertaCandidata"/> ya materializadas.
     /// </summary>
     private async Task<ContextoDeResolucion> ConstruirContextoAsync(
-        IReadOnlyList<LineaDeResolucion> lineas, DateTimeOffset? momento, CancellationToken ct)
+        IReadOnlyList<LineaDeResolucion> lineas, DateTimeOffset? momento, CancellationToken ct,
+        bool cargarListasDeLosImportes = false)
     {
         var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
         var idsListaPrecio = lineas.Select(l => l.IdListaPrecio).Distinct().ToList();
@@ -755,8 +769,21 @@ public class ServicioDeOfertas(
 
         var (fechaLocal, horaLocal, diaSemanaLocal) = DescomponerHoraLocal(momentoEfectivo);
 
+        // Una consulta más, solo si el lote trae una línea por importe: su precio es el monto tipeado con el porcentaje de
+        // la lista del cliente si es derivada. La existencia de la lista ya la validó PreciosVigentesEnLoteAsync.
+        var idsListaDeImportes = cargarListasDeLosImportes
+            ? lineas.Where(l => l.Importe is not null).Select(l => l.IdListaPrecio).Distinct().ToList()
+            : [];
+        var listasDeLosImportes = idsListaDeImportes.Count == 0
+            ? new Dictionary<int, ListaDeImporte>()
+            : (await db.ListasPrecio
+                .Where(l => idsListaDeImportes.Contains(l.Id))
+                .Select(l => new { l.Id, l.Modo, l.Porcentaje })
+                .ToListAsync(ct))
+                .ToDictionary(l => l.Id, l => new ListaDeImporte(l.Modo, l.Porcentaje));
+
         return new ContextoDeResolucion(
-            alcancePorArticulo, candidatas, precios, fechaLocal, horaLocal, diaSemanaLocal);
+            alcancePorArticulo, candidatas, precios, fechaLocal, horaLocal, diaSemanaLocal, listasDeLosImportes);
     }
 
     /// <summary>Lo que las dos resoluciones necesitan por línea antes de llamar al motor: el
@@ -811,11 +838,14 @@ public class ServicioDeOfertas(
         return cantidadPorFamilia;
     }
 
-    /// <summary>La línea de un artículo por importe: su precio es el monto que tipeó el cajero, igual en el precio
-    /// original y en el final, sin descuento ni ofertas. No mira la lista de precios ni las ofertas candidatas, y
-    /// tampoco suma a la cantidad de una familia. Solo un artículo por importe admite un importe, y su cantidad es 1.</summary>
+    /// <summary>La línea de un artículo por importe: su precio original es el monto que tipeó el cajero y el final es el
+    /// mismo, sin descuento ni ofertas. Con una lista derivada del cliente el monto lleva su porcentaje
+    /// (<see cref="ResolvedorDePrecios.ResolverPrecioDerivado"/>: tipeado 1500 a -10 % es 1350); con una fija queda como
+    /// está. Con <paramref name="aplicarLaLista"/> en <c>false</c> (una devolución) el monto se toma tal cual. No mira las
+    /// ofertas candidatas, y tampoco suma a la cantidad de una familia. Solo un artículo por importe admite un importe, y
+    /// su cantidad es 1.</summary>
     private static ResultadoDeResolucion ResolverPorImporte(
-        ContextoDeResolucion contexto, LineaDeResolucion linea, decimal importe)
+        ContextoDeResolucion contexto, LineaDeResolucion linea, decimal importe, bool aplicarLaLista)
     {
         if (contexto.AlcancePorArticulo[linea.IdArticulo].UnidadVenta != UnidadVenta.Importe)
         {
@@ -833,7 +863,29 @@ public class ServicioDeOfertas(
                 400);
         }
 
-        return new ResultadoDeResolucion(linea.IdArticulo, linea.IdListaPrecio, importe, importe, 0m, []);
+        var precio = aplicarLaLista ? ConLaListaDelCliente(contexto, linea, importe) : importe;
+
+        return new ResultadoDeResolucion(linea.IdArticulo, linea.IdListaPrecio, precio, precio, 0m, []);
+    }
+
+    private static decimal ConLaListaDelCliente(ContextoDeResolucion contexto, LineaDeResolucion linea, decimal importe)
+    {
+        var lista = contexto.ListasDeLosImportes.GetValueOrDefault(linea.IdListaPrecio)
+            ?? throw new ErrorDominio(
+                "referencia_invalida", $"No existe la lista de precios {linea.IdListaPrecio}.", 400);
+
+        if (lista.Modo == ModoLista.Fija)
+        {
+            return importe;
+        }
+
+        var porcentaje = lista.Porcentaje
+            ?? throw new ErrorDominio(
+                "precio_derivado_invalido",
+                $"La lista derivada {linea.IdListaPrecio} no tiene porcentaje configurado.",
+                422);
+
+        return ResolvedorDePrecios.ResolverPrecioDerivado(importe, porcentaje);
     }
 
     /// <summary>Par (artículo, lista) sin precio vigente: caso fuera de alcance de la spec de

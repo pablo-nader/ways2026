@@ -5,7 +5,7 @@
  * wirea `POST /api/ventas` (checkout real, Slice 4, mergeado a main).
  */
 import { api } from './cliente'
-import { calcularTotalesDeLinea, totalesDeAjusteManual } from './ajusteManual'
+import { totalesDeAjusteManual } from './ajusteManual'
 import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea } from './combos'
 import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
 import { redondearAPeso } from '../formato/importes'
@@ -111,21 +111,12 @@ export function indexarResolucionPorLinea(lineas: readonly LineaCarrito[], resul
  * línea (si lo tiene) se aplica sobre ese neto posterior a ofertas y combo. `total` ya incluye el ajuste y
  * `ajusteManual` es su monto con signo (0 sin ajuste). `ahorroDeCombo` es el importe de línea que el combo
  * descuenta (0 sin combo). Nunca autoritativo (design decisión 3: el servidor vuelve a resolver en el
- * checkout). Una línea por importe se cotiza a su importe con la misma fórmula, sin lista, oferta ni combo: no depende de
- * que haya un precio resuelto. */
+ * checkout). Una línea por importe se cotiza con el precio que el servidor le resolvió (su importe con el porcentaje de la lista
+ * derivada del cliente, sin oferta ni combo): hasta que llega ese precio no tiene total, como cualquier otra línea. */
 export function previaDeLinea(
   linea: LineaCarrito,
   resultado: ResultadoDeResolucion | undefined,
 ): { precioUnitario: number | null; descuentoUnitario: number; total: number | null; ajusteManual: number; ahorroDeCombo: number } {
-  if (linea.importe !== undefined) {
-    const totales = calcularTotalesDeLinea({
-      cantidad: linea.cantidad,
-      precioOriginal: linea.importe,
-      descuentoUnitario: 0,
-      porcentaje: linea.ajusteManualPorcentaje,
-    })
-    return { precioUnitario: linea.importe, descuentoUnitario: 0, total: totales.total, ajusteManual: totales.ajuste, ahorroDeCombo: 0 }
-  }
   if (!resultado || resultado.precioFinal === null) {
     return { precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0, ahorroDeCombo: 0 }
   }
@@ -151,8 +142,7 @@ export function previaDeLinea(
  * ningún precio resuelto todavía (primera carga, o el lote de `/resolver` falló); una línea sin
  * precio propio dentro de un carrito parcialmente resuelto contribuye 0 y no rompe la suma. */
 export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: PreciosPorLinea): number | null {
-  const soloLineasPorImporte = lineas.length > 0 && lineas.every((l) => l.importe !== undefined)
-  if (Object.keys(precios).length === 0 && !soloLineasPorImporte) return null
+  if (Object.keys(precios).length === 0) return null
   return redondearAPeso(
     lineas.reduce((acumulado, l) => {
       const previa = previaDeLinea(l, precios[l.idLinea])
