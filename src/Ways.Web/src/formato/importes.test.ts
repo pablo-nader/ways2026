@@ -259,8 +259,15 @@ describe('parsearImporte', () => {
     ['1234,56', 1234.56],
     ['1234', 1234],
     ['-1.234,56', -1234.56],
-    ['12.345.678', 12345678],
+    ['12.345.678,9', 12345678.9],
     ['1,5', 1.5],
+    ['1.5', 1.5],
+    ['1.500', 1.5],
+    ['1,500', 1.5],
+    ['1234.56', 1234.56],
+    ['1.23', 1.23],
+    ['1.234', 1.234],
+    ['12.3456', 12.3456],
     ['0', 0],
     ['0,00', 0],
     ['$ 1.234,56', 1234.56],
@@ -269,13 +276,27 @@ describe('parsearImporte', () => {
     expect(parsearImporte(texto)).toBe(esperado)
   })
 
-  it('rechaza "." usado como separador decimal (regla: "," es el único decimal)', () => {
-    expect(parsearImporte('1234.56')).toBeNull()
+  it('con un solo separador, "." y "," son el decimal aunque queden tres dígitos detrás', () => {
+    expect(parsearImporte('1.500')).toBe(1.5)
+    expect(parsearImporte('1,500')).toBe(1.5)
   })
 
-  it('rechaza un grupo de miles incompleto', () => {
-    expect(parsearImporte('1.23')).toBeNull()
-    expect(parsearImporte('12.3456')).toBeNull()
+  it('rechaza el mismo separador repetido (ni "." ni "," pueden ser miles sin el otro)', () => {
+    expect(parsearImporte('1.234.567')).toBeNull()
+    expect(parsearImporte('12.345.678')).toBeNull()
+    expect(parsearImporte('1,2,3')).toBeNull()
+  })
+
+  it('con "." y "," juntos, el formato es-AR exige miles en grupos de 3 y una sola coma', () => {
+    expect(parsearImporte('1.234,56')).toBe(1234.56)
+    expect(parsearImporte('1.23,5')).toBeNull()
+    expect(parsearImporte('1,234.56')).toBeNull()
+    expect(parsearImporte('1.234,5,6')).toBeNull()
+  })
+
+  it('rechaza un punto sin dígitos detrás o sin dígitos delante', () => {
+    expect(parsearImporte('1234.')).toBeNull()
+    expect(parsearImporte('.5')).toBeNull()
   })
 
   it('rechaza entrada vacía, solo espacios, o no numérica', () => {

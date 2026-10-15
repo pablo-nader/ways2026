@@ -16,23 +16,30 @@ export interface PropsCampoImporte extends Omit<InputHTMLAttributes<HTMLInputEle
   admiteNegativos?: boolean
 }
 
-/** Elimina cualquier caracter que no sea dígito o ",", conserva un único signo "-" SOLO al
+/** Un importe ya agrupado en miles: con coma decimal ("1.234,56") o, sin coma, con dos o más grupos ("1.234.567"). Un solo
+ * grupo sin coma ("1.234") no entra: ahí el "." es decimal. */
+const PATRON_FORMATEADO = /^\d{1,3}((\.\d{3})+,\d*|(\.\d{3}){2,})$/
+
+/** Elimina cualquier caracter que no sea dígito, "." o ",", conserva un único signo "-" SOLO al
  * principio y solo si `admiteNegativos` (uno tipeado en cualquier otra posición se descarta,
- * no se cuela silenciosamente como si fuera parte del número), una única "," (el resto de
- * comas tipeadas se funden en los decimales), y descarta cualquier "." tipeado — se tolera
- * como separador de miles pero no se conserva mientras el campo está enfocado
- * (`react-async-state`: no reformatear en cada tecla evita que el caret salte). Los decimales
- * tipeados se recortan a `decimales` dígitos — nunca se deja tipear un tercer decimal cuando
- * `decimales` es 2. El reformateo con "." de miles ocurre recién en el blur. */
+ * no se cuela silenciosamente como si fuera parte del número). "." y "," son el mismo separador
+ * decimal: el primero que se tipea queda como "," y los siguientes (de cualquiera de los dos
+ * tipos) se funden en los decimales. Los decimales tipeados se recortan a `decimales` dígitos —
+ * nunca se deja tipear un tercer decimal cuando `decimales` es 2; con `decimales` en 0 se
+ * conservan para que el blur los redondee en vez de pegarlos a los enteros. Un importe ya
+ * agrupado en miles (`PATRON_FORMATEADO`, p. ej. pegado) conserva la lectura es-AR: sus "." son
+ * de miles. El agrupado de miles con "." ocurre recién en el blur
+ * (`react-async-state`: no reformatear en cada tecla evita que el caret salte). */
 function sanearTipeo(bruto: string, decimales: number, admiteNegativos: boolean): string {
   const negativo = admiteNegativos && bruto.trimStart().startsWith('-')
   const sinSigno = bruto.replace(/-/g, '')
-  const soloValidos = decimales > 0 ? sinSigno.replace(/[^0-9,]/g, '') : sinSigno.replace(/[^0-9]/g, '')
-  const [antes, ...resto] = soloValidos.split(',')
+  const filtrado = sinSigno.replace(/[^0-9.,]/g, '')
+  const soloValidos = PATRON_FORMATEADO.test(filtrado) ? filtrado.replace(/\./g, '') : filtrado
+  const [antes, ...resto] = soloValidos.split(/[.,]/)
 
   let cuerpo = antes
-  if (decimales > 0 && resto.length > 0) {
-    const decimalesTipeados = resto.join('').slice(0, decimales)
+  if (resto.length > 0) {
+    const decimalesTipeados = decimales > 0 ? resto.join('').slice(0, decimales) : resto.join('')
     cuerpo = `${antes},${decimalesTipeados}`
   }
 
@@ -47,9 +54,17 @@ function valorEmitido(texto: string, decimales: number): number | null {
   return parseado === null ? null : redondearImporte(parseado, decimales)
 }
 
+/** Texto de edición de un valor existente: sin miles y con "," decimal ("1234,56"). */
+function textoCrudo(valor: number | null, decimales: number): string {
+  if (valor === null) return ''
+  const redondeado = redondearImporte(valor, decimales)
+  return Number.isFinite(redondeado) ? String(redondeado).replace('.', ',') : ''
+}
+
 /**
- * Input de importe: mientras está enfocado se edita en crudo (dígitos + una ","); al perder
- * el foco se reformatea a "1.234,56". El valor numérico sale por `onChange`, nunca el texto.
+ * Input de importe: mientras está enfocado se edita en crudo, sin miles (dígitos + un separador
+ * decimal, "." o ","; al enfocar un valor existente aparece como "1234,56"); al perder el foco se
+ * reformatea a "1.234,56". El valor numérico sale por `onChange`, nunca el texto.
  */
 export const CampoImporte = forwardRef<HTMLInputElement, PropsCampoImporte>(function CampoImporte(
   { valor, onChange, decimales = 2, admiteNegativos = false, className, onFocus, onBlur, ...resto },
@@ -74,12 +89,14 @@ export const CampoImporte = forwardRef<HTMLInputElement, PropsCampoImporte>(func
 
   function manejarFocus(e: FocusEvent<HTMLInputElement>) {
     enfocadoRef.current = true
+    setTexto(textoCrudo(valor, decimales))
     onFocus?.(e)
   }
 
   function manejarBlur(e: FocusEvent<HTMLInputElement>) {
     enfocadoRef.current = false
-    const redondeado = valorEmitido(texto, decimales)
+    // Un separador final sin decimales ("1234,") vale como el entero al salir del campo.
+    const redondeado = valorEmitido(texto.replace(/,$/, ''), decimales)
     setTexto(redondeado === null ? '' : formatearImporte(redondeado, { decimales }))
     onChange(redondeado)
     onBlur?.(e)
