@@ -1510,22 +1510,21 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
     // Anulación de una venta facturada
     // ===================================================================================================
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task UnaVentaConEspejoPendienteOAprobadoNoSeAnula(bool aprobado)
+    [Fact]
+    public async Task UnaVentaConLaFacturaEnTramiteNoSeAnula()
     {
-        var c = await PrepararAsync($"anul{aprobado}");
+        var c = await PrepararAsync("anultramite");
         var venta = await SembrarVentaDecididaAsync(c);
-        c.Wsfe.Solicitar = aprobado ? Responde(FecaeAprobado()) : RespondeHttp500();
+        c.Wsfe.Solicitar = RespondeHttp500();
         await ProcesarAsync(c.Admin, venta.IdFacturacion);
         var antes = await InstantaneaAsync(c, venta.IdVenta);
 
         var respuesta = await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null);
 
-        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, "venta_facturada_requiere_nota_de_credito");
+        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, "venta_con_factura_en_tramite");
         Assert.Equal(antes, await InstantaneaAsync(c, venta.IdVenta));
         Assert.Equal("emitido", antes.Estado);
+        Assert.Empty(await LeerNotasAsync(c));
     }
 
     [Fact]
@@ -1540,7 +1539,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
 
     /// <summary>La carrera real: la transacción A (que bloquea la venta e inserta el espejo) queda pausada justo antes de insertarlo
     /// y la anulación espera el lock de la venta. Al reanudar, el espejo se comitea primero y la anulación, que decide bajo su
-    /// propio lock, lo ve y se rechaza.</summary>
+    /// propio lock, lo ve todavía pendiente y se rechaza: el cierre del espejo también necesita el lock de la venta.</summary>
     [Fact]
     public async Task LaAnulacionQueEsperaElLockDeLaVentaVeElEspejoRecienComiteado()
     {
@@ -1566,7 +1565,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         var respuestaDeAnulacion = await ConTopeAsync(anulacion);
 
         Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
-        await AssertCodigoAsync(respuestaDeAnulacion, HttpStatusCode.Conflict, "venta_facturada_requiere_nota_de_credito");
+        await AssertCodigoAsync(respuestaDeAnulacion, HttpStatusCode.Conflict, "venta_con_factura_en_tramite");
         Assert.Equal("emitido", (await InstantaneaAsync(c, venta.IdVenta)).Estado);
     }
 

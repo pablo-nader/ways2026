@@ -21,7 +21,7 @@ namespace Ways.IntegrationTests;
 /// asociados del pedido, el signo de la reversión del cupo de la factura y su condición de decisión emitida, el rechazo sin
 /// reversión, las notas de crédito en el lote (cabeza de serie y candidatas por clase de espejo), la liquidación de una factura
 /// rechazada de una venta anulada por la decisión suelta (el lote no la toma) y los filtros de clase de factura de T8a: la búsqueda del espejo, <c>ExisteEspejoDeLaVenta</c>,
-/// la decisión de <c>ServicioDeDecisionDeFacturacion</c> y <c>TieneFacturaVigenteAsync</c>.
+/// la decisión de <c>ServicioDeDecisionDeFacturacion</c> y <c>LeerResultadoDeLaFacturaAsync</c>.
 /// </summary>
 public partial class FacturacionDeVentasEmisionTests
 {
@@ -898,7 +898,7 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.NotEqual(factura.IdDecisionNota, estado.IdFacturacion);
     }
 
-    /// <summary>Cláusula bajo prueba: <c>id_comprobante_asociado IS NULL</c> de <c>TieneFacturaVigenteAsync</c>. El espejo de una
+    /// <summary>Cláusula bajo prueba: <c>id_comprobante_asociado IS NULL</c> de <c>LeerResultadoDeLaFacturaAsync</c>. El espejo de una
     /// nota pendiente no es la factura: la venta emitida todavía se puede anular.</summary>
     [Fact]
     public async Task ElEspejoDeUnaNotaNoEsLaFacturaVigenteDeLaVentaQueSeAnula()

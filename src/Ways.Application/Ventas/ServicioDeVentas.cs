@@ -20,6 +20,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Combos;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Ventas;
@@ -51,7 +52,8 @@ namespace Ways.Application.Ventas;
 /// </summary>
 public class ServicioDeVentas(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas,
-    ServicioDeTurnos servicioDeTurnos, ServicioDeLotes servicioDeLotes, ServicioDeAuditoria servicioDeAuditoria)
+    ServicioDeTurnos servicioDeTurnos, ServicioDeLotes servicioDeLotes, ServicioDeAuditoria servicioDeAuditoria,
+    ServicioDeFacturacionDeVentas? facturacion = null)
 {
     public async Task<ComprobanteEmitido> EmitirAsync(SolicitudDeVenta solicitud, CancellationToken ct = default)
     {
@@ -1060,6 +1062,10 @@ public class ServicioDeVentas(
             .Where(f => idsComprobante.Contains(f.IdComprobanteVenta) && f.IdFacturacionOrigen == null)
             .ToDictionaryAsync(f => f.IdComprobanteVenta, f => f.Estado, ct);
 
+        var estadoDeNotaDeCredito = await db.FacturacionesDeVenta.AsNoTracking()
+            .Where(f => idsComprobante.Contains(f.IdComprobanteVenta) && f.IdFacturacionOrigen != null)
+            .ToDictionaryAsync(f => f.IdComprobanteVenta, f => f.Estado, ct);
+
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
         var nombrePorMedioPago = await db.MediosPago.AsNoTracking()
             .Where(m => idsMedioPago.Contains(m.Id))
@@ -1090,7 +1096,8 @@ public class ServicioDeVentas(
                 mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<MedioDeVentaNeto>)[]),
                 estadoDeDecision.TryGetValue(c.Id, out var estadoFiscal)
                     ? EstadosFiscalesDeVenta.De(estadoFiscal)
-                    : EstadosFiscalesDeVenta.SinFila(c.IdVentaOrigen, c.FacturacionDecididaEn)))
+                    : EstadosFiscalesDeVenta.SinFila(c.IdVentaOrigen, c.FacturacionDecididaEn),
+                estadoDeNotaDeCredito.TryGetValue(c.Id, out var estadoNota) ? EstadosFiscalesDeVenta.De(estadoNota) : null))
             .ToList();
     }
 
@@ -1189,11 +1196,24 @@ public class ServicioDeVentas(
 
         var (idPuntoVentaAnulacion, codigoTipoAnulado) = resultadoAnulacion.Value;
 
-        // Una venta facturada no se anula. La pregunta se hace ACÁ, bajo el lock de la fila de la venta que tomó el UPDATE
-        // de arriba, y no en la pre-lectura: la emisión del espejo bloquea esa misma fila y verifica que siga emitida antes
-        // de insertarlo, así que o el espejo ya está comiteado y se ve, o esta anulación gana y no se crea ninguno.
-        ReglaDeComprobantes.ValidarAnulacionDeVentaFacturada(
-            await TieneFacturaVigenteAsync(conexion, transaccionCruda, id, ct));
+        // La facturación de la venta se resuelve ACÁ, bajo el lock de la fila de la venta que tomó el UPDATE de arriba, y no en la
+        // pre-lectura: la emisión del espejo bloquea esa misma fila y verifica que siga emitida antes de insertarlo, y la resolución
+        // del espejo la bloquea antes que a él, así que lo que se lee del espejo no cambia hasta el commit. Con la factura aprobada
+        // la anulación solo decide la nota de crédito (el proceso fiscal la emite después, con su propia serie): nunca toca
+        // las series fiscales, porque el paso A del proceso toma la serie ANTES que la venta.
+        var efectoFiscal = ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion(
+            await LeerResultadoDeLaFacturaAsync(conexion, transaccionCruda, id, ct));
+        switch (efectoFiscal)
+        {
+            case EfectoFiscalDeAnulacion.EmitirNotaDeCredito:
+                await DecidirNotaDeCreditoAsync(conexion, transaccionCruda, idTenant, id, momento, ct);
+                break;
+            case EfectoFiscalDeAnulacion.LiquidarFacturaRechazada:
+                await (facturacion ?? throw new InvalidOperationException(
+                    "Anular una venta con la factura rechazada exige el servicio de facturación de ventas."))
+                    .LiquidarFacturaRechazadaDeVentaAnuladaAsync(id, ct);
+                break;
+        }
 
         // stage-17-presupuestos-y-remitos, Slice 6 (design: Transactions — "ANULAR VENTA", decisión
         // 4/7, mutation targets 55/56/58): POSICIÓN 1.6 — inmediatamente DESPUÉS de MarcarAnuladoAsync
@@ -1364,20 +1384,80 @@ public class ServicioDeVentas(
         }
     }
 
-    /// <summary>¿La venta tiene una factura espejo aprobada o en trámite? Un espejo rechazado que quedó en pie no cuenta, y el
-    /// espejo de una nota de crédito (<c>id_comprobante_asociado</c> con valor) tampoco es la factura.</summary>
-    private static async Task<bool> TieneFacturaVigenteAsync(
+    /// <summary>El resultado fiscal de la factura de la venta, o <c>null</c> si no tiene: el del espejo de la factura (el de una nota
+    /// de crédito, con <c>id_comprobante_asociado</c>, no cuenta) o, sin espejo, <c>rechazado</c> si la decisión de la factura quedó
+    /// rechazada, porque el espejo que ARCA rechaza se libera y no queda en pie. Una decisión pendiente sin espejo no es una
+    /// factura: tampoco tiene resultado. Se lee bajo el lock de la venta: ninguna transición de la factura ocurre sin él.</summary>
+    private static async Task<ResultadoFiscal?> LeerResultadoDeLaFacturaAsync(
         DbConnection conexion, DbTransaction? transaccion, int idVenta, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
-            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta " +
-            "WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL AND resultado_fiscal <> 'rechazado')";
+            "SELECT COALESCE(" +
+            "(SELECT resultado_fiscal::text FROM comprobantes_venta WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL), " +
+            "(SELECT 'rechazado' FROM facturaciones_de_venta " +
+            "WHERE id_comprobante_venta = $1 AND id_facturacion_origen IS NULL AND estado = 'rechazada'::estado_facturacion_venta))";
 
         ParametrosDeComando.Agregar(comando, idVenta);
 
-        return (bool)(await comando.ExecuteScalarAsync(ct))!;
+        return (await comando.ExecuteScalarAsync(ct) as string) switch
+        {
+            null => null,
+            "pendiente" => ResultadoFiscal.Pendiente,
+            "aprobado" => ResultadoFiscal.Aprobado,
+            "aprobado_con_observaciones" => ResultadoFiscal.AprobadoConObservaciones,
+            "rechazado" => ResultadoFiscal.Rechazado,
+            var otro => throw new InvalidOperationException($"Resultado fiscal desconocido: {otro}.")
+        };
+    }
+
+    /// <summary>Inserta la decisión de la nota de crédito de la factura de la venta: <c>pendiente</c>, sin aportes (no mueve
+    /// saldos), con la empresa, el motivo y el período de la decisión de la factura y enlazada a ella. La decisión de la factura
+    /// se bloquea antes (orden de locks: la venta, ya bloqueada, y después la decisión). Un espejo aprobado sin decisión de
+    /// factura no existe: es una invariante rota.</summary>
+    private static async Task DecidirNotaDeCreditoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idVenta, DateTimeOffset momento, CancellationToken ct)
+    {
+        int idDecision;
+        int idEmpresa;
+        string motivo;
+        DateOnly periodo;
+        await using (var lectura = conexion.CreateCommand())
+        {
+            lectura.Transaction = transaccion;
+            lectura.CommandText =
+                "SELECT id_facturacion_venta, id_empresa, motivo::text, periodo FROM facturaciones_de_venta " +
+                "WHERE id_comprobante_venta = $1 AND id_facturacion_origen IS NULL FOR UPDATE";
+            ParametrosDeComando.Agregar(lectura, idVenta);
+
+            await using var lector = await lectura.ExecuteReaderAsync(ct);
+            if (!await lector.ReadAsync(ct))
+            {
+                throw new InvalidOperationException(
+                    $"La venta {idVenta} tiene el espejo de su factura aprobado y ninguna decisión de facturar.");
+            }
+
+            idDecision = lector.GetInt32(0);
+            idEmpresa = lector.GetInt32(1);
+            motivo = lector.GetString(2);
+            periodo = lector.GetFieldValue<DateOnly>(3);
+        }
+
+        await using var insercion = conexion.CreateCommand();
+        insercion.Transaction = transaccion;
+        insercion.CommandText =
+            "INSERT INTO facturaciones_de_venta (id_tenant, id_empresa, id_comprobante_venta, motivo, estado, aportes, " +
+            "periodo, intentos, id_facturacion_origen, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4::motivo_facturacion, 'pendiente'::estado_facturacion_venta, '[]'::jsonb, $5, 0, $6, $7, $7)";
+        ParametrosDeComando.Agregar(insercion, idTenant);
+        ParametrosDeComando.Agregar(insercion, idEmpresa);
+        ParametrosDeComando.Agregar(insercion, idVenta);
+        ParametrosDeComando.Agregar(insercion, motivo);
+        ParametrosDeComando.Agregar(insercion, periodo);
+        ParametrosDeComando.Agregar(insercion, idDecision);
+        ParametrosDeComando.Agregar(insercion, momento);
+        await insercion.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>task 3.13: lock del cliente ANTES de re-chequear el marcador de reliquidación de

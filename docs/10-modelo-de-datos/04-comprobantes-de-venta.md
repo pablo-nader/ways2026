@@ -587,12 +587,8 @@ es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador
 - **Cancelación.** Cuando la venta está anulada y no hay espejo, la decisión pasa a `cancelada` y se deshace TODO lo que ella
   aplicó sobre su `periodo`: `saldo_a_facturar −= aporte` (el guardado en la decisión), `total_vendido −= vendido` y
   `total_facturado −= vendido`. Una `rechazada` no se reintenta sola.
-- **Anulación de una venta facturada (regla 5).** `POST /api/ventas/{id}/anulacion` responde
-  `409 venta_facturada_requiere_nota_de_credito` si la venta tiene un espejo aprobado o en trámite (`pendiente`). La pregunta se
-  hace bajo el lock de la fila de la venta que toma el `UPDATE` de la anulación, y la creación del espejo bloquea esa misma fila y
-  verifica que la venta siga emitida antes de insertarlo, así que o el espejo ya está comiteado y se ve, o la anulación gana y no se
-  crea ninguno. Un espejo `rechazado` que quedó en pie no cuenta, y una venta con la decisión `pendiente` y sin espejo se anula
-  como siempre. La nota de crédito fiscal de una venta facturada es T8 (ver "Nota de crédito fiscal (T8b)").
+- **Anulación de una venta facturada (regla 5).** Ver "Anulación con nota de crédito (T8c)": con la factura aprobada la anulación
+  decide la nota de crédito, con la factura en trámite responde `409 venta_con_factura_en_tramite`.
 - **La espera registrada.** `proximo_intento_en` se escribe (30 s duplicándose hasta 10 min; 5 min hasta 4 h para una
   compuerta). Este servicio y su endpoint procesan la decisión que se les pide aunque la espera no haya vencido; la respeta el
   procesador por lote (T5b). Tampoco hay todavía quién llame a ninguno de los dos endpoints por sí solo (la emisión en línea de T5c usa el servicio, no el endpoint).
@@ -827,8 +823,7 @@ Las dos lecturas del POS informan el estado fiscal sin decidir, emitir ni llamar
 #### Nota de crédito fiscal (T8b): implementada
 
 El mismo `ServicioDeFacturacionDeVentas` y el mismo lote emiten la nota de crédito (NC) de una venta anulada cuya factura está
-aprobada, sin cambios de esquema. Todavía nada inserta la decisión de la nota: la anulación (T8c) la creará `pendiente`, sin
-aportes y con la empresa, el motivo y el período de la decisión de la factura; hasta entonces la ejercitan solo los tests.
+aprobada, sin cambios de esquema. La decisión de la nota la inserta la anulación (T8c, más abajo).
 
 - **Clase de decisión.** `id_facturacion_origen` con valor es la decisión de una nota, y su espejo es el que tiene
   `id_comprobante_asociado` (el espejo de la factura). Cada decisión mira el espejo de su clase; una venta anulada con nota tiene
@@ -859,8 +854,41 @@ aportes y con la empresa, el motivo y el período de la decisión de la factura;
   `total_facturado −= vendido`), así que la venta anulada seguía devengando y contando como vendida. Procesar esa decisión
   (el endpoint de la decisión suelta) la pasa a `cancelada`, conserva el motivo del rechazo y termina de revertir el acumulado
   (aportes y `total_vendido`), bajo los locks de la venta y de la decisión y una sola vez. El lote NO la toma como candidata (no
-  toma número ni tiene espera, y recorrería el historial de decisiones del punto de venta en cada llamada): hoy se liquida por la
-  decisión suelta y la transacción de la anulación (T8c) la invocará.
+  toma número ni tiene espera, y recorrería el historial de decisiones del punto de venta en cada llamada): se liquida por la
+  decisión suelta o, desde T8c, en la transacción de la anulación de la venta.
+
+#### Anulación con nota de crédito (T8c): implementada
+
+`POST /api/ventas/{id}/anulacion` anula el ticket como siempre (stock y cuenta corriente) y, en esa misma transacción sin
+reintento y bajo el lock de la fila de la venta que toma el `UPDATE` de la anulación, resuelve qué hacer con la facturación. La regla
+(`ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion`) parte del resultado de la factura de la venta: el del espejo sin
+`id_comprobante_asociado` o, si no hay espejo, `rechazado` cuando la decisión de la factura quedó `rechazada` (el espejo que ARCA
+rechaza se libera):
+
+| La factura de la venta | La anulación |
+|---|---|
+| Ninguna (sin decisión, o decisión `pendiente` sin espejo) | Sin efecto fiscal. Una decisión pendiente la cancela después el lote, como antes. |
+| `rechazada` (ARCA rechazó) | Liquida la factura rechazada (decisión a `cancelada`, acumulado revertido, una sola vez) en la misma transacción. |
+| `pendiente` (en trámite) | `409 venta_con_factura_en_tramite`; nada cambia. |
+| `aprobado` o `aprobado_con_observaciones` | Inserta la decisión de la nota de crédito. |
+
+- **Decisión de la nota.** `SELECT … FROM facturaciones_de_venta WHERE id_comprobante_venta = … AND id_facturacion_origen IS NULL FOR
+  UPDATE` (orden de locks: la venta, la decisión) e `INSERT` de la fila `pendiente`, `aportes = '[]'`, `intentos = 0`,
+  `proximo_intento_en` NULL, con `id_empresa`, `motivo` y `periodo` de la decisión de la factura e `id_facturacion_origen` = esa
+  decisión. Una factura aprobada sin decisión es una invariante rota (`InvalidOperationException`, rollback). La anulación NUNCA toca
+  `numeraciones_fiscales`: el paso A del proceso toma la serie antes que la venta y se cruzaría. El número lo toma el proceso fiscal.
+  Una segunda nota (carrera) cae en los únicos de T8a: `409 nota_de_credito_duplicada`; dos anulaciones concurrentes se serializan
+  en el `UPDATE` y la segunda recibe `409 comprobante_ya_anulado`.
+- **Intento en línea.** Con la anulación comiteada, el endpoint llama a `EmisionEnLineaAlCobrar.IntentarNotaDeCreditoAsync`: busca la
+  decisión de la nota de la venta y, solo con un ticket de acceso ya cacheado (nunca firma ante WSAA), la procesa con un presupuesto
+  de 4 s. Nunca lanza ni recibe el token de la solicitud; un fallo inesperado se anota como intento fallido y lo que no sale lo emite
+  el lote.
+- **Respuesta y lectura (`fiscal.notaDeCredito`).** La respuesta de la anulación y `GET /api/ventas/{id}` informan el estado fiscal con
+  la factura intacta (`estado` `aprobado`, su `comprobante`) y, con una nota decidida, `notaDeCredito = { estado, idFacturacion,
+  error, comprobante }`: `estado` es `pendiente`, `aprobado` o `rechazado`; `error` el código estable del último motivo anotado
+  (`10015`, `nota_de_credito_venta_no_anulada`, …) y `comprobante` el espejo de la nota, solo aprobada, con el mismo contrato que la
+  factura (`codigoTipoComprobante` NCA/NCB/NCC). El listado por turno agrega `estadoNotaDeCredito` (los mismos tres valores o
+  `null`) con una consulta más por lote de ventas, sin N+1.
 
 ### Presupuestos (Etapa 17)
 

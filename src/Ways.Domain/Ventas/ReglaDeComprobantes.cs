@@ -94,19 +94,23 @@ public static class ReglaDeComprobantes
         }
     }
 
-    /// <summary>Una venta cuya factura espejo está aprobada, o en trámite y por lo tanto puede quedar aprobada, no se anula:
-    /// el ticket y la factura son el mismo hecho económico y la única reversa fiscal es una nota de crédito. Una venta sin
-    /// espejo (aunque su decisión de facturar esté pendiente) o con un espejo rechazado sí se anula.</summary>
-    public static void ValidarAnulacionDeVentaFacturada(bool tieneFacturaVigente)
-    {
-        if (tieneFacturaVigente)
+    /// <summary>Qué hace la anulación de una venta con su factura fiscal. <paramref name="resultadoDeLaFactura"/> es el resultado de
+    /// la factura de la venta (sin contar el de una nota de crédito), o <c>null</c> si la venta no tiene factura, aunque su decisión
+    /// de facturar esté pendiente. Un espejo que ARCA rechaza se libera, así que el rechazo es el de la decisión. Sin factura no hay
+    /// efecto fiscal; con la factura rechazada se liquida su cupo; con una aprobada hay que emitir la nota de crédito; con una en
+    /// trámite no se anula, porque puede quedar aprobada y la anulación llegaría sin nota de crédito.</summary>
+    public static EfectoFiscalDeAnulacion ResolverEfectoFiscalDeAnulacion(ResultadoFiscal? resultadoDeLaFactura) =>
+        resultadoDeLaFactura switch
         {
-            throw new ErrorDominio(
-                "venta_facturada_requiere_nota_de_credito",
-                "La venta tiene una factura emitida o en trámite ante ARCA y no se puede anular: para corregirla hay que emitir una nota de crédito.",
-                409);
-        }
-    }
+            null => EfectoFiscalDeAnulacion.Ninguno,
+            ResultadoFiscal.Rechazado => EfectoFiscalDeAnulacion.LiquidarFacturaRechazada,
+            ResultadoFiscal.Aprobado or ResultadoFiscal.AprobadoConObservaciones => EfectoFiscalDeAnulacion.EmitirNotaDeCredito,
+            ResultadoFiscal.Pendiente => throw new ErrorDominio(
+                "venta_con_factura_en_tramite",
+                "La factura de la venta está en trámite ante ARCA: hay que esperar su resultado para poder anularla.",
+                409),
+            _ => throw new ArgumentOutOfRangeException(nameof(resultadoDeLaFactura), resultadoDeLaFactura, null)
+        };
 
     /// <summary><c>id_comprobante_asociado</c> (spec: Devoluciones As NCX Comprobantes) —
     /// siempre opcional; cuando está poblado, exige NCX (nunca un TX asociado a otro) y que el
@@ -158,4 +162,13 @@ public static class ReglaDeComprobantes
                 400);
         }
     }
+}
+
+/// <summary>Lo que la anulación de una venta hace además con su facturación: ver
+/// <see cref="ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion"/>.</summary>
+public enum EfectoFiscalDeAnulacion
+{
+    Ninguno,
+    LiquidarFacturaRechazada,
+    EmitirNotaDeCredito
 }

@@ -10,7 +10,7 @@ namespace Ways.Application.Fiscal;
 /// <see cref="EstadosFiscalesDeVenta"/>; <see cref="Motivo"/> es la etiqueta de <c>motivo_facturacion</c> con la que
 /// se decidió facturar (solo con una fila de decisión) y <see cref="IdFacturacion"/> el id de esa fila. La emisión del
 /// espejo agrega, al final y sin cambiar los campos que ya existían, <see cref="Error"/> y <see cref="Comprobante"/> (la
-/// factura, solo cuando está aprobada). En la respuesta de la venta <see cref="Error"/> es solo un código estable; los
+/// factura, solo cuando está aprobada) y, con la venta anulada y una nota de crédito decidida, <see cref="NotaDeCredito"/>. En la respuesta de la venta <see cref="Error"/> es solo un código estable; los
 /// endpoints de procesamiento por lote y de una decisión devuelven el texto guardado completo (el último motivo por el
 /// que la decisión sigue pendiente, o los errores de ARCA si la rechazó).
 /// </summary>
@@ -19,12 +19,23 @@ public sealed record EstadoFiscalDeVenta(
     string? Motivo = null,
     int? IdFacturacion = null,
     string? Error = null,
-    DatosDeFacturaFiscal? Comprobante = null)
+    DatosDeFacturaFiscal? Comprobante = null,
+    EstadoDeNotaDeCredito? NotaDeCredito = null)
 {
     public static EstadoFiscalDeVenta NoCorresponde { get; } = new(EstadosFiscalesDeVenta.NoCorresponde);
 
     public static EstadoFiscalDeVenta SinDecidir { get; } = new(EstadosFiscalesDeVenta.SinDecidir);
 }
+
+/// <summary>La nota de crédito de la factura de una venta anulada. <see cref="Estado"/> es <c>pendiente</c>, <c>aprobado</c> o
+/// <c>rechazado</c> (de <see cref="EstadosFiscalesDeVenta"/>); <see cref="IdFacturacion"/> el id de su decisión; <see cref="Error"/>
+/// el código estable del último motivo anotado; <see cref="Comprobante"/> el espejo de la nota, solo cuando está aprobada. La
+/// factura conserva su propio estado: <c>aprobado</c>.</summary>
+public sealed record EstadoDeNotaDeCredito(
+    string Estado,
+    int IdFacturacion,
+    string? Error,
+    DatosDeFacturaFiscal? Comprobante);
 
 public static class EstadosFiscalesDeVenta
 {

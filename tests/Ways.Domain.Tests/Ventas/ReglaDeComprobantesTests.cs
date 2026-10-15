@@ -230,19 +230,37 @@ public class ReglaDeComprobantesTests
         ReglaDeComprobantes.ValidarAnulacionDeVenta(CrearComprobante());
     }
 
-    // ---- ValidarAnulacionDeVentaFacturada: una venta con factura vigente se corrige con nota de crédito ----------
+    // ---- ResolverEfectoFiscalDeAnulacion: la anulación de una venta facturada emite la nota de crédito ----------
 
     [Fact]
-    public void UnaVentaConFacturaVigenteNoSeAnula()
+    public void UnaVentaSinEspejoDeFacturaSeAnulaSinEfectoFiscal()
     {
-        var excepcion = Assert.Throws<ErrorDominio>(() => ReglaDeComprobantes.ValidarAnulacionDeVentaFacturada(true));
-        Assert.Equal("venta_facturada_requiere_nota_de_credito", excepcion.Codigo);
-        Assert.Equal(409, excepcion.EstadoHttp);
+        Assert.Equal(EfectoFiscalDeAnulacion.Ninguno, ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion(null));
     }
 
     [Fact]
-    public void UnaVentaSinFacturaVigenteSeAnula()
+    public void UnaFacturaRechazadaSeLiquidaAlAnular()
     {
-        ReglaDeComprobantes.ValidarAnulacionDeVentaFacturada(false);
+        Assert.Equal(
+            EfectoFiscalDeAnulacion.LiquidarFacturaRechazada,
+            ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion(ResultadoFiscal.Rechazado));
+    }
+
+    [Theory]
+    [InlineData(ResultadoFiscal.Aprobado)]
+    [InlineData(ResultadoFiscal.AprobadoConObservaciones)]
+    public void UnaFacturaAprobadaEmiteLaNotaDeCredito(ResultadoFiscal resultado)
+    {
+        Assert.Equal(
+            EfectoFiscalDeAnulacion.EmitirNotaDeCredito, ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion(resultado));
+    }
+
+    [Fact]
+    public void UnaFacturaEnTramiteImpideAnular()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(
+            () => ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion(ResultadoFiscal.Pendiente));
+        Assert.Equal("venta_con_factura_en_tramite", excepcion.Codigo);
+        Assert.Equal(409, excepcion.EstadoHttp);
     }
 }
