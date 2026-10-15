@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
-import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { api, ErrorApi } from '../api/cliente'
 import {
   aSolicitudDeOrdenDeCompra,
@@ -34,6 +34,7 @@ import { Cargando } from '../componentes/Cargando'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { atributosDeCampoDecimal } from '../formato/numeros'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? fechaHoraATexto(iso) : '—'
@@ -156,9 +157,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
       </td>
       <td style={{ width: 120 }}>
         <input
-          type="number"
-          step={restriccion.step}
-          min={restriccion.min}
+          {...atributosDeCampoDeCantidad(restriccion)}
           className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
           aria-label="Cantidad pedida"
           value={linea.cantidadPedida}
@@ -168,9 +167,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
       </td>
       <td style={{ width: 140 }}>
         <input
-          type="number"
-          step="0.0001"
-          min="0"
+          {...atributosDeCampoDecimal({ decimales: 4 })}
           className="form-control form-control-sm"
           aria-label="Costo estimado"
           value={linea.costoUnitarioEstimado}

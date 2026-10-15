@@ -18,6 +18,7 @@ import type {
   SolicitudDeRemito,
   UnidadVenta,
 } from './tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 // ---- Offset local para desde/hasta — mismo criterio que presupuestos.ts/compras.ts/
 // cuentaCorriente.ts: el servidor corre en UTC, `fecha_emision` es `timestamptz` y un
@@ -135,8 +136,7 @@ export function lineaDeRemitoCompletaParaEnvio(l: LineaDeRemitoFormulario): bool
 }
 
 function numeroDeCantidad(valor: string): number {
-  const n = Number(valor)
-  return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
+  return parsearNumeroDecimal(valor) ?? 0
 }
 
 /** Fila de formulario → `LineaDeRemito` — solo las líneas completas

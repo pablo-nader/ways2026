@@ -38,8 +38,8 @@ export function esTeclaDeAtajo(tecla: string): tecla is TeclaAtajo {
 }
 
 /** La entrada de escaneo `importe*código` con el importe tipeado con coma (`150,50*500`) escrita con punto, que es lo único que
- * acepta el servidor; `null` si el prefijo no trae coma o no es un importe válido (no hay nada que corregir). Para un artículo
- * común el servidor lee la coma como separador de miles: por eso se reintenta con esta forma solo cuando rechazó el importe. */
+ * acepta el servidor para un importe; `null` si el prefijo no trae coma o no es un importe válido (no hay nada que corregir).
+ * Para la cantidad de un artículo común el servidor ya acepta la coma: por eso se reintenta solo cuando rechazó el importe. */
 export function entradaConPuntoDecimal(entrada: string): string | null {
   const indice = entrada.indexOf('*')
   if (indice < 0) return null

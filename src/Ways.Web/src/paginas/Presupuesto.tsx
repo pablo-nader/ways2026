@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
-import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
@@ -155,9 +155,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
       </td>
       <td style={{ width: 120 }}>
         <input
-          type="number"
-          step={restriccion.step}
-          min={restriccion.min}
+          {...atributosDeCampoDeCantidad(restriccion)}
           className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
           aria-label="Cantidad"
           value={linea.cantidad}

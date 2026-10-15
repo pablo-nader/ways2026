@@ -156,6 +156,14 @@ describe('parsearEntradaDeEscaneoOffline — espejo de ParserDeEscaneo (regla I.
   })
 
   it.each([
+    ['0,25*7790001234567', 0.25],
+    ['0.25*7790001234567', 0.25],
+    ['2,5*A0001', 2.5],
+  ])('el prefijo "%s" acepta coma o punto como separador decimal', (entrada, cantidadEsperada) => {
+    expect(parsearEntradaDeEscaneoOffline(entrada)?.cantidad).toBe(cantidadEsperada)
+  })
+
+  it.each([
     ['prefijo ausente', '7790001234567', 1],
     ['prefijo "0"', '0*7790001234567', 1],
     ['prefijo negativo', '-2*7790001234567', 1],

@@ -1,6 +1,7 @@
 /**
- * Formateo y parseo de importes (dinero) en formato es-AR: "." separador de miles
- * (SIEMPRE visible, incluso con 4 dígitos: "1.234", nunca "1234"), "," separador decimal.
+ * Formateo y parseo de importes (dinero). La salida de `formatearImporte` es es-AR: "." separador
+ * de miles (SIEMPRE visible, incluso con 4 dígitos: "1.234", nunca "1234"), "," separador decimal.
+ * Al tipear, en cambio, "." y "," valen igual como decimal (ver `parsearImporte`).
  *
  * Implementación propia (sin depender de `Intl.NumberFormat`): distintos motores ICU
  * (Node/jsdom en los tests vs. WebView2 en el instalador de escritorio) difieren en si
@@ -8,7 +9,8 @@
  * que el agrupado se arma con un regex determinístico en vez de `useGrouping: 'always'`.
  */
 
-const PATRON_IMPORTE_VALIDO = /^-?(\d+|\d{1,3}(\.\d{3})+)(,\d+)?$/
+const PATRON_IMPORTE_UN_SEPARADOR = /^-?\d+([.,]\d+)?$/
+const PATRON_IMPORTE_FORMATEADO = /^-?\d{1,3}(\.\d{3})+,\d+$/
 
 /** Inserta "." cada 3 dígitos desde la derecha. Determinístico, no depende de ICU. */
 function agruparMiles(digitos: string): string {
@@ -249,12 +251,12 @@ export function formatearImporteConSigno(valor: number | null | undefined, opcio
 }
 
 /**
- * Parsea un texto de importe con la regla: "," es el ÚNICO separador decimal, "." es
- * ÚNICAMENTE separador de miles y solo es válido en grupos completos de 3 dígitos
- * (ej. "1.234", "12.345.678"). Cualquier otro uso de "." (por ejemplo "1234.56", donde
- * "56" no es un grupo de 3) se considera AMBIGUO y se rechaza devolviendo `null` — el
- * usuario debe escribir "1234,56". Tolera un símbolo "$" y espacios, que se descartan
- * antes de validar. Devuelve `null` ante cualquier entrada inválida o vacía.
+ * Parsea un texto de importe. Con un solo tipo de separador, que aparece una única vez, ese
+ * separador es el decimal, sea "." o "," ("1.5", "1,5" y "1.500" valen 1,5). Con "." y ","
+ * juntos rige el formato es-AR que produce `formatearImporte`: "." de miles en grupos completos
+ * de 3 dígitos y una única "," decimal ("1.234,56"). El mismo separador repetido ("1.234.567",
+ * "1,2,3") es inválido. Tolera un símbolo "$" y espacios, que se descartan antes de validar.
+ * Devuelve `null` ante cualquier entrada inválida o vacía.
  */
 export function parsearImporte(texto: string | null | undefined): number | null {
   if (texto === null || texto === undefined) {
@@ -266,12 +268,16 @@ export function parsearImporte(texto: string | null | undefined): number | null 
     return null
   }
 
-  if (!PATRON_IMPORTE_VALIDO.test(limpio)) {
+  let normalizado: string
+  if (PATRON_IMPORTE_UN_SEPARADOR.test(limpio)) {
+    normalizado = limpio.replace(',', '.')
+  } else if (PATRON_IMPORTE_FORMATEADO.test(limpio)) {
+    normalizado = limpio.replace(/\./g, '').replace(',', '.')
+  } else {
     return null
   }
 
-  const sinMiles = limpio.replace(/\./g, '').replace(',', '.')
-  const valor = Number.parseFloat(sinMiles)
+  const valor = Number.parseFloat(normalizado)
   if (Number.isNaN(valor)) {
     return null
   }

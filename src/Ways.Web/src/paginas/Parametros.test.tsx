@@ -194,8 +194,8 @@ describe('Parametros — clave lotes_habilitado (tipo booleano, nuevo en el regi
     await usuario.selectOptions(screen.getByLabelText('Clave'), 'dias_alerta_vencimiento')
 
     expect(screen.getByLabelText('Valor').tagName).toBe('INPUT')
-    expect((screen.getByLabelText('Valor') as HTMLInputElement).type).toBe('number')
-    expect(screen.getByLabelText('Valor')).toHaveValue(null)
+    expect((screen.getByLabelText('Valor') as HTMLInputElement).type).toBe('text')
+    expect(screen.getByLabelText('Valor')).toHaveValue('')
   })
 })
 

@@ -58,14 +58,121 @@ describe('CampoImporte', () => {
     expect(campo).toHaveValue('1.234,50')
   })
 
-  it('tolera "." tipeado como miles: se descarta mientras edita y no rompe el número final', async () => {
+  it('un "." tipeado es el separador decimal, igual que ",": emite 1.5 y el blur muestra "1,50"', async () => {
+    const onChange = vi.fn()
+    const usuario = userEvent.setup()
+    render(<CampoControlado onChange={onChange} />)
+    const campo = screen.getByLabelText('importe')
+    await usuario.type(campo, '1.5')
+    expect(campo).toHaveValue('1,5')
+    expect(onChange).toHaveBeenLastCalledWith(1.5)
+    await usuario.tab()
+    expect(campo).toHaveValue('1,50')
+  })
+
+  it('"1.500" tipeado vale 1,5 (el punto nunca es miles al tipear)', async () => {
+    const onChange = vi.fn()
+    const usuario = userEvent.setup()
+    render(<CampoControlado onChange={onChange} />)
+    const campo = screen.getByLabelText('importe')
+    await usuario.type(campo, '1.500')
+    expect(onChange).toHaveBeenLastCalledWith(1.5)
+  })
+
+  it('un segundo separador tipeado se funde en los decimales, sea "." o ","', async () => {
     const usuario = userEvent.setup()
     render(<CampoControlado />)
     const campo = screen.getByLabelText('importe')
-    await usuario.type(campo, '1.234,56')
+    await usuario.type(campo, '1.2,3')
+    expect(campo).toHaveValue('1,23')
+  })
+
+  it.each([
+    ['1.234,56', '1234,56', 1234.56],
+    ['$ 12.345.678,9', '12345678,9', 12345678.9],
+  ])('pegar un importe formateado (%s) lee el "." como miles', async (pegado, texto, valor) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} onChange={onChange} aria-label="pegado" />)
+    const campo = screen.getByLabelText('pegado')
+    await usuario.click(campo)
+    await usuario.paste(pegado)
+    expect(campo).toHaveValue(texto)
+    expect(onChange).toHaveBeenLastCalledWith(valor)
+  })
+
+  it.each([
+    ['1.234.567', '1234567', 1234567],
+    ['$ 1.234.567', '1234567', 1234567],
+  ])('pegar un entero agrupado en miles (%s) lee el "." como miles', async (pegado, texto, valor) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} onChange={onChange} aria-label="pegado" />)
+    const campo = screen.getByLabelText('pegado')
+    await usuario.click(campo)
+    await usuario.paste(pegado)
+    expect(campo).toHaveValue(texto)
+    expect(onChange).toHaveBeenLastCalledWith(valor)
+  })
+
+  it.each([
+    ['1.5', '2', 2],
+    ['1,4', '1', 1],
+  ])('con decimales=0 el separador tipeado (%s) es decimal y el blur redondea, nunca multiplica', async (tipeado, final, valor) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} decimales={0} onChange={onChange} aria-label="entero" />)
+    const campo = screen.getByLabelText('entero')
+    await usuario.type(campo, tipeado)
+    await usuario.tab()
+    expect(campo).toHaveValue(final)
+    expect(onChange).toHaveBeenLastCalledWith(valor)
+  })
+
+  it('con decimales=0 pegar un importe formateado lee el "." como miles y redondea los decimales', async () => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} decimales={0} onChange={onChange} aria-label="entero" />)
+    const campo = screen.getByLabelText('entero')
+    await usuario.click(campo)
+    await usuario.paste('1.234,56')
+    await usuario.tab()
+    expect(campo).toHaveValue('1.235')
+    expect(onChange).toHaveBeenLastCalledWith(1235)
+  })
+
+  it.each(['1234,', '1234.'])('un separador final sin decimales (%s) no borra el importe al salir del campo', async (tipeado) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} onChange={onChange} aria-label="final" />)
+    const campo = screen.getByLabelText('final')
+    await usuario.type(campo, tipeado)
+    await usuario.tab()
+    expect(campo).toHaveValue('1.234,00')
+    expect(onChange).toHaveBeenLastCalledWith(1234)
+  })
+
+  it('al enfocar un valor existente se muestra sin miles ("1234,56") y el blur lo reformatea a "1.234,56"', async () => {
+    const usuario = userEvent.setup()
+    render(<CampoControlado valorInicial={1234.56} />)
+    const campo = screen.getByLabelText('importe')
+    expect(campo).toHaveValue('1.234,56')
+    await usuario.click(campo)
     expect(campo).toHaveValue('1234,56')
     await usuario.tab()
     expect(campo).toHaveValue('1.234,56')
+  })
+
+  it('al enfocar conserva el signo negativo y un valor null sigue vacío', async () => {
+    const usuario = userEvent.setup()
+    const { rerender } = render(<CampoImporte valor={-1234.5} onChange={() => {}} admiteNegativos aria-label="neg" />)
+    const campo = screen.getByLabelText('neg')
+    await usuario.click(campo)
+    expect(campo).toHaveValue('-1234,5')
+    await usuario.tab()
+    rerender(<CampoImporte valor={null} onChange={() => {}} admiteNegativos aria-label="neg" />)
+    await usuario.click(campo)
+    expect(campo).toHaveValue('')
   })
 
   it('onChange recibe el número parseado en cada tecleo', async () => {

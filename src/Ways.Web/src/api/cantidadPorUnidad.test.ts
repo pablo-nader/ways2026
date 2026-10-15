@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  atributosDeCampoDeCantidad,
   esCantidadValida,
   esFraccionDeArticuloPorUnidad,
   esTextoDeCantidadValido,
@@ -103,6 +104,21 @@ describe('esTextoDeCantidadValido', () => {
     expect(esTextoDeCantidadValido('Peso', '2.5')).toBe(true)
     expect(esTextoDeCantidadValido(undefined, '2.5')).toBe(true)
   })
+
+  it('la coma vale igual que el punto como separador decimal', () => {
+    expect(esTextoDeCantidadValido('Peso', '0,25')).toBe(true)
+    expect(esTextoDeCantidadValido('Peso', '0.25')).toBe(true)
+    expect(esTextoDeCantidadValido('Unidad', '2,5')).toBe(false)
+    expect(esTextoDeCantidadValido('Peso', '1.234,5')).toBe(false)
+  })
+})
+
+describe('atributosDeCampoDeCantidad', () => {
+  it('un campo por unidad pide teclado numérico y uno por peso, decimal; ambos son de texto', () => {
+    expect(atributosDeCampoDeCantidad(restriccionDeCantidad('Unidad'))).toMatchObject({ type: 'text', inputMode: 'numeric' })
+    expect(atributosDeCampoDeCantidad(restriccionDeCantidad('Peso'))).toMatchObject({ type: 'text', inputMode: 'decimal' })
+    expect(atributosDeCampoDeCantidad(restriccionDeCantidad(undefined, { permiteCero: true }))).toMatchObject({ inputMode: 'decimal' })
+  })
 })
 
 describe('fraccionaUnaUnidad', () => {
@@ -127,6 +143,7 @@ describe('fraccionaUnaUnidad', () => {
 describe('esFraccionDeArticuloPorUnidad', () => {
   it('solo es verdadero para un positivo fraccionario de un artículo por unidad', () => {
     expect(esFraccionDeArticuloPorUnidad('Unidad', '1.5')).toBe(true)
+    expect(esFraccionDeArticuloPorUnidad('Unidad', '1,5')).toBe(true)
     expect(esFraccionDeArticuloPorUnidad('Unidad', '2')).toBe(false)
     expect(esFraccionDeArticuloPorUnidad('Unidad', '')).toBe(false)
     expect(esFraccionDeArticuloPorUnidad('Unidad', '0')).toBe(false)

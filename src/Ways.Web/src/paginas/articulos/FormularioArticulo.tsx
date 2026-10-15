@@ -44,6 +44,7 @@ import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 import { SeccionDeFamilia } from './SeccionDeFamilia'
 import { SeccionDeDisponibilidad } from './SeccionDeDisponibilidad'
+import { atributosDeCampoDecimal, parsearNumeroDecimal } from '../../formato/numeros'
 
 /** Una tecla de atajo que el servidor rechazó por estar ya tomada por otro artículo, con el texto para mostrar. */
 export type ErrorDeTecla = { tecla: TeclaAtajo; mensaje: string }
@@ -197,8 +198,7 @@ function aVacioNulo(valor: string): string | null {
 }
 
 function numeroOpcional(valor: string): number | null {
-  const limpio = valor.trim()
-  return limpio === '' ? null : Number(limpio)
+  return parsearNumeroDecimal(valor, { permitirNegativo: true })
 }
 
 function camposComunes(f: Formulario) {
@@ -446,7 +446,7 @@ export function FormularioArticulo({
   const costoNominal = costoNominalDelFormulario(valor, alicuotasIva, bloqueoDeFamilia)
   const bultoSinUnidadesPorBulto = bultoSinUnidades(
     valor.costoListaPor,
-    valor.unidadesPorBulto.trim() === '' ? null : Number(valor.unidadesPorBulto),
+    parsearNumeroDecimal(valor.unidadesPorBulto),
   )
 
   // El campo que se tipeó pasa a ser la fuente del costo de lista; el otro se deriva. `CampoImporte` también emite al
@@ -561,9 +561,7 @@ export function FormularioArticulo({
             </Etiqueta>
             <input
               id="art-unidades-por-bulto"
-              type="number"
-              step="0.01"
-              min="0"
+              {...atributosDeCampoDecimal({ decimales: 2 })}
               className="form-control"
               value={valor.unidadesPorBulto}
               disabled={bloqueoDeFamilia}
@@ -869,9 +867,7 @@ export function FormularioArticulo({
               </Etiqueta>
               <input
                 id="art-descuento-proveedor"
-                type="number"
-                step="0.01"
-                min="0"
+                {...atributosDeCampoDecimal({ decimales: 2 })}
                 className="form-control"
                 value={valor.descuentoProveedor}
                 disabled={bloqueoDeFamilia}

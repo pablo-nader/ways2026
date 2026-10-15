@@ -16,6 +16,7 @@ import type {
 } from '../../api/tipos'
 import type { Formulario } from './FormularioArticulo'
 import { fechaHoraATexto } from '../../formato/fechas'
+import { parsearNumeroDecimal } from '../../formato/numeros'
 
 /** Las quince claves compartidas son las de `ValoresCompartidosDeLaFamilia`: un campo nuevo del
  * contrato obliga a decidir acá si se comparte, y `Pick<Formulario, ClaveCompartida>` obliga a que el
@@ -91,8 +92,7 @@ function valorComparable(formulario: Formulario, campo: CampoCompartido): number
   if (campo.tipo === 'id') return valor === '' ? null : Number(valor)
 
   if (campo.tipo === 'decimal') {
-    const texto = String(valor).trim()
-    return texto === '' ? null : Number(texto)
+    return parsearNumeroDecimal(String(valor), { permitirNegativo: true })
   }
 
   return valor as string | boolean

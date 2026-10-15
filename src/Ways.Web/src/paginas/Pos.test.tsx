@@ -756,7 +756,7 @@ describe('Pos — escaneo', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
     expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
-    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(1)
+    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('1')
   })
 
   it('re-escanear el mismo código suma la cantidad en la misma línea, no duplica', async () => {
@@ -773,7 +773,7 @@ describe('Pos — escaneo', () => {
     await userEvent.type(entrada, '7790001234567')
     await userEvent.click(boton)
 
-    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('2'))
     expect(screen.getAllByText('Coca Cola 1L')).toHaveLength(1)
   })
 
@@ -1105,7 +1105,7 @@ describe('Pos — vista previa de precios', () => {
     await screen.findByText('Coca Cola 1L')
     await userEvent.type(entrada, '7790001234567')
     await userEvent.click(boton)
-    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('2'))
 
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
     await waitFor(() => expect(within(fila).getByText('$ 120,00')).toBeInTheDocument())
@@ -1260,7 +1260,7 @@ describe('Pos — vista previa de precios', () => {
 
     await userEvent.type(entrada, '7790001234567')
     await userEvent.click(boton)
-    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('2'))
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
 
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
@@ -2083,12 +2083,10 @@ describe('Pos — el borrador sobrevive a un restart entero (stage-pos-borrador-
     render(arbolDePosConAuthYBorrador())
 
     const sinUnidad = await screen.findByLabelText('Cantidad de Coca Cola 1L')
-    expect(sinUnidad).toHaveValue(1.5)
-    expect(sinUnidad).toHaveAttribute('step', '0.001')
-    expect(sinUnidad).toHaveAttribute('min', '0.001')
+    expect(sinUnidad).toHaveValue('1,5')
+    expect(sinUnidad).toHaveAttribute('inputmode', 'decimal')
     const porUnidad = screen.getByLabelText('Cantidad de Fanta 1.5L')
-    expect(porUnidad).toHaveAttribute('step', '1')
-    expect(porUnidad).toHaveAttribute('min', '1')
+    expect(porUnidad).toHaveAttribute('inputmode', 'numeric')
   })
 
   it('una fila de pago restaurada con un medio que ya no existe monta sin romper y el panel queda usable', async () => {
@@ -3439,7 +3437,7 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
 })
 
 describe('Pos — CampoImporte en el panel de pagos: separador de miles y decimales con coma', () => {
-  it('tipear "10.000" (con separador de miles) en el importe se interpreta como 10000 — la vista se actualiza y el checkout envía el número correcto', async () => {
+  it('tipear "10000" en el importe se muestra como "10.000,00" — la vista se actualiza y el checkout envía el número correcto', async () => {
     renderPos()
     await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -3449,7 +3447,7 @@ describe('Pos — CampoImporte en el panel de pagos: separador de miles y decima
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     const importe = await screen.findByLabelText('Importe de Efectivo (fila 1)')
-    await userEvent.type(importe, '10.000')
+    await userEvent.type(importe, '10000')
     importe.blur()
 
     await waitFor(() => expect(importe).toHaveValue('10.000,00'))
@@ -3562,8 +3560,7 @@ describe('Pos — edición de cantidad', () => {
 
   it('el guard de cantidad mínima rechaza valores por debajo de 0.001, el mismo piso declarado en min/step', async () => {
     const input = await agregarLineaCocaCola()
-    expect(input).toHaveAttribute('min', '0.001')
-    expect(input).toHaveAttribute('step', '0.001')
+    expect(input).toHaveAttribute('inputmode', 'decimal')
 
     fireEvent.change(input, { target: { value: '0.0001' } })
     expect(input.value).toBe('0.0001')
@@ -3592,8 +3589,7 @@ describe('Pos — cantidad según la unidad de venta', () => {
     mockearEscaneo({ unidadVenta: 'Unidad' })
     await escanearCocaCola()
     const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
-    expect(input).toHaveAttribute('step', '1')
-    expect(input).toHaveAttribute('min', '1')
+    expect(input).toHaveAttribute('inputmode', 'numeric')
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
 
     fireEvent.change(input, { target: { value: '1.5' } })
@@ -3618,15 +3614,32 @@ describe('Pos — cantidad según la unidad de venta', () => {
     mockearEscaneo({ unidadVenta: 'Peso' })
     await escanearCocaCola()
     const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
-    expect(input).toHaveAttribute('step', '0.001')
-    expect(input).toHaveAttribute('min', '0.001')
+    expect(input).toHaveAttribute('inputmode', 'decimal')
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
 
     fireEvent.change(input, { target: { value: '1.5' } })
     expect(input).not.toHaveAttribute('aria-invalid')
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
     fireEvent.blur(input)
-    expect(input.value).toBe('1.5')
+    expect(input.value).toBe('1,5')
+  })
+
+  it('una línea de un artículo por peso acepta la coma como separador decimal: "1,5" y "1.5" comprometen 1,5', async () => {
+    mockearEscaneo({ unidadVenta: 'Peso' })
+    await escanearCocaCola()
+    const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(input, { target: { value: '1,5' } })
+    expect(input).not.toHaveAttribute('aria-invalid')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
+    fireEvent.blur(input)
+    expect(input.value).toBe('1,5')
+
+    fireEvent.change(input, { target: { value: '2.5' } })
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(3))
+    fireEvent.blur(input)
+    expect(input.value).toBe('2,5')
   })
 
   it('un escaneo sin unidad de venta (servidor o instantánea anteriores) no bloquea una cantidad fraccionaria', async () => {
@@ -3634,8 +3647,8 @@ describe('Pos — cantidad según la unidad de venta', () => {
     await escanearCocaCola()
 
     const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
-    expect(input).toHaveValue(1.5)
-    expect(input).toHaveAttribute('step', '0.001')
+    expect(input).toHaveValue('1,5')
+    expect(input).toHaveAttribute('inputmode', 'decimal')
     expect(screen.queryByText(/se vende por unidad/)).not.toBeInTheDocument()
   })
 
@@ -3651,9 +3664,9 @@ describe('Pos — cantidad según la unidad de venta', () => {
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
-    await waitFor(() => expect(input).toHaveValue(2.5))
+    await waitFor(() => expect(input).toHaveValue('2,5'))
     expect(input).toHaveClass('is-invalid')
-    expect(input).toHaveAttribute('step', '1')
+    expect(input).toHaveAttribute('inputmode', 'numeric')
     await waitFor(() => expect(screen.getByText('$ 250,00', { selector: 'strong' })).toBeInTheDocument())
     const importe = screen.getByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
     await userEvent.clear(importe)
@@ -3684,8 +3697,8 @@ describe('Pos — cantidad según la unidad de venta', () => {
       await waitFor(() => expect(screen.getAllByLabelText('Cantidad de Coca Cola 1L')).toHaveLength(i + 1))
     }
     const [primera, segunda] = screen.getAllByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement[]
-    expect(primera).toHaveAttribute('step', '1')
-    expect(segunda).toHaveAttribute('step', '1')
+    expect(primera).toHaveAttribute('inputmode', 'numeric')
+    expect(segunda).toHaveAttribute('inputmode', 'numeric')
 
     fireEvent.change(segunda, { target: { value: '1.5' } })
 
@@ -3829,7 +3842,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
     await userEvent.click(boton)
     await screen.findByText('Coca Cola 1L')
 
-    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(1)
+    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('1')
   })
 
   it('vaciar el carrito con una edición pendiente no deja overrides fantasma para las líneas siguientes', async () => {
@@ -3854,7 +3867,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
     await userEvent.click(boton)
     await screen.findByText('Coca Cola 1L')
 
-    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(1)
+    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('1')
   })
 
   it('un escaneo que suma sobre una línea existente descarta el override de edición pendiente de esa fila', async () => {
@@ -3874,7 +3887,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
     await userEvent.type(entrada, '7790001234567')
     await userEvent.click(boton)
 
-    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('2'))
   })
 })
 
@@ -4776,7 +4789,7 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
 
     expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
     expect(await screen.findByText('Fanta 1.5L')).toBeInTheDocument()
-    expect(screen.getByLabelText('Cantidad de Fanta 1.5L')).toHaveValue(1)
+    expect(screen.getByLabelText('Cantidad de Fanta 1.5L')).toHaveValue('1')
     expect(inputCodigo).toHaveFocus()
   })
 })
@@ -6620,7 +6633,7 @@ describe('Pos — ajuste manual por línea', () => {
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
-    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('2'))
     await waitFor(() => expect(screen.getByText('$ 180,00', { selector: 'strong' })).toBeInTheDocument())
     expect(screen.getByText('Desc. manual 10% -$ 20,00')).toBeInTheDocument()
   })
@@ -7045,7 +7058,7 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
     await armarCarritoConPanchoYCoca()
     await userEvent.type(screen.getByLabelText('Código escaneado'), CODIGO_PANCHO)
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-    await waitFor(() => expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue('2'))
     const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
     await waitFor(() => expect(within(filaPancho).getByText('$ 5.400,00', { selector: 'td' })).toBeInTheDocument())
 
@@ -9807,8 +9820,8 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       await tipearYAgregar('C7')
 
       const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
-      expect(within(dialogo).getByLabelText('Pesable')).toHaveAttribute('step', '0.001')
-      expect(within(dialogo).getByLabelText('Sprite 1L')).toHaveAttribute('step', '1')
+      expect(within(dialogo).getByLabelText('Pesable')).toHaveAttribute('inputmode', 'decimal')
+      expect(within(dialogo).getByLabelText('Sprite 1L')).toHaveAttribute('inputmode', 'numeric')
       expect(llamadasGet('/combos')).toEqual([])
     })
 
@@ -9894,7 +9907,7 @@ describe('Pos — artículos por importe', () => {
       await screen.findByText('Fiambrería', { selector: 'td' })
       await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
       expect(lineasDeFiambreria()).toHaveLength(1)
-      expect(screen.getByLabelText('Cantidad de Fiambrería')).toHaveValue(1)
+      expect(screen.getByLabelText('Cantidad de Fiambrería')).toHaveValue('1')
       expect(within(screen.getByRole('table')).getAllByText('$ 150,00')).toHaveLength(2)
       expect(campoDeCodigo()).toHaveValue('')
     })
@@ -10629,8 +10642,8 @@ describe('Pos — ergonomía del carrito', () => {
       await userEvent.type(screen.getByLabelText('Código escaneado'), '111')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
-      await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
-      expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue(1)
+      await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue('2'))
+      expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue('1')
       expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
     })
 

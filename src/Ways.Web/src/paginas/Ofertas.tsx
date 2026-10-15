@@ -34,6 +34,7 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
+import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
 
 const ID_FORMULARIO_OFERTA = 'formulario-oferta'
 
@@ -498,8 +499,7 @@ function ModalDeOferta({
             </label>
             <input
               id="of-prioridad"
-              type="number"
-              step="1"
+              {...atributosDeCampoEntero()}
               className="form-control"
               value={valor.prioridad}
               onChange={(e) => onCambio({ ...valor, prioridad: e.target.value })}
@@ -721,9 +721,7 @@ function ModalDeOferta({
             </label>
             <input
               id="of-cantidad-minima"
-              type="number"
-              step="0.001"
-              min="0"
+              {...atributosDeCampoDecimal({ decimales: 3 })}
               className="form-control"
               placeholder="Sin mínimo (oferta directa)"
               value={valor.cantidadMinima}
@@ -760,10 +758,7 @@ function ModalDeOferta({
               </label>
               <input
                 id="of-porcentaje"
-                type="number"
-                step="0.01"
-                min="0"
-                max="100"
+                {...atributosDeCampoDecimal({ decimales: 2 })}
                 className="form-control"
                 value={valor.porcentaje}
                 onChange={(e) => onCambio({ ...valor, porcentaje: e.target.value })}

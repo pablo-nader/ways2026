@@ -1,4 +1,5 @@
 import type { EmpresaEdicion, EmpresaListado } from '../api/tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 /** Estado del formulario de edición de empresa: las alícuotas de percepción viajan como texto
  * (`''` = sin informar) para no pisar lo que el operador está tipeando. */
@@ -39,8 +40,8 @@ function aAlicuota(texto: string): number | null | undefined {
   const limpio = texto.trim()
   if (limpio === '') return null
 
-  const valor = Number(limpio.replace(',', '.'))
-  if (!Number.isFinite(valor) || valor < 0 || valor > 100) return undefined
+  const valor = parsearNumeroDecimal(limpio)
+  if (valor === null || valor > 100) return undefined
   if (Math.round(valor * 1000) / 1000 !== valor) return undefined
 
   return valor

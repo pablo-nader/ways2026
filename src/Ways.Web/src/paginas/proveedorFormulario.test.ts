@@ -70,6 +70,7 @@ describe('aAlta', () => {
 
     expect(alta.nombreFantasia).toBeNull()
     expect(alta.margen).toBe(12.5)
+    expect(aAlta({ ...aFormulario(proveedor()), margen: '12,5' }).margen).toBe(12.5)
     expect(alta.idCondicionFiscal).toBe(0)
   })
 })

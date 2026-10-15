@@ -32,6 +32,7 @@ import type { PreciosPorLinea } from '../api/ventas'
 import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
 import { leerImporteTipeado } from '../api/importeDeVenta'
 import { productoRedondeado, redondearImporte } from '../formato/importes'
+import { parsearNumeroDecimal } from '../formato/numeros'
 import { normalizarParaBuscar } from '../formato/texto'
 import { resolverCombos, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
 
@@ -184,8 +185,8 @@ export function parsearEntradaDeEscaneoOffline(entradaCruda: string): EntradaDeE
   if (!separada) return null
   const { prefijo, codigo } = separada
 
-  const cantidadParseada = prefijo === null ? Number.NaN : Number(prefijo)
-  const cantidad = prefijo !== null && Number.isFinite(cantidadParseada) && cantidadParseada > 0 ? cantidadParseada : 1
+  const cantidadParseada = prefijo === null ? null : parsearNumeroDecimal(prefijo)
+  const cantidad = cantidadParseada !== null && cantidadParseada > 0 ? cantidadParseada : 1
 
   const objetivo: ObjetivoDeEscaneo = codigo.length < LONGITUD_MINIMA_CODIGO_BARRA ? 'CodigoInterno' : 'CodigoBarra'
   return { cantidad, codigo, objetivo }

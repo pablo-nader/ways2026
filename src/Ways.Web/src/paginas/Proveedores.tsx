@@ -14,6 +14,7 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
 import { aAlta, aFormulario, formularioVacio, type Formulario } from './proveedorFormulario'
+import { atributosDeCampoDecimal } from '../formato/numeros'
 
 const ID_FORMULARIO_PROVEEDOR = 'formulario-proveedor'
 
@@ -632,9 +633,7 @@ function ModalDeProveedor({
           </label>
           <input
             id="p-margen"
-            type="number"
-            step="0.01"
-            min="0"
+            {...atributosDeCampoDecimal({ decimales: 2 })}
             className="form-control"
             value={valor.margen}
             onChange={(e) => onCambio({ ...valor, margen: e.target.value })}

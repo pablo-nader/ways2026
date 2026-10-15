@@ -743,9 +743,8 @@ describe('Combos — componentes por peso', () => {
     expect(cantidadDe(1)).toHaveAttribute('type', 'text')
     expect(cantidadDe(1)).toHaveAttribute('inputmode', 'decimal')
     expect(fila(2).queryByText('kg')).not.toBeInTheDocument()
-    expect(cantidadDe(2)).toHaveAttribute('type', 'number')
-    expect(cantidadDe(2)).toHaveAttribute('min', '1')
-    expect(cantidadDe(2)).toHaveAttribute('step', '1')
+    expect(cantidadDe(2)).toHaveAttribute('type', 'text')
+    expect(cantidadDe(2)).toHaveAttribute('inputmode', 'numeric')
   })
 
   it('un artículo por unidad rechaza 1,5 en su fila y no envía', async () => {
@@ -801,8 +800,8 @@ describe('Combos — componentes por peso', () => {
     await cambiarCantidad(1, '0,2')
     await elegirArticulo(1, 'pancho', 1)
 
-    expect(cantidadDe(1)).toHaveValue(1)
-    expect(cantidadDe(1)).toHaveAttribute('type', 'number')
+    expect(cantidadDe(1)).toHaveValue('1')
+    expect(cantidadDe(1)).toHaveAttribute('inputmode', 'numeric')
     expect(fila(1).queryByText('kg')).not.toBeInTheDocument()
 
     await cambiarCantidad(1, '3')

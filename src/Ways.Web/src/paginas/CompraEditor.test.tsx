@@ -333,7 +333,7 @@ describe('CompraEditor — borrador existente', () => {
     const fila = within(filas[0])
     expect(fila.getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Fideos 500g')
     expect(fila.getByLabelText(/^UM, línea \d+$/)).toHaveValue('Unidad')
-    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(10)
+    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue('10')
     expect(fila.getByLabelText(/^Importe, línea \d+$/)).toHaveValue('100,0000')
     expect(fila.getByLabelText(/^Descuento \(%\), línea \d+$/)).toHaveValue('5,00')
     await waitFor(() => expect(fila.getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3'))
@@ -1513,7 +1513,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
-    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(2) // Pendiente, no Pedida
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue('2') // Pendiente, no Pedida
     expect(within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)).toHaveValue('100,0000') // CostoEstimado de la cobertura
     expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Yerba mate 1kg')
     expect(filasDeItems()).toHaveLength(2) // la fila precargada y la vacía del final
@@ -1533,7 +1533,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
 
     await screen.findByText(/Vinculada a la orden de compra/)
     expect(filasDeItems()).toHaveLength(2)
-    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(3)
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue('3')
   })
 
   it('un artículo nunca cotizado precarga costo unitario vacío, nunca "0"', async () => {
@@ -1716,7 +1716,7 @@ describe('CompraEditor — líneas por concepto', () => {
     await cargarConcepto(usuario, '1234,56')
 
     const fila = within(filaDeItems(0))
-    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(1)
+    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue('1')
     expect(fila.getByLabelText(/^Importe, línea \d+$/)).toHaveValue('1.234,5600')
     // un concepto es siempre por unidad y no ofrece crear un artículo ya resuelto
     expect(fila.getByLabelText(/^UM, línea \d+$/)).toBeDisabled()
@@ -2203,8 +2203,8 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     await screen.findByDisplayValue('00012345')
 
     const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
-    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
-    expect(cantidad).toHaveAttribute('min', '1')
+    await waitFor(() => expect(cantidad).toHaveAttribute('inputmode', 'numeric')
+)
 
     fireEvent.change(cantidad, { target: { value: '2.5' } })
 
@@ -2229,7 +2229,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     await usuario.click(await screen.findByRole('option', { name: 'ART-20 — Leche en polvo 800g' }))
 
     const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
-    expect(cantidad).toHaveAttribute('step', '1')
+    expect(cantidad).toHaveAttribute('inputmode', 'numeric')
     fireEvent.change(cantidad, { target: { value: '2.5' } })
     expect(cantidad).toHaveClass('is-invalid')
     await act(async () => {})
@@ -2249,7 +2249,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
     fireEvent.change(cantidad, { target: { value: '2.5' } })
 
-    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).toHaveAttribute('inputmode', 'decimal')
     expect(cantidad).not.toHaveClass('is-invalid')
   })
 

@@ -10,6 +10,7 @@ import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
+import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
 
 type Formulario = {
   id: number | null
@@ -46,6 +47,13 @@ const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la 
  * adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores
  * de la carga del listado y de la baja siguen en la pantalla.
  */
+function atributosDeCampoNumerico(campo: CampoDescriptor) {
+  const decimales = (campo.paso ?? (campo.tipo === 'numeroDecimal' ? '0.01' : '1')).split('.')[1]?.length ?? 0
+  return decimales === 0
+    ? atributosDeCampoEntero({ permitirNegativo: true })
+    : atributosDeCampoDecimal({ decimales, permitirNegativo: true })
+}
+
 export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   definicion,
 }: {
@@ -552,8 +560,7 @@ function ModalDeCatalogo({
               ) : (
                 <input
                   id={`f-${campo.clave}`}
-                  type="number"
-                  step={campo.paso ?? (campo.tipo === 'numeroDecimal' ? '0.01' : '1')}
+                  {...atributosDeCampoNumerico(campo)}
                   className="form-control"
                   value={valorActual}
                   onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}

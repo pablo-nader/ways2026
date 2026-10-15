@@ -256,7 +256,7 @@ describe('GrillaDeItemsDeCompra — estructura', () => {
 
     await usuario.type(campo(0, 'Cantidad'), '5')
     expect(filasDeItems()).toHaveLength(2)
-    expect(campo(1, 'Cantidad')).toHaveValue(null)
+    expect(campo(1, 'Cantidad')).toHaveValue('')
 
     await usuario.type(campo(1, 'Código'), 'X')
     expect(filasDeItems()).toHaveLength(3)
@@ -478,7 +478,7 @@ describe('GrillaDeItemsDeCompra — UM, cantidad e importe', () => {
     montar({ inicial: [itemAFormulario(1, itemFixture({ cantidad: 24, bultos: 2, unidadesPorBulto: 12, costoUnitario: 10, descuento: 0 }))] })
 
     expect(campo(0, 'UM')).toHaveValue('Bulto')
-    expect(campo(0, 'Cantidad')).toHaveValue(2)
+    expect(campo(0, 'Cantidad')).toHaveValue('2')
     expect(campo(0, 'Importe')).toHaveValue('120,0000')
   })
 
@@ -488,7 +488,7 @@ describe('GrillaDeItemsDeCompra — UM, cantidad e importe', () => {
     })
 
     expect(campo(0, 'UM')).toHaveValue('Unidad')
-    expect(campo(0, 'Cantidad')).toHaveValue(20)
+    expect(campo(0, 'Cantidad')).toHaveValue('20')
     expect(enviadas()[0]).toMatchObject({ unidades: 2, bultos: 3, unidadesPorBulto: 6, costoUnitario: 10, descuento: 0 })
   })
 
@@ -931,7 +931,7 @@ describe('GrillaDeItemsDeCompra — código del proveedor (T7)', () => {
       expect(campo(0, 'Detalle')).toHaveValue('Leche en polvo 800g')
       expect(campo(0, 'Detalle')).toHaveAttribute('readonly')
       // …lo tipeado se respeta…
-      expect(campo(0, 'Cantidad')).toHaveValue(3)
+      expect(campo(0, 'Cantidad')).toHaveValue('3')
       expect(campo(0, 'Importe')).toHaveValue('150')
       // …Importe y Descuento son un par: tipeado uno, el artículo no precarga ninguno; el IVA vacío sí se precarga
       expect(campo(0, 'Descuento (%)')).toHaveValue('')
@@ -1097,7 +1097,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
 
       await usuario.selectOptions(campo(0, 'UM'), 'Unidad')
       expect(campo(0, 'Importe')).toHaveValue('100,0000')
-      expect(campo(0, 'Cantidad')).toHaveValue(1)
+      expect(campo(0, 'Cantidad')).toHaveValue('1')
       expect(enviadas()[0]).toMatchObject({ unidades: 1, bultos: null, costoUnitario: 100 })
     })
   })

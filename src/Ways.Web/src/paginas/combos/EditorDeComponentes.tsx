@@ -11,7 +11,7 @@ import {
   type FilaDeComponente,
   type TipoDeComponente,
 } from '../../api/combosAbm'
-import { restriccionDeCantidad } from '../../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, restriccionDeCantidad } from '../../api/cantidadPorUnidad'
 import type { FamiliaListado } from '../../api/tipos'
 import { BotonIcono } from '../../componentes/BotonIcono'
 import { SelectorDeArticuloDeCombo } from './SelectorDeArticuloDeCombo'
@@ -91,7 +91,6 @@ export function EditorDeComponentes({
         const error = errores[fila.clave]
         const errorDeReferencia = error?.referencia ?? (fila.disponible ? undefined : MENSAJE_COMPONENTE_NO_DISPONIBLE)
         const unidad = unidadDeFila(fila)
-        const esEntera = unidad === 'Unidad'
         const familiaFaltante = fila.idFamilia !== '' && !familias.some((f) => f.id === fila.idFamilia)
         const idErrorReferencia = `cb-fila-${fila.clave}-referencia-error`
         const idErrorCantidad = `cb-fila-${fila.clave}-cantidad-error`
@@ -168,9 +167,7 @@ export function EditorDeComponentes({
               <div className="col-6 col-md-2">
                 <div className="input-group input-group-sm">
                   <input
-                    {...(esEntera
-                      ? { type: 'number', min: restriccionDeCantidad(unidad).min, step: restriccionDeCantidad(unidad).step }
-                      : { type: 'text', inputMode: 'decimal', autoComplete: 'off' })}
+                    {...atributosDeCampoDeCantidad(restriccionDeCantidad(unidad))}
                     className={`form-control form-control-sm ${error?.cantidad ? 'is-invalid' : ''}`}
                     aria-label={`Cantidad del componente ${numero}`}
                     aria-invalid={error?.cantidad ? true : undefined}

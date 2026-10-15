@@ -19,6 +19,7 @@ import type {
   AgregacionDeResolucion,
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
+import { parsearEnteroTipeado, parsearNumeroDecimal } from '../formato/numeros'
 
 export const clienteDeOfertas = {
   listar: (incluirEliminados: boolean) =>
@@ -120,7 +121,7 @@ export function formularioOfertaVacio(): FormularioOferta {
 
 function numeroOpcional(valor: string): number | null {
   const limpio = valor.trim()
-  return limpio === '' ? null : Number(limpio)
+  return limpio === '' ? null : parsearNumeroDecimal(limpio)
 }
 
 function fechaOpcional(valor: string): string | null {
@@ -157,7 +158,7 @@ export function aAltaOferta(f: FormularioOferta): AltaOferta {
     precioUnitario: f.beneficio === 'PrecioUnitario' ? numeroOpcional(f.precioUnitario) : null,
     porcentaje: f.beneficio === 'Porcentaje' ? numeroOpcional(f.porcentaje) : null,
     importeFijo: f.beneficio === 'ImporteFijo' ? numeroOpcional(f.importeFijo) : null,
-    prioridad: f.prioridad.trim() === '' ? 0 : Number(f.prioridad),
+    prioridad: parsearEnteroTipeado(f.prioridad) ?? 0,
     acumulable: f.acumulable,
     idsListas: f.idsListas,
     activo: f.activo,

@@ -242,7 +242,7 @@ describe('Transferencias — clave de línea (judgment-day fix, Slice 15)', () =
     // Comportamiento observable: si la `clave` colisionara, editar la fila nueva también
     // habría tocado la fila inicial (mismo `clave` en el `.map` de `cambiarLinea`).
     expect(buscadores[0]).toHaveValue('')
-    expect(screen.getAllByLabelText('Cantidad')[0]).toHaveValue(null)
+    expect(screen.getAllByLabelText('Cantidad')[0]).toHaveValue('')
 
     const huboWarningDeClave = errorSpy.mock.calls.some((call) =>
       call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
@@ -695,8 +695,7 @@ describe('Transferencias — cantidad según la unidad de venta', () => {
     mockearConArticulo('Unidad')
     const cantidad = await elegirArticulo(userEvent.setup())
 
-    expect(cantidad).toHaveAttribute('step', '1')
-    expect(cantidad).toHaveAttribute('min', '1')
+    expect(cantidad).toHaveAttribute('inputmode', 'numeric')
 
     fireEvent.change(cantidad, { target: { value: '1.5' } })
 
@@ -709,8 +708,7 @@ describe('Transferencias — cantidad según la unidad de venta', () => {
     mockearConArticulo('Peso')
     const cantidad = await elegirArticulo(userEvent.setup())
 
-    expect(cantidad).toHaveAttribute('step', '0.001')
-    expect(cantidad).toHaveAttribute('min', '0.001')
+    expect(cantidad).toHaveAttribute('inputmode', 'decimal')
 
     fireEvent.change(cantidad, { target: { value: '1.5' } })
 

@@ -146,6 +146,11 @@ describe('aLineasDeTransferencia', () => {
     expect(lineas).toEqual([{ idArticulo: 10, cantidad: 5, idLote: null }])
   })
 
+  it('la cantidad con coma decimal viaja como número', () => {
+    const lineas = aLineasDeTransferencia([lineaFixture({ idArticulo: 10, cantidad: '1,5' })])
+    expect(lineas).toEqual([{ idArticulo: 10, cantidad: 1.5, idLote: null }])
+  })
+
   it('un idLote elegido viaja como número; sin elegir viaja como null (el servidor resuelve FEFO)', () => {
     const lineas = aLineasDeTransferencia([lineaFixture({ idArticulo: 10, cantidad: '5', idLote: 41 })])
     expect(lineas).toEqual([{ idArticulo: 10, cantidad: 5, idLote: 41 }])
@@ -183,6 +188,7 @@ describe('contadaValida', () => {
     expect(contadaValida('')).toBe(false)
     expect(contadaValida('-1')).toBe(false)
     expect(contadaValida('abc')).toBe(false)
+    expect(contadaValida('0,5')).toBe(true)
   })
 
   it('un artículo por unidad solo admite enteros, cero incluido; uno por peso o sin unidad conocida admite fracciones', () => {
@@ -293,8 +299,13 @@ describe('umbralTextoValido', () => {
     expect(umbralTextoValido('-1')).toBe(true)
   })
 
-  it('una coma decimal no parsea — inválido, nunca coercionado en silencio a null', () => {
-    expect(umbralTextoValido('1,5')).toBe(false)
+  it('la coma decimal vale igual que el punto', () => {
+    expect(umbralTextoValido('1,5')).toBe(true)
+    expect(umbralTextoValido('1.234,5')).toBe(false)
+  })
+
+  it('un texto que no es número es inválido — nunca coercionado en silencio a null', () => {
+    expect(umbralTextoValido('abc')).toBe(false)
   })
 })
 
@@ -316,9 +327,8 @@ describe('aSolicitudDeMinimos', () => {
     expect(aSolicitudDeMinimos(2, 10, '2.5', '-1')).toEqual({ idPuntoVenta: 2, idArticulo: 10, minimo: 2.5, reposicion: -1 })
   })
 
-  it('una coma decimal ("1,5") coerciona a NaN — nunca silenciosamente a null', () => {
-    const solicitud = aSolicitudDeMinimos(2, 10, '1,5', '')
-    expect(Number.isNaN(solicitud.minimo)).toBe(true)
+  it('la coma decimal ("1,5") se lee como 1,5', () => {
+    expect(aSolicitudDeMinimos(2, 10, '1,5', '').minimo).toBe(1.5)
   })
 })
 
@@ -339,6 +349,11 @@ describe('reposicionMenorQueMinimo', () => {
   })
 
   it('un campo con formato inválido nunca dispara este aviso en particular', () => {
-    expect(reposicionMenorQueMinimo('1,5', '5')).toBe(false)
+    expect(reposicionMenorQueMinimo('1,2,3', '5')).toBe(false)
+  })
+
+  it('compara igual con coma que con punto', () => {
+    expect(reposicionMenorQueMinimo('2,5', '1,5')).toBe(true)
+    expect(reposicionMenorQueMinimo('2,5', '2.5')).toBe(false)
   })
 })

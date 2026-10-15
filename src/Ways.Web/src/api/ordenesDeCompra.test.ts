@@ -16,6 +16,17 @@ import {
 } from './ordenesDeCompra'
 import type { EstadoOrdenCompra, ItemDeOrden } from './tipos'
 
+describe('aLineaDeOrdenSolicitada — separador decimal', () => {
+  it('la cantidad y el costo estimado con coma se leen igual que con punto', () => {
+    const base = { clave: 1, idArticulo: 10, descripcion: '' } as const
+    const conComa = aLineaDeOrdenSolicitada({ ...base, cantidadPedida: '0,25', costoUnitarioEstimado: '10,5' })
+    const conPunto = aLineaDeOrdenSolicitada({ ...base, cantidadPedida: '0.25', costoUnitarioEstimado: '10.5' })
+
+    expect(conComa).toMatchObject({ cantidadPedida: 0.25, costoUnitarioEstimado: 10.5 })
+    expect(conComa).toEqual(conPunto)
+  })
+})
+
 describe('filtrosDeOrdenesDeCompraVacios / construirQueryDeOrdenesDeCompra', () => {
   it('sin filtros manda solo pagina/tamanio', () => {
     expect(construirQueryDeOrdenesDeCompra(filtrosDeOrdenesDeCompraVacios())).toBe('?pagina=1&tamanio=25')
