@@ -101,12 +101,55 @@ describe('CampoImporte', () => {
     expect(onChange).toHaveBeenLastCalledWith(valor)
   })
 
-  it('con decimales=0 un "." tipeado se descarta, igual que la coma', async () => {
+  it.each([
+    ['1.234.567', '1234567', 1234567],
+    ['$ 1.234.567', '1234567', 1234567],
+  ])('pegar un entero agrupado en miles (%s) lee el "." como miles', async (pegado, texto, valor) => {
     const usuario = userEvent.setup()
-    render(<CampoImporte valor={null} decimales={0} onChange={() => {}} aria-label="entero" />)
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} onChange={onChange} aria-label="pegado" />)
+    const campo = screen.getByLabelText('pegado')
+    await usuario.click(campo)
+    await usuario.paste(pegado)
+    expect(campo).toHaveValue(texto)
+    expect(onChange).toHaveBeenLastCalledWith(valor)
+  })
+
+  it.each([
+    ['1.5', '2', 2],
+    ['1,4', '1', 1],
+  ])('con decimales=0 el separador tipeado (%s) es decimal y el blur redondea, nunca multiplica', async (tipeado, final, valor) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} decimales={0} onChange={onChange} aria-label="entero" />)
     const campo = screen.getByLabelText('entero')
-    await usuario.type(campo, '1.5')
-    expect(campo).toHaveValue('15')
+    await usuario.type(campo, tipeado)
+    await usuario.tab()
+    expect(campo).toHaveValue(final)
+    expect(onChange).toHaveBeenLastCalledWith(valor)
+  })
+
+  it('con decimales=0 pegar un importe formateado lee el "." como miles y redondea los decimales', async () => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} decimales={0} onChange={onChange} aria-label="entero" />)
+    const campo = screen.getByLabelText('entero')
+    await usuario.click(campo)
+    await usuario.paste('1.234,56')
+    await usuario.tab()
+    expect(campo).toHaveValue('1.235')
+    expect(onChange).toHaveBeenLastCalledWith(1235)
+  })
+
+  it.each(['1234,', '1234.'])('un separador final sin decimales (%s) no borra el importe al salir del campo', async (tipeado) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} onChange={onChange} aria-label="final" />)
+    const campo = screen.getByLabelText('final')
+    await usuario.type(campo, tipeado)
+    await usuario.tab()
+    expect(campo).toHaveValue('1.234,00')
+    expect(onChange).toHaveBeenLastCalledWith(1234)
   })
 
   it('al enfocar un valor existente se muestra sin miles ("1234,56") y el blur lo reformatea a "1.234,56"', async () => {
