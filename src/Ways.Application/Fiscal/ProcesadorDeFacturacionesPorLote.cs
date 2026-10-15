@@ -29,8 +29,7 @@ public sealed record ResultadoDeLoteDeFacturacion(
     IReadOnlyList<ResultadoDeFacturacionDeLote> Resultados);
 
 /// <summary>
-/// Procesa las decisiones de facturación <c>pendiente</c> de UN punto de venta (de factura y de nota de crédito) y las facturas
-/// <c>rechazada</c> de ventas anuladas (que el servicio termina de revertir), de a una por
+/// Procesa las decisiones de facturación <c>pendiente</c> de UN punto de venta (de factura y de nota de crédito), de a una por
 /// <see cref="ServicioDeFacturacionDeVentas.ProcesarDecisionAsync"/>: la misma ruta, los mismos locks y la misma lista blanca de
 /// resultados definitivos. Este lote agrega, sobre eso, lo que una decisión suelta no tiene:
 ///
@@ -351,14 +350,11 @@ public class ProcesadorDeFacturacionesPorLote(
 
     /// <summary>Las candidatas del punto de venta, las más viejas primero (por id de decisión), de a páginas a partir de
     /// <paramref name="cursor"/>:
-    /// <list type="bullet">
-    /// <item>decisiones <c>pendiente</c> cuya espera no existe o ya venció, de factura o de nota de crédito, que todavía no
+    /// decisiones <c>pendiente</c> cuya espera no existe o ya venció, de factura o de nota de crédito, que todavía no
     /// tienen el espejo de SU clase (el de la factura no tiene comprobante asociado; el de la nota sí): quien lo tiene es cabeza
-    /// de serie. Una venta anulada puede tener las dos decisiones y se procesan por separado;</item>
-    /// <item>decisiones de factura <c>rechazada</c> de una venta anulada: el rechazo solo devolvió el débito y el servicio
-    /// termina de revertir el acumulado. Se ignora su espera (ya no es de reintento) y las de nota de crédito rechazadas no
-    /// entran: no se reintentan solas.</item>
-    /// </list>
+    /// de serie. Una venta anulada puede tener las dos decisiones y se procesan por separado. Las decisiones de factura
+    /// <c>rechazada</c> de una venta anulada no entran: no toman número ni tienen espera, y se liquidan por la decisión suelta
+    /// (<see cref="ServicioDeFacturacionDeVentas.ProcesarDecisionAsync"/>) y, más adelante, desde la transacción de la anulación.
     /// <see cref="FilaDeCandidata.LetraDeLaFactura"/> es la letra del tipo del espejo de la factura de la venta, de donde sale
     /// la serie de una nota de crédito.</summary>
     private async Task<List<FilaDeCandidata>> LeerCandidatasAsync(
@@ -376,13 +372,11 @@ public class ProcesadorDeFacturacionesPorLote(
             LEFT JOIN tipos_comprobante ti ON ti.id_tipo_comprobante = fe.id_tipo_comprobante
             WHERE v.id_punto_venta = {idPuntoVenta}
               AND f.id_facturacion_venta > {cursor}
-              AND ((f.estado = 'pendiente'::estado_facturacion_venta
-                    AND (f.proximo_intento_en IS NULL OR f.proximo_intento_en <= {ahora})
-                    AND NOT EXISTS (SELECT 1 FROM comprobantes_venta e
-                                    WHERE e.id_venta_origen = f.id_comprobante_venta
-                                      AND (e.id_comprobante_asociado IS NOT NULL) = (f.id_facturacion_origen IS NOT NULL)))
-                   OR (f.estado = 'rechazada'::estado_facturacion_venta AND f.id_facturacion_origen IS NULL
-                       AND v.estado = 'anulado'))
+              AND f.estado = 'pendiente'::estado_facturacion_venta
+              AND (f.proximo_intento_en IS NULL OR f.proximo_intento_en <= {ahora})
+              AND NOT EXISTS (SELECT 1 FROM comprobantes_venta e
+                              WHERE e.id_venta_origen = f.id_comprobante_venta
+                                AND (e.id_comprobante_asociado IS NOT NULL) = (f.id_facturacion_origen IS NOT NULL))
             ORDER BY f.id_facturacion_venta
             LIMIT {TamanioDePagina}
             """).ToListAsync(ct);

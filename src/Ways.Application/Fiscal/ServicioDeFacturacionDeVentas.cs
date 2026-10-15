@@ -526,7 +526,8 @@ public class ServicioDeFacturacionDeVentas(
             return FallaCon("receptor_sin_cuit", "Una factura A exige que el receptor esté identificado con su CUIT.");
         }
 
-        var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(origen.Id, ct);
+        // Los ítems de una nota de crédito son los de una factura ya autorizada: una alícuota dada de baja después no la frena.
+        var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(origen.Id, ct, incluirBajasDeCatalogo: factura is not null);
         TotalesFiscales totales;
         try
         {

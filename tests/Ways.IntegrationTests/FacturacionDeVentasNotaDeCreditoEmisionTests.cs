@@ -20,7 +20,7 @@ namespace Ways.IntegrationTests;
 /// clase de la decisión, la venta anulada y la factura aprobada), los datos legales congelados de la factura, los comprobantes
 /// asociados del pedido, el signo de la reversión del cupo de la factura y su condición de decisión emitida, el rechazo sin
 /// reversión, las notas de crédito en el lote (cabeza de serie y candidatas por clase de espejo), la liquidación de una factura
-/// rechazada de una venta anulada y los filtros de clase de factura de T8a: la búsqueda del espejo, <c>ExisteEspejoDeLaVenta</c>,
+/// rechazada de una venta anulada por la decisión suelta (el lote no la toma) y los filtros de clase de factura de T8a: la búsqueda del espejo, <c>ExisteEspejoDeLaVenta</c>,
 /// la decisión de <c>ServicioDeDecisionDeFacturacion</c> y <c>TieneFacturaVigenteAsync</c>.
 /// </summary>
 public partial class FacturacionDeVentasEmisionTests
@@ -207,6 +207,33 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal("1", CampoDelCuerpo(cuerpo, "CondicionIVAReceptorId"));
         Assert.Equal("20111111112", CampoDelCuerpo(cuerpo, "Cuit"));
         Assert.Equal("20111111112", ComprobanteAsociadoDelPedido(cuerpo)["Cuit"]);
+    }
+
+    /// <summary>Cláusula bajo prueba: <c>incluirBajasDeCatalogo</c> al componer las líneas de una nota de crédito. Las alícuotas
+    /// de la factura se dan de baja después de aprobarla: la nota se emite igual, con los mismos totales.</summary>
+    [Fact]
+    public async Task UnaNotaDeCreditoSeEmiteAunqueSeDieranDeBajaLasAlicuotasDeLaFactura()
+    {
+        var c = await PrepararAsync("ncalibaja");
+        var factura = await SembrarFacturaAprobadaYAnuladaAsync(c);
+        c.Wsfe.Solicitar = Responde(FecaeAprobado("70222222222223"));
+
+        // El catálogo de alícuotas es compartido por toda la suite: la baja se deshace siempre.
+        await EjecutarComoOwnerAsync("UPDATE alicuotas_iva SET deleted_at = now() WHERE codigo_afip IN (4, 5)");
+        try
+        {
+            var estado = await ProcesarAsync(c.Admin, factura.IdDecisionNota);
+
+            Assert.True(estado.Estado == EstadosFiscalesDeVenta.Aprobado, $"{estado.Estado}: {estado.Error}");
+            var cuerpo = Assert.Single(c.Wsfe.CuerposDeSolicitud);
+            Assert.Equal("231.00", CampoDelCuerpo(cuerpo, "ImpTotal"));
+            Assert.Equal("199.55", CampoDelCuerpo(cuerpo, "ImpNeto"));
+            Assert.Equal("31.45", CampoDelCuerpo(cuerpo, "ImpIVA"));
+        }
+        finally
+        {
+            await EjecutarComoOwnerAsync("UPDATE alicuotas_iva SET deleted_at = NULL WHERE codigo_afip IN (4, 5)");
+        }
     }
 
     // ===================================================================================================
@@ -603,28 +630,24 @@ public partial class FacturacionDeVentasEmisionTests
     }
 
     [Fact]
-    public async Task ElLoteLiquidaLaFacturaRechazadaDeUnaVentaAnuladaYDejaLasDemasRechazadas()
+    public async Task ElLoteNoTomaLaFacturaRechazadaDeUnaVentaAnuladaYLaDecisionSueltaLaLiquida()
     {
         var c = await PrepararAsync("rechlote");
         var anulada = await SembrarFacturaRechazadaAsync(c);
         await AnularPorSqlAsync(anulada.IdVenta);
-        var vigente = await SembrarVentaDecididaAsync(c, sembrarAcumulados: false);
-        c.Wsfe.Solicitar = Responde(FecaeRechazado());
-        await ProcesarAsync(c.Admin, vigente.IdFacturacion);
-        c.Wsfe.Reiniciar();
         var tras = await LeerAcumuladosAsync(c);
 
         var lote = await ProcesarLoteAsync(c.Admin, c.IdPuntoVenta);
 
-        Assert.Equal((0, 0, 1, 0), (lote.Emitidas, lote.Rechazadas, lote.Canceladas, lote.PendientesRestantes));
-        Assert.Equal(anulada.IdFacturacion, Assert.Single(lote.Resultados).IdFacturacion);
-        Assert.Equal("cancelada", (await LeerDecisionAsync(c, anulada.IdFacturacion)).Estado);
-        Assert.Equal("rechazada", (await LeerDecisionAsync(c, vigente.IdFacturacion)).Estado);
-        Assert.NotEqual(tras, await LeerAcumuladosAsync(c));
+        Assert.Empty(lote.Resultados);
+        Assert.Equal("rechazada", (await LeerDecisionAsync(c, anulada.IdFacturacion)).Estado);
+        Assert.Equal(tras, await LeerAcumuladosAsync(c));
 
-        // Y el segundo lote ya no tiene nada.
-        var segundo = await ProcesarLoteAsync(c.Admin, c.IdPuntoVenta);
-        Assert.Empty(segundo.Resultados);
+        var estado = await ProcesarAsync(c.Admin, anulada.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, estado.Estado);
+        Assert.Equal("cancelada", (await LeerDecisionAsync(c, anulada.IdFacturacion)).Estado);
+        Assert.NotEqual(tras, await LeerAcumuladosAsync(c));
     }
 
     [Fact]

@@ -857,8 +857,10 @@ aportes y con la empresa, el motivo y el período de la decisión de la factura;
   candidata nota sale de la letra del espejo de su factura. Las notas pendientes cuentan en `pendientesRestantes`.
 - **Factura rechazada de una venta que se anula.** El rechazo solo había devuelto el débito (`saldo += vendido`,
   `total_facturado −= vendido`), así que la venta anulada seguía devengando y contando como vendida. Procesar esa decisión
-  (el endpoint o el lote, que ahora la toma como candidata) la pasa a `cancelada`, conserva el motivo del rechazo y termina de
-  revertir el acumulado (aportes y `total_vendido`), bajo los locks de la venta y de la decisión y una sola vez.
+  (el endpoint de la decisión suelta) la pasa a `cancelada`, conserva el motivo del rechazo y termina de revertir el acumulado
+  (aportes y `total_vendido`), bajo los locks de la venta y de la decisión y una sola vez. El lote NO la toma como candidata (no
+  toma número ni tiene espera, y recorrería el historial de decisiones del punto de venta en cada llamada): hoy se liquida por la
+  decisión suelta y la transacción de la anulación (T8c) la invocará.
 
 ### Presupuestos (Etapa 17)
 
