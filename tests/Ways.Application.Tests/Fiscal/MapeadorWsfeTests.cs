@@ -103,4 +103,47 @@ public class MapeadorWsfeTests
         Assert.Contains("<FchServHasta>20260131</FchServHasta>", sobre, StringComparison.Ordinal);
         Assert.Contains("<FchVtoPago>20260210</FchVtoPago>", sobre, StringComparison.Ordinal);
     }
+
+    /// <summary>Orden del WSDL de WSFEv1 (<c>FECAEDetRequest</c>): <c>CondicionIVAReceptorId</c>, <c>CbtesAsoc</c>, <c>Tributos</c>,
+    /// <c>Iva</c>. <c>Cuit</c> y <c>CbteFch</c> del asociado van después de <c>Nro</c>, con la fecha en <c>yyyyMMdd</c>.</summary>
+    [Fact]
+    public void LosComprobantesAsociadosSeEmitenDespuesDeLaCondicionDelReceptorYAntesDelIvaConSuFechaYyyyMmDd()
+    {
+        var notaDeCredito = SolicitudDeReferencia with
+        {
+            CbtesAsoc = [new ComprobanteAsociadoFiscal(6, 3, 104, 20111111111, new DateOnly(2026, 1, 14))]
+        };
+
+        var sobre = MapeadorWsfe.ConstruirFecaeSolicitar(Ticket, Cuit, notaDeCredito);
+
+        Assert.Contains(
+            "<CondicionIVAReceptorId>5</CondicionIVAReceptorId><CbtesAsoc><CbteAsoc><Tipo>6</Tipo><PtoVta>3</PtoVta>" +
+            "<Nro>104</Nro><Cuit>20111111111</Cuit><CbteFch>20260114</CbteFch></CbteAsoc></CbtesAsoc><Iva>",
+            sobre, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ElCuitYLaFechaDelComprobanteAsociadoSeOmitenCuandoSonNulosNuncaVacios()
+    {
+        var notaDeCredito = SolicitudDeReferencia with { CbtesAsoc = [new ComprobanteAsociadoFiscal(6, 3, 104)] };
+
+        var sobre = MapeadorWsfe.ConstruirFecaeSolicitar(Ticket, Cuit, notaDeCredito);
+
+        Assert.Contains(
+            "<CbtesAsoc><CbteAsoc><Tipo>6</Tipo><PtoVta>3</PtoVta><Nro>104</Nro></CbteAsoc></CbtesAsoc>", sobre,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SinComprobantesAsociadosNoSeEmiteCbtesAsocNiVacio(bool listaVacia)
+    {
+        var solicitud = listaVacia ? SolicitudDeReferencia with { CbtesAsoc = [] } : SolicitudDeReferencia;
+
+        var sobre = MapeadorWsfe.ConstruirFecaeSolicitar(Ticket, Cuit, solicitud);
+
+        Assert.DoesNotContain("CbtesAsoc", sobre, StringComparison.Ordinal);
+        Assert.Equal(MapeadorWsfe.ConstruirFecaeSolicitar(Ticket, Cuit, SolicitudDeReferencia), sobre);
+    }
 }

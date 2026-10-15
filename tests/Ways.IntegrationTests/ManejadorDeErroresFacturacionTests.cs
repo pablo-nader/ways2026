@@ -71,6 +71,8 @@ public class ManejadorDeErroresFacturacionTests
     [InlineData("ux_comprobantes_venta_venta_origen", "venta_ya_facturada")]
     [InlineData("ux_facturaciones_de_venta_comprobante", "facturacion_de_venta_duplicada")]
     [InlineData("ux_facturaciones_de_venta_comprobante_fiscal", "factura_ya_asignada")]
+    [InlineData("ux_facturaciones_de_venta_origen", "nota_de_credito_duplicada")]
+    [InlineData("ux_comprobantes_venta_nota_credito_espejo", "nota_de_credito_duplicada")]
     public async Task LosIndicesUnicosDeLaFacturacionSeTraducenA409ConSuCodigoPropio(string indice, string codigoEsperado)
     {
         var postgres = CrearExcepcion("23505", indice);

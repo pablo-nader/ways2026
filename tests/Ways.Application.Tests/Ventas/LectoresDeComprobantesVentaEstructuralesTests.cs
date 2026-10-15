@@ -116,8 +116,8 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "\"SELECT xmin::text FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
                 (1, PorId),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
-                "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1)\", ct, idVenta);")] =
-                (1, "Pregunta si UNA venta ya tiene espejo, en cualquier estado: tiene que verlo, es justo lo que pregunta."),
+                "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL)\", ct, idVenta);")] =
+                (1, "Pregunta si UNA venta ya tiene espejo de factura, en cualquier estado: tiene que verlo, es justo lo que pregunta."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "\"DELETE FROM items_comprobante_venta WHERE id_comprobante_venta = $1\", ct, idEspejo))")] =
                 (1, "Borra los ítems de UN espejo fiscal liberado (rechazado por ARCA o con un número que ARCA no tiene), por id."),
