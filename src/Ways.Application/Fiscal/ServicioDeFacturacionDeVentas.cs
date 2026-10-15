@@ -33,6 +33,12 @@ namespace Ways.Application.Fiscal;
 /// Un espejo pendiente SIEMPRE se resuelve, sea cual sea el estado de su decisión: si la decisión ya no está pendiente se
 /// consulta y se adopta o se libera, nunca se pide un CAE nuevo.
 ///
+/// La nota de crédito de una venta anulada sigue el mismo circuito (decisión con <c>id_facturacion_origen</c>, espejo con
+/// <c>id_comprobante_asociado</c>): se arma sobre el espejo de la factura aprobada, con el tipo <c>NC</c> de su letra y la factura en
+/// <c>CbtesAsoc</c>, toma el número de su propia serie y exige la venta <c>anulado</c> en lugar de <c>emitido</c>. Aprobada, devuelve
+/// el cupo de la factura (si su decisión está <c>emitida</c>); rechazada, solo libera el número. Una factura rechazada cuya venta se anuló después se termina de
+/// revertir (<c>cancelada</c>) al procesarla.
+///
 /// Orden de locks: <c>numeraciones_fiscales</c> → <c>comprobantes_venta</c> (venta, luego espejo) → <c>facturaciones_de_venta</c>
 /// → <c>acumulados_de_facturacion</c> (por medio de pago ascendente). Toda transición de una decisión se hace con su fila
 /// bloqueada y su estado releído bajo ese lock; el registro de un fallo es la excepción: un único UPDATE guardado por
@@ -68,6 +74,12 @@ public class ServicioDeFacturacionDeVentas(
 
     public const string SerieBloqueada = "serie_bloqueada";
 
+    /// <summary>La decisión de una nota de crédito espera: la venta todavía no está anulada.</summary>
+    public const string NotaDeCreditoVentaNoAnulada = "nota_de_credito_venta_no_anulada";
+
+    /// <summary>La decisión de una nota de crédito espera: la venta no tiene una factura aprobada que corregir.</summary>
+    public const string NotaDeCreditoSinFacturaAprobada = "nota_de_credito_sin_factura_aprobada";
+
     private const string Pendiente = "pendiente";
 
     private const string Emitida = "emitida";
@@ -81,8 +93,8 @@ public class ServicioDeFacturacionDeVentas(
     // ---- API -----------------------------------------------------------------------------------
 
     /// <summary>Procesa la decisión: devuelve su estado resultante. Idempotente: una decisión que ya no está pendiente y no
-    /// tiene un espejo pendiente devuelve su estado sin ninguna llamada a ARCA. Una decisión inexistente o de otro tenant es
-    /// un 404.</summary>
+    /// tiene un espejo pendiente devuelve su estado sin ninguna llamada a ARCA; la única que se mueve es la factura rechazada de
+    /// una venta anulada, que se cancela una sola vez. Una decisión inexistente o de otro tenant es un 404.</summary>
     public async Task<EstadoFiscalDeVenta> ProcesarDecisionAsync(int idFacturacion, CancellationToken ct = default)
     {
         var idTenant = contexto.IdTenant
@@ -155,10 +167,15 @@ public class ServicioDeFacturacionDeVentas(
 
         var decision = await LeerDecisionAsync(idFacturacion, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la facturación {idFacturacion}.");
+        var esNotaDeCredito = decision.IdFacturacionOrigen is not null;
         var venta = await db.ComprobantesVenta.AsNoTracking()
             .FirstAsync(c => c.Id == decision.IdComprobanteVenta, ct);
+
+        // El espejo de la CLASE de la decisión: la de la factura mira el espejo sin comprobante asociado; la de la nota de
+        // crédito, el que lo tiene. Una venta anulada con nota de crédito tiene los dos con el mismo id_venta_origen.
         var espejo = await db.ComprobantesVenta.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.IdVentaOrigen == decision.IdComprobanteVenta && c.IdComprobanteAsociado == null, ct);
+            .FirstOrDefaultAsync(
+                c => c.IdVentaOrigen == decision.IdComprobanteVenta && (c.IdComprobanteAsociado != null) == esNotaDeCredito, ct);
 
         // Un espejo pendiente se resuelve aunque su decisión ya no lo esté.
         if (espejo is { ResultadoFiscal: ResultadoFiscal.Pendiente })
@@ -168,6 +185,14 @@ public class ServicioDeFacturacionDeVentas(
 
         if (decision.Estado != Pendiente)
         {
+            // Una factura rechazada de una venta que después se anuló sigue contando en el acumulado (el rechazo solo devolvió
+            // el débito): la anulación no pasa por acá, así que se termina de revertir cuando alguien procesa la decisión. La
+            // decisión de una nota de crédito rechazada no es de esta clase: no movió saldos y no tiene nada que revertir.
+            if (decision is { Estado: Rechazada, IdFacturacionOrigen: null } && venta.Estado == EstadoComprobante.Anulado)
+            {
+                return await CancelarRechazadaDeVentaAnuladaAsync(decision, ct);
+            }
+
             return await ProyectarAsync(decision, null, ct);
         }
 
@@ -185,14 +210,38 @@ public class ServicioDeFacturacionDeVentas(
                 $"El espejo {espejo.Id} está '{espejo.ResultadoFiscal}' pero su decisión {decision.Id} sigue pendiente.");
         }
 
-        // Una venta anulada es terminal (emitido → anulado) y un espejo no se crea sobre ella, así que esta lectura sin lock
-        // no puede quedar vieja: lo que decide la anulación contra el espejo se decide bajo el lock de la venta.
-        if (venta.Estado != EstadoComprobante.Emitido)
+        ComprobanteVenta? factura = null;
+        if (esNotaDeCredito)
         {
+            // La nota de crédito corrige una factura aprobada de una venta ya anulada. Mientras eso no valga, la decisión espera
+            // con la espera de una compuerta. La venta anulada y la factura aprobada son estados terminales, así que estas
+            // lecturas sin lock no pueden quedar viejas: la creación del espejo las verifica de nuevo bajo el lock de la venta.
+            if (venta.Estado != EstadoComprobante.Anulado)
+            {
+                return await RegistrarFalloAsync(
+                    decision, $"{NotaDeCreditoVentaNoAnulada}: la venta todavía no está anulada.",
+                    EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
+            }
+
+            factura = await db.ComprobantesVenta.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.IdVentaOrigen == venta.Id && c.IdComprobanteAsociado == null, ct);
+            if (factura is not { ResultadoFiscal: ResultadoFiscal.Aprobado or ResultadoFiscal.AprobadoConObservaciones })
+            {
+                return await RegistrarFalloAsync(
+                    decision, $"{NotaDeCreditoSinFacturaAprobada}: la venta no tiene una factura aprobada que corregir.",
+                    EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
+            }
+        }
+        else if (venta.Estado != EstadoComprobante.Emitido)
+        {
+            // Una venta anulada es terminal (emitido → anulado) y un espejo no se crea sobre ella, así que esta lectura sin lock
+            // no puede quedar vieja: lo que decide la anulación contra el espejo se decide bajo el lock de la venta.
             return await CancelarAsync(decision, ct);
         }
 
-        var evaluacion = await EvaluarCompuertasAsync(venta, false, ct);
+        var evaluacion = factura is null
+            ? await EvaluarCompuertasAsync(venta, false, null, ct)
+            : await EvaluarCompuertasAsync(factura, true, factura, ct);
         if (evaluacion.Fallo is { } fallo)
         {
             return await RegistrarFalloAsync(
@@ -212,7 +261,7 @@ public class ServicioDeFacturacionDeVentas(
                 decision, DescribirFalla(ex), EsperaInicialNoDefinitiva, EsperaMaximaNoDefinitiva, ct);
         }
 
-        var creacion = await CrearEspejoAsync(decision, venta, plan, idTenant, ct);
+        var creacion = await CrearEspejoAsync(decision, venta, factura, plan, idTenant, ct);
         switch (creacion.Resultado)
         {
             case ResultadoDeCreacion.VentaNoEmitida:
@@ -240,7 +289,7 @@ public class ServicioDeFacturacionDeVentas(
 
         if (prerrequisitos.Fallo is { } sinPrerrequisitos)
         {
-            var compuertas = decision.Estado == Pendiente ? await EvaluarCompuertasAsync(espejo, true, ct) : null;
+            var compuertas = decision.Estado == Pendiente ? await EvaluarCompuertasDelEspejoAsync(espejo, ct) : null;
             var fallo = compuertas?.Fallo ?? sinPrerrequisitos;
             return await RegistrarFalloDeEspejoAsync(
                 decision, espejo.Id, $"{fallo.Codigo}: {fallo.Mensaje}", EsperaInicialDeCompuerta, EsperaMaximaDeCompuerta, ct);
@@ -277,7 +326,7 @@ public class ServicioDeFacturacionDeVentas(
     private sealed record Plan(
         PuntoVenta PuntoVenta, Empresa Empresa, TipoComprobante Tipo, char Letra, string CuitEmisor,
         short CondicionIvaReceptor, short TipoDocReceptor, long NroDocReceptor, TotalesFiscales Totales,
-        AmbienteFiscal Ambiente, DatosLegalesDeFacturaFiscal DatosLegales)
+        AmbienteFiscal Ambiente, DatosLegalesDeFacturaFiscal DatosLegales, ComprobanteAsociadoFiscal? Asociado = null)
     {
         public ClaveDeSerie Serie => new(PuntoVenta.NumeroFiscal!.Value, Tipo.CodigoAfip!.Value);
 
@@ -334,9 +383,27 @@ public class ServicioDeFacturacionDeVentas(
         return new Prerrequisitos(new ContextoDeConsulta(puntoVenta, empresa, ambiente, cuitEmisor, codigoAfip), null);
     }
 
+    /// <summary>Las compuertas de un espejo que ya existe: las de la factura, con el espejo como origen, y las de una nota de
+    /// crédito, que además necesitan la factura que corrige (<c>id_comprobante_asociado</c>).</summary>
+    private async Task<Evaluacion> EvaluarCompuertasDelEspejoAsync(ComprobanteVenta espejo, CancellationToken ct)
+    {
+        ComprobanteVenta? factura = null;
+        if (espejo.IdComprobanteAsociado is { } idFactura)
+        {
+            factura = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idFactura, ct);
+        }
+
+        return await EvaluarCompuertasAsync(espejo, true, factura, ct);
+    }
+
     /// <summary>Las compuertas se evalúan sobre el ticket (si todavía no hay espejo) o sobre el espejo existente, cuyo tipo,
-    /// cliente e ítems ya quedaron fijados por la llamada que lo creó.</summary>
-    private async Task<Evaluacion> EvaluarCompuertasAsync(ComprobanteVenta origen, bool origenEsEspejo, CancellationToken ct)
+    /// cliente e ítems ya quedaron fijados por la llamada que lo creó. Para una nota de crédito <paramref name="factura"/> es
+    /// la factura que corrige: si es el propio <paramref name="origen"/> la nota todavía no existe y se arma sobre la factura
+    /// (su tipo es el <c>NC</c> de la letra de la factura, sus datos legales congelados y sus ítems los de la factura, en
+    /// positivo: el signo lo pone el tipo); si no, <paramref name="origen"/> es el espejo de la nota y la factura solo
+    /// aporta el comprobante asociado.</summary>
+    private async Task<Evaluacion> EvaluarCompuertasAsync(
+        ComprobanteVenta origen, bool origenEsEspejo, ComprobanteVenta? factura, CancellationToken ct)
     {
         static Evaluacion Falla(FalloDeCompuerta fallo) => new(null, fallo);
         static Evaluacion FallaCon(string codigo, string mensaje) => Falla(new FalloDeCompuerta(codigo, mensaje));
@@ -344,6 +411,7 @@ public class ServicioDeFacturacionDeVentas(
         var ambiente = fiscal.ResolverAmbiente();
         var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(p => p.Id == origen.IdPuntoVenta, ct);
         var empresa = await db.Empresas.AsNoTracking().FirstAsync(e => e.Id == puntoVenta.IdEmpresa, ct);
+        var notaNueva = factura is not null && factura.Id == origen.Id;
 
         // Un espejo con datos legales congelados vuelve a pedir con el emisor y el receptor con que se emitió (documento,
         // condición IVA, CUIT y letra del propio espejo), no con las filas actuales de cliente y empresa.
@@ -400,7 +468,24 @@ public class ServicioDeFacturacionDeVentas(
 
         TipoComprobante? tipo;
         char letra;
-        if (origenEsEspejo)
+        TipoComprobante? tipoDeLaFactura = null;
+        if (factura is not null)
+        {
+            tipoDeLaFactura = await db.TiposComprobante.AsNoTracking().FirstAsync(t => t.Id == factura.IdTipoComprobante, ct);
+        }
+
+        if (notaNueva)
+        {
+            // La nota de crédito de la letra de la factura: NCA, NCB o NCC.
+            letra = tipoDeLaFactura!.Letra ?? ' ';
+            var codigoDeNota = $"NC{letra}";
+            tipo = await db.TiposComprobante.AsNoTracking()
+                .FirstOrDefaultAsync(
+                    t => t.Codigo == codigoDeNota && t.Clase == ClaseComprobante.Venta && t.EsFiscal && t.Activo
+                        && t.Letra == letra && t.CodigoAfip != null,
+                    ct);
+        }
+        else if (origenEsEspejo)
         {
             tipo = await db.TiposComprobante.AsNoTracking().FirstAsync(t => t.Id == origen.IdTipoComprobante, ct);
             letra = tipo.Letra ?? ' ';
@@ -423,7 +508,9 @@ public class ServicioDeFacturacionDeVentas(
 
         if (tipo?.CodigoAfip is null)
         {
-            return FallaCon("tipo_fiscal_invalido", $"No hay un tipo de factura fiscal activo para la letra '{letra}'.");
+            return FallaCon(
+                "tipo_fiscal_invalido",
+                $"No hay un tipo de {(notaNueva ? "nota de crédito" : "factura")} fiscal activo para la letra '{letra}'.");
         }
 
         var (tipoDoc, nroDoc) = congelados is { } fijos
@@ -439,7 +526,8 @@ public class ServicioDeFacturacionDeVentas(
             return FallaCon("receptor_sin_cuit", "Una factura A exige que el receptor esté identificado con su CUIT.");
         }
 
-        var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(origen.Id, ct);
+        // Los ítems de una nota de crédito son los de una factura ya autorizada: una alícuota dada de baja después no la frena.
+        var lineas = await fiscal.ComponerLineasFiscalesDesdeItemsAsync(origen.Id, ct, incluirBajasDeCatalogo: factura is not null);
         TotalesFiscales totales;
         try
         {
@@ -457,10 +545,25 @@ public class ServicioDeFacturacionDeVentas(
                 $"El total fiscal ({totales.ImpTotal}) no coincide con el total del ticket ({origen.Total}).");
         }
 
+        ComprobanteAsociadoFiscal? asociado = null;
+        if (factura is not null)
+        {
+            if (tipoDeLaFactura!.CodigoAfip is not { } codigoDeLaFactura)
+            {
+                return FallaCon(
+                    "tipo_fiscal_invalido", $"El tipo de la factura ('{tipoDeLaFactura.Codigo}') no tiene código ARCA.");
+            }
+
+            // La factura con la que se emitió: su punto de venta fiscal y número, el CUIT del emisor congelado y su fecha fiscal.
+            asociado = new ComprobanteAsociadoFiscal(
+                codigoDeLaFactura, puntoVenta.NumeroFiscal.Value, factura.Numero,
+                long.Parse(cuitEmisor, CultureInfo.InvariantCulture), await fiscal.ResolverFechaFiscalAsync(empresa.Id, factura.Fecha, ct));
+        }
+
         return new Evaluacion(
             new Plan(
                 puntoVenta, empresa, tipo, letra, cuitEmisor, condicionIvaReceptor, tipoDoc, nroDoc,
-                totales, ambiente, datosLegales),
+                totales, ambiente, datosLegales, asociado),
             null);
     }
 
@@ -481,12 +584,18 @@ public class ServicioDeFacturacionDeVentas(
 
     private sealed record Creacion(ResultadoDeCreacion Resultado, EspejoEnTramite? Espejo);
 
+    /// <summary><paramref name="factura"/> es el espejo de la factura que corrige la nota de crédito que se crea; es <c>null</c>
+    /// cuando se crea la factura. La nota se arma sobre la factura (cliente, importes, ítems y datos legales congelados) y toma
+    /// el número de su propia serie (la del <c>NC</c> de la letra); la venta, en cambio, tiene que estar anulada.</summary>
     private async Task<Creacion> CrearEspejoAsync(
-        FacturacionPendiente decision, ComprobanteVenta venta, Plan plan, int idTenant, CancellationToken ct)
+        FacturacionPendiente decision, ComprobanteVenta venta, ComprobanteVenta? factura, Plan plan, int idTenant,
+        CancellationToken ct)
     {
         var momento = reloj.Ahora;
         var codigoAfip = plan.Tipo.CodigoAfip!.Value;
-        var datosLegales = plan.DatosLegales.Serializar();
+        var esNotaDeCredito = factura is not null;
+        var origen = factura ?? venta;
+        var datosLegales = factura?.DatosLegalesFiscales ?? plan.DatosLegales.Serializar();
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
@@ -500,17 +609,21 @@ public class ServicioDeFacturacionDeVentas(
             }
 
             // El lock de la venta serializa contra la anulación: o la anulación ya comiteó y la venta deja de estar
-            // emitida, o este espejo comitea primero y la anulación lo encuentra.
-            if (await BloquearVentaYLeerEstadoAsync(venta.Id, ct) != "emitido")
+            // emitida, o este espejo comitea primero y la anulación lo encuentra. La nota de crédito, al revés, exige la venta
+            // anulada; la venta anulada es terminal, así que si dejó de estarlo es que la lectura previa era de otra decisión:
+            // se reevalúa.
+            var estadoDeLaVenta = await BloquearVentaYLeerEstadoAsync(venta.Id, ct);
+            if (estadoDeLaVenta != (esNotaDeCredito ? "anulado" : "emitido"))
             {
-                return new Creacion(ResultadoDeCreacion.VentaNoEmitida, null);
+                return new Creacion(esNotaDeCredito ? ResultadoDeCreacion.Obsoleta : ResultadoDeCreacion.VentaNoEmitida, null);
             }
 
             // Lo que se leyó sin lock al empezar pudo quedar viejo: otra llamada pudo crear y resolver un espejo, o resolver
             // la decisión, antes de que esta tomara los locks. Se relee bajo ellos, antes de tomar el número y antes de
             // preguntar por la serie: un espejo propio de esta venta no es "serie bloqueada" sino un estado que se reevalúa.
-            if (await ExisteEspejoDeLaVentaAsync(venta.Id, ct)
-                || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Pendiente)
+            if (await ExisteEspejoDeLaVentaAsync(venta.Id, esNotaDeCredito, ct)
+                || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Pendiente
+                || (esNotaDeCredito && !await FacturaEstaAprobadaAsync(factura!.Id, ct)))
             {
                 return new Creacion(ResultadoDeCreacion.Obsoleta, null);
             }
@@ -523,7 +636,7 @@ public class ServicioDeFacturacionDeVentas(
             var numero = await AsignadorDeNumeroFiscal.AsignarSiguienteAsync(db, plan.PuntoVenta.Id, codigoAfip, ct);
 
             var itemsDeLaVenta = await db.ItemsComprobanteVenta.AsNoTracking()
-                .Where(i => i.IdComprobanteVenta == venta.Id)
+                .Where(i => i.IdComprobanteVenta == origen.Id)
                 .OrderBy(i => i.Orden)
                 .ToListAsync(ct);
 
@@ -534,13 +647,14 @@ public class ServicioDeFacturacionDeVentas(
                 Fecha = momento,
                 IdPuntoVenta = plan.PuntoVenta.Id,
                 IdTurnoCaja = null,
-                IdEmpleado = venta.IdEmpleado,
-                IdCliente = venta.IdCliente,
+                IdEmpleado = origen.IdEmpleado,
+                IdCliente = origen.IdCliente,
                 IdVentaOrigen = venta.Id,
-                Subtotal = venta.Subtotal,
-                DescuentoTotal = venta.DescuentoTotal,
-                DescuentoManualTotal = venta.DescuentoManualTotal,
-                RecargoManualTotal = venta.RecargoManualTotal,
+                IdComprobanteAsociado = factura?.Id,
+                Subtotal = origen.Subtotal,
+                DescuentoTotal = origen.DescuentoTotal,
+                DescuentoManualTotal = origen.DescuentoManualTotal,
+                RecargoManualTotal = origen.RecargoManualTotal,
                 Total = plan.Totales.ImpTotal,
                 NetoGravado = plan.Totales.ImpNeto,
                 IvaTotal = plan.Totales.ImpIVA,
@@ -621,14 +735,26 @@ public class ServicioDeFacturacionDeVentas(
         return (string?)await comando.ExecuteScalarAsync(ct);
     }
 
-    /// <summary>¿Tiene la venta un espejo de factura, en cualquier estado? El índice único <c>ux_comprobantes_venta_venta_origen</c>
-    /// admite uno solo: esta pregunta, hecha bajo el lock de la venta, evita llegar a él. El espejo de una nota de crédito
-    /// (<c>id_comprobante_asociado</c> con valor) no cuenta.</summary>
-    private async Task<bool> ExisteEspejoDeLaVentaAsync(int idVenta, CancellationToken ct)
+    /// <summary>¿Tiene la venta un espejo de esa clase, en cualquier estado? Los índices únicos
+    /// <c>ux_comprobantes_venta_venta_origen</c> y <c>ux_comprobantes_venta_nota_credito_espejo</c> admiten uno solo de cada
+    /// clase: esta pregunta, hecha bajo el lock de la venta, evita llegar a ellos. El de la factura no tiene comprobante
+    /// asociado (<paramref name="notaDeCredito"/> en <c>false</c>); el de la nota de crédito sí.</summary>
+    private async Task<bool> ExisteEspejoDeLaVentaAsync(int idVenta, bool notaDeCredito, CancellationToken ct)
     {
         await using var comando = await NuevoComandoAsync(
-            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL)", ct, idVenta);
+            "SELECT EXISTS (SELECT 1 FROM comprobantes_venta " +
+            "WHERE id_venta_origen = $1 AND (id_comprobante_asociado IS NOT NULL) = $2)", ct, idVenta, notaDeCredito);
         return (bool)(await comando.ExecuteScalarAsync(ct))!;
+    }
+
+    /// <summary>¿Está aprobada (con o sin observaciones) la factura que va a corregir la nota de crédito? Un estado terminal: una
+    /// factura aprobada no vuelve a pendiente.</summary>
+    private async Task<bool> FacturaEstaAprobadaAsync(int idFactura, CancellationToken ct)
+    {
+        await using var comando = await NuevoComandoAsync(
+            "SELECT resultado_fiscal::text IN ('aprobado', 'aprobado_con_observaciones') " +
+            "FROM comprobantes_venta WHERE id_comprobante_venta = $1", ct, idFactura);
+        return await comando.ExecuteScalarAsync(ct) is true;
     }
 
     private async Task<long> LeerEpocaDelEspejoAsync(int idEspejo, CancellationToken ct)
@@ -668,6 +794,9 @@ public class ServicioDeFacturacionDeVentas(
         public (string EstadoDeLaDecision, string Detalle)? Inconsistencia { get; set; }
 
         public List<(int IdMedioPago, DateOnly Periodo)> AcumuladosFaltantes { get; } = [];
+
+        /// <summary>La nota de crédito se aprobó pero la decisión de su factura no estaba <c>emitida</c>: no devolvió cupo.</summary>
+        public (int IdFacturacionOrigen, string Estado)? CupoSinRevertir { get; set; }
     }
 
     /// <summary>Paso C: el espejo pendiente existía de antes. Se consulta a ARCA antes que nada (I2).</summary>
@@ -714,7 +843,7 @@ public class ServicioDeFacturacionDeVentas(
                 else
                 {
                     // Las compuertas de la venta se evalúan solo ahora que ARCA no tiene el número y hay que volver a pedir.
-                    var compuertas = await EvaluarCompuertasAsync(espejoLeido, true, ct);
+                    var compuertas = await EvaluarCompuertasDelEspejoAsync(espejoLeido, ct);
                     if (compuertas.Fallo is { } fallo)
                     {
                         _ = await EscribirFalloAsync(
@@ -805,6 +934,14 @@ public class ServicioDeFacturacionDeVentas(
 
         LoguearAcumuladosFaltantes(decision.Id, salida);
 
+        if (salida.CupoSinRevertir is { } sinRevertir)
+        {
+            log.LogWarning(
+                "La nota de crédito de la decisión {IdFacturacion} se aprobó pero la decisión {IdFacturacionOrigen} de su factura " +
+                "está '{Estado}', no 'emitida': no se devolvió cupo.",
+                decision.Id, sinRevertir.IdFacturacionOrigen, sinRevertir.Estado);
+        }
+
         if (salida.Reevaluar)
         {
             return await ProcesarAsync(decision.Id, idTenant, ct);
@@ -863,7 +1000,7 @@ public class ServicioDeFacturacionDeVentas(
         var solicitud = new SolicitudDeCae(
             plan.Serie, numero, numero, 1, plan.TipoDocReceptor, plan.NroDocReceptor, fechaFiscal, totales.ImpTotal,
             totales.ImpTotConc, totales.ImpNeto, totales.ImpOpEx, totales.ImpTrib, totales.ImpIVA,
-            plan.CondicionIvaReceptor, totales.Iva);
+            plan.CondicionIvaReceptor, totales.Iva, CbtesAsoc: plan.Asociado is { } asociado ? [asociado] : null);
 
         try
         {
@@ -913,11 +1050,16 @@ public class ServicioDeFacturacionDeVentas(
                 {
                     await ActualizarDecisionAsync(
                         decision.Id, Rechazada, null, ConstruirTextoDeErrores(rechazo.Respuesta), ct);
-                    var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
-                    foreach (var (idMedio, monto) in vendido.OrderBy(v => v.Key))
+
+                    // La decisión de una nota de crédito no aplicó nada al acumulado, así que su rechazo no devuelve nada.
+                    if (decision.IdFacturacionOrigen is null)
                     {
-                        await AplicarAlAcumuladoAsync(
-                            salida, decision.IdEmpresa, idMedio, decision.Periodo, monto, 0m, -monto, ct);
+                        var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
+                        foreach (var (idMedio, monto) in vendido.OrderBy(v => v.Key))
+                        {
+                            await AplicarAlAcumuladoAsync(
+                                salida, decision.IdEmpresa, idMedio, decision.Periodo, monto, 0m, -monto, ct);
+                        }
                     }
                 }
                 else
@@ -936,6 +1078,10 @@ public class ServicioDeFacturacionDeVentas(
                 if (pendiente)
                 {
                     await ActualizarDecisionAsync(decision.Id, Emitida, idEspejo, null, ct);
+                    if (decision.IdFacturacionOrigen is not null)
+                    {
+                        await RevertirElCupoDeLaFacturaAsync(decision, salida, ct);
+                    }
                 }
                 else
                 {
@@ -1031,22 +1177,14 @@ public class ServicioDeFacturacionDeVentas(
             // Mismos locks y mismo orden que la creación del espejo: la venta primero, que la serializa contra ella, y
             // después, bajo ese lock, se relee que siga sin espejo y que la decisión siga pendiente.
             _ = await BloquearVentaYLeerEstadoAsync(decision.IdComprobanteVenta, ct);
-            if (await ExisteEspejoDeLaVentaAsync(decision.IdComprobanteVenta, ct)
+            if (await ExisteEspejoDeLaVentaAsync(decision.IdComprobanteVenta, false, ct)
                 || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Pendiente)
             {
                 return;
             }
 
             await ActualizarDecisionAsync(decision.Id, Cancelada, null, null, ct);
-
-            var aportes = JsonSerializer.Deserialize<List<AporteDeSaldo>>(decision.Aportes, OpcionesDeAportes)!;
-            var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
-            foreach (var inverso in PoliticaDeFacturacionPorMedio.Revertir(aportes).OrderBy(a => a.IdMedioPago))
-            {
-                var monto = vendido.GetValueOrDefault(inverso.IdMedioPago);
-                await AplicarAlAcumuladoAsync(
-                    salida, decision.IdEmpresa, inverso.IdMedioPago, decision.Periodo, inverso.Aporte, -monto, -monto, ct);
-            }
+            await RevertirAportesAsync(decision, false, salida, ct);
 
             await transaccion.CommitAsync(ct);
         });
@@ -1056,6 +1194,83 @@ public class ServicioDeFacturacionDeVentas(
         var final = await LeerDecisionAsync(decision.Id, ct)
             ?? throw new InvalidOperationException($"La decisión {decision.Id} dejó de existir.");
         return await ProyectarAsync(final, null, ct);
+    }
+
+    /// <summary>Termina de revertir una factura rechazada cuya venta se anuló: el rechazo había devuelto solo el débito, así
+    /// que la venta anulada seguía sumando su devengo y su venta al acumulado. La decisión pasa a <c>cancelada</c>
+    /// (conserva el motivo del rechazo en <c>ultimo_error</c>). Mismos locks y mismo orden que la cancelación: la venta, la
+    /// decisión y los acumulados; la decisión se relee bajo el lock y solo se mueve si sigue rechazada, así que un segundo
+    /// proceso, o el mismo proceso de nuevo, no revierte dos veces.</summary>
+    private async Task<EstadoFiscalDeVenta> CancelarRechazadaDeVentaAnuladaAsync(FacturacionPendiente decision, CancellationToken ct)
+    {
+        var salida = new Salida();
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            if (await BloquearVentaYLeerEstadoAsync(decision.IdComprobanteVenta, ct) != "anulado"
+                || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Rechazada)
+            {
+                return;
+            }
+
+            await using (var comando = await NuevoComandoAsync(
+                "UPDATE facturaciones_de_venta SET estado = $2::estado_facturacion_venta, updated_at = $3 " +
+                "WHERE id_facturacion_venta = $1",
+                ct, decision.Id, Cancelada, reloj.Ahora))
+            {
+                await comando.ExecuteNonQueryAsync(ct);
+            }
+
+            await RevertirAportesAsync(decision, true, salida, ct);
+            await transaccion.CommitAsync(ct);
+        });
+
+        LoguearAcumuladosFaltantes(decision.Id, salida);
+        db.ChangeTracker.Clear();
+        var final = await LeerDecisionAsync(decision.Id, ct)
+            ?? throw new InvalidOperationException($"La decisión {decision.Id} dejó de existir.");
+        return await ProyectarAsync(final, null, ct);
+    }
+
+    /// <summary>Deshace en el acumulado lo que aplicó la decisión: aportes inversos, <c>total_vendido</c> y
+    /// <c>total_facturado</c>, sobre su período y en orden ascendente de medio. Con <paramref name="debitoYaDevuelto"/> la
+    /// decisión estaba rechazada: el rechazo ya había devuelto el débito (<c>saldo += vendido</c>, <c>total_facturado −=
+    /// vendido</c>), así que se revierte solo lo que quedaba.</summary>
+    private async Task RevertirAportesAsync(
+        FacturacionPendiente decision, bool debitoYaDevuelto, Salida salida, CancellationToken ct)
+    {
+        var aportes = JsonSerializer.Deserialize<List<AporteDeSaldo>>(decision.Aportes, OpcionesDeAportes)!;
+        var vendido = await LeerVendidoPorMedioAsync(decision.IdComprobanteVenta, ct);
+        foreach (var inverso in PoliticaDeFacturacionPorMedio.Revertir(aportes).OrderBy(a => a.IdMedioPago))
+        {
+            var monto = vendido.GetValueOrDefault(inverso.IdMedioPago);
+            await AplicarAlAcumuladoAsync(
+                salida, decision.IdEmpresa, inverso.IdMedioPago, decision.Periodo,
+                debitoYaDevuelto ? inverso.Aporte - monto : inverso.Aporte, -monto, debitoYaDevuelto ? 0m : -monto, ct);
+        }
+    }
+
+    /// <summary>La nota de crédito aprobada devuelve el cupo de la factura que corrige: revierte por completo lo que aplicó la
+    /// decisión de la factura, como una cancelación. La decisión de la factura no se bloquea: solo se actúa si está
+    /// <c>emitida</c>, y <c>emitida</c> es terminal (ninguna transición sale de ella), así que la lectura no puede quedar vieja.
+    /// En cualquier otro estado el acumulado ya no la cuenta (rechazada, cancelada) o nunca llegó a aplicarla, y se deja como
+    /// está.</summary>
+    private async Task RevertirElCupoDeLaFacturaAsync(
+        FacturacionPendiente notaDeCredito, Salida salida, CancellationToken ct)
+    {
+        var idOrigen = notaDeCredito.IdFacturacionOrigen!.Value;
+        var origen = await LeerDecisionAsync(idOrigen, ct)
+            ?? throw new InvalidOperationException($"La decisión {idOrigen} de la factura dejó de existir.");
+        if (origen.Estado != Emitida)
+        {
+            salida.CupoSinRevertir = (idOrigen, origen.Estado);
+            return;
+        }
+
+        await RevertirAportesAsync(origen, false, salida, ct);
     }
 
     // ---- Fallos ----------------------------------------------------------------------------------
