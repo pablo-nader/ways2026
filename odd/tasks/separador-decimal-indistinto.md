@@ -53,3 +53,7 @@ Ronda 1 sobre 5b260ffa..33c90e39: 0 críticos confirmados → `JUDGMENT: APPROVE
 Seguimientos (info): el selector de miembros del combo y "Días de alerta" de Vencimientos no marcan el texto inválido; `atributosDeCampoDeCantidad` ya no aplica `min`; los campos editables se siembran con "." (`String(n)`).
 
 T4: RED 13 fallos (8 en `importes.test.ts`, 5 en `CampoImporte.test.tsx`) → GREEN. Tests de página ajustados: `VentasDelTurno` ("1500") y `Pos` ("10000"). `MENSAJE_DE_IMPORTE_INVALIDO` sigue exacto ("1500" vale 1500). Verificación: `npx tsc -b` sin errores; `npm run lint` 0 errores; `npm test` 242 archivos / 7479 tests en verde.
+
+## Judgment-day de T4 (importes)
+
+Ronda 1 sobre 46799eff..b3e22c32: F1 (crítico, A; warning, B) un entero agrupado pegado ("1.234.567") quedaba 1,23; F2 (warning, ambos) con `decimales=0` "1,5" daba 15; F3 (warning, ambos) "1234," + salir borraba el importe. Corrección única en 792fb9a3 (RED 7 → GREEN). Re-juicio acotado: ambos jueces F1–F3 resueltos, sin defectos nuevos → `JUDGMENT: APPROVED`. Web: 242 archivos / 7487 tests, tsc y lint sin errores.
