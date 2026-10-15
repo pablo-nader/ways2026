@@ -10450,7 +10450,7 @@ describe('Pos — artículos por importe', () => {
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
     }
 
-    it('una venta solo por importe se encola con el importe, sin precios, y el ticket muestra la línea', async () => {
+    it('una venta solo por importe se encola con el importe y el precio cobrado, y el ticket muestra la línea', async () => {
       apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
       await montarConInstantanea()
       await escanear('150,50*500')
@@ -10462,11 +10462,11 @@ describe('Pos — artículos por importe', () => {
       expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
       const outbox = await leerOutbox(crearAlmacenIndexedDb())
       expect(outbox).toHaveLength(1)
-      expect(outbox[0].solicitud.lineas).toEqual([{ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150.5 }])
+      expect(outbox[0].solicitud.lineas).toEqual([{ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150.5, precioUnitario: 150.5 }])
       expect(screen.getByText('Total: $ 151,00')).toBeInTheDocument()
     })
 
-    it('una venta mixta encola precio de lista en la línea común y solo importe en la otra', async () => {
+    it('una venta mixta encola precio de lista en la línea común e importe con su precio cobrado en la otra', async () => {
       apiPostMock.mockImplementation((ruta: string) => (ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
       await montarConInstantanea()
       await escanear('7790001234567')
@@ -10481,7 +10481,7 @@ describe('Pos — artículos por importe', () => {
       const [comun, porImporte] = (await leerOutbox(crearAlmacenIndexedDb()))[0].solicitud.lineas ?? []
       expect(comun).toMatchObject({ idArticulo: 1, precioUnitario: 100, descuentoUnitario: 0 })
       expect(comun).not.toHaveProperty('importe')
-      expect(porImporte).toEqual({ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150 })
+      expect(porImporte).toEqual({ idArticulo: FIAMBRERIA, cantidad: 1, codigoBarra: null, idLote: null, importe: 150, precioUnitario: 150 })
     })
   })
 
