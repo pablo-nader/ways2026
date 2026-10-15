@@ -6,7 +6,7 @@ import { ShellPos } from './ShellPos'
 import { ErrorApi } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
-import { cierreDeTurno, facturaDeVenta, pulsoDeCajon, ticketDePagoACuenta, ticketDeVenta } from '../impresion/plantillas'
+import { cierreDeTurno, facturaDeVenta, notaDeCreditoDeVenta, pulsoDeCajon, ticketDePagoACuenta, ticketDeVenta } from '../impresion/plantillas'
 import type {
   ArticuloEscaneado,
   ClienteListado,
@@ -1201,6 +1201,80 @@ describe('ShellPos — "Reimprimir factura" de Ventas del turno', () => {
       facturaDeVenta(comprobante, datosDeFactura, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: true }),
     )
     expect(await screen.findByText('No se pudo imprimir la reimpresión de la factura 0007-00000001: sin papel')).toBeInTheDocument()
+  })
+})
+
+describe('ShellPos — nota de crédito de una venta anulada', () => {
+  const datosDeFactura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+  }
+  const datosDeNota: DatosDeFacturaFiscal = { ...datosDeFactura, idComprobante: 8, codigoTipoComprobante: 'NCB', numero: 5, fecha: '2026-10-15' }
+  const anulada = (): ComprobanteEmitido => ({
+    ...comprobanteEmitidoFixture(),
+    estado: 'Anulado',
+    fiscal: {
+      estado: 'aprobado',
+      motivo: 'forzada',
+      idFacturacion: 4,
+      error: null,
+      comprobante: datosDeFactura,
+      notaDeCredito: { estado: 'aprobado', idFacturacion: 9, comprobante: datosDeNota },
+    },
+  })
+
+  it('"Reimprimir NC" encola la nota de crédito con la factura asociada y la marca de reimpresión, por la misma cola', async () => {
+    const comprobante = anulada()
+    mockearRutasDePos((ruta) => {
+      if (ruta.startsWith('/ventas/por-turno/')) {
+        return Promise.resolve<VentaDeTurnoListado[]>([{ ...ventaDeTurnoDesdeComprobante(comprobante), estadoFiscal: 'aprobado', estadoNotaDeCredito: 'aprobado' }])
+      }
+      if (ruta === `/ventas/${comprobante.id}`) return Promise.resolve<ComprobanteEmitido>(comprobante)
+      return undefined
+    })
+    imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
+    renderShell()
+
+    await elegirDeMenu('Caja', 'Ventas del turno')
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir NC' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock).toHaveBeenCalledWith(
+      notaDeCreditoDeVenta(comprobante, datosDeNota, datosDeFactura, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: true }),
+    )
+    expect(await screen.findByText('No se pudo imprimir la reimpresión de la nota de crédito de 0007-00000001: sin papel')).toBeInTheDocument()
+  })
+
+  it('al anular una venta facturada imprime la nota de crédito aprobada (no es una reimpresión)', async () => {
+    const comprobante = anulada()
+    const enVenta: ComprobanteEmitido = { ...comprobante, estado: 'Emitido', fiscal: { ...comprobante.fiscal!, notaDeCredito: null } }
+    mockearRutasDePos((ruta) => {
+      if (ruta.startsWith('/ventas/por-turno/')) {
+        return Promise.resolve<VentaDeTurnoListado[]>([{ ...ventaDeTurnoDesdeComprobante(enVenta), estadoFiscal: 'aprobado' }])
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => Promise.resolve(ruta === `/ventas/${comprobante.id}/anulacion` ? comprobante : undefined))
+    renderShell()
+
+    await elegirDeMenu('Caja', 'Ventas del turno')
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock).toHaveBeenCalledWith(
+      notaDeCreditoDeVenta(comprobante, datosDeNota, datosDeFactura, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: false }),
+    )
   })
 })
 

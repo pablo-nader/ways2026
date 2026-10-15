@@ -1643,3 +1643,271 @@ describe('VentasDelTurno — estado fiscal y "Reimprimir factura"', () => {
     expect(alReimprimirFactura).not.toHaveBeenCalled()
   })
 })
+
+describe('VentasDelTurno — nota de crédito (T8c)', () => {
+  const datosDeFactura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+  }
+  const datosDeNota: DatosDeFacturaFiscal = { ...datosDeFactura, idComprobante: 8, codigoTipoComprobante: 'NCB', numero: 5, fecha: '2026-10-15' }
+  const fiscalConNota = (notaDeCredito: FiscalDeVenta['notaDeCredito']): FiscalDeVenta => ({
+    estado: 'aprobado',
+    motivo: 'forzada',
+    idFacturacion: 4,
+    error: null,
+    comprobante: datosDeFactura,
+    notaDeCredito,
+  })
+  const NC_APROBADA = { estado: 'aprobado', idFacturacion: 9, comprobante: datosDeNota } as const
+
+  async function esperarFila(numeroVisible: string) {
+    await screen.findByText(numeroVisible)
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/catalogos/medios-pago'))
+  }
+
+  /** Anula la única fila (id 3) y deja que el POST devuelva `respuesta`. */
+  async function anularLaFila(respuesta: ComprobanteEmitido | Error, alImprimirNotaDeCredito = vi.fn()) {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 3, numeroVisible: '0007-00000003', estadoFiscal: 'aprobado' })],
+    })
+    if (respuesta instanceof Error) apiPostMock.mockRejectedValueOnce(respuesta)
+    else apiPostMock.mockResolvedValueOnce(respuesta)
+    render(<VentasDelTurno alImprimirNotaDeCredito={alImprimirNotaDeCredito} />)
+    await esperarFila('0007-00000003')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ventas/3/anulacion'))
+    return alImprimirNotaDeCredito
+  }
+
+  it('al anular con la NC aprobada la imprime con la factura como asociada, sin marca de reimpresión', async () => {
+    const respuesta = comprobanteFixture({ id: 3, estado: 'Anulado', fiscal: fiscalConNota(NC_APROBADA) })
+    const imprimir = await anularLaFila(respuesta)
+
+    await waitFor(() => expect(imprimir).toHaveBeenCalledTimes(1))
+    expect(imprimir).toHaveBeenCalledWith(respuesta, datosDeNota, datosDeFactura, [medioEfectivo], { reimpresion: false })
+    expect(screen.queryByText(/nota de crédito/i)).not.toBeInTheDocument()
+  })
+
+  it('con la NC pendiente no imprime y avisa que se emitirá sola', async () => {
+    const imprimir = await anularLaFila(comprobanteFixture({ id: 3, estado: 'Anulado', fiscal: fiscalConNota({ estado: 'pendiente', idFacturacion: 9 }) }))
+
+    expect(await screen.findByText('La venta 0007-00000003 se anuló. La nota de crédito quedó pendiente; se emitirá sola.')).toBeInTheDocument()
+    expect(imprimir).not.toHaveBeenCalled()
+  })
+
+  it('con la NC rechazada no imprime y avisa que ARCA la rechazó', async () => {
+    const imprimir = await anularLaFila(
+      comprobanteFixture({ id: 3, estado: 'Anulado', fiscal: fiscalConNota({ estado: 'rechazado', idFacturacion: 9, error: 'x' }) }),
+    )
+
+    expect(await screen.findByText('La venta 0007-00000003 se anuló. ARCA rechazó la nota de crédito.')).toBeInTheDocument()
+    expect(imprimir).not.toHaveBeenCalled()
+  })
+
+  it('con la NC aprobada pero sin comprobante no imprime y lo dice', async () => {
+    const imprimir = await anularLaFila(
+      comprobanteFixture({ id: 3, estado: 'Anulado', fiscal: fiscalConNota({ estado: 'aprobado', idFacturacion: 9, comprobante: null }) }),
+    )
+
+    expect(await screen.findByText(/La nota de crédito no está disponible para imprimir\./)).toBeInTheDocument()
+    expect(imprimir).not.toHaveBeenCalled()
+  })
+
+  it('una venta sin nota de crédito en la respuesta se anula como siempre: no imprime ni avisa', async () => {
+    const imprimir = await anularLaFila(comprobanteFixture({ id: 3, estado: 'Anulado' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Confirmar anulación' })).not.toBeInTheDocument())
+    expect(imprimir).not.toHaveBeenCalled()
+    expect(screen.queryByText(/se anuló\./)).not.toBeInTheDocument()
+  })
+
+  it('el 409 venta_con_factura_en_tramite se muestra con el mensaje de trámite y la venta queda sin anular', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    const imprimir = await anularLaFila(new ErrorApi(409, 'venta_con_factura_en_tramite', 'texto del servidor'))
+
+    expect(await screen.findByText('La factura está en trámite en ARCA; probá de nuevo en unos minutos.')).toBeInTheDocument()
+    expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
+    expect(imprimir).not.toHaveBeenCalled()
+  })
+
+  it('cada fila anulada muestra la marca de su NC: emitida, pendiente, rechazada, y ninguna sin NC', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001', estado: 'Anulado', estadoNotaDeCredito: 'aprobado' }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', estado: 'Anulado', estadoNotaDeCredito: 'pendiente' }),
+        ventaFixture({ id: 3, numeroVisible: '0007-00000003', estado: 'Anulado', estadoNotaDeCredito: 'rechazado' }),
+        ventaFixture({ id: 4, numeroVisible: '0007-00000004', estado: 'Anulado', estadoNotaDeCredito: null }),
+        ventaFixture({ id: 5, numeroVisible: '0007-00000005', estado: 'Anulado' }),
+      ],
+    })
+    render(<VentasDelTurno />)
+    await esperarFila('0007-00000005')
+
+    const etiquetasDe = (numeroVisible: string) => {
+      const fila = screen.getByText(numeroVisible).closest('tr') as HTMLElement
+      return ['NC emitida', 'NC pendiente', 'NC rechazada'].filter((t) => within(fila).queryByText(t) !== null)
+    }
+    expect(etiquetasDe('0007-00000001')).toEqual(['NC emitida'])
+    expect(etiquetasDe('0007-00000002')).toEqual(['NC pendiente'])
+    expect(etiquetasDe('0007-00000003')).toEqual(['NC rechazada'])
+    expect(etiquetasDe('0007-00000004')).toEqual([])
+    expect(etiquetasDe('0007-00000005')).toEqual([])
+  })
+
+  it('"Reimprimir NC" aparece solo en la fila anulada con NC aprobada y solo si el shell sabe imprimir', async () => {
+    const ventas = [
+      ventaFixture({ id: 1, numeroVisible: '0007-00000001', estado: 'Anulado', estadoNotaDeCredito: 'aprobado' }),
+      ventaFixture({ id: 2, numeroVisible: '0007-00000002', estado: 'Anulado', estadoNotaDeCredito: 'pendiente' }),
+      ventaFixture({ id: 3, numeroVisible: '0007-00000003', estado: 'Anulado', estadoNotaDeCredito: 'rechazado' }),
+      ventaFixture({ id: 4, numeroVisible: '0007-00000004', estado: 'Anulado' }),
+    ]
+    mockearRutas({ turno: turnoFixture(), medios: [medioEfectivo], ventas })
+    const { unmount } = render(<VentasDelTurno alImprimirNotaDeCredito={vi.fn()} />)
+    await esperarFila('0007-00000004')
+
+    const botones = screen.getAllByRole('button', { name: 'Reimprimir NC' })
+    expect(botones).toHaveLength(1)
+    expect((botones[0].closest('tr') as HTMLElement).textContent).toContain('0007-00000001')
+    unmount()
+
+    render(<VentasDelTurno />)
+    await esperarFila('0007-00000004')
+    expect(screen.queryByRole('button', { name: 'Reimprimir NC' })).not.toBeInTheDocument()
+  })
+
+  it('"Reimprimir NC" pide la venta por id e imprime la NC con la factura asociada y la marca de reimpresión, sin ticket ni factura', async () => {
+    const comprobante = comprobanteFixture({ id: 42, numeroVisible: '0007-00000042', estado: 'Anulado', fiscal: fiscalConNota(NC_APROBADA) })
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 42, numeroVisible: '0007-00000042', estado: 'Anulado', estadoFiscal: 'aprobado', estadoNotaDeCredito: 'aprobado' })],
+      comprobantes: { 42: comprobante },
+    })
+    const imprimirNc = vi.fn()
+    const alReimprimir = vi.fn()
+    const alReimprimirFactura = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} alReimprimirFactura={alReimprimirFactura} alImprimirNotaDeCredito={imprimirNc} />)
+    await esperarFila('0007-00000042')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir NC' }))
+
+    await waitFor(() => expect(imprimirNc).toHaveBeenCalledTimes(1))
+    expect(imprimirNc).toHaveBeenCalledWith(comprobante, datosDeNota, datosDeFactura, [medioEfectivo], { reimpresion: true })
+    expect(alReimprimir).not.toHaveBeenCalled()
+    expect(alReimprimirFactura).not.toHaveBeenCalled()
+    expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/ventas/42')).toHaveLength(1)
+  })
+
+  it('si la respuesta fresca no trae la NC aprobada con su comprobante muestra un error, actualiza la marca y no imprime nada', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 43, numeroVisible: '0007-00000043', estado: 'Anulado', estadoNotaDeCredito: 'aprobado' })],
+      comprobantes: {
+        43: comprobanteFixture({
+          id: 43,
+          numeroVisible: '0007-00000043',
+          estado: 'Anulado',
+          fiscal: fiscalConNota({ estado: 'aprobado', idFacturacion: 9, comprobante: null }),
+        }),
+      },
+    })
+    const imprimirNc = vi.fn()
+    const alReimprimir = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} alImprimirNotaDeCredito={imprimirNc} />)
+    await esperarFila('0007-00000043')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir NC' }))
+
+    expect(await screen.findByText('La nota de crédito de esta venta no está disponible para reimprimir.')).toBeInTheDocument()
+    expect(imprimirNc).not.toHaveBeenCalled()
+    expect(alReimprimir).not.toHaveBeenCalled()
+  })
+
+  it('si la NC ya no está aprobada la fila actualiza su marca y deja de ofrecer "Reimprimir NC"', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 44, numeroVisible: '0007-00000044', estado: 'Anulado', estadoNotaDeCredito: 'aprobado' })],
+      comprobantes: {
+        44: comprobanteFixture({
+          id: 44,
+          numeroVisible: '0007-00000044',
+          estado: 'Anulado',
+          fiscal: fiscalConNota({ estado: 'rechazado', idFacturacion: 9 }),
+        }),
+      },
+    })
+    render(<VentasDelTurno alImprimirNotaDeCredito={vi.fn()} />)
+    await esperarFila('0007-00000044')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir NC' }))
+
+    await screen.findByText('NC rechazada')
+    expect(screen.queryByRole('button', { name: 'Reimprimir NC' })).not.toBeInTheDocument()
+  })
+
+  it('un fallo al pedir la venta se informa y no imprime', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 45, numeroVisible: '0007-00000045', estado: 'Anulado', estadoNotaDeCredito: 'aprobado' })],
+      erroresComprobante: { 45: new Error('sin red') },
+    })
+    const imprimirNc = vi.fn()
+    render(<VentasDelTurno alImprimirNotaDeCredito={imprimirNc} />)
+    await esperarFila('0007-00000045')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir NC' }))
+
+    expect(await screen.findByText('No se pudo obtener el comprobante para reimprimir.')).toBeInTheDocument()
+    expect(imprimirNc).not.toHaveBeenCalled()
+  })
+
+  it('dos clicks del mismo tick sobre "Reimprimir NC" piden y imprimen una sola vez', async () => {
+    const comprobante = comprobanteFixture({ id: 46, numeroVisible: '0007-00000046', estado: 'Anulado', fiscal: fiscalConNota(NC_APROBADA) })
+    mockearRutas({
+      turno: turnoFixture(),
+      medios: [medioEfectivo],
+      ventas: [ventaFixture({ id: 46, numeroVisible: '0007-00000046', estado: 'Anulado', estadoNotaDeCredito: 'aprobado' })],
+    })
+    let resolverComprobante: (valor: ComprobanteEmitido) => void = () => undefined
+    let cantidadDeGets = 0
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas/46') {
+        cantidadDeGets += 1
+        return new Promise<ComprobanteEmitido>((resolve) => {
+          resolverComprobante = resolve
+        })
+      }
+      return base(ruta)
+    })
+    const imprimirNc = vi.fn()
+    render(<VentasDelTurno alImprimirNotaDeCredito={imprimirNc} />)
+    await esperarFila('0007-00000046')
+
+    const boton = screen.getByRole('button', { name: 'Reimprimir NC' })
+    await userEvent.click(boton)
+    await userEvent.click(boton)
+
+    expect(cantidadDeGets).toBe(1)
+    expect(boton).toBeDisabled()
+    resolverComprobante(comprobante)
+    await waitFor(() => expect(imprimirNc).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(boton).toBeEnabled())
+  })
+})

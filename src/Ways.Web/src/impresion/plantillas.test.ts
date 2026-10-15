@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, facturaDeVenta, lineasDeCierreDeTurno, notaDeCreditoDeVenta, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DatosDeFacturaFiscal, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -1275,5 +1275,157 @@ describe('facturaDeVenta — contenido legal (T7c)', () => {
 
     expect(textoPlano(bytes)).not.toMatch(/TRANSPARENCIA|Condicion de venta|Codigo N|CAE/)
     expect(contieneImpresionDeQr(bytes)).toBe(false)
+  })
+})
+
+describe('notaDeCreditoDeVenta (T8c)', () => {
+  const emisor = {
+    razonSocial: 'Almacen Demo SA',
+    nombreFantasia: null,
+    cuit: '30-71234567-8',
+    condicionFiscal: 'IVA Responsable Inscripto',
+    ingresosBrutos: '901-123456-7',
+    inicioActividades: '2020-03-01',
+    domicilio: 'Av. Siempreviva 742',
+  }
+  const receptorConsumidorFinal = {
+    nombre: 'Consumidor Final',
+    tipoDocumento: 'Sin identificar',
+    codigoTipoDocumento: 99,
+    numeroDocumento: 0,
+    condicionFiscal: 'Consumidor Final',
+    domicilio: null,
+  }
+  const receptorResponsable = {
+    nombre: 'Distribuidora Norte SRL',
+    tipoDocumento: 'CUIT',
+    codigoTipoDocumento: 80,
+    numeroDocumento: 30712345678,
+    condicionFiscal: 'IVA Responsable Inscripto',
+    domicilio: 'Calle Falsa 123',
+  }
+  const PAYLOAD = 'https://www.arca.gob.ar/fe/qr/?p=eyJ2ZXIiOjJ9'
+  const factura: DatosDeFacturaFiscal = {
+    idComprobante: 7,
+    codigoTipoComprobante: 'FB',
+    letra: 'B',
+    puntoDeVentaFiscal: 3,
+    numero: 12,
+    fecha: '2026-10-14',
+    cae: '70123456789012',
+    caeVencimiento: '2026-10-24',
+    payloadQr: null,
+    observaciones: [],
+    emisor,
+    receptor: receptorConsumidorFinal,
+  }
+  const notaB: DatosDeFacturaFiscal = {
+    ...factura,
+    idComprobante: 8,
+    codigoTipoComprobante: 'NCB',
+    puntoDeVentaFiscal: 3,
+    numero: 5,
+    fecha: '2026-10-15',
+    cae: '70999999999999',
+    caeVencimiento: '2026-10-25',
+    payloadQr: PAYLOAD,
+    totales: { impNeto: 826.45, impIva: 173.55, impOpEx: 0, impTotConc: 0, impTrib: 0, impTotal: 1000, alicuotas: [{ porcentaje: 21, neto: 826.45, iva: 173.55 }] },
+  }
+  const notaA: DatosDeFacturaFiscal = {
+    ...notaB,
+    codigoTipoComprobante: 'NCA',
+    letra: 'A',
+    receptor: receptorResponsable,
+    totales: { impNeto: 1000, impIva: 210, impOpEx: 0, impTotConc: 0, impTrib: 0, impTotal: 1210, alicuotas: [{ porcentaje: 21, neto: 1000, iva: 210 }] },
+  }
+  const facturaA: DatosDeFacturaFiscal = { ...factura, letra: 'A', codigoTipoComprobante: 'FA' }
+  const medios = [medioFixture()]
+  const imprimir = (nota: DatosDeFacturaFiscal, asociada: DatosDeFacturaFiscal | null = factura, opciones = {}) =>
+    notaDeCreditoDeVenta(comprobanteFixture({ estado: 'Anulado' }), nota, asociada, CONTEXTO, medios, opciones)
+  const contieneImpresionDeQr = (bytes: Uint8Array) =>
+    Array.from(bytes).some((_, i) => bytes[i] === 0x1d && bytes[i + 1] === 0x28 && bytes[i + 2] === 0x6b && bytes[i + 6] === 0x51)
+
+  it('NC B a consumidor final: título, código 008, número, fecha, asociado, receptor, transparencia, CAE y QR', () => {
+    const bytes = imprimir(notaB)
+    const texto = textoPlano(bytes)
+
+    for (const esperado of [
+      'Almacen Demo SA',
+      'NOTA DE CREDITO B',
+      'Codigo N° 008',
+      'Nro 00003-00000005',
+      'Fecha: 15/10/2026',
+      'Comprobante asociado: FACTURA B 00003-00000012 del 14/10/2026',
+      'A CONSUMIDOR FINAL',
+      'TRANSPARENCIA FISCAL',
+      'C.A.E. N°: 70999999999999',
+      'Fecha de Vto.: 25/10/2026',
+    ]) {
+      expect(texto).toContain(esperado)
+    }
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?173,55/)
+    expect(texto).not.toContain('Neto gravado')
+    expect(contieneImpresionDeQr(bytes)).toBe(true)
+  })
+
+  it('NC A: código 003, IVA discriminado y asociada de letra A', () => {
+    const texto = textoPlano(imprimir(notaA, facturaA))
+
+    expect(texto).toContain('NOTA DE CREDITO A')
+    expect(texto).toContain('Codigo N° 003')
+    expect(texto).toContain('Comprobante asociado: FACTURA A 00003-00000012 del 14/10/2026')
+    expect(texto).toContain('Distribuidora Norte SRL')
+    expect(texto).toMatch(/Neto gravado\s+\$ ?1\.000,00/)
+    expect(texto).toMatch(/IVA 21%\s+\$ ?210,00/)
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?210,00/)
+  })
+
+  it('NC C: código 013 y transparencia con 0,00', () => {
+    const texto = textoPlano(imprimir({ ...notaB, letra: 'C', totales: undefined }, { ...factura, letra: 'C' }))
+
+    expect(texto).toContain('NOTA DE CREDITO C')
+    expect(texto).toContain('Codigo N° 013')
+    expect(texto).toMatch(/IVA Contenido\s+\$ ?0,00/)
+  })
+
+  it('sin factura asociada no imprime la línea de comprobante asociado', () => {
+    const texto = textoPlano(imprimir(notaB, null))
+
+    expect(texto).toContain('NOTA DE CREDITO B')
+    expect(texto).not.toContain('Comprobante asociado')
+  })
+
+  it('no pulsa el cajón: ni la primera impresión ni la reimpresión, aunque el pago original fuera en efectivo', () => {
+    expect(algunPagoEnEfectivo(comprobanteFixture(), medios)).toBe(true)
+    expect(contieneComandoDeCajon(imprimir(notaB))).toBe(false)
+    expect(contieneComandoDeCajon(imprimir(notaB, factura, { reimpresion: true }))).toBe(false)
+  })
+
+  it('la reimpresión lleva la marca REIMPRESION antes del título y la original no', () => {
+    const reimpresion = textoPlano(imprimir(notaB, factura, { reimpresion: true }))
+
+    expect(reimpresion.indexOf('REIMPRESION')).toBeGreaterThan(-1)
+    expect(reimpresion.indexOf('REIMPRESION')).toBeLessThan(reimpresion.indexOf('NOTA DE CREDITO B'))
+    expect(textoPlano(imprimir(notaB))).not.toContain('REIMPRESION')
+  })
+
+  it('no lista pagos ni agradece la compra, y no imprime el saldo del cliente', () => {
+    const texto = textoPlano(imprimir(notaB, factura, { cliente: { numero: 4, nombre: 'Ana', saldoAntes: 0, saldoDespues: 100 } }))
+
+    expect(texto).not.toContain('Pagos:')
+    expect(texto).not.toContain('Gracias por su compra')
+    expect(texto).not.toContain('Saldo')
+    expect(texto).toContain('2 x Coca Cola 1L')
+  })
+
+  it('el ticket y la factura no cambian: sin nota de crédito ni línea de asociado', () => {
+    const ticket = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, medios))
+    const fact = textoPlano(facturaDeVenta(comprobanteFixture(), factura, CONTEXTO, medios))
+
+    expect(ticket).not.toContain('NOTA DE CREDITO')
+    expect(fact).not.toContain('NOTA DE CREDITO')
+    expect(fact).not.toContain('Comprobante asociado')
+    expect(fact).toContain('Gracias por su compra')
+    expect(fact).toContain('Pagos:')
   })
 })

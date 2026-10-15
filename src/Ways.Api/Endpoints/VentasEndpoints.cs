@@ -78,12 +78,20 @@ public static class VentasEndpoints
         // filas (movimientos inversos + contramovimiento CC), no elimina ninguna. Sin
         // GestionDeCatalogo apilado (spec: OperacionDePos Authorization For Emission and
         // Anulación — un Vendedor puede anular su propia venta, mismo criterio que emitir).
-        grupo.MapPost("/{id:int}/anulacion", async (ServicioDeVentas servicio, int id, CancellationToken ct) =>
+        grupo.MapPost("/{id:int}/anulacion", async (
+            ServicioDeVentas servicio, EmisionEnLineaAlCobrar emisionEnLinea, int id, CancellationToken ct) =>
         {
             var anulado = await servicio.AnularAsync(id, ct);
-            return Results.Ok(anulado);
+
+            // Con la factura aprobada la anulación dejó decidida la nota de crédito: se intenta emitirla con un presupuesto corto
+            // y sin el token de la solicitud (la anulación ya está comiteada). No lanza; lo que no salga lo emite el lote.
+            await emisionEnLinea.IntentarNotaDeCreditoAsync(id);
+            return Results.Ok(anulado with { Fiscal = await emisionEnLinea.LeerEstadoTrasAnularAsync(id) });
         })
-        .WithSummary("Anula un comprobante: revierte stock y cuenta corriente en la misma transacción. No existe restaurar.");
+        .WithSummary(
+            "Anula un comprobante: revierte stock y cuenta corriente en la misma transacción. No existe restaurar. " +
+            "Con la factura aprobada decide la nota de crédito (3/8/13) y la intenta emitir en línea; con la factura en trámite " +
+            "responde 409 venta_con_factura_en_tramite. La respuesta informa el estado fiscal, con fiscal.notaDeCredito.");
 
         grupo.MapGet("/", (
             ServicioDeVentas servicio,

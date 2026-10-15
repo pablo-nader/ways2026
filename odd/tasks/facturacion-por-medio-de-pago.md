@@ -91,7 +91,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
     necesita el QR), y siempre avisando al dueño antes.
 - [x] **T7 — Impresión.** Factura con CAE y QR en `VistaDeTicket` y en el POS de escritorio,
   reimpresión. Depende de T5.
-- [ ] **T8 — Anulación y nota de crédito de una venta facturada.** `CbtesAsoc`, espejo de NC,
+- [x] **T8 — Anulación y nota de crédito de una venta facturada.** `CbtesAsoc`, espejo de NC,
   reversión del acumulado. Depende de T5.
 - [ ] **T9 — Back office.** Pendientes y rechazadas, reporte vendido vs. facturado por medio.
 
@@ -592,13 +592,13 @@ opcionales.
 
 - [x] **T8a — Esquema, lectores y `CbtesAsoc`** (sin cambio de comportamiento). Ruta: delegada.
 - [x] **T8b — Emisión de la NC** (proceso, lote, cupo). Ruta: delegada.
-- [ ] **T8c — Anulación, intento en línea, lectura, POS e impresión de la NC.** Ruta: delegada.
+- [x] **T8c — Anulación, intento en línea, lectura, POS e impresión de la NC.** Ruta: delegada.
   Obligatorio: la transacción de la anulación invoca `CancelarRechazadaDeVentaAnuladaAsync` cuando la
   factura de la venta está rechazada (desde T8b el lote ya no la liquida; hasta T8c queda a mano).
 
 ## Próximo paso
 
-PR de T8a; después T8b (emisión de la NC) apilado.
+PR de T8c; release del POS 0.12.0 con OK del dueño; después T9.
 
 ### Evidencia de T8a (2026-10-15)
 
@@ -639,3 +639,25 @@ también el caso de alícuotas dadas de baja (un juez). Re-juicio: resueltos; lo
 hasta T8c esa liquidación queda a mano (anotado como obligatorio en T8c). JUDGMENT: APPROVED.
 Información: una NC cuya factura nunca se aprueba quedaría pendiente (inalcanzable con la regla
 de anulación de T8c).
+
+### Evidencia de T8c (2026-10-15)
+
+Commits `5c81d06d` (servidor), `bacbea24` (caja), `a1ef1ce6` (fix) y el comentario de la guarda.
+La anulación resuelve el efecto fiscal (`ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion`):
+factura aprobada → decisión de NC en la misma transacción (FOR UPDATE de la decisión, nunca
+`numeraciones_fiscales`); en trámite → 409 `venta_con_factura_en_tramite`; rechazada (leída de la
+decisión, porque el rechazo borra el espejo) → liquida el cupo en la misma transacción. Intento en
+línea de la NC (4 s, solo con ticket); la respuesta y las lecturas informan `fiscal.notaDeCredito`
+y `estadoNotaDeCredito`; la lectura posterior al commit nunca convierte la anulación en error.
+POS: imprime la NC aprobada (factura asociada, código 003/008/013, transparencia, CAE, QR, sin
+cajón ni pagos), insignias NC emitida/pendiente/rechazada y "Reimprimir NC".
+Checks: dominio 1705/1705; aplicación 1042/1042; integración de anulación, facturación, NC y
+estructurales 467/467 tras la corrección; Vitest completo 7524/7524; impresión, Ventas del turno y
+ShellPos 362/362 tras integrar. Sin RED previo: mutaciones en rojo en cada rama.
+Judgment-day: ronda 1, confirmado por los dos jueces que la lectura posterior a la anulación podía
+devolver 500 con la venta ya anulada, corregido; además un comentario falso sobre el lock de la
+venta y un test de carrera no determinista, corregidos. Re-juicio: resueltos. JUDGMENT: APPROVED.
+Información: una NC aprobada después de anular se imprime por primera vez con la marca de
+reimpresión (coherente con la regla 2); la NC de un turno cerrado no se imprime desde la caja
+(T9); sin proyección de la factura, la NC sale sin la línea del comprobante asociado; no se probó
+la reversión de stock y cuenta corriente de una venta facturada (código sin cambios).

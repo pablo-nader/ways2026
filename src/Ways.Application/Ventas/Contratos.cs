@@ -215,12 +215,13 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 ///
 /// <see cref="FacturaForzada"/> es el round-trip de <see cref="SolicitudDeVenta.ForzarFactura"/>. <see cref="Fiscal"/>
 /// es lo que el servidor decidió sobre la facturación del ticket: lo completan la respuesta de la emisión (y de su
-/// reenvío) y la lectura por id (reimpresión), que solo lo lee; <c>null</c> significa "no consultado" y lo devuelve, por
-/// ejemplo, la anulación. Si el servidor alcanzó a emitir la factura antes de responder (o ya estaba emitida en un reenvío), <c>Fiscal.Estado</c> es
+/// reenvío) , la lectura por id (reimpresión), que solo lo lee, y la anulación; <c>null</c> significa "no consultado". Si el servidor alcanzó a emitir la factura antes de responder (o ya estaba emitida en un reenvío), <c>Fiscal.Estado</c> es
 /// <c>aprobado</c> y <c>Fiscal.Comprobante</c> lleva sus datos (<see cref="EmisionEnLineaAlCobrar"/>). <c>Fiscal.Estado</c> es
 /// uno de: <c>no_corresponde</c> (no se factura), <c>sin_decidir</c> (la decisión falló y se completa después), <c>pendiente</c>
 /// (se decidió facturar y la factura no está emitida), <c>aprobado</c>, <c>rechazado</c> (ARCA rechazó) o <c>cancelado</c> (la
-/// venta se anuló antes de procesarse su facturación; se ve en un reenvío, en una lectura o si la anulación llega durante el cobro). <c>Fiscal.Error</c> es solo un código, nunca texto libre; las observaciones de ARCA de una factura aprobada (<c>Fiscal.Comprobante.Observaciones</c>) sí viajan con su texto, porque son las que se imprimen en el comprobante.</summary>
+/// venta se anuló antes de procesarse su facturación; se ve en un reenvío, en una lectura o si la anulación llega durante el cobro). Con la venta anulada y su factura aprobada, <c>Fiscal.NotaDeCredito</c> informa la nota de crédito (<c>estado</c>
+/// <c>pendiente</c>, <c>aprobado</c> o <c>rechazado</c>, <c>idFacturacion</c>, <c>error</c> y, aprobada, <c>comprobante</c>); la factura
+/// conserva su estado <c>aprobado</c>. <c>Fiscal.Error</c> es solo un código, nunca texto libre; las observaciones de ARCA de una factura aprobada (<c>Fiscal.Comprobante.Observaciones</c>) sí viajan con su texto, porque son las que se imprimen en el comprobante.</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,
@@ -281,7 +282,9 @@ public sealed record PaginaDeVentas(IReadOnlyList<ComprobanteListado> Items, int
 /// <see cref="RecargoManualTotal"/>: los mismos totales de ajuste manual de
 /// <see cref="ComprobanteEmitido"/>. <see cref="EstadoFiscal"/> es solo el estado (uno de
 /// <see cref="Ways.Application.Fiscal.EstadosFiscalesDeVenta"/>, el mismo de <c>ComprobanteEmitido.Fiscal.Estado</c>): sin la
-/// factura ni el error, que se piden por id.</summary>
+/// factura ni el error, que se piden por id.
+/// <see cref="EstadoNotaDeCredito"/> es el estado de la nota de crédito de la venta anulada con factura aprobada
+/// (<c>pendiente</c>, <c>aprobado</c> o <c>rechazado</c>); <c>null</c> si no tiene.</summary>
 public sealed record VentaDeTurnoListado(
     int Id,
     long Numero,
@@ -294,7 +297,8 @@ public sealed record VentaDeTurnoListado(
     decimal DescuentoManualTotal,
     decimal RecargoManualTotal,
     IReadOnlyList<MedioDeVentaNeto> MediosDePago,
-    string EstadoFiscal);
+    string EstadoFiscal,
+    string? EstadoNotaDeCredito = null);
 
 /// <summary>Monto neto cobrado por UN medio de pago dentro de una <see cref="VentaDeTurnoListado"/>
 /// — <c>Σ(Importe − Vuelto)</c> agrupado por <see cref="IdMedioPago"/> (nunca el importe bruto

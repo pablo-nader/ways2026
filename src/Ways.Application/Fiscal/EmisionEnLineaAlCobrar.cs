@@ -80,6 +80,73 @@ public class EmisionEnLineaAlCobrar(
         return estado with { Error = CodigoDeError(estado.Error) };
     }
 
+    /// <summary>Después de anular una venta con la factura aprobada: intenta UNA vez emitir su nota de crédito antes de responder,
+    /// con el mismo criterio que el intento de la factura. Solo corre si la venta tiene la decisión de una nota de crédito y la empresa
+    /// tiene un ticket de acceso ya cacheado (no firma ante WSAA); procesar una decisión que ya no está pendiente no llama a ARCA; el presupuesto es <see cref="PresupuestoDeIntento"/>. Nunca
+    /// lanza ni recibe el token de la solicitud: la anulación ya está comiteada. Lo que no se emita ahora lo emite el procesador
+    /// por lote. El estado resultante se lee aparte (<see cref="ServicioDeFacturacionDeVentas.LeerEstadoDeVentaAsync"/>).</summary>
+    public async Task IntentarNotaDeCreditoAsync(int idVenta)
+    {
+        using var presupuesto = new CancellationTokenSource(PresupuestoDeIntento, tiempo);
+        var ct = presupuesto.Token;
+        int? idFacturacion = null;
+        try
+        {
+            var nota = await db.FacturacionesDeVenta.AsNoTracking()
+                .Where(f => f.IdComprobanteVenta == idVenta && f.IdFacturacionOrigen != null)
+                .Select(f => new { f.Id, f.IdEmpresa })
+                .FirstOrDefaultAsync(ct);
+            if (nota is null)
+            {
+                return;
+            }
+
+            idFacturacion = nota.Id;
+
+            // Sin ticket cacheado no se intenta: firmar ante WSAA no se interrumpe y puede tardar bastante más que el tope.
+            if (!await fiscal.HayTicketVigenteAsync(nota.IdEmpresa, ct))
+            {
+                return;
+            }
+
+            _ = await facturacion.ProcesarDecisionAsync(nota.Id, ct);
+        }
+        catch (Exception ex) when (ct.IsCancellationRequested && ex is not ErrorDominio)
+        {
+            log.LogDebug(
+                "El presupuesto del intento en línea cortó la nota de crédito de la venta {IdVenta}; no se anota como fallo.", idVenta);
+        }
+        catch (Exception ex)
+        {
+            var codigo = ex is ErrorDominio dominio ? dominio.Codigo : ErrorInesperado;
+            log.LogWarning(
+                ex, "No se pudo emitir en línea la nota de crédito de la venta {IdVenta} ({Codigo}); queda pendiente.", idVenta, codigo);
+            if (idFacturacion is { } id)
+            {
+                using var cierre = new CancellationTokenSource(PresupuestoDeCierre, tiempo);
+                await facturacion.RegistrarFalloInesperadoAsync(id, codigo, cierre.Token);
+            }
+        }
+    }
+
+    /// <summary>El estado fiscal que informa la respuesta de una anulación ya comiteada, o <c>null</c> si no se pudo leer. Nunca
+    /// lanza: la anulación ocurrió y una falla de esta lectura no puede convertirla en un error que el cajero reintente (el
+    /// reintento respondería 409). Sin el token de la solicitud, con el presupuesto de <see cref="PresupuestoDeIntento"/>: un
+    /// cliente que corta la conexión no debe dejar la respuesta sin la nota que la caja imprime.</summary>
+    public async Task<EstadoFiscalDeVenta?> LeerEstadoTrasAnularAsync(int idVenta)
+    {
+        try
+        {
+            using var presupuesto = new CancellationTokenSource(PresupuestoDeIntento, tiempo);
+            return await facturacion.LeerEstadoDeVentaAsync(idVenta, presupuesto.Token);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "No se pudo leer el estado fiscal de la venta {IdVenta} anulada; se responde sin él.", idVenta);
+            return null;
+        }
+    }
+
     /// <summary>Lo único del error anotado que la respuesta de la venta informa: el código inicial (minúsculas, dígitos y
     /// guion bajo, hasta el primer <c>:</c> o todo el texto si es solo eso). Un rechazo de ARCA anotado como
     /// <c>10015: mensaje; 10016: mensaje</c> queda con su primer código (<c>10015</c>). Todo lo demás, por ejemplo

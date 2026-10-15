@@ -188,8 +188,8 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == id, ct)")] =
                 (1, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
-                "\"SELECT EXISTS (SELECT 1 FROM comprobantes_venta \" +")] =
-                (1, "Pregunta por el espejo de UNA venta por id_venta_origen: tiene que verlo para rechazar la anulación."),
+                "\"(SELECT resultado_fiscal::text FROM comprobantes_venta WHERE id_venta_origen = $1 AND id_comprobante_asociado IS NULL), \" +")] =
+                (1, "Lee el resultado del espejo de la factura de UNA venta por id_venta_origen: tiene que verlo para decidir la anulación."),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "\"JOIN comprobantes_venta c ON c.id_turno_caja = t.id_turno_caja AND c.id_tenant = t.id_tenant \" +")] =
                 (1, "Resuelve el turno de UN comprobante por id."),

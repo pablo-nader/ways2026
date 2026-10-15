@@ -147,7 +147,11 @@ public class ServicioDeFacturacionDeVentas(
                 estado = await ProyectarAsync(decision, null, ct, conFactura: false);
             }
 
-            return estado with { Error = EmisionEnLineaAlCobrar.CodigoDeError(estado.Error) };
+            return estado with
+            {
+                Error = EmisionEnLineaAlCobrar.CodigoDeError(estado.Error),
+                NotaDeCredito = await LeerNotaDeCreditoAsync(id, ct)
+            };
         }
 
         var marcas = await db.ComprobantesVenta.AsNoTracking()
@@ -156,6 +160,55 @@ public class ServicioDeFacturacionDeVentas(
             .FirstOrDefaultAsync(ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el comprobante {idVenta}.");
         return new EstadoFiscalDeVenta(EstadosFiscalesDeVenta.SinFila(marcas.IdVentaOrigen, marcas.FacturacionDecididaEn));
+    }
+
+    /// <summary>La nota de crédito de la factura de la decisión <paramref name="idDecisionDeLaFactura"/>, si la hay: su estado
+    /// (<c>pendiente</c>, <c>aprobado</c> o <c>rechazado</c>), el código del error anotado y, aprobada, su comprobante con la misma
+    /// proyección que la factura. Como la lectura de la factura, no falla por los datos del comprobante: si no se pueden
+    /// proyectar, se informa sin ellos.</summary>
+    private async Task<EstadoDeNotaDeCredito?> LeerNotaDeCreditoAsync(int idDecisionDeLaFactura, CancellationToken ct)
+    {
+        int? idNota = null;
+        await using (var comando = await NuevoComandoAsync(
+            "SELECT id_facturacion_venta FROM facturaciones_de_venta WHERE id_facturacion_origen = $1", ct, idDecisionDeLaFactura))
+        {
+            if (await comando.ExecuteScalarAsync(ct) is int id)
+            {
+                idNota = id;
+            }
+        }
+
+        if (idNota is not int idDeLaNota)
+        {
+            return null;
+        }
+
+        var nota = await LeerDecisionAsync(idDeLaNota, ct)
+            ?? throw new InvalidOperationException($"La decisión {idDeLaNota} de la nota de crédito dejó de existir.");
+        var estado = EstadosFiscalesDeVenta.De(nota.Estado switch
+        {
+            Pendiente => EstadoFacturacionDeVenta.Pendiente,
+            Emitida => EstadoFacturacionDeVenta.Emitida,
+            Rechazada => EstadoFacturacionDeVenta.Rechazada,
+            Cancelada => EstadoFacturacionDeVenta.Cancelada,
+            var otro => throw new InvalidOperationException($"Estado de facturación desconocido: {otro}.")
+        });
+
+        DatosDeFacturaFiscal? comprobante = null;
+        if (nota.Estado == Emitida)
+        {
+            try
+            {
+                comprobante = await LeerFacturaAsync(nota.IdComprobanteFiscal!.Value, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogWarning(ex, "No se pudo proyectar la nota de crédito de la decisión {IdFacturacion}; se informa sin ella.", idDeLaNota);
+            }
+        }
+
+        return new EstadoDeNotaDeCredito(
+            estado, nota.Id, EmisionEnLineaAlCobrar.CodigoDeError(nota.UltimoError), comprobante);
     }
 
     /// <summary>Evalúa el estado actual y lo avanza. Se vuelve a llamar a sí mismo ("reevaluar") solo cuando otra llamada
@@ -1210,21 +1263,11 @@ public class ServicioDeFacturacionDeVentas(
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            if (await BloquearVentaYLeerEstadoAsync(decision.IdComprobanteVenta, ct) != "anulado"
-                || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Rechazada)
+            if (!await LiquidarRechazadaDeVentaAnuladaAsync(decision, salida, ct))
             {
                 return;
             }
 
-            await using (var comando = await NuevoComandoAsync(
-                "UPDATE facturaciones_de_venta SET estado = $2::estado_facturacion_venta, updated_at = $3 " +
-                "WHERE id_facturacion_venta = $1",
-                ct, decision.Id, Cancelada, reloj.Ahora))
-            {
-                await comando.ExecuteNonQueryAsync(ct);
-            }
-
-            await RevertirAportesAsync(decision, true, salida, ct);
             await transaccion.CommitAsync(ct);
         });
 
@@ -1233,6 +1276,61 @@ public class ServicioDeFacturacionDeVentas(
         var final = await LeerDecisionAsync(decision.Id, ct)
             ?? throw new InvalidOperationException($"La decisión {decision.Id} dejó de existir.");
         return await ProyectarAsync(final, null, ct);
+    }
+
+    /// <summary>Liquida la factura rechazada de una venta que se anula, DENTRO de la transacción del que llama (la anulación de la
+    /// venta, que ya tiene bloqueada la fila de la venta): no abre ni cierra ninguna. Es la misma liquidación y la misma
+    /// idempotencia que <see cref="CancelarRechazadaDeVentaAnuladaAsync"/>; un acumulado que falta se anota en el log y no frena
+    /// la anulación. Requiere una transacción abierta en el contexto.</summary>
+    public async Task LiquidarFacturaRechazadaDeVentaAnuladaAsync(int idVenta, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("La liquidación de la factura rechazada exige la transacción de la anulación.");
+        }
+
+        int? idDecision = null;
+        await using (var comando = await NuevoComandoAsync(
+            "SELECT id_facturacion_venta FROM facturaciones_de_venta " +
+            "WHERE id_comprobante_venta = $1 AND id_facturacion_origen IS NULL", ct, idVenta))
+        {
+            if (await comando.ExecuteScalarAsync(ct) is int id)
+            {
+                idDecision = id;
+            }
+        }
+
+        var decision = idDecision is int encontrada ? await LeerDecisionAsync(encontrada, ct) : null;
+        if (decision is null)
+        {
+            throw new InvalidOperationException($"La venta {idVenta} tiene el espejo de su factura rechazado y ninguna decisión de facturar.");
+        }
+
+        var salida = new Salida();
+        _ = await LiquidarRechazadaDeVentaAnuladaAsync(decision, salida, ct);
+        LoguearAcumuladosFaltantes(decision.Id, salida);
+    }
+
+    /// <summary>El cuerpo de la liquidación, sin transacción propia. Devuelve si liquidó: la venta tiene que estar <c>anulado</c> y
+    /// la decisión <c>rechazada</c>, leídas bajo sus locks.</summary>
+    private async Task<bool> LiquidarRechazadaDeVentaAnuladaAsync(FacturacionPendiente decision, Salida salida, CancellationToken ct)
+    {
+        if (await BloquearVentaYLeerEstadoAsync(decision.IdComprobanteVenta, ct) != "anulado"
+            || await BloquearDecisionYLeerEstadoAsync(decision.Id, ct) != Rechazada)
+        {
+            return false;
+        }
+
+        await using (var comando = await NuevoComandoAsync(
+            "UPDATE facturaciones_de_venta SET estado = $2::estado_facturacion_venta, updated_at = $3 " +
+            "WHERE id_facturacion_venta = $1",
+            ct, decision.Id, Cancelada, reloj.Ahora))
+        {
+            await comando.ExecuteNonQueryAsync(ct);
+        }
+
+        await RevertirAportesAsync(decision, true, salida, ct);
+        return true;
     }
 
     /// <summary>Deshace en el acumulado lo que aplicó la decisión: aportes inversos, <c>total_vendido</c> y

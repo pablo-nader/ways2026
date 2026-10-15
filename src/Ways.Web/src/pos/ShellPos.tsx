@@ -23,7 +23,7 @@ import type { CajaDeEscritorio, SaldoParaTicket } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
-import { cierreDeTurno, facturaDeVenta, ticketDeVenta } from '../impresion/plantillas'
+import { cierreDeTurno, facturaDeVenta, notaDeCreditoDeVenta, ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { MenuDeAcciones } from '../componentes/MenuDeAcciones'
 import type { ItemDeMenuDeAcciones } from '../componentes/MenuDeAcciones'
@@ -370,6 +370,21 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     )
   }
 
+  /** Nota de crédito aprobada de una venta anulada (al anular o desde "Reimprimir NC"): la misma cola FIFO. */
+  function alImprimirNotaDeCredito(
+    comprobante: ComprobanteEmitido,
+    notaDeCredito: DatosDeFacturaFiscal,
+    facturaAsociada: DatosDeFacturaFiscal | null,
+    medios: MedioPagoListado[],
+    opciones: { reimpresion?: boolean } = {},
+  ) {
+    const reimpresion = opciones.reimpresion ?? false
+    encolarImpresion(
+      reimpresion ? `la reimpresión de la nota de crédito de ${comprobante.numeroVisible}` : `la nota de crédito de ${comprobante.numeroVisible}`,
+      notaDeCreditoDeVenta(comprobante, notaDeCredito, facturaAsociada, contextoDeImpresion, medios, { reimpresion }),
+    )
+  }
+
   /** "Imprimir" de "Cierres de caja": el mismo `cierreDeTurno` y la misma cola
    * FIFO que el cierre del turno. */
   function alReimprimirCierre(resumen: ResumenDeCierrePorRetiro) {
@@ -440,7 +455,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                 <main className="flex-grow-1" inert={instalandoActualizacion}>
                   <Routes>
                     <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
-                    <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} alReimprimirFactura={alReimprimirFacturaDeVenta} />} />
+                    <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} alReimprimirFactura={alReimprimirFacturaDeVenta} alImprimirNotaDeCredito={alImprimirNotaDeCredito} />} />
                     <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
                     <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
                     <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
