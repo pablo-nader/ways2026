@@ -6,10 +6,10 @@ namespace Ways.Application.Tests.Ventas;
 /// Facturación por medio de pago, T8c: pinea por texto lo que la anulación de una venta facturada no puede hacer. El paso A del
 /// proceso fiscal toma la serie de <c>numeraciones_fiscales</c> ANTES que la fila de la venta; si la anulación (que ya tiene la
 /// venta bloqueada) pidiera esa serie, se cruzaría con él y se produciría un deadlock. El comportamiento lo prueba el test de
-/// integración <c>LaAnulacionTerminaConTodasLasSeriesFiscalesBloqueadasPorqueNuncaLasToca</c>; acá se fija el texto de lo que la
-/// anulación ejecuta dentro de su transacción (<c>ServicioDeVentas.EjecutarAnulacionAsync</c>, la decisión de la nota de crédito y
-/// la liquidación de la factura rechazada de <c>ServicioDeFacturacionDeVentas</c>), que además cubre el camino que ese test no
-/// recorre (cualquier número fiscal tomado por la vía de <c>AsignadorDeNumeroFiscal</c>).
+/// integración <c>LaAnulacionTerminaConTodasLasSeriesFiscalesBloqueadasPorqueNuncaLasToca</c>; acá se fija el texto de los métodos
+/// principales que la anulación ejecuta dentro de su transacción (el cuerpo de <c>ServicioDeVentas.EjecutarAnulacionAsync</c>,
+/// <c>DecidirNotaDeCreditoAsync</c> y la liquidación de la factura rechazada de <c>ServicioDeFacturacionDeVentas</c> hasta
+/// <c>RevertirAportesAsync</c>). Los auxiliares que esos métodos llaman no se escanean.
 ///
 /// Cada test verifica el texto del archivo, no el comportamiento, y su nombre dice solo eso.
 /// </summary>
