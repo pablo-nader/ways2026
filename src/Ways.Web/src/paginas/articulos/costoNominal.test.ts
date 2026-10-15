@@ -168,6 +168,15 @@ describe('porcentajeDeAlicuota y entradasDeCosto', () => {
 
     expect(entradasDeCosto({ ...costos, descuentoProveedor: '12.5' }, alicuotas).descuentoProveedor).toBe(12.5)
   })
+
+  it('un descuento y unidades por bulto con coma decimal valen igual que con punto', () => {
+    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, idAlicuotaIva: 1 }
+
+    const entradas = entradasDeCosto({ ...costos, descuentoProveedor: '12,5', unidadesPorBulto: '2,5' }, alicuotas)
+
+    expect(entradas.descuentoProveedor).toBe(12.5)
+    expect(entradas.unidadesPorBulto).toBe(2.5)
+  })
 })
 
 describe('costoNominalDelFormulario', () => {

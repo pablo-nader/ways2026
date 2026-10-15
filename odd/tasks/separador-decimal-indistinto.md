@@ -43,3 +43,9 @@ T1: `npx tsc -b`: sin errores; `npm run lint`: 0 errores (warnings preexistentes
 ## Próximo paso
 
 T3 (inline, 2 archivos mecánicos): `ParserDeEscaneo` acepta "," o "." en el prefijo `cantidad*codigo` (antes "0,5*x" daba 5 y "1,2,3*x" daba 123). RED 3 fallos → GREEN `dotnet test tests/Ways.Domain.Tests`: 1701/1701. Luego judgment-day y PR.
+
+## Judgment-day
+
+Ronda 1 sobre 5b260ffa..33c90e39: 0 críticos confirmados → `JUDGMENT: APPROVED`. Warnings arreglados igual (RED→GREEN): vista previa de costo nominal con coma (`costoNominal.ts`) y `+3*x` alineado entre servidor y offline. Dominio 1702/1702, web 242 archivos / 7465 tests, tsc y lint sin errores.
+
+Seguimientos (info): el selector de miembros del combo y "Días de alerta" de Vencimientos no marcan el texto inválido; `atributosDeCampoDeCantidad` ya no aplica `min`; los campos editables se siembran con "." (`String(n)`); `parsearImporte` (dinero, "." = miles) sigue igual.

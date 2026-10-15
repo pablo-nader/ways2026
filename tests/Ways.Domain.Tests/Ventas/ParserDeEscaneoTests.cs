@@ -91,6 +91,12 @@ public class ParserDeEscaneoTests
     }
 
     [Fact]
+    public void UnPrefijoConSignoMasDefaultAUnoComoEnElParserOffline()
+    {
+        Assert.Equal(1m, ParserDeEscaneo.Parsear("+3*42").Cantidad);
+    }
+
+    [Fact]
     public void UnPrefijoDeCantidadAplicaTambienAUnCodigoInterno()
     {
         var resultado = ParserDeEscaneo.Parsear("2*42");
