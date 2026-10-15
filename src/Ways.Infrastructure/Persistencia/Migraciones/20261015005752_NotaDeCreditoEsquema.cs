@@ -30,6 +30,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 columns: new[] { "id_facturacion_venta", "id_tenant" });
 
             migrationBuilder.CreateIndex(
+                name: "ix_facturaciones_de_venta_comprobante",
+                table: "facturaciones_de_venta",
+                columns: new[] { "id_comprobante_venta", "id_tenant" });
+
+            migrationBuilder.CreateIndex(
                 name: "ux_facturaciones_de_venta_comprobante",
                 table: "facturaciones_de_venta",
                 columns: new[] { "id_comprobante_venta", "id_tenant" },
@@ -52,6 +57,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 name: "ck_facturaciones_de_venta_origen_distinto",
                 table: "facturaciones_de_venta",
                 sql: "id_facturacion_origen IS NULL OR id_facturacion_origen <> id_facturacion_venta");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_comprobantes_venta_venta_origen",
+                table: "comprobantes_venta",
+                columns: new[] { "id_venta_origen", "id_tenant" },
+                filter: "id_venta_origen IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "ux_comprobantes_venta_nota_credito_espejo",
@@ -88,6 +99,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 table: "facturaciones_de_venta");
 
             migrationBuilder.DropIndex(
+                name: "ix_facturaciones_de_venta_comprobante",
+                table: "facturaciones_de_venta");
+
+            migrationBuilder.DropIndex(
                 name: "ux_facturaciones_de_venta_comprobante",
                 table: "facturaciones_de_venta");
 
@@ -102,6 +117,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             migrationBuilder.DropCheckConstraint(
                 name: "ck_facturaciones_de_venta_origen_distinto",
                 table: "facturaciones_de_venta");
+
+            migrationBuilder.DropIndex(
+                name: "ix_comprobantes_venta_venta_origen",
+                table: "comprobantes_venta");
 
             migrationBuilder.DropIndex(
                 name: "ux_comprobantes_venta_nota_credito_espejo",

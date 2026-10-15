@@ -38,6 +38,8 @@ comprobantes_venta (          -- [operativa]
 --                                                                            ix_comprobantes_venta_decision_debida
 -- UNIQUE (id_punto_venta, id_tipo_comprobante, numero)
 -- FK (id_venta_origen, id_tenant) → comprobantes_venta ON DELETE RESTRICT
+-- INDEX  (id_venta_origen, id_tenant) WHERE id_venta_origen IS NOT NULL         ix_comprobantes_venta_venta_origen
+--                                                                            ⇒ soporte de la FK (el único de abajo es parcial)
 -- UNIQUE (id_venta_origen, id_tenant) WHERE id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NULL
 --                                                                            ⇒ a lo sumo un espejo de factura por venta
 -- UNIQUE (id_comprobante_asociado, id_tenant) WHERE id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NOT NULL
@@ -300,6 +302,7 @@ facturaciones_de_venta (        -- [operativa] id_tenant + id_empresa NOT NULL, 
     created_at, updated_at, deleted_at
 );
 -- UNIQUE (id_comprobante_venta, id_tenant) WHERE id_facturacion_origen IS NULL  ux_facturaciones_de_venta_comprobante
+-- INDEX  (id_comprobante_venta, id_tenant)                                  ix_facturaciones_de_venta_comprobante (soporte de la FK; el único es parcial)
 -- UNIQUE (id_facturacion_origen, id_tenant) WHERE id_facturacion_origen IS NOT NULL  ux_facturaciones_de_venta_origen
 -- UNIQUE (id_facturacion_venta, id_tenant)                                   ak_..._id_facturacion_venta_id_tenant
 -- FK (id_facturacion_origen, id_tenant) → facturaciones_de_venta, RESTRICT   fk_facturaciones_de_venta_origen
@@ -346,7 +349,7 @@ y no las filas actuales de empresa y cliente. `ck_comprobantes_venta_datos_legal
 espejos anteriores a la columna.
 
 **Bloqueo de la migración.** Los CHECK (`ck_comprobantes_venta_espejo_fiscal`, `ck_comprobantes_venta_espejo_sin_turno`), la FK
-autorreferente (`fk_comprobantes_venta_venta_origen`) y el índice único (`ux_comprobantes_venta_venta_origen`) sobre
+autorreferente (`fk_comprobantes_venta_venta_origen`) y los índices (`ux_comprobantes_venta_venta_origen`, `ix_comprobantes_venta_venta_origen`) sobre
 `comprobantes_venta` se crean sin `NOT VALID` ni `CONCURRENTLY`: la migración recorre esa tabla mientras bloquea las escrituras,
 así que en un tenant con muchos comprobantes conviene aplicarla en una ventana de bajo tráfico.
 

@@ -568,6 +568,8 @@ public partial class FacturacionEsquemaTests(WaysApiFixture fixture) : IClassFix
 
     [Theory]
     [InlineData("comprobantes_venta", "ux_comprobantes_venta_venta_origen", "UNIQUE INDEX", "btree (id_venta_origen, id_tenant)", "WHERE ((id_venta_origen IS NOT NULL) AND (id_comprobante_asociado IS NULL))")]
+    [InlineData("comprobantes_venta", "ix_comprobantes_venta_venta_origen", "INDEX", "btree (id_venta_origen, id_tenant)", "WHERE (id_venta_origen IS NOT NULL)")]
+    [InlineData("facturaciones_de_venta", "ix_facturaciones_de_venta_comprobante", "INDEX", "btree (id_comprobante_venta, id_tenant)", "")]
     [InlineData("comprobantes_venta", "ux_comprobantes_venta_nota_credito_espejo", "UNIQUE INDEX", "btree (id_comprobante_asociado, id_tenant)", "WHERE ((id_venta_origen IS NOT NULL) AND (id_comprobante_asociado IS NOT NULL))")]
     [InlineData("comprobantes_venta", "ix_comprobantes_venta_asociado", "INDEX", "btree (id_comprobante_asociado, id_tenant)", "")]
     [InlineData("facturaciones_de_venta", "ux_facturaciones_de_venta_comprobante", "UNIQUE INDEX", "btree (id_comprobante_venta, id_tenant)", "WHERE (id_facturacion_origen IS NULL)")]

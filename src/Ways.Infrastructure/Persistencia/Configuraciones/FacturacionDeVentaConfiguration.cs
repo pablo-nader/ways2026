@@ -89,12 +89,17 @@ public class FacturacionDeVentaConfiguration : IEntityTypeConfiguration<Facturac
         builder.HasIndex(f => f.IdTenant).HasDatabaseName("ix_facturaciones_de_venta_tenant");
         builder.HasIndex(f => new { f.IdEmpresa, f.IdTenant }).HasDatabaseName("ix_facturaciones_de_venta_empresa");
 
-        // Clave de idempotencia de la decisión de la factura: una venta, una fila de factura. Mismas columnas y orden
-        // que la FK. Parcial: la decisión de la nota de crédito comparte la venta y queda afuera.
+        // Clave de idempotencia de la decisión de la factura: una venta, una fila de factura. Parcial: la decisión de
+        // la nota de crédito comparte la venta y queda afuera, así que no sirve de soporte de
+        // fk_facturaciones_de_venta_comprobante: lo es ix_facturaciones_de_venta_comprobante.
         builder.HasIndex(f => new { f.IdComprobanteVenta, f.IdTenant })
             .HasDatabaseName("ux_facturaciones_de_venta_comprobante")
             .IsUnique()
             .HasFilter("id_facturacion_origen IS NULL");
+
+        // Soporte total de fk_facturaciones_de_venta_comprobante. Con nombre para que EF no lo funda con el único.
+        builder.HasIndex(f => new { f.IdComprobanteVenta, f.IdTenant }, "ix_facturaciones_de_venta_comprobante")
+            .HasDatabaseName("ix_facturaciones_de_venta_comprobante");
 
         // Una decisión de factura tiene a lo sumo una nota de crédito. Soporte de fk_facturaciones_de_venta_origen.
         builder.HasIndex(f => new { f.IdFacturacionOrigen, f.IdTenant })

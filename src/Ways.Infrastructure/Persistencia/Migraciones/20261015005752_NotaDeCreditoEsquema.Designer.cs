@@ -25,7 +25,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.Infrastructure.Persistencia.Migraciones
 {
     [DbContext(typeof(WaysDbContext))]
-    [Migration("20261014233048_NotaDeCreditoEsquema")]
+    [Migration("20261015005752_NotaDeCreditoEsquema")]
     partial class NotaDeCreditoEsquema
     {
         /// <inheritdoc />
@@ -3312,6 +3312,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_facturaciones_de_venta_pendientes")
                         .HasFilter("estado = 'pendiente'::estado_facturacion_venta");
 
+                    b.HasIndex(new[] { "IdComprobanteVenta", "IdTenant" }, "ix_facturaciones_de_venta_comprobante")
+                        .HasDatabaseName("ix_facturaciones_de_venta_comprobante");
+
                     b.ToTable("facturaciones_de_venta", null, t =>
                         {
                             t.HasCheckConstraint("ck_facturaciones_de_venta_aportes_arreglo", "jsonb_typeof(aportes) = 'array'");
@@ -5054,6 +5057,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdPuntoVenta", "IdTipoComprobante", "Numero")
                         .IsUnique()
                         .HasDatabaseName("ux_comprobantes_venta_numero");
+
+                    b.HasIndex(new[] { "IdVentaOrigen", "IdTenant" }, "ix_comprobantes_venta_venta_origen")
+                        .HasDatabaseName("ix_comprobantes_venta_venta_origen")
+                        .HasFilter("id_venta_origen IS NOT NULL");
 
                     b.HasIndex(new[] { "IdComprobanteAsociado", "IdTenant" }, "ux_comprobantes_venta_nota_credito_espejo")
                         .IsUnique()

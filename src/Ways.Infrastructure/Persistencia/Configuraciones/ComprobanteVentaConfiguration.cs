@@ -196,13 +196,20 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .IsUnique()
             .HasFilter("id_presupuesto_origen IS NOT NULL");
 
-        // UNIQUE PARCIAL: una venta tiene a lo sumo un espejo de factura, y es además el índice de soporte de
-        // fk_comprobantes_venta_venta_origen (mismas columnas, mismo orden). El espejo de la nota de crédito comparte
-        // id_venta_origen y se distingue por id_comprobante_asociado (la factura que anula).
+        // UNIQUE PARCIAL: una venta tiene a lo sumo un espejo de factura. El espejo de la nota de crédito comparte
+        // id_venta_origen y se distingue por id_comprobante_asociado (la factura que anula). Por ser parcial no sirve
+        // de soporte de fk_comprobantes_venta_venta_origen: lo es ix_comprobantes_venta_venta_origen.
         builder.HasIndex(c => new { c.IdVentaOrigen, c.IdTenant })
             .HasDatabaseName("ux_comprobantes_venta_venta_origen")
             .IsUnique()
             .HasFilter("id_venta_origen IS NOT NULL AND id_comprobante_asociado IS NULL");
+
+        // Soporte de fk_comprobantes_venta_venta_origen: el chequeo referencial (DELETE del espejo) busca por
+        // id_venta_origen = $1 y un índice parcial por otra condición no se puede usar. Con nombre para que EF no lo
+        // funda con el único de arriba (mismas columnas).
+        builder.HasIndex(c => new { c.IdVentaOrigen, c.IdTenant }, "ix_comprobantes_venta_venta_origen")
+            .HasDatabaseName("ix_comprobantes_venta_venta_origen")
+            .HasFilter("id_venta_origen IS NOT NULL");
 
         // Una factura espejo tiene a lo sumo una nota de crédito espejo. Se declara con nombre: sin él EF lo fundiría
         // con ix_comprobantes_venta_asociado (mismas columnas), que sigue siendo el soporte total de la FK.
