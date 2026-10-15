@@ -17,6 +17,7 @@ import type {
   LineaDeCompraSolicitada,
   UnidadVenta,
 } from './tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 export type UnidadDeMedidaDeLinea = 'Unidad' | 'Bulto'
 
@@ -139,8 +140,7 @@ export function normalizarFilas(lineas: LineaDeCompraFormulario[], claveNueva: n
 }
 
 function numero(valor: string): number {
-  const n = Number(valor)
-  return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
+  return parsearNumeroDecimal(valor, { permitirNegativo: true }) ?? 0
 }
 
 /** Decimales que admite la columna `bultos` (`numeric(10,2)`): con más, la base redondea en silencio
@@ -159,8 +159,8 @@ function tieneBulto(l: LineaDeCompraFormulario): boolean {
  * los que guarda la base. */
 export function mensajeDeCantidadDeBultos(l: LineaDeCompraFormulario): string | null {
   if (tipoDeLinea(l) !== 'articulo' || l.unidadDeMedida !== 'Bulto' || !tieneBulto(l)) return null
-  const bultos = l.cantidad.trim() === '' ? Number.NaN : Number(l.cantidad)
-  if (!(bultos > 0)) return null
+  const bultos = parsearNumeroDecimal(l.cantidad)
+  if (bultos === null || !(bultos > 0)) return null
 
   const escalada = bultos * 10 ** DECIMALES_DE_BULTOS
   return Math.abs(escalada - Math.round(escalada)) >= 1e-6 ? MENSAJE_DE_BULTOS_CON_DECIMALES_DE_MAS : null
@@ -178,7 +178,7 @@ export function camposInvalidosDeLinea(l: LineaDeCompraFormulario): CampoDeLinea
 
   if (esConcepto && l.descripcion.trim() === '') invalidos.push('detalle')
 
-  const cantidad = l.cantidad.trim() === '' ? Number.NaN : Number(l.cantidad)
+  const cantidad = parsearNumeroDecimal(l.cantidad) ?? Number.NaN
   const granularidad = esBulto
     ? mensajeDeCantidadDeBultos(l) === null
     : respetaGranularidad(esConcepto ? undefined : l.unidadVenta, cantidad)

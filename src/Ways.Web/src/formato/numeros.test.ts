@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatearNumeroDecimal, parsearEnteroTipeado, parsearNumeroDecimal } from './numeros'
+import { atributosDeCampoDecimal, atributosDeCampoEntero, formatearNumeroDecimal, parsearEnteroTipeado, parsearNumeroDecimal } from './numeros'
 
 describe('parsearNumeroDecimal', () => {
   it.each([
@@ -34,6 +34,32 @@ describe('parsearEnteroTipeado', () => {
     expect(parsearEnteroTipeado('1.5')).toBeNull()
     expect(parsearEnteroTipeado('')).toBeNull()
     expect(parsearEnteroTipeado('-1')).toBeNull()
+  })
+})
+
+describe('atributosDeCampoDecimal / atributosDeCampoEntero', () => {
+  const cumple = (pattern: string, texto: string) => new RegExp(`^(?:${pattern})$`).test(texto)
+
+  it('el decimal acepta coma o punto y acota los decimales', () => {
+    const { pattern, inputMode, type } = atributosDeCampoDecimal({ decimales: 2 })
+    expect(type).toBe('text')
+    expect(inputMode).toBe('decimal')
+    expect(['10', '10,5', '10.55', ',5', '0,25'].every((t) => cumple(pattern, t))).toBe(true)
+    expect(['10,555', '1,2,3', '1.234,5', '-1', 'abc', ''].some((t) => cumple(pattern, t))).toBe(false)
+  })
+
+  it('el decimal sin tope de decimales y con negativo opcional', () => {
+    expect(cumple(atributosDeCampoDecimal().pattern, '1,23456')).toBe(true)
+    expect(cumple(atributosDeCampoDecimal().pattern, '-1')).toBe(false)
+    expect(cumple(atributosDeCampoDecimal({ permitirNegativo: true }).pattern, '-1,5')).toBe(true)
+  })
+
+  it('el entero rechaza separadores decimales', () => {
+    const { pattern, inputMode } = atributosDeCampoEntero()
+    expect(inputMode).toBe('numeric')
+    expect(cumple(pattern, '12')).toBe(true)
+    expect(['1,5', '1.5', '-1', ''].some((t) => cumple(pattern, t))).toBe(false)
+    expect(cumple(atributosDeCampoEntero({ permitirNegativo: true }).pattern, '-3')).toBe(true)
   })
 })
 

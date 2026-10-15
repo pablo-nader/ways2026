@@ -24,6 +24,7 @@ import {
   MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA,
   type FormularioDeEmpresa,
 } from './empresaFormulario'
+import { atributosDeCampoDecimal } from '../formato/numeros'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -318,10 +319,7 @@ export function Empresas() {
               </label>
               <input
                 id="e-percepcion-iibb"
-                type="number"
-                step="0.001"
-                min="0"
-                max="100"
+                {...atributosDeCampoDecimal({ decimales: 3 })}
                 className="form-control"
                 value={formulario.alicuotaPercepcionIibb}
                 onChange={(e) => setFormulario({ ...formulario, alicuotaPercepcionIibb: e.target.value })}
@@ -334,10 +332,7 @@ export function Empresas() {
               </label>
               <input
                 id="e-percepcion-iva"
-                type="number"
-                step="0.001"
-                min="0"
-                max="100"
+                {...atributosDeCampoDecimal({ decimales: 3 })}
                 className="form-control"
                 value={formulario.alicuotaPercepcionIva}
                 onChange={(e) => setFormulario({ ...formulario, alicuotaPercepcionIva: e.target.value })}

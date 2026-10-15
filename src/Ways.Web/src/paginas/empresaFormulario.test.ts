@@ -85,9 +85,10 @@ describe('alicuotasDePercepcionValidas', () => {
     expect(alicuotasDePercepcionValidas(formulario())).toBe(true)
     expect(alicuotasDePercepcionValidas(formulario({ alicuotaPercepcionIibb: '0', alicuotaPercepcionIva: '100' }))).toBe(true)
     expect(alicuotasDePercepcionValidas(formulario({ alicuotaPercepcionIibb: '2.512' }))).toBe(true)
+    expect(alicuotasDePercepcionValidas(formulario({ alicuotaPercepcionIibb: '2,512' }))).toBe(true)
   })
 
-  it.each(['-0.001', '100.001', '101', '1.2345', 'abc'])('rechaza %s', (texto) => {
+  it.each(['-0.001', '100.001', '101', '1.2345', 'abc', '1.234,5'])('rechaza %s', (texto) => {
     expect(alicuotasDePercepcionValidas(formulario({ alicuotaPercepcionIibb: texto }))).toBe(false)
     expect(alicuotasDePercepcionValidas(formulario({ alicuotaPercepcionIva: texto }))).toBe(false)
   })

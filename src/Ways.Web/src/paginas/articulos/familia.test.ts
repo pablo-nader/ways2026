@@ -183,6 +183,10 @@ describe('camposCompartidosModificados', () => {
     expect(camposCompartidosModificados(formulario(), formulario())).toEqual([])
   })
 
+  it('un decimal escrito con coma o con punto es el mismo valor', () => {
+    expect(camposCompartidosModificados(formulario({ unidadesPorBulto: '12.5' }), formulario({ unidadesPorBulto: '12,5' }))).toEqual([])
+  })
+
   const cambios: [CampoCompartido['clave'], Partial<Formulario>][] = [
     ['idArea', { idArea: 99 }],
     ['idCategoria', { idCategoria: 99 }],

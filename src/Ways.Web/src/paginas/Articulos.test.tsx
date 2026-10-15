@@ -955,7 +955,7 @@ describe('Articulos — alta rápida: error del servidor mantiene el modal abier
 
     expect(await within(dialogo).findByText('Ya existe un grupo con ese nombre.')).toBeInTheDocument()
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Duplicado')
-    expect(within(dialogo).getByLabelText('Margen sugerido (%)')).toHaveValue(15)
+    expect(within(dialogo).getByLabelText('Margen sugerido (%)')).toHaveValue('15')
     expect(screen.getByRole('dialog', { name: 'Nuevo grupo' })).toBeInTheDocument()
   })
 })
@@ -2879,7 +2879,7 @@ describe('Articulos — sección Costos', () => {
 
   it('un artículo nuevo arranca con descuento 0 y lo manda así', async () => {
     await abrirAltaConAlicuota()
-    expect(screen.getByLabelText('Descuento (%)')).toHaveValue(0)
+    expect(screen.getByLabelText('Descuento (%)')).toHaveValue('0')
     await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))

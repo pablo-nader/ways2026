@@ -1,4 +1,5 @@
 import type { AltaProveedor, ProveedorListado } from '../api/tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 /** Estado del formulario del ABM de proveedores: texto para los campos libres, `''` para los
  * numéricos vacíos. `aAlta` lo convierte al cuerpo del request (vacío → `null`). */
@@ -91,7 +92,7 @@ export function aAlta(f: Formulario): AltaProveedor {
     celularVendedor: aVacioNulo(f.celularVendedor),
     supervisor: aVacioNulo(f.supervisor),
     celularSupervisor: aVacioNulo(f.celularSupervisor),
-    margen: f.margen.trim() === '' ? null : Number(f.margen),
+    margen: parsearNumeroDecimal(f.margen),
     observaciones: aVacioNulo(f.observaciones),
     idEmpresa: f.idEmpresa,
     activo: f.activo,

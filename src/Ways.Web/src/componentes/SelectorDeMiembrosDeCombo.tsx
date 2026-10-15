@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import type { ArticuloEscaneado } from '../api/tipos'
 import { parsearNumeroDecimal } from '../formato/numeros'
 import {
@@ -94,9 +94,7 @@ export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: Pr
                   <input
                     ref={indice === aElegir[0] && posicion === 0 ? primerCampoRef : undefined}
                     id={`miembro-${indice}-${candidato.idArticulo}`}
-                    type="text"
-                    inputMode={restriccionDeCantidad(candidato.unidadVenta).step === 1 ? 'numeric' : 'decimal'}
-                    autoComplete="off"
+                    {...atributosDeCampoDeCantidad(restriccionDeCantidad(candidato.unidadVenta))}
                     className="form-control form-control-sm"
                     style={{ width: 90 }}
                     value={textos[`${indice}-${candidato.idArticulo}`] ?? formatearCantidadDeCombo(elecciones[indice]?.[candidato.idArticulo] ?? 0)}

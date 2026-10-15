@@ -331,7 +331,7 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
       expect(llamadas.length).toBeGreaterThan(0)
       expect(llamadas.every((call: unknown[]) => !(call[0] as string).includes('idEntidad='))).toBe(true)
     })
-    expect(screen.getByLabelText('#Id')).toHaveValue(null)
+    expect(screen.getByLabelText('#Id')).toHaveValue('')
   })
 
   it('el botón de descarga llama a rutasDeExportacion.auditoria con el filtro actual', async () => {

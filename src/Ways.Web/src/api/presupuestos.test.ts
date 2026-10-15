@@ -159,6 +159,10 @@ describe('aLineaDePresupuestoSolicitada', () => {
     })
   })
 
+  it('la cantidad con coma decimal se lee igual que con punto', () => {
+    expect(aLineaDePresupuestoSolicitada({ clave: 1, idArticulo: 10, descripcion: '', cantidad: '0,25' }).cantidad).toBe(0.25)
+  })
+
   it('cantidad vacía o no numérica mapea a 0 (nunca viaja sola: el filtro de "completa" ya la descartó antes)', () => {
     expect(aLineaDePresupuestoSolicitada({ clave: 1, idArticulo: 10, descripcion: '', cantidad: '' }).cantidad).toBe(0)
   })

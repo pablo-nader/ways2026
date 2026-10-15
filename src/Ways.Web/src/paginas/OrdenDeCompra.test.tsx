@@ -339,7 +339,7 @@ describe('OrdenDeCompra — precarga desde Reposicion.tsx (location.state)', () 
 
     expect(proveedor).toHaveValue('4')
     expect(screen.getByLabelText('Punto de venta')).toHaveValue('9')
-    expect(screen.getByLabelText('Cantidad pedida')).toHaveValue(17)
+    expect(screen.getByLabelText('Cantidad pedida')).toHaveValue('17')
   })
 })
 
@@ -493,8 +493,8 @@ describe('OrdenDeCompra — cantidad según la unidad de venta', () => {
     renderPantalla()
 
     const cantidad = await screen.findByLabelText('Cantidad pedida')
-    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
-    expect(cantidad).toHaveAttribute('min', '1')
+    await waitFor(() => expect(cantidad).toHaveAttribute('inputmode', 'numeric')
+)
 
     fireEvent.change(cantidad, { target: { value: '2.5' } })
 
@@ -513,7 +513,7 @@ describe('OrdenDeCompra — cantidad según la unidad de venta', () => {
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
     fireEvent.change(cantidad, { target: { value: '2.5' } })
 
-    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).toHaveAttribute('inputmode', 'decimal')
     expect(cantidad).not.toHaveClass('is-invalid')
   })
 })

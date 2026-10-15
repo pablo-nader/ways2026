@@ -37,6 +37,14 @@ describe('sujetoDeBaja de cada descriptor de catálogo', () => {
   })
 })
 
+describe('descriptorGrupos.aAlta — separador decimal', () => {
+  it('el margen con coma se lee igual que con punto, y vacío es null', () => {
+    expect(descriptorGrupos.aAlta('G', true, { margen: '12,5' }, null).margen).toBe(12.5)
+    expect(descriptorGrupos.aAlta('G', true, { margen: '12.5' }, null).margen).toBe(12.5)
+    expect(descriptorGrupos.aAlta('G', true, { margen: '' }, null).margen).toBeNull()
+  })
+})
+
 describe('descriptorListasPrecio.aAlta', () => {
   it('fuerza idListaBase y porcentaje a null en modo Fija aunque el formulario tenga valores residuales', () => {
     const alta = descriptorListasPrecio.aAlta('Lista A', true, {

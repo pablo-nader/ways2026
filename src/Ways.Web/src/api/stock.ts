@@ -21,6 +21,7 @@ import type {
   StockActual,
   UnidadVenta,
 } from './tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 export const clienteDeStock = {
   /** `GET /api/stock` — balance actual de un artículo en un punto de venta. Usado por el conteo
@@ -143,7 +144,7 @@ export function aLineasDeTransferencia(lineas: LineaDeTransferenciaFormulario[])
     .filter(lineaTransferenciaCompleta)
     .map((l) => ({
       idArticulo: Number(l.idArticulo),
-      cantidad: Number(l.cantidad),
+      cantidad: parsearNumeroDecimal(l.cantidad) ?? 0,
       idLote: l.idLote === '' ? null : Number(l.idLote),
     }))
 }
@@ -173,7 +174,7 @@ export function aSolicitudDeConteo(
   return {
     idPuntoVenta: idPuntoVenta === '' ? 0 : idPuntoVenta,
     idArticulo: idArticulo === '' ? 0 : idArticulo,
-    contada: contada.trim() === '' ? 0 : Number(contada),
+    contada: parsearNumeroDecimal(contada) ?? 0,
     observaciones: observaciones.trim(),
   }
 }
@@ -181,9 +182,8 @@ export function aSolicitudDeConteo(
 /** Cero es una cantidad contada legítima (no queda nada); la unidad de venta decide si admite
  * fracciones. Sin unidad conocida se comporta como siempre. */
 export function contadaValida(contada: string, unidadVenta?: UnidadVenta | null): boolean {
-  if (contada.trim() === '') return false
-  const n = Number(contada)
-  return Number.isFinite(n) && n >= 0 && respetaGranularidad(unidadVenta, n)
+  const n = parsearNumeroDecimal(contada)
+  return n !== null && respetaGranularidad(unidadVenta, n)
 }
 
 // ---- Conteo por lote (stage-12-lotes-vencimientos, Slice 15, design decisión 12/18) ------------
@@ -209,7 +209,7 @@ export function lineasDeConteoDeLoteCompletas(
 }
 
 export function aConteoDeLotes(lineas: LineaDeConteoDeLoteFormulario[], unidadVenta?: UnidadVenta | null): ConteoDeLote[] {
-  return lineasDeConteoDeLoteCompletas(lineas, unidadVenta).map((l) => ({ idLote: l.idLote, contada: Number(l.contada) }))
+  return lineasDeConteoDeLoteCompletas(lineas, unidadVenta).map((l) => ({ idLote: l.idLote, contada: parsearNumeroDecimal(l.contada) ?? 0 }))
 }
 
 /** Rama por-lote de `SolicitudDeConteo` — `contada: null`, `lotes` con al menos una línea
@@ -237,16 +237,15 @@ export function aSolicitudDeConteoPorLote(
 
 function aUmbral(texto: string): number | null {
   const limpio = texto.trim()
-  return limpio === '' ? null : Number(limpio)
+  return limpio === '' ? null : parsearNumeroDecimal(limpio, { permitirNegativo: true })
 }
 
-/** Un campo vacío siempre es válido (unmanage); uno tipeado tiene que parsear a un número finito.
- * `Number('1,5')` (coma decimal) es `NaN`, así que ese texto queda INVÁLIDO en vez de viajar como
- * `null` en silencio — que es lo que `JSON.stringify` haría con un `NaN` sin este guard, la
- * misma clase de "campo aceptado y descartado" que `dto-contract-honesty` prohíbe. */
+/** Un campo vacío siempre es válido (unmanage); uno tipeado tiene que ser un decimal válido ("." o "," como separador).
+ * Un texto que no parsea queda INVÁLIDO en vez de viajar como `null` en silencio — la misma clase de
+ * "campo aceptado y descartado" que `dto-contract-honesty` prohíbe. */
 export function umbralTextoValido(texto: string): boolean {
   const limpio = texto.trim()
-  return limpio === '' || Number.isFinite(Number(limpio))
+  return limpio === '' || parsearNumeroDecimal(limpio, { permitirNegativo: true }) !== null
 }
 
 /** Espejo cliente de `reposicion_menor_que_minimo` (design decisión 11) — feedback instantáneo

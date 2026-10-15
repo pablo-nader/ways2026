@@ -34,6 +34,16 @@ export function restriccionDeCantidad(unidadVenta: UnidadOAusente, opciones?: { 
   return { step: paso, min: opciones?.permiteCero ? 0 : paso }
 }
 
+/** Atributos del `<input>` de un campo de cantidad tipeada: texto (no `type="number"`, que rechaza la coma según el idioma del
+ * navegador) con el teclado que corresponde a la granularidad de la unidad. */
+export function atributosDeCampoDeCantidad(restriccion: RestriccionDeCantidad) {
+  return {
+    type: 'text' as const,
+    inputMode: (restriccion.step === 1 ? 'numeric' : 'decimal') as 'numeric' | 'decimal',
+    autoComplete: 'off',
+  }
+}
+
 /** Granularidad sola, sin mirar el signo ni el cero (mismo alcance que la regla del dominio). */
 export function respetaGranularidad(unidadVenta: UnidadOAusente, cantidad: number): boolean {
   if (!Number.isFinite(cantidad)) return false

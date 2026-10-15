@@ -6,6 +6,7 @@ import { PARAMETROS_CONOCIDOS, ZONAS_HORARIAS_OFRECIDAS } from '../api/tipos'
 import type { EmpresaListado, ParametroAlta, ParametroListado, ParametroResuelto, PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { atributosDeCampoDecimal, atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
 
 /**
  * Editor de `parametros` (ADR-13): punto de venta gana sobre empresa, empresa gana sobre el
@@ -95,6 +96,14 @@ export function Parametros() {
     setError('')
     setAviso('')
 
+    const numeroDelValor = parsearNumeroDecimal(valorTexto, { permitirNegativo: true })
+    const esNumerico = conocidoSeleccionado?.tipo !== 'texto' && conocidoSeleccionado?.tipo !== 'booleano'
+    if (esNumerico && numeroDelValor === null) {
+      setError('El valor tiene que ser un número (el separador decimal puede ser "." o ",").')
+      setGuardando(false)
+      return
+    }
+
     try {
       const valor =
         conocidoSeleccionado?.tipo === 'texto'
@@ -102,7 +111,7 @@ export function Parametros() {
           : conocidoSeleccionado?.tipo === 'booleano'
             ? JSON.stringify(valorTexto === 'true')
             : JSON.stringify(
-                conocidoSeleccionado?.tipo === 'entero' ? Math.trunc(Number(valorTexto)) : Number(valorTexto),
+                conocidoSeleccionado?.tipo === 'entero' ? Math.trunc(numeroDelValor ?? 0) : (numeroDelValor ?? 0),
               )
 
       const datos: ParametroAlta = {
@@ -238,8 +247,9 @@ export function Parametros() {
                 ) : (
                   <input
                     id="p-valor"
-                    type="number"
-                    step={conocidoSeleccionado?.tipo === 'entero' ? '1' : '0.01'}
+                    {...(conocidoSeleccionado?.tipo === 'entero'
+                      ? atributosDeCampoEntero({ permitirNegativo: true })
+                      : atributosDeCampoDecimal({ decimales: 2, permitirNegativo: true }))}
                     className="form-control"
                     placeholder={`Default: ${conocidoSeleccionado?.porDefecto}`}
                     value={valorTexto}

@@ -11,6 +11,7 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
 import {
+  atributosDeCampoDeCantidad,
   esCantidadValida,
   esFraccionDeArticuloPorUnidad,
   esTextoDeCantidadValido,
@@ -4094,9 +4095,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             </td>
                             <td>
                               <input
-                                type="text"
-                                inputMode={restriccionDeCantidad(l.unidadVenta).step === 1 ? 'numeric' : 'decimal'}
-                                autoComplete="off"
+                                {...atributosDeCampoDeCantidad(restriccionDeCantidad(l.unidadVenta))}
                                 className={`form-control form-control-sm${cantidadInvalida(l) ? ' is-invalid' : ''}`}
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 aria-invalid={cantidadInvalida(l) || undefined}

@@ -6,6 +6,7 @@ import type { EstadoDeVencimiento, PuntoVentaListado, Vencimientos as Vencimient
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { atributosDeCampoEntero, parsearEnteroTipeado } from '../formato/numeros'
 
 function formatearCantidad(valor: number): string {
   return valor.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
@@ -70,7 +71,7 @@ export function Vencimientos() {
 
   // `dias` vacío ⇒ `null` — deja que el servidor resuelva `dias_alerta_vencimiento` (nunca se
   // manda un valor inventado del lado del cliente cuando el servidor ya sabe resolverlo).
-  const diasNumero = dias.trim() === '' ? null : Number(dias)
+  const diasNumero = parsearEnteroTipeado(dias)
 
   const cargar = useCallback(() => {
     if (idPuntoVenta === null) return
@@ -145,9 +146,7 @@ export function Vencimientos() {
                 </label>
                 <input
                   id="vencimientos-dias"
-                  type="number"
-                  step="1"
-                  min="0"
+                  {...atributosDeCampoEntero()}
                   className="form-control"
                   placeholder="Default de la empresa"
                   value={dias}

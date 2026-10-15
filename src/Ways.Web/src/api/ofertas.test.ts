@@ -56,6 +56,18 @@ function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrec
   }
 }
 
+describe('aAltaOferta — separador decimal', () => {
+  it('la coma y el punto se leen igual en la cantidad mínima, el porcentaje y la prioridad es entera', () => {
+    const conComa = aAltaOferta({ ...formularioOfertaVacio(), nombre: 'Oferta', beneficio: 'Porcentaje', cantidadMinima: '2,5', porcentaje: '12,5' })
+    const conPunto = aAltaOferta({ ...formularioOfertaVacio(), nombre: 'Oferta', beneficio: 'Porcentaje', cantidadMinima: '2.5', porcentaje: '12.5' })
+
+    expect(conComa.cantidadMinima).toBe(2.5)
+    expect(conComa.porcentaje).toBe(12.5)
+    expect(conComa).toEqual(conPunto)
+    expect(aAltaOferta({ ...formularioOfertaVacio(), nombre: 'Oferta', prioridad: '3' }).prioridad).toBe(3)
+  })
+})
+
 describe('aAltaOferta — exclusividad de alcance', () => {
   /** Con las cuatro columnas de alcance cargadas a la vez, solo la del radio elegido sobrevive. */
   const todasCargadas = { idArticulo: 5, idGrupo: 9, idCategoria: 8, idFamilia: 7 } as const

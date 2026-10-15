@@ -8,7 +8,7 @@ import {
   type LineaDeTransferenciaFormulario,
 } from '../api/stock'
 import { clienteDeArticulos } from '../api/articulos'
-import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia } from '../api/tipos'
@@ -241,9 +241,7 @@ function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta
       </td>
       <td style={{ width: 120 }}>
         <input
-          type="number"
-          step={restriccion.step}
-          min={restriccion.min}
+          {...atributosDeCampoDeCantidad(restriccion)}
           className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
           aria-label="Cantidad"
           value={linea.cantidad}

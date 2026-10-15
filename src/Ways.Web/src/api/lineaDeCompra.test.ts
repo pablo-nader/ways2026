@@ -235,6 +235,8 @@ describe('camposInvalidosDeLinea / lineaCompletaParaEnvio', () => {
   it('cantidad fraccionaria: inválida para un artículo por unidad, válida por peso o con unidad desconocida', () => {
     expect(camposInvalidosDeLinea(lineaFixture({ cantidad: '1.5', unidadVenta: 'Unidad' }))).toEqual(['cantidad'])
     expect(camposInvalidosDeLinea(lineaFixture({ cantidad: '1.5', unidadVenta: 'Peso' }))).toEqual([])
+    expect(camposInvalidosDeLinea(lineaFixture({ cantidad: '1,5', unidadVenta: 'Peso' }))).toEqual([])
+    expect(camposInvalidosDeLinea(lineaFixture({ cantidad: '1,5', unidadVenta: 'Unidad' }))).toEqual(['cantidad'])
     expect(camposInvalidosDeLinea(lineaFixture({ cantidad: '1.5' }))).toEqual([])
   })
 

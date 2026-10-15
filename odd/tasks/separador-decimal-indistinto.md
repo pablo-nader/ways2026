@@ -28,7 +28,7 @@ con cantidad fraccionaria (p. ej. 0,25) se pueda cargar en el POS.
 ## Tareas
 
 - [x] T1 — Parser compartido + selector de miembros de combo + cantidad de línea del POS + escaneo offline `qty*code`. Ruta: delegada (writer: 2+ archivos no triviales).
-- [ ] T2 — Resto de campos numéricos (stock, compras, presupuestos, remitos, OC, ofertas, artículos, precios, gastos, caja, catálogos, familias, empresas, categorías, auditoría). Ruta: delegada.
+- [x] T2 — Resto de campos numéricos (stock, compras, presupuestos, remitos, OC, ofertas, artículos, precios, gastos, caja, catálogos, familias, empresas, categorías, auditoría). Ruta: delegada.
 
 ## Criterios de aceptación
 
@@ -38,8 +38,8 @@ con cantidad fraccionaria (p. ej. 0,25) se pueda cargar en el POS.
 
 ## Evidencia
 
-T1: `npx tsc -b`: sin errores; `npm run lint`: 0 errores (warnings preexistentes); `npm test`: 242 archivos / 7450 tests en verde. Parser: `formato/numeros.ts` (`parsearNumeroDecimal`, `parsearEnteroTipeado`, `formatearNumeroDecimal`). Nota: el servidor (`ParserDeEscaneo`) lee la coma del prefijo `cantidad*codigo` como miles; el offline ahora acepta coma, el online no (seguimiento).
+T1: `npx tsc -b`: sin errores; `npm run lint`: 0 errores (warnings preexistentes); `npm test`: 242 archivos / 7450 tests en verde. Parser: `formato/numeros.ts` (`parsearNumeroDecimal`, `parsearEnteroTipeado`, `formatearNumeroDecimal`). T2: `npx tsc -b`: sin errores; `npm run lint`: 0 errores; `npm test`: 242 archivos / 7464 tests en verde. Ya no queda `type="number"` ni `Number(texto)` sobre texto tipeado salvo: ids/selects/URL, importes que vienen de `CampoImporte` (`String(n)`: caja.ts, EditorDePrecios, costoLista/costoNominal) y los parsers con regex propio (combosAbm, carrito, ajusteManual, cuentaDePersonal, importeDeVenta). Nota: el servidor (`ParserDeEscaneo`) lee la coma del prefijo `cantidad*codigo` como miles; el offline ahora acepta coma, el online no (seguimiento).
 
 ## Próximo paso
 
-T2.
+Seguimiento fuera de alcance: `ParserDeEscaneo` (servidor) lee la coma del prefijo `cantidad*codigo` como miles.

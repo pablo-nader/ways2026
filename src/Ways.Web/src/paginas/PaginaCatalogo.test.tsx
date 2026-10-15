@@ -684,7 +684,7 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     expect(within(cuenta).queryByRole('option', { name: /Vieja/ })).not.toBeInTheDocument()
     expect(within(cuenta).getByRole('option', { name: '— Sin cuenta —' })).toBeInTheDocument()
     expect(cuenta).toHaveValue('3')
-    expect(within(dialogo).getByLabelText('Comisión (%)')).toHaveValue(4.5)
+    expect(within(dialogo).getByLabelText('Comisión (%)')).toHaveValue('4.5')
     expect(within(dialogo).getByText(/neto de la comisión y las retenciones/)).toBeInTheDocument()
   })
 

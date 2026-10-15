@@ -597,8 +597,8 @@ describe('Empresas — alícuotas de percepción', () => {
     const usuario = userEvent.setup()
     await abrirEdicionDeSur(usuario, { ...empresaSur, alicuotaPercepcionIibb: 3.5, alicuotaPercepcionIva: null })
 
-    expect(screen.getByLabelText('Alícuota de percepción de IIBB (%)')).toHaveValue(3.5)
-    expect(screen.getByLabelText('Alícuota de percepción de IVA (%)')).toHaveValue(null)
+    expect(screen.getByLabelText('Alícuota de percepción de IIBB (%)')).toHaveValue('3.5')
+    expect(screen.getByLabelText('Alícuota de percepción de IVA (%)')).toHaveValue('')
   })
 
   it('guardar manda las alícuotas tipeadas como números y las vacías como null', async () => {

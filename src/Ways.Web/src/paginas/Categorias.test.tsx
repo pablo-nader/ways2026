@@ -102,7 +102,7 @@ describe('Categorias — alta y edición en una modal', () => {
 
     const dialogo = screen.getByRole('dialog', { name: 'Editar categoría' })
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Bebidas')
-    expect(within(dialogo).getByLabelText('Orden')).toHaveValue(7)
+    expect(within(dialogo).getByLabelText('Orden')).toHaveValue('7')
     expect(within(dialogo).getByLabelText('Estado')).toHaveValue('inactivo')
   })
 

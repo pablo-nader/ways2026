@@ -441,8 +441,8 @@ describe('Remito — cantidad según la unidad de venta', () => {
     renderPantalla()
 
     const cantidad = await screen.findByLabelText('Cantidad')
-    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
-    expect(cantidad).toHaveAttribute('min', '1')
+    await waitFor(() => expect(cantidad).toHaveAttribute('inputmode', 'numeric')
+)
     expect(cantidad).not.toHaveClass('is-invalid')
 
     fireEvent.change(cantidad, { target: { value: '1.5' } })
@@ -460,7 +460,8 @@ describe('Remito — cantidad según la unidad de venta', () => {
     apiPutMock.mockResolvedValue(borradorFixture())
     renderPantalla()
     const cantidad = await screen.findByLabelText('Cantidad')
-    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
+    await waitFor(() => expect(cantidad).toHaveAttribute('inputmode', 'numeric')
+)
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
@@ -469,7 +470,8 @@ describe('Remito — cantidad según la unidad de venta', () => {
     await act(async () => {})
 
     const despues = screen.getByLabelText('Cantidad')
-    await waitFor(() => expect(despues).toHaveAttribute('step', '1'))
+    await waitFor(() => expect(despues).toHaveAttribute('inputmode', 'numeric')
+)
     fireEvent.change(despues, { target: { value: '1.5' } })
     expect(despues).toHaveClass('is-invalid')
     expect(apiGetMock.mock.calls.filter((c) => c[0] === '/articulos/10')).toHaveLength(1)
@@ -496,7 +498,7 @@ describe('Remito — cantidad según la unidad de venta', () => {
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
     fireEvent.change(cantidad, { target: { value: '1.5' } })
 
-    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).toHaveAttribute('inputmode', 'decimal')
     expect(cantidad).not.toHaveClass('is-invalid')
   })
 
@@ -508,7 +510,7 @@ describe('Remito — cantidad según la unidad de venta', () => {
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
     fireEvent.change(cantidad, { target: { value: '1.5' } })
 
-    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).toHaveAttribute('inputmode', 'decimal')
     expect(cantidad).not.toHaveClass('is-invalid')
   })
 
@@ -537,7 +539,7 @@ describe('Remito — cantidad según la unidad de venta', () => {
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
     await usuario.click(await screen.findByText('ART-10 — Yerba mate 1kg'))
     const cantidad = screen.getByLabelText('Cantidad')
-    expect(cantidad).toHaveAttribute('step', '1')
+    expect(cantidad).toHaveAttribute('inputmode', 'numeric')
 
     fireEvent.change(cantidad, { target: { value: '2.5' } })
     expect(cantidad).toHaveClass('is-invalid')
