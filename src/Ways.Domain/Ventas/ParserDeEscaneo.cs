@@ -71,7 +71,8 @@ public static class ParserDeEscaneo
         var prefijo = texto[..indice].Trim();
         var codigo = texto[(indice + 1)..].Trim();
 
-        var cantidad = decimal.TryParse(prefijo, NumberStyles.Number, CultureInfo.InvariantCulture, out var parseada)
+        // "." y "," son indistintos como separador decimal; no hay separador de miles.
+        var cantidad = decimal.TryParse(prefijo.Replace(',', '.'), NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture, out var parseada)
             && parseada > 0
                 ? parseada
                 : 1m;

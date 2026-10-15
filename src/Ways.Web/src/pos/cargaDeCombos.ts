@@ -7,6 +7,7 @@
 import { DECIMALES_DE_PESO, esCantidadValida, respetaGranularidad } from '../api/cantidadPorUnidad'
 import type { ArticuloEscaneado } from '../api/tipos'
 import { redondearImporte } from '../formato/importes'
+import { formatearNumeroDecimal } from '../formato/numeros'
 
 /** Un componente listo para cargar. `candidatos` es vacía cuando no se puede vender; con uno solo, ese es el artículo; con
  * varios (una familia), el cajero reparte la cantidad entre ellos. Las dos fuentes (la instantánea y la API) dejan como
@@ -54,7 +55,7 @@ export function rotuloDeCodigoDeCombo(codigo: number): string {
 
 /** Cantidad para mostrar: coma decimal, sin ceros de más (`2`, `0,2`). */
 export function formatearCantidadDeCombo(cantidad: number): string {
-  return String(cantidad).replace('.', ',')
+  return formatearNumeroDecimal(cantidad)
 }
 
 /** Por qué un componente no se puede cargar, o `null` si se puede (aunque haya que elegir entre varios miembros). La

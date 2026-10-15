@@ -8,6 +8,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
+import { atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
 
 const PROFUNDIDAD_MAXIMA = 3
 const ID_FORMULARIO_CATEGORIA = 'formulario-categoria'
@@ -182,7 +183,7 @@ export function Categorias() {
         const datosAlta: CategoriaAlta = {
           nombre: datos.nombre,
           idEmpresa: datos.idEmpresa,
-          orden: Number(datos.orden || '1'),
+          orden: parsearNumeroDecimal(datos.orden, { permitirNegativo: true }) ?? 1,
           idCategoriaPadre: datos.idCategoriaPadre,
           activo: datos.activo,
         }
@@ -552,7 +553,7 @@ function ModalDeCategoria({
           </label>
           <input
             id="fc-orden"
-            type="number"
+            {...atributosDeCampoEntero({ permitirNegativo: true })}
             className="form-control"
             value={valor.orden}
             onChange={(e) => onCambio({ ...valor, orden: e.target.value })}

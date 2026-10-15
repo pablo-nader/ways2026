@@ -31,6 +31,7 @@ import type {
 } from './tipos'
 import { COMPORTAMIENTOS_MEDIO_PAGO } from './tipos'
 import { clienteDeCuentasTesoreria, opcionesDeCuentas, type CuentaTesoreriaListado } from './cuentasTesoreria'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 /** Todo campo propio se maneja como texto en el formulario (incl. números y el select de
  * comportamiento) salvo los booleanos — simplifica el estado controlado; cada descriptor
@@ -74,7 +75,7 @@ export type CampoDescriptor = {
   opcionVacia?: string
   /** Texto de ayuda debajo del campo. */
   ayuda?: string
-  /** `step` del input numérico, cuando el valor por defecto (0.01) no alcanza. */
+  /** Granularidad del campo numérico (`0.001` = hasta tres decimales), cuando el valor por defecto (0.01) no alcanza. */
   paso?: string
 }
 
@@ -108,7 +109,7 @@ export function clienteDeCatalogo<TListado, TAlta>(recurso: string) {
 }
 
 function numeroOVacio(valor: ValorDeCampo): number | null {
-  return valor === '' || valor === null || valor === undefined ? null : Number(valor)
+  return typeof valor === 'string' ? parsearNumeroDecimal(valor, { permitirNegativo: true }) : null
 }
 
 export const descriptorAreas: DescriptorDeCatalogo<AreaListado, AreaAlta> = {

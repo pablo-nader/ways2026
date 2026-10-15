@@ -3,6 +3,7 @@ import { clienteDeCatalogo } from '../../api/catalogos'
 import { ErrorApi } from '../../api/cliente'
 import type { GrupoAlta, GrupoListado } from '../../api/tipos'
 import { Modal } from '../../componentes/Modal'
+import { atributosDeCampoDecimal, parsearNumeroDecimal } from '../../formato/numeros'
 
 const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
 
@@ -12,8 +13,7 @@ type Props = {
 }
 
 function margenOVacio(valor: string): number | null {
-  const limpio = valor.trim()
-  return limpio === '' ? null : Number(limpio)
+  return parsearNumeroDecimal(valor)
 }
 
 /**
@@ -75,9 +75,7 @@ export function AltaRapidaGrupo({ onCreado, onCancelar }: Props) {
           </label>
           <input
             id="alta-rapida-grupo-margen"
-            type="number"
-            step="0.01"
-            min="0"
+            {...atributosDeCampoDecimal({ decimales: 2 })}
             className="form-control"
             value={margen}
             disabled={guardando}

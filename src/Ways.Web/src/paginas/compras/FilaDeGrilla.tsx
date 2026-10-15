@@ -11,15 +11,15 @@ import {
   type LineaDeCompraFormulario,
   type UnidadDeMedidaDeLinea,
 } from '../../api/lineaDeCompra'
-import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../../api/cantidadPorUnidad'
 import type { AlicuotaIvaListado, ArticuloListado } from '../../api/tipos'
 import { CampoFecha } from '../../componentes/CampoFecha'
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { formatearImporte } from '../../formato/importes'
 import { ComboboxDeArticulos } from './ComboboxDeArticulos'
+import { parsearNumeroDecimal } from '../../formato/numeros'
 
 const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
-const PASO_DE_BULTOS = 0.01
 
 type Props = {
   /** Posición de la fila en la grilla (desde 1): da nombre accesible propio a cada celda. */
@@ -135,9 +135,7 @@ export function FilaDeGrilla({
         </td>
         <td style={{ width: 110 }}>
           <input
-            type="number"
-            step={esBulto ? PASO_DE_BULTOS : restriccion.step}
-            min={esBulto ? PASO_DE_BULTOS : restriccion.min}
+            {...atributosDeCampoDeCantidad(restriccion)}
             className={clase('cantidad', fraccionEnUnidad || problemaDeBultos !== null ? 'is-invalid' : '')}
             aria-label={nombre('Cantidad')}
             aria-invalid={marca('cantidad') || fraccionEnUnidad || problemaDeBultos !== null || undefined}
@@ -150,7 +148,7 @@ export function FilaDeGrilla({
           {problemaDeBultos !== null && <div className="invalid-feedback d-block">{problemaDeBultos}</div>}
           {esBulto && linea.unidadesPorBulto !== null && !invalidos.includes('cantidad') && (
             <div className="small text-muted">
-              = {cantidadDeLinea(0, Number(linea.cantidad), linea.unidadesPorBulto)} un. ({linea.unidadesPorBulto} por bulto)
+              = {cantidadDeLinea(0, parsearNumeroDecimal(linea.cantidad) ?? 0, linea.unidadesPorBulto)} un. ({linea.unidadesPorBulto} por bulto)
             </div>
           )}
         </td>

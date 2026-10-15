@@ -17,6 +17,7 @@ import type {
   SolicitudDeOrdenDeCompra,
   UnidadVenta,
 } from './tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 // ---- Offset local para desde/hasta — mismo criterio que compras.ts/cuentaCorriente.ts: el
 // servidor corre en UTC, `fecha_emision` es `timestamptz` y un `<input type="date">` sin offset
@@ -165,12 +166,11 @@ export function lineaDeOrdenCompletaParaEnvio(l: LineaDeOrdenFormulario): boolea
 }
 
 function numeroDeOrden(valor: string): number {
-  const n = Number(valor)
-  return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
+  return parsearNumeroDecimal(valor) ?? 0
 }
 
 function numeroDeOrdenONulo(valor: string): number | null {
-  return valor.trim() === '' ? null : Number(valor)
+  return parsearNumeroDecimal(valor)
 }
 
 /** Fila de formulario → `LineaDeOrdenSolicitada` — solo las líneas completas

@@ -15,6 +15,7 @@ import { Cargando } from '../componentes/Cargando'
 import { PanelDeCambio } from './PanelDeCambio'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
+import { atributosDeCampoEntero, parsearEnteroTipeado } from '../formato/numeros'
 
 function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
@@ -92,6 +93,13 @@ export function Auditoria() {
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  /** Un texto que no es un entero (letras, "," o ".") no se acepta: dejarlo pasar vaciaría el campo al volver a pintarlo. */
+  function cambiarFiltroNumerico(campo: 'idActor' | 'idEntidad', texto: string) {
+    const id = parsearEnteroTipeado(texto)
+    if (id === null && texto.trim() !== '') return
+    cambiarFiltro({ [campo]: id })
+  }
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDeConsultaDeAuditoria, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
@@ -173,11 +181,11 @@ export function Auditoria() {
             </label>
             <input
               id="auditoria-actor"
-              type="number"
+              {...atributosDeCampoEntero()}
               className="form-control"
               placeholder="Id"
               value={filtros.idActor ?? ''}
-              onChange={(e) => cambiarFiltro({ idActor: e.target.value === '' ? null : Number(e.target.value) })}
+              onChange={(e) => cambiarFiltroNumerico('idActor', e.target.value)}
             />
           </div>
           <div className="col-md-2">
@@ -199,11 +207,11 @@ export function Auditoria() {
             </label>
             <input
               id="auditoria-id-entidad"
-              type="number"
+              {...atributosDeCampoEntero()}
               className="form-control"
               disabled={filtros.entidad === null}
               value={filtros.idEntidad ?? ''}
-              onChange={(e) => cambiarFiltro({ idEntidad: e.target.value === '' ? null : Number(e.target.value) })}
+              onChange={(e) => cambiarFiltroNumerico('idEntidad', e.target.value)}
             />
           </div>
           <div className="col-md-2">

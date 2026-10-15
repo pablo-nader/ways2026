@@ -9,7 +9,7 @@ import {
   type LineaDeConteoDeLoteFormulario,
 } from '../api/stock'
 import { clienteDeArticulos } from '../api/articulos'
-import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeParametros } from '../api/parametros'
@@ -423,9 +423,7 @@ export function ConteoDeInventario() {
               </label>
               <input
                 id="conteo-contada"
-                type="number"
-                step={restriccionDeContada.step}
-                min={restriccionDeContada.min}
+                {...atributosDeCampoDeCantidad(restriccionDeContada)}
                 className={`form-control${fraccionEnUnidad ? ' is-invalid' : ''}`}
                 value={contada}
                 disabled={contando || !referenciaOk}
@@ -472,9 +470,7 @@ export function ConteoDeInventario() {
                         <td>{l.codigo}</td>
                         <td>
                           <input
-                            type="number"
-                            step={restriccionDeContada.step}
-                            min={restriccionDeContada.min}
+                            {...atributosDeCampoDeCantidad(restriccionDeContada)}
                             className={`form-control form-control-sm${esFraccionDeArticuloPorUnidad(unidadDelArticulo, l.contada) ? ' is-invalid' : ''}`}
                             aria-label={`Contada del lote ${l.codigo}`}
                             value={l.contada}

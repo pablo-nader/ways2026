@@ -523,8 +523,7 @@ describe('ConteoDeInventario — cantidad contada según la unidad de venta', ()
     await screen.findByText('40')
 
     const contada = screen.getByLabelText('Cantidad contada')
-    expect(contada).toHaveAttribute('step', '1')
-    expect(contada).toHaveAttribute('min', '0')
+    expect(contada).toHaveAttribute('inputmode', 'numeric')
 
     await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento')
     fireEvent.change(contada, { target: { value: '12.5' } })
@@ -546,7 +545,7 @@ describe('ConteoDeInventario — cantidad contada según la unidad de venta', ()
     await screen.findByText('40')
 
     const contada = screen.getByLabelText('Cantidad contada')
-    expect(contada).toHaveAttribute('step', '0.001')
+    expect(contada).toHaveAttribute('inputmode', 'decimal')
 
     await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento')
     fireEvent.change(contada, { target: { value: '12.5' } })

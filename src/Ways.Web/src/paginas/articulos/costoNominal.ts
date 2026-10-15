@@ -6,6 +6,7 @@
  */
 import type { AlicuotaIvaListado, CostoListaPor } from '../../api/tipos'
 import { productoRedondeado, redondearImporte } from '../../formato/importes'
+import { parsearNumeroDecimal } from '../../formato/numeros'
 import type { Formulario } from './FormularioArticulo'
 
 /** Lo que entra en el cálculo, tal como está guardado o tal como se está editando. */
@@ -88,7 +89,7 @@ export function costoDeListaSinYConIva(
 
 function numeroOVacio(texto: string): number | null {
   const limpio = texto.trim()
-  return limpio === '' ? null : Number(limpio)
+  return limpio === '' ? null : (parsearNumeroDecimal(limpio) ?? Number.NaN)
 }
 
 /** Lo que el formulario toma de un artículo para decidir si sus entradas de costo cambiaron. */

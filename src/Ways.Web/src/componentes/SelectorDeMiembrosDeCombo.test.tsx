@@ -158,8 +158,35 @@ describe('SelectorDeMiembrosDeCombo', () => {
         }),
       )
 
-      expect(screen.getByLabelText('Jamón')).toHaveAttribute('step', '0.001')
-      expect(screen.getByLabelText('Coca')).toHaveAttribute('step', '1')
+      expect(screen.getByLabelText('Jamón')).toHaveAttribute('inputmode', 'decimal')
+      expect(screen.getByLabelText('Coca')).toHaveAttribute('inputmode', 'numeric')
+    })
+
+    it.each(['0,25', '0.25'])('"%s" cierra un componente de 0,25 kg y habilita "Agregar combo"', async (texto) => {
+      const usuario = userEvent.setup()
+      const { onConfirmar } = montar(
+        combo({
+          componentes: [{ idArticulo: null, idFamilia: 30, etiqueta: 'Fiambres', cantidad: 0.25, candidatos: [JAMON, QUESO] }],
+        }),
+      )
+
+      await usuario.clear(screen.getByLabelText('Jamón'))
+      await usuario.type(screen.getByLabelText('Jamón'), texto)
+
+      expect(screen.getByLabelText('Jamón')).toHaveValue(texto)
+      expect(screen.getByRole('status')).toHaveTextContent('Elegidas 0,25 de 0,25')
+      await usuario.click(screen.getByRole('button', { name: 'Agregar combo' }))
+      expect(onConfirmar).toHaveBeenCalledWith([{ ...JAMON, cantidad: 0.25 }])
+    })
+
+    it('conserva la coma a mitad de tipeo ("0," no se pierde)', async () => {
+      const usuario = userEvent.setup()
+      montar(picada())
+
+      await usuario.clear(screen.getByLabelText('Jamón'))
+      await usuario.type(screen.getByLabelText('Jamón'), '0,')
+
+      expect(screen.getByLabelText('Jamón')).toHaveValue('0,')
     })
 
     it('reparte kilos entre los miembros, compara el total exacto (0,1 + 0,2 = 0,3) y entrega las líneas en kilos', async () => {

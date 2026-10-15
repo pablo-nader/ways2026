@@ -340,8 +340,8 @@ describe('Presupuesto — cantidad según la unidad de venta', () => {
     renderPantalla()
 
     const cantidad = await screen.findByLabelText('Cantidad')
-    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
-    expect(cantidad).toHaveAttribute('min', '1')
+    await waitFor(() => expect(cantidad).toHaveAttribute('inputmode', 'numeric')
+)
 
     fireEvent.change(cantidad, { target: { value: '0.5' } })
 
@@ -361,7 +361,7 @@ describe('Presupuesto — cantidad según la unidad de venta', () => {
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
     fireEvent.change(cantidad, { target: { value: '0.5' } })
 
-    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).toHaveAttribute('inputmode', 'decimal')
     expect(cantidad).not.toHaveClass('is-invalid')
   })
 })

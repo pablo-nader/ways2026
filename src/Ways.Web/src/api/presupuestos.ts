@@ -19,6 +19,7 @@ import type {
   SolicitudDeVenta,
   UnidadVenta,
 } from './tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 
 // ---- Offset local para desde/hasta — mismo criterio que ordenesDeCompra.ts/compras.ts: el
 // servidor corre en UTC, `fecha_emision` es `timestamptz` y un `<input type="date">` sin offset
@@ -156,8 +157,7 @@ export function lineaDePresupuestoCompletaParaEnvio(l: LineaDePresupuestoFormula
 }
 
 function numeroDeCantidad(valor: string): number {
-  const n = Number(valor)
-  return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
+  return parsearNumeroDecimal(valor) ?? 0
 }
 
 /** Fila de formulario → `LineaDePresupuesto` — solo las líneas completas
