@@ -16,18 +16,22 @@ export interface PropsCampoImporte extends Omit<InputHTMLAttributes<HTMLInputEle
   admiteNegativos?: boolean
 }
 
+const PATRON_FORMATEADO = /^\d{1,3}(\.\d{3})+,\d*$/
+
 /** Elimina cualquier caracter que no sea dígito, "." o ",", conserva un único signo "-" SOLO al
  * principio y solo si `admiteNegativos` (uno tipeado en cualquier otra posición se descarta,
  * no se cuela silenciosamente como si fuera parte del número). "." y "," son el mismo separador
  * decimal: el primero que se tipea queda como "," y los siguientes (de cualquiera de los dos
  * tipos) se funden en los decimales. Con `decimales` en 0 ambos se descartan. Los decimales
  * tipeados se recortan a `decimales` dígitos — nunca se deja tipear un tercer decimal cuando
- * `decimales` es 2. El agrupado de miles con "." ocurre recién en el blur
+ * `decimales` es 2. Un importe ya formateado ("1.234,56", p. ej. pegado) conserva la lectura
+ * es-AR: sus "." son de miles. El agrupado de miles con "." ocurre recién en el blur
  * (`react-async-state`: no reformatear en cada tecla evita que el caret salte). */
 function sanearTipeo(bruto: string, decimales: number, admiteNegativos: boolean): string {
   const negativo = admiteNegativos && bruto.trimStart().startsWith('-')
   const sinSigno = bruto.replace(/-/g, '')
-  const soloValidos = decimales > 0 ? sinSigno.replace(/[^0-9.,]/g, '') : sinSigno.replace(/[^0-9]/g, '')
+  const filtrado = decimales > 0 ? sinSigno.replace(/[^0-9.,]/g, '') : sinSigno.replace(/[^0-9]/g, '')
+  const soloValidos = PATRON_FORMATEADO.test(filtrado) ? filtrado.replace(/\./g, '') : filtrado
   const [antes, ...resto] = soloValidos.split(/[.,]/)
 
   let cuerpo = antes

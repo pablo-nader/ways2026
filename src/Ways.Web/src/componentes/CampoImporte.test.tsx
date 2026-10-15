@@ -87,6 +87,20 @@ describe('CampoImporte', () => {
     expect(campo).toHaveValue('1,23')
   })
 
+  it.each([
+    ['1.234,56', '1234,56', 1234.56],
+    ['$ 12.345.678,9', '12345678,9', 12345678.9],
+  ])('pegar un importe formateado (%s) lee el "." como miles', async (pegado, texto, valor) => {
+    const usuario = userEvent.setup()
+    const onChange = vi.fn()
+    render(<CampoImporte valor={null} onChange={onChange} aria-label="pegado" />)
+    const campo = screen.getByLabelText('pegado')
+    await usuario.click(campo)
+    await usuario.paste(pegado)
+    expect(campo).toHaveValue(texto)
+    expect(onChange).toHaveBeenLastCalledWith(valor)
+  })
+
   it('con decimales=0 un "." tipeado se descarta, igual que la coma', async () => {
     const usuario = userEvent.setup()
     render(<CampoImporte valor={null} decimales={0} onChange={() => {}} aria-label="entero" />)
