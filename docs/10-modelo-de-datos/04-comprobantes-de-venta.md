@@ -592,7 +592,7 @@ es `404` antes de cualquier otra cosa). No hay cambios de esquema. El procesador
   hace bajo el lock de la fila de la venta que toma el `UPDATE` de la anulación, y la creación del espejo bloquea esa misma fila y
   verifica que la venta siga emitida antes de insertarlo, así que o el espejo ya está comiteado y se ve, o la anulación gana y no se
   crea ninguno. Un espejo `rechazado` que quedó en pie no cuenta, y una venta con la decisión `pendiente` y sin espejo se anula
-  como siempre. La nota de crédito es T8.
+  como siempre. La nota de crédito fiscal de una venta facturada es T8 (ver "Nota de crédito fiscal (T8b)").
 - **La espera registrada.** `proximo_intento_en` se escribe (30 s duplicándose hasta 10 min; 5 min hasta 4 h para una
   compuerta). Este servicio y su endpoint procesan la decisión que se les pide aunque la espera no haya vencido; la respeta el
   procesador por lote (T5b). Tampoco hay todavía quién llame a ninguno de los dos endpoints por sí solo (la emisión en línea de T5c usa el servicio, no el endpoint).
@@ -823,6 +823,42 @@ Las dos lecturas del POS informan el estado fiscal sin decidir, emitir ni llamar
 - **`GET /api/ventas/por-turno/{idTurno}`.** Cada fila lleva `estadoFiscal`: solo el estado (`no_corresponde`, `pendiente`,
   `sin_decidir`, `aprobado`, `rechazado` o `cancelado`), sin la factura ni el error, que se piden por id. Se calcula con una única consulta
   por las decisiones de todas las ventas del turno (`id_comprobante_venta IN (...)`) y la misma regla de mapeo para las ventas sin fila.
+
+#### Nota de crédito fiscal (T8b): implementada
+
+El mismo `ServicioDeFacturacionDeVentas` y el mismo lote emiten la nota de crédito (NC) de una venta anulada cuya factura está
+aprobada, sin cambios de esquema. Todavía nada inserta la decisión de la nota: la anulación (T8c) la creará `pendiente`, sin
+aportes y con la empresa, el motivo y el período de la decisión de la factura; hasta entonces la ejercitan solo los tests.
+
+- **Clase de decisión.** `id_facturacion_origen` con valor es la decisión de una nota, y su espejo es el que tiene
+  `id_comprobante_asociado` (el espejo de la factura). Cada decisión mira el espejo de su clase; una venta anulada con nota tiene
+  dos decisiones y dos espejos con el mismo `id_venta_origen`.
+- **Esperas.** La decisión de la nota queda `pendiente` con la espera de una compuerta (5 min duplicándose hasta 4 h) mientras la
+  venta no esté `anulado` (`nota_de_credito_venta_no_anulada`) o no tenga una factura aprobada o aprobada con observaciones
+  (`nota_de_credito_sin_factura_aprobada`). No hay número, espejo ni llamada a ARCA. La regla "venta no emitida → cancelar" es solo
+  de la factura.
+- **Qué se pide.** El tipo es el `NC` de la letra del tipo de la factura (NCA/NCB/NCC, códigos ARCA 3/8/13), que tiene que ser fiscal
+  y activo (`tipo_fiscal_invalido`). El documento, la condición IVA del receptor y el CUIT del emisor salen de los datos legales
+  congelados de la factura, nunca de las filas actuales (solo una factura anterior a esa columna usa las actuales). Los importes y los
+  ítems son los del espejo de la factura, en positivo: el signo lo pone `tipos_comprobante.signo`; el total fiscal tiene que
+  coincidir con el de la factura (`total_fiscal_no_coincide`). `CbtesAsoc` lleva la factura: su tipo ARCA, el punto de venta
+  fiscal, su número, el CUIT del emisor congelado y su fecha fiscal. La fecha de la nota es el día de emisión.
+- **Espejo.** La transacción A bloquea la serie de la nota (`numeraciones_fiscales`, punto de venta y código `NC`), después la venta,
+  y bajo ese lock vuelve a verificar que la venta siga `anulado`, que no haya ya un espejo de nota, que la decisión siga pendiente y
+  que la factura siga aprobada. El espejo copia cliente, importes, ítems y datos legales de la factura, y lleva
+  `id_comprobante_asociado` = la factura e `id_venta_origen` = la venta. El orden de locks y la estrategia sin reintento son los de
+  la factura. Las consultas, la adopción, la liberación del número ante un rechazo y el QR (con el tipo de la nota) valen para
+  cualquier tipo.
+- **Resultado.** Aprobada: la decisión de la nota pasa a `emitida` y, si la decisión de la factura está `emitida`, se revierte por
+  completo su cupo (aportes inversos, `total_vendido` y `total_facturado` sobre el período de la factura), igual que una cancelación;
+  se lee sin lock porque `emitida` es terminal, y en cualquier otro estado se deja el acumulado como está y se loguea. Rechazada: se
+  libera el número, la decisión queda `rechazada` con el motivo, no se toca el acumulado y no se reintenta sola (T9).
+- **Lote.** Procesa las dos clases. La cabeza de una serie es la decisión del espejo pendiente de su clase; la serie de una
+  candidata nota sale de la letra del espejo de su factura. Las notas pendientes cuentan en `pendientesRestantes`.
+- **Factura rechazada de una venta que se anula.** El rechazo solo había devuelto el débito (`saldo += vendido`,
+  `total_facturado −= vendido`), así que la venta anulada seguía devengando y contando como vendida. Procesar esa decisión
+  (el endpoint o el lote, que ahora la toma como candidata) la pasa a `cancelada`, conserva el motivo del rechazo y termina de
+  revertir el acumulado (aportes y `total_vendido`), bajo los locks de la venta y de la decisión y una sola vez.
 
 ### Presupuestos (Etapa 17)
 

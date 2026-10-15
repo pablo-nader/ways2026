@@ -29,7 +29,8 @@ public sealed record ResultadoDeLoteDeFacturacion(
     IReadOnlyList<ResultadoDeFacturacionDeLote> Resultados);
 
 /// <summary>
-/// Procesa las decisiones de facturación <c>pendiente</c> de UN punto de venta, de a una por
+/// Procesa las decisiones de facturación <c>pendiente</c> de UN punto de venta (de factura y de nota de crédito) y las facturas
+/// <c>rechazada</c> de ventas anuladas (que el servicio termina de revertir), de a una por
 /// <see cref="ServicioDeFacturacionDeVentas.ProcesarDecisionAsync"/>: la misma ruta, los mismos locks y la misma lista blanca de
 /// resultados definitivos. Este lote agrega, sobre eso, lo que una decisión suelta no tiene:
 ///
@@ -223,7 +224,9 @@ public class ProcesadorDeFacturacionesPorLote(
             foreach (var candidata in pagina)
             {
                 cursor = candidata.IdFacturacion;
-                var serie = series.De(candidata.CondicionReceptor);
+                var serie = candidata.EsNotaDeCredito
+                    ? series.DeLaNotaDeCredito(candidata.LetraDeLaFactura)
+                    : series.De(candidata.CondicionReceptor);
                 if (lote.Bloqueadas.ContainsKey(serie))
                 {
                     continue;
@@ -322,10 +325,16 @@ public class ProcesadorDeFacturacionesPorLote(
         public int IdComprobanteVenta { get; set; }
 
         public string? CondicionReceptor { get; set; }
+
+        public bool EsNotaDeCredito { get; set; }
+
+        public string? LetraDeLaFactura { get; set; }
     }
 
     /// <summary>Las decisiones que tienen un espejo pendiente en el punto de venta (a lo sumo una por serie), las más viejas
-    /// primero. La decisión puede no estar pendiente: el servicio igual resuelve el espejo.</summary>
+    /// primero. La decisión puede no estar pendiente: el servicio igual resuelve el espejo. El espejo de una factura se une con
+    /// la decisión de la factura y el de una nota de crédito (el que tiene comprobante asociado) con la de la nota: una venta
+    /// anulada con nota de crédito tiene las dos decisiones y los dos espejos sobre la misma venta.</summary>
     private async Task<List<FilaDeCabeza>> LeerCabezasAsync(int idPuntoVenta, CancellationToken ct) =>
         await db.Database.SqlQuery<FilaDeCabeza>(
             $"""
@@ -333,36 +342,53 @@ public class ProcesadorDeFacturacionesPorLote(
                    f.estado::text AS "Estado", f.proximo_intento_en AS "ProximoIntentoEn", t.codigo_afip AS "CodigoAfip"
             FROM comprobantes_venta e
             JOIN tipos_comprobante t ON t.id_tipo_comprobante = e.id_tipo_comprobante
-            JOIN facturaciones_de_venta f ON f.id_comprobante_venta = e.id_venta_origen AND f.id_facturacion_origen IS NULL
-            WHERE e.id_punto_venta = {idPuntoVenta} AND e.id_venta_origen IS NOT NULL AND e.id_comprobante_asociado IS NULL
+            JOIN facturaciones_de_venta f ON f.id_comprobante_venta = e.id_venta_origen
+                 AND (f.id_facturacion_origen IS NOT NULL) = (e.id_comprobante_asociado IS NOT NULL)
+            WHERE e.id_punto_venta = {idPuntoVenta} AND e.id_venta_origen IS NOT NULL
               AND e.resultado_fiscal = 'pendiente'
             ORDER BY f.id_facturacion_venta
             """).ToListAsync(ct);
 
-    /// <summary>Las decisiones pendientes del punto de venta cuya espera no existe o ya venció, las más viejas primero (por id de
-    /// decisión), de a páginas a partir de <paramref name="cursor"/>. Se excluyen las que ya tienen un espejo (cualquier
-    /// estado): ésas son cabezas de serie.</summary>
+    /// <summary>Las candidatas del punto de venta, las más viejas primero (por id de decisión), de a páginas a partir de
+    /// <paramref name="cursor"/>:
+    /// <list type="bullet">
+    /// <item>decisiones <c>pendiente</c> cuya espera no existe o ya venció, de factura o de nota de crédito, que todavía no
+    /// tienen el espejo de SU clase (el de la factura no tiene comprobante asociado; el de la nota sí): quien lo tiene es cabeza
+    /// de serie. Una venta anulada puede tener las dos decisiones y se procesan por separado;</item>
+    /// <item>decisiones de factura <c>rechazada</c> de una venta anulada: el rechazo solo devolvió el débito y el servicio
+    /// termina de revertir el acumulado. Se ignora su espera (ya no es de reintento) y las de nota de crédito rechazadas no
+    /// entran: no se reintentan solas.</item>
+    /// </list>
+    /// <see cref="FilaDeCandidata.LetraDeLaFactura"/> es la letra del tipo del espejo de la factura de la venta, de donde sale
+    /// la serie de una nota de crédito.</summary>
     private async Task<List<FilaDeCandidata>> LeerCandidatasAsync(
         int idPuntoVenta, DateTimeOffset ahora, int cursor, CancellationToken ct) =>
         await db.Database.SqlQuery<FilaDeCandidata>(
             $"""
             SELECT f.id_facturacion_venta AS "IdFacturacion", f.id_comprobante_venta AS "IdComprobanteVenta",
-                   cf.codigo AS "CondicionReceptor"
+                   cf.codigo AS "CondicionReceptor", (f.id_facturacion_origen IS NOT NULL) AS "EsNotaDeCredito",
+                   ti.letra::text AS "LetraDeLaFactura"
             FROM facturaciones_de_venta f
             JOIN comprobantes_venta v ON v.id_comprobante_venta = f.id_comprobante_venta AND v.id_venta_origen IS NULL
             LEFT JOIN clientes c ON c.id_cliente = v.id_cliente
             LEFT JOIN condiciones_fiscales cf ON cf.id_condicion_fiscal = c.id_condicion_fiscal
-            WHERE f.estado = 'pendiente'::estado_facturacion_venta AND v.id_punto_venta = {idPuntoVenta}
-              AND (f.proximo_intento_en IS NULL OR f.proximo_intento_en <= {ahora})
+            LEFT JOIN comprobantes_venta fe ON fe.id_venta_origen = f.id_comprobante_venta AND fe.id_comprobante_asociado IS NULL
+            LEFT JOIN tipos_comprobante ti ON ti.id_tipo_comprobante = fe.id_tipo_comprobante
+            WHERE v.id_punto_venta = {idPuntoVenta}
               AND f.id_facturacion_venta > {cursor}
-              AND f.id_facturacion_origen IS NULL
-              AND NOT EXISTS (SELECT 1 FROM comprobantes_venta e
-                              WHERE e.id_venta_origen = f.id_comprobante_venta AND e.id_comprobante_asociado IS NULL)
+              AND ((f.estado = 'pendiente'::estado_facturacion_venta
+                    AND (f.proximo_intento_en IS NULL OR f.proximo_intento_en <= {ahora})
+                    AND NOT EXISTS (SELECT 1 FROM comprobantes_venta e
+                                    WHERE e.id_venta_origen = f.id_comprobante_venta
+                                      AND (e.id_comprobante_asociado IS NOT NULL) = (f.id_facturacion_origen IS NOT NULL)))
+                   OR (f.estado = 'rechazada'::estado_facturacion_venta AND f.id_facturacion_origen IS NULL
+                       AND v.estado = 'anulado'))
             ORDER BY f.id_facturacion_venta
             LIMIT {TamanioDePagina}
             """).ToListAsync(ct);
 
-    /// <summary>Las decisiones pendientes del punto de venta, con o sin espera y con o sin espejo.</summary>
+    /// <summary>Las decisiones pendientes del punto de venta, de factura o de nota de crédito, con o sin espera y con o sin
+    /// espejo.</summary>
     private async Task<int> ContarPendientesAsync(int idPuntoVenta, CancellationToken ct) =>
         await db.Database.SqlQuery<int>(
             $"""
@@ -370,13 +396,21 @@ public class ProcesadorDeFacturacionesPorLote(
             FROM facturaciones_de_venta f
             JOIN comprobantes_venta v ON v.id_comprobante_venta = f.id_comprobante_venta AND v.id_venta_origen IS NULL
             WHERE f.estado = 'pendiente'::estado_facturacion_venta AND v.id_punto_venta = {idPuntoVenta}
-              AND f.id_facturacion_origen IS NULL
             """).SingleAsync(ct);
 
     // ---- Serie de una candidata ---------------------------------------------------------------------------
 
-    private sealed class SeriesDelPuntoDeVenta(CondicionFiscalCodigo? emisor, IReadOnlyDictionary<char, short> codigoPorLetra)
+    private sealed class SeriesDelPuntoDeVenta(
+        CondicionFiscalCodigo? emisor, IReadOnlyDictionary<char, short> codigoPorLetra,
+        IReadOnlyDictionary<char, short> codigoDeNotaPorLetra)
     {
+        /// <summary>El código ARCA de la nota de crédito que corrige una factura de esa letra (<c>NC{letra}</c>), o
+        /// <see cref="SerieDesconocida"/> si la venta todavía no tiene espejo de factura y no se puede saber.</summary>
+        public short DeLaNotaDeCredito(string? letraDeLaFactura) =>
+            letraDeLaFactura is { Length: 1 } letra
+                ? codigoDeNotaPorLetra.GetValueOrDefault(letra[0], SerieDesconocida)
+                : SerieDesconocida;
+
         /// <summary>El código ARCA de la factura que la candidata emitiría, con la misma regla del servicio (cruce de
         /// condiciones y tipo <c>F{letra}</c>), o <see cref="SerieDesconocida"/> si no se puede saber.</summary>
         public short De(string? condicionReceptor)
@@ -423,8 +457,11 @@ public class ProcesadorDeFacturacionesPorLote(
             .Select(t => new { t.Codigo, Letra = t.Letra!.Value, CodigoAfip = t.CodigoAfip!.Value })
             .ToListAsync(ct);
 
-        // La factura de la letra (FA, FB, FC): las notas de débito comparten letra, así que la letra sola no alcanza.
+        // La factura de la letra (FA, FB, FC) y su nota de crédito (NCA, NCB, NCC): las notas de débito comparten letra, así que
+        // la letra sola no alcanza.
         return new SeriesDelPuntoDeVenta(
-            emisor, tipos.Where(t => t.Codigo == $"F{t.Letra}").ToDictionary(t => t.Letra, t => t.CodigoAfip));
+            emisor,
+            tipos.Where(t => t.Codigo == $"F{t.Letra}").ToDictionary(t => t.Letra, t => t.CodigoAfip),
+            tipos.Where(t => t.Codigo == $"NC{t.Letra}").ToDictionary(t => t.Letra, t => t.CodigoAfip));
     }
 }

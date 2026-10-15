@@ -5,11 +5,12 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// Facturación por medio de pago, T8-S1: con las filas de una nota de crédito ya sembradas (decisión y espejo, enlazados a la
-/// factura), los lectores que suponían una sola decisión y un solo espejo por venta siguen informando la FACTURA y no se rompen, y
-/// el lote no toca la decisión de la nota de crédito. Ningún camino de la aplicación crea todavía esas filas: se siembran por SQL.
+/// factura), los lectores que suponían una sola decisión y un solo espejo por venta siguen informando la FACTURA y no se rompen.
+/// Ningún camino de la aplicación crea todavía esas filas: se siembran por SQL. Desde T8b el lote también procesa la decisión de
+/// la nota (ver FacturacionDeVentasNotaDeCreditoEmisionTests).
 ///
 /// Mutation-proof-tests: las cláusulas bajo prueba son el filtro de tipo (<c>IdFacturacionOrigen == null</c>) del listado del
-/// turno, el <c>id_facturacion_origen IS NULL</c> de la lectura por id y de las candidatas y el conteo del lote.
+/// turno y el <c>id_facturacion_origen IS NULL</c> de la lectura por id.
 /// </summary>
 public partial class FacturacionDeVentasEmisionTests
 {
@@ -87,11 +88,11 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal(EstadosFiscalesDeVenta.Aprobado, fila.EstadoFiscal);
     }
 
-    /// <summary>Cláusula bajo prueba: <c>f.id_facturacion_origen IS NULL</c> de las candidatas del lote. Con el espejo de la factura
-    /// presente, <c>NOT EXISTS</c> ya deja afuera a la venta y el filtro de tipo no se distingue: acá la factura todavía no tiene
-    /// espejo, y la única diferencia entre las dos candidatas posibles es el tipo de su decisión.</summary>
+    /// <summary>Desde T8b el lote procesa las dos clases de decisión. La factura todavía no tiene espejo y la nota de crédito de la
+    /// misma venta no corresponde (la venta no está anulada): el lote emite la factura y deja la nota esperando con su código, en la
+    /// cuenta de pendientes y sin tocar ARCA ni tomar número.</summary>
     [Fact]
-    public async Task ElLoteEmiteLaFacturaPendienteYNoTocaLaDecisionDeNotaDeCreditoDeLaMismaVenta()
+    public async Task ElLoteEmiteLaFacturaPendienteYDejaEnEsperaLaNotaDeUnaVentaQueNoEstaAnulada()
     {
         var t = await PrepararCobroAsync("ncfiltrocandidatas", conTicket: true);
         var venta = await SembrarVentaDecididaAsync(t.C, t.C.IdClienteRi, sembrarAcumulados: false);
@@ -100,28 +101,12 @@ public partial class FacturacionDeVentasEmisionTests
 
         var lote = await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta);
 
-        Assert.Equal((1, 0, 0, 0), (lote.Emitidas, lote.Rechazadas, lote.Canceladas, lote.PendientesRestantes));
-        Assert.Equal(venta.IdFacturacion, Assert.Single(lote.Resultados).IdFacturacion);
+        Assert.Equal((1, 0, 0, 1), (lote.Emitidas, lote.Rechazadas, lote.Canceladas, lote.PendientesRestantes));
+        Assert.Equal([venta.IdFacturacion, nota.IdDecision], lote.Resultados.Select(r => r.IdFacturacion));
+        Assert.Equal(1, t.C.Wsfe.Contar("FECAESolicitar"));
         var decision = await LeerDecisionAsync(t.C, nota.IdDecision);
-        Assert.Equal((0, "pendiente"), (decision.Intentos, decision.Estado));
+        Assert.Equal((1, "pendiente"), (decision.Intentos, decision.Estado));
+        Assert.StartsWith(ServicioDeFacturacionDeVentas.NotaDeCreditoVentaNoAnulada + ":", decision.UltimoError);
         Assert.Null(decision.IdComprobanteFiscal);
-    }
-
-    [Fact]
-    public async Task ElLoteIgnoraLaDecisionDeNotaDeCreditoPendienteYNoLaCuentaComoPendiente()
-    {
-        var t = await PrepararCobroAsync("ncignoralote");
-        var emitido = await VenderEnLineaAsync(t.Cajero, VentaDeCobro(t));
-        var espejoFactura = Assert.Single(await LeerEspejosAsync(t.C));
-        var nota = await SembrarNotaDeCreditoAsync(t.C, emitido.Id, emitido.Fiscal!.IdFacturacion!.Value, espejoFactura.Id);
-        t.C.Wsfe.Reiniciar();
-
-        var lote = await ProcesarLoteAsync(t.Cajero, t.C.IdPuntoVenta);
-
-        Assert.Equal((0, 0, 0, 0), (lote.Emitidas, lote.Rechazadas, lote.Canceladas, lote.PendientesRestantes));
-        Assert.Empty(lote.Resultados);
-        Assert.Empty(t.C.Wsfe.Operaciones);
-        var decision = await LeerDecisionAsync(t.C, nota.IdDecision);
-        Assert.Equal((0, "pendiente"), (decision.Intentos, decision.Estado));
     }
 }
