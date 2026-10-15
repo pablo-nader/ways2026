@@ -59,6 +59,32 @@ public class ArmadorDeInstantaneaTests
         Assert.Equal([1, 2], listas);
     }
 
+    /// <summary>Las listas de la instantánea llevan modo y porcentaje, y el porcentaje solo viaja en una derivada.</summary>
+    [Fact]
+    public void ArmarListasLlevaModoYPorcentajeSoloEnLasDerivadas()
+    {
+        var visibles = new[] { Fija(1), Derivada(2, idBase: 1, porcentaje: -10m), Derivada(3, idBase: 1, porcentaje: 25.5m) };
+
+        var listas = ArmarListas(visibles, [1, 2, 3]);
+
+        Assert.Equal(
+            [
+                new ListaDeInstantanea(1, ModoLista.Fija, null),
+                new ListaDeInstantanea(2, ModoLista.Derivada, -10m),
+                new ListaDeInstantanea(3, ModoLista.Derivada, 25.5m)
+            ],
+            listas);
+    }
+
+    [Fact]
+    public void ArmarListasSoloIncluyeLasResueltasYSinNingunaQuedaAusente()
+    {
+        var visibles = new[] { Fija(1), Derivada(2, idBase: 1) };
+
+        Assert.Equal([new ListaDeInstantanea(2, ModoLista.Derivada, 10m)], ArmarListas(visibles, [2]));
+        Assert.Null(ArmarListas(visibles, []));
+    }
+
     [Fact]
     public void UnaListaFueraDeLasVisiblesSeProyectaComoNula()
     {

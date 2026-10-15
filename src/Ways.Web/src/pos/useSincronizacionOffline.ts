@@ -251,9 +251,10 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
   for (const [indice, linea] of lineas.entries()) {
     const precios = vigentes[indice]
     if (!precios) return null
-    // La línea por importe viaja con su importe y nunca con precio de lista ni descuento (el servidor rechaza la mezcla).
+    // La línea por importe viaja con su importe y con el precio que cobró la caja (el importe con el porcentaje de la lista
+    // derivada): el servidor no lo re-deriva con la lista de hoy. Sin descuento ni combo: no hay oferta sobre un importe.
     if (linea.importe !== undefined) {
-      enriquecidas.push(linea)
+      enriquecidas.push({ ...linea, precioUnitario: precios.precioOriginal })
       continue
     }
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`

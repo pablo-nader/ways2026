@@ -43,6 +43,20 @@ public static class ArmadorDeInstantanea
             .ToList();
     }
 
+    /// <summary>Las listas de <see cref="InstantaneaDePos.Listas"/>: las mismas <paramref name="idsLista"/> que se
+    /// resolvieron, con su modo y porcentaje. Un porcentaje solo viaja en una derivada.</summary>
+    public static IReadOnlyList<ListaDeInstantanea>? ArmarListas(
+        IReadOnlyList<ListaVisible> visibles, IReadOnlyList<int> idsLista)
+    {
+        var porId = visibles.ToDictionary(l => l.Id);
+        var listas = idsLista
+            .Select(id => porId[id])
+            .Select(l => new ListaDeInstantanea(l.Id, l.Modo, l.Modo == ModoLista.Derivada ? l.Porcentaje : null))
+            .ToList();
+
+        return listas.Count == 0 ? null : listas;
+    }
+
     /// <summary>Proyecta la lista de un cliente: una FK a una lista dada de baja (fuera de
     /// <paramref name="idsListaVisibles"/>) se devuelve <c>null</c>, igual que una FK nula.</summary>
     public static int? ListaEfectiva(int idListaPrecio, IReadOnlySet<int> idsListaVisibles) =>

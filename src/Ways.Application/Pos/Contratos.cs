@@ -131,6 +131,11 @@ public sealed record ComboDeInstantanea(
 /// dispositivo puede completar con los artículos de esta misma instantánea, ascendentes por id de combo. Ausente (no
 /// <c>[]</c>) si no hay ninguno: así una instantánea sin combos es byte por byte la de antes y su etiqueta de contenido
 /// no cambia al desplegar la funcionalidad.
+///
+/// <see cref="Listas"/> son las listas de precios que la instantánea resuelve (las de <see cref="ClienteDeInstantanea.IdListaPrecio"/>
+/// y las activas), ascendentes por id, con lo que una línea por importe necesita para cotizarse sin red: si es derivada, su
+/// porcentaje. Ausente (no <c>[]</c>) en el formato original, que no lo lleva; una instantánea guardada antes de este campo
+/// tampoco lo trae y el dispositivo cotiza online esas líneas.
 /// </summary>
 public sealed record InstantaneaDePos(
     DateTimeOffset Momento,
@@ -140,7 +145,13 @@ public sealed record InstantaneaDePos(
     IReadOnlyList<MedioPagoDeInstantanea> MediosDePago,
     decimal ToleranciaPago,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<ComboDeInstantanea>? Combos = null);
+    IReadOnlyList<ComboDeInstantanea>? Combos = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<ListaDeInstantanea>? Listas = null);
+
+/// <summary>Una lista de precios de <see cref="InstantaneaDePos.Listas"/>: <see cref="Porcentaje"/> es el de una lista
+/// <c>Derivada</c> (negativo descuenta, positivo recarga) y <c>null</c> en una <c>Fija</c>.</summary>
+public sealed record ListaDeInstantanea(int IdListaPrecio, ModoLista Modo, decimal? Porcentaje);
 
 /// <summary>
 /// Artículo del formato original de la instantánea (pedido sin <c>?version=2</c>): precio plano

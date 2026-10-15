@@ -165,17 +165,19 @@ movimientos, y los movimientos no se editan.
 > `resolver-con-combos`) suman `importe` (`decimal?`): **obligatorio** en un artículo por importe (`400
 > importe_requerido`) y **rechazado** en cualquier otro (`400 importe_no_admitido`, en vez de ignorarse); mayor a cero,
 > con a lo sumo 2 decimales y dentro de `numeric(14,2)` (`400 importe_invalido`, `ReglaDeImporteDeVenta`); la cantidad es
-> exactamente 1 (`400 cantidad_importe_invalida`) y junto a `precioUnitario` no tiene destino (`400
-> importe_con_precio_no_admitido`). `ServicioDeOfertas` resuelve la línea sin mirar lista, ofertas ni combos: precio
-> original = precio final = importe, descuento 0, sin ofertas aplicadas (`articulo_sin_precio_vigente` no aplica). La
-> venta persiste el item como cualquier otro: `cantidad` 1, `precio_unitario` = importe, `descuento` 0, `id_oferta`
+> exactamente 1 (`400 cantidad_importe_invalida`) y junto a `precioUnitario` solo se admite en una venta offline (`400
+> importe_con_precio_no_admitido` en cualquier otra). `ServicioDeOfertas` resuelve la línea sin mirar ofertas ni combos: precio
+> original = precio final = importe con el porcentaje de la lista derivada del cliente (la fija lo deja igual), descuento 0, sin ofertas aplicadas (`articulo_sin_precio_vigente` no aplica). La
+> venta persiste el item como cualquier otro: `cantidad` 1, `precio_unitario` = el precio resuelto (importe con el porcentaje de la lista; offline, el que cobró la caja), `descuento` 0, `id_oferta`
 > NULL, `id_combo` NULL, `id_lista_precio` la del cliente. El ajuste manual (`ajusteManualPorcentaje`) se aplica encima y
 > el total de la línea sigue la regla de peso entero de `CalculadorDeTotales`: un importe con centavos conserva el
 > precio unitario tipeado (150,50) y el total de la línea sale al peso (151).
 >
-> - **Offline.** La línea por importe lleva `importe` y nunca `precioUnitario`/`descuentoUnitario`; el "todas o ninguna" del
->   precio offline se mide solo sobre las líneas de lista, así que una venta solo de importes y una mixta se aceptan. No es
->   una discrepancia de precio. Una línea que el dispositivo ya cobró con precio de lista para un artículo que hoy es por
+> - **Offline.** La venta con número pre-asignado nunca re-deriva con la lista de hoy el precio de una línea por importe:
+>   si la línea trae `precioUnitario` (el que cobró la caja) se graba tal cual y la diferencia contra el precio derivado hoy
+>   queda en la auditoría de discrepancias; si trae solo `importe` (paquete anterior de la caja) se registra por el importe
+>   tipeado. Online, `importe` + `precioUnitario` sigue siendo `400 importe_con_precio_no_admitido`. El "todas o ninguna" del
+>   precio offline se mide solo sobre las líneas de lista, así que una venta solo de importes y una mixta se aceptan. Una línea que el dispositivo ya cobró con precio de lista para un artículo que hoy es por
 >   importe se honra (no se le exige `importe`).
 > - **Devolución (NCX).** Cada línea por importe lleva el importe devuelto; con comprobante asociado tiene que existir en él
 >   una línea por importe (`por_importe`, cantidad positiva) de ese artículo con ese precio unitario y ese mismo

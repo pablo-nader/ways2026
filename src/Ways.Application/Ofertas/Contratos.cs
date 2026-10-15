@@ -104,7 +104,8 @@ public sealed record EdicionOferta(
 /// empresas"; ver <c>Ways.Domain.Ofertas.ReglaDeOfertas.CoincideEmpresa</c>).
 ///
 /// <para><see cref="Importe"/> es el monto de un artículo que se vende por importe (<c>UnidadVenta.Importe</c>): la línea se
-/// resuelve a ese precio, sin lista, ofertas ni combos, y su cantidad es 1. Solo lo admite un artículo por importe (400
+/// resuelve a ese monto, con el porcentaje de la lista del cliente si es derivada (tipeado 1500 a -10 % es 1350) y sin
+/// cambio si es fija, sin ofertas ni combos, y su cantidad es 1. Solo lo admite un artículo por importe (400
 /// <c>importe_no_admitido</c>); inválido es 400 <c>importe_invalido</c>. La curva por cantidad de la instantánea no lo
 /// admite.</para></summary>
 public sealed record LineaDeResolucion(

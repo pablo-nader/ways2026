@@ -48,6 +48,19 @@ public class CalculadorDeTotalesTests
         Assert.Equal(resultado.Total, resultado.Items.Sum(i => i.Total));
     }
 
+    /// <summary>Un precio unitario con centavos (lista derivada -10% sobre 1,00) se redondea una sola vez,
+    /// sobre el bruto de la línea: 0,90 por 3 es 2,70 y da 3; por 10 da 9.</summary>
+    [Theory]
+    [InlineData(3, 3)]
+    [InlineData(10, 9)]
+    public void UnPrecioUnitarioConCentavosSeRedondeaSobreElBrutoDeLaLinea(int cantidad, int esperado)
+    {
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(cantidad, 0.90m, 0m)]);
+
+        Assert.Equal(esperado, resultado.Subtotal);
+        Assert.Equal(esperado, resultado.Total);
+    }
+
     // ---- redondeo AwayFromZero --------------------------------------------------------------
 
     [Fact]

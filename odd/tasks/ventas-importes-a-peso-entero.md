@@ -14,7 +14,9 @@ the POS charges 3499.98. Argentina no longer uses cents in retail; the smallest 
 
 - Sale line totals (offers, discounts, manual adjustment %), document totals and whatever derives
   from them: payments, change, cuenta corriente consumption repricing.
-- Derived price lists (base × %).
+- Derived price lists (base × %). Amended 2026-10-14 (owner): the derived UNIT price keeps 2 decimals
+  (1.00 at -10 % is 0.90); line and document totals stay whole pesos. See
+  `listas-derivadas-con-centavos-e-importe.md`.
 - Both the server authority and the web/POS mirror.
 
 Out of scope, explicitly: purchases, costs, supplier invoices, percepciones, and the fiscal
