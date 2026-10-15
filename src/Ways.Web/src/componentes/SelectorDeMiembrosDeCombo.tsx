@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import type { ArticuloEscaneado } from '../api/tipos'
+import { parsearNumeroDecimal } from '../formato/numeros'
 import {
   componentesAElegir,
   formatearCantidadDeCombo,
@@ -28,6 +29,8 @@ export type PropsSelectorDeMiembrosDeCombo = {
  */
 export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: PropsSelectorDeMiembrosDeCombo) {
   const [elecciones, setElecciones] = useState<EleccionDeMiembros>({})
+  // El texto tal cual se tipea: "0," todavía no es un número cerrado y no se puede perder a mitad de tipeo.
+  const [textos, setTextos] = useState<Record<string, string>>({})
   // Reentrancia de primera línea: un segundo Enter o clic antes de que el cierre se comite no vuelve a confirmar.
   const confirmadoRef = useRef(false)
   const primerCampoRef = useRef<HTMLInputElement>(null)
@@ -42,7 +45,8 @@ export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: Pr
   const fijos = combo.componentes.filter((_, i) => !aElegir.includes(i))
 
   function cambiar(indiceDeComponente: number, idArticulo: number, texto: string) {
-    const cantidad = texto.trim() === '' ? 0 : Number(texto)
+    setTextos((prev) => ({ ...prev, [`${indiceDeComponente}-${idArticulo}`]: texto }))
+    const cantidad = parsearNumeroDecimal(texto) ?? 0
     setElecciones((prev) => ({ ...prev, [indiceDeComponente]: { ...prev[indiceDeComponente], [idArticulo]: cantidad } }))
   }
 
@@ -90,13 +94,12 @@ export function SelectorDeMiembrosDeCombo({ combo, onConfirmar, onCancelar }: Pr
                   <input
                     ref={indice === aElegir[0] && posicion === 0 ? primerCampoRef : undefined}
                     id={`miembro-${indice}-${candidato.idArticulo}`}
-                    type="number"
+                    type="text"
+                    inputMode={restriccionDeCantidad(candidato.unidadVenta).step === 1 ? 'numeric' : 'decimal'}
+                    autoComplete="off"
                     className="form-control form-control-sm"
                     style={{ width: 90 }}
-                    min={0}
-                    max={componente.cantidad}
-                    step={restriccionDeCantidad(candidato.unidadVenta).step}
-                    value={elecciones[indice]?.[candidato.idArticulo] ?? 0}
+                    value={textos[`${indice}-${candidato.idArticulo}`] ?? formatearCantidadDeCombo(elecciones[indice]?.[candidato.idArticulo] ?? 0)}
                     onChange={(e) => cambiar(indice, candidato.idArticulo, e.target.value)}
                   />
                 </div>

@@ -12,6 +12,7 @@ import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
 import {
   esCantidadValida,
+  esFraccionDeArticuloPorUnidad,
   esTextoDeCantidadValido,
   fraccionaUnaUnidad,
   MENSAJE_DE_CANTIDAD_ENTERA,
@@ -107,6 +108,7 @@ import type { PagoACuentaRegistrado } from '../componentes/ModalCuentaCorrienteP
 import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
+import { formatearNumeroDecimal, parsearNumeroDecimal } from '../formato/numeros'
 import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import {
@@ -2279,7 +2281,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * completo (ej. "1." antes del dígito decimal) — spec: no perder el punto decimal a mitad de
    * tipeo. */
   function textoCantidad(l: LineaCarrito): string {
-    return cantidadesEnEdicion[l.idLinea] ?? String(l.cantidad)
+    return cantidadesEnEdicion[l.idLinea] ?? formatearNumeroDecimal(l.cantidad)
   }
 
   /** Marca el texto en edición que no se va a comprometer a la línea y también la cantidad ya
@@ -2294,12 +2296,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   function cambiarCantidad(idLinea: string, texto: string) {
     if (cobrandoRef.current) return
     setCantidadesEnEdicion((prev) => ({ ...prev, [idLinea]: texto }))
-    const cantidad = Number(texto)
+    const cantidad = parsearNumeroDecimal(texto)
     const lineaActual = lineas.find((l) => l.idLinea === idLinea)
-    if (!esTextoDeCantidadValido(lineaActual?.unidadVenta, texto)) return
+    if (cantidad === null || !esTextoDeCantidadValido(lineaActual?.unidadVenta, texto)) return
 
-    // Un estado intermedio del input (ej. "1." tipeando hacia "1.5") puede parsear al mismo
-    // valor ya comprometido en la línea (Number("1.") === 1) — despachar en ese caso dispara
+    // Un estado intermedio del input (ej. "1," tipeando hacia "1,5") puede parsear al mismo
+    // valor ya comprometido en la línea ("1," vale 1) — despachar en ese caso dispara
     // una resolución de precios redundante. Solo se despacha cuando el valor parseado difiere
     // de la cantidad comprometida.
     if (lineaActual && lineaActual.cantidad === cantidad) return
@@ -4092,16 +4094,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             </td>
                             <td>
                               <input
-                                type="number"
-                                step={restriccionDeCantidad(l.unidadVenta).step}
-                                min={restriccionDeCantidad(l.unidadVenta).min}
+                                type="text"
+                                inputMode={restriccionDeCantidad(l.unidadVenta).step === 1 ? 'numeric' : 'decimal'}
+                                autoComplete="off"
                                 className={`form-control form-control-sm${cantidadInvalida(l) ? ' is-invalid' : ''}`}
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 aria-invalid={cantidadInvalida(l) || undefined}
                                 title={
                                   l.importe !== undefined
                                     ? MENSAJE_DE_CANTIDAD_DE_IMPORTE
-                                    : fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l)))
+                                    : esFraccionDeArticuloPorUnidad(l.unidadVenta, textoCantidad(l))
                                       ? MENSAJE_DE_CANTIDAD_ENTERA
                                       : undefined
                                 }

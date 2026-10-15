@@ -9,6 +9,7 @@
  * instantánea offline anterior, un artículo que todavía no se resolvió) se trata como `Peso`, o
  * sea el comportamiento de siempre. Nunca bloquea por falta de dato; el servidor es quien manda.
  */
+import { parsearNumeroDecimal } from '../formato/numeros'
 import type { UnidadVenta } from './tipos'
 
 export const DECIMALES_DE_PESO = 3
@@ -46,9 +47,10 @@ export function esCantidadValida(unidadVenta: UnidadOAusente, cantidad: number):
   return Number.isFinite(cantidad) && cantidad > 0 && respetaGranularidad(unidadVenta, cantidad)
 }
 
-/** Texto de un `<input type="number">` → `esCantidadValida`. Vacío o no numérico es inválido. */
+/** Texto tipeado de un campo de cantidad ("." o "," como separador decimal) → `esCantidadValida`. Vacío o no numérico es inválido. */
 export function esTextoDeCantidadValido(unidadVenta: UnidadOAusente, texto: string): boolean {
-  return texto.trim() !== '' && esCantidadValida(unidadVenta, Number(texto))
+  const cantidad = parsearNumeroDecimal(texto)
+  return cantidad !== null && esCantidadValida(unidadVenta, cantidad)
 }
 
 /** Una cantidad positiva con fracción en un artículo por unidad: el único caso en que la pantalla
@@ -57,7 +59,8 @@ export function fraccionaUnaUnidad(unidadVenta: UnidadOAusente, cantidad: number
   return unidadVenta === 'Unidad' && Number.isFinite(cantidad) && cantidad > 0 && !Number.isInteger(cantidad)
 }
 
-/** Lo mismo que `fraccionaUnaUnidad`, sobre el texto de un `<input type="number">`. */
+/** Lo mismo que `fraccionaUnaUnidad`, sobre el texto tipeado de un campo de cantidad ("." o "," como separador decimal). */
 export function esFraccionDeArticuloPorUnidad(unidadVenta: UnidadOAusente, texto: string): boolean {
-  return texto.trim() !== '' && fraccionaUnaUnidad(unidadVenta, Number(texto))
+  const cantidad = parsearNumeroDecimal(texto)
+  return cantidad !== null && fraccionaUnaUnidad(unidadVenta, cantidad)
 }
