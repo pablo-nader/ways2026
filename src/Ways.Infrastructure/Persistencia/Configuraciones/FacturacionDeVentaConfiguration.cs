@@ -8,8 +8,9 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
 /// Mapea <see cref="FacturacionDeVenta"/>: la decisión de facturar una venta. Operativa con RLS estándar
-/// (id_tenant + id_empresa NOT NULL, doc 10). <c>ux_facturaciones_de_venta_comprobante</c> es la clave de
-/// idempotencia de la decisión y además el índice de soporte de su FK a la venta.
+/// (id_tenant + id_empresa NOT NULL, doc 10). <c>ux_facturaciones_de_venta_comprobante</c> (parcial, solo
+/// facturas) es la clave de idempotencia de la decisión; <c>ix_facturaciones_de_venta_comprobante</c> es el
+/// índice de soporte de su FK a la venta.
 /// </summary>
 public class FacturacionDeVentaConfiguration : IEntityTypeConfiguration<FacturacionDeVenta>
 {
