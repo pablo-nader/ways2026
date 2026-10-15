@@ -3437,7 +3437,7 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
 })
 
 describe('Pos — CampoImporte en el panel de pagos: separador de miles y decimales con coma', () => {
-  it('tipear "10.000" (con separador de miles) en el importe se interpreta como 10000 — la vista se actualiza y el checkout envía el número correcto', async () => {
+  it('tipear "10000" en el importe se muestra como "10.000,00" — la vista se actualiza y el checkout envía el número correcto', async () => {
     renderPos()
     await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -3447,7 +3447,7 @@ describe('Pos — CampoImporte en el panel de pagos: separador de miles y decima
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     const importe = await screen.findByLabelText('Importe de Efectivo (fila 1)')
-    await userEvent.type(importe, '10.000')
+    await userEvent.type(importe, '10000')
     importe.blur()
 
     await waitFor(() => expect(importe).toHaveValue('10.000,00'))

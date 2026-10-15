@@ -18,7 +18,7 @@ con cantidad fraccionaria (p. ej. 0,25) se pueda cargar en el POS.
 - Parser compartido de cantidades/números decimales que acepta "." o "," (un solo separador, sin miles).
 - Reemplazar `type="number"` por `type="text"` + `inputMode="decimal"|"numeric"` con el parser compartido.
 - Reemplazar los `Number(texto)` sobre texto tipeado por el parser compartido.
-- Fuera de alcance por ahora: `parsearImporte` (campos de dinero, "." = miles). Pendiente decisión del dueño.
+- Campos de dinero (T4, decisión del dueño): `parsearImporte` y `CampoImporte` también toman "." como decimal.
 
 ## Restricciones
 
@@ -29,6 +29,8 @@ con cantidad fraccionaria (p. ej. 0,25) se pueda cargar en el POS.
 
 - [x] T1 — Parser compartido + selector de miembros de combo + cantidad de línea del POS + escaneo offline `qty*code`. Ruta: delegada (writer: 2+ archivos no triviales).
 - [x] T2 — Resto de campos numéricos (stock, compras, presupuestos, remitos, OC, ofertas, artículos, precios, gastos, caja, catálogos, familias, empresas, categorías, auditoría). Ruta: delegada.
+
+- [x] T4 — Campos de dinero: `parsearImporte` (un solo separador, una vez = decimal; "." y "," juntos = formato es-AR; repetido = null) y `CampoImporte` ("." tipeado = ","; al enfocar muestra el valor crudo "1234,56"). Ruta: delegada (2+ archivos no triviales). Commit: «feat(web): el punto también es separador decimal en los importes».
 
 ## Criterios de aceptación
 
@@ -48,4 +50,6 @@ T3 (inline, 2 archivos mecánicos): `ParserDeEscaneo` acepta "," o "." en el pre
 
 Ronda 1 sobre 5b260ffa..33c90e39: 0 críticos confirmados → `JUDGMENT: APPROVED`. Warnings arreglados igual (RED→GREEN): vista previa de costo nominal con coma (`costoNominal.ts`) y `+3*x` alineado entre servidor y offline. Dominio 1702/1702, web 242 archivos / 7465 tests, tsc y lint sin errores.
 
-Seguimientos (info): el selector de miembros del combo y "Días de alerta" de Vencimientos no marcan el texto inválido; `atributosDeCampoDeCantidad` ya no aplica `min`; los campos editables se siembran con "." (`String(n)`); `parsearImporte` (dinero, "." = miles) sigue igual.
+Seguimientos (info): el selector de miembros del combo y "Días de alerta" de Vencimientos no marcan el texto inválido; `atributosDeCampoDeCantidad` ya no aplica `min`; los campos editables se siembran con "." (`String(n)`).
+
+T4: RED 13 fallos (8 en `importes.test.ts`, 5 en `CampoImporte.test.tsx`) → GREEN. Tests de página ajustados: `VentasDelTurno` ("1500") y `Pos` ("10000"). `MENSAJE_DE_IMPORTE_INVALIDO` sigue exacto ("1500" vale 1500). Verificación: `npx tsc -b` sin errores; `npm run lint` 0 errores; `npm test` 242 archivos / 7479 tests en verde.

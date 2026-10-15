@@ -58,14 +58,64 @@ describe('CampoImporte', () => {
     expect(campo).toHaveValue('1.234,50')
   })
 
-  it('tolera "." tipeado como miles: se descarta mientras edita y no rompe el número final', async () => {
+  it('un "." tipeado es el separador decimal, igual que ",": emite 1.5 y el blur muestra "1,50"', async () => {
+    const onChange = vi.fn()
+    const usuario = userEvent.setup()
+    render(<CampoControlado onChange={onChange} />)
+    const campo = screen.getByLabelText('importe')
+    await usuario.type(campo, '1.5')
+    expect(campo).toHaveValue('1,5')
+    expect(onChange).toHaveBeenLastCalledWith(1.5)
+    await usuario.tab()
+    expect(campo).toHaveValue('1,50')
+  })
+
+  it('"1.500" tipeado vale 1,5 (el punto nunca es miles al tipear)', async () => {
+    const onChange = vi.fn()
+    const usuario = userEvent.setup()
+    render(<CampoControlado onChange={onChange} />)
+    const campo = screen.getByLabelText('importe')
+    await usuario.type(campo, '1.500')
+    expect(onChange).toHaveBeenLastCalledWith(1.5)
+  })
+
+  it('un segundo separador tipeado se funde en los decimales, sea "." o ","', async () => {
     const usuario = userEvent.setup()
     render(<CampoControlado />)
     const campo = screen.getByLabelText('importe')
-    await usuario.type(campo, '1.234,56')
+    await usuario.type(campo, '1.2,3')
+    expect(campo).toHaveValue('1,23')
+  })
+
+  it('con decimales=0 un "." tipeado se descarta, igual que la coma', async () => {
+    const usuario = userEvent.setup()
+    render(<CampoImporte valor={null} decimales={0} onChange={() => {}} aria-label="entero" />)
+    const campo = screen.getByLabelText('entero')
+    await usuario.type(campo, '1.5')
+    expect(campo).toHaveValue('15')
+  })
+
+  it('al enfocar un valor existente se muestra sin miles ("1234,56") y el blur lo reformatea a "1.234,56"', async () => {
+    const usuario = userEvent.setup()
+    render(<CampoControlado valorInicial={1234.56} />)
+    const campo = screen.getByLabelText('importe')
+    expect(campo).toHaveValue('1.234,56')
+    await usuario.click(campo)
     expect(campo).toHaveValue('1234,56')
     await usuario.tab()
     expect(campo).toHaveValue('1.234,56')
+  })
+
+  it('al enfocar conserva el signo negativo y un valor null sigue vacío', async () => {
+    const usuario = userEvent.setup()
+    const { rerender } = render(<CampoImporte valor={-1234.5} onChange={() => {}} admiteNegativos aria-label="neg" />)
+    const campo = screen.getByLabelText('neg')
+    await usuario.click(campo)
+    expect(campo).toHaveValue('-1234,5')
+    await usuario.tab()
+    rerender(<CampoImporte valor={null} onChange={() => {}} admiteNegativos aria-label="neg" />)
+    await usuario.click(campo)
+    expect(campo).toHaveValue('')
   })
 
   it('onChange recibe el número parseado en cada tecleo', async () => {

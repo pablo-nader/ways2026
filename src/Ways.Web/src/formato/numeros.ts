@@ -1,7 +1,8 @@
 /**
  * Número decimal tipeado por el usuario (cantidades, porcentajes, pesos): "." y "," son el mismo separador decimal.
  * No admite separador de miles: un texto con más de un separador ("1.234,5", "1,2,3") es inválido. Los campos de dinero
- * tienen su propio parser (`parsearImporte`), donde el punto es de miles.
+ * tienen su propio parser (`parsearImporte`), que además admite el formato es-AR con "." de miles
+ * cuando aparecen los dos separadores.
  */
 const FORMA_DECIMAL = /^(\d+[.,]?\d*|[.,]\d+)$/
 
