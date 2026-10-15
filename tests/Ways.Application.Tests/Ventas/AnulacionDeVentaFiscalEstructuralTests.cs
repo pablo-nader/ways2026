@@ -6,8 +6,10 @@ namespace Ways.Application.Tests.Ventas;
 /// Facturación por medio de pago, T8c: pinea por texto lo que la anulación de una venta facturada no puede hacer. El paso A del
 /// proceso fiscal toma la serie de <c>numeraciones_fiscales</c> ANTES que la fila de la venta; si la anulación (que ya tiene la
 /// venta bloqueada) pidiera esa serie, se cruzaría con él y se produciría un deadlock. El comportamiento lo prueba el test de
-/// integración <c>LaAnulacionTerminaConTodasLasSeriesFiscalesBloqueadasPorqueNuncaLasToca</c>; acá se fija el texto, que además
-/// cubre el camino que ese test no recorre (cualquier número fiscal tomado por la vía de <c>AsignadorDeNumeroFiscal</c>).
+/// integración <c>LaAnulacionTerminaConTodasLasSeriesFiscalesBloqueadasPorqueNuncaLasToca</c>; acá se fija el texto de lo que la
+/// anulación ejecuta dentro de su transacción (<c>ServicioDeVentas.EjecutarAnulacionAsync</c>, la decisión de la nota de crédito y
+/// la liquidación de la factura rechazada de <c>ServicioDeFacturacionDeVentas</c>), que además cubre el camino que ese test no
+/// recorre (cualquier número fiscal tomado por la vía de <c>AsignadorDeNumeroFiscal</c>).
 ///
 /// Cada test verifica el texto del archivo, no el comportamiento, y su nombre dice solo eso.
 /// </summary>
@@ -32,7 +34,13 @@ public class AnulacionDeVentaFiscalEstructuralTests
         var anulacion = Entre(fuente, "private async Task<ComprobanteEmitido> EjecutarAnulacionAsync(", "private static async Task ExigirTurnoNoCerradoAsync(");
         var nota = Entre(fuente, "private static async Task DecidirNotaDeCreditoAsync(", "/// <summary>task 3.13");
 
-        foreach (var texto in new[] { anulacion, nota })
+        // La liquidación de la factura rechazada corre dentro de la transacción de la anulación: su entrada, su cuerpo sin
+        // transacción propia y la reversión de los aportes que ese cuerpo llama.
+        var liquidacion = Entre(
+            Fuente("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs"),
+            "public async Task LiquidarFacturaRechazadaDeVentaAnuladaAsync(", "private async Task RevertirElCupoDeLaFacturaAsync(");
+
+        foreach (var texto in new[] { anulacion, nota, liquidacion })
         {
             Assert.DoesNotContain("numeraciones_fiscales", texto, StringComparison.Ordinal);
             Assert.DoesNotContain("AsignadorDeNumeroFiscal", texto, StringComparison.Ordinal);

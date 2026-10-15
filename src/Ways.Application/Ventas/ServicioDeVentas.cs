@@ -1196,11 +1196,14 @@ public class ServicioDeVentas(
 
         var (idPuntoVentaAnulacion, codigoTipoAnulado) = resultadoAnulacion.Value;
 
-        // La facturación de la venta se resuelve ACÁ, bajo el lock de la fila de la venta que tomó el UPDATE de arriba, y no en la
-        // pre-lectura: la emisión del espejo bloquea esa misma fila y verifica que siga emitida antes de insertarlo, y la resolución
-        // del espejo la bloquea antes que a él, así que lo que se lee del espejo no cambia hasta el commit. Con la factura aprobada
-        // la anulación solo decide la nota de crédito (el proceso fiscal la emite después, con su propia serie): nunca toca
-        // las series fiscales, porque el paso A del proceso toma la serie ANTES que la venta.
+        // La facturación de la venta se resuelve ACÁ, con la fila de la venta ya bloqueada por el UPDATE de arriba, y no en la
+        // pre-lectura. Ese lock garantiza una sola cosa: no puede nacer un espejo nuevo, porque crearlo bloquea la venta y exige
+        // que siga emitida. La resolución de un espejo que ya existe NO toma el lock de la venta (bloquea la serie, el espejo y la
+        // decisión), así que puede comitear en medio de la anulación. Es seguro porque 'pendiente' es el único estado no terminal y
+        // se rechaza con 409: si la lectura ve 'pendiente' no se escribe nada (el reintento verá el estado terminal), y si ve un
+        // estado terminal ese estado ya no cambia hasta el commit. Con la factura aprobada la anulación solo decide la nota de
+        // crédito (el proceso fiscal la emite después, con su propia serie): nunca toca las series fiscales, porque el paso A del
+        // proceso toma la serie ANTES que la venta.
         var efectoFiscal = ReglaDeComprobantes.ResolverEfectoFiscalDeAnulacion(
             await LeerResultadoDeLaFacturaAsync(conexion, transaccionCruda, id, ct));
         switch (efectoFiscal)
@@ -1387,7 +1390,8 @@ public class ServicioDeVentas(
     /// <summary>El resultado fiscal de la factura de la venta, o <c>null</c> si no tiene: el del espejo de la factura (el de una nota
     /// de crédito, con <c>id_comprobante_asociado</c>, no cuenta) o, sin espejo, <c>rechazado</c> si la decisión de la factura quedó
     /// rechazada, porque el espejo que ARCA rechaza se libera y no queda en pie. Una decisión pendiente sin espejo no es una
-    /// factura: tampoco tiene resultado. Se lee bajo el lock de la venta: ninguna transición de la factura ocurre sin él.</summary>
+    /// factura: tampoco tiene resultado. Se lee con la venta bloqueada, que impide solo que nazca un espejo nuevo; las transiciones
+    /// del espejo existente no toman ese lock, pero la única no terminal (<c>pendiente</c>) se rechaza al anular.</summary>
     private static async Task<ResultadoFiscal?> LeerResultadoDeLaFacturaAsync(
         DbConnection conexion, DbTransaction? transaccion, int idVenta, CancellationToken ct)
     {

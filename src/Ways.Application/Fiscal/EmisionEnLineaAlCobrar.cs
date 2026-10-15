@@ -129,6 +129,24 @@ public class EmisionEnLineaAlCobrar(
         }
     }
 
+    /// <summary>El estado fiscal que informa la respuesta de una anulación ya comiteada, o <c>null</c> si no se pudo leer. Nunca
+    /// lanza: la anulación ocurrió y una falla de esta lectura no puede convertirla en un error que el cajero reintente (el
+    /// reintento respondería 409). Sin el token de la solicitud, con el presupuesto de <see cref="PresupuestoDeIntento"/>: un
+    /// cliente que corta la conexión no debe dejar la respuesta sin la nota que la caja imprime.</summary>
+    public async Task<EstadoFiscalDeVenta?> LeerEstadoTrasAnularAsync(int idVenta)
+    {
+        try
+        {
+            using var presupuesto = new CancellationTokenSource(PresupuestoDeIntento, tiempo);
+            return await facturacion.LeerEstadoDeVentaAsync(idVenta, presupuesto.Token);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "No se pudo leer el estado fiscal de la venta {IdVenta} anulada; se responde sin él.", idVenta);
+            return null;
+        }
+    }
+
     /// <summary>Lo único del error anotado que la respuesta de la venta informa: el código inicial (minúsculas, dígitos y
     /// guion bajo, hasta el primer <c>:</c> o todo el texto si es solo eso). Un rechazo de ARCA anotado como
     /// <c>10015: mensaje; 10016: mensaje</c> queda con su primer código (<c>10015</c>). Todo lo demás, por ejemplo

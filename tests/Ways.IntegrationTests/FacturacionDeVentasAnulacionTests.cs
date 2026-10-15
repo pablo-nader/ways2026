@@ -259,6 +259,51 @@ public partial class FacturacionDeVentasEmisionTests
         Assert.Equal("pendiente", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
         Assert.Empty(await LeerDecisionesDeNotaAsync(c, venta.IdVenta));
         Assert.Empty(await LeerEspejosAsync(c));
+
+        // La cancelación diferida: al procesar la decisión, la venta anulada la cancela y devuelve el cupo.
+        var procesada = await ProcesarAsync(c.Admin, venta.IdFacturacion);
+
+        Assert.Equal(EstadosFiscalesDeVenta.Cancelado, procesada.Estado);
+        Assert.Equal("cancelada", (await LeerDecisionAsync(c, venta.IdFacturacion)).Estado);
+        Assert.Equal(AcumuladosAntesDeDecidir(c, venta.Periodo), await LeerAcumuladosAsync(c));
+        Assert.Empty(await LeerEspejosAsync(c));
+    }
+
+    /// <summary>Cláusula bajo prueba: el guardia de la lectura posterior al commit de la anulación (<c>LeerEstadoTrasAnularAsync</c>).
+    /// Una política de seguridad por fila restrictiva hace fallar toda lectura de una decisión de nota de crédito de la empresa, sin
+    /// tocar la anulación (que solo las inserta): la lectura de la respuesta lanza y la anulación ya comiteada igual responde 200.</summary>
+    [Fact]
+    public async Task UnaFallaDeLaLecturaPosteriorALaAnulacionNoConvierteLaAnulacionComiteadaEnUnError()
+    {
+        var (t, vendida) = await VenderFacturadaAsync("anulleefalla");
+        await QuitarElTicketAsync(t.C);
+        const string Funcion = "explota_lectura_de_nota_test";
+        const string Politica = "explota_lectura_de_nota_test";
+        await EjecutarComoOwnerAsync(
+            $"CREATE FUNCTION {Funcion}() RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'lectura rota a propósito'; END $$");
+        try
+        {
+            await EjecutarComoOwnerAsync("ALTER TABLE facturaciones_de_venta ENABLE ROW LEVEL SECURITY");
+            await EjecutarComoOwnerAsync(
+                $"CREATE POLICY {Politica} ON facturaciones_de_venta AS RESTRICTIVE FOR SELECT " +
+                $"USING (id_facturacion_origen IS NULL OR id_empresa <> {t.C.IdEmpresa} OR {Funcion}())");
+
+            var (respuesta, cuerpo) = await AnularAsync(t.Cajero, vendida.Id);
+
+            Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+            var anulado = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+            Assert.Equal(EstadoComprobante.Anulado, anulado.Estado);
+            Assert.Null(anulado.Fiscal);
+        }
+        finally
+        {
+            await EjecutarComoOwnerAsync($"DROP POLICY IF EXISTS {Politica} ON facturaciones_de_venta");
+            await EjecutarComoOwnerAsync($"DROP FUNCTION IF EXISTS {Funcion}()");
+        }
+
+        Assert.Equal("anulado", await ScalarOwnerAsync<string>(
+            "SELECT estado::text FROM comprobantes_venta WHERE id_comprobante_venta = $1", vendida.Id));
+        Assert.Single(await LeerDecisionesDeNotaAsync(t.C, vendida.Id));
     }
 
     [Fact]

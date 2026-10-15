@@ -79,15 +79,14 @@ public static class VentasEndpoints
         // GestionDeCatalogo apilado (spec: OperacionDePos Authorization For Emission and
         // Anulación — un Vendedor puede anular su propia venta, mismo criterio que emitir).
         grupo.MapPost("/{id:int}/anulacion", async (
-            ServicioDeVentas servicio, EmisionEnLineaAlCobrar emisionEnLinea, ServicioDeFacturacionDeVentas facturacion,
-            int id, CancellationToken ct) =>
+            ServicioDeVentas servicio, EmisionEnLineaAlCobrar emisionEnLinea, int id, CancellationToken ct) =>
         {
             var anulado = await servicio.AnularAsync(id, ct);
 
             // Con la factura aprobada la anulación dejó decidida la nota de crédito: se intenta emitirla con un presupuesto corto
             // y sin el token de la solicitud (la anulación ya está comiteada). No lanza; lo que no salga lo emite el lote.
             await emisionEnLinea.IntentarNotaDeCreditoAsync(id);
-            return Results.Ok(anulado with { Fiscal = await facturacion.LeerEstadoDeVentaAsync(id, ct) });
+            return Results.Ok(anulado with { Fiscal = await emisionEnLinea.LeerEstadoTrasAnularAsync(id) });
         })
         .WithSummary(
             "Anula un comprobante: revierte stock y cuenta corriente en la misma transacción. No existe restaurar. " +

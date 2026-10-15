@@ -1537,60 +1537,45 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
-    /// <summary>La carrera real: la transacción A (que bloquea la venta e inserta el espejo) queda pausada justo antes de insertarlo
-    /// y la anulación espera el lock de la venta. Al reanudar, el espejo se comitea primero y la anulación, que decide bajo su
-    /// propio lock, lo ve todavía pendiente y se rechaza: el cierre del espejo también necesita el lock de la venta.</summary>
+    /// <summary>La carrera real entre el cierre del espejo y la anulación, sin azar: el paso que pide el CAE queda detenido dentro de la
+    /// llamada a ARCA, con el espejo ya comiteado en 'pendiente'. La anulación toma el lock de la venta (el cierre del espejo no lo
+    /// necesita), lee el espejo todavía pendiente y se rechaza con 409 sin escribir nada. Al soltar a ARCA el espejo queda aprobado y
+    /// el reintento de la anulación, que ahora lo ve terminal, decide la nota de crédito.</summary>
     [Fact]
-    public async Task LaAnulacionQueEsperaElLockDeLaVentaVeElEspejoRecienComiteado()
+    public async Task LaAnulacionConElEspejoPendienteSeRechazaYConElEspejoYaAprobadoDecideLaNota()
     {
         var c = await PrepararAsync("carrera2");
         var venta = await SembrarVentaDecididaAsync(c);
 
-        var insertando = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var continuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var interceptor = new InterceptorDePausaEnElInsertDelEspejo(insertando, continuar);
-        var pausado = await ClienteConServiciosAsync(
-            c, services => services.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor)));
+        var enArca = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var soltar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var respuesta = Responde(FecaeAprobado());
+        c.Wsfe.Solicitar = async pedido =>
+        {
+            enArca.TrySetResult();
+            await soltar.Task;
+            return await respuesta(pedido);
+        };
 
-        var procesamiento = ProcesarAsync(pausado, venta.IdFacturacion);
-        await insertando.Task.WaitAsync(Tope);
+        var procesamiento = ProcesarAsync(c.Admin, venta.IdFacturacion);
+        await enArca.Task.WaitAsync(Tope);
 
-        var anulacion = c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null);
-        await EsperarAsync(
-            () => HayEsperaDeLockAsync("UPDATE comprobantes_venta SET estado"), "la anulación esperando el lock de la venta");
+        var antes = await InstantaneaAsync(c, venta.IdVenta);
+        var rechazada = await c.Admin.PostAsync($"/api/ventas/{venta.IdVenta}/anulacion", null);
 
-        continuar.TrySetResult();
+        await AssertCodigoAsync(rechazada, HttpStatusCode.Conflict, "venta_con_factura_en_tramite");
+        Assert.Equal(antes, await InstantaneaAsync(c, venta.IdVenta));
+        Assert.Equal("emitido", antes.Estado);
 
+        soltar.TrySetResult();
         var estado = await ConTopeAsync(procesamiento);
-        var respuestaDeAnulacion = await ConTopeAsync(anulacion);
-
         Assert.Equal(EstadosFiscalesDeVenta.Aprobado, estado.Estado);
-        await AssertCodigoAsync(respuestaDeAnulacion, HttpStatusCode.Conflict, "venta_con_factura_en_tramite");
-        Assert.Equal("emitido", (await InstantaneaAsync(c, venta.IdVenta)).Estado);
-    }
 
-    private sealed class InterceptorDePausaEnElInsertDelEspejo(
-        TaskCompletionSource insertando, TaskCompletionSource continuar) : DbCommandInterceptor
-    {
-        private int _disparos;
+        await QuitarElTicketAsync(c);
+        var anulado = await AnularConExitoAsync(c.Admin, venta.IdVenta);
 
-        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
-            CancellationToken cancellationToken = default)
-        {
-            await PausarSiCorrespondeAsync(command);
-            return result;
-        }
-
-        private async Task PausarSiCorrespondeAsync(DbCommand command)
-        {
-            if (command.CommandText.Contains("INSERT INTO comprobantes_venta", StringComparison.Ordinal)
-                && Interlocked.Increment(ref _disparos) == 1)
-            {
-                insertando.TrySetResult();
-                await continuar.Task;
-            }
-        }
+        Assert.Equal(EstadoComprobante.Anulado, anulado.Estado);
+        Assert.Single(await LeerDecisionesDeNotaAsync(c, venta.IdVenta));
     }
 
     // ===================================================================================================
