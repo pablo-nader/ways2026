@@ -157,6 +157,12 @@ Las herramientas de compras sirven para resolver los ids de una factura de prove
 cargarla; la carga del borrador todavía no está disponible. Con otro rol responden un error sin
 datos (misma política que las escrituras de compras de la API).
 
+Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
+todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`
+y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sale como resultado con
+`isError` y ese mensaje; una excepción que escapa de la herramienta, incluso una `McpException`, le
+llega a Claude con un mensaje genérico del SDK.
+
 ### Encenderlo
 
 ```env
