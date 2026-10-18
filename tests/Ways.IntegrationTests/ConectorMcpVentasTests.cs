@@ -185,7 +185,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         Assert.Contains("Total vendido: 4.000,00", Lineas(ayer.Texto));
     }
 
-    /// <summary>Cláusula bajo prueba: <c>HerramientasDeVentas.MotivoDeRechazo</c>, en las dos herramientas.</summary>
+    /// <summary>Cláusula bajo prueba: la evaluación de <c>Politicas.LecturaDeReportes</c> en <c>HerramientasDeVentas.EjecutarAsync</c>, en las dos herramientas.</summary>
     [Theory]
     [InlineData("ventas_resumen")]
     [InlineData("ventas_agrupadas")]
@@ -205,7 +205,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         var delAdmin = await LlamarHerramientaAsync(cliente, await AccessTokenAsync(cliente, e.Admin.Mail), herramienta, argumentos);
 
         Assert.False(delVendedor.EsError);
-        Assert.Equal("Tu rol (Vendedor) no puede consultar reportes de ventas: requiere Supervisor o Admin.", delVendedor.Texto);
+        Assert.Equal("Tu rol (Vendedor) no puede ver reportes de ventas: requiere Supervisor o Admin.", delVendedor.Texto);
         foreach (var conDatos in new[] { delSupervisor, delAdmin })
         {
             Assert.False(conDatos.EsError, conDatos.Texto);

@@ -1,11 +1,12 @@
 using System.ComponentModel;
 using System.Globalization;
+using Microsoft.AspNetCore.Authorization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Ways.Application.Abstracciones;
+using Ways.Api.Seguridad;
 using Ways.Application.Reportes;
 using Ways.Domain.Common;
-using Ways.Domain.Usuarios;
 
 namespace Ways.Api.ConectorMcp;
 
@@ -46,6 +47,8 @@ public sealed class HerramientasDeVentas
         "suma todas las empresas del tenant. Solo para Supervisor y Admin.")]
     public static async Task<CallToolResult> VentasResumenAsync(
         IContextoDeUsuario actual,
+        IAuthorizationService autorizacion,
+        IHttpContextAccessor http,
         ServicioDeConsultasDeVentas consultas,
         [Description("Nombre del período: hoy, ayer, esta_semana, semana_pasada, este_mes o mes_pasado. No se combina con desde/hasta.")]
         string? periodo = null,
@@ -58,7 +61,7 @@ public sealed class HerramientasDeVentas
         [Description("Punto de venta, por id o por nombre. Si se omite, todos los de la empresa.")]
         string? punto_venta = null,
         CancellationToken ct = default) =>
-        await EjecutarAsync(actual, async () =>
+        await EjecutarAsync(actual, autorizacion, http, async () =>
         {
             var resumen = await consultas.ResumirAsync(new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, punto_venta), ct);
             return FormatearResumen(resumen);
@@ -81,6 +84,8 @@ public sealed class HerramientasDeVentas
         "Solo para Supervisor y Admin.")]
     public static async Task<CallToolResult> VentasAgrupadasAsync(
         IContextoDeUsuario actual,
+        IAuthorizationService autorizacion,
+        IHttpContextAccessor http,
         ServicioDeConsultasDeVentas consultas,
         [Description("Cómo agrupar: punto_venta, medio_pago, vendedor o dia.")]
         string agrupar_por,
@@ -97,7 +102,7 @@ public sealed class HerramientasDeVentas
         [Description("Cantidad máxima de grupos a devolver, de 1 a 50. Por defecto 20.")]
         int limite = LimitePorDefecto,
         CancellationToken ct = default) =>
-        await EjecutarAsync(actual, async () =>
+        await EjecutarAsync(actual, autorizacion, http, async () =>
         {
             if (limite is < 1 or > LimiteMaximo)
             {
@@ -110,21 +115,18 @@ public sealed class HerramientasDeVentas
             return FormatearAgrupacion(agrupacion, limite);
         });
 
-    /// <summary>La única puerta de rol de las consultas de ventas: Supervisor y Admin, igual que la
-    /// política <c>LecturaDeReportes</c> de la web. Devuelve el texto del rechazo, o <c>null</c> si el
-    /// rol puede consultar.</summary>
-    internal static string? MotivoDeRechazo(RolConocido rol) =>
-        rol is RolConocido.Admin or RolConocido.Supervisor
-            ? null
-            : $"Tu rol ({rol}) no puede consultar reportes de ventas: requiere Supervisor o Admin.";
-
-    /// <summary>El rechazo por rol es un resultado de texto normal; un error del usuario (período
-    /// desconocido, empresa inexistente…) vuelve como resultado con <c>IsError</c> y su mensaje.</summary>
-    private static async Task<CallToolResult> EjecutarAsync(IContextoDeUsuario actual, Func<Task<string>> consulta)
+    /// <summary>La puerta de rol es la misma política que protege los reportes de ventas de la web
+    /// (<see cref="Politicas.LecturaDeReportes"/>), evaluada sobre el usuario de la request. Un rol
+    /// rechazado recibe un resultado de texto normal; un error del usuario (período desconocido,
+    /// empresa inexistente…) vuelve como resultado con <c>IsError</c> y su mensaje.</summary>
+    private static async Task<CallToolResult> EjecutarAsync(
+        IContextoDeUsuario actual, IAuthorizationService autorizacion, IHttpContextAccessor http, Func<Task<string>> consulta)
     {
-        if (MotivoDeRechazo(actual.Rol) is { } motivo)
+        var usuario = http.HttpContext!.User;
+        if (!(await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeReportes)).Succeeded)
         {
-            return Resultado(motivo, esError: false);
+            return Resultado(
+                $"Tu rol ({actual.Rol}) no puede ver reportes de ventas: requiere Supervisor o Admin.", esError: false);
         }
 
         try

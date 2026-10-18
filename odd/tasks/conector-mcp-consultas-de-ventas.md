@@ -21,10 +21,11 @@ El conector MCP (PR #350) solo expone `quien_soy`. Las respuestas a esas pregunt
 ## Diseño
 - **Períodos con nombre** (`hoy`, `ayer`, `esta_semana`, `semana_pasada`, `este_mes`, `mes_pasado`): resolución pura en `Ways.Domain/Reportes`, a partir del "hoy" local (reloj del sistema convertido a la zona resuelta). Semana de lunes a domingo, como `date_trunc('week')`. "Esta semana" y "este mes" terminan hoy.
 - **Empresa**: opcional. Sin empresa, todas las empresas del tenant, cada una con su zona; los resultados se suman y se muestra el desglose por empresa cuando hay más de una.
-- **Rol**: pendiente de la orquestadora. Recomendación enviada: ventas solo Supervisor y Admin (igual que la política `LecturaDeReportes` de la web); `articulo_info` para todos los roles, sin costos ni compras para el Vendedor.
+- **Rol** (decidido por la orquestadora, 2026-10-18): el conector nunca es más permisivo que la web. Las tools de ventas evalúan la política `LecturaDeReportes` (Supervisor y Admin); `articulo_info` queda abierta a todos los roles, sin costos ni compras para el Vendedor (política `LecturaDeCostos`); lo que en la web es solo Admin sigue siendo solo Admin.
+- **Medio de pago** (decidido por la orquestadora): neto del vuelto, `(Importe − Vuelto) × Signo`, como el cierre de caja. El reporte web suma el importe sin restar el vuelto; su corrección es un follow-up de la orquestadora.
 
 ## Tareas
-- [ ] T1 — `ventas_resumen` y `ventas_agrupadas` por punto de venta, medio de pago, vendedor y día, con la resolución de períodos. Reusa `ServicioDeReportesDeVentas`. PR 1.
+- [x] T1 — `ventas_resumen` y `ventas_agrupadas` por punto de venta, medio de pago, vendedor y día, con la resolución de períodos. Reusa `ServicioDeReportesDeVentas`. PR 1.
 - [ ] T2 — Consulta por línea nueva: `ventas_agrupadas` por área, categoría y marca, y `ventas_por_articulo` con filtros y top N. PR 2, apilado sobre el 1.
 - [ ] T3 — `articulo_info`: precios vigentes por lista, stock por punto de venta, ventas de 30 días y últimas compras (solo Admin y Supervisor). PR 3, apilado sobre el 2.
 - [ ] T4 — `Instrucciones` del servidor MCP y la sección del conector en `docs/07-despliegue.md` (se reparte entre los tres PRs, cada uno documenta sus tools).
@@ -52,7 +53,7 @@ El conector MCP (PR #350) solo expone `quien_soy`. Las respuestas a esas pregunt
 Mutaciones (cada una aplicada, test fallando, revertida y verde):
 - `HoyLocal(reloj.Ahora, zona)` cambiado a `TimeZoneInfo.Utc`: `HoyYAyerSeResuelvenEnLaZonaDeLaEmpresaYNoEnUtc` falla (`Assert.Contains() Failure: Item not found in collection`).
 - `(x.Importe - x.Vuelto) * x.Signo` cambiado a `x.Importe * x.Signo`: `ElMedioDePagoSeMuestraNetoDelVuelto` falla (`Assert.Contains() Failure`).
-- `MotivoDeRechazo` admitiendo también al Vendedor: `SoloSupervisorYAdminConsultanVentas` falla en las dos herramientas (esperaba "Tu rol (Vendedor) no puede consultar…" y llegó "Ventas hoy…" / "Ventas por día hoy…").
+- Política `LecturaDeReportes` reemplazada por `OperacionDePos` (admite al Vendedor) en `HerramientasDeVentas.EjecutarAsync`: `SoloSupervisorYAdminConsultanVentas` falla en las dos herramientas ("Assert.Equal() Failure: Strings differ"); revertida, pasa.
 - `.IgnoreQueryFilters()` en el listado de `db.Empresas` del servicio: el test de punta a punta por HTTP (`VentasResumenSumaLoVendidoDelTenantYNuncaMuestraLasVentasDeOtro`) SOBREVIVE, porque como `ways_app` el RLS ya oculta las empresas del otro tenant. No se afirma aislamiento probado con ese test. Se bajó por debajo del confound con `SinRlsElFiltroDeEmpresasDelTenantAlcanzaParaNoSumarOtroTenant` (el servicio sobre un contexto de owner, sin RLS): con la mutación falla (`ErrorDominio : No existe la empresa 1.`, porque la empresa del otro tenant entra al alcance y el reporte la rechaza); sin ella pasa. Lo que aísla el listado es el filtro de EF; en producción lo respalda el RLS.
 
 ## Próximo paso
