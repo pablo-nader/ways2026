@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -264,11 +264,72 @@ describe('ReporteDeVentasPorArticulo', () => {
     await usuario.selectOptions(screen.getByLabelText('Área'), 'Almacén')
     await screen.findByText('Respuesta nueva')
 
-    resolverPrimera(respuestaFixture({ articulos: [{ ...respuestaFixture().articulos[0], descripcion: 'Respuesta vieja' }] }))
-    await Promise.resolve()
+    await act(async () => {
+      resolverPrimera(respuestaFixture({ articulos: [{ ...respuestaFixture().articulos[0], descripcion: 'Respuesta vieja' }] }))
+    })
 
     expect(screen.queryByText('Respuesta vieja')).not.toBeInTheDocument()
     expect(screen.getByText('Respuesta nueva')).toBeInTheDocument()
+  })
+
+  it('mientras carga un filtro nuevo marca la tabla vieja como ocupada y avisa que actualiza', async () => {
+    let resolverSegunda: (v: VentasPorArticulo) => void = () => {}
+    let consultas = 0
+    mockearRutasBase((ruta) => {
+      if (!ruta.startsWith('/reportes/ventas/por-articulo?')) return undefined
+      consultas += 1
+      if (consultas === 1) return Promise.resolve(respuestaFixture())
+      return new Promise((resolver) => (resolverSegunda = resolver))
+    })
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByText('MARL-20')
+    await esperarCatalogos()
+    await usuario.selectOptions(screen.getByLabelText('Área'), 'Almacén')
+
+    expect(await screen.findByText('Actualizando…')).toHaveAttribute('role', 'status')
+    expect(screen.getByRole('table').closest('[aria-busy]')).toHaveAttribute('aria-busy', 'true')
+
+    await act(async () => {
+      resolverSegunda(respuestaFixture({ articulos: [{ ...respuestaFixture().articulos[0], descripcion: 'Filtrado' }] }))
+    })
+
+    expect(await screen.findByText('Filtrado')).toBeInTheDocument()
+    expect(screen.queryByText('Actualizando…')).not.toBeInTheDocument()
+    expect(screen.getByRole('table').closest('[aria-busy]')).toHaveAttribute('aria-busy', 'false')
+  })
+
+  it('un rango inválido limpia el error de la consulta anterior', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-articulo?')) {
+        return Promise.reject(new ErrorApi(500, 'error', 'Falló el servidor.'))
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByText('Falló el servidor.')
+    await usuario.clear(screen.getByLabelText('Desde'))
+
+    expect(await screen.findByText(/Elegí un rango de fechas válido/)).toBeInTheDocument()
+    expect(screen.queryByText('Falló el servidor.')).not.toBeInTheDocument()
+  })
+
+  it('busca artículos incluyendo los dados de baja', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByText('MARL-20')
+    await usuario.click(screen.getByRole('combobox', { name: 'Artículo' }))
+    await usuario.keyboard('aceite')
+    await screen.findByRole('option', { name: 'ACE-1 — Aceite girasol' })
+
+    const busqueda = apiGetMock.mock.calls.map((c) => c[0] as string).find((r) => r.startsWith('/articulos?'))!
+    expect(new URLSearchParams(busqueda.split('?')[1]).get('incluirEliminados')).toBe('true')
   })
 
   it('el botón de descarga apunta al export con los mismos filtros y formato=xlsx una sola vez', async () => {
