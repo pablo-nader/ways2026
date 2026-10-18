@@ -92,6 +92,16 @@ public static class ComprasEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Reemplaza el header y el set completo de items de un borrador (borrador únicamente).");
 
+        grupo.MapDelete("/{id:int}", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.DescartarBorradorAsync(id, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Descarta un borrador: borra el encabezado, las líneas, las alícuotas y las percepciones, y deja el " +
+            "rastro compra.descarte. Una compra confirmada o anulada responde 409 compra_no_descartable.");
+
         grupo.MapPost("/{id:int}/confirmar", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {
             var confirmada = await servicio.ConfirmarAsync(id, ct);

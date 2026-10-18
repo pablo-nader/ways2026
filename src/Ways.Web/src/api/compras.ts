@@ -87,6 +87,8 @@ export const clienteDeCompras = {
   obtener: (id: number) => api.get<CompraDetalle>(`/compras/${id}`),
   crear: (solicitud: SolicitudDeCompra) => api.post<CompraDetalle>('/compras', solicitud),
   actualizar: (id: number, solicitud: SolicitudDeCompra) => api.put<CompraDetalle>(`/compras/${id}`, solicitud),
+  /** `DELETE /api/compras/{id}` — borra de verdad un borrador (409 `compra_no_descartable` si ya no lo es). */
+  descartar: (id: number) => api.delete<void>(`/compras/${id}`),
   confirmar: (id: number) => api.post<CompraDetalle>(`/compras/${id}/confirmar`),
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>

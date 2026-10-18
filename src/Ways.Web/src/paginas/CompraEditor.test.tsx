@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -25,6 +25,7 @@ import type {
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 // Permite retener la navegación para observar la pantalla en la ventana entre guardar y que la
 // navegación la reemplace; por defecto navega de verdad.
@@ -52,7 +53,7 @@ vi.mock('../api/cliente', () => ({
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown?])),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -316,6 +317,7 @@ beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
   navegacion.retener = false
   navegacion.llamadas = []
   usuarioActual = usuarioFixture()
@@ -963,6 +965,177 @@ describe('CompraEditor — cancelar', () => {
   })
 })
 
+describe('CompraEditor — descartar borrador', () => {
+  function pendiente<T>() {
+    let resolver!: (valor: T) => void
+    const promesa = new Promise<T>((res) => {
+      resolver = res
+    })
+    return { promesa, resolver }
+  }
+
+  async function abrirPuerta(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: 'Descartar borrador' }))
+    return screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+  }
+
+  async function renderizarBorrador() {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+  }
+
+  it('el botón aparece en un borrador existente', async () => {
+    await renderizarBorrador()
+
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeEnabled()
+  })
+
+  it('no aparece en una compra nueva, que todavía no existe en el servidor', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
+  })
+
+  it.each(['Confirmada', 'Anulada'] as const)('no aparece en una compra %s', async (estado) => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado })) : undefined))
+    renderEditor()
+    await screen.findByText('0003-00012345', { exact: false })
+
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [ROL.Supervisor, 'Supervisor'],
+    [ROL.Vendedor, 'Vendedor'],
+  ] as const)('no aparece para un %s, que no escribe compras', async (rolId, rol) => {
+    usuarioActual = usuarioFixture({ rolId, rol })
+    await renderizarBorrador()
+
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
+  })
+
+  it('pide confirmación: abrir la puerta no borra nada y Cancelar la cierra', async () => {
+    await renderizarBorrador()
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+
+    expect(within(puerta).getByText(/Descartar este borrador/)).toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    // La puerta deja inerte el resto de la pantalla.
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeDisabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeEnabled()
+    expect(screen.queryByText('Listado de compras')).not.toBeInTheDocument()
+  })
+
+  it('al confirmar manda un solo DELETE y vuelve al listado', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockResolvedValue(undefined)
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar descarte' }))
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/compras/1')
+  })
+
+  it('un rechazo del servidor se muestra, cierra la puerta y deja reintentar', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'compra_no_descartable', 'Solo una compra en borrador puede descartarse.'))
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar descarte' }))
+
+    expect(await screen.findByText('Solo una compra en borrador puede descartarse.')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Listado de compras')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('un error que no es del servidor muestra la copia genérica', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockRejectedValue(new Error('se cortó'))
+    const usuario = userEvent.setup()
+
+    await usuario.click(within(await abrirPuerta(usuario)).getByRole('button', { name: 'Confirmar descarte' }))
+
+    expect(await screen.findByText('No se pudo descartar el borrador.')).toBeInTheDocument()
+  })
+
+  it('abrir la puerta de nuevo borra el rechazo anterior', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'compra_no_descartable', 'Solo una compra en borrador puede descartarse.'))
+    const usuario = userEvent.setup()
+
+    await usuario.click(within(await abrirPuerta(usuario)).getByRole('button', { name: 'Confirmar descarte' }))
+    await screen.findByText('Solo una compra en borrador puede descartarse.')
+
+    await abrirPuerta(usuario)
+
+    expect(screen.queryByText('Solo una compra en borrador puede descartarse.')).not.toBeInTheDocument()
+  })
+
+  it('mientras el DELETE está en vuelo la pantalla entera queda inerte y un doble clic manda un solo pedido', async () => {
+    await renderizarBorrador()
+    const enVuelo = pendiente<undefined>()
+    apiDeleteMock.mockReturnValue(enVuelo.promesa)
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    const confirmar = within(puerta).getByRole('button', { name: 'Confirmar descarte' })
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(await within(puerta).findByRole('button', { name: 'Descartando…' })).toBeDisabled()
+    expect(within(puerta).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
+    expect(screen.getByLabelText('Observaciones')).toBeDisabled()
+
+    await act(async () => {
+      enVuelo.resolver(undefined)
+    })
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('si la pantalla ya no está montada cuando llega la respuesta, no navega', async () => {
+    await renderizarBorrador()
+    navegacion.retener = true
+    const enVuelo = pendiente<undefined>()
+    apiDeleteMock.mockReturnValue(enVuelo.promesa)
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar descarte' }))
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledTimes(1))
+    cleanup()
+
+    await act(async () => {
+      enVuelo.resolver(undefined)
+    })
+
+    expect(navegacion.llamadas).toHaveLength(0)
+  })
+})
+
 describe('CompraEditor — selectores del encabezado', () => {
   it('el proveedor se rotula con el nombre de fantasía y cae a la razón social', async () => {
     mockearReferencia(undefined, [tipoFixture()], [puntoVentaFixture()], [
@@ -1386,6 +1559,7 @@ describe('CompraEditor — role gating', () => {
     expect(screen.queryByRole('button', { name: 'Guardar borrador' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Guardar' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Proveedor')).toBeDisabled()
     expect(screen.queryByLabelText(/^Importe, línea \d+$/)).not.toBeInTheDocument()
   })

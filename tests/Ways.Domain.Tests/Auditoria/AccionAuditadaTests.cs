@@ -5,7 +5,7 @@ namespace Ways.Domain.Tests.Auditoria;
 
 /// <summary>
 /// stage-14-auditoria-trazabilidad, Slice 1 (task 1.13, design decisión 4): el catálogo genérico
-/// — 22 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
+/// — 23 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
 /// no vacía. Las tres de <c>pv.baja</c>/<c>tenant.baja</c>/<c>empresa.baja</c> las agregó la etapa
 /// 20 slice 4 (judgment-day ronda 1, hallazgo C1): las bajas de organización no dejaban rastro.
 /// <c>pv.modo</c> la agregó stage-desktop-pos (DB CHANGE GATE aprobado): el flip administrativo de
@@ -16,6 +16,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// identificados: una venta con cuenta corriente que superó el límite sin poder validarlo.
 /// <c>gasto.edicion</c>/<c>gasto.baja</c> las agregó la edición y baja de gastos.
 /// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente.
+/// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
 /// bajos en el dominio.
 /// </summary>
@@ -25,9 +26,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneVeintidosEntradas()
+    public void TieneVeintitresEntradas()
     {
-        Assert.Equal(22, AccionAuditada.Todas.Count);
+        Assert.Equal(23, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -59,15 +60,16 @@ public partial class AccionAuditadaTests
     /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
     /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
     /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
-    /// 22 pares exactos que el resto del código asume.</summary>
+    /// 23 pares exactos que el resto del código asume.</summary>
     [Fact]
-    public void ElCatalogoTieneExactamenteLosVeintidosParesEsperados()
+    public void ElCatalogoTieneExactamenteLosVeintitresParesEsperados()
     {
         (string Accion, string Entidad)[] esperado =
         [
             ("precio.cambio", "articulo"),
             ("venta.anulacion", "comprobante_venta"),
             ("compra.anulacion", "comprobante_compra"),
+            ("compra.descarte", "comprobante_compra"),
             ("stock.ajuste", "articulo"),
             ("stock.decomiso", "articulo"),
             ("stock.conteo", "articulo"),
