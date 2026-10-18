@@ -272,7 +272,10 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
 
     /// <summary><c>pagos_comprobante.importe</c> es lo que entregó el cliente y
     /// <c>pagos_comprobante.vuelto</c> el cambio devuelto, así que lo que quedó en caja por cada
-    /// pago es <c>importe − vuelto</c>, mismo criterio que <see cref="Ways.Application.Caja.LectorDeMovimientosDelTurno"/>.
+    /// pago es <c>importe − vuelto</c>, restado en el medio del propio pago, igual que
+    /// <see cref="Ways.Application.Ventas.MedioDeVentaNeto"/>. El arqueo de
+    /// <see cref="Ways.Application.Caja.LectorDeMovimientosDelTurno"/> resta todos los vueltos del
+    /// medio ancla, así que ambos coinciden mientras el vuelto se dé en efectivo.
     /// Ninguno de los dos es negativo (CHECK <c>ck_pagos_comprobante_importe_no_negativo</c> y
     /// <c>ck_pagos_comprobante_vuelto_no_negativo</c>, <c>ValidadorDePagos</c> regla 0) — el signo lo aporta el <c>Signo</c> del tipo de
     /// comprobante del encabezado, mismo discriminador que las otras dos rutas, así que una NCX
@@ -295,9 +298,6 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
                 p => p.IdComprobanteVenta,
                 (cv, p) => new { cv.Signo, p.IdMedioPago, p.Importe, p.Vuelto })
             .GroupBy(x => x.IdMedioPago)
-            // mutation-proof-tests: "x.Signo" es lo único que hace que una NCX reste acá
-            // (PorMedioPagoUnaNcxReduceElSubtotalDelMedioSinRamaEspecial) y "- x.Vuelto" lo único
-            // que deja el efectivo neto del cambio (PorMedioPagoElEfectivoEsNetoDelVuelto).
             .Select(g => new { Clave = g.Key, Neto = g.Sum(x => (x.Importe - x.Vuelto) * x.Signo), CantidadPagos = g.Count() })
             .ToListAsync(ct);
 

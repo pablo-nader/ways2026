@@ -513,8 +513,9 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     /// <summary>Mutation-proof (skill mutation-proof-tests): la cláusula bajo prueba es el
     /// <c>- x.Vuelto</c> de <c>(x.Importe - x.Vuelto) * x.Signo</c> en
     /// <c>ServicioDeReportesDeVentas.ConsultarPorMedioPagoAsync</c>. El efectivo del reporte es lo
-    /// que quedó en caja, no lo que entregó el cliente. Una NCX con vuelto discrimina además dónde
-    /// cae el signo: el vuelto de una NCX también resta multiplicado por él. La transferencia sin
+    /// que quedó en caja, no lo que entregó el cliente. El pago con vuelto sobre la NCX es una fila
+    /// sembrada a mano (<c>ValidadorDePagos</c> no la admite) que solo discrimina dónde cae el
+    /// signo: el vuelto también se multiplica por él. La transferencia sin
     /// vuelto fija que un medio sin cambio reporta su importe tal cual. Mutaciones aplicadas sobre
     /// esa expresión, cada una confirmada y revertida: sin <c>- x.Vuelto</c> el efectivo da
     /// <c>900</c>; con <c>x.Importe * x.Signo - x.Vuelto</c> da <c>730</c>; sin el signo da
