@@ -28,7 +28,8 @@ public static class RegistroDelConectorMcp
         "quien_soy informa con qué usuario y tenant de Ways quedó autorizada la conexión. Para preparar la " +
         "carga de una factura de proveedor (solo administradores): primero contexto_de_compras (puntos de " +
         "venta, tipos de comprobante de compra y alícuotas de IVA), después buscar_proveedor (por CUIT o " +
-        "nombre). La carga del borrador de compra todavía no está disponible.";
+        "nombre) y por último buscar_articulos con todas las líneas de la factura en una sola llamada. La " +
+        "carga del borrador de compra todavía no está disponible.";
 
     private static readonly string[] EsquemasDelConector =
     [

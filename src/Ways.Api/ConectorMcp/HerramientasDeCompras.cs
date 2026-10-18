@@ -7,6 +7,7 @@ using ModelContextProtocol.Server;
 using Ways.Application.Abstracciones;
 using Ways.Application.Catalogos;
 using Ways.Application.Organizacion;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Proveedores;
 using static Ways.Application.Busqueda.BusquedaSinAcentos;
@@ -20,6 +21,12 @@ namespace Ways.Api.ConectorMcp;
 public sealed class HerramientasDeCompras
 {
     public const int MaximoDeProveedores = 10;
+
+    public const int MaximoDeLineas = 100;
+
+    public const int MaximoDeCandidatos = 5;
+
+    private const int MaximoDePalabras = 6;
 
     [McpServerTool(
         Name = "contexto_de_compras",
@@ -157,8 +164,148 @@ public sealed class HerramientasDeCompras
             return string.Join(Environment.NewLine, lineas);
         });
 
+    [McpServerTool(
+        Name = "buscar_articulos",
+        Title = "Buscar artículos de una factura",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false)]
+    [Description(
+        "Resuelve en una sola llamada las líneas de una factura de un proveedor contra los artículos de Ways. Por " +
+        "cada línea prueba, en orden y quedándose con la primera que encuentra algo: el código del proveedor " +
+        "exacto (sin distinguir mayúsculas), el código de barras exacto y, por último, los artículos cuyo nombre " +
+        "contiene todas las palabras de la descripción (las primeras 6 de al menos 2 letras). Devuelve por línea " +
+        "la fuente del match y hasta 5 candidatos ordenados por nombre, con id, nombre, código interno, unidad de " +
+        "venta, alícuota de IVA y si están inactivos. Hasta 100 líneas. Solo para administradores.")]
+    public static Task<CallToolResult> BuscarArticulosAsync(
+        IAuthorizationService autorizacion,
+        IHttpContextAccessor accesor,
+        IWaysDbContext db,
+        [Description("Id del proveedor de la factura, el que devolvió buscar_proveedor.")]
+        int idProveedor,
+        [Description("Las líneas de la factura, en el orden en que aparecen. Cada una necesita al menos un dato.")]
+        IReadOnlyList<LineaDeFactura> lineas,
+        CancellationToken ct = default) =>
+        ResultadoDeHerramienta.EjecutarAsync(async () =>
+        {
+            await PermisoDeCompras.ExigirAsync(autorizacion, accesor);
+
+            if (lineas is not { Count: > 0 and <= MaximoDeLineas })
+            {
+                throw new ErrorDeHerramienta($"Pasá entre 1 y {MaximoDeLineas} líneas.");
+            }
+
+            if (lineas.Any(l => l is null))
+            {
+                throw new ErrorDeHerramienta("Cada línea tiene que ser un objeto con codigoProveedor, codigoBarras o descripcion.");
+            }
+
+            if (!await db.Proveedores.AnyAsync(p => p.Id == idProveedor, ct))
+            {
+                throw new ErrorDeHerramienta($"No existe el proveedor {idProveedor}. Buscalo antes con buscar_proveedor.");
+            }
+
+            List<string> salida = ["Candidatos (id | nombre | código interno | unidad | alícuota de IVA):"];
+            for (var i = 0; i < lineas.Count; i++)
+            {
+                var (fuente, candidatos) = await ResolverLineaAsync(db, idProveedor, lineas[i], ct);
+                salida.Add($"Línea {i + 1}: {fuente}");
+                salida.AddRange(candidatos.Select(c =>
+                    $"- {c.Id} | {EnUnaLinea(c.Nombre)} | {EnUnaLinea(c.CodigoInterno)} | {c.Unidad} | " +
+                    (c.Alicuota is null ? "sin alícuota" : $"{EnUnaLinea(c.Alicuota)} (id {c.IdAlicuota})") +
+                    (c.Activo ? string.Empty : " | inactivo")));
+            }
+
+            return string.Join(Environment.NewLine, salida);
+        });
+
+    private sealed record Candidato(
+        int Id, string Nombre, string CodigoInterno, UnidadVenta Unidad, int? IdAlicuota, string? Alicuota, bool Activo);
+
+    private static async Task<(string Fuente, List<Candidato> Candidatos)> ResolverLineaAsync(
+        IWaysDbContext db, int idProveedor, LineaDeFactura linea, CancellationToken ct)
+    {
+        var codigoProveedor = linea.CodigoProveedor?.Trim();
+        var codigoBarras = linea.CodigoBarras?.Trim();
+        var palabras = (linea.Descripcion ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => p.Length >= 2)
+            .Take(MaximoDePalabras)
+            .ToList();
+
+        if (string.IsNullOrEmpty(codigoProveedor) && string.IsNullOrEmpty(codigoBarras) && palabras.Count == 0)
+        {
+            return ("sin datos para buscar (hace falta un código o una palabra de al menos 2 letras)", []);
+        }
+
+        if (!string.IsNullOrEmpty(codigoProveedor))
+        {
+            var porCodigoProveedor = await ProyectarAsync(
+                db,
+                db.Articulos.Where(a => db.CodigosProveedor.Any(c =>
+                    c.IdArticulo == a.Id && c.IdProveedor == idProveedor && c.Codigo == codigoProveedor)),
+                ct);
+            if (porCodigoProveedor.Count > 0)
+            {
+                return ("código del proveedor", porCodigoProveedor);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(codigoBarras))
+        {
+            var porCodigoBarras = await ProyectarAsync(
+                db,
+                db.Articulos.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Codigo == codigoBarras)),
+                ct);
+            if (porCodigoBarras.Count > 0)
+            {
+                return ("código de barras", porCodigoBarras);
+            }
+        }
+
+        if (palabras.Count > 0)
+        {
+            var porNombre = db.Articulos.AsQueryable();
+            foreach (var palabra in palabras)
+            {
+                var patron = PatronDeContiene(palabra);
+                porNombre = porNombre.Where(a => Coincide(a.Nombre, patron));
+            }
+
+            var candidatos = await ProyectarAsync(db, porNombre, ct);
+            if (candidatos.Count > 0)
+            {
+                return ("nombre", candidatos);
+            }
+        }
+
+        return ("sin coincidencias", []);
+    }
+
+    private static Task<List<Candidato>> ProyectarAsync(IWaysDbContext db, IQueryable<Articulo> articulos, CancellationToken ct) =>
+        (from a in articulos
+         join iva in db.AlicuotasIva on a.IdAlicuotaIva equals iva.Id into alicuotas
+         from iva in alicuotas.DefaultIfEmpty()
+         orderby a.Nombre, a.Id
+         select new Candidato(
+             a.Id, a.Nombre, a.CodigoInterno, a.UnidadVenta, iva != null ? iva.Id : null, iva != null ? iva.Nombre : null, a.Activo))
+        .Take(MaximoDeCandidatos)
+        .AsNoTracking()
+        .ToListAsync(ct);
+
     private static string SiNo(bool valor) => valor ? "sí" : "no";
+
+    /// <summary>La salida es una línea por dato: un salto de línea dentro de un nombre no puede
+    /// abrir una línea nueva que Claude lea como otra línea de factura o como otro candidato.</summary>
+    private static string EnUnaLinea(string texto) => texto.ReplaceLineEndings(" ");
 
     private static string Porcentaje(decimal? valor) =>
         valor is { } v ? v.ToString("0.##", CultureInfo.InvariantCulture) + " %" : "sin valor";
 }
+
+/// <summary>Una línea de la factura tal como la lee Claude; sirve cualquier combinación de datos.</summary>
+public sealed record LineaDeFactura(
+    [property: Description("Código del artículo según el proveedor, como figura en la factura.")] string? CodigoProveedor = null,
+    [property: Description("Código de barras del artículo, si figura en la factura.")] string? CodigoBarras = null,
+    [property: Description("Descripción del artículo en la factura.")] string? Descripcion = null);
