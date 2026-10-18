@@ -46,7 +46,7 @@ Lecturas sobre `puntos_venta`, `empresas` (alícuotas de percepción por defecto
 - [x] T1 — Guarda de permiso de compras, resultado de herramienta con `isError` y
   `contexto_de_compras`, más instrucciones y docs. Ruta: inline (archivos nuevos del conector, ya
   entendidos). Tests: integración por `/mcp` (feliz con aislamiento, rechazo por rol, anotaciones).
-- [ ] T2 — `buscar_proveedor` + normalización de CUIT. Ruta: inline. Tests: unitarios de CUIT;
+- [x] T2 — `buscar_proveedor` + normalización de CUIT. Ruta: inline. Tests: unitarios de CUIT;
   integración por `/mcp` (CUIT con separadores, nombre sin acentos, tope, errores, aislamiento,
   rechazo por rol).
 - [ ] T3 — `buscar_articulos` en lote (código del proveedor exacto → código de barras exacto →

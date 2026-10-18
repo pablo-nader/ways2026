@@ -26,9 +26,9 @@ public static class RegistroDelConectorMcp
     private const string Instrucciones =
         "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental. " +
         "quien_soy informa con qué usuario y tenant de Ways quedó autorizada la conexión. Para preparar la " +
-        "carga de una factura de proveedor (solo administradores): contexto_de_compras da los puntos de " +
-        "venta, los tipos de comprobante de compra y las alícuotas de IVA. La carga del borrador de compra " +
-        "todavía no está disponible.";
+        "carga de una factura de proveedor (solo administradores): primero contexto_de_compras (puntos de " +
+        "venta, tipos de comprobante de compra y alícuotas de IVA), después buscar_proveedor (por CUIT o " +
+        "nombre). La carga del borrador de compra todavía no está disponible.";
 
     private static readonly string[] EsquemasDelConector =
     [

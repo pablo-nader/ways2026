@@ -152,6 +152,7 @@ herramientas son **de solo lectura** y corren con la identidad y el tenant de la
 | --- | --- | --- |
 | `quien_soy` | cualquier rol | Usuario, correo, rol y tenant de la cuenta, más la hora del servidor. |
 | `contexto_de_compras` | Admin | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
+| `buscar_proveedor` | Admin | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
 
 Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
 cargarla; la carga del borrador todavía no está disponible. Con otro rol responden un error sin
