@@ -24,9 +24,11 @@ public static class RegistroDelConectorMcp
     private const string CategoriaDeLog = "Ways.Api.ConectorMcp";
 
     private const string Instrucciones =
-        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental: por " +
-        "ahora solo expone la herramienta quien_soy, que informa con qué usuario y tenant de Ways " +
-        "quedó autorizada la conexión.";
+        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental. " +
+        "quien_soy informa con qué usuario y tenant de Ways quedó autorizada la conexión. Para preparar la " +
+        "carga de una factura de proveedor (solo administradores): contexto_de_compras da los puntos de " +
+        "venta, los tipos de comprobante de compra y las alícuotas de IVA. La carga del borrador de compra " +
+        "todavía no está disponible.";
 
     private static readonly string[] EsquemasDelConector =
     [
@@ -201,7 +203,7 @@ public static class RegistroDelConectorMcp
                 servidorMcp.ServerInstructions = Instrucciones;
             })
             .WithHttpTransport(transporte => transporte.SessionMode = HttpServerSessionMode.Stateless)
-            .WithTools<HerramientasDeIdentidad>();
+            .WithToolsFromAssembly(typeof(RegistroDelConectorMcp).Assembly);
 
         return EstadoDelConectorMcp.Registrado();
     }

@@ -145,9 +145,17 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 ## Conector MCP (experimental)
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
-Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Hoy expone
-**una sola herramienta, de solo lectura**: `quien_soy`, que devuelve el nombre de usuario, el
-correo, el rol y el tenant de la cuenta que autorizó la conexión, más la hora del servidor.
+Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas las
+herramientas son **de solo lectura** y corren con la identidad y el tenant de la cuenta que autorizó:
+
+| Herramienta | Quién | Qué devuelve |
+| --- | --- | --- |
+| `quien_soy` | cualquier rol | Usuario, correo, rol y tenant de la cuenta, más la hora del servidor. |
+| `contexto_de_compras` | Admin | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
+
+Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
+cargarla; la carga del borrador todavía no está disponible. Con otro rol responden un error sin
+datos (misma política que las escrituras de compras de la API).
 
 ### Encenderlo
 

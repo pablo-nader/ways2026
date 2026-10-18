@@ -932,8 +932,8 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var (estado, mensaje) = await LlamarMcpAsync(cliente, accessToken, "tools/list");
 
         Assert.Equal(HttpStatusCode.OK, estado);
-        var herramienta = Assert.Single(mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray());
-        Assert.Equal("quien_soy", Campo(herramienta, "name"));
+        var herramienta = Assert.Single(
+            mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray(), h => Campo(h, "name") == "quien_soy");
         var anotaciones = herramienta.GetProperty("annotations");
         Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
         Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
