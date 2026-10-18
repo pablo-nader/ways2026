@@ -24,9 +24,12 @@ public static class RegistroDelConectorMcp
     private const string CategoriaDeLog = "Ways.Api.ConectorMcp";
 
     private const string Instrucciones =
-        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental: por " +
-        "ahora solo expone la herramienta quien_soy, que informa con qué usuario y tenant de Ways " +
-        "quedó autorizada la conexión.";
+        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental y de solo " +
+        "lectura. quien_soy informa con qué usuario y tenant quedó autorizada la conexión. ventas_resumen y " +
+        "ventas_agrupadas responden cuánto se vendió: total vendido, por medio de pago, por punto de venta, " +
+        "por vendedor o por día (solo Supervisor y Admin). El período se indica con un nombre (hoy, ayer, " +
+        "esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona horaria de cada empresa, " +
+        "o con desde y hasta (yyyy-MM-dd, ambos inclusivos).";
 
     private static readonly string[] EsquemasDelConector =
     [
@@ -201,7 +204,8 @@ public static class RegistroDelConectorMcp
                 servidorMcp.ServerInstructions = Instrucciones;
             })
             .WithHttpTransport(transporte => transporte.SessionMode = HttpServerSessionMode.Stateless)
-            .WithTools<HerramientasDeIdentidad>();
+            .WithTools<HerramientasDeIdentidad>()
+            .WithTools<HerramientasDeVentas>();
 
         return EstadoDelConectorMcp.Registrado();
     }

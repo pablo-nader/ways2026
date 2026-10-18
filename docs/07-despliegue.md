@@ -145,9 +145,31 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 ## Conector MCP (experimental)
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
-Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Hoy expone
-**una sola herramienta, de solo lectura**: `quien_soy`, que devuelve el nombre de usuario, el
-correo, el rol y el tenant de la cuenta que autorizó la conexión, más la hora del servidor.
+Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas sus
+herramientas son de solo lectura: `quien_soy`, que devuelve el nombre de usuario, el correo, el rol
+y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, y las consultas de
+ventas de la sección siguiente.
+
+### Consultas de ventas
+
+| Herramienta | Qué responde |
+|---|---|
+| `ventas_resumen` | Total vendido, comprobantes, ticket promedio y notas de crédito del período, con desglose por medio de pago, por punto de venta y por día (la tabla por día solo hasta 31 días) |
+| `ventas_agrupadas` | Lo vendido agrupado por `punto_venta`, `medio_pago`, `vendedor` o `dia`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto) |
+
+- **Rol:** solo Supervisor y Admin, igual que los reportes de la web (`LecturaDeReportes`). Un
+  Vendedor recibe un texto que lo explica, no un error.
+- **"Vendido":** el criterio del reporte de ventas de la web: comprobantes de venta no anulados, sin
+  los espejos fiscales, con las notas de crédito restadas, al importe final.
+- **Período:** un nombre (`hoy`, `ayer`, `esta_semana`, `semana_pasada`, `este_mes`, `mes_pasado`) o
+  `desde` y `hasta` (`yyyy-MM-dd`, ambos inclusivos, hasta 366 días). El "hoy" y el corte de cada día se
+  toman en la zona horaria de la empresa (parámetro `zona_horaria`), no en UTC; la semana va de lunes
+  a domingo y `esta_semana` y `este_mes` terminan hoy.
+- **Alcance:** `empresa` y `punto_venta` por id o por nombre. Sin ellos se suman todas las empresas
+  del tenant, cada una con su zona, y se muestra el desglose por empresa.
+- **Medio de pago:** lo cobrado neto del vuelto (`importe - vuelto`). La tabla por medio de pago de la
+  web suma el importe entregado, sin descontar el vuelto, así que en efectivo puede diferir.
+- La salida es texto con tablas `a | b | c`; cada tabla se corta en 31 filas y avisa cuántas faltan.
 
 ### Encenderlo
 
