@@ -133,8 +133,10 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
 
     /// <summary><c>pagos_comprobante.importe</c> siempre no-negativo (CHECK
     /// <c>ck_pagos_comprobante_importe_no_negativo</c>) — el signo de una NCX lo aporta el
-    /// <c>Signo</c> del tipo de comprobante del encabezado, nunca este importe.</summary>
-    private async Task SembrarPagoAsync(Contexto ctx, int idComprobanteVenta, int idMedioPago, decimal importe)
+    /// <c>Signo</c> del tipo de comprobante del encabezado, nunca este importe. <paramref name="vuelto"/>
+    /// es el cambio devuelto sobre lo entregado, igual que lo persiste <c>ServicioDeVentas</c>.</summary>
+    private async Task SembrarPagoAsync(
+        Contexto ctx, int idComprobanteVenta, int idMedioPago, decimal importe, decimal vuelto = 0m)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -145,7 +147,7 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
             IdComprobanteVenta = idComprobanteVenta,
             IdMedioPago = idMedioPago,
             Importe = importe,
-            Vuelto = 0m,
+            Vuelto = vuelto,
             CreatedAt = ahora,
             UpdatedAt = ahora
         });
@@ -482,11 +484,12 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     }
 
     /// <summary>Mutation-proof (skill mutation-proof-tests): la cláusula bajo prueba es
-    /// <c>x.Importe * x.Signo</c> en <c>ServicioDeReportesDeVentas.ConsultarPorMedioPagoAsync</c> —
+    /// el <c>x.Signo</c> de <c>(x.Importe - x.Vuelto) * x.Signo</c> en
+    /// <c>ServicioDeReportesDeVentas.ConsultarPorMedioPagoAsync</c> —
     /// el único lugar de esta etapa donde una NCX resta un importe que, por esquema, SIEMPRE llega
     /// no-negativo (<c>ck_pagos_comprobante_importe_no_negativo</c>). Mutación aplicada: reemplazar
-    /// <c>x.Importe * x.Signo</c> por <c>x.Importe</c> (quitar el signo) → este test pasó de
-    /// <c>250m</c> a fallar con <c>350m</c> — confirmado, revertido.</summary>
+    /// <c>(x.Importe - x.Vuelto) * x.Signo</c> por <c>(x.Importe - x.Vuelto)</c> (quitar el signo) → este
+    /// test pasó de <c>250m</c> a fallar con <c>350m</c> — confirmado, revertido.</summary>
     [Fact]
     public async Task PorMedioPagoUnaNcxReduceElSubtotalDelMedioSinRamaEspecial()
     {
@@ -505,5 +508,41 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
         var fila = Assert.Single(reporte.Filas);
         Assert.Equal(250m, fila.Neto);
         Assert.Equal(2, fila.CantidadPagos);
+    }
+
+    /// <summary>Mutation-proof (skill mutation-proof-tests): la cláusula bajo prueba es el
+    /// <c>- x.Vuelto</c> de <c>(x.Importe - x.Vuelto) * x.Signo</c> en
+    /// <c>ServicioDeReportesDeVentas.ConsultarPorMedioPagoAsync</c>. El efectivo del reporte es lo
+    /// que quedó en caja, no lo que entregó el cliente. Una NCX con vuelto discrimina además dónde
+    /// cae el signo: el vuelto de una NCX también resta multiplicado por él. La transferencia sin
+    /// vuelto fija que un medio sin cambio reporta su importe tal cual. Mutaciones aplicadas sobre
+    /// esa expresión, cada una confirmada y revertida: sin <c>- x.Vuelto</c> el efectivo da
+    /// <c>900</c>; con <c>x.Importe * x.Signo - x.Vuelto</c> da <c>730</c>; sin el signo da
+    /// <c>930</c>. El valor esperado es <c>770</c>.</summary>
+    [Fact]
+    public async Task PorMedioPagoElEfectivoEsNetoDelVuelto()
+    {
+        var ctx = await PrepararAsync(nameof(PorMedioPagoElEfectivoEsNetoDelVuelto));
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
+
+        var idTxEfectivo = await SembrarComprobanteAsync(ctx, mediodiaUtc, 850m);
+        await SembrarPagoAsync(ctx, idTxEfectivo, ctx.IdMedioPagoEfectivo, 1000m, vuelto: 150m);
+
+        var idTxTransferencia = await SembrarComprobanteAsync(ctx, mediodiaUtc, 600m);
+        await SembrarPagoAsync(ctx, idTxTransferencia, ctx.IdMedioPagoTransferencia, 600m);
+
+        var idNcx = await SembrarComprobanteAsync(ctx, mediodiaUtc, -80m, esNcx: true);
+        await SembrarPagoAsync(ctx, idNcx, ctx.IdMedioPagoEfectivo, 100m, vuelto: 20m);
+
+        var reporte = await ObtenerPorMedioPagoAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
+
+        Assert.Equal(2, reporte.Filas.Count);
+        var filaEfectivo = Assert.Single(reporte.Filas, f => f.IdMedioPago == ctx.IdMedioPagoEfectivo);
+        Assert.Equal(770m, filaEfectivo.Neto);
+        Assert.Equal(2, filaEfectivo.CantidadPagos);
+        var filaTransferencia = Assert.Single(reporte.Filas, f => f.IdMedioPago == ctx.IdMedioPagoTransferencia);
+        Assert.Equal(600m, filaTransferencia.Neto);
+        Assert.Equal(1, filaTransferencia.CantidadPagos);
     }
 }
