@@ -55,7 +55,7 @@ Categoría global (doc 09), sin `id_tenant` ni RLS. Columnas en snake_case espa�
 
 ## Tareas
 
-- [ ] T1 — Persistencia en Postgres: contexto con mapeo, fábrica de diseño, migración inicial,
+- [x] T1 — Persistencia en Postgres: contexto con mapeo, fábrica de diseño, migración inicial,
   migración al arrancar, cliente sincronizado, Data Protection, sin `DisableBulkOperations`,
   poda diaria, tests y docs. Ruta: inline (un escritor, archivos acoplados).
 
@@ -75,8 +75,34 @@ Categoría global (doc 09), sin `id_tenant` ni RLS. Columnas en snake_case espa�
 
 ## Progreso
 
-- Exploración terminada; rama `pnader/conector-mcp-almacen-persistente`.
+- T1 hecha en el commit `fd6be5da` (ruta inline: archivos acoplados, un solo escritor).
+- `dotnet build src/Ways.Api`: sin advertencias nuevas (las NU1902/NU1903 de Pkcs son previas).
+- `tests/Ways.Application.Tests` completo: 1042/1042 en verde (guardas estructurales incluidas).
+- Integración `FullyQualifiedName~ConectorMcp`: 110/110 en verde contra Postgres. Los tests
+  existentes de reuso del refresh y de revocación ahora corren contra Postgres sin
+  `DisableBulkOperations`.
+- La clase nueva corrió tres veces seguidas en verde.
+
+### Evidencia de mutación (`ConectorMcpAlmacenPersistenteTests`)
+
+| Mutación | Tests que fallan |
+|---|---|
+| Sin `UseDataProtection` en el servidor ni en la validación | redeploy, reuso después del redeploy |
+| Umbral de poda sin `- Antiguedad` | poda; también el reuso después del redeploy, porque la poda del arranque borra el refresh canjeado |
+| Sin `EnableTokenEntryValidation` | reuso después del redeploy |
+| Sin `MigrateAsync` del contexto del conector | los cuatro |
+
+### Judgment-day
+
+- Ronda 1 sobre `fd6be5da`: el juez A no encontró hallazgos. El juez B dejó una sugerencia: la
+  fábrica de diseño lee solo `ConnectionStrings__Ways`, igual que la de Ways. Queda informativa.
+- Veredicto: APPROVED, sin rondas de corrección.
+
+### Entrega
+
+- Excepción de tamaño aceptada por la orquestadora: un solo PR (unas 552 líneas escritas a mano
+  más la migración generada), con las labels `size:exception` y `type:feature`.
 
 ## Próximo paso
 
-T1.
+Abrir el PR con auto-merge y Auto-fix, y avisarle a la orquestadora.
