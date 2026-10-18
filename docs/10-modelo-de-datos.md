@@ -58,6 +58,7 @@ parte apuntan a la sección `N` de este índice.
 | 8. Cuenta corriente de clientes | [08-cuenta-corriente-de-clientes.md](10-modelo-de-datos/08-cuenta-corriente-de-clientes.md) | 19 | `movimientos_cuenta_corriente`, `movimientos_cuenta_corriente_proveedor`, `movimientos_personal` |
 | 9. Parámetros operativos | [09-parametros-operativos.md](10-modelo-de-datos/09-parametros-operativos.md) | 1 | `parametros` |
 | 10. Auditoría | [10-auditoria.md](10-modelo-de-datos/10-auditoria.md) | 4 | `auditoria` |
+| 11. Conector MCP: almacén OAuth | [11-conector-mcp.md](10-modelo-de-datos/11-conector-mcp.md) | 4 | `aplicaciones_oauth`, `autorizaciones_oauth`, `alcances_oauth`, `tokens_oauth` |
 | Diagrama de referencias (resumen) | [diagrama-de-referencias.md](10-modelo-de-datos/diagrama-de-referencias.md) | 2 | — |
 | Etapas sugeridas (definido todo, implementado por partes) | [etapas-sugeridas.md](10-modelo-de-datos/etapas-sugeridas.md) | 6 | — |
 | 9. Dispositivos de escritorio (stage-desktop-pos) — 9.1 Invariante "una PC-caja = un punto de venta" (stage-desktop-pos) | [09-dispositivos--9.1-invariante-una-pc-caja.md](10-modelo-de-datos/09-dispositivos--9.1-invariante-una-pc-caja.md) | 9 | `dispositivos`, `puntos_venta` |
