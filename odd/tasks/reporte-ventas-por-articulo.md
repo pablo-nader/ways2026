@@ -61,4 +61,4 @@ task) per the owner's standing preference.
 
 ## Next step
 
-PR slice for T2 (judgment-day first).
+T3 commit 0e8990ae, judgment-day APPROVED (no CRITICAL). Open follow-up, flagged as WARNING by both judges: a soft-deleted article matched by a classification filter renders with null code and labels ("Sin asignar"), because the label lookup still applies `BajaLogica`.

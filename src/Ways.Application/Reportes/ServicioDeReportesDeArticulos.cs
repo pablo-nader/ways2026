@@ -19,7 +19,8 @@ namespace Ways.Application.Reportes;
 /// LINQ puro sobre <c>ItemsComprobanteVenta</c> ⋈ <c>ComprobantesVenta</c> ⋈
 /// <c>TiposComprobante</c>, sin costo ni margen: esos campos viven en <c>/rentabilidad</c>,
 /// gateado aparte por <c>LecturaDeRentabilidad</c> (no en esta policy). Los filtros de
-/// <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre ambas tablas (design decisión 1) —
+/// <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre ambas tablas (design decisión 1), salvo
+/// el subconjunto de artículos de ventas por artículo, que apaga solo <c>BajaLogica</c> —
 /// a diferencia de <c>LectorDeSerieTemporal</c>, esta consulta nunca corre SQL crudo.
 /// </summary>
 public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametros parametros)
