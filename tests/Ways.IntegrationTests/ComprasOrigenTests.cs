@@ -235,7 +235,7 @@ public class ComprasOrigenTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         var hoja = libro.Worksheets.First();
 
         const int primeraFilaDeDatos = 7;
-        Assert.Equal("0001-00000001", hoja.Cell(primeraFilaDeDatos, 1).GetString());
+        Assert.Equal("00001-00000001", hoja.Cell(primeraFilaDeDatos, 1).GetString());
         Assert.True(hoja.Cell(primeraFilaDeDatos + 1, 1).IsEmpty());
 
         Assert.Equal([asistida.Id], await IdsDelListadoAsync(ctx, "&origen=Asistente"));

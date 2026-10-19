@@ -66,7 +66,9 @@ import {
 import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
+import { AvisoDeNumeroDuplicado } from './compras/AvisoDeNumeroDuplicado'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
+import { useDuplicadosDeCompra } from './compras/useDuplicadosDeCompra'
 import { GrillaDeItemsDeCompra } from './compras/GrillaDeItemsDeCompra'
 import {
   hayCambiosSinGuardar,
@@ -876,6 +878,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const impedimentoParaGuardar =
     intentoFallido === null ? null : mensajeDeLoQueImpideGuardar(encabezado, lineas, intentoFallido === 'guardar')
   const hayCambios = hayCambiosSinGuardar({ esNuevo, encabezado, lineas, huellaGuardada })
+  const duplicados = useDuplicadosDeCompra({
+    idProveedor: encabezado.idProveedor,
+    idTipoComprobante: encabezado.idTipoComprobante,
+    numeroExterno: encabezado.numeroExterno,
+    excluirId: idCompra,
+    activo: puedeEscribir && (esNuevo || compra?.estado === 'Borrador'),
+  })
 
   const cantidadPorCodigo = lineas.filter((l) => l.resueltaPorCodigo).length
   const hayPorCodigoEnBultos = lineas.some((l) => l.resueltaPorCodigo && l.unidadDeMedida === 'Bulto')
@@ -1261,6 +1270,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaComprobante: valor }))}
             />
           </div>
+          {duplicados.length > 0 && (
+            <div className="col-12">
+              <AvisoDeNumeroDuplicado duplicados={duplicados} />
+            </div>
+          )}
           <div className="col-12">
             <label className="form-label" htmlFor="compra-observaciones">
               Observaciones

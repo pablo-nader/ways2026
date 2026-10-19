@@ -47,7 +47,7 @@ proveedor como BORRADOR de compra. La confirmación sigue siendo humana, en la w
 - [x] **T2 — Origen de la compra** (PR 2)
   - Columna, enum, migración, doc 10 §5, lecturas con `origen`, filtro del listado.
   - Web: insignia "Asistente" con filtro y aviso en el editor del borrador asistido.
-- [ ] **T3 — Número canónico + proveedor por CUIT** (PR 3)
+- [x] **T3 — Número canónico + proveedor por CUIT** (PR 3)
   - Normalización al escribir para C-FA/C-FB/C-FC, 400 estable, chequeo de duplicado normalizado.
   - `GET /api/proveedores?cuit=` y método de servicio.
 
@@ -97,6 +97,23 @@ Ruta por tarea, commits y resultado de judgment-day se anotan acá al cerrar cad
   fuera del enum en `?origen=` no se rechaza con 400, igual que `estado` hoy. La suite de integración completa (enum
   nativo nuevo) queda al CI.
 
+- **T3** (ruta: escritor delegado hasta cortarse por límite de uso; lo terminó el padre en una rama nueva desde
+  main, porque T1 y T2 ya entraron por #470): `NumeroDeComprobanteDeCompra` (forma canónica `PPPPP-NNNNNNNN` y
+  segmentos numéricos), normalización al escribir en alta y PUT para tipos con libro IVA (400
+  `numero_comprobante_invalido`), PUT con 404 primero, `BuscarDuplicadosAsync` + `GET /api/compras/duplicados`,
+  `?cuit=` en `GET /api/proveedores` + `BuscarPorCuitAsync` (400 `cuit_invalido`). Web: punto de venta de 5 dígitos
+  y aviso de número duplicado en el editor. Checks: Domain 1805 ok, Application 1059 ok, integración filtrada
+  (compras, proveedores, autorización, saldos, cuenta corriente de proveedor) 513 ok, Vitest 470 ok, tsc y oxlint
+  ok. Mutación: sin el filtro de anuladas, sin `excluirId` y con CUIT comparado por texto exacto caen
+  `UnaCompraAnuladaNoCuentaComoDuplicado`, `ElChequeoDejaAfueraLaCompraQueSeEstaEditando` y los tres tests del
+  filtro por CUIT. Seguimiento: normalizar las filas viejas (puede chocar con el índice único).
+
+- **T3 cierre**: commit 1fe74a9d. Judgment-day APPROVED en ronda 1, sin hallazgos severos confirmados. Info: un
+  borrador viejo con un número fiscal ininterpretable (texto libre sin guion) recibe 400 en cada PUT hasta que se
+  corrija el número; el chequeo de duplicados lee todas las compras no anuladas del proveedor y tipo; un número a
+  medio tipear ("3-12") puede mostrar un aviso de duplicado momentáneo.
+
 ## Próximo paso
 
-T3.
+Etapa S2 completa. Seguimientos: normalizar las filas viejas, permitir el PUT de un borrador viejo que conserva su
+número original, catálogo web de acciones auditadas con `compra.descarte`.

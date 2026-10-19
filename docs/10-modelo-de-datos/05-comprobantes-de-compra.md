@@ -9,8 +9,8 @@ comprobantes_compra (         -- [operativa]
     id_comprobante_compra,
     id_proveedor,
     id_tipo_comprobante integer NOT NULL,    -- clase = compra (FA del proveedor, etc.)
-    numero_externo      citext,              -- el número DEL PROVEEDOR ("0003-00012345");
-                                             -- acá no hay correlativo propio
+    numero_externo      citext,              -- el número DEL PROVEEDOR ("00003-00012345");
+                                             -- acá no hay correlativo propio; forma canónica abajo
     fecha_comprobante   date,                -- la fecha de la factura
     fecha_recepcion     timestamptz,         -- cuándo entró la mercadería
     id_punto_venta,                          -- a qué local ingresa el stock
@@ -23,6 +23,18 @@ comprobantes_compra (         -- [operativa]
     origen origen_compra NOT NULL DEFAULT 'manual'  -- enum: manual | asistente; quién cargó la compra
 );
 -- UNIQUE (id_proveedor, id_tipo_comprobante, numero_externo): la misma factura no entra dos veces.
+--
+-- Número canónico (tipos con registra_libro_iva: C-FA, C-FB, C-FC): el servicio guarda
+-- `PPPPP-NNNNNNNN` (punto de venta de 5 dígitos, número de 8, la forma vigente de ARCA que imprime la
+-- factura legal). Acepta `3-12345`, `0003-00012345`, `00003-00012345` o 12/13 dígitos pegados, y responde
+-- 400 `numero_comprobante_invalido` si no puede interpretarlo (letras, más de un guion, más de 5/8
+-- dígitos significativos, punto de venta o número en cero). Los demás tipos (remito) conservan texto libre.
+-- El índice único compara texto, así que no es la defensa contra formatos distintos: el chequeo de duplicado
+-- (`GET /api/compras/duplicados`) compara el VALOR NUMÉRICO de cada segmento, partiendo en el último
+-- guion, y por eso también encuentra filas anteriores a la forma canónica ("0003-00012345").
+-- Seguimiento: las filas viejas no se normalizaron. Una migración de datos podría chocar con el índice
+-- único (dos formatos de la misma factura) y exige resolver esos pares antes; mientras tanto el
+-- chequeo numérico las detecta.
 
 alicuotas_comprobante_compra (            -- [operativa, child: solo id_tenant, como los items]
     id_alicuota_comprobante_compra, id_tenant,

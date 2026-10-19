@@ -6,7 +6,7 @@ namespace Ways.IntegrationTests;
 internal static class DatosDePrueba
 {
     /// <summary>
-    /// Número externo de comprobante de compra con el formato visible <c>PPPP-NNNNNNNN</c> y 10^8
+    /// Número externo de comprobante de compra con el formato visible <c>PPPP-NNNNNNNN</c> (el servicio lo guarda como <c>0PPPP-NNNNNNNN</c>) y 10^8
     /// combinaciones en la parte variable. El índice único
     /// <c>ux_comprobantes_compra_numero_externo</c> alcanza a (tenant, proveedor, tipo, número),
     /// un ámbito que varias pruebas llenan con media docena de comprobantes: con poca entropía la
@@ -14,5 +14,5 @@ internal static class DatosDePrueba
     /// suite corre completa. Nunca recortar el resultado — el prefijo del punto de venta se lleva
     /// los primeros caracteres y el recorte deja casi toda la entropía afuera.
     /// </summary>
-    internal static string NumeroExternoUnico() => $"0001-{Random.Shared.Next(0, 100_000_000):D8}";
+    internal static string NumeroExternoUnico() => $"0001-{Random.Shared.Next(1, 100_000_000):D8}";
 }

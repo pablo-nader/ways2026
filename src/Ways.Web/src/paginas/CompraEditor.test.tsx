@@ -11,6 +11,7 @@ import type {
   AlicuotaIvaListado,
   ArticuloListado,
   CompraDetalle,
+  CompraDuplicada,
   GastoDeAdministracionListado,
   ItemDeCompra,
   ListaPrecioListado,
@@ -1228,7 +1229,7 @@ describe('CompraEditor — selectores del encabezado', () => {
 })
 
 describe('CompraEditor — número de comprobante', () => {
-  it('rellena con ceros al salir de cada campo y manda PPPP-NNNNNNNN', async () => {
+  it('rellena con ceros al salir de cada campo y manda PPPPP-NNNNNNNN', async () => {
     mockearReferencia()
     apiPostMock.mockImplementation((ruta: string) =>
       ruta === '/compras' ? Promise.resolve(compraFixture({ id: 99 })) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
@@ -1246,12 +1247,12 @@ describe('CompraEditor — número de comprobante', () => {
     await usuario.type(screen.getByLabelText('Número del comprobante'), '9985')
     await usuario.tab()
 
-    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0010')
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('00010')
     expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00009985')
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('0010-00009985')
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('00010-00009985')
   })
 
   it('solo admite dígitos y respeta el largo máximo de cada campo', async () => {
@@ -1263,7 +1264,7 @@ describe('CompraEditor — número de comprobante', () => {
     await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), 'a1b2c3d4e5')
     await usuario.type(screen.getByLabelText('Número del comprobante'), '1x2345678901')
 
-    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('1234')
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('12345')
     expect(screen.getByLabelText('Número del comprobante')).toHaveValue('12345678')
   })
 
@@ -1305,7 +1306,7 @@ describe('CompraEditor — número de comprobante', () => {
     expect(numero).not.toHaveClass('is-invalid')
 
     await usuario.tab()
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveClass('is-invalid')
     expect(puntoVenta).not.toHaveClass('is-invalid')
     expect(screen.getByText(/Falta el número\./)).toBeInTheDocument()
@@ -1362,21 +1363,28 @@ describe('CompraEditor — número de comprobante', () => {
 
     await usuario.click(puntoVenta)
     await usuario.paste('0010-00009985')
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveValue('00009985')
 
     await usuario.clear(puntoVenta)
     await usuario.clear(numero)
     await usuario.click(numero)
     await usuario.paste('10-9985')
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveValue('00009985')
 
     await usuario.clear(puntoVenta)
     await usuario.clear(numero)
     await usuario.click(puntoVenta)
     await usuario.paste('001000009985')
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
+    expect(numero).toHaveValue('00009985')
+
+    await usuario.clear(puntoVenta)
+    await usuario.clear(numero)
+    await usuario.click(numero)
+    await usuario.paste('0001000009985')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveValue('00009985')
   })
 
@@ -2933,5 +2941,144 @@ describe('CompraEditor — datos del artículo que completa la pantalla (lote e 
 
     expect(await screen.findByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
     expect(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3')
+  })
+})
+
+describe('CompraEditor — aviso de número duplicado', () => {
+  const duplicadoFixture = (sobrescribir: Partial<CompraDuplicada> = {}): CompraDuplicada => ({
+    id: 7,
+    estado: 'Confirmada',
+    numeroExterno: '3-12345',
+    fechaComprobante: '2026-07-01',
+    origen: 'Manual',
+    ...sobrescribir,
+  })
+
+  const llamadasADuplicados = () =>
+    apiGetMock.mock.calls.map((c) => c[0] as string).filter((ruta) => ruta.startsWith('/compras/duplicados'))
+
+  const mockearDuplicados = (respuesta: (ruta: string) => Promise<unknown>) =>
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta.startsWith('/compras/duplicados')) return respuesta(ruta)
+      return undefined
+    })
+
+  it('avisa sin bloquear qué compra ya tiene el número, con un vínculo a ella', async () => {
+    mockearDuplicados(() => Promise.resolve([duplicadoFixture({ id: 7 }), duplicadoFixture({ id: 9, estado: 'Borrador' })]))
+    renderEditor()
+
+    const texto = await screen.findByText(/Ya hay compras con ese número/, {}, { timeout: 3000 })
+
+    expect(texto).toHaveTextContent('#7 (Confirmada), #9 (Borrador).')
+    expect(within(texto).getByRole('link', { name: '#7' })).toHaveAttribute('href', '/compras/7')
+    expect(within(texto).getByRole('link', { name: '#9' })).toHaveAttribute('href', '/compras/9')
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeEnabled()
+  })
+
+  it('con una sola compra usa el singular', async () => {
+    mockearDuplicados(() => Promise.resolve([duplicadoFixture()]))
+    renderEditor()
+
+    expect(await screen.findByText(/Ya hay una compra con ese número/, {}, { timeout: 3000 })).toHaveTextContent('#7 (Confirmada).')
+  })
+
+  it('sin duplicados no muestra ningún aviso', async () => {
+    mockearDuplicados(() => Promise.resolve([]))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+    await act(async () => {})
+
+    expect(screen.queryByText(/Ya hay/)).not.toBeInTheDocument()
+  })
+
+  it('al editar una compra existente la consulta lleva el proveedor, el tipo, el número y su propio id', async () => {
+    mockearDuplicados(() => Promise.resolve([]))
+    renderEditor()
+
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+
+    const parametros = new URLSearchParams(llamadasADuplicados()[0].split('?')[1])
+    expect(parametros.get('idProveedor')).toBe('1')
+    expect(parametros.get('idTipoComprobante')).toBe('5')
+    expect(parametros.get('numeroExterno')).toBe('0003-00012345')
+    expect(parametros.get('excluirId')).toBe('1')
+  })
+
+  it('en una compra nueva consulta con el número tipeado y sin excluirId', async () => {
+    mockearReferencia((ruta) => (ruta.startsWith('/compras/duplicados') ? Promise.resolve([]) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), '3')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '12345')
+
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+
+    const parametros = new URLSearchParams(llamadasADuplicados()[0].split('?')[1])
+    expect(parametros.get('numeroExterno')).toBe('00003-12345')
+    expect(parametros.has('excluirId')).toBe(false)
+  })
+
+  it('una respuesta tardía de un número anterior no muestra su aviso sobre el número vigente', async () => {
+    let resolverViejo!: (valor: CompraDuplicada[]) => void
+    const viejo = new Promise<CompraDuplicada[]>((r) => {
+      resolverViejo = r
+    })
+    mockearDuplicados((ruta) =>
+      new URLSearchParams(ruta.split('?')[1]).get('numeroExterno') === '0003-00012345' ? viejo : Promise.resolve([]),
+    )
+    const usuario = userEvent.setup()
+    renderEditor()
+    const numero = await screen.findByDisplayValue('00012345')
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+
+    await usuario.clear(numero)
+    await usuario.type(numero, '777')
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(2), { timeout: 3000 })
+    expect(new URLSearchParams(llamadasADuplicados()[1].split('?')[1]).get('numeroExterno')).toBe('0003-777')
+
+    await act(async () => {
+      resolverViejo([duplicadoFixture()])
+    })
+
+    expect(screen.queryByText(/Ya hay/)).not.toBeInTheDocument()
+  })
+
+  it('un rol sin escritura no consulta duplicados', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearDuplicados(() => Promise.resolve([duplicadoFixture()]))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700))
+    })
+
+    expect(llamadasADuplicados()).toHaveLength(0)
+    expect(screen.queryByText(/Ya hay/)).not.toBeInTheDocument()
+  })
+
+  it('una compra confirmada no consulta duplicados', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-02T10:00:00Z' }))
+      if (ruta.startsWith('/compras/duplicados')) return Promise.resolve([duplicadoFixture()])
+      return undefined
+    })
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700))
+    })
+
+    expect(llamadasADuplicados()).toHaveLength(0)
   })
 })

@@ -269,16 +269,23 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     /// <summary>Test diferido de la Slice 1 (task deferred): la unicidad usa <c>citext</c> —
     /// "F-0001" y "f-0001" son el MISMO valor para el índice parcial, así que guardar el
-    /// segundo borrador choca contra la primera fila con el mismo <c>23505</c> traducido.</summary>
+    /// segundo borrador choca contra la primera fila con el mismo <c>23505</c> traducido. Va con un
+    /// remito (<c>C-RM</c>): en las facturas el número se normaliza a dígitos y no admite letras.</summary>
     [Fact]
     public async Task UnNumeroExternoDifiereSoloEnMayusculasChocaPorCitext()
     {
         var ctx = await PrepararAsync(nameof(UnNumeroExternoDifiereSoloEnMayusculasChocaPorCitext));
+        int idRemito;
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            idRemito = await db.TiposComprobante.Where(t => t.Codigo == "C-RM").Select(t => t.Id).SingleAsync();
+        }
 
-        var primera = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "F-0001"));
+        var primera = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "F-0001") with { IdTipoComprobante = idRemito });
         await ConfirmarAsync(ctx, primera.Id);
 
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/compras", SolicitudSimple(ctx, numeroExterno: "f-0001"));
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/compras", SolicitudSimple(ctx, numeroExterno: "f-0001") with { IdTipoComprobante = idRemito });
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();

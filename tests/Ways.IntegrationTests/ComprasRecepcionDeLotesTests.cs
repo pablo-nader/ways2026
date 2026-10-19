@@ -147,7 +147,7 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         Contexto ctx, string? codigoLote, DateOnly? fechaVencimiento, decimal unidades = 10m,
         decimal costoUnitario = 100m, string? numeroExterno = null) =>
         new(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno ?? $"NE-{Guid.NewGuid():N}",
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno ?? DatosDePrueba.NumeroExternoUnico(),
             DateOnly.FromDateTime(DateTime.UtcNow), null,
             [
                 new LineaDeCompraSolicitada(
@@ -460,7 +460,7 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         var ctx = await PrepararAsync(nameof(UnaLineaConVencimientoPasadoEsRechazadaAlEditarElBorrador));
         var creada = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-EDICION", VencimientoLejanoFuturo));
 
-        var edicion = SolicitudConLote(ctx, "L-EDICION", VencimientoLejanoPasado, numeroExterno: $"NE-{Guid.NewGuid():N}");
+        var edicion = SolicitudConLote(ctx, "L-EDICION", VencimientoLejanoPasado, numeroExterno: DatosDePrueba.NumeroExternoUnico());
         var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/compras/{creada.Id}", edicion);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
 
@@ -700,7 +700,7 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         await db.SaveChangesAsync();
 
         var solicitud = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, $"NE-{Guid.NewGuid():N}", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, DatosDePrueba.NumeroExternoUnico(), DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(articuloSinLote.Id, "Item sin lote", 8m, null, null, 50m, 0m, ctx.IdAlicuotaIva21, true)]);
 
         var creada = await CrearBorradorAsync(ctx, solicitud);

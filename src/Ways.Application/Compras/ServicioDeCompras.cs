@@ -216,6 +216,7 @@ public class ServicioDeCompras(
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
@@ -230,11 +231,12 @@ public class ServicioDeCompras(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarAltaDeBorradorAsync(
-                idTenant, idEmpleado, solicitud, origen, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
+                idTenant, idEmpleado, solicitud, origen, numeroExterno, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarAltaDeBorradorAsync(
-        int idTenant, int idEmpleado, SolicitudDeCompra solicitud, OrigenCompra origen, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
+        int idTenant, int idEmpleado, SolicitudDeCompra solicitud, OrigenCompra origen, string? numeroExterno, bool discriminaIva,
+        IReadOnlyList<LineaDeCompra> lineas,
         CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -253,7 +255,7 @@ public class ServicioDeCompras(
             IdTenant = idTenant,
             IdProveedor = solicitud.IdProveedor,
             IdTipoComprobante = solicitud.IdTipoComprobante,
-            NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno),
+            NumeroExterno = numeroExterno,
             FechaComprobante = solicitud.FechaComprobante,
             FechaRecepcion = null,
             IdPuntoVenta = solicitud.IdPuntoVenta,
@@ -293,6 +295,15 @@ public class ServicioDeCompras(
     public async Task<CompraDetalle> ActualizarBorradorAsync(int id, SolicitudDeCompra solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
+
+        // update-404-first: una compra inexistente, de otro tenant o dada de baja responde 404 antes de
+        // validar el cuerpo. La lectura que manda sigue siendo la de EjecutarActualizacionAsync, bajo el lock.
+        var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+        if (!existe)
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+        }
+
         var momento = reloj.Ahora;
 
         // Etapa 12, slice 5: mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
@@ -301,6 +312,7 @@ public class ServicioDeCompras(
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
@@ -311,12 +323,13 @@ public class ServicioDeCompras(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarActualizacionAsync(
-                id, idTenant, solicitud, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
+                id, idTenant, solicitud, numeroExterno, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarActualizacionAsync(
-        int id, int idTenant, SolicitudDeCompra solicitud, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
-        CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor, DateTimeOffset momento, CancellationToken ct)
+        int id, int idTenant, SolicitudDeCompra solicitud, string? numeroExterno, bool discriminaIva,
+        IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor,
+        DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -361,7 +374,7 @@ public class ServicioDeCompras(
 
         comprobante.IdProveedor = solicitud.IdProveedor;
         comprobante.IdTipoComprobante = solicitud.IdTipoComprobante;
-        comprobante.NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno);
+        comprobante.NumeroExterno = numeroExterno;
         comprobante.FechaComprobante = solicitud.FechaComprobante;
         comprobante.IdPuntoVenta = solicitud.IdPuntoVenta;
         comprobante.Observaciones = NormalizarOpcional(solicitud.Observaciones);
@@ -385,6 +398,75 @@ public class ServicioDeCompras(
         await transaccion.CommitAsync(ct);
 
         return Proyectar(comprobante, itemsNuevos, alicuotasNuevas, percepcionesNuevas, pagado: 0m);
+    }
+
+    // ---- chequeo de duplicado por número normalizado -----------------------------------------------
+
+    /// <summary>Compras no anuladas del mismo proveedor y tipo cuyo número es el pedido. Mismo alcance que
+    /// <c>ux_comprobantes_compra_numero_externo</c>, pero en tipos que registran el libro IVA compara el valor
+    /// numérico de cada segmento (<see cref="NumeroDeComprobanteDeCompra.TryObtenerSegmentos"/>), así que
+    /// <c>3-12345</c> encuentra una fila vieja guardada como <c>0003-00012345</c>; el número guardado como
+    /// texto libre sin guion no es comparable y no aparece. En los demás tipos (remito) compara el texto
+    /// recortado sin distinguir mayúsculas. Un número vacío no tiene duplicados; un número fiscal que no se
+    /// puede interpretar es 400 <c>numero_comprobante_invalido</c>. <paramref name="excluirIdCompra"/> deja
+    /// afuera la compra que se está editando.</summary>
+    public async Task<IReadOnlyList<CompraDuplicada>> BuscarDuplicadosAsync(
+        int idProveedor, int idTipoComprobante, string? numeroExterno, int? excluirIdCompra, CancellationToken ct = default)
+    {
+        var tipo = await ResolverTipoDeCompraAsync(idTipoComprobante, ct);
+
+        var pedido = NormalizarOpcional(numeroExterno);
+        if (pedido is null)
+        {
+            return [];
+        }
+
+        Func<string, bool> coincide;
+        if (tipo.RegistraLibroIva)
+        {
+            var canonico = NormalizarNumeroExterno(tipo, pedido)!;
+            NumeroDeComprobanteDeCompra.TryObtenerSegmentos(canonico, out var buscados);
+            coincide = guardado =>
+                NumeroDeComprobanteDeCompra.TryObtenerSegmentos(guardado, out var segmentos) && segmentos == buscados;
+        }
+        else
+        {
+            coincide = guardado => string.Equals(guardado.Trim(), pedido, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var candidatos = await db.ComprobantesCompra
+            .AsNoTracking()
+            .Where(c => c.IdProveedor == idProveedor && c.IdTipoComprobante == idTipoComprobante
+                && c.Estado != EstadoCompra.Anulada && c.NumeroExterno != null
+                && (excluirIdCompra == null || c.Id != excluirIdCompra))
+            .OrderBy(c => c.Id)
+            .Select(c => new CompraDuplicada(c.Id, c.Estado, c.NumeroExterno!, c.FechaComprobante, c.Origen))
+            .ToListAsync(ct);
+
+        return candidatos.Where(c => coincide(c.NumeroExterno)).ToList();
+    }
+
+    /// <summary>Número listo para guardar: en los tipos que registran el libro IVA, la forma canónica
+    /// <c>PPPPP-NNNNNNNN</c> o 400 <c>numero_comprobante_invalido</c>; en los demás, el texto libre recortado.
+    /// Sin número devuelve <c>null</c>.</summary>
+    private static string? NormalizarNumeroExterno(TipoComprobante tipo, string? numero)
+    {
+        var limpio = NormalizarOpcional(numero);
+        if (limpio is null || !tipo.RegistraLibroIva)
+        {
+            return limpio;
+        }
+
+        if (!NumeroDeComprobanteDeCompra.TryNormalizar(limpio, out var canonico))
+        {
+            throw new ErrorDominio(
+                "numero_comprobante_invalido",
+                "El número del comprobante no es válido. Se espera punto de venta y número separados por un guion, " +
+                "por ejemplo 0003-00012345 (hasta 5 dígitos de punto de venta y 8 de número, ninguno en cero).",
+                400);
+        }
+
+        return canonico;
     }
 
     // ---- descartar un borrador (borrado físico) -----------------------------------------------------

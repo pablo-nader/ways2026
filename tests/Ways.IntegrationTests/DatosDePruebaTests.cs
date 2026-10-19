@@ -3,7 +3,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// <c>mutation-proof-tests</c> regla 1 — la cláusula bajo prueba es la parte variable de ocho
 /// dígitos de <see cref="DatosDePrueba.NumeroExternoUnico"/>
-/// (<c>Random.Shared.Next(0, 100_000_000):D8</c>). Es la que evita el 409 <c>compra_duplicada</c>
+/// (<c>Random.Shared.Next(1, 100_000_000):D8</c>). Es la que evita el 409 <c>compra_duplicada</c>
 /// intermitente contra <c>ux_comprobantes_compra_numero_externo</c> cuando la suite corre
 /// completa; el generador anterior recortaba el interpolado a ocho caracteres y dejaba sólo tres
 /// hexadecimales (4096 valores) dentro del ámbito (tenant, proveedor, tipo).

@@ -11,6 +11,7 @@ import { brutoDeLinea, cantidadDeLinea, lineaCompletaParaEnvio, aLineaSolicitada
 import { redondearImporte } from '../formato/importes'
 import type {
   CompraDetalle,
+  CompraDuplicada,
   EstadoCompra,
   OrigenCompra,
   EstadoPago,
@@ -85,9 +86,30 @@ export function construirQueryDeCompras(filtros: FiltrosDeCompras): string {
   return `?${parametros.toString()}`
 }
 
+export type ParametrosDeDuplicados = {
+  idProveedor: number
+  idTipoComprobante: number
+  numeroExterno: string
+  /** La compra que se está editando: no cuenta como duplicado de sí misma. */
+  excluirId: number | null
+}
+
+/** Arma el query string de `GET /api/compras/duplicados`. */
+export function construirQueryDeDuplicados(parametros: ParametrosDeDuplicados): string {
+  const query = new URLSearchParams()
+  query.set('idProveedor', String(parametros.idProveedor))
+  query.set('idTipoComprobante', String(parametros.idTipoComprobante))
+  query.set('numeroExterno', parametros.numeroExterno)
+  if (parametros.excluirId !== null) query.set('excluirId', String(parametros.excluirId))
+  return `?${query.toString()}`
+}
+
 export const clienteDeCompras = {
   listar: (filtros: FiltrosDeCompras) => api.get<PaginaDeCompras>(`/compras${construirQueryDeCompras(filtros)}`),
   obtener: (id: number) => api.get<CompraDetalle>(`/compras/${id}`),
+  /** `GET /api/compras/duplicados` — compras no anuladas del mismo proveedor y tipo con ese número, comparado por su valor. */
+  buscarDuplicados: (parametros: ParametrosDeDuplicados) =>
+    api.get<CompraDuplicada[]>(`/compras/duplicados${construirQueryDeDuplicados(parametros)}`),
   crear: (solicitud: SolicitudDeCompra) => api.post<CompraDetalle>('/compras', solicitud),
   actualizar: (id: number, solicitud: SolicitudDeCompra) => api.put<CompraDetalle>(`/compras/${id}`, solicitud),
   /** `DELETE /api/compras/{id}` — borra de verdad un borrador (409 `compra_no_descartable` si ya no lo es). */

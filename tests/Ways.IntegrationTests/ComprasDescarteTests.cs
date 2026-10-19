@@ -196,7 +196,7 @@ public class ComprasDescarteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.True(valorAnterior.RootElement.GetProperty("existe").GetBoolean());
         Assert.False(valorNuevo.RootElement.GetProperty("existe").GetBoolean());
         Assert.Equal(ctx.IdProveedor, valorNuevo.RootElement.GetProperty("id_proveedor").GetInt32());
-        Assert.Equal("0001-00000001", valorNuevo.RootElement.GetProperty("numero_externo").GetString());
+        Assert.Equal("00001-00000001", valorNuevo.RootElement.GetProperty("numero_externo").GetString());
         Assert.Equal(creada.Total, valorNuevo.RootElement.GetProperty("total").GetDecimal());
         Assert.Equal(2, valorNuevo.RootElement.GetProperty("cantidad_de_items").GetInt32());
     }
