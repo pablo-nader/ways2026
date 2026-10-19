@@ -134,6 +134,7 @@ export function ReporteDeVentasPorArticulo() {
     if (clave === null) {
       setDatos(null)
       setCargando(false)
+      setError('')
       return
     }
     setCargando(true)
@@ -160,10 +161,11 @@ export function ReporteDeVentasPorArticulo() {
     cargar()
   }, [cargar])
 
+  // Incluye los dados de baja: el reporte sigue mostrando lo que se vendió de ellos en el período.
   const buscarArticulos = useCallback(
     (texto: string) =>
       clienteDeArticulos
-        .listar(texto, false)
+        .listar(texto, true)
         .then((pagina) => pagina.items.map((a) => ({ id: a.id, etiqueta: `${a.codigoInterno} — ${a.nombre}` }))),
     [],
   )
@@ -346,8 +348,13 @@ export function ReporteDeVentasPorArticulo() {
 
             {cargando && !datos && <Cargando />}
 
+            {cargando && datos && (
+              <div className="small text-muted mb-2" role="status">
+                Actualizando…
+              </div>
+            )}
             {datos && (
-              <div className="table-responsive">
+              <div className="table-responsive" aria-busy={cargando} style={cargando ? { opacity: 0.5 } : undefined}>
                 <table className="table table-sm table-striped table-bordered align-middle">
                   <thead>
                     <tr>

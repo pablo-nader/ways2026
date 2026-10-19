@@ -241,11 +241,12 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
     }
 
     // Cada caso fija una cláusula: categoria/area/articulo van al reporte; marca, proveedor y texto recortan sus filas.
-    // Agua 1L ya es Gaseosas (cambió después de vender); Viejo no es visible, así que ningún filtro de artículo lo alcanza.
+    // Agua 1L ya es Gaseosas (cambió después de vender). Viejo está dado de baja: los filtros del reporte (categoría y
+    // área) lo siguen contando con su clasificación, los propios del conector (marca, proveedor, texto) no lo alcanzan.
     [Theory]
     [InlineData("""{"categoria":"gaseosas"}""", "categoría Gaseosas", "1.300,00", new[] { "COLA-2L", "COLA-500", "AGUA-1L" })]
-    [InlineData("""{"categoria":"aguas"}""", "categoría Aguas", "0,00", new string[0])]
-    [InlineData("""{"area":"almacén"}""", "área Almacén", "150,00", new[] { "FID-500" })]
+    [InlineData("""{"categoria":"aguas"}""", "categoría Aguas", "200,00", new[] { "(sin código)" })]
+    [InlineData("""{"area":"almacén"}""", "área Almacén", "350,00", new[] { "(sin código)", "FID-500" })]
     [InlineData("""{"articulo":"cola-500"}""", "artículo Cola 500", "400,00", new[] { "COLA-500" })]
     [InlineData("""{"marca":"FRESH"}""", "marca Fresh", "300,00", new[] { "AGUA-1L" })]
     [InlineData("""{"proveedor":"norte"}""", "proveedor Distribuidora Norte", "1.000,00", new[] { "COLA-2L", "COLA-500" })]

@@ -19,7 +19,8 @@ namespace Ways.Application.Reportes;
 /// LINQ puro sobre <c>ItemsComprobanteVenta</c> ⋈ <c>ComprobantesVenta</c> ⋈
 /// <c>TiposComprobante</c>, sin costo ni margen: esos campos viven en <c>/rentabilidad</c>,
 /// gateado aparte por <c>LecturaDeRentabilidad</c> (no en esta policy). Los filtros de
-/// <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre ambas tablas (design decisión 1) —
+/// <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre ambas tablas (design decisión 1), salvo
+/// el subconjunto de artículos de ventas por artículo, que apaga solo <c>BajaLogica</c> —
 /// a diferencia de <c>LectorDeSerieTemporal</c>, esta consulta nunca corre SQL crudo.
 /// </summary>
 public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametros parametros)
@@ -69,7 +70,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
     private IQueryable<LineaVendida> LineasVendidas(
         IReadOnlyList<int> idsPuntoVenta, RangoDeReporte rango, int? idArticulo = null,
-        IReadOnlyCollection<int?>? soloArticulos = null)
+        IQueryable<int>? soloArticulos = null)
     {
         var consulta = db.ItemsComprobanteVenta
             .Where(i => i.IdArticulo != null)
@@ -91,7 +92,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         if (soloArticulos is not null)
         {
-            consulta = consulta.Where(x => soloArticulos.Contains(x.Item.IdArticulo));
+            consulta = consulta.Where(x => soloArticulos.Contains(x.Item.IdArticulo!.Value));
         }
 
         return consulta.Select(x => new LineaVendida(x.Item.IdArticulo, x.Item.Descripcion, x.Item.Cantidad, x.Item.Total, x.Comprobante.Fecha));
@@ -146,11 +147,13 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
             return new VentasPorArticulo(desde, hasta, zonaId, 0m, 0m, []);
         }
 
-        List<int?>? idsQueCoinciden = null;
+        IQueryable<int>? idsQueCoinciden = null;
 
         if (idArea is not null || idGrupo is not null || categorias is not null)
         {
-            var articulosQuery = db.Articulos.AsQueryable();
+            // Un artículo dado de baja que se vendió en el período sigue contando; solo se apaga
+            // el filtro de baja, el de tenant se mantiene.
+            var articulosQuery = db.Articulos.IgnoreQueryFilters(["BajaLogica"]);
 
             if (idArea is { } areaFiltro)
             {
@@ -167,7 +170,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
                 articulosQuery = articulosQuery.Where(a => a.IdCategoria != null && categorias.Contains(a.IdCategoria.Value));
             }
 
-            idsQueCoinciden = await articulosQuery.Select(a => (int?)a.Id).ToListAsync(ct);
+            idsQueCoinciden = articulosQuery.Select(a => a.Id);
         }
 
         var lineasQuery = LineasVendidas(idsPuntoVenta, rango, idArticulo, idsQueCoinciden);

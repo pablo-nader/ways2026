@@ -234,6 +234,14 @@ public class ReportesVentasPorArticuloTests(WaysApiFixture fixture) : IClassFixt
         await db.SaveChangesAsync();
     }
 
+    private async Task DarDeBajaArticuloAsync(Contexto ctx, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var articulo = await db.Articulos.SingleAsync(a => a.Id == id);
+        articulo.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     // ---- filtros ------------------------------------------------------------------------------
 
     [Fact]
@@ -457,6 +465,34 @@ public class ReportesVentasPorArticuloTests(WaysApiFixture fixture) : IClassFixt
         Assert.Null(fila.Area);
         Assert.Empty(porCategoria.Articulos);
         Assert.Empty(porArea.Articulos);
+    }
+
+    /// <summary>Cláusula bajo prueba: el subconjunto de artículos de los filtros de clasificación
+    /// ignora solo el filtro de baja lógica. Mutación aplicada (volver a <c>db.Articulos</c> con el
+    /// filtro de baja): este test falló; revertida, pasó.</summary>
+    [Fact]
+    public async Task UnArticuloDadoDeBajaVendidoEnElPeriodoSigueApareciendoConLosFiltros()
+    {
+        var ctx = await PrepararAsync(nameof(UnArticuloDadoDeBajaVendidoEnElPeriodoSigueApareciendoConLosFiltros));
+        var borrado = await SembrarArticuloAsync(ctx, "Discontinuado", ctx.IdAreaA, ctx.IdGrupoA, ctx.IdCategoriaHija);
+        var otroGrupo = await SembrarArticuloAsync(ctx, "Otro grupo", ctx.IdAreaA, ctx.IdGrupoB);
+        await SembrarLineaAsync(ctx, borrado, 3m, 300m);
+        await SembrarLineaAsync(ctx, otroGrupo, 1m, 100m);
+        await DarDeBajaArticuloAsync(ctx, borrado);
+
+        var sinFiltro = await ObtenerAsync(ctx.Admin, Url(ctx.IdEmpresa));
+        var porGrupo = await ObtenerAsync(ctx.Admin, Url(ctx.IdEmpresa, idGrupo: ctx.IdGrupoA));
+        var porArea = await ObtenerAsync(ctx.Admin, Url(ctx.IdEmpresa, idArea: ctx.IdAreaA));
+        var porCategoria = await ObtenerAsync(ctx.Admin, Url(ctx.IdEmpresa, idCategoria: ctx.IdCategoriaPadre));
+
+        Assert.Contains(sinFiltro.Articulos, f => f.IdArticulo == borrado);
+        var fila = Assert.Single(porGrupo.Articulos);
+        Assert.Equal(borrado, fila.IdArticulo);
+        Assert.Equal("snapshot", fila.Descripcion);
+        Assert.Equal(3m, fila.Cantidad);
+        Assert.Equal(300m, porGrupo.Total);
+        Assert.Equal(new[] { borrado, otroGrupo }.Order(), porArea.Articulos.Select(f => f.IdArticulo).Order());
+        Assert.Equal(borrado, Assert.Single(porCategoria.Articulos).IdArticulo);
     }
 
     [Fact]
