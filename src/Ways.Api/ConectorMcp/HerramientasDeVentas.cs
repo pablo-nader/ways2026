@@ -47,11 +47,12 @@ public sealed class HerramientasDeVentas
         "separados como máximo 366 días). La tabla por día solo aparece cuando el período abarca 31 días distintos o " +
         "menos (contados entre todas las empresas). Sin empresa suma todas las empresas del tenant. Solo para " +
         "Supervisor y Admin.")]
-    public static async Task<CallToolResult> VentasResumenAsync(
+    public static Task<CallToolResult> VentasResumenAsync(
         IContextoDeUsuario actual,
         IAuthorizationService autorizacion,
         IHttpContextAccessor http,
         ServicioDeConsultasDeVentas consultas,
+        ILogger<HerramientasDeVentas> log,
         [Description("Nombre del período: hoy, ayer, esta_semana, semana_pasada, este_mes o mes_pasado. No se combina con desde/hasta.")]
         string? periodo = null,
         [Description("Primer día del rango, yyyy-MM-dd, inclusivo. Va junto con hasta, que puede estar como máximo 366 días después.")]
@@ -63,11 +64,16 @@ public sealed class HerramientasDeVentas
         [Description("Punto de venta, por id o por nombre. Si se omite, todos los de la empresa.")]
         string? punto_venta = null,
         CancellationToken ct = default) =>
-        await EjecutarAsync(actual, autorizacion, http, async () =>
+        ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
+            if (await NegacionDeRolAsync(actual, autorizacion, http) is { } negacion)
+            {
+                return negacion;
+            }
+
             var resumen = await consultas.ResumirAsync(new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, punto_venta), ct);
             return FormatearResumen(resumen);
-        });
+        }, log);
 
     [McpServerTool(
         Name = "ventas_agrupadas",
@@ -90,11 +96,12 @@ public sealed class HerramientasDeVentas
         "'limite' grupos. El período se indica con un nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, " +
         "mes_pasado), resuelto en la zona horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, inclusivos; pueden " +
         "estar separados como máximo 366 días). Solo para Supervisor y Admin.")]
-    public static async Task<CallToolResult> VentasAgrupadasAsync(
+    public static Task<CallToolResult> VentasAgrupadasAsync(
         IContextoDeUsuario actual,
         IAuthorizationService autorizacion,
         IHttpContextAccessor http,
         ServicioDeConsultasDeVentas consultas,
+        ILogger<HerramientasDeVentas> log,
         [Description("Cómo agrupar: punto_venta, medio_pago, vendedor, dia, area, grupo, categoria o marca.")]
         string agrupar_por,
         [Description("Nombre del período: hoy, ayer, esta_semana, semana_pasada, este_mes o mes_pasado. No se combina con desde/hasta.")]
@@ -110,14 +117,19 @@ public sealed class HerramientasDeVentas
         [Description("Cantidad máxima de grupos a devolver, de 1 a 50. Por defecto 20.")]
         int limite = LimitePorDefecto,
         CancellationToken ct = default) =>
-        await EjecutarAsync(actual, autorizacion, http, async () =>
+        ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
+            if (await NegacionDeRolAsync(actual, autorizacion, http) is { } negacion)
+            {
+                return negacion;
+            }
+
             ValidarLimite(limite);
             var por = ServicioDeConsultasDeVentas.ParsearAgrupacion(agrupar_por);
             var agrupacion = await consultas.AgruparAsync(
                 new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, punto_venta), por, ct);
             return FormatearAgrupacion(agrupacion, limite);
-        });
+        }, log);
 
     [McpServerTool(
         Name = "ventas_por_articulo",
@@ -138,11 +150,12 @@ public sealed class HerramientasDeVentas
         "artículos. El período se indica con un nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), " +
         "resuelto en la zona horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, inclusivos; pueden estar separados " +
         "como máximo 366 días). Solo para Supervisor y Admin.")]
-    public static async Task<CallToolResult> VentasPorArticuloAsync(
+    public static Task<CallToolResult> VentasPorArticuloAsync(
         IContextoDeUsuario actual,
         IAuthorizationService autorizacion,
         IHttpContextAccessor http,
         ServicioDeConsultasDeVentas consultas,
+        ILogger<HerramientasDeVentas> log,
         [Description("Nombre del período: hoy, ayer, esta_semana, semana_pasada, este_mes o mes_pasado. No se combina con desde/hasta.")]
         string? periodo = null,
         [Description("Primer día del rango, yyyy-MM-dd, inclusivo. Va junto con hasta, que puede estar como máximo 366 días después.")]
@@ -172,8 +185,13 @@ public sealed class HerramientasDeVentas
         [Description("Cantidad máxima de artículos a devolver, de 1 a 50. Por defecto 20.")]
         int limite = LimitePorDefecto,
         CancellationToken ct = default) =>
-        await EjecutarAsync(actual, autorizacion, http, async () =>
+        ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
+            if (await NegacionDeRolAsync(actual, autorizacion, http) is { } negacion)
+            {
+                return negacion;
+            }
+
             ValidarLimite(limite);
             var resultado = await consultas.PorArticuloAsync(
                 new SolicitudDeVentasPorArticulo(
@@ -181,7 +199,7 @@ public sealed class HerramientasDeVentas
                     texto, area, grupo, categoria, marca, proveedor, articulo, ServicioDeConsultasDeVentas.ParsearOrden(orden), limite),
                 ct);
             return FormatearPorArticulo(resultado);
-        });
+        }, log);
 
     private static void ValidarLimite(int limite)
     {
@@ -193,30 +211,13 @@ public sealed class HerramientasDeVentas
 
     /// <summary>La puerta de rol es la misma política que protege los reportes de ventas de la web
     /// (<see cref="Politicas.LecturaDeReportes"/>), evaluada sobre el usuario de la request. Un rol
-    /// rechazado recibe un resultado de texto normal; un error del usuario (período desconocido,
-    /// empresa inexistente…) vuelve como resultado con <c>IsError</c> y su mensaje.</summary>
-    private static async Task<CallToolResult> EjecutarAsync(
-        IContextoDeUsuario actual, IAuthorizationService autorizacion, IHttpContextAccessor http, Func<Task<string>> consulta)
-    {
-        var usuario = http.HttpContext!.User;
-        if (!(await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeReportes)).Succeeded)
-        {
-            return Resultado(
-                $"Tu rol ({actual.Rol}) no puede ver reportes de ventas: requiere Supervisor o Admin.", esError: false);
-        }
-
-        try
-        {
-            return Resultado(await consulta(), esError: false);
-        }
-        catch (ErrorDominio error)
-        {
-            return Resultado(error.Message, esError: true);
-        }
-    }
-
-    internal static CallToolResult Resultado(string texto, bool esError) =>
-        new() { IsError = esError, Content = [new TextContentBlock { Text = texto }] };
+    /// rechazado recibe este texto como resultado normal, sin <c>isError</c>; un error del usuario (período
+    /// desconocido, empresa inexistente…) vuelve por <see cref="ResultadoDeHerramienta"/> con <c>isError</c>.</summary>
+    private static async Task<string?> NegacionDeRolAsync(
+        IContextoDeUsuario actual, IAuthorizationService autorizacion, IHttpContextAccessor http) =>
+        (await autorizacion.AuthorizeAsync(http.HttpContext!.User, Politicas.LecturaDeReportes)).Succeeded
+            ? null
+            : $"Tu rol ({actual.Rol}) no puede ver reportes de ventas: requiere Supervisor o Admin.";
 
     private static string FormatearResumen(ResumenDeVentasConsultado r)
     {

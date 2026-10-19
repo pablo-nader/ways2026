@@ -147,5 +147,5 @@ public sealed class HerramientasDeCargaDeCompras
             }
 
             return TextosDelBorradorDeCompra.DescribirCreado(compra, tipo.Nombre, Link(compra.Id), factura.TotalImpreso);
-        });
+        }, log);
 }

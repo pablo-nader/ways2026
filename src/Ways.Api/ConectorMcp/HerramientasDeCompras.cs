@@ -42,6 +42,7 @@ public sealed class HerramientasDeCompras
     public static Task<CallToolResult> ContextoDeComprasAsync(
         IAuthorizationService autorizacion,
         IHttpContextAccessor accesor,
+        ILogger<HerramientasDeCompras> log,
         IContextoDeUsuario actual,
         ServicioDeOrganizacion organizacion,
         ServicioDeCatalogosFiscales catalogosFiscales,
@@ -74,7 +75,7 @@ public sealed class HerramientasDeCompras
             lineas.AddRange(alicuotas.Select(a => $"- {a.Id} | {a.Nombre} | {Porcentaje(a.Porcentaje)}"));
 
             return string.Join(Environment.NewLine, lineas);
-        });
+        }, log);
 
     [McpServerTool(
         Name = "buscar_proveedor",
@@ -91,6 +92,7 @@ public sealed class HerramientasDeCompras
     public static Task<CallToolResult> BuscarProveedorAsync(
         IAuthorizationService autorizacion,
         IHttpContextAccessor accesor,
+        ILogger<HerramientasDeCompras> log,
         IWaysDbContext db,
         [Description("CUIT del proveedor, con o sin guiones, puntos o espacios. Si viene, la búsqueda es solo por CUIT.")]
         string? cuit = null,
@@ -162,7 +164,7 @@ public sealed class HerramientasDeCompras
             }
 
             return string.Join(Environment.NewLine, lineas);
-        });
+        }, log);
 
     [McpServerTool(
         Name = "buscar_articulos",
@@ -181,6 +183,7 @@ public sealed class HerramientasDeCompras
     public static Task<CallToolResult> BuscarArticulosAsync(
         IAuthorizationService autorizacion,
         IHttpContextAccessor accesor,
+        ILogger<HerramientasDeCompras> log,
         IWaysDbContext db,
         [Description("Id del proveedor de la factura, el que devolvió buscar_proveedor.")]
         int idProveedor,
@@ -218,7 +221,7 @@ public sealed class HerramientasDeCompras
             }
 
             return string.Join(Environment.NewLine, salida);
-        });
+        }, log);
 
     private sealed record Candidato(
         int Id, string Nombre, string CodigoInterno, UnidadVenta Unidad, int? IdAlicuota, string? Alicuota, bool Activo);

@@ -278,8 +278,10 @@ regla es solo de la herramienta: la web solo advierte y la API acepta códigos n
 Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
 todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`
 y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sale como resultado con
-`isError` y ese mensaje; una excepción que escapa de la herramienta, incluso una `McpException`, le
-llega a Claude con un mensaje genérico del SDK.
+`isError` y ese mensaje. El mismo runner devuelve con `isError` el mensaje de un `ErrorDominio` de los
+servicios y, para un `DbUpdateException` que la API clasifica (`ManejadorDeErrores`), el mismo título
+que daría el endpoint. Cualquier otra excepción que escapa de la herramienta, incluso una
+`McpException`, le llega a Claude con un mensaje genérico del SDK.
 
 ### Encenderlo
 

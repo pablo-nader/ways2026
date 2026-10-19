@@ -5,7 +5,6 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Ways.Api.Seguridad;
 using Ways.Application.Reportes;
-using Ways.Domain.Common;
 
 namespace Ways.Api.ConectorMcp;
 
@@ -45,32 +44,27 @@ public sealed class HerramientasDeFichaDeArticulo
         "(total de la línea neto del descuento, más el IVA si el comprobante lo discrimina y los costos cargados " +
         "no lo incluyen, dividido por la cantidad; no indica si esa línea actualizó el costo). Con empresa, los precios son los de las listas compartidas y " +
         "las de esa empresa, y el stock, las ventas y las compras son los de esa empresa; sin empresa, todo el tenant.")]
-    public static async Task<CallToolResult> ArticuloInfoAsync(
+    public static Task<CallToolResult> ArticuloInfoAsync(
         IAuthorizationService autorizacion,
         IHttpContextAccessor http,
         ServicioDeFichaDeArticulo fichas,
+        ILogger<HerramientasDeFichaDeArticulo> log,
         [Description("El artículo: id, código interno, código de barras o nombre (o parte del nombre).")]
         string articulo,
         [Description("Empresa, por id o por nombre. Si se omite, todas las empresas del tenant.")]
         string? empresa = null,
         [Description("Cuántas compras recientes listar, de 1 a 20. Por defecto 5.")]
         int compras = ServicioDeFichaDeArticulo.ComprasPorDefecto,
-        CancellationToken ct = default)
-    {
-        var usuario = http.HttpContext!.User;
-        var verVentas = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeReportes)).Succeeded;
-        var verCostos = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeCostos)).Succeeded;
+        CancellationToken ct = default) =>
+        ResultadoDeHerramienta.EjecutarAsync(async () =>
+        {
+            var usuario = http.HttpContext!.User;
+            var verVentas = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeReportes)).Succeeded;
+            var verCostos = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeCostos)).Succeeded;
 
-        try
-        {
             var ficha = await fichas.ObtenerAsync(new SolicitudDeFichaDeArticulo(articulo, empresa, compras, verVentas, verCostos), ct);
-            return HerramientasDeVentas.Resultado(Formatear(ficha, verVentas), esError: false);
-        }
-        catch (ErrorDominio error)
-        {
-            return HerramientasDeVentas.Resultado(error.Message, esError: true);
-        }
-    }
+            return Formatear(ficha, verVentas);
+        }, log);
 
     private static string Formatear(FichaDeArticulo f, bool verMinimo)
     {

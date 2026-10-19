@@ -1,12 +1,18 @@
+using System.Data.Common;
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using static Ways.IntegrationTests.ApoyoDeConectorMcp;
 
 namespace Ways.IntegrationTests;
@@ -47,7 +53,8 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
 
     /// <param name="rol">Se fija en la base ANTES de autorizar: el access token lleva el rol que el
     /// usuario tiene al momento de aprobar.</param>
-    private async Task<Escenario> PrepararAsync(string nombre, RolConocido rol = RolConocido.Admin)
+    private async Task<Escenario> PrepararAsync(
+        string nombre, RolConocido rol = RolConocido.Admin, Action<IWebHostBuilder>? configurarMas = null)
     {
         var usuario = await _apoyo.SembrarUsuarioDeTenantAsync(nombre);
         var datos = await SembrarCatalogoAsync(usuario, nombre);
@@ -60,7 +67,7 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
             await db.SaveChangesAsync();
         }
 
-        var host = _apoyo.HostConConector(usuario.Mail);
+        var host = _apoyo.HostConConector(usuario.Mail, configurarMas: configurarMas);
         var cliente = Cliente(host);
         var tokens = await ObtenerTokensAsync(cliente, usuario.Mail);
 
@@ -563,5 +570,76 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
         var ganador = filasA.Count == 1 ? a : b;
         Assert.Contains(ganador.Nombre, fallo.Texto);
         Assert.Contains("No se escribió nada", fallo.Texto);
+    }
+
+    /// <summary>Cláusula bajo prueba: la rama de carrera de <c>asociar_codigo_de_barras</c> que no encuentra al dueño.
+    /// El interceptor hace que el INSERT choque con <c>ux_codigos_barra_codigo_tenant</c> sin que exista ninguna fila
+    /// que lo tenga, así que la segunda búsqueda del dueño vuelve vacía. El texto sale de la clasificación de la API,
+    /// no del mensaje de EF.</summary>
+    [Fact]
+    public async Task UnaCarreraDeCodigoDeBarrasSinDuenoVisibleDiceQuePasoSinElMensajeDeLaBase()
+    {
+        var interceptor = new InterceptorQueSimulaUnaViolacionUnica("codigos_barra", "ux_codigos_barra_codigo_tenant");
+        await using var e = await PrepararAsync(
+            nameof(UnaCarreraDeCodigoDeBarrasSinDuenoVisibleDiceQuePasoSinElMensajeDeLaBase),
+            configurarMas: builder => builder.ConfigureServices(servicios =>
+                servicios.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor))));
+        var articulo = await SembrarArticuloAsync(e.Datos, "Artículo de la carrera");
+
+        var resultado = await AsociarCodigoDeBarrasAsync(e, articulo.Id, EanValido);
+
+        Assert.True(resultado.EsError, resultado.Texto);
+        Assert.Equal(
+            $"No se pudo asociar el código {EanValido}. Ya existe ese código de barras en este tenant. " +
+            "No se pudo identificar a qué artículo pertenece. No se escribió nada.",
+            resultado.Texto);
+        Assert.Equal(1, interceptor.Disparos);
+        Assert.Empty(await CodigosDeBarrasEnLaBaseAsync(articulo.Id));
+    }
+
+    /// <summary>La misma rama en <c>asociar_codigo_de_proveedor</c>, contra
+    /// <c>ux_codigos_proveedor_proveedor_codigo</c>.</summary>
+    [Fact]
+    public async Task UnaCarreraDeCodigoDeProveedorSinDuenoVisibleDiceQuePasoSinElMensajeDeLaBase()
+    {
+        var interceptor = new InterceptorQueSimulaUnaViolacionUnica("codigos_proveedor", "ux_codigos_proveedor_proveedor_codigo");
+        await using var e = await PrepararAsync(
+            nameof(UnaCarreraDeCodigoDeProveedorSinDuenoVisibleDiceQuePasoSinElMensajeDeLaBase),
+            configurarMas: builder => builder.ConfigureServices(servicios =>
+                servicios.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor))));
+        var articulo = await SembrarArticuloAsync(e.Datos, "Artículo de la carrera");
+
+        var resultado = await AsociarCodigoDeProveedorAsync(e, articulo.Id, e.Datos.IdProveedor, "CARR-2");
+
+        Assert.True(resultado.EsError, resultado.Texto);
+        Assert.Equal(
+            "No se pudo asociar el código CARR-2. Ya existe ese código de proveedor para ese proveedor en este tenant. " +
+            "No se pudo identificar a qué artículo pertenece. No se escribió nada.",
+            resultado.Texto);
+        Assert.Equal(1, interceptor.Disparos);
+        Assert.Empty(await CodigosDeProveedorEnLaBaseAsync(articulo.Id));
+    }
+
+    /// <summary>Rompe el primer INSERT sobre <c>tabla</c> con un 23505 de <c>indice</c>, como lo haría otra request
+    /// que comiteó el mismo código entre el chequeo y el alta, pero sin dejar ninguna fila.</summary>
+    private sealed class InterceptorQueSimulaUnaViolacionUnica(string tabla, string indice) : DbCommandInterceptor
+    {
+        private int _disparos;
+
+        public int Disparos => Volatile.Read(ref _disparos);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains($"INSERT INTO {tabla} (", StringComparison.Ordinal)
+                && Interlocked.Increment(ref _disparos) == 1)
+            {
+                throw new PostgresException(
+                    "falla inyectada por la prueba", "ERROR", "ERROR", PostgresErrorCodes.UniqueViolation, constraintName: indice);
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 }

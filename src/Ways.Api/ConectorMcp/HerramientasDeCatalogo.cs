@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Npgsql;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
@@ -22,8 +21,8 @@ namespace Ways.Api.ConectorMcp;
 [McpServerToolType]
 public sealed class HerramientasDeCatalogo
 {
-    private const string IndiceCodigoBarra = "ux_codigos_barra_codigo_tenant";
-    private const string IndiceCodigoProveedor = "ux_codigos_proveedor_proveedor_codigo";
+    private const string CodigoBarraDuplicado = "codigo_barra_duplicado";
+    private const string CodigoProveedorDuplicado = "codigo_proveedor_duplicado";
 
     private sealed record DuenoDelCodigo(int Id, string Nombre, string CodigoInterno, bool DadoDeBaja);
 
@@ -45,6 +44,7 @@ public sealed class HerramientasDeCatalogo
         IHttpContextAccessor contextoHttp,
         ServicioDeArticulos articulos,
         IWaysDbContext db,
+        ILogger<HerramientasDeCatalogo> log,
         [Description("Id del artículo en Ways al que se asocia el código.")] int id_articulo,
         [Description("Código de barras tal como se lee (hasta 50 caracteres); se recortan los espacios de los extremos.")] string codigo,
         [Description("Dejarlo en false salvo que el usuario haya confirmado que los dígitos leídos son correctos aunque no sean un GTIN estándar.")]
@@ -55,12 +55,13 @@ public sealed class HerramientasDeCatalogo
             await ExigirAdminAsync(autorizacion, contextoHttp);
 
             return await AsociarCodigoDeBarrasComoAdminAsync(
-                articulos, db, id_articulo, codigo, confirmar_codigo_no_estandar, ct);
-        });
+                articulos, db, log, id_articulo, codigo, confirmar_codigo_no_estandar, ct);
+        }, log);
 
     private static async Task<string> AsociarCodigoDeBarrasComoAdminAsync(
         ServicioDeArticulos articulos,
         IWaysDbContext db,
+        ILogger log,
         int id_articulo,
         string codigo,
         bool confirmar_codigo_no_estandar,
@@ -95,13 +96,13 @@ public sealed class HerramientasDeCatalogo
         {
             await articulos.AgregarCodigoBarraAsync(id_articulo, new AltaCodigoBarra(limpio), ct);
         }
-        catch (ErrorDominio error) when (error.Codigo == "codigo_barra_duplicado")
+        catch (ErrorDominio error) when (error.Codigo == CodigoBarraDuplicado)
         {
-            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, id_articulo, articulo.Value, limpio, error, ct);
+            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, id_articulo, articulo.Value, limpio, error.Message, ct);
         }
-        catch (DbUpdateException error) when (EsViolacionUnica(error, IndiceCodigoBarra))
+        catch (DbUpdateException error) when (ResultadoDeHerramienta.Clasificar(error, log) is { Codigo: CodigoBarraDuplicado } clasificado)
         {
-            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, id_articulo, articulo.Value, limpio, error, ct);
+            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, id_articulo, articulo.Value, limpio, clasificado.Titulo, ct);
         }
         catch (ErrorDominio error) when (error.EstadoHttp == 404)
         {
@@ -134,6 +135,7 @@ public sealed class HerramientasDeCatalogo
         IHttpContextAccessor contextoHttp,
         ServicioDeArticulos articulos,
         IWaysDbContext db,
+        ILogger<HerramientasDeCatalogo> log,
         [Description("Id del artículo en Ways al que se asocia el código.")] int id_articulo,
         [Description("Id del proveedor en Ways que imprime ese código.")] int id_proveedor,
         [Description("Código del proveedor tal como figura en su factura (hasta 50 caracteres); se recortan los espacios de los extremos.")] string codigo,
@@ -142,12 +144,13 @@ public sealed class HerramientasDeCatalogo
         {
             await ExigirAdminAsync(autorizacion, contextoHttp);
 
-            return await AsociarCodigoDeProveedorComoAdminAsync(articulos, db, id_articulo, id_proveedor, codigo, ct);
-        });
+            return await AsociarCodigoDeProveedorComoAdminAsync(articulos, db, log, id_articulo, id_proveedor, codigo, ct);
+        }, log);
 
     private static async Task<string> AsociarCodigoDeProveedorComoAdminAsync(
         ServicioDeArticulos articulos,
         IWaysDbContext db,
+        ILogger log,
         int id_articulo,
         int id_proveedor,
         string codigo,
@@ -177,13 +180,13 @@ public sealed class HerramientasDeCatalogo
             creado = (await articulos.AgregarCodigoProveedorAsync(
                 id_articulo, new AltaCodigoProveedor(id_proveedor, limpio), ct)).Creado;
         }
-        catch (ErrorDominio error) when (error.Codigo == "codigo_proveedor_duplicado")
+        catch (ErrorDominio error) when (error.Codigo == CodigoProveedorDuplicado)
         {
-            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, id_articulo, id_proveedor, razonSocial, limpio, error, ct);
+            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, id_articulo, id_proveedor, razonSocial, limpio, error.Message, ct);
         }
-        catch (DbUpdateException error) when (EsViolacionUnica(error, IndiceCodigoProveedor))
+        catch (DbUpdateException error) when (ResultadoDeHerramienta.Clasificar(error, log) is { Codigo: CodigoProveedorDuplicado } clasificado)
         {
-            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, id_articulo, id_proveedor, razonSocial, limpio, error, ct);
+            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, id_articulo, id_proveedor, razonSocial, limpio, clasificado.Titulo, ct);
         }
         catch (ErrorDominio error) when (error.EstadoHttp == 404)
         {
@@ -218,6 +221,11 @@ public sealed class HerramientasDeCatalogo
 
     private static ErrorDeHerramienta Error(string texto) => new(texto);
 
+    /// <summary>El índice único rechazó el código pero la segunda búsqueda no ve a su dueño (por ejemplo, la otra
+    /// request lo asoció y alguien lo borró enseguida).</summary>
+    private static ErrorDeHerramienta SinDuenoTrasLaCarrera(string codigo, string motivo) =>
+        Error($"No se pudo asociar el código {codigo}. {motivo} No se pudo identificar a qué artículo pertenece. No se escribió nada.");
+
     private static string Describir(string nombre, string codigoInterno, int id) =>
         $"{nombre} (código interno {codigoInterno}, id {id})";
 
@@ -232,10 +240,6 @@ public sealed class HerramientasDeCatalogo
 
         return fila is null ? null : (fila.Nombre, fila.CodigoInterno);
     }
-
-    private static bool EsViolacionUnica(DbUpdateException error, string indice) =>
-        error.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } pg &&
-        pg.ConstraintName == indice;
 
     /// <summary>Un artículo dado de baja conserva sus códigos de barras vivos, que siguen bloqueando
     /// la reutilización: por eso el dueño se busca ignorando solo el filtro de baja lógica.</summary>
@@ -318,21 +322,22 @@ public sealed class HerramientasDeCatalogo
     }
 
     /// <summary>Otra request ganó la carrera por el código entre el chequeo y el alta: se vuelve a
-    /// buscar al dueño y se responde como si el chequeo lo hubiera visto.</summary>
+    /// buscar al dueño y se responde como si el chequeo lo hubiera visto. <paramref name="motivo"/> es el
+    /// mensaje del servicio o el título que la API da al índice único, nunca el texto de la excepción.</summary>
     private static async Task<string> RespuestaTrasCarreraDeCodigoDeBarrasAsync(
         ServicioDeArticulos articulos,
         IWaysDbContext db,
         int idArticulo,
         (string Nombre, string CodigoInterno) articulo,
         string codigo,
-        Exception error,
+        string motivo,
         CancellationToken ct)
     {
         var dueno = await BuscarDuenoDelCodigoDeBarrasAsync(db, codigo, ct);
 
         if (dueno is null)
         {
-            throw Error($"No se pudo asociar el código {codigo}: {error.Message} No se escribió nada.");
+            throw SinDuenoTrasLaCarrera(codigo, motivo);
         }
 
         return await RespuestaPorDuenoDelCodigoDeBarrasAsync(articulos, idArticulo, articulo, codigo, dueno, ct);
@@ -344,14 +349,14 @@ public sealed class HerramientasDeCatalogo
         int idProveedor,
         string nombreProveedor,
         string codigo,
-        Exception error,
+        string motivo,
         CancellationToken ct)
     {
         var dueno = await BuscarDuenoDelCodigoDeProveedorAsync(db, idProveedor, codigo, ct);
 
         if (dueno is null)
         {
-            throw Error($"No se pudo asociar el código {codigo}: {error.Message} No se escribió nada.");
+            throw SinDuenoTrasLaCarrera(codigo, motivo);
         }
 
         if (dueno.Id == idArticulo)
