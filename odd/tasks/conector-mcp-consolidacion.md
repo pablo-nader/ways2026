@@ -54,26 +54,36 @@ Sin cambios.
 
 Rebanada 1:
 
-- [x] T0 — Este documento y su espejo en Engram (observación 1659). Ruta: inline. Commit `54651ce6`.
-- [x] T1 — Un solo runner de resultados. Ruta: inline (writer único de la rebanada). Commit `54651ce6`.
+- [x] T0 — Este documento y su espejo en Engram (observación 1659). Ruta: inline. Commit `2b008799`.
+- [x] T1 — Un solo runner de resultados. Ruta: inline (writer único de la rebanada). Commit `2b008799`.
   RED observado: 4 de 7 tests nuevos fallaban (runner con `ErrorDominio` y con 23505 clasificado; las dos
   carreras de catálogo devolvían "An error occurred while saving…"). GREEN: `ConectorMcp` 347/347.
   Mutaciones: brazo `ErrorDominio` anulado → caen el unitario, 10 casos de `ventas_por_articulo` y 3 de
   la ficha; brazo `DbUpdateException` anulado → cae el unitario; la captura clasificada de catálogo
   anulada → cae la carrera de su hermano (barras y proveedor, uno por uno).
-- [x] T2 — Una sola guarda de rol. Ruta: inline (writer único de la rebanada). Commit `6ae907b9`.
+- [x] T2 — Una sola guarda de rol. Ruta: inline (writer único de la rebanada). Commit `49a94c92`.
   `PermisoDelConector` (antes `PermisoDeCompras`): `CumpleAsync(política)` y `ExigirAsync(política, mensaje)`;
   ventas y ficha usan `CumpleAsync` y conservan su texto sin `isError`. Refactor sin comportamiento nuevo.
   Mutación: `CumpleAsync` siempre verdadero → caen los 14 tests de rol (compras ×6, carga ×2, catálogo ×2,
   ventas ×2, ficha del Vendedor ×1, más el de ventas por artículo).
-- [x] T3 — Búsquedas de artículos en consultas de ventas sin `LIKE`. Ruta: inline (writer único). Commit `fb8fd34c`.
+- [x] T3 — Búsquedas de artículos en consultas de ventas sin `LIKE`. Ruta: inline (writer único). Commit `cf55863c`.
   RED: `VentasPorArticuloBuscaElTextoYElArticuloSinDistinguirAcentos` (texto "FIDÉOS" y articulo "fidéo") fallaba en
   las dos filas. GREEN: ventas por artículo + ficha 42/42. Mutaciones (una por hermano): el "contiene" de `texto`
   vuelto a `LIKE` → cae la fila texto; el "contiene" de la búsqueda → cae la fila articulo y la ficha exacta-vs-contiene
   no; el paso exacto de código interno o de código de barras roto → cae
   `LaCoincidenciaExactaGanaAntesDeBuscarPorContenidoYLaAmbiguaListaHastaDiezCandidatos`. El paso de nombre exacto
   no tiene una mutación propia probada.
-- [ ] T4 — Sin doble pasada en ventas por artículo. Ruta: inline (writer único).
+- [x] T4 — Sin doble pasada en ventas por artículo. Ruta: inline (writer único). Commit `31cecfae`.
+  Una lectura sin filtros por empresa; `AcotarComoElReporteAsync` aplica en memoria (más una consulta de ids de
+  artículos) los criterios del reporte. RED: `VentasPorArticuloConUnFiltroDelReporteLeeLasLineasUnaSolaVezPorEmpresa`
+  contaba 2 lecturas de `items_comprobante_venta`, esperado 1. GREEN: ventas por artículo + ficha 45/45, con
+  `VentasPorArticuloAcotaLasFilasPeroElPorcentajeSigueSiendoSobreTodoLoVendido` sin cambios. Tests nuevos de
+  caracterización: subcategorías y grupo. Mutaciones: área anulada → cae `area almacén`; sin descendientes →
+  cae `gaseosas` con subcategoría; filtro de baja de vuelta → caen `area almacén` y `categoria aguas`; artículo
+  anulado → caen `articulo cola-500` y `fidéo`; grupo anulado → cae el test de grupo.
+  No hecho: la doble resolución de empresa de la ficha (`ServicioDeFichaDeArticulo.ObtenerAsync` resuelve la
+  empresa y `VentasDeUnArticuloAsync` vuelve a leer las empresas en `ResolverAlcanceAsync`); no es trivial sin
+  cambiar la firma pública del alcance, queda para después.
 
 Rebanada 2 (pendiente):
 
@@ -95,8 +105,16 @@ Rebanada 2 (pendiente):
 
 ## Verificación
 
-Pendiente.
+Observado sobre `31cecfae` (rebaseado sobre `origin/main` `e22281db`), 2026-10-19:
+
+- `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores (34 advertencias preexistentes; ninguna
+  nueva en los archivos tocados).
+- `dotnet test tests/Ways.Application.Tests -c Release`: 1059/1059.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 353/353 (340
+  previos + 13 nuevos).
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 66/66.
 
 ## Progreso
 
-- Siguiente paso: T1.
+- Rebanada 1 completa en `pnader/mcp-consolidacion-1`, rebaseada sobre `origin/main` después del merge de #477.
+- Siguiente paso: judgment-day de la rebanada 1 (lo corre el orquestador) y después la rebanada 2.
