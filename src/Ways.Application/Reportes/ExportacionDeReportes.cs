@@ -119,6 +119,35 @@ public static class ExportacionDeReportes
                 ])
                 .ToList());
 
+    private static readonly IReadOnlyList<ColumnaExportable> ColumnasVentasPorArticulo =
+    [
+        new ColumnaExportable("Artículo", TipoDeColumna.Entero),
+        new ColumnaExportable("Código", TipoDeColumna.Texto),
+        new ColumnaExportable("Descripción", TipoDeColumna.Texto),
+        new ColumnaExportable("Área", TipoDeColumna.Texto),
+        new ColumnaExportable("Grupo", TipoDeColumna.Texto),
+        new ColumnaExportable("Categoría", TipoDeColumna.Texto),
+        new ColumnaExportable("Cantidad", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Total", TipoDeColumna.Moneda)
+    ];
+
+    public static TablaExportable De(VentasPorArticulo respuesta, ContextoDeExportacion ctx) =>
+        new(
+            "Ventas por artículo", ctx, ColumnasVentasPorArticulo,
+            respuesta.Articulos
+                .Select(a => (IReadOnlyList<Celda>)
+                [
+                    Celda.Entero(a.IdArticulo),
+                    Celda.Texto(a.Codigo),
+                    Celda.Texto(a.Descripcion),
+                    Celda.Texto(a.Area),
+                    Celda.Texto(a.Grupo),
+                    Celda.Texto(a.Categoria),
+                    Celda.Cantidad(a.Cantidad),
+                    Celda.Moneda(a.Total)
+                ])
+                .ToList());
+
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasArticulosTop =
     [
         new ColumnaExportable("Artículo", TipoDeColumna.Entero),
