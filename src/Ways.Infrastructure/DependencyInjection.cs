@@ -182,6 +182,7 @@ public static class DependencyInjection
             npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
             npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
             npgsql.MapEnum<EstadoCompra>("estado_compra");
+            npgsql.MapEnum<OrigenCompra>("origen_compra");
             npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
             npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
             npgsql.MapEnum<TipoMovimientoCuenta>("tipo_movimiento_cuenta");

@@ -67,6 +67,9 @@ public class ComprobanteCompra : EntidadTenant
 
     public EstadoCompra Estado { get; set; } = EstadoCompra.Borrador;
 
+    /// <summary>Quién cargó la compra; se fija al crear el borrador y no cambia.</summary>
+    public OrigenCompra Origen { get; set; } = OrigenCompra.Manual;
+
     /// <summary>Etapa 16 (proposal: Modelo de datos propuesto — §D): la orden de compra que esta
     /// recepción cubre. <c>NULL</c> = 100% del tráfico anterior a esta etapa, un estado
     /// permanentemente legítimo — no toda compra viene de una OC. Seteable mientras

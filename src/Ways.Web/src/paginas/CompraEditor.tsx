@@ -6,6 +6,7 @@ import {
   calcularTotalesDeCompra,
   clienteDeCompras,
   discriminaIvaEfectivo,
+  esBorradorCargadoPorElAsistente,
   etiquetaDeEstadoCompra,
   itemAFormulario,
   ivaImpresoDesdeDetalle,
@@ -1111,6 +1112,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
           <div className="alert alert-info py-1 px-2 small">
             Vinculada a la orden de compra{' '}
             <Link to={`/ordenes-compra/${encabezado.idOrdenCompra}`}>#{encabezado.idOrdenCompra}</Link>.
+          </div>
+        )}
+        {esBorradorCargadoPorElAsistente(compra) && (
+          <div className="alert alert-warning py-1 px-2 small" role="status">
+            Cargado por el asistente: revisá contra la factura antes de confirmar.
           </div>
         )}
         {idDesdeGasto !== null && !gastoVinculado && (

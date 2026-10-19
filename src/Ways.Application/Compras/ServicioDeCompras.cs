@@ -83,12 +83,13 @@ public class ServicioDeCompras(
         int? idEmpresa = null,
         int pagina = 1,
         int tamanio = 25,
+        OrigenCompra? origen = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa);
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa, origen);
 
         var total = await query.CountAsync(ct);
 
@@ -96,7 +97,7 @@ public class ServicioDeCompras(
             .OrderByDescending(c => c.Id)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
             .ToListAsync(ct);
 
         return new PaginaDeCompras(await ConSaldoPendienteAsync(items, ct), total, pagina, tamanio);
@@ -114,9 +115,10 @@ public class ServicioDeCompras(
         DateTimeOffset? hasta,
         int topeDeFilas,
         int? idEmpresa = null,
+        OrigenCompra? origen = null,
         CancellationToken ct = default)
     {
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa);
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa, origen);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
@@ -124,7 +126,7 @@ public class ServicioDeCompras(
         var items = await query
             .OrderByDescending(c => c.Id)
             .Take(topeDeFilas + 1)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
             .ToListAsync(ct);
 
         GuardaDeTope.Exigir(items.Count, topeDeFilas);
@@ -150,7 +152,8 @@ public class ServicioDeCompras(
     /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> (design decisión 7).</summary>
     private IQueryable<ComprobanteCompra> ConstruirQuery(
-        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null)
+        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null,
+        OrigenCompra? origen = null)
     {
         var query = db.ComprobantesCompra.AsQueryable();
 
@@ -162,6 +165,11 @@ public class ServicioDeCompras(
         if (estado is { } e)
         {
             query = query.Where(c => c.Estado == e);
+        }
+
+        if (origen is { } o)
+        {
+            query = query.Where(c => c.Origen == o);
         }
 
         if (desde is { } d)
@@ -188,7 +196,13 @@ public class ServicioDeCompras(
 
     // ---- borrador: crear + replace-set (design decisión 2) ---------------------------------------
 
-    public async Task<CompraDetalle> CrearBorradorAsync(SolicitudDeCompra solicitud, CancellationToken ct = default)
+    public Task<CompraDetalle> CrearBorradorAsync(SolicitudDeCompra solicitud, CancellationToken ct = default) =>
+        CrearBorradorAsync(solicitud, OrigenCompra.Manual, ct);
+
+    /// <summary>El origen lo fija solo quien llama a este método (la API REST siempre crea
+    /// <see cref="OrigenCompra.Manual"/>); <see cref="ActualizarBorradorAsync"/> no lo toca.</summary>
+    public async Task<CompraDetalle> CrearBorradorAsync(
+        SolicitudDeCompra solicitud, OrigenCompra origen, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -216,11 +230,11 @@ public class ServicioDeCompras(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarAltaDeBorradorAsync(
-                idTenant, idEmpleado, solicitud, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
+                idTenant, idEmpleado, solicitud, origen, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarAltaDeBorradorAsync(
-        int idTenant, int idEmpleado, SolicitudDeCompra solicitud, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
+        int idTenant, int idEmpleado, SolicitudDeCompra solicitud, OrigenCompra origen, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
         CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -252,6 +266,7 @@ public class ServicioDeCompras(
             Total = calculada.Total,
             Observaciones = NormalizarOpcional(solicitud.Observaciones),
             Estado = EstadoCompra.Borrador,
+            Origen = origen,
             IdOrdenCompra = solicitud.IdOrdenCompra,
             CreatedAt = momento,
             UpdatedAt = momento
@@ -1758,5 +1773,6 @@ public class ServicioDeCompras(
                 x.Tipo, x.Alicuota, PuedeVerCostos ? x.BaseImponible : null, PuedeVerCostos ? x.Importe : null))
             .ToList(),
         pagado,
-        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado));
+        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado),
+        comprobante.Origen);
 }

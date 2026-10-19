@@ -19,7 +19,8 @@ comprobantes_compra (         -- [operativa]
     discrimina_iva boolean NOT NULL,         -- snapshot por comprobante; ver más abajo
     precios_incluyen_iva boolean NOT NULL DEFAULT false,  -- snapshot; solo si discrimina_iva
     observaciones,
-    estado estado_compra NOT NULL            -- enum: borrador | confirmada | anulada
+    estado estado_compra NOT NULL,           -- enum: borrador | confirmada | anulada
+    origen origen_compra NOT NULL DEFAULT 'manual'  -- enum: manual | asistente; quién cargó la compra
 );
 -- UNIQUE (id_proveedor, id_tipo_comprobante, numero_externo): la misma factura no entra dos veces.
 
@@ -250,6 +251,14 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > por el guard de servicio (`ExigirOrdenLigableAsync`, slice 3), no por esquema. `NULL` sigue
 > siendo el 100% del tráfico anterior a esta etapa, un estado permanentemente legítimo: no toda
 > compra viene de una orden.
+>
+> **Origen (carga asistida): implementada.** `comprobantes_compra` gana `origen origen_compra NOT NULL
+> DEFAULT 'manual'` — enum nativo (`manual`, `asistente`), registrado con `MapEnum` como el resto. El
+> `ALTER` rellena las filas existentes con `manual` (el 100% del tráfico anterior), así que la migración no
+> escribe datos. Lo fija solo la capa de aplicación (`ServicioDeCompras.CrearBorradorAsync(solicitud,
+> origen)`): la API REST nunca lo acepta y siempre crea `manual`, y el PUT de un borrador no lo cambia.
+> `asistente` marca un borrador cargado desde una factura por el conector; la confirmación sigue siendo
+> humana. Se expone en el detalle y el listado de compras, con filtro `origen` en el listado y su export.
 
 **Relación con gastos:** la compra registra la mercadería; el gasto registra la plata.
 `gastos` gana `id_comprobante_compra NULL`: pagarle al proveedor referencia la factura.

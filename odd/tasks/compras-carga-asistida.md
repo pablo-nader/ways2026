@@ -79,6 +79,20 @@ Ruta por tarea, commits y resultado de judgment-day se anotan acá al cerrar cad
   hallazgos severos. Info: el catálogo web de acciones auditadas no incluye `compra.descarte` (ya le faltaban siete
   acciones previas: seguimiento aparte); el descarte no tiene test de reintento conductual, solo el estructural.
 
+- **T2** (ruta: escritor delegado, disparador: 2+ archivos no triviales; sin commit todavía): enum nativo `origen_compra`
+  (`manual`, `asistente`) y columna `comprobantes_compra.origen NOT NULL DEFAULT 'manual'` (migración
+  `OrigenDeLaCompra`, sin UPDATE: el DEFAULT rellena al ALTER, no aplica `rls-migration-backfills`); `MapEnum` en
+  `DependencyInjection.cs`, `WaysDbContextFactory.cs` y los 23 sitios de fixtures de integración que mapean `EstadoCompra`.
+  `CrearBorradorAsync(solicitud, origen)` es el único lugar donde se fija; el overload sin origen delega con `Manual`;
+  el PUT no lo toca y `SolicitudDeCompra` no lo lleva (miembro desconocido en el JSON: el binding lo ignora, como
+  cualquier otro; sin campo no hay campo aceptado-y-descartado). `CompraDetalle`/`CompraListada` exponen `Origen` (string
+  PascalCase, como `Estado`); filtro `origen` en `GET /api/compras` y `/export` por `ConstruirQuery`; el export no gana
+  columna (sus cinco columnas son la hoja de conciliación y el test de igualdad las fija), solo respeta el filtro. Web:
+  insignia "Asistente", filtro Origen y aviso en el editor del borrador asistido.
+- **T2 checks**: Domain 1706 ok; Application 1046 ok; `ComprasOrigenTests` 7 ok; mutaciones: sin la cláusula del filtro fallan
+  2 (listado y export), con `Origen = Manual` en el PUT falla 1; Vitest 437 ok (13 archivos), tsc y oxlint ok; mutaciones web
+  (estado del aviso, parámetro del query, condición de la insignia) matan sus tests. La suite de integración entera queda al CI.
+
 ## Próximo paso
 
 T2.

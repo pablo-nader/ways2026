@@ -236,6 +236,7 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     total: 1149.5,
     observaciones: null,
     estado: 'Borrador',
+    origen: 'Manual',
     items: [itemFixture()],
     idOrdenCompra: null,
     discriminaIva: true,
@@ -507,6 +508,39 @@ describe('CompraEditor — borrador existente', () => {
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(2))
     expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras')).toHaveLength(0)
+  })
+})
+
+describe('CompraEditor — aviso de carga asistida', () => {
+  const AVISO = 'Cargado por el asistente: revisá contra la factura antes de confirmar.'
+
+  it('un borrador cargado por el asistente muestra el aviso de revisión', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Borrador', origen: 'Asistente' })) : undefined,
+    )
+    renderEditor()
+
+    expect(await screen.findByText(AVISO)).toBeInTheDocument()
+  })
+
+  it('un borrador manual no muestra el aviso', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Borrador', origen: 'Manual' })) : undefined,
+    )
+    renderEditor()
+
+    await screen.findByDisplayValue('00012345')
+    expect(screen.queryByText(AVISO)).not.toBeInTheDocument()
+  })
+
+  it('una compra confirmada del asistente ya no muestra el aviso', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada', origen: 'Asistente' })) : undefined,
+    )
+    renderEditor()
+
+    await screen.findByText('Fideos 500g')
+    expect(screen.queryByText(AVISO)).not.toBeInTheDocument()
   })
 })
 
