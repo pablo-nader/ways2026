@@ -86,6 +86,33 @@ Rebanada 1:
   empresa y `VentasDeUnArticuloAsync` vuelve a leer las empresas en `ResolverAlcanceAsync`); no es trivial sin
   cambiar la firma pública del alcance, queda para después.
 
+Judgment-day, ronda 1 de correcciones (ledger congelado sobre `7203e061`, sin CRITICAL):
+
+- [x] L1 Prosa de ventas por artículo (resumen de clase y de `PorArticuloAsync`, docs/07, comentarios de tests) a
+  la lectura única con acotado en memoria; el test de rol de ventas nombra `NegacionDeRolAsync`. Commit `eb39806b`.
+- [x] L2 El runner y docs/07 prometen solo la clasificación de `ClasificarPostgresException` (restricciones y
+  rangos); lo transitorio y la concurrencia siguen escapando. Commit `1049a1e4`.
+- [x] L3 El comentario de la búsqueda exacta ya no promete índice sobre el nombre. Commit `742fb7b4`.
+- [x] L4 Casos que discriminan cada brazo: "fíd-5" por código interno en `texto` y en `articulo`, y `Buscar("a1")`
+  para el paso exacto sin distinguir mayúsculas. Commit `d95ab02c`. Mutaciones: brazo de código del contiene de
+  `texto` vuelto a `LIKE` → cae la fila texto "fíd-5"; el de la búsqueda → cae la fila articulo "fíd-5"; código
+  interno exacto sensible a mayúsculas (`a.CodigoInterno + "" == buscado`) → cae la ficha en `Buscar("a1")`.
+- [x] L5 Teoría de dos filtros del reporte (artículo + categoría, área + categoría). Commit `a79763f7`.
+  Mutaciones: `ids.Contains` anulado → cae la fila artículo + categoría; área O categoría en vez de Y → cae la fila
+  área + categoría.
+- [x] L6 `LeerArticulosVendidosAsync` sin los tres parámetros de clasificación muertos. Commit `274e33d7`.
+- [x] L7 El resumen de `SinDuenoTrasLaCarrera` cubre los dos orígenes y dos tests alcanzan el brazo `ErrorDominio`
+  (interceptor que asocia el código a otro artículo antes de la verificación del servicio y lo borra antes de la
+  búsqueda del dueño). Commit `940f4211`. Mutación: los dos brazos `ErrorDominio` de duplicado anulados → caen
+  los dos tests.
+- [x] L8 Test unitario de `PermisoDelConector` sin request, con una autorización que aprueba todo; el resumen se
+  acota a "sin request". Commit `12a560dc`. Mutación: sin el chequeo de nulo → cae `SinRequestNingunaPoliticaSeCumple`.
+- [x] L9 Mutación del paso de nombre exacto corrida y registrada en T3. Commit `cdfe8e02`.
+- Verificado: el sha de T0 es `2b008799` (commit que crea este documento), no `e5a1d43c`.
+- Diferidos a la rebanada 2: L10 (esquemas de entrada de las 11 tools y que ninguna publique `log`), L11 (paridad
+  de `AcotarComoElReporteAsync` con el reporte: helper compartido o test de paridad) y verificar con un test si el
+  mensaje de una `McpException` llega al cliente antes de tocar esa prosa.
+
 Rebanada 2 (pendiente):
 
 - [ ] R2-T1 — Prosa de `Instrucciones` y docs/07 (matriz de roles por tool, identidad, herramientas de
@@ -115,7 +142,14 @@ Observado sobre `31cecfae` (rebaseado sobre `origin/main` `e22281db`), 2026-10-1
   previos + 13 nuevos).
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 66/66.
 
+Ronda 1 del judgment-day, observado sobre `cdfe8e02` (main sigue en `e22281db`):
+
+- `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 361/361.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 70/70.
+
 ## Progreso
 
 - Rebanada 1 completa en `pnader/mcp-consolidacion-1`, rebaseada sobre `origin/main` después del merge de #477.
-- Siguiente paso: judgment-day de la rebanada 1 (lo corre el orquestador) y después la rebanada 2.
+- Ronda 1 del judgment-day corregida (L1–L9). Siguiente paso: re-juicio de la ronda 1 (orquestador) y después la
+  rebanada 2.
