@@ -217,6 +217,46 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         return new VentasPorArticulo(desde, hasta, zonaId, filas.Sum(f => f.Cantidad), filas.Sum(f => f.Total), filas);
     }
 
+    /// <summary>Ventas netas por día de la semana y hora local (zona resuelta del alcance pedido),
+    /// con el promedio por ocurrencia del día en el rango. El monto es el total del comprobante: la
+    /// nota de crédito ya viene negativa y resta; solo los comprobantes de signo positivo cuentan
+    /// como ticket, igual que <c>LectorDeSerieTemporal</c>. Sin costo ni margen.</summary>
+    public async Task<VentasPorHora> ObtenerVentasPorHoraAsync(
+        int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var ventas = idsPuntoVenta.Count == 0
+            ? []
+            : await VentasConSigno(idsPuntoVenta, rango).ToListAsync(ct);
+
+        // Application no referencia Npgsql (sin AtTimeZone): la conversión a hora local corre en C#
+        // y solo se materializan tres columnas por comprobante.
+        var sumas = ventas
+            .Select(v => (Local: TimeZoneInfo.ConvertTime(v.Fecha, zona), v.Total, v.Signo))
+            .GroupBy(v => (Dia: GrillaDeVentasPorHora.DiaDeLaSemanaIso(DateOnly.FromDateTime(v.Local.DateTime)), v.Local.Hour))
+            .Select(g => new SumaDeHora(g.Key.Dia, g.Key.Hour, g.Sum(v => v.Total), g.Count(v => v.Signo > 0)));
+
+        var grilla = GrillaDeVentasPorHora.Construir(desde, hasta, sumas);
+
+        return new VentasPorHora(desde, hasta, zonaId, grilla.Total, grilla.Tickets, grilla.Dias, grilla.Celdas);
+    }
+
+    private sealed record VentaConSigno(DateTimeOffset Fecha, decimal Total, short Signo);
+
+    private IQueryable<VentaConSigno> VentasConSigno(IReadOnlyList<int> idsPuntoVenta, RangoDeReporte rango) =>
+        db.ComprobantesVenta.SinEspejosFiscales()
+            .Join(db.TiposComprobante, c => c.IdTipoComprobante, t => t.Id, (c, t) => new { Comprobante = c, Tipo = t })
+            .Where(x => x.Tipo.Clase == ClaseComprobante.Venta
+                && x.Comprobante.Estado != EstadoComprobante.Anulado
+                && idsPuntoVenta.Contains(x.Comprobante.IdPuntoVenta)
+                && x.Comprobante.Fecha >= rango.DesdeUtc
+                && x.Comprobante.Fecha < rango.HastaUtcExclusivo)
+            .Select(x => new VentaConSigno(x.Comprobante.Fecha, x.Comprobante.Total, x.Tipo.Signo));
+
     private async Task ExigirEmpresaAsync(int idEmpresa, CancellationToken ct)
     {
         // ADR-8: mismo 404 para "no existe" y "es de otro tenant" — el filtro de EF/RLS ya deja
