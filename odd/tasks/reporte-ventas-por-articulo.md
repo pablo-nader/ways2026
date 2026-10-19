@@ -60,4 +60,4 @@ task) per the owner's standing preference.
 
 ## Next step
 
-PR slice for T2 (judgment-day first).
+T1 shipped in #458, T2 in #460 (judgment-day APPROVED). Follow-ups in #461.
