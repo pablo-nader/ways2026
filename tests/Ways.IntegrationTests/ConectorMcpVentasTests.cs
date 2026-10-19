@@ -287,7 +287,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
     [InlineData("ventas_resumen", """{}""", "Indicá 'periodo'", null)]
     [InlineData("ventas_resumen", """{"desde":"2026-01-01","hasta":"2027-06-01"}""", "366 días", null)]
     [InlineData("ventas_resumen", """{"periodo":"hoy","empresa":"no-existe"}""", "No encontré la empresa 'no-existe'", null)]
-    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"color"}""", "punto_venta, medio_pago, vendedor, dia", null)]
+    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"color"}""", "punto_venta, medio_pago, vendedor, dia", "'agruparPor'")]
     [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"dia","limite":0}""", "entre 1 y 50", null)]
     [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"dia","limite":51}""", "entre 1 y 50", null)]
     public async Task UnaEntradaInvalidaDevuelveUnResultadoDeErrorConElMotivo(
@@ -352,6 +352,50 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         // Con la empresa dada, el nombre del punto de venta se busca solo entre los de esa empresa
         // ("Local 1" existe en las dos).
         Assert.Contains("Total vendido: 250,00", Lineas(porNombreDeLaEmpresa.Texto));
+    }
+
+    /// <summary>Cláusulas bajo prueba, una por hermano: el <c>puntoVenta</c> que <c>ventas_agrupadas</c> y
+    /// <c>ventas_por_articulo</c> le pasan a la consulta (el de <c>ventas_resumen</c> lo fija
+    /// <see cref="SinEmpresaSumaTodasLasDelTenantYConEmpresaOPuntoDeVentaAcotaElAlcance"/>). Dos puntos de venta de la
+    /// misma empresa: Local 1 vende 2 Colas por 1.000 y Local 2 una Galletita por 250. Se agrupa con
+    /// <c>agruparPor = "punto_venta"</c>, el valor que se escribe igual que el nombre viejo del argumento.</summary>
+    [Fact]
+    public async Task PuntoVentaAcotaVentasAgrupadasYVentasPorArticulo()
+    {
+        var e = await SembrarEscenarioAsync(nameof(PuntoVentaAcotaVentasAgrupadasYVentasPorArticulo));
+        var t = e.Tenant;
+        var idLocal2 = await _apoyo.SembrarPuntoVentaAsync(t, "Local 2");
+        var area = await _apoyo.SembrarAreaAsync(t, "Kiosco");
+        var cola = await _apoyo.SembrarArticuloAsync(t, "Cola", "COLA-1", area);
+        var galletita = await _apoyo.SembrarArticuloAsync(t, "Galletita", "GALL-1", area);
+        var hoy = new DateTimeOffset(2026, 10, 18, 10, 0, 0, TimeSpan.Zero);
+        await _apoyo.SembrarComprobanteConLineasAsync(t, hoy, e.Admin.IdUsuario, [new(cola, "Cola", area, 2m, 1000m)]);
+        await _apoyo.SembrarComprobanteConLineasAsync(
+            t, hoy, e.Admin.IdUsuario, [new(galletita, "Galletita", area, 1m, 250m)], idPuntoVenta: idLocal2);
+
+        await using var host = _apoyo.HostConReloj(RelojDelMediodia, e.Admin.Mail);
+        using var cliente = ApoyoDeConectorMcp.Cliente(host);
+        var token = await AccessTokenAsync(cliente, e.Admin.Mail);
+
+        var porPunto = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "punto_venta", periodo = "hoy" });
+        var porPuntoDelLocal2 = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "punto_venta", periodo = "hoy", puntoVenta = "local 2" });
+        var porArticuloDelLocal2 = await LlamarHerramientaAsync(
+            cliente, token, "ventas_por_articulo", new { periodo = "hoy", puntoVenta = idLocal2.ToString() });
+
+        Assert.False(porPunto.EsError, porPunto.Texto);
+        Assert.Contains("Total: 1.250,00 en 2 grupos", Lineas(porPunto.Texto));
+
+        Assert.False(porPuntoDelLocal2.EsError, porPuntoDelLocal2.Texto);
+        Assert.Contains("Local 2 | 250,00 | 1 | 100,0%", Lineas(porPuntoDelLocal2.Texto));
+        Assert.Contains("Total: 250,00 en 1 grupos", Lineas(porPuntoDelLocal2.Texto));
+
+        Assert.False(porArticuloDelLocal2.EsError, porArticuloDelLocal2.Texto);
+        Assert.Contains("GALL-1 | Galletita | 1 | 250,00 | 100,0%", Lineas(porArticuloDelLocal2.Texto));
+        Assert.DoesNotContain(Lineas(porArticuloDelLocal2.Texto), l => l.StartsWith("COLA-1", StringComparison.Ordinal));
+        Assert.Contains(
+            "Total de todos los artículos vendidos en el período (base del %): 250,00", Lineas(porArticuloDelLocal2.Texto));
     }
 
     /// <summary>Las herramientas de ventas se anuncian con los argumentos que sus descripciones prometen;

@@ -179,6 +179,11 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
     agrupación desconocida, las descripciones, las instrucciones, docs/07 y los tests usan los nombres nuevos.
   - Verificado: filtro `ConectorMcpVentas|…Catalogo|…BuscarArticulos|…Conjunto|…Descripciones|…FichaDeArticulo`
     123/123.
+  - Ronda 1 del judgment-day (L2): el error de agrupación desconocida fija `'agruparPor'`;
+    `PuntoVentaAcotaVentasAgrupadasYVentasPorArticulo` agrupa con `agruparPor = "punto_venta"` (el valor que se
+    escribe como el nombre viejo) y manda `puntoVenta` a `ventas_agrupadas` y a `ventas_por_articulo`. Mutaciones:
+    el mensaje vuelto a `'agrupar_por'` → cae la fila `color` del test de entradas inválidas; `puntoVenta`
+    ignorado en `ventas_agrupadas` → cae el test nuevo; ídem en `ventas_por_articulo` → cae el test nuevo.
 - [x] R2-T4 — Paridad de `AcotarComoElReporteAsync` con el reporte web (cierra L11), sin cambios de producción.
   Ruta: inline (writer único de la rebanada). `VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte`
   compara, para nueve filtros (sin filtros; área; grupo; categoría con una subcategoría; la subcategoría;
