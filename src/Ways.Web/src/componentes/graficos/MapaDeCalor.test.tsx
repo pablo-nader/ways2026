@@ -52,7 +52,7 @@ describe('MapaDeCalor', () => {
     const celdasLunes = within(lunes).getAllByRole('cell')
     expect(celdasLunes[celdasLunes.length - 1]).toHaveTextContent('300')
 
-    const totales = screen.getByRole('rowheader', { name: 'Total' }).closest('tr') as HTMLElement
+    const totales = screen.getByRole('rowheader', { name: 'Suma de promedios' }).closest('tr') as HTMLElement
     const celdasTotales = within(totales).getAllByRole('cell')
     expect(celdasTotales).toHaveLength(25)
     expect(celdasTotales[10]).toHaveTextContent('250')

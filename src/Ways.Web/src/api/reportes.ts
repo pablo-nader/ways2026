@@ -461,8 +461,8 @@ export function rangoDeLaSemanaActual(ahora: Date = new Date()): { desde: string
   return { desde: aFechaIso(lunes), hasta: aFechaIso(ahora) }
 }
 
-/** Período por defecto de ventas por hora: las 4 semanas completas que terminan ayer (28 días), así cada día de la
- * semana aparece exactamente 4 veces y el promedio no se sesga por un día de más. */
+/** Período por defecto de ventas por hora: los últimos 28 días, que terminan ayer (no son semanas calendario). Al ser
+ * 28 días corridos, cada día de la semana aparece exactamente 4 veces y el promedio no se sesga por un día de más. */
 export function rangoDeLasUltimasCuatroSemanas(ahora: Date = new Date()): { desde: string; hasta: string } {
   const ayer = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() - 1)
   const inicio = new Date(ayer.getFullYear(), ayer.getMonth(), ayer.getDate() - 27)

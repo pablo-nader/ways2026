@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -174,9 +174,31 @@ describe('ReporteDeVentasPorHora', () => {
     await usuario.selectOptions(await screen.findByLabelText('Punto de venta'), 'Sucursal Centro')
     expect(await screen.findByText('$ 777,00')).toBeInTheDocument()
 
-    resolverPrimera(respuestaFixture({ total: 999 }))
-    await waitFor(() => expect(screen.queryByText('$ 999,00')).not.toBeInTheDocument())
+    await act(async () => {
+      resolverPrimera(respuestaFixture({ total: 999 }))
+    })
+    expect(screen.queryByText('$ 999,00')).not.toBeInTheDocument()
     expect(screen.getByText('$ 777,00')).toBeInTheDocument()
+  })
+
+  it('al cambiar un filtro no deja a la vista los números del filtro anterior mientras la consulta está pendiente', async () => {
+    let llamadas = 0
+    mockearRutasBase(() => {
+      llamadas += 1
+      if (llamadas === 1) return Promise.resolve(respuestaFixture({ total: 1200 }))
+      return new Promise<VentasPorHora>(() => {})
+    })
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await tablaDelMapa()
+    expect(screen.getByText('$ 1.200,00')).toBeInTheDocument()
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa'), 'Empresa Dos SA')
+    await waitFor(() => expect(llamadasDeReporte()).toHaveLength(2))
+
+    expect(screen.queryByText('$ 1.200,00')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: /promedio por día de la semana y hora/ })).not.toBeInTheDocument()
   })
 
   it('muestra el mensaje del servidor si falla y reintenta', async () => {
@@ -204,7 +226,7 @@ describe('ReporteDeVentasPorHora', () => {
     expect(await screen.findByText('No se pudo cargar el reporte de ventas por hora.')).toBeInTheDocument()
   })
 
-  it('un rango invertido avisa y no consulta', async () => {
+  it('una fecha inicial posterior a la final avisa y no consulta', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()
     renderReporte()
@@ -213,10 +235,39 @@ describe('ReporteDeVentasPorHora', () => {
     const consultas = llamadasDeReporte().length
     const desde = screen.getByLabelText('Desde')
     await usuario.clear(desde)
+    await usuario.type(desde, '31122099')
+
+    expect(desde).toHaveValue('31/12/2099')
+    expect(await screen.findByText(/Elegí un rango de fechas válido/)).toBeInTheDocument()
+    expect(llamadasDeReporte()).toHaveLength(consultas)
+    expect(screen.queryByRole('table', { name: /promedio por día de la semana y hora/ })).not.toBeInTheDocument()
+  })
+
+  it('una fecha inicial vacía avisa y no consulta', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await tablaDelMapa()
+    const consultas = llamadasDeReporte().length
+    await usuario.clear(screen.getByLabelText('Desde'))
 
     expect(await screen.findByText(/Elegí un rango de fechas válido/)).toBeInTheDocument()
     expect(llamadasDeReporte()).toHaveLength(consultas)
     expect(screen.queryByRole('table', { name: /promedio por día de la semana y hora/ })).not.toBeInTheDocument()
+  })
+
+  it('un rango inválido borra el error de la consulta anterior y su Reintentar', async () => {
+    mockearRutasBase(() => Promise.reject(new ErrorApi(400, 'rango_invalido', 'El rango no puede superar 366 días.')))
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    expect(await screen.findByText('El rango no puede superar 366 días.')).toBeInTheDocument()
+    await usuario.clear(screen.getByLabelText('Desde'))
+
+    expect(await screen.findByText(/Elegí un rango de fechas válido/)).toBeInTheDocument()
+    expect(screen.queryByText('El rango no puede superar 366 días.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
   })
 
   it('sin empresas visibles lo dice y no consulta el reporte', async () => {

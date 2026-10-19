@@ -23,7 +23,7 @@ type Props = {
  * Tabla día de la semana × hora con el número en cada celda sobre un fondo cuya intensidad sigue al valor
  * (relativo al máximo de las celdas, sin contar los totales). Es una `<table>` HTML y no un canvas, para que un
  * lector de pantalla recorra filas y columnas; el scroll horizontal queda adentro de `.table-responsive`.
- * Los totales por día (columna final) y por hora (fila final) suman las celdas ya mostradas.
+ * Las sumas por día (columna final) y por hora (fila final) suman las celdas ya mostradas.
  */
 export function MapaDeCalor({ valores, formatearCelda, formatearDetalle, titulo }: Props) {
   const maximo = maximoDeLaMatriz(valores)
@@ -44,7 +44,7 @@ export function MapaDeCalor({ valores, formatearCelda, formatearDetalle, titulo 
                 {String(hora).padStart(2, '0')}
               </th>
             ))}
-            <th scope="col">Total</th>
+            <th scope="col">Suma de promedios</th>
           </tr>
         </thead>
         <tbody>
@@ -75,7 +75,7 @@ export function MapaDeCalor({ valores, formatearCelda, formatearDetalle, titulo 
         <tfoot>
           <tr className="fw-bold">
             <th scope="row" className="text-start">
-              Total
+              Suma de promedios
             </th>
             {porColumna.map((valor, hora) => (
               <td key={HORAS_DEL_DIA[hora]} className="small text-nowrap">

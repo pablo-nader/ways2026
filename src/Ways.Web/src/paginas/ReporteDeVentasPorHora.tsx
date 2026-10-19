@@ -34,7 +34,7 @@ function idODefecto(valor: string): number | null {
  * Cuándo se vende más: promedio por día de la semana y hora del importe o de los tickets en un rango
  * (`Politicas.LecturaDeReportes`: Supervisor + Admin). Cada cambio de filtro lanza una consulta nueva gateada por
  * un único `useRef` de generación (`react-async-state`): una respuesta vieja nunca pisa un filtro ya cambiado.
- * El rango por defecto son las 4 semanas completas que terminan ayer.
+ * El rango por defecto son los últimos 28 días, que terminan ayer.
  */
 export function ReporteDeVentasPorHora() {
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
@@ -83,8 +83,10 @@ export function ReporteDeVentasPorHora() {
     if (clave === null) {
       setDatos(null)
       setCargando(false)
+      setError('')
       return
     }
+    setDatos(null)
     setCargando(true)
     setError('')
 
@@ -228,7 +230,8 @@ export function ReporteDeVentasPorHora() {
                 </dl>
                 <p className="small text-muted mb-1">
                   Cada celda es el promedio de ese día de la semana y hora: el total del rango dividido por las veces
-                  que cae ese día. Los totales suman los promedios mostrados.
+                  que cae ese día. La fila y la columna «Suma de promedios» suman los promedios de las celdas: no equivalen al
+                  «Total del rango».
                   {esImporte ? ' Los importes de las celdas se redondean al peso; el detalle está en cada una.' : ''}
                 </p>
                 <ul className="list-inline small mb-3" aria-label="Días incluidos en el rango">
