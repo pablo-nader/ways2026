@@ -148,7 +148,7 @@ Permite agregar Ways como conector personalizado de Claude (claude.ai, escritori
 Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas sus
 herramientas son de solo lectura: `quien_soy`, que devuelve el nombre de usuario, el correo, el rol
 y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, y las consultas de
-ventas de la sección siguiente.
+ventas y de compras de las secciones siguientes.
 
 ### Consultas de ventas
 
@@ -186,6 +186,23 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   filtros. Un filtro por nombre que no coincide con nada, o que coincide con varios, devuelve un error que
   lo nombra y lista hasta 10 candidatos con su id.
 - La salida es texto con tablas `a | b | c`; cada tabla se corta en 31 filas y avisa cuántas faltan.
+
+### Consultas de compras
+
+| Herramienta | Qué devuelve |
+|---|---|
+| `contexto_de_compras` | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
+| `buscar_proveedor` | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
+
+Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
+cargarla; la carga del borrador todavía no está disponible. Son solo para Admin, igual que las
+escrituras de compras de la API (`GestionDeCatalogo`): con otro rol responden un error sin datos.
+
+Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
+todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`
+y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sale como resultado con
+`isError` y ese mensaje; una excepción que escapa de la herramienta, incluso una `McpException`, le
+llega a Claude con un mensaje genérico del SDK.
 
 ### Encenderlo
 

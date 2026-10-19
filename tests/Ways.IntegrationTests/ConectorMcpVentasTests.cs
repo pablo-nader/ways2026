@@ -365,7 +365,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
 
         var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .ToDictionary(h => h.GetProperty("name").GetString()!);
-        Assert.Equal(["quien_soy", "ventas_agrupadas", "ventas_por_articulo", "ventas_resumen"], herramientas.Keys.Order().ToArray());
+        Assert.Subset(herramientas.Keys.ToHashSet(), new HashSet<string> { "quien_soy", "ventas_agrupadas", "ventas_por_articulo", "ventas_resumen" });
         foreach (var herramienta in herramientas.Values)
         {
             var anotaciones = herramienta.GetProperty("annotations");

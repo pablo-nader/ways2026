@@ -34,7 +34,10 @@ public static class RegistroDelConectorMcp
         "marca y proveedor ('¿cuánto se vendió de Coca-Cola el mes pasado?'). El período se indica con un " +
         "nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona " +
         "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
-        "366 días).";
+        "366 días). Para preparar la carga de una factura de proveedor (solo " +
+        "Admin): primero contexto_de_compras (puntos de venta, tipos de comprobante de compra y alícuotas de " +
+        "IVA), después buscar_proveedor (por CUIT o nombre). La carga del borrador de compra todavía no está " +
+        "disponible.";
 
     private static readonly string[] EsquemasDelConector =
     [
@@ -214,8 +217,7 @@ public static class RegistroDelConectorMcp
                 servidorMcp.ServerInstructions = Instrucciones;
             })
             .WithHttpTransport(transporte => transporte.SessionMode = HttpServerSessionMode.Stateless)
-            .WithTools<HerramientasDeIdentidad>()
-            .WithTools<HerramientasDeVentas>();
+            .WithToolsFromAssembly(typeof(RegistroDelConectorMcp).Assembly);
 
         return estado;
     }
