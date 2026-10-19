@@ -151,7 +151,12 @@ ventas, la ficha de un artículo (`articulo_info`) y las de compras y de código
 secciones siguientes. Todas son de solo lectura salvo tres que escriben:
 `crear_borrador_de_compra`, que guarda una factura de proveedor como borrador de compra, y
 `asociar_codigo_de_barras` y `asociar_codigo_de_proveedor`, que solo agregan códigos a un artículo.
-Los argumentos van en camelCase (`puntoVenta`, `idArticulo`).
+Los argumentos van en camelCase (`puntoVenta`, `idArticulo`); hasta octubre de 2026 cinco de ellos iban en
+snake_case (`punto_venta`, `agrupar_por`, `id_articulo`, `id_proveedor`, `confirmar_codigo_no_estandar`). El SDK
+solo liga los argumentos que la herramienta declara: un cliente que todavía mande `punto_venta` no recibe un
+error, recibe el total sin acotar (la línea `Alcance:` de la respuesta lo deja ver), y uno que mande con el nombre
+viejo un argumento obligatorio (`agrupar_por`, `id_articulo`) falla porque le falta ese argumento. Se supone que
+Claude vuelve a leer el esquema (`tools/list`) al conectarse; no hay alias de los nombres viejos.
 
 Quién puede usar cada una, según el rol de la cuenta (las mismas políticas que la web):
 

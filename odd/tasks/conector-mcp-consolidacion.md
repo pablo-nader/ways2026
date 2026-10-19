@@ -175,8 +175,12 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
     (`punto_venta` → `puntoVenta`, `agrupar_por` → `agruparPor`; los valores de `agruparPor`, como
     `punto_venta`, no cambian), `asociar_codigo_de_barras` (`id_articulo` → `idArticulo`,
     `confirmar_codigo_no_estandar` → `confirmarCodigoNoEstandar`) y `asociar_codigo_de_proveedor` (`id_articulo`,
-    `id_proveedor` → `idArticulo`, `idProveedor`). Claude relee el esquema en cada sesión; el mensaje de
-    agrupación desconocida, las descripciones, las instrucciones, docs/07 y los tests usan los nombres nuevos.
+    `id_proveedor` → `idArticulo`, `idProveedor`). El mensaje de agrupación desconocida, las descripciones, las
+    instrucciones, docs/07 y los tests usan los nombres nuevos. Transición (L3 de la ronda 1, sin alias ni rechazo
+    por ser un despliegue de un solo dueño): el SDK solo liga los argumentos declarados, así que un `punto_venta`
+    viejo se ignora sin error y el total vuelve sin acotar (lo delata la línea `Alcance:`), y un obligatorio con el
+    nombre viejo falla por faltante. Es un supuesto, no algo verificado, que Claude relee `tools/list` al
+    conectarse; docs/07 lo dice en la nota de camelCase.
   - Verificado: filtro `ConectorMcpVentas|…Catalogo|…BuscarArticulos|…Conjunto|…Descripciones|…FichaDeArticulo`
     123/123.
   - Ronda 1 del judgment-day (L2): el error de agrupación desconocida fija `'agruparPor'`;
