@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Catalogos;
 using Ways.Application.Organizacion;
@@ -15,7 +16,7 @@ using static Ways.Application.Busqueda.BusquedaSinAcentos;
 namespace Ways.Api.ConectorMcp;
 
 /// <summary>Lecturas para resolver los ids de una factura de proveedor antes de cargarla como compra.
-/// Todas pasan por <see cref="PermisoDeCompras"/> y leen con los servicios y el <see cref="IWaysDbContext"/>
+/// Todas pasan por <see cref="PermisoDelConector"/> y leen con los servicios y el <see cref="IWaysDbContext"/>
 /// de la request, acotados al tenant del usuario por el filtro de EF y RLS.</summary>
 [McpServerToolType]
 public sealed class HerramientasDeCompras
@@ -49,7 +50,8 @@ public sealed class HerramientasDeCompras
         CancellationToken ct) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            await PermisoDeCompras.ExigirAsync(autorizacion, accesor);
+            await PermisoDelConector.ExigirAsync(
+                autorizacion, accesor, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinPermisoDeCompras);
 
             var puntosVenta = await organizacion.ListarPuntosVentaAsync(ct);
             var empresas = await organizacion.ListarEmpresasAsync(ct);
@@ -101,7 +103,8 @@ public sealed class HerramientasDeCompras
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            await PermisoDeCompras.ExigirAsync(autorizacion, accesor);
+            await PermisoDelConector.ExigirAsync(
+                autorizacion, accesor, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinPermisoDeCompras);
 
             IQueryable<Proveedor> consulta;
             string criterio;
@@ -192,7 +195,8 @@ public sealed class HerramientasDeCompras
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            await PermisoDeCompras.ExigirAsync(autorizacion, accesor);
+            await PermisoDelConector.ExigirAsync(
+                autorizacion, accesor, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinPermisoDeCompras);
 
             if (lineas is not { Count: > 0 and <= MaximoDeLineas })
             {

@@ -215,7 +215,7 @@ public sealed class HerramientasDeVentas
     /// desconocido, empresa inexistente…) vuelve por <see cref="ResultadoDeHerramienta"/> con <c>isError</c>.</summary>
     private static async Task<string?> NegacionDeRolAsync(
         IContextoDeUsuario actual, IAuthorizationService autorizacion, IHttpContextAccessor http) =>
-        (await autorizacion.AuthorizeAsync(http.HttpContext!.User, Politicas.LecturaDeReportes)).Succeeded
+        await PermisoDelConector.CumpleAsync(autorizacion, http, Politicas.LecturaDeReportes)
             ? null
             : $"Tu rol ({actual.Rol}) no puede ver reportes de ventas: requiere Supervisor o Admin.";
 

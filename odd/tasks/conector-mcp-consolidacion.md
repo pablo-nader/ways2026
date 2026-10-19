@@ -54,8 +54,13 @@ Sin cambios.
 
 Rebanada 1:
 
-- [ ] T0 — Este documento y su espejo en Engram. Ruta: inline.
-- [ ] T1 — Un solo runner de resultados. Ruta: inline (writer único de la rebanada).
+- [x] T0 — Este documento y su espejo en Engram (observación 1659). Ruta: inline. Commit `54651ce6`.
+- [x] T1 — Un solo runner de resultados. Ruta: inline (writer único de la rebanada). Commit `54651ce6`.
+  RED observado: 4 de 7 tests nuevos fallaban (runner con `ErrorDominio` y con 23505 clasificado; las dos
+  carreras de catálogo devolvían "An error occurred while saving…"). GREEN: `ConectorMcp` 347/347.
+  Mutaciones: brazo `ErrorDominio` anulado → caen el unitario, 10 casos de `ventas_por_articulo` y 3 de
+  la ficha; brazo `DbUpdateException` anulado → cae el unitario; la captura clasificada de catálogo
+  anulada → cae la carrera de su hermano (barras y proveedor, uno por uno).
 - [ ] T2 — Una sola guarda de rol. Ruta: inline (writer único de la rebanada).
 - [ ] T3 — Búsquedas de artículos en consultas de ventas sin `LIKE`. Ruta: inline (writer único).
 - [ ] T4 — Sin doble pasada en ventas por artículo. Ruta: inline (writer único).

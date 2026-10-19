@@ -218,6 +218,6 @@ public class ConectorMcpHerramientasDeComprasTests(WaysApiFixture fixture) : ICl
         var resultado = await LlamarHerramientaAsync(conexion.Cliente, conexion.AccessToken, herramienta, argumentos);
 
         Assert.True(resultado.EsError);
-        Assert.Equal(PermisoDeCompras.MensajeSinPermiso, resultado.Texto);
+        Assert.Equal(PermisoDelConector.MensajeSinPermisoDeCompras, resultado.Texto);
     }
 }

@@ -58,9 +58,8 @@ public sealed class HerramientasDeFichaDeArticulo
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            var usuario = http.HttpContext!.User;
-            var verVentas = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeReportes)).Succeeded;
-            var verCostos = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeCostos)).Succeeded;
+            var verVentas = await PermisoDelConector.CumpleAsync(autorizacion, http, Politicas.LecturaDeReportes);
+            var verCostos = await PermisoDelConector.CumpleAsync(autorizacion, http, Politicas.LecturaDeCostos);
 
             var ficha = await fichas.ObtenerAsync(new SolicitudDeFichaDeArticulo(articulo, empresa, compras, verVentas, verCostos), ct);
             return Formatear(ficha, verVentas);

@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Protocol;
@@ -52,7 +51,8 @@ public sealed class HerramientasDeCatalogo
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            await ExigirAdminAsync(autorizacion, contextoHttp);
+            await PermisoDelConector.ExigirAsync(
+                autorizacion, contextoHttp, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinRolAdminParaEscribir);
 
             return await AsociarCodigoDeBarrasComoAdminAsync(
                 articulos, db, log, id_articulo, codigo, confirmar_codigo_no_estandar, ct);
@@ -142,7 +142,8 @@ public sealed class HerramientasDeCatalogo
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            await ExigirAdminAsync(autorizacion, contextoHttp);
+            await PermisoDelConector.ExigirAsync(
+                autorizacion, contextoHttp, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinRolAdminParaEscribir);
 
             return await AsociarCodigoDeProveedorComoAdminAsync(articulos, db, log, id_articulo, id_proveedor, codigo, ct);
         }, log);
@@ -207,16 +208,6 @@ public sealed class HerramientasDeCatalogo
         return creado
             ? $"Listo: se asoció el código de proveedor {limpio} al artículo {destino}. Se escribió en la base. Códigos del artículo para ese proveedor: {actuales}."
             : $"El código de proveedor {limpio} ya estaba asociado al artículo {destino}. No se cambió nada. Códigos del artículo para ese proveedor: {actuales}.";
-    }
-
-    private static async Task ExigirAdminAsync(IAuthorizationService autorizacion, IHttpContextAccessor contextoHttp)
-    {
-        var usuario = contextoHttp.HttpContext?.User ?? new ClaimsPrincipal();
-        if (!(await autorizacion.AuthorizeAsync(usuario, Politicas.GestionDeCatalogo)).Succeeded)
-        {
-            throw new ErrorDeHerramienta(
-                "Esta herramienta requiere el rol Admin y el usuario que autorizó la conexión no lo tiene. No se escribió nada.");
-        }
     }
 
     private static ErrorDeHerramienta Error(string texto) => new(texto);
