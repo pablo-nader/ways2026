@@ -10,9 +10,10 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// Qué hace el SDK con una excepción que escapa de una herramienta, sin pasar por
-/// <see cref="Ways.Api.ConectorMcp.ResultadoDeHerramienta"/>: las dos llegan como resultado con <c>isError</c>; el de
-/// una <see cref="McpException"/> lleva su mensaje detrás de un prefijo en inglés y el de cualquier otra excepción,
-/// solo el prefijo. Las dos herramientas de prueba se registran solo en este host; producción no las conoce.
+/// <see cref="Ways.Api.ConectorMcp.ResultadoDeHerramienta"/>: las dos llegan como resultado con <c>isError</c>. Una
+/// <see cref="McpException"/> llega como <c>An error occurred invoking '&lt;herramienta&gt;': &lt;mensaje&gt;</c>; una
+/// <see cref="InvalidOperationException"/>, como <c>An error occurred invoking '&lt;herramienta&gt;'.</c>, sin su
+/// mensaje. Las dos herramientas de prueba se registran solo en este host; producción no las conoce.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ConectorMcpErroresQueEscapanTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -42,7 +43,7 @@ public class ConectorMcpErroresQueEscapanTests(WaysApiFixture fixture) : IClassF
     }
 
     [Fact]
-    public async Task ElSdkDevuelveElMensajeDeUnaMcpExceptionYTapaElDeCualquierOtraExcepcion()
+    public async Task ElSdkDevuelveElMensajeDeUnaMcpExceptionYTapaElDeUnaInvalidOperationException()
     {
         var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("mcp-errores-que-escapan");
         await using var host = _apoyo.HostConConector(

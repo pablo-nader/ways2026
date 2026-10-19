@@ -7,8 +7,9 @@ using Ways.Domain.Common;
 namespace Ways.Api.ConectorMcp;
 
 /// <summary>Las herramientas del conector informan sus errores como resultado con <c>isError</c> y el
-/// mensaje, para que Claude lo lea: de una excepción que escapa de la herramienta el SDK devuelve solo un
-/// texto genérico en inglés (de una <c>McpException</c>, ese texto seguido de su mensaje).</summary>
+/// mensaje, para que Claude lo lea: de una excepción que escapa de la herramienta el SDK devuelve
+/// <c>An error occurred invoking '&lt;herramienta&gt;'.</c>, sin su mensaje, y de una <c>McpException</c>,
+/// <c>An error occurred invoking '&lt;herramienta&gt;': &lt;mensaje&gt;</c>.</summary>
 public static class ResultadoDeHerramienta
 {
     /// <summary>Corre la herramienta y devuelve su texto. Un <see cref="ErrorDeHerramienta"/> o un

@@ -311,12 +311,13 @@ y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sal
 `isError` y ese mensaje. El mismo runner devuelve con `isError` el mensaje de un `ErrorDominio` de los
 servicios y, para un `DbUpdateException` cuya `PostgresException` clasifica
 `ManejadorDeErrores.ClasificarPostgresException` (violaciones de restricciones y de rangos), el mismo
-título que daría el endpoint. Cualquier otra excepción que escapa de la herramienta le llega a Claude
-como resultado con `isError` y solo un texto genérico del SDK, en inglés (`An error occurred invoking
-'<herramienta>'.`); entre ellas, el fallo transitorio y el conflicto de concurrencia, que en la API sí
-tienen su respuesta (503 y 409). De una `McpException` el SDK sí agrega el mensaje, detrás de ese mismo
-texto en inglés; las herramientas usan `ErrorDeHerramienta` para que Claude reciba solo el mensaje
-(`ConectorMcpErroresQueEscapanTests` fija las dos conductas).
+título que daría el endpoint. Una excepción que escapa de la herramienta le llega a Claude como resultado
+con `isError` y un texto del SDK en inglés. Si no es una `McpException` (probado con una
+`InvalidOperationException`), el texto es solo `An error occurred invoking '<herramienta>'.`, sin su
+mensaje; así llegan, por ejemplo, el fallo transitorio y el conflicto de concurrencia, que en la API sí
+tienen su respuesta (503 y 409). Si es una `McpException`, el texto es
+`An error occurred invoking '<herramienta>': <mensaje>`. Las herramientas usan `ErrorDeHerramienta` para
+que Claude reciba solo el mensaje (`ConectorMcpErroresQueEscapanTests` fija las dos formas).
 
 ### Encenderlo
 

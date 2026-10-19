@@ -124,8 +124,9 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
   nombra las once tools. Ruta: inline (writer único de la rebanada).
   - `McpException`: verificada con `ConectorMcpErroresQueEscapanTests`, que registra dos tools de prueba solo en
     el host del test (`ConfigureTestServices` + `McpServerTool.Create`). Resultado observado con el SDK 2.2.0:
-    las dos llegan como resultado con `isError`; una excepción común trae solo
-    `An error occurred invoking '<tool>'.` y una `McpException` trae ese texto seguido de `: <su mensaje>`. La
+    las dos llegan como resultado con `isError`; una `InvalidOperationException` trae solo
+    `An error occurred invoking '<tool>'.` y una `McpException` trae `An error occurred invoking '<tool>': <mensaje>`
+    (el punto final se reemplaza por los dos puntos; ronda 1, L5: las tres prosas citan las dos formas). La
     afirmación de docs/07 y del resumen de `ResultadoDeHerramienta` ("incluso el de una `McpException`") era
     falsa y se corrigió; el primer borrador del test, que imprimía las dos respuestas, es la evidencia.
   - `Instrucciones`: matriz de roles por tool (todos: `quien_soy`, `articulo_info`; Supervisor y Admin: las tres
