@@ -29,6 +29,12 @@ public sealed class HerramientasDeCompras
 
     public const int MaximoDePalabras = 6;
 
+    /// <summary>Las palabras más cortas de la descripción de una línea no se buscan.</summary>
+    public const int MinimoDeLetrasPorPalabra = 2;
+
+    /// <summary>El nombre más corto que acepta <c>buscar_proveedor</c>.</summary>
+    public const int MinimoDeCaracteresDelNombre = 2;
+
     [McpServerTool(
         Name = "contexto_de_compras",
         Title = "Contexto de compras",
@@ -117,7 +123,7 @@ public sealed class HerramientasDeCompras
                     p.Cuit != null && p.Cuit.Replace("-", "").Replace(".", "").Replace(" ", "") == digitos);
                 criterio = $"el CUIT {digitos}";
             }
-            else if (nombre?.Trim() is { Length: >= 2 } termino)
+            else if (nombre?.Trim() is { Length: >= MinimoDeCaracteresDelNombre } termino)
             {
                 var patron = PatronDeContiene(termino);
                 consulta = db.Proveedores.Where(p => Coincide(p.RazonSocial, patron) || Coincide(p.NombreFantasia, patron));
@@ -125,7 +131,7 @@ public sealed class HerramientasDeCompras
             }
             else
             {
-                throw new ErrorDeHerramienta("Pasá un cuit o un nombre de al menos 2 caracteres.");
+                throw new ErrorDeHerramienta($"Pasá un cuit o un nombre de al menos {MinimoDeCaracteresDelNombre} caracteres.");
             }
 
             var proveedores = await consulta
@@ -237,13 +243,13 @@ public sealed class HerramientasDeCompras
         var codigoBarras = linea.CodigoBarras?.Trim();
         var palabras = (linea.Descripcion ?? string.Empty)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(p => p.Length >= 2)
+            .Where(p => p.Length >= MinimoDeLetrasPorPalabra)
             .Take(MaximoDePalabras)
             .ToList();
 
         if (string.IsNullOrEmpty(codigoProveedor) && string.IsNullOrEmpty(codigoBarras) && palabras.Count == 0)
         {
-            return ("sin datos para buscar (hace falta un código o una palabra de al menos 2 letras)", []);
+            return ($"sin datos para buscar (hace falta un código o una palabra de al menos {MinimoDeLetrasPorPalabra} letras)", []);
         }
 
         if (!string.IsNullOrEmpty(codigoProveedor))

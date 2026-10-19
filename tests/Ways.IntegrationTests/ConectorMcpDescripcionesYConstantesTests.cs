@@ -50,7 +50,11 @@ public partial class ConectorMcpDescripcionesYConstantesTests
     {
         var datos = new TheoryData<string, string?, string>
         {
-            { "buscar_articulos", null, $"las primeras {HerramientasDeCompras.MaximoDePalabras} de al menos 2 letras" },
+            {
+                "buscar_articulos", null,
+                $"las primeras {HerramientasDeCompras.MaximoDePalabras} de al menos " +
+                $"{HerramientasDeCompras.MinimoDeLetrasPorPalabra} letras"
+            },
             { "buscar_articulos", null, $"hasta {HerramientasDeCompras.MaximoDeCandidatosPorLinea} candidatos" },
             { "buscar_articulos", null, $"Hasta {HerramientasDeCompras.MaximoDeLineas} líneas." },
             { "crear_borrador_de_compra", "lineas", $"hasta {ArmadoDelBorradorDeCompra.MaximoDeLineas}." },
