@@ -1,3 +1,5 @@
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using static Ways.IntegrationTests.ApoyoDeConsultasMcp;
@@ -289,6 +291,94 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         if (codigosEsperados.Contains("AGUA-1L"))
         {
             Assert.Contains("AGUA-1L | Agua 1L | 3 | 300,00 | 18,2%", lineas);
+        }
+    }
+
+    /// <summary>Cláusula bajo prueba: una sola lectura de las líneas vendidas por empresa aunque haya un filtro del
+    /// reporte. El porcentaje sale de esa misma lectura (lo fija
+    /// <see cref="VentasPorArticuloAcotaLasFilasPeroElPorcentajeSigueSiendoSobreTodoLoVendido"/>); acá se cuentan las
+    /// consultas a <c>items_comprobante_venta</c>, una por empresa del alcance (el escenario tiene una).</summary>
+    [Fact]
+    public async Task VentasPorArticuloConUnFiltroDelReporteLeeLasLineasUnaSolaVezPorEmpresa()
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloConUnFiltroDelReporteLeeLasLineasUnaSolaVezPorEmpresa));
+        var contador = new ContadorDeLecturasDeLineas();
+        await using var host = _apoyo.HostConRelojEInterceptor(RelojDelMediodia, contador, e.Admin.Mail);
+        using var cliente = ApoyoDeConectorMcp.Cliente(host);
+        var token = await AccessTokenAsync(cliente, e.Admin.Mail);
+        var antes = contador.Lecturas;
+
+        var resultado = await LlamarHerramientaAsync(
+            cliente, token, "ventas_por_articulo", new { periodo = "hoy", categoria = "gaseosas" });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        Assert.Contains("Total de todos los artículos vendidos en el período (base del %): 1.650,00", Lineas(resultado.Texto));
+        Assert.Equal(1, contador.Lecturas - antes);
+    }
+
+    /// <summary>Cláusula bajo prueba: el filtro de categoría incluye sus subcategorías. Cola 500 pasa a Light, hija de
+    /// Gaseosas: sigue contando en Gaseosas y es lo único de Light.</summary>
+    [Theory]
+    [InlineData("gaseosas", "categoría Gaseosas", "1.300,00", new[] { "COLA-2L", "COLA-500", "AGUA-1L" })]
+    [InlineData("light", "categoría Light", "400,00", new[] { "COLA-500" })]
+    public async Task VentasPorArticuloFiltraUnaCategoriaConSusSubcategorias(
+        string categoria, string filtroEsperado, string importeFiltrado, string[] codigosEsperados)
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloFiltraUnaCategoriaConSusSubcategorias));
+        var light = await _apoyo.SembrarCategoriaAsync(e.Tenant, "Light");
+        await _apoyo.AsignarCategoriaPadreAsync(e.Tenant, light, await _apoyo.IdDeCategoriaAsync(e.Tenant, "Gaseosas"));
+        await _apoyo.CambiarCategoriaDeArticuloAsync(e.Tenant, await _apoyo.IdDeArticuloAsync(e.Tenant, "COLA-500"), light);
+        var (host, cliente, token) = await ConectarAsync(e.Admin);
+        await using var _ = host;
+        using var __ = cliente;
+
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_por_articulo", new { periodo = "hoy", categoria });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        var lineas = Lineas(resultado.Texto);
+        Assert.Equal(filtroEsperado, lineas[2].Replace("Filtros: ", string.Empty, StringComparison.Ordinal));
+        var filas = lineas.Skip(5).TakeWhile(l => !l.StartsWith("Total de los", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(codigosEsperados, filas.Select(f => f.Split(" | ")[0]).ToArray());
+        Assert.Contains($"Total de los artículos filtrados: {importeFiltrado} en {codigosEsperados.Length} artículos", lineas);
+        Assert.Contains("Total de todos los artículos vendidos en el período (base del %): 1.650,00", lineas);
+    }
+
+    /// <summary>Cláusula bajo prueba: el filtro de grupo (el escenario no asigna grupos). Cola 500 pasa a Combos.</summary>
+    [Fact]
+    public async Task VentasPorArticuloFiltraPorElGrupoActualDelArticulo()
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloFiltraPorElGrupoActualDelArticulo));
+        await _apoyo.SembrarGrupoDeArticuloAsync(e.Tenant, "Combos", await _apoyo.IdDeArticuloAsync(e.Tenant, "COLA-500"));
+        var (host, cliente, token) = await ConectarAsync(e.Admin);
+        await using var _ = host;
+        using var __ = cliente;
+
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_por_articulo", new { periodo = "hoy", grupo = "combos" });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        var lineas = Lineas(resultado.Texto);
+        Assert.Equal("grupo Combos", lineas[2].Replace("Filtros: ", string.Empty, StringComparison.Ordinal));
+        Assert.Contains("COLA-500 | Cola 500 | 4 | 400,00 | 24,2%", lineas);
+        Assert.Contains("Total de los artículos filtrados: 400,00 en 1 artículos", lineas);
+    }
+
+    /// <summary>Cuenta las consultas que leen líneas de comprobantes de venta.</summary>
+    private sealed class ContadorDeLecturasDeLineas : DbCommandInterceptor
+    {
+        private int _lecturas;
+
+        public int Lecturas => Volatile.Read(ref _lecturas);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FROM items_comprobante_venta", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _lecturas);
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 

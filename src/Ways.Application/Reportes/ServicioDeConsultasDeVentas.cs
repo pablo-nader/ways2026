@@ -5,6 +5,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Parametros;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Reportes;
 using Ways.Domain.Ventas;
 using static Ways.Application.Busqueda.BusquedaSinAcentos;
@@ -289,12 +290,12 @@ public class ServicioDeConsultasDeVentas(
             filtros.Insert(0, $"texto '{texto}'");
         }
 
-        var filasFiltradas = await LeerArticulosVendidosAsync(alcance, area?.Id, grupo?.Id, categoria?.Id, articulo?.Id, ct);
-        var hayFiltroDelReporte = area is not null || grupo is not null || categoria is not null || articulo is not null;
-        var filasDeTodos = hayFiltroDelReporte
-            ? await LeerArticulosVendidosAsync(alcance, null, null, null, null, ct)
-            : filasFiltradas;
+        var filasDeTodos = await LeerArticulosVendidosAsync(alcance, null, null, null, null, ct);
         var deTodos = filasDeTodos.Sum(f => f.Importe);
+        var hayFiltroDelReporte = area is not null || grupo is not null || categoria is not null || articulo is not null;
+        var filasFiltradas = hayFiltroDelReporte
+            ? await AcotarComoElReporteAsync(filasDeTodos, area?.Id, grupo?.Id, categoria?.Id, articulo?.Id, ct)
+            : filasDeTodos;
 
         if (texto is not null || marca is not null || proveedor is not null)
         {
@@ -417,6 +418,45 @@ public class ServicioDeConsultasDeVentas(
         }
 
         return [.. porArticulo.Values];
+    }
+
+    /// <summary>Los filtros de <see cref="ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync"/> aplicados a
+    /// las filas ya leídas sin filtros, para no leer el reporte otra vez por empresa: la clasificación ACTUAL del
+    /// artículo aunque esté dado de baja, la categoría con sus subcategorías visibles y el artículo puntual. Los ids
+    /// llegan resueltos entre los visibles, igual que los que el reporte acepta.</summary>
+    private async Task<List<FilaDeArticulo>> AcotarComoElReporteAsync(
+        List<FilaDeArticulo> filas, int? idArea, int? idGrupo, int? idCategoria, int? idArticulo, CancellationToken ct)
+    {
+        var ids = filas.Select(f => f.IdArticulo).Where(id => idArticulo is null || id == idArticulo).ToList();
+
+        if (idArea is not null || idGrupo is not null || idCategoria is not null)
+        {
+            var consulta = db.Articulos.IgnoreQueryFilters(["BajaLogica"]).Where(a => ids.Contains(a.Id));
+
+            if (idArea is { } area)
+            {
+                consulta = consulta.Where(a => a.IdArea == area);
+            }
+
+            if (idGrupo is { } grupo)
+            {
+                consulta = consulta.Where(a => a.IdGrupo == grupo);
+            }
+
+            if (idCategoria is { } categoria)
+            {
+                var padrePorCategoria = await db.Categorias
+                    .Select(c => new { c.Id, c.IdCategoriaPadre })
+                    .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+                var categorias = CadenaDeCategorias.ConstruirDescendientes(categoria, padrePorCategoria).ToList();
+                consulta = consulta.Where(a => a.IdCategoria != null && categorias.Contains(a.IdCategoria.Value));
+            }
+
+            ids = await consulta.Select(a => a.Id).ToListAsync(ct);
+        }
+
+        var coinciden = ids.ToHashSet();
+        return [.. filas.Where(f => coinciden.Contains(f.IdArticulo))];
     }
 
     private async Task<HashSet<int>> IdsDeArticulosQueCoincidenAsync(
