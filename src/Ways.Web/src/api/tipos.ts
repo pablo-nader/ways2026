@@ -2996,6 +2996,31 @@ export type TopArticulos = {
   articulos: ArticuloTop[]
 }
 
+/** Fila de `GET /api/reportes/ventas/por-articulo` — espejo de `ArticuloVendido`. `area`/`grupo`/
+ * `categoria` son la clasificación ACTUAL del artículo y vienen `null` cuando no la tiene o apunta a una
+ * fila dada de baja; la UI decide el rótulo. `cantidad`/`total` son netos (una nota de crédito resta). */
+export type ArticuloVendido = {
+  idArticulo: number
+  codigo: string | null
+  descripcion: string
+  area: string | null
+  grupo: string | null
+  categoria: string | null
+  cantidad: number
+  total: number
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-articulo` — espejo de `VentasPorArticulo`. `articulos` viene
+ * por `total` descendente, sin paginar; `cantidadTotal` y `total` suman esas mismas filas. */
+export type VentasPorArticulo = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  cantidadTotal: number
+  total: number
+  articulos: ArticuloVendido[]
+}
+
 /** Fila de `GET /api/reportes/articulos` (reporte de completitud de catálogo) — espejo de
  * `ArticuloDeReporte`. `area`/`categoria`/`marca`/`grupo`/`proveedor` son `null` cuando el
  * artículo no tiene esa clasificación asignada, o cuando el FK apunta a una fila dada de baja
