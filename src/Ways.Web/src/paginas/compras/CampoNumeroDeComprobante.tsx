@@ -15,7 +15,7 @@ import {
 
 type Props = {
   idBase: string
-  /** Valor único `PPPP-NNNNNNNN` (o vacío) que viaja a la API. */
+  /** Valor único `PPPPP-NNNNNNNN` (o vacío) que viaja a la API. */
   valor: string
   onChange: (valor: string) => void
   disabled?: boolean
@@ -78,10 +78,10 @@ export function CampoNumeroDeComprobante({ idBase, valor, onChange, disabled = f
           inputMode="numeric"
           autoComplete="off"
           className={`form-control${faltaPuntoVenta ? ' is-invalid' : ''}`}
-          style={{ maxWidth: '5.5rem' }}
+          style={{ maxWidth: '6.5rem' }}
           aria-label="Punto de venta del comprobante"
           aria-invalid={faltaPuntoVenta || undefined}
-          placeholder="0000"
+          placeholder="00000"
           value={estado.puntoVenta}
           disabled={disabled}
           onChange={(e) => aplicar({ puntoVenta: soloDigitos(e.target.value, DIGITOS_PUNTO_DE_VENTA), numero: estado.numero })}

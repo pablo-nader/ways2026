@@ -61,4 +61,5 @@ task) per the owner's standing preference.
 
 ## Next step
 
+T1 shipped in #458, T2 in #460 (judgment-day APPROVED). Follow-ups in #461.
 T3 commit 0e8990ae, judgment-day APPROVED (no CRITICAL). Open follow-up, flagged as WARNING by both judges: a soft-deleted article matched by a classification filter renders with null code and labels ("Sin asignar"), because the label lookup still applies `BajaLogica`.

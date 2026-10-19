@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
@@ -31,15 +32,21 @@ namespace Ways.Application.Proveedores;
 /// </summary>
 public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
 {
+    private const int DigitosDelCuit = 11;
+
     public async Task<PaginaDe<ProveedorListado>> ListarAsync(
         string? busqueda = null,
         bool incluirEliminados = false,
         int pagina = 1,
         int tamanio = 25,
+        string? cuit = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
+
+        // Antes de leer nada: un cuit que no tiene 11 dígitos es un pedido inválido aunque no haya filas.
+        var digitosDelCuit = cuit is null ? null : ExigirDigitosDeCuit(cuit);
 
         var query = db.Proveedores.AsQueryable();
 
@@ -60,6 +67,11 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
                 Coincide(p.Cuit, patron));
         }
 
+        if (digitosDelCuit is not null)
+        {
+            query = ConCuit(query, digitosDelCuit);
+        }
+
         var total = await query.CountAsync(ct);
 
         var items = await query
@@ -70,6 +82,41 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
             .ToListAsync(ct);
 
         return new PaginaDe<ProveedorListado>(items, total, pagina, tamanio);
+    }
+
+    /// <summary>Proveedores vivos cuyo CUIT, comparando solo dígitos, es el pedido: <c>30-71234567-9</c>,
+    /// <c>30712345679</c> y <c>30 71234567 9</c> son el mismo. El CUIT se guarda tal como se cargó, así que
+    /// puede haber más de un match (la unicidad por tenant es sobre el texto exacto). Un CUIT que no tiene
+    /// 11 dígitos es 400 <c>cuit_invalido</c>.</summary>
+    public async Task<List<ProveedorListado>> BuscarPorCuitAsync(string cuit, CancellationToken ct = default)
+    {
+        var digitos = ExigirDigitosDeCuit(cuit);
+
+        return await ConCuit(db.Proveedores.AsQueryable(), digitos)
+            .OrderBy(p => p.RazonSocial)
+            .Select(p => Proyectar(p))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>Igualdad sobre los dígitos del CUIT guardado, traducida a <c>cuit ~ patrón</c>. No se usa
+    /// <c>Regex.Replace</c>: Npgsql lo traduce a <c>regexp_replace</c> sin la bandera <c>g</c>, que solo quita
+    /// el primer separador. El patrón admite cualquier cantidad de no-dígitos entre los dígitos pedidos.</summary>
+    private static IQueryable<Proveedor> ConCuit(IQueryable<Proveedor> query, string digitos)
+    {
+        var patron = "^[^0-9]*" + string.Join("[^0-9]*", digitos.Select(d => d.ToString())) + "[^0-9]*$";
+        return query.Where(p => p.Cuit != null && Regex.IsMatch(p.Cuit, patron));
+    }
+
+    private static string ExigirDigitosDeCuit(string cuit)
+    {
+        var digitos = Regex.Replace(cuit, "[^0-9]", "");
+
+        if (digitos.Length != DigitosDelCuit)
+        {
+            throw new ErrorDominio("cuit_invalido", "El CUIT tiene que tener 11 dígitos.", 400);
+        }
+
+        return digitos;
     }
 
     /// <summary>JD-A1 (judgment-day): fuente de <c>GET /api/proveedores/opciones</c>

@@ -153,6 +153,7 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     total: 1240,
     observaciones: null,
     estado: 'Borrador',
+    origen: 'Manual',
     items: [
       {
         orden: 1,

@@ -11,7 +11,9 @@ import { brutoDeLinea, cantidadDeLinea, lineaCompletaParaEnvio, aLineaSolicitada
 import { redondearImporte } from '../formato/importes'
 import type {
   CompraDetalle,
+  CompraDuplicada,
   EstadoCompra,
+  OrigenCompra,
   EstadoPago,
   PaginaDeCompras,
   PercepcionSolicitada,
@@ -53,6 +55,7 @@ function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
 export type FiltrosDeCompras = {
   idProveedor: number | null
   estado: EstadoCompra | null
+  origen: OrigenCompra | null
   desde: string
   hasta: string
   /** stage-tesoreria-por-empresa (PR5): filtro opcional por la empresa del punto de venta de la
@@ -64,7 +67,7 @@ export type FiltrosDeCompras = {
 }
 
 export function filtrosDeComprasVacios(): FiltrosDeCompras {
-  return { idProveedor: null, estado: null, desde: '', hasta: '', idEmpresa: null, pagina: 1, tamanio: 25 }
+  return { idProveedor: null, estado: null, origen: null, desde: '', hasta: '', idEmpresa: null, pagina: 1, tamanio: 25 }
 }
 
 /** Arma el query string de `GET /api/compras` — `desde`/`hasta` filtran por `fecha_recepcion`
@@ -74,6 +77,7 @@ export function construirQueryDeCompras(filtros: FiltrosDeCompras): string {
   const parametros = new URLSearchParams()
   if (filtros.idProveedor !== null) parametros.set('idProveedor', String(filtros.idProveedor))
   if (filtros.estado !== null) parametros.set('estado', filtros.estado)
+  if (filtros.origen !== null) parametros.set('origen', filtros.origen)
   if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
   if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   if (filtros.idEmpresa !== null) parametros.set('idEmpresa', String(filtros.idEmpresa))
@@ -82,11 +86,34 @@ export function construirQueryDeCompras(filtros: FiltrosDeCompras): string {
   return `?${parametros.toString()}`
 }
 
+export type ParametrosDeDuplicados = {
+  idProveedor: number
+  idTipoComprobante: number
+  numeroExterno: string
+  /** La compra que se está editando: no cuenta como duplicado de sí misma. */
+  excluirId: number | null
+}
+
+/** Arma el query string de `GET /api/compras/duplicados`. */
+export function construirQueryDeDuplicados(parametros: ParametrosDeDuplicados): string {
+  const query = new URLSearchParams()
+  query.set('idProveedor', String(parametros.idProveedor))
+  query.set('idTipoComprobante', String(parametros.idTipoComprobante))
+  query.set('numeroExterno', parametros.numeroExterno)
+  if (parametros.excluirId !== null) query.set('excluirId', String(parametros.excluirId))
+  return `?${query.toString()}`
+}
+
 export const clienteDeCompras = {
   listar: (filtros: FiltrosDeCompras) => api.get<PaginaDeCompras>(`/compras${construirQueryDeCompras(filtros)}`),
   obtener: (id: number) => api.get<CompraDetalle>(`/compras/${id}`),
+  /** `GET /api/compras/duplicados` — compras no anuladas del mismo proveedor y tipo con ese número, comparado por su valor. */
+  buscarDuplicados: (parametros: ParametrosDeDuplicados) =>
+    api.get<CompraDuplicada[]>(`/compras/duplicados${construirQueryDeDuplicados(parametros)}`),
   crear: (solicitud: SolicitudDeCompra) => api.post<CompraDetalle>('/compras', solicitud),
   actualizar: (id: number, solicitud: SolicitudDeCompra) => api.put<CompraDetalle>(`/compras/${id}`, solicitud),
+  /** `DELETE /api/compras/{id}` — borra de verdad un borrador (409 `compra_no_descartable` si ya no lo es). */
+  descartar: (id: number) => api.delete<void>(`/compras/${id}`),
   confirmar: (id: number) => api.post<CompraDetalle>(`/compras/${id}/confirmar`),
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>
@@ -99,6 +126,11 @@ export const clienteDeCompras = {
    * Surface). Usado acá solo para la columna de estado de pago cuando el listado está filtrado
    * por un proveedor puntual; el panel completo lo construye `Proveedores.tsx` en la Slice 6. */
   obtenerSaldoDeProveedor: (idProveedor: number) => api.get<SaldoDeProveedor>(`/proveedores/${idProveedor}/saldo`),
+}
+
+/** Aviso del editor: un borrador que cargó el asistente se confirma recién después de revisarlo contra la factura. */
+export function esBorradorCargadoPorElAsistente(compra: Pick<CompraDetalle, 'estado' | 'origen'> | null): boolean {
+  return compra !== null && compra.estado === 'Borrador' && compra.origen === 'Asistente'
 }
 
 export function etiquetaDeEstadoCompra(estado: EstadoCompra): string {

@@ -394,7 +394,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
     public async Task DobleConfirmacionConcurrenteDaExactamenteUnGanador()
     {
         var ctx = await PrepararAsync(nameof(DobleConfirmacionConcurrenteDaExactamenteUnGanador));
-        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "race-confirmar"));
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "0001-00000301"));
 
         using var gate = new CountdownEvent(2);
         var interceptor = new InterceptorDeRendezVousConfirmar(gate);
@@ -525,7 +525,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         var ctx = await PrepararAsync(nameof(ConfirmarConCambioDeTipoDeIvaConcurrenteUsaElDiscriminaIvaQueElLockRealmenteVio));
 
         var solicitudInicial = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, "tipo-switch-race", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, "0001-00000303", DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 1m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
         var creada = await CrearBorradorAsync(ctx, solicitudInicial);
 
@@ -548,7 +548,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         // El PUT gana la carrera: cambia el tipo (mismo costoUnitario) y COMMITEA antes de que el
         // lock del header de confirmar corra.
         var solicitudSwitch = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "tipo-switch-race", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "0001-00000303", DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 1m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
         var respuestaPut = await ctx.Admin.PutAsJsonAsync($"/api/compras/{creada.Id}", solicitudSwitch);
         var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
@@ -599,7 +599,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
     public async Task ConfirmarConNumeroYFechaVaciadosPorUnPutConcurrenteEsRechazadoConBadRequestNoConError500()
     {
         var ctx = await PrepararAsync(nameof(ConfirmarConNumeroYFechaVaciadosPorUnPutConcurrenteEsRechazadoConBadRequestNoConError500));
-        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "vaciado-race"));
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "0001-00000302"));
 
         var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -649,7 +649,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
     {
         var ctx = await PrepararAsync(nameof(ConfirmarSinFechaDeComprobanteEsRechazadaConElCodigoPineado));
         var solicitud = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "sin-fecha", null, null,
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "0001-00000304", null, null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 1m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
         var creada = await CrearBorradorAsync(ctx, solicitud);
 
@@ -751,7 +751,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         }
 
         var solicitud = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, $"presupuesto-{Guid.NewGuid():N}",
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, DatosDePrueba.NumeroExternoUnico(),
             DateOnly.FromDateTime(DateTime.UtcNow), null, lineas);
 
         return await CrearBorradorAsync(ctx, solicitud);
@@ -779,6 +779,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
                 npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
+                npgsql.MapEnum<OrigenCompra>("origen_compra");
                 // stage-15-cc-proveedores-ledger, Slice 2: ConfirmarAsync/AnularAsync ahora
                 // escriben el ledger de proveedor — sin este mapeo, ExecuteScalarAsync/
                 // ExecuteReaderAsync fallan al (de)serializar TipoMovimientoCcProveedor.

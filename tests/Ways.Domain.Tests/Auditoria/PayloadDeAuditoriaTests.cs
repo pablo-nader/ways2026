@@ -78,6 +78,12 @@ public class PayloadDeAuditoriaTests
             PayloadDeAuditoria.AnulacionDeCompra(EstadoCompra.Confirmada, EstadoCompra.Anulada));
 
     [Fact]
+    public void DescarteDeCompraEsConstruible() =>
+        AsumirConstruible(
+            AccionAuditada.CompraDescarte,
+            PayloadDeAuditoria.DescarteDeCompra(idProveedor: 7, numeroExterno: "0001-00000001", total: 121m, cantidadDeItems: 2));
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,

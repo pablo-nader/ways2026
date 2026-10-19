@@ -106,11 +106,11 @@ jobs:
     needs: cambios
     if: ${{ !cancelled() && needs.cambios.outputs.codigo != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        fragmento: [1, 2, 3]
+        fragmento: [1, 2, 3, 4]
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
