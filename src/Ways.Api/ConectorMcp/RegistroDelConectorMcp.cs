@@ -36,8 +36,9 @@ public static class RegistroDelConectorMcp
         "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
         "366 días). Para preparar la carga de una factura de proveedor (solo " +
         "Admin): primero contexto_de_compras (puntos de venta, tipos de comprobante de compra y alícuotas de " +
-        "IVA), después buscar_proveedor (por CUIT o nombre). La carga del borrador de compra todavía no está " +
-        "disponible. Para asociar códigos a un artículo (solo Admin, escriben y solo agregan): " +
+        "IVA), después buscar_proveedor (por CUIT o nombre) y por último buscar_articulos con todas las líneas " +
+        "de la factura en una sola llamada. La carga del borrador de compra todavía no está disponible. " +
+        "Para asociar códigos a un artículo (solo Admin, escriben y solo agregan): " +
         "asociar_codigo_de_barras con los dígitos impresos debajo de las barras, y asociar_codigo_de_proveedor " +
         "con el código que un proveedor imprime en su factura. Si el código de barras no es un GTIN estándar, " +
         "hay que confirmar los dígitos con el usuario antes de repetir la llamada con confirmar_codigo_no_estandar.";

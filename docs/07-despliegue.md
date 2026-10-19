@@ -194,6 +194,7 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
 |---|---|
 | `contexto_de_compras` | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
 | `buscar_proveedor` | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
+| `buscar_articulos` | Hasta 100 líneas de una factura en una llamada: por línea, el primer match entre código del proveedor, código de barras y nombre, con hasta 5 candidatos, sin costos. |
 
 Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
 cargarla; la carga del borrador todavía no está disponible. Son solo para Admin, igual que las
