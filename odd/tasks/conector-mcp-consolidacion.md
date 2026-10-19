@@ -217,9 +217,16 @@ Ronda 1 del judgment-day, observado sobre `cdfe8e02` (main sigue en `e22281db`):
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 361/361.
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 70/70.
 
+Rebanada 2, observado sobre `e3b795c7` y rebaseada sin cambios de contenido sobre `origin/main` `8dd66b39` (merge de
+#478), 2026-10-19:
+
+- `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
+- `dotnet test tests/Ways.Application.Tests -c Release`: 1059/1059.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 380/380.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 71/71.
+
 ## Progreso
 
-- Rebanada 1 completa en `pnader/mcp-consolidacion-1`, rebaseada sobre `origin/main` después del merge de #477.
-- Rondas 1 y 2 del judgment-day corregidas (L1–L9 y el resumen de clase). Siguiente paso: re-juicio de la ronda 2
-  (orquestador), PR con auto-merge y después la
-  rebanada 2.
+- Rebanada 1 mergeada en main (#478, `8dd66b39`).
+- Rebanada 2 completa (R2-T1…R2-T4) en `pnader/mcp-consolidacion-2`, apilada sobre main. Siguiente paso:
+  judgment-day del orquestador y PR. Pendiente fuera de alcance: la doble resolución de empresa de la ficha.
