@@ -145,10 +145,11 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 ## Conector MCP (experimental)
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
-Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas sus
-herramientas son de solo lectura: `quien_soy`, que devuelve el nombre de usuario, el correo, el rol
-y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, y las consultas de
-ventas y de compras de las secciones siguientes.
+Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Las
+herramientas corren con la identidad y el tenant de la cuenta que autorizó. Son de solo lectura
+`quien_soy`, que devuelve el nombre de usuario, el correo, el rol y el tenant de la cuenta que
+autorizó la conexión, más la hora del servidor, y las consultas de ventas y de compras de las
+secciones siguientes. Las dos de códigos de artículos escriben, y solo agregan.
 
 ### Consultas de ventas
 
@@ -198,6 +199,24 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
 Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
 cargarla; la carga del borrador todavía no está disponible. Son solo para Admin, igual que las
 escrituras de compras de la API (`GestionDeCatalogo`): con otro rol responden un error sin datos.
+
+### Códigos de artículos
+
+| Herramienta | Qué hace |
+|---|---|
+| `asociar_codigo_de_barras(id_articulo, codigo, confirmar_codigo_no_estandar)` | Asocia un código de barras a un artículo y devuelve sus códigos actuales. |
+| `asociar_codigo_de_proveedor(id_articulo, id_proveedor, codigo)` | Asocia a un artículo el código con que un proveedor lo imprime en su factura. |
+
+Las herramientas de códigos escriben con `ServicioDeArticulos`, el mismo camino que la web, y
+exigen la política `GestionDeCatalogo` de los endpoints del ABM: con otro rol devuelven un error
+sin escribir. Son idempotentes: repetir la misma asociación no agrega nada y responde que ya
+estaba. Si el código pertenece a otro artículo, no escriben y el error nombra a ese artículo
+(nombre, código interno e id, y si está dado de baja) para que decida el usuario. Un artículo o
+proveedor que no existe, o que es de otro tenant, da el mismo error de "no existe". Además,
+`asociar_codigo_de_barras` no escribe un código que no sea un GTIN estándar (8, 12, 13 o 14 dígitos
+con dígito verificador GS1 correcto) mientras la llamada no traiga `confirmar_codigo_no_estandar`
+en `true`: el error le indica a Claude que le pida al usuario confirmar los dígitos leídos. Esa
+regla es solo de la herramienta: la web solo advierte y la API acepta códigos no estándar.
 
 Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
 todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`

@@ -25,8 +25,8 @@ public static class RegistroDelConectorMcp
     private const string CategoriaDeLog = "Ways.Api.ConectorMcp";
 
     private const string Instrucciones =
-        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental y de solo " +
-        "lectura. quien_soy informa con qué usuario y tenant quedó autorizada la conexión. Las consultas de " +
+        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental. " +
+        "quien_soy informa con qué usuario y tenant quedó autorizada la conexión. Las consultas de " +
         "ventas son solo para Supervisor y Admin: ventas_resumen responde cuánto se vendió (por ejemplo, " +
         "'¿cuánto vendimos hoy?'); ventas_agrupadas lo abre por punto de venta, medio de pago, vendedor, día, " +
         "área, grupo, categoría o marca ('¿cuánto vendió cada vendedor esta semana?', '¿qué marca vendió más este " +
@@ -37,7 +37,11 @@ public static class RegistroDelConectorMcp
         "366 días). Para preparar la carga de una factura de proveedor (solo " +
         "Admin): primero contexto_de_compras (puntos de venta, tipos de comprobante de compra y alícuotas de " +
         "IVA), después buscar_proveedor (por CUIT o nombre) y por último buscar_articulos con todas las líneas " +
-        "de la factura en una sola llamada. La carga del borrador de compra todavía no está disponible.";
+        "de la factura en una sola llamada. La carga del borrador de compra todavía no está disponible. " +
+        "Para asociar códigos a un artículo (solo Admin, escriben y solo agregan): " +
+        "asociar_codigo_de_barras con los dígitos impresos debajo de las barras, y asociar_codigo_de_proveedor " +
+        "con el código que un proveedor imprime en su factura. Si el código de barras no es un GTIN estándar, " +
+        "hay que confirmar los dígitos con el usuario antes de repetir la llamada con confirmar_codigo_no_estandar.";
 
     private static readonly string[] EsquemasDelConector =
     [
