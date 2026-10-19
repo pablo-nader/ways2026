@@ -29,14 +29,16 @@ public static class ComprasEndpoints
             DateTimeOffset? desde,
             DateTimeOffset? hasta,
             int? idEmpresa,
+            OrigenCompra? origen,
             int? pagina,
             int? tamanio,
             CancellationToken ct) =>
-            servicio.ListarAsync(idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, ct))
+            servicio.ListarAsync(idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, origen, ct))
         .WithSummary(
             "Lista comprobantes de compra con filtros y paginado. idEmpresa (stage-tesoreria-por-" +
             "empresa, PR5) filtra por la empresa del punto de venta de la compra — usado por el " +
-            "picker 'Vincular a compra' de Gastos para no ofrecer compras de otra empresa.");
+            "picker 'Vincular a compra' de Gastos para no ofrecer compras de otra empresa. origen " +
+            "filtra por quién cargó la compra (Manual o Asistente); la API no permite fijarlo.");
 
         // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
         // inmediatamente después de su ruta fuente — hereda OperacionDePos por co-locación.
@@ -49,12 +51,12 @@ public static class ComprasEndpoints
             ServicioDeCompras servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
             IContextoDeUsuario usuario, IRelojDelSistema reloj,
             int? idProveedor, EstadoCompra? estado, DateTimeOffset desde, DateTimeOffset hasta, int? idEmpresa,
-            string formato, CancellationToken ct) =>
+            OrigenCompra? origen, string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
-                idProveedor, estado, desde, hasta, opciones.Value.TopeDeFilas, idEmpresa, ct);
+                idProveedor, estado, desde, hasta, opciones.Value.TopeDeFilas, idEmpresa, origen, ct);
 
             var zona = TimeZoneInfo.FindSystemTimeZoneById(AlcanceDeListadoHttp.ZonaPorDefecto);
             var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);
@@ -91,6 +93,16 @@ public static class ComprasEndpoints
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Reemplaza el header y el set completo de items de un borrador (borrador únicamente).");
+
+        grupo.MapDelete("/{id:int}", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.DescartarBorradorAsync(id, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Descarta un borrador: borra el encabezado, las líneas, las alícuotas y las percepciones, y deja el " +
+            "rastro compra.descarte. Una compra confirmada o anulada responde 409 compra_no_descartable.");
 
         grupo.MapPost("/{id:int}/confirmar", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {

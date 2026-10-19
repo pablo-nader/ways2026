@@ -779,6 +779,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
                 npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
+                npgsql.MapEnum<OrigenCompra>("origen_compra");
                 // stage-15-cc-proveedores-ledger, Slice 2: ConfirmarAsync/AnularAsync ahora
                 // escriben el ledger de proveedor — sin este mapeo, ExecuteScalarAsync/
                 // ExecuteReaderAsync fallan al (de)serializar TipoMovimientoCcProveedor.

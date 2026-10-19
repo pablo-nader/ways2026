@@ -165,6 +165,15 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "ConsultarEspejoPendienteAsync" },
         { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "SolicitarAsync" },
         { "Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs", "CancelarAsync" },
+
+        // Alta de un borrador de compra: encabezado, líneas, alícuotas y percepciones en una sola transacción sin clave
+        // de idempotencia; un reintento tras un commit ambiguo duplicaría la compra (o el índice único del número la
+        // rechazaría con un 409 falso sobre un alta que sí tuvo éxito).
+        { "Ways.Application/Compras/ServicioDeCompras.cs", "CrearBorradorAsync" },
+
+        // Descartar un borrador: toma el lock FOR UPDATE y borra el encabezado con sus hijos; un reintento tras un commit
+        // ambiguo respondería 404 a un descarte que sí tuvo éxito.
+        { "Ways.Application/Compras/ServicioDeCompras.cs", "DescartarBorradorAsync" },
     };
 
     /// <summary>
