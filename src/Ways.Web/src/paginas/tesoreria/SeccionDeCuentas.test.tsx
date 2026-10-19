@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeccionDeCuentas } from './SeccionDeCuentas'
 import { ErrorApi } from '../../api/cliente'
 import { ROL } from '../../api/tipos'
@@ -427,12 +427,6 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
   }
 
   it('al registrar el ajuste cierra el modal, confirma y vuelve a leer las cuentas y el libro', async () => {
-    // El rango por defecto son los últimos siete días: sin fijar el reloj, el ajuste del fixture queda fuera con el paso del tiempo.
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date(2026, 9, 12, 12, 0))
-    onTestFinished(() => {
-      vi.useRealTimers()
-    })
     mockearConLibro()
     apiPostMock.mockResolvedValue({
       saldoActual: 1750,
