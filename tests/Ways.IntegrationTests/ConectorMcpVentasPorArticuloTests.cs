@@ -409,6 +409,37 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         Assert.Contains("Total de los artículos filtrados: 150,00 en 1 artículos", lineas);
     }
 
+    /// <summary>Cláusulas bajo prueba: el Y entre los criterios del reporte en <c>AcotarComoElReporteAsync</c>. Con
+    /// artículo y categoría, solo el artículo pedido (lo lleva la restricción a los ids, no la consulta de
+    /// clasificación); con área y categoría, solo lo que cumple las dos: Agua 1L ya es Gaseosas y Viejo es de Almacén,
+    /// así que Bebidas y Aguas no deja nada.</summary>
+    [Theory]
+    [InlineData("""{"articulo":"cola-500","categoria":"gaseosas"}""", "categoría Gaseosas, artículo Cola 500", "400,00", new[] { "COLA-500" })]
+    [InlineData("""{"area":"bebidas","categoria":"aguas"}""", "área Bebidas, categoría Aguas", "0,00", new string[0])]
+    public async Task VentasPorArticuloCombinaLosFiltrosDelReporteConY(
+        string filtrosJson, string filtroEsperado, string importeFiltrado, string[] codigosEsperados)
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloCombinaLosFiltrosDelReporteConY));
+        var (host, cliente, token) = await ConectarAsync(e.Admin);
+        await using var _ = host;
+        using var __ = cliente;
+        var argumentos = new Dictionary<string, object?> { ["periodo"] = "hoy" };
+        foreach (var propiedad in System.Text.Json.JsonDocument.Parse(filtrosJson).RootElement.EnumerateObject())
+        {
+            argumentos[propiedad.Name] = propiedad.Value.GetString();
+        }
+
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_por_articulo", argumentos);
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        var lineas = Lineas(resultado.Texto);
+        Assert.Equal(filtroEsperado, lineas[2].Replace("Filtros: ", string.Empty, StringComparison.Ordinal));
+        var filas = lineas.Skip(5).TakeWhile(l => !l.StartsWith("Total de los", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(codigosEsperados, filas.Select(f => f.Split(" | ")[0]).ToArray());
+        Assert.Contains($"Total de los artículos filtrados: {importeFiltrado} en {codigosEsperados.Length} artículos", lineas);
+        Assert.Contains("Total de todos los artículos vendidos en el período (base del %): 1.650,00", lineas);
+    }
+
     [Theory]
     [InlineData("""{"periodo":"hoy","categoria":"inexistente"}""", new[] { "No encontré la categoría 'inexistente'" })]
     [InlineData("""{"periodo":"hoy","categoria":"descontinuada"}""", new[] { "No encontré la categoría 'descontinuada'" })]
