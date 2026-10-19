@@ -430,7 +430,7 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
     mockearConLibro()
     apiPostMock.mockResolvedValue({
       saldoActual: 1750,
-      movimiento: fila({ id: 99, tipo: 'Ajuste', final: 1750 }),
+      movimiento: fila({ id: 99, tipo: 'Ajuste', fecha: new Date().toISOString(), final: 1750 }),
     })
     const usuario = userEvent.setup()
     montar()
