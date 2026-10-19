@@ -158,8 +158,8 @@ prosa, así que la prosa se reescribe una sola vez, después). Commits de unidad
   `Subset` de los tests de ventas, ficha, catálogo y borrador; se conservan sus aserciones de esquema.
 - [x] R2-T3 — Constantes en las descripciones, el `MaximoDeCandidatos` repetido y la convención de nombres de
   argumentos. Ruta: inline (writer único de la rebanada). Commit `12db4041`.
-  - Constantes: `ConectorMcpDescripcionesYConstantesTests` compara cada número de las descripciones con su
-    constante (la `[Description]` no admite interpolar un `int`): palabras (6), candidatos por línea (5) y líneas
+  - Constantes: `ConectorMcpDescripcionesYConstantesTests` compara los límites numéricos de las descripciones con
+    su constante (la `[Description]` no admite interpolar un `int`): palabras (6), candidatos por línea (5) y líneas
     (100) de `buscar_articulos`; líneas del borrador (100); candidatos listados (10), días de ventas (30) y compras
     (1 a 20, 5) de `articulo_info`; días de la tabla por día (31) de `ventas_resumen`; el tope del rango (366, la
     constante privada de `RangoDeReporte` leída por reflexión) en las tres de ventas y su `desde`; `limite` (1 a

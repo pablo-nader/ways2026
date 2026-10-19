@@ -11,9 +11,10 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// Los límites numéricos que las descripciones de las herramientas le prometen a Claude (candidatos, palabras,
-/// letras, filas, días y líneas) salen de las constantes que el código aplica. Una <c>[Description]</c> solo admite una expresión constante y un <c>int</c> no se interpola en una
-/// <c>const string</c>, así que el texto sigue escrito a mano y esta prueba lo compara con la constante: cambiar el
-/// límite sin cambiar la prosa, o al revés, la rompe.
+/// letras, filas, días y líneas) salen de las constantes que el código aplica. Una <c>[Description]</c> solo
+/// admite una expresión constante y un <c>int</c> no se interpola en una <c>const string</c>, así que el texto
+/// sigue escrito a mano y esta prueba lo compara con la constante: cambiar el límite sin cambiar la prosa, o al
+/// revés, la rompe.
 /// </summary>
 public partial class ConectorMcpDescripcionesYConstantesTests
 {
