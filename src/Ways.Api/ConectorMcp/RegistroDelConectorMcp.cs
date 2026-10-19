@@ -36,8 +36,8 @@ public static class RegistroDelConectorMcp
         "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
         "366 días). Para preparar la carga de una factura de proveedor (solo " +
         "Admin): primero contexto_de_compras (puntos de venta, tipos de comprobante de compra y alícuotas de " +
-        "IVA), después buscar_proveedor (por CUIT o nombre). La carga del borrador de compra todavía no está " +
-        "disponible.";
+        "IVA), después buscar_proveedor (por CUIT o nombre) y por último buscar_articulos con todas las líneas " +
+        "de la factura en una sola llamada. La carga del borrador de compra todavía no está disponible.";
 
     private static readonly string[] EsquemasDelConector =
     [

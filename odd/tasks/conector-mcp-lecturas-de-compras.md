@@ -49,7 +49,7 @@ Lecturas sobre `puntos_venta`, `empresas` (alícuotas de percepción por defecto
 - [x] T2 — `buscar_proveedor` + normalización de CUIT. Ruta: inline. Tests: unitarios de CUIT;
   integración por `/mcp` (CUIT con separadores, nombre sin acentos, tope, errores, aislamiento,
   rechazo por rol).
-- [ ] T3 — `buscar_articulos` en lote (código del proveedor exacto → código de barras exacto →
+- [x] T3 — `buscar_articulos` en lote (código del proveedor exacto → código de barras exacto →
   nombre, hasta 5 candidatos). Ruta: inline. Tests: integración con las tres fuentes, línea sin
   resultado, proveedor ajeno, aislamiento, rechazo por rol, sin costos.
 
@@ -75,3 +75,17 @@ Auto-fix.
 ## Progreso
 
 - Exploración hecha (2026-10-18). RDD apagado por decisión local del clon: rige judgment-day.
+- Registro de tools por ensamblado (`WithToolsFromAssembly`), pedido de la orquestadora para que las
+  sesiones paralelas no editen `RegistroDelConectorMcp.cs`.
+- Verificación: 16 unitarios de CUIT; 30 de integración del conector en verde sobre T3 (5 sobre T1 y
+  16 sobre T2, cada rebanada probada aislada). Build de `src` sin advertencias nuevas.
+- Mutaciones (cada una hace fallar su test, revertidas): modo de tenant → plataforma (6 tests de
+  aislamiento), sin guarda de permiso (6 casos de rol), sin `IdProveedor` en el código del
+  proveedor, sin chequeo de proveedor visible, sin quitar guiones del CUIT guardado, sin chequeo
+  de línea nula, INNER JOIN a alícuotas, nombre sin aplanar, split solo por espacio, sin rama de
+  línea sin datos.
+- Judgment-day: T1 y T2 sin hallazgos severos (una sugerencia informativa en T2: el CUIT guardado
+  solo se limpia de guiones, puntos y espacios). T3: advertencias corregidas (línea nula, alícuota
+  dada de baja, línea sin datos, saltos de línea en nombres) y re-judgment acotado limpio. Queda
+  informativo: hasta 3 consultas por línea, mismo costo que el listado de artículos.
+  Veredicto: APPROVED en las tres rebanadas.

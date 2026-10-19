@@ -55,7 +55,7 @@ public class ConectorMcpHerramientasDeComprasTests(WaysApiFixture fixture) : ICl
         var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .ToDictionary(h => h.GetProperty("name").GetString()!);
         Assert.Contains("quien_soy", herramientas.Keys);
-        foreach (var nombre in new[] { "contexto_de_compras", "buscar_proveedor" })
+        foreach (var nombre in new[] { "contexto_de_compras", "buscar_proveedor", "buscar_articulos" })
         {
             var anotaciones = herramientas[nombre].GetProperty("annotations");
             Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
@@ -199,13 +199,22 @@ public class ConectorMcpHerramientasDeComprasTests(WaysApiFixture fixture) : ICl
     [InlineData("contexto_de_compras", RolConocido.Vendedor)]
     [InlineData("buscar_proveedor", RolConocido.Supervisor)]
     [InlineData("buscar_proveedor", RolConocido.Vendedor)]
+    [InlineData("buscar_articulos", RolConocido.Supervisor)]
+    [InlineData("buscar_articulos", RolConocido.Vendedor)]
     public async Task UnUsuarioQueNoEsAdminRecibeUnErrorSinDatos(string herramienta, RolConocido rol)
     {
         await using var conexion = await ConectarAsync($"mcp-compras-rol-{rol}", rol);
         await _compras.SembrarEmpresaConPuntoDeVentaAsync(conexion.Usuario.IdTenant, "Empresa Vedada SA", "Local vedado");
-        await _compras.SembrarProveedorAsync(conexion.Usuario.IdTenant, "Proveedor Vedado SA", cuit: "30-11111111-2");
+        var idProveedor = await _compras.SembrarProveedorAsync(
+            conexion.Usuario.IdTenant, "Proveedor Vedado SA", cuit: "30-11111111-2");
+        await _compras.SembrarArticuloAsync(conexion.Usuario.IdTenant, "Artículo vedado", codigoBarras: "7792222222222");
 
-        object argumentos = herramienta == "buscar_proveedor" ? new { cuit = "30-11111111-2" } : new { };
+        object argumentos = herramienta switch
+        {
+            "buscar_proveedor" => new { cuit = "30-11111111-2" },
+            "buscar_articulos" => new { idProveedor, lineas = new[] { new { codigoBarras = "7792222222222" } } },
+            _ => new { }
+        };
         var resultado = await LlamarHerramientaAsync(conexion.Cliente, conexion.AccessToken, herramienta, argumentos);
 
         Assert.True(resultado.EsError);
