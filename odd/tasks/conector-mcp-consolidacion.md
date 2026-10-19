@@ -35,8 +35,9 @@ Rebanada 1 (código), rama `pnader/mcp-consolidacion-1`, apilada sobre la S4 (#4
   `Coincide` para los "contiene".
 - Una sola lectura del reporte por empresa en `ventas_por_articulo`.
 
-Rebanada 2 (prosa y tests del conjunto), pendiente: `Instrucciones` y la sección de docs/07, un test
-del conjunto exacto de once tools, y constantes y nombres de argumentos.
+Rebanada 2 (prosa y tests del conjunto), rama `pnader/mcp-consolidacion-2`, completa: `Instrucciones` y la
+sección de docs/07, un test del conjunto exacto de once tools, constantes y nombres de argumentos, y la paridad
+del acotado de ventas por artículo con el reporte web.
 
 ## Restricciones
 
@@ -117,11 +118,13 @@ Judgment-day, ronda 1 de correcciones (ledger congelado sobre `7203e061`, sin CR
   de `AcotarComoElReporteAsync` con el reporte: helper compartido o test de paridad) y verificar con un test si el
   mensaje de una `McpException` llega al cliente antes de tocar esa prosa.
 
-Rebanada 2, rama `pnader/mcp-consolidacion-2`, apilada sobre `pnader/mcp-consolidacion-1` (#478). Orden de
-ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la prosa se reescribe una sola vez, después).
+Rebanada 2, rama `pnader/mcp-consolidacion-2`: nació apilada sobre `pnader/mcp-consolidacion-1` y se rebaseó sobre
+`origin/main` `8dd66b39` cuando #478 mergeó. Orden de ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la
+prosa, así que la prosa se reescribe una sola vez, después). Commits de unidad de trabajo, después del rebase: T2
+`4fda73e5`, T3 `12db4041`, T1 `36405fa8`, T4 `a47ad0e2`; verificación y progreso `9d604815`.
 
 - [x] R2-T1 — Prosa de `Instrucciones` y docs/07, la `McpException` verificada y un test de que `instructions`
-  nombra las once tools. Ruta: inline (writer único de la rebanada).
+  nombra las once tools. Ruta: inline (writer único de la rebanada). Commit `36405fa8`.
   - `McpException`: verificada con `ConectorMcpErroresQueEscapanTests`, que registra dos tools de prueba solo en
     el host del test (`ConfigureTestServices` + `McpServerTool.Create`). Resultado observado con el SDK 2.2.0:
     las dos llegan como resultado con `isError`; una `InvalidOperationException` trae solo
@@ -142,7 +145,7 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
     del conjunto; reemplaza al test de las tres de escritura de `ConectorMcpCrearBorradorDeCompraTests`). Sin RED
     (la prosa vieja también nombraba las once). Mutación: `ventas_resumen` → `ventas_total` en `Instrucciones` →
     cae con `Item: "ventas_resumen"`.
-- [x] R2-T2 — Test del conjunto exacto de once tools. Ruta: inline (writer único de la rebanada).
+- [x] R2-T2 — Test del conjunto exacto de once tools. Ruta: inline (writer único de la rebanada). Commit `4fda73e5`.
   `ConectorMcpConjuntoDeHerramientasTests`: `tools/list` anuncia exactamente las once, cada una con su título, sus
   cuatro anotaciones, sus argumentos y sus requeridos (cierra L10: antes había esquemas fijados para 6 de 11); y
   un test estructural por reflexión: los argumentos publicados de cada método `[McpServerTool]` son exactamente sus
@@ -154,7 +157,7 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
   tests de anotaciones de `quien_soy` (flujo) y de las tres de compras, y las aserciones de anotaciones, título y
   `Subset` de los tests de ventas, ficha, catálogo y borrador; se conservan sus aserciones de esquema.
 - [x] R2-T3 — Constantes en las descripciones, el `MaximoDeCandidatos` repetido y la convención de nombres de
-  argumentos. Ruta: inline (writer único de la rebanada).
+  argumentos. Ruta: inline (writer único de la rebanada). Commit `12db4041`.
   - Constantes: `ConectorMcpDescripcionesYConstantesTests` compara cada número de las descripciones con su
     constante (la `[Description]` no admite interpolar un `int`): palabras (6), candidatos por línea (5) y líneas
     (100) de `buscar_articulos`; líneas del borrador (100); candidatos listados (10), días de ventas (30) y compras
@@ -190,7 +193,8 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
     el mensaje vuelto a `'agrupar_por'` → cae la fila `color` del test de entradas inválidas; `puntoVenta`
     ignorado en `ventas_agrupadas` → cae el test nuevo; ídem en `ventas_por_articulo` → cae el test nuevo.
 - [x] R2-T4 — Paridad de `AcotarComoElReporteAsync` con el reporte web (cierra L11), sin cambios de producción.
-  Ruta: inline (writer único de la rebanada). `VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte`
+  Ruta: inline (writer único de la rebanada). Commit `a47ad0e2`.
+  `VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte`
   compara, para nueve filtros (sin filtros; área; grupo; categoría con una subcategoría; la subcategoría;
   artículo; área + categoría; grupo + área; artículo + categoría), las filas de `ventas_por_articulo` con las
   de `GET /api/reportes/ventas/por-articulo` con los mismos ids: código, nombre, cantidad e importe de cada fila y
@@ -231,8 +235,8 @@ Ronda 1 del judgment-day, observado sobre `cdfe8e02` (main sigue en `e22281db`):
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 361/361.
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 70/70.
 
-Rebanada 2, observado sobre `e3b795c7` y rebaseada sin cambios de contenido sobre `origin/main` `8dd66b39` (merge de
-#478), 2026-10-19:
+Rebanada 2, observado sobre `e3b795c7` (antes del rebase; el árbol es idéntico al de `9d604815`, ya sobre
+`origin/main` `8dd66b39`), 2026-10-19:
 
 - `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
 - `dotnet test tests/Ways.Application.Tests -c Release`: 1059/1059.
@@ -242,5 +246,7 @@ Rebanada 2, observado sobre `e3b795c7` y rebaseada sin cambios de contenido sobr
 ## Progreso
 
 - Rebanada 1 mergeada en main (#478, `8dd66b39`).
-- Rebanada 2 completa (R2-T1…R2-T4) en `pnader/mcp-consolidacion-2`, apilada sobre main. Siguiente paso:
-  judgment-day del orquestador y PR. Pendiente fuera de alcance: la doble resolución de empresa de la ficha.
+- Rebanada 2 completa (R2-T1…R2-T4) en `pnader/mcp-consolidacion-2`, sobre main. Ronda 1 del judgment-day en
+  corrección (L1–L9 del ledger, un commit por ítem): L1 `706a1b59`, L2 `d1cf2456`, L3 `6c301fd1`, L4 `f9eed76d`,
+  L5 `bca2b60f`. Siguiente paso: L6–L9, verificación y re-juicio. Pendiente fuera de alcance: la doble resolución
+  de empresa de la ficha.
