@@ -44,7 +44,7 @@ proveedor como BORRADOR de compra. La confirmación sigue siendo humana, en la w
   - Alta en una transacción sin reintento; test con falla al guardar hijos sin header huérfano.
   - `DELETE /api/compras/{id}` con 404 primero, 409 estable, lock, auditoría, guardas estructurales.
   - Web: botón "Descartar borrador" con confirmación en el editor.
-- [ ] **T2 — Origen de la compra** (PR 2)
+- [x] **T2 — Origen de la compra** (PR 2)
   - Columna, enum, migración, doc 10 §5, lecturas con `origen`, filtro del listado.
   - Web: insignia "Asistente" con filtro y aviso en el editor del borrador asistido.
 - [ ] **T3 — Número canónico + proveedor por CUIT** (PR 3)
@@ -93,6 +93,10 @@ Ruta por tarea, commits y resultado de judgment-day se anotan acá al cerrar cad
   2 (listado y export), con `Origen = Manual` en el PUT falla 1; Vitest 437 ok (13 archivos), tsc y oxlint ok; mutaciones web
   (estado del aviso, parámetro del query, condición de la insignia) matan sus tests. La suite de integración entera queda al CI.
 
+- **T2 cierre**: commit 7367572f. Judgment-day APPROVED en ronda 1, sin hallazgos severos. Info: un valor numérico
+  fuera del enum en `?origen=` no se rechaza con 400, igual que `estado` hoy. La suite de integración completa (enum
+  nativo nuevo) queda al CI.
+
 ## Próximo paso
 
-T2.
+T3.
