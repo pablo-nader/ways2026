@@ -74,6 +74,16 @@ public static class ComprasEndpoints
             "Export XLSX de GET /api/compras: mismo filtro, sin paginado bajo el tope, gate " +
             "OperacionDePos heredado por co-locación.");
 
+        grupo.MapGet("/duplicados", (
+            ServicioDeCompras servicio, int idProveedor, int idTipoComprobante, string? numeroExterno, int? excluirId,
+            CancellationToken ct) =>
+            servicio.BuscarDuplicadosAsync(idProveedor, idTipoComprobante, numeroExterno, excluirId, ct))
+        .WithSummary(
+            "Compras no anuladas del mismo proveedor y tipo con ese número. En C-FA/C-FB/C-FC compara el valor " +
+            "numérico de punto de venta y número (3-12345 = 0003-00012345); en los demás tipos, el texto sin " +
+            "distinguir mayúsculas. excluirId deja afuera la compra que se está editando. Un número fiscal " +
+            "ininterpretable responde 400 numero_comprobante_invalido.");
+
         grupo.MapGet("/{id:int}", (ServicioDeCompras servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
         .WithSummary("Detalle de una compra: header + items + precioSugerido por item.");

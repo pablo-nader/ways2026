@@ -97,6 +97,17 @@ Ruta por tarea, commits y resultado de judgment-day se anotan acá al cerrar cad
   fuera del enum en `?origen=` no se rechaza con 400, igual que `estado` hoy. La suite de integración completa (enum
   nativo nuevo) queda al CI.
 
+- **T3** (ruta: escritor delegado hasta cortarse por límite de uso; lo terminó el padre en una rama nueva desde
+  main, porque T1 y T2 ya entraron por #470): `NumeroDeComprobanteDeCompra` (forma canónica `PPPPP-NNNNNNNN` y
+  segmentos numéricos), normalización al escribir en alta y PUT para tipos con libro IVA (400
+  `numero_comprobante_invalido`), PUT con 404 primero, `BuscarDuplicadosAsync` + `GET /api/compras/duplicados`,
+  `?cuit=` en `GET /api/proveedores` + `BuscarPorCuitAsync` (400 `cuit_invalido`). Web: punto de venta de 5 dígitos
+  y aviso de número duplicado en el editor. Checks: Domain 1805 ok, Application 1059 ok, integración filtrada
+  (compras, proveedores, autorización, saldos, cuenta corriente de proveedor) 513 ok, Vitest 470 ok, tsc y oxlint
+  ok. Mutación: sin el filtro de anuladas, sin `excluirId` y con CUIT comparado por texto exacto caen
+  `UnaCompraAnuladaNoCuentaComoDuplicado`, `ElChequeoDejaAfueraLaCompraQueSeEstaEditando` y los tres tests del
+  filtro por CUIT. Seguimiento: normalizar las filas viejas (puede chocar con el índice único).
+
 ## Próximo paso
 
-T3.
+Judgment-day de T3 y PR.

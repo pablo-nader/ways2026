@@ -2557,6 +2557,17 @@ export type CompraListada = {
   origen: OrigenCompra
 }
 
+/** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo
+ * proveedor y tipo con el número buscado. `numeroExterno` es el texto guardado, que puede estar en otro
+ * formato que el buscado (filas anteriores a la forma canónica `PPPPP-NNNNNNNN`). */
+export type CompraDuplicada = {
+  id: number
+  estado: EstadoCompra
+  numeroExterno: string
+  fechaComprobante: string | null
+  origen: OrigenCompra
+}
+
 /** Cuerpo de `POST /api/compras/{id}/pagos` (espejo de `SolicitudDePagoDeCompra`). `fecha` viaja como
  * `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. */
 export type SolicitudDePagoDeCompra = { fecha: string; importe: number; idMedioPago: number; concepto: string | null }
