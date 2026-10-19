@@ -620,6 +620,103 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
         Assert.Empty(await CodigosDeProveedorEnLaBaseAsync(articulo.Id));
     }
 
+    /// <summary>Cláusula bajo prueba: el brazo <c>ErrorDominio</c> (<c>codigo_barra_duplicado</c>) de la carrera de
+    /// <c>asociar_codigo_de_barras</c> cuando no se encuentra al dueño. El interceptor asocia el código a otro artículo
+    /// justo antes de la verificación previa del servicio y lo borra antes de que la herramienta busque al dueño.</summary>
+    [Fact]
+    public async Task UnCodigoDeBarrasQueElServicioVeTomadoSinDuenoVisibleDiceQuePaso()
+    {
+        var interceptor = new InterceptorQueTomaYSueltaElCodigo("codigos_barra", disparoDeLaToma: 2);
+        await using var e = await PrepararAsync(
+            nameof(UnCodigoDeBarrasQueElServicioVeTomadoSinDuenoVisibleDiceQuePaso),
+            configurarMas: builder => builder.ConfigureServices(servicios =>
+                servicios.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor))));
+        var articulo = await SembrarArticuloAsync(e.Datos, "Artículo pedido");
+        var otro = await SembrarArticuloAsync(e.Datos, "Artículo que lo toma");
+        interceptor.Tomar = () => SembrarCodigoDeBarrasAsync(e.IdTenant, otro.Id, EanValido);
+        interceptor.Soltar = () => BorrarCodigosAsync(otro.Id);
+
+        var resultado = await AsociarCodigoDeBarrasAsync(e, articulo.Id, EanValido);
+
+        Assert.True(resultado.EsError, resultado.Texto);
+        Assert.Equal(
+            $"No se pudo asociar el código {EanValido}. Ya existe el código de barras {EanValido} en este tenant. " +
+            "No se pudo identificar a qué artículo pertenece. No se escribió nada.",
+            resultado.Texto);
+        Assert.Equal((1, 1), (interceptor.Tomas, interceptor.Sueltas));
+        Assert.Empty(await CodigosDeBarrasEnLaBaseAsync(articulo.Id));
+    }
+
+    /// <summary>El mismo brazo en <c>asociar_codigo_de_proveedor</c> (<c>codigo_proveedor_duplicado</c>): la toma va
+    /// antes de la lectura del servicio y se suelta antes de la búsqueda del dueño.</summary>
+    [Fact]
+    public async Task UnCodigoDeProveedorQueElServicioVeTomadoSinDuenoVisibleDiceQuePaso()
+    {
+        var interceptor = new InterceptorQueTomaYSueltaElCodigo("codigos_proveedor", disparoDeLaToma: 1);
+        await using var e = await PrepararAsync(
+            nameof(UnCodigoDeProveedorQueElServicioVeTomadoSinDuenoVisibleDiceQuePaso),
+            configurarMas: builder => builder.ConfigureServices(servicios =>
+                servicios.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor))));
+        var articulo = await SembrarArticuloAsync(e.Datos, "Artículo pedido");
+        var otro = await SembrarArticuloAsync(e.Datos, "Artículo que lo toma");
+        interceptor.Tomar = () => SembrarCodigoDeProveedorAsync(e.IdTenant, otro.Id, e.Datos.IdProveedor, "CARR-3");
+        interceptor.Soltar = () => BorrarCodigosAsync(otro.Id);
+
+        var resultado = await AsociarCodigoDeProveedorAsync(e, articulo.Id, e.Datos.IdProveedor, "CARR-3");
+
+        Assert.True(resultado.EsError, resultado.Texto);
+        Assert.Equal(
+            $"No se pudo asociar el código CARR-3. El código CARR-3 ya está asignado a otro artículo para el proveedor {e.Datos.IdProveedor}. " +
+            "No se pudo identificar a qué artículo pertenece. No se escribió nada.",
+            resultado.Texto);
+        Assert.Equal((1, 1), (interceptor.Tomas, interceptor.Sueltas));
+        Assert.Empty(await CodigosDeProveedorEnLaBaseAsync(articulo.Id));
+    }
+
+    private async Task BorrarCodigosAsync(int idArticulo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        await db.CodigosBarra.Where(c => c.IdArticulo == idArticulo).ExecuteDeleteAsync();
+        await db.CodigosProveedor.Where(c => c.IdArticulo == idArticulo).ExecuteDeleteAsync();
+    }
+
+    /// <summary>Antes de la lectura número <c>disparoDeLaToma</c> de <c>tabla</c> corre <see cref="Tomar"/>, y antes
+    /// de la siguiente, <see cref="Soltar"/>; las demás pasan sin tocar.</summary>
+    private sealed class InterceptorQueTomaYSueltaElCodigo(string tabla, int disparoDeLaToma) : DbCommandInterceptor
+    {
+        private int _lecturas;
+
+        public Func<Task> Tomar { get; set; } = () => Task.CompletedTask;
+
+        public Func<Task> Soltar { get; set; } = () => Task.CompletedTask;
+
+        public int Tomas { get; private set; }
+
+        public int Sueltas { get; private set; }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains($"FROM {tabla} AS", StringComparison.Ordinal))
+            {
+                var lectura = Interlocked.Increment(ref _lecturas);
+                if (lectura == disparoDeLaToma)
+                {
+                    await Tomar();
+                    Tomas++;
+                }
+                else if (lectura == disparoDeLaToma + 1)
+                {
+                    await Soltar();
+                    Sueltas++;
+                }
+            }
+
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     /// <summary>Rompe el primer INSERT sobre <c>tabla</c> con un 23505 de <c>indice</c>, como lo haría otra request
     /// que comiteó el mismo código entre el chequeo y el alta, pero sin dejar ninguna fila.</summary>
     private sealed class InterceptorQueSimulaUnaViolacionUnica(string tabla, string indice) : DbCommandInterceptor

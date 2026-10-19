@@ -212,8 +212,10 @@ public sealed class HerramientasDeCatalogo
 
     private static ErrorDeHerramienta Error(string texto) => new(texto);
 
-    /// <summary>El índice único rechazó el código pero la segunda búsqueda no ve a su dueño (por ejemplo, la otra
-    /// request lo asoció y alguien lo borró enseguida).</summary>
+    /// <summary>El código resultó tomado, por la verificación previa del servicio (<see cref="ErrorDominio"/> con
+    /// <c>codigo_barra_duplicado</c> o <c>codigo_proveedor_duplicado</c>) o por el índice único (23505), pero la
+    /// segunda búsqueda no ve a su dueño (por ejemplo, otra request lo asoció y alguien lo borró enseguida). En los
+    /// dos casos el alta no llegó a escribir.</summary>
     private static ErrorDeHerramienta SinDuenoTrasLaCarrera(string codigo, string motivo) =>
         Error($"No se pudo asociar el código {codigo}. {motivo} No se pudo identificar a qué artículo pertenece. No se escribió nada.");
 
