@@ -4,8 +4,8 @@ using Ways.Api.Seguridad;
 namespace Ways.Api.ConectorMcp;
 
 /// <summary>Las herramientas del conector evalúan las mismas políticas que la API (<see cref="Politicas"/>) sobre el
-/// principal que armó <see cref="ManejadorDeTokenMcp"/>. Sin request o sin principal, ninguna política se
-/// cumple.</summary>
+/// principal que armó <see cref="ManejadorDeTokenMcp"/>. Sin request (<c>HttpContext</c> nulo), ninguna política
+/// se cumple; un principal sin identidad lo rechaza la política misma.</summary>
 public static class PermisoDelConector
 {
     /// <summary>Compras y carga de compras: la política de toda escritura de compras en la API
