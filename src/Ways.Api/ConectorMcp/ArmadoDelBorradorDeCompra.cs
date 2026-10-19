@@ -217,8 +217,8 @@ public static class ArmadoDelBorradorDeCompra
     /// <summary>Una línea, con su número en cada error: es un objeto; trae <c>idArticulo</c> o <c>concepto</c>,
     /// no los dos; trae costo y alícuota; bultos y unidades por bulto van juntos; cada número, la cantidad y el
     /// bruto entran en su columna (dígitos enteros y decimales); la cantidad es positiva, el costo y el descuento no
-    /// son negativos y el descuento no supera el bruto; un lote trae vencimiento, y el vencimiento es
-    /// yyyy-MM-dd.</summary>
+    /// son negativos y el descuento no supera el bruto; en una línea de artículo, un lote trae vencimiento; y el
+    /// vencimiento es yyyy-MM-dd. Un concepto con lote pasa: el servicio lo rechaza con <c>concepto_con_lote</c>.</summary>
     private static void ValidarLinea(LineaDeBorradorDeCompra? linea, int numero)
     {
         if (linea is null)
@@ -279,7 +279,7 @@ public static class ArmadoDelBorradorDeCompra
                 $"{bruto.ToString("0.00", CultureInfo.InvariantCulture)}): es la bonificación en pesos, no un porcentaje.");
         }
 
-        if (!string.IsNullOrWhiteSpace(linea.CodigoLote) && string.IsNullOrWhiteSpace(linea.FechaVencimiento))
+        if (esArticulo && !string.IsNullOrWhiteSpace(linea.CodigoLote) && string.IsNullOrWhiteSpace(linea.FechaVencimiento))
         {
             throw new ErrorDeHerramienta($"Línea {numero}: codigoLote va con fechaVencimiento.");
         }

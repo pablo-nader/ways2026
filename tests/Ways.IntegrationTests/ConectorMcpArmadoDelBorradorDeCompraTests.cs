@@ -312,6 +312,18 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
             new LineaDeBorradorDeCompra(
                 IdArticulo: IdArticulo, Unidades: 1m, CostoUnitario: 1m, IdAlicuotaIva: 5, FechaVencimiento: "2027-03-01")));
 
+    /// <summary>La pareja de lote y vencimiento es de las líneas de artículo: un concepto con lote y sin vencimiento
+    /// pasa la forma y llega al servicio con su lote, que lo rechaza con <c>concepto_con_lote</c> porque un concepto
+    /// no lleva lote.</summary>
+    [Fact]
+    public void UnConceptoConLoteSinVencimientoLlegaAlServicioConSuLote()
+    {
+        var linea = Assert.Single(Armar(Factura(Concepto() with { CodigoLote = "L-1" })).Items);
+
+        Assert.Null(linea.IdArticulo);
+        Assert.Equal("L-1", linea.CodigoLote);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("15/10/2026")]
