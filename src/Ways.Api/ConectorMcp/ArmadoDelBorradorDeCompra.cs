@@ -167,7 +167,7 @@ public static class ArmadoDelBorradorDeCompra
             factura.IdTipoComprobante,
             factura.IdPuntoVenta,
             ArmarNumero(registraLibroIva, factura.PuntoVentaFactura, factura.NumeroFactura, factura.NumeroRemito),
-            LeerFecha(factura.FechaComprobante, "fechaComprobante"),
+            Fecha(factura.FechaComprobante!),
             factura.Observaciones,
             lineas,
             IdOrdenCompra: null,
@@ -323,9 +323,13 @@ public static class ArmadoDelBorradorDeCompra
             linea.IdAlicuotaIva!.Value,
             ActualizaCosto: null,
             linea.CodigoLote,
-            string.IsNullOrWhiteSpace(linea.FechaVencimiento) ? null : LeerFecha(linea.FechaVencimiento, "fechaVencimiento"),
+            string.IsNullOrWhiteSpace(linea.FechaVencimiento) ? null : Fecha(linea.FechaVencimiento),
             linea.CodigoProveedor);
     }
+
+    /// <summary>Solo para una fecha que ya pasó por <see cref="LeerFecha"/> en <see cref="ValidarForma"/>.</summary>
+    private static DateOnly Fecha(string texto) =>
+        DateOnly.ParseExact(texto.Trim(), FormatoDeFecha, CultureInfo.InvariantCulture);
 
     private static DateOnly LeerFecha(string? texto, string argumento) =>
         DateOnly.TryParseExact(texto?.Trim(), FormatoDeFecha, CultureInfo.InvariantCulture, DateTimeStyles.None, out var fecha)

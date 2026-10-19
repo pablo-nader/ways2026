@@ -454,6 +454,64 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(otro.IdTenant));
     }
 
+    /// <summary>Un caso por familia de las reglas de forma, a través de la herramienta: sin la llamada a
+    /// <see cref="ArmadoDelBorradorDeCompra.ValidarForma"/> cada uno escribe el borrador o devuelve otro error.</summary>
+    [Theory]
+    [InlineData("más de 100 líneas", "Pasá entre 1 y 100 líneas.")]
+    [InlineData("costo faltante", "Línea 1: necesita costoUnitario e idAlicuotaIva.")]
+    [InlineData(
+        "descuento mayor al bruto",
+        "Línea 1: descuento supera el importe bruto de la línea (cantidad × costoUnitario = 10.00): es la bonificación " +
+        "en pesos, no un porcentaje.")]
+    [InlineData("fecha del comprobante", "fechaComprobante tiene que ser una fecha yyyy-MM-dd, por ejemplo 2026-10-15.")]
+    [InlineData("IVA impreso incompleto", "ivaImpreso 1: necesita idAlicuotaIva e iva.")]
+    [InlineData("percepción sin importe", "Percepción 1: falta el importe.")]
+    public async Task CadaFamiliaDeReglasDeFormaRechazaElPedidoSinEscribir(string caso, string mensaje)
+    {
+        await using var e = await PrepararAsync("mcp-borrador-forma");
+        var flete = new { concepto = "Servicio de flete", unidades = 1, costoUnitario = 10m, idAlicuotaIva = e.IdIva21 };
+        var argumentos = new Dictionary<string, object>
+        {
+            ["idProveedor"] = e.IdProveedor,
+            ["idTipoComprobante"] = e.IdFacturaA,
+            ["idPuntoVenta"] = e.IdPuntoVenta,
+            ["fechaComprobante"] = "2026-10-15",
+            ["puntoVentaFactura"] = 3,
+            ["numeroFactura"] = 12345,
+            ["lineas"] = new object[] { flete }
+        };
+        switch (caso)
+        {
+            case "más de 100 líneas":
+                argumentos["lineas"] = Enumerable.Repeat<object>(flete, ArmadoDelBorradorDeCompra.MaximoDeLineas + 1).ToArray();
+                break;
+            case "costo faltante":
+                argumentos["lineas"] = new object[] { new { concepto = "Servicio de flete", unidades = 1, idAlicuotaIva = e.IdIva21 } };
+                break;
+            case "descuento mayor al bruto":
+                argumentos["lineas"] = new object[]
+                {
+                    new { concepto = "Servicio de flete", unidades = 1, costoUnitario = 10m, descuento = 11m, idAlicuotaIva = e.IdIva21 }
+                };
+                break;
+            case "fecha del comprobante":
+                argumentos["fechaComprobante"] = "15/10/2026";
+                break;
+            case "IVA impreso incompleto":
+                argumentos["ivaImpreso"] = new object[] { new { idAlicuotaIva = e.IdIva21 } };
+                break;
+            default:
+                argumentos["percepciones"] = new object[] { new { tipo = "iibb" } };
+                break;
+        }
+
+        var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, argumentos);
+
+        Assert.True(resultado.EsError);
+        Assert.Equal(mensaje, resultado.Texto);
+        Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
+    }
+
     /// <summary>Un número que no entra en su columna se rechaza antes de escribir: unas unidades que en realidad son
     /// un código de barras, y un total impreso que haría desbordar la resta contra el total calculado.</summary>
     [Theory]
