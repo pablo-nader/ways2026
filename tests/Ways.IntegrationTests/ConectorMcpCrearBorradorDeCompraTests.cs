@@ -93,8 +93,10 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
 
     private static string Link(int idCompra) => $"{UrlPublica}/admin/compras/{idCompra}";
 
+    /// <summary>Los argumentos y los campos de cada elemento de sus listas, que nombran los mensajes de error. Las
+    /// anotaciones las fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
-    public async Task ToolsListLaAnunciaComoEscrituraNoDestructivaNoIdempotenteDeMundoCerradoConLosArgumentosQueNombranSusMensajes()
+    public async Task ToolsListPublicaLosArgumentosYLosCamposDeSusListasQueNombranSusMensajes()
     {
         await using var e = await PrepararAsync("mcp-borrador-anuncio");
 
@@ -103,12 +105,6 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         Assert.Equal(HttpStatusCode.OK, estado);
         var herramienta = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .Single(h => h.GetProperty("name").GetString() == Herramienta);
-
-        var anotaciones = herramienta.GetProperty("annotations");
-        Assert.False(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("idempotentHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
 
         var esquema = herramienta.GetProperty("inputSchema");
         Assert.Equal(

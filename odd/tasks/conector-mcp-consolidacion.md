@@ -117,13 +117,27 @@ Judgment-day, ronda 1 de correcciones (ledger congelado sobre `7203e061`, sin CR
   de `AcotarComoElReporteAsync` con el reporte: helper compartido o test de paridad) y verificar con un test si el
   mensaje de una `McpException` llega al cliente antes de tocar esa prosa.
 
-Rebanada 2 (pendiente):
+Rebanada 2, rama `pnader/mcp-consolidacion-2`, apilada sobre `pnader/mcp-consolidacion-1` (#478). Orden de
+ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la prosa se reescribe una sola vez, después).
 
 - [ ] R2-T1 — Prosa de `Instrucciones` y docs/07 (matriz de roles por tool, identidad, herramientas de
-  asociación atadas al flujo de factura, `zona_horaria` no es argumento, "código de barras activo").
-- [ ] R2-T2 — Test del conjunto exacto de once tools (nombres, anotaciones, títulos).
+  asociación atadas al flujo de factura, `zona_horaria` no es argumento, "código de barras activo"), la afirmación
+  sobre `McpException` verificada o retirada, y un test de que `instructions` nombra las once tools.
+- [x] R2-T2 — Test del conjunto exacto de once tools. Ruta: inline (writer único de la rebanada).
+  `ConectorMcpConjuntoDeHerramientasTests`: `tools/list` anuncia exactamente las once, cada una con su título, sus
+  cuatro anotaciones, sus argumentos y sus requeridos (cierra L10: antes había esquemas fijados para 6 de 11); y
+  un test estructural por reflexión: los argumentos publicados de cada método `[McpServerTool]` son exactamente sus
+  parámetros con `[Description]`, así que ningún parámetro inyectado (`log`, `db`, servicios, autorización,
+  accesor, urls, token) aparece en un esquema. Sin RED: el contrato actual ya cumple; el test fija lo que no estaba
+  fijado. Mutaciones (una corrida, dos mutantes en archivos distintos): `buscar_articulos` con `Idempotent = false`
+  → cae el test del conjunto en esa línea; `[Description]` quitado de `nombre` en `buscar_proveedor` → cae el
+  estructural (`["cuit"]` esperado, `["cuit", "nombre"]` publicado). Retirado lo que quedó cubierto del todo: los
+  tests de anotaciones de `quien_soy` (flujo) y de las tres de compras, y las aserciones de anotaciones, título y
+  `Subset` de los tests de ventas, ficha, catálogo y borrador; se conservan sus aserciones de esquema.
 - [ ] R2-T3 — Constantes en las descripciones (límites, candidatos, días), el `MaximoDeCandidatos`
   repetido y la convención de nombres de argumentos.
+- [ ] R2-T4 — Test de paridad de `AcotarComoElReporteAsync` con `ObtenerVentasPorArticuloAsync` (L11), sin
+  cambios de producción.
 
 ## Criterios de aceptación
 

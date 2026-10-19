@@ -354,12 +354,13 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         Assert.Contains("Total vendido: 250,00", Lineas(porNombreDeLaEmpresa.Texto));
     }
 
-    /// <summary>Las herramientas de ventas se anuncian de solo lectura y con los argumentos en snake_case
-    /// que sus descripciones prometen; <c>agrupar_por</c> es el único obligatorio de <c>ventas_agrupadas</c>.</summary>
+    /// <summary>Las herramientas de ventas se anuncian con los argumentos que sus descripciones prometen;
+    /// <c>agrupar_por</c> es el único obligatorio de <c>ventas_agrupadas</c>. Las anotaciones y el conjunto de
+    /// herramientas los fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
-    public async Task ToolsListAnunciaLasHerramientasDeVentasDeSoloLecturaYConSusArgumentos()
+    public async Task ToolsListAnunciaLasHerramientasDeVentasConSusArgumentos()
     {
-        var e = await SembrarEscenarioAsync(nameof(ToolsListAnunciaLasHerramientasDeVentasDeSoloLecturaYConSusArgumentos));
+        var e = await SembrarEscenarioAsync(nameof(ToolsListAnunciaLasHerramientasDeVentasConSusArgumentos));
         await using var host = _apoyo.HostConReloj(RelojDelMediodia, e.Admin.Mail);
         using var cliente = ApoyoDeConectorMcp.Cliente(host);
         var token = await AccessTokenAsync(cliente, e.Admin.Mail);
@@ -368,17 +369,6 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
 
         var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .ToDictionary(h => h.GetProperty("name").GetString()!);
-        var deSoloLectura = new HashSet<string> { "articulo_info", "quien_soy", "ventas_agrupadas", "ventas_por_articulo", "ventas_resumen" };
-        Assert.Subset(herramientas.Keys.ToHashSet(), deSoloLectura);
-        foreach (var herramienta in deSoloLectura.Select(nombre => herramientas[nombre]))
-        {
-            var anotaciones = herramienta.GetProperty("annotations");
-            Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-            Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
-        }
-
         var agrupadas = herramientas["ventas_agrupadas"].GetProperty("inputSchema");
         Assert.Equal(
             ["agrupar_por", "desde", "empresa", "hasta", "limite", "periodo", "punto_venta"],

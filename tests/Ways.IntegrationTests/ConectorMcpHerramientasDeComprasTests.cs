@@ -45,27 +45,6 @@ public class ConectorMcpHerramientasDeComprasTests(WaysApiFixture fixture) : ICl
     }
 
     [Fact]
-    public async Task ToolsListAnunciaQuienSoyYLasHerramientasDeComprasDeSoloLecturaNoDestructivasIdempotentesYDeMundoCerrado()
-    {
-        await using var conexion = await ConectarAsync("mcp-compras-anotaciones");
-
-        var (estado, mensaje) = await LlamarMcpAsync(conexion.Cliente, conexion.AccessToken, "tools/list");
-
-        Assert.Equal(HttpStatusCode.OK, estado);
-        var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
-            .ToDictionary(h => h.GetProperty("name").GetString()!);
-        Assert.Contains("quien_soy", herramientas.Keys);
-        foreach (var nombre in new[] { "contexto_de_compras", "buscar_proveedor", "buscar_articulos" })
-        {
-            var anotaciones = herramientas[nombre].GetProperty("annotations");
-            Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-            Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
-        }
-    }
-
-    [Fact]
     public async Task ContextoDeComprasDevuelveLosPuntosDeVentaYEmpresasDelTenantYSoloLosTiposDeCompra()
     {
         await using var conexion = await ConectarAsync("mcp-compras-contexto");

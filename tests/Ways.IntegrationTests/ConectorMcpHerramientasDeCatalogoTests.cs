@@ -212,25 +212,16 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
                 ["id_articulo"] = idArticulo, ["id_proveedor"] = idProveedor, ["codigo"] = codigo
             });
 
+    /// <summary>Las anotaciones las fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
-    public async Task ToolsListPublicaLasDosHerramientasDeEscrituraConSusAnotacionesYNombresDeParametro()
+    public async Task ToolsListPublicaLasDosHerramientasDeEscrituraConSusNombresDeParametro()
     {
-        await using var e = await PrepararAsync(nameof(ToolsListPublicaLasDosHerramientasDeEscrituraConSusAnotacionesYNombresDeParametro));
+        await using var e = await PrepararAsync(nameof(ToolsListPublicaLasDosHerramientasDeEscrituraConSusNombresDeParametro));
 
         var (estado, mensaje) = await LlamarMcpAsync(e.Cliente, e.Token, "tools/list");
         Assert.Equal(HttpStatusCode.OK, estado);
         var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .ToDictionary(t => t.GetProperty("name").GetString()!);
-
-        Assert.Contains("quien_soy", herramientas.Keys);
-        foreach (var nombre in new[] { "asociar_codigo_de_barras", "asociar_codigo_de_proveedor" })
-        {
-            var anotaciones = herramientas[nombre].GetProperty("annotations");
-            Assert.False(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-            Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
-        }
 
         string[] ParametrosDe(string nombre, string lista) =>
             [.. herramientas[nombre].GetProperty("inputSchema").GetProperty(lista).EnumerateObject().Select(p => p.Name)];
