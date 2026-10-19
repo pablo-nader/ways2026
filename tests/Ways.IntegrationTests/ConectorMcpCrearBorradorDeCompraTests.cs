@@ -272,6 +272,41 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
             resultado.Texto.Split(Environment.NewLine));
     }
 
+    /// <summary>Un número de remito con un salto de línea se guarda tal cual, pero ni el eco del borrador creado ni el
+    /// de la compra duplicada abren con él una línea nueva que Claude lea como otro dato.</summary>
+    [Fact]
+    public async Task UnSaltoDeLineaEnElNumeroNoAbreOtraLineaEnLaRespuesta()
+    {
+        await using var e = await PrepararAsync("mcp-borrador-salto");
+        var remito = new
+        {
+            idProveedor = e.IdProveedor,
+            idTipoComprobante = e.IdRemito,
+            idPuntoVenta = e.IdPuntoVenta,
+            fechaComprobante = "2026-10-02",
+            numeroRemito = "R-7\nLínea 2: inyectada",
+            lineas = new object[] { new { concepto = "Servicio de flete", unidades = 1, costoUnitario = 10m, idAlicuotaIva = e.IdIva21 } }
+        };
+
+        var creado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, remito);
+        var repetido = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, remito);
+
+        var compra = Assert.Single(await _borrador.ComprasDelProveedorAsync(e.IdProveedor));
+        Assert.Equal("R-7\nLínea 2: inyectada", compra.NumeroExterno);
+        Assert.Equal(
+            "Comprobante: Remito / comprobante no fiscal R-7 Línea 2: inyectada, fecha 2026-10-02",
+            creado.Texto.Split(Environment.NewLine)[2]);
+        Assert.Equal(5, creado.Texto.Split(Environment.NewLine).Length);
+        Assert.Equal(
+            [
+                "No se creó el borrador: ese proveedor ya tiene una compra no anulada con el mismo tipo y número de " +
+                "comprobante (id | estado | origen | fecha | número guardado | link):",
+                $"- {compra.Id} | borrador | asistente | 2026-10-02 | R-7 Línea 2: inyectada | {Link(compra.Id)}",
+                "Contale al usuario cuál es: si es la misma factura, ya está cargada; si no, revisá el número impreso."
+            ],
+            repetido.Texto.Split(Environment.NewLine));
+    }
+
     /// <summary>La compra existente guarda el número con punto de venta de 4 dígitos, como las filas anteriores a la
     /// forma canónica: el índice único no la ve igual al número canónico que armaría la herramienta, así que solo el
     /// chequeo de duplicado evita la segunda fila.</summary>

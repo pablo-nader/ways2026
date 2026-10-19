@@ -118,7 +118,8 @@ public static class TextosDelBorradorDeCompra
             $"Borrador de compra {compra.Id} creado con origen {Minusculas(compra.Origen)}: {link}",
             "Para confirmarlo, el usuario lo abre en ese link, lo revisa contra la factura y toca Guardar. Hasta " +
             "entonces no mueve stock, costos ni la cuenta corriente del proveedor.",
-            $"Comprobante: {nombreDelTipo} {compra.NumeroExterno ?? "sin número"}, fecha {Fecha(compra.FechaComprobante)}",
+            $"Comprobante: {nombreDelTipo} {compra.NumeroExterno?.ReplaceLineEndings(" ") ?? "sin número"}, " +
+            $"fecha {Fecha(compra.FechaComprobante)}",
             $"Líneas: {deArticulo} de artículo y {compra.Items.Count - deArticulo} de concepto",
             $"Subtotal: {Importe(compra.Subtotal)} | Descuentos: {Importe(compra.DescuentoTotal)} | IVA: {iva} | " +
             $"Percepciones: {Importe(percepciones)} | Total: {Importe(compra.Total)}"
