@@ -291,7 +291,7 @@ public class ServicioDeConsultasDeVentas(
             filtros.Insert(0, $"texto '{texto}'");
         }
 
-        var filasDeTodos = await LeerArticulosVendidosAsync(alcance, null, null, null, null, ct);
+        var filasDeTodos = await LeerArticulosVendidosAsync(alcance, null, ct);
         var deTodos = filasDeTodos.Sum(f => f.Importe);
         var hayFiltroDelReporte = area is not null || grupo is not null || categoria is not null || articulo is not null;
         var filasFiltradas = hayFiltroDelReporte
@@ -334,7 +334,7 @@ public class ServicioDeConsultasDeVentas(
     private async Task<AgrupacionConsultada> AgruparPorClasificacionAsync(
         SolicitudDeConsultaDeVentas solicitud, AgrupacionDeVentas por, AlcanceResuelto alcance, CancellationToken ct)
     {
-        var filas = await LeerArticulosVendidosAsync(alcance, null, null, null, null, ct);
+        var filas = await LeerArticulosVendidosAsync(alcance, null, ct);
         var idsDeArticulo = filas.Select(f => f.IdArticulo).ToList();
 
         var clasificacion = await db.Articulos.AsNoTracking()
@@ -400,16 +400,17 @@ public class ServicioDeConsultasDeVentas(
         IQueryable<T> catalogo, IReadOnlyCollection<int> ids, CancellationToken ct) where T : CatalogoSimple =>
         await catalogo.Where(c => ids.Contains(c.Id)).Select(c => new { c.Id, c.Nombre }).ToDictionaryAsync(c => c.Id, c => c.Nombre, ct);
 
-    /// <summary>Una llamada al reporte por empresa del alcance, sumando por artículo entre empresas.</summary>
+    /// <summary>Una llamada al reporte por empresa del alcance, sin filtros de clasificación (solo, si se pide, el de
+    /// un artículo), sumando por artículo entre empresas.</summary>
     private async Task<List<FilaDeArticulo>> LeerArticulosVendidosAsync(
-        AlcanceResuelto alcance, int? idArea, int? idGrupo, int? idCategoria, int? idArticulo, CancellationToken ct)
+        AlcanceResuelto alcance, int? idArticulo, CancellationToken ct)
     {
         var porArticulo = new Dictionary<int, FilaDeArticulo>();
         foreach (var contexto in alcance.Contextos)
         {
             var reporte = await articulos.ObtenerVentasPorArticuloAsync(
                 contexto.Empresa.Id, contexto.Empresa.IdPuntoVenta, contexto.Desde, contexto.Hasta,
-                idArea, idGrupo, idCategoria, idArticulo, ct);
+                null, null, null, idArticulo, ct);
             foreach (var fila in reporte.Articulos)
             {
                 porArticulo[fila.IdArticulo] = porArticulo.TryGetValue(fila.IdArticulo, out var previa)
@@ -572,7 +573,7 @@ public class ServicioDeConsultasDeVentas(
         int idArticulo, string? empresa, int dias, CancellationToken ct = default)
     {
         var alcance = await ResolverAlcanceAsync(new SolicitudDeConsultaDeVentas(null, null, null, empresa, null), ct, dias);
-        var filas = await LeerArticulosVendidosAsync(alcance, null, null, null, idArticulo, ct);
+        var filas = await LeerArticulosVendidosAsync(alcance, idArticulo, ct);
 
         return new VentasDeArticuloEnVentana(
             alcance.Contextos.Min(c => c.Desde),
