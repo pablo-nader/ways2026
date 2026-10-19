@@ -64,13 +64,13 @@ Rebanada 1:
 - [x] T2 — Una sola guarda de rol. Ruta: inline (writer único de la rebanada). Commit `49a94c92`.
   `PermisoDelConector` (antes `PermisoDeCompras`): `CumpleAsync(política)` y `ExigirAsync(política, mensaje)`;
   ventas y ficha usan `CumpleAsync` y conservan su texto sin `isError`. Refactor sin comportamiento nuevo.
-  Mutación: `CumpleAsync` siempre verdadero → caen los 14 tests de rol (compras ×6, carga ×2, catálogo ×2,
-  ventas ×2, ficha del Vendedor ×1, más el de ventas por artículo).
+  Mutación: `CumpleAsync` siempre verdadero → caen los 14 casos de rol del filtro (compras, carga de compras,
+  catálogo, ventas y la ficha del Vendedor).
 - [x] T3 — Búsquedas de artículos en consultas de ventas sin `LIKE`. Ruta: inline (writer único). Commit `cf55863c`.
   RED: `VentasPorArticuloBuscaElTextoYElArticuloSinDistinguirAcentos` (texto "FIDÉOS" y articulo "fidéo") fallaba en
   las dos filas. GREEN: ventas por artículo + ficha 42/42. Mutaciones (una por hermano): el "contiene" de `texto`
-  vuelto a `LIKE` → cae la fila texto; el "contiene" de la búsqueda → cae la fila articulo y la ficha exacta-vs-contiene
-  no; el paso exacto de código interno o de código de barras roto → cae
+  vuelto a `LIKE` → cae la fila texto; el "contiene" de la búsqueda vuelto a `LIKE` → cae la fila articulo; el paso
+  exacto de código interno o de código de barras roto (cada uno en una corrida distinta) → cae
   `LaCoincidenciaExactaGanaAntesDeBuscarPorContenidoYLaAmbiguaListaHastaDiezCandidatos`. El paso de nombre exacto
   no tiene una mutación propia probada.
 - [x] T4 — Sin doble pasada en ventas por artículo. Ruta: inline (writer único). Commit `31cecfae`.
