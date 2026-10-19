@@ -398,6 +398,10 @@ describe('SeccionDeCuentas — libro', () => {
 })
 
 describe('SeccionDeCuentas — ajuste de saldo', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   function mockearConLibro() {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta.startsWith('/reportes/tesoreria/cuentas?')) return Promise.resolve(empresaConCuentas([cuenta()]))
@@ -427,10 +431,13 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
   }
 
   it('al registrar el ajuste cierra el modal, confirma y vuelve a leer las cuentas y el libro', async () => {
+    // El ajuste (10/10) tiene que caer dentro del rango por defecto, que se calcula con la fecha actual.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 12, 12, 0))
     mockearConLibro()
     apiPostMock.mockResolvedValue({
       saldoActual: 1750,
-      movimiento: fila({ id: 99, tipo: 'Ajuste', final: 1750 }),
+      movimiento: fila({ id: 99, tipo: 'Ajuste', fecha: new Date().toISOString(), final: 1750 }),
     })
     const usuario = userEvent.setup()
     montar()

@@ -39,7 +39,7 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     public static readonly TheoryData<string> TodasLasRutas = new()
     {
         "ventas/resumen", "compras/por-proveedor", "gastos/resumen", "articulos/top",
-        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago",
+        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago", "ventas/por-articulo",
         "rentabilidad", "comisiones",
         "stock/reposicion/resumen", "stock/vencimientos/resumen"
     };
@@ -47,7 +47,7 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     public static readonly TheoryData<string> RutasSinLecturaDeRentabilidad = new()
     {
         "ventas/resumen", "compras/por-proveedor", "gastos/resumen", "articulos/top",
-        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago",
+        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago", "ventas/por-articulo",
         "stock/reposicion/resumen", "stock/vencimientos/resumen"
     };
 

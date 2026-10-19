@@ -151,6 +151,40 @@ public static class ReportesEndpoints
         })
         .WithSummary("Export XLSX de /articulos/top: mismos parámetros y figuras.");
 
+        grupo.MapGet("/ventas/por-articulo", (
+            ServicioDeReportesDeArticulos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            int? idArea, int? idGrupo, int? idCategoria, int? idArticulo, CancellationToken ct) =>
+            servicio.ObtenerVentasPorArticuloAsync(idEmpresa, idPuntoVenta, desde, hasta, idArea, idGrupo, idCategoria, idArticulo, ct))
+        .WithSummary(
+            "Cantidad y monto neto vendido por artículo, filtrable por área, grupo, categoría " +
+            "(con descendientes) y artículo — clasificación actual, filtros combinados con AND. " +
+            "Sin costo ni margen: ver /rentabilidad.");
+
+        grupo.MapGet("/ventas/por-articulo/export", async (
+            ServicioDeReportesDeArticulos servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            int? idArea, int? idGrupo, int? idCategoria, int? idArticulo, string formato,
+            CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var reporte = await servicio.ObtenerVentasPorArticuloAsync(
+                idEmpresa, idPuntoVenta, desde, hasta, idArea, idGrupo, idCategoria, idArticulo, ct);
+
+            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, idEmpresa, idPuntoVenta, desde, hasta, reporte.ZonaHoraria);
+            var tabla = ExportacionDeReportes.De(reporte, ctx);
+
+            GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
+
+            var bytes = exportador.Generar(tabla);
+            var alcance = idPuntoVenta is { } id ? $"pv{id}" : "todos";
+            var nombre = NombreDeArchivo.Construir("ventas_por_articulo", alcance, desde, hasta);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary("Export XLSX de /ventas/por-articulo: mismos parámetros, filtros y figuras.");
+
         // Reporte de completitud de catálogo (owner: "artículos sin proveedor, sin marca, sin
         // categoría, sin grupo, para verlos de un vistazo"): tenant-wide, sin idEmpresa/
         // idPuntoVenta — los artículos no tienen esa columna (doc 10 §3), a diferencia de todo el
