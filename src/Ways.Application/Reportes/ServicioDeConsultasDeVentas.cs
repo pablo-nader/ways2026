@@ -507,7 +507,7 @@ public class ServicioDeConsultasDeVentas(
     /// <summary>Un artículo visible por texto, con coincidencia exacta primero y cada paso resuelto en SQL antes de
     /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo (sin distinguir
     /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código
-    /// (sin distinguir mayúsculas ni acentos). Un
+    /// interno (sin distinguir mayúsculas ni acentos). Un
     /// paso con una sola coincidencia termina la búsqueda; con más de una es ambiguo (hasta <see cref="MaximoDeOpcionesListadasEnUnError"/> candidatos listados) y
     /// no sigue al paso siguiente; si ningún paso encuentra nada, no existe.</summary>
     public async Task<ArticuloResuelto> BuscarArticuloAsync(string texto, CancellationToken ct = default)

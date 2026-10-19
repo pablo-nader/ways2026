@@ -235,8 +235,8 @@ Ronda 1 del judgment-day, observado sobre `cdfe8e02` (main sigue en `e22281db`):
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 361/361.
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 70/70.
 
-Rebanada 2, observado sobre `e3b795c7` (antes del rebase; el árbol es idéntico al de `9d604815`, ya sobre
-`origin/main` `8dd66b39`), 2026-10-19:
+Rebanada 2, observado sobre `e3b795c7` (antes del rebase; el rebase sobre `origin/main` `8dd66b39` no cambió
+contenido: su pick es `a47ad0e2`), 2026-10-19:
 
 - `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
 - `dotnet test tests/Ways.Application.Tests -c Release`: 1059/1059.
