@@ -45,7 +45,7 @@ task) per the owner's standing preference.
 ## Tasks
 
 - [x] T1 — Backend read model + endpoint + tests. Route: delegated (2+ non-trivial files). Evidence: Domain.Tests Reportes 57 passed; IntegrationTests (ReportesVentasPorHora + ReportesAutorizacion + SuperficieDeAutorizacion) 71 passed; Application.Tests 1059 passed. Mutation: ConvertTime to UTC failed 7/14 ventas-por-hora tests (incl. Monday/23), `Count(Signo > 0)` -> `Count()` failed the NC test; both reverted, green.
-- [ ] T2 — Web page, menu entry, route, API client, heatmap + Vitest. Route: delegated (2+ non-trivial files).
+- [x] T2 — Web page, menu entry, route, API client, heatmap + Vitest. Route: delegated (2+ non-trivial files). Evidence: `npm run build` ok; oxlint 0 errors (warnings pre-existing, none in new files); focused Vitest (reportes, menu, graficos, page) 138 passed; full suite 247 files / 7627 tests passed.
 
 ## Acceptance criteria
 
@@ -66,7 +66,10 @@ task) per the owner's standing preference.
 
 - Exploration done (2026-10-19): pattern is `ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync`.
 - T1 done: `ObtenerVentasPorHoraAsync` lives in that service (reuses its private helpers); pure grid in `Ways.Domain.Reportes.GrillaDeVentasPorHora`. Application has no Npgsql reference (no `AtTimeZone`), so (Fecha, Total, Signo) are materialized and converted with `TimeZoneInfo.ConvertTime`. NC = `tipos_comprobante.signo < 0`; ticket = `signo > 0`. Averages rounded to 2 decimals AwayFromZero.
+- T2 done: `ClienteDeReportes.ventasPorHora` + `construirQueryDeVentasPorHora`; default range = 28 days ending yesterday (`rangoDeLasUltimasCuatroSemanas`, each weekday exactly 4 times). `MapaDeCalor` is an HTML table; color = brand orange `rgba(247,148,29,a)` with alpha 0.10..0.60 over the theme surface and the theme's own text color (readable in light and dark); zero/negative = transparent. Helpers live in `mapaDeCalorEscala.ts` (a name differing from `MapaDeCalor.tsx` only by extension collides on case-insensitive filesystems). Totals sum the shown averages.
+- Judgment-day T1: dos jueces sin CRITICAL, APPROVED (PR #475). Sugerencias aplicadas: aserción campo por campo y sin comentario tipo changelog.
+- Judgment-day T2: sin CRITICAL; seis hallazgos coincidentes corregidos en una ronda (respuesta tardía con act, sin datos viejos al cambiar filtro, error limpiado con rango inválido, rótulo "Suma de promedios", test de rango invertido real, comentario de 28 días) con evidencia de mutación; re-juicio de ambos: resueltos, APPROVED.
 
 ## Next step
 
-T2.
+Feature completa. Abierto: sin test con zona con horario de verano; materialización en memoria acotada por el tope de 366 días.

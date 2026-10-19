@@ -27,6 +27,7 @@ import type {
   TopArticulos,
   Vencimientos,
   VentasPorArticulo,
+  VentasPorHora,
   VentasPorMedioPago,
   VentasPorPuntoVenta,
   VentasPorVendedor,
@@ -161,6 +162,8 @@ export const clienteDeReportes = {
     api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros)}`),
   ventasPorArticulo: (filtros: FiltrosDeVentasPorArticulo) =>
     api.get<VentasPorArticulo>(`/reportes/ventas/por-articulo${construirQueryDeVentasPorArticulo(filtros)}`),
+  ventasPorHora: (filtros: FiltrosDeVentasPorHora) =>
+    api.get<VentasPorHora>(`/reportes/ventas/por-hora${construirQueryDeVentasPorHora(filtros)}`),
   libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
     api.get<LibroIva>(`/reportes/libro-iva-compras${construirQueryDeLibroIva(filtros)}`),
   libroIvaVentas: (filtros: FiltrosDeLibroIva) =>
@@ -351,6 +354,18 @@ export function construirQueryDeVentasPorArticulo(filtros: FiltrosDeVentasPorArt
   return `?${parametros.toString()}`
 }
 
+/** Filtro de `GET /api/reportes/ventas/por-hora`: empresa y rango obligatorios; `idPuntoVenta` nulo = todos. */
+export type FiltrosDeVentasPorHora = { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string }
+
+export function construirQueryDeVentasPorHora(filtros: FiltrosDeVentasPorHora): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
+  return `?${parametros.toString()}`
+}
+
 /** Filtro de `GET /api/reportes/articulos` — reporte de completitud de catálogo (owner: "sin
  * proveedor, sin marca, sin categoría, sin grupo"). Tenant-wide: sin `idEmpresa`/`idPuntoVenta`,
  * a diferencia de todo el resto de `FiltrosDe*` de este módulo. */
@@ -444,6 +459,14 @@ export function rangoDeLaSemanaActual(ahora: Date = new Date()): { desde: string
   const lunes = new Date(ahora)
   lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7))
   return { desde: aFechaIso(lunes), hasta: aFechaIso(ahora) }
+}
+
+/** Período por defecto de ventas por hora: los últimos 28 días, que terminan ayer (no son semanas calendario). Al ser
+ * 28 días corridos, cada día de la semana aparece exactamente 4 veces y el promedio no se sesga por un día de más. */
+export function rangoDeLasUltimasCuatroSemanas(ahora: Date = new Date()): { desde: string; hasta: string } {
+  const ayer = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() - 1)
+  const inicio = new Date(ayer.getFullYear(), ayer.getMonth(), ayer.getDate() - 27)
+  return { desde: aFechaIso(inicio), hasta: aFechaIso(ayer) }
 }
 
 /** Período por defecto del libro IVA: del primer al último día del mes de `ahora`. Recibe `ahora`

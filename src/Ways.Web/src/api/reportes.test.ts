@@ -29,6 +29,8 @@ const {
   construirQueryDeReporteDeArticulos,
   construirQueryDeTesoreria,
   construirQueryDeVentasPorArticulo,
+  construirQueryDeVentasPorHora,
+  rangoDeLasUltimasCuatroSemanas,
   filtrosDeHistoricoDeCajasVacios,
   filtrosDeReporteDeArticulosVacios,
   rangoDeLaSemanaActual,
@@ -551,6 +553,35 @@ describe('construirQueryDeVentasPorArticulo', () => {
 
     expect(apiGetMock).toHaveBeenCalledWith(`/reportes/ventas/por-articulo${query}`)
     expect(rutasDeExportacion.ventasPorArticulo(filtros)).toBe(`/reportes/ventas/por-articulo/export${query}&formato=xlsx`)
+  })
+})
+
+describe('construirQueryDeVentasPorHora', () => {
+  it('omite el punto de venta nulo y lo manda una sola vez cuando está', () => {
+    const base = { idEmpresa: 1, desde: '2026-09-21', hasta: '2026-10-18' }
+    expect(construirQueryDeVentasPorHora({ ...base, idPuntoVenta: null })).toBe(
+      '?idEmpresa=1&desde=2026-09-21&hasta=2026-10-18',
+    )
+    expect(new URLSearchParams(construirQueryDeVentasPorHora({ ...base, idPuntoVenta: 7 })).getAll('idPuntoVenta')).toEqual(['7'])
+  })
+
+  it('el cliente pide /reportes/ventas/por-hora con ese query', async () => {
+    const filtros = { idEmpresa: 2, idPuntoVenta: 5, desde: '2026-09-21', hasta: '2026-10-18' }
+    apiGetMock.mockClear()
+
+    await clienteDeReportes.ventasPorHora(filtros)
+
+    expect(apiGetMock).toHaveBeenCalledWith(`/reportes/ventas/por-hora${construirQueryDeVentasPorHora(filtros)}`)
+  })
+})
+
+describe('rangoDeLasUltimasCuatroSemanas', () => {
+  it('son 28 días que terminan ayer', () => {
+    expect(rangoDeLasUltimasCuatroSemanas(new Date(2026, 9, 19))).toEqual({ desde: '2026-09-21', hasta: '2026-10-18' })
+  })
+
+  it('cruza el cambio de año', () => {
+    expect(rangoDeLasUltimasCuatroSemanas(new Date(2026, 0, 3))).toEqual({ desde: '2025-12-06', hasta: '2026-01-02' })
   })
 })
 

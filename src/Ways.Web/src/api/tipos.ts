@@ -3032,6 +3032,32 @@ export type VentasPorArticulo = {
   articulos: ArticuloVendido[]
 }
 
+/** Cuántas veces cae un día de la semana (1 = lunes … 7 = domingo) en el rango: es el divisor de sus promedios. */
+export type DiaDeVentasPorHora = { diaDeLaSemana: number; ocurrencias: number }
+
+/** Celda día × hora de `GET /api/reportes/ventas/por-hora`. `total`/`tickets` son del rango completo (el total es
+ * neto de notas de crédito; los tickets no las cuentan); los promedios dividen por las ocurrencias del día. */
+export type CeldaDeVentasPorHora = {
+  diaDeLaSemana: number
+  hora: number
+  total: number
+  tickets: number
+  promedioTotal: number
+  promedioTickets: number
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-hora` — espejo de `VentasPorHora`: siempre 7 `dias` y 168 `celdas`
+ * (día, luego hora), con ceros donde no hubo ventas. */
+export type VentasPorHora = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  total: number
+  tickets: number
+  dias: DiaDeVentasPorHora[]
+  celdas: CeldaDeVentasPorHora[]
+}
+
 /** Fila de `GET /api/reportes/articulos` (reporte de completitud de catálogo) — espejo de
  * `ArticuloDeReporte`. `area`/`categoria`/`marca`/`grupo`/`proveedor` son `null` cuando el
  * artículo no tiene esa clasificación asignada, o cuando el FK apunta a una fila dada de baja

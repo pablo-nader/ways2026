@@ -51,6 +51,7 @@ import { Remito } from './paginas/Remito'
 import { Remitos } from './paginas/Remitos'
 import { ReporteDeArticulos } from './paginas/ReporteDeArticulos'
 import { ReporteDeVentasPorArticulo } from './paginas/ReporteDeVentasPorArticulo'
+import { ReporteDeVentasPorHora } from './paginas/ReporteDeVentasPorHora'
 import { Reposicion } from './paginas/Reposicion'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tablero } from './paginas/Tablero'
@@ -226,6 +227,15 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <ReporteDeVentasPorArticulo />
+                </RutaProtegida>
+              }
+            />
+            {/* Ventas por hora: mismo gate que el resto de los reportes (Politicas.LecturaDeReportes). */}
+            <Route
+              path="/reportes/ventas-por-hora"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <ReporteDeVentasPorHora />
                 </RutaProtegida>
               }
             />
