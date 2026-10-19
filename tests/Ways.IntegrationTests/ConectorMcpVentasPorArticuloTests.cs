@@ -101,7 +101,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         await using var _ = host;
         using var __ = cliente;
 
-        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agrupar_por = "area", periodo = "hoy" });
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agruparPor = "area", periodo = "hoy" });
 
         Assert.False(resultado.EsError, resultado.Texto);
         var lineas = Lineas(resultado.Texto);
@@ -126,7 +126,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         await using var _ = host;
         using var __ = cliente;
 
-        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agrupar_por = "grupo", periodo = "hoy" });
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agruparPor = "grupo", periodo = "hoy" });
 
         Assert.False(resultado.EsError, resultado.Texto);
         Assert.Equal(
@@ -146,7 +146,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         await using var _ = host;
         using var __ = cliente;
 
-        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agrupar_por = "categoria", periodo = "hoy" });
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agruparPor = "categoria", periodo = "hoy" });
 
         Assert.False(resultado.EsError, resultado.Texto);
         var lineas = Lineas(resultado.Texto);
@@ -171,7 +171,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         await using var _ = host;
         using var __ = cliente;
 
-        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agrupar_por = "marca", periodo = "hoy" });
+        var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agruparPor = "marca", periodo = "hoy" });
 
         Assert.False(resultado.EsError, resultado.Texto);
         var lineas = Lineas(resultado.Texto);
@@ -513,7 +513,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         using var __ = cliente;
 
         var porArticulo = await LlamarHerramientaAsync(cliente, token, "ventas_por_articulo", new { periodo = "hoy" });
-        var porCategoria = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agrupar_por = "categoria", periodo = "hoy" });
+        var porCategoria = await LlamarHerramientaAsync(cliente, token, "ventas_agrupadas", new { agruparPor = "categoria", periodo = "hoy" });
 
         Assert.Contains("COLA-2L | Cola 2L | 2 | 600,00 | 36,4%", Lineas(porArticulo.Texto));
         Assert.Contains("Total de los artículos filtrados: 1.650,00 en 5 artículos", Lineas(porArticulo.Texto));
@@ -543,7 +543,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         using var cliente = ApoyoDeConectorMcp.Cliente(host);
 
         var resultado = await LlamarHerramientaAsync(
-            cliente, await AccessTokenAsync(cliente, supervisor.Mail), "ventas_agrupadas", new { agrupar_por = "categoria", periodo = "hoy" });
+            cliente, await AccessTokenAsync(cliente, supervisor.Mail), "ventas_agrupadas", new { agruparPor = "categoria", periodo = "hoy" });
 
         Assert.False(resultado.EsError, resultado.Texto);
         Assert.Equal(

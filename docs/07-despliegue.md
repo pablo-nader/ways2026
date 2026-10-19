@@ -158,7 +158,7 @@ de las secciones siguientes. Todas son de solo lectura salvo tres que escriben:
 | Herramienta | Qué responde |
 |---|---|
 | `ventas_resumen` | Total vendido, comprobantes, ticket promedio y notas de crédito del período, con desglose por medio de pago, por punto de venta y por día (la tabla por día solo aparece si el período abarca 31 días distintos o menos, contados entre todas las empresas) |
-| `ventas_agrupadas` | Lo vendido agrupado por `punto_venta`, `medio_pago`, `vendedor`, `dia`, `area`, `grupo`, `categoria` o `marca`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto). `dia` va del más reciente al más antiguo, así que el límite descarta los días viejos |
+| `ventas_agrupadas` | Lo vendido agrupado (`agruparPor`) por `punto_venta`, `medio_pago`, `vendedor`, `dia`, `area`, `grupo`, `categoria` o `marca`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto). `dia` va del más reciente al más antiguo, así que el límite descarta los días viejos |
 | `ventas_por_articulo` | Los artículos más vendidos, con filtros `texto`, `area`, `grupo`, `categoria`, `marca`, `proveedor` y `articulo`, `orden` por importe o cantidad y `limite`; el % es sobre todo lo vendido en artículos, sin los filtros |
 
 Preguntas que responde: "¿cuánto vendimos hoy?", "¿cuánto vendió cada vendedor esta semana?", "¿qué
@@ -173,7 +173,7 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   `desde` y `hasta` (`yyyy-MM-dd`, ambos inclusivos, separados como máximo 366 días). El "hoy" y el corte de cada día se
   toman en la zona horaria de la empresa (parámetro `zona_horaria`), no en UTC; la semana va de lunes
   a domingo y `esta_semana` y `este_mes` terminan hoy.
-- **Alcance:** `empresa` y `punto_venta` por id o por nombre. Sin ellos se suman todas las empresas
+- **Alcance:** `empresa` y `puntoVenta` por id o por nombre. Sin ellos se suman todas las empresas
   del tenant, cada una con su zona, y se muestra el desglose por empresa.
 - **Medio de pago:** lo cobrado neto del vuelto (`importe - vuelto`). La tabla por medio de pago de la
   web suma el importe entregado, sin descontar el vuelto, así que en efectivo puede diferir.
@@ -262,8 +262,8 @@ de volver a cargarlo.
 
 | Herramienta | Qué hace |
 |---|---|
-| `asociar_codigo_de_barras(id_articulo, codigo, confirmar_codigo_no_estandar)` | Asocia un código de barras a un artículo y devuelve sus códigos actuales. |
-| `asociar_codigo_de_proveedor(id_articulo, id_proveedor, codigo)` | Asocia a un artículo el código con que un proveedor lo imprime en su factura. |
+| `asociar_codigo_de_barras(idArticulo, codigo, confirmarCodigoNoEstandar)` | Asocia un código de barras a un artículo y devuelve sus códigos actuales. |
+| `asociar_codigo_de_proveedor(idArticulo, idProveedor, codigo)` | Asocia a un artículo el código con que un proveedor lo imprime en su factura. |
 
 Las herramientas de códigos escriben con `ServicioDeArticulos`, el mismo camino que la web, y
 exigen la política `GestionDeCatalogo` de los endpoints del ABM: con otro rol devuelven un error
@@ -272,7 +272,7 @@ estaba. Si el código pertenece a otro artículo, no escriben y el error nombra 
 (nombre, código interno e id, y si está dado de baja) para que decida el usuario. Un artículo o
 proveedor que no existe, o que es de otro tenant, da el mismo error de "no existe". Además,
 `asociar_codigo_de_barras` no escribe un código que no sea un GTIN estándar (8, 12, 13 o 14 dígitos
-con dígito verificador GS1 correcto) mientras la llamada no traiga `confirmar_codigo_no_estandar`
+con dígito verificador GS1 correcto) mientras la llamada no traiga `confirmarCodigoNoEstandar`
 en `true`: el error le indica a Claude que le pida al usuario confirmar los dígitos leídos. Esa
 regla es solo de la herramienta: la web solo advierte y la API acepta códigos no estándar.
 

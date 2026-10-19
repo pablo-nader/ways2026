@@ -28,17 +28,17 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
         string[] Argumentos,
         string[] Requeridos);
 
-    private static readonly string[] AlcanceDeVentas = ["desde", "empresa", "hasta", "periodo", "punto_venta"];
+    private static readonly string[] AlcanceDeVentas = ["desde", "empresa", "hasta", "periodo", "puntoVenta"];
 
     private static readonly Esperada[] Herramientas =
     [
         new("articulo_info", "Ficha de artículo", true, false, true, false, ["articulo", "compras", "empresa"], ["articulo"]),
         new(
             "asociar_codigo_de_barras", "Asociar código de barras a un artículo", false, false, true, false,
-            ["codigo", "confirmar_codigo_no_estandar", "id_articulo"], ["codigo", "id_articulo"]),
+            ["codigo", "confirmarCodigoNoEstandar", "idArticulo"], ["codigo", "idArticulo"]),
         new(
             "asociar_codigo_de_proveedor", "Asociar código de proveedor a un artículo", false, false, true, false,
-            ["codigo", "id_articulo", "id_proveedor"], ["codigo", "id_articulo", "id_proveedor"]),
+            ["codigo", "idArticulo", "idProveedor"], ["codigo", "idArticulo", "idProveedor"]),
         new(
             "buscar_articulos", "Buscar artículos de una factura", true, false, true, false,
             ["idProveedor", "lineas"], ["idProveedor", "lineas"]),
@@ -55,7 +55,7 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
         new("quien_soy", "Quién soy", true, false, true, false, [], []),
         new(
             "ventas_agrupadas", "Ventas agrupadas", true, false, true, false,
-            [.. AlcanceDeVentas.Append("agrupar_por").Append("limite").Order(StringComparer.Ordinal)], ["agrupar_por"]),
+            [.. AlcanceDeVentas.Append("agruparPor").Append("limite").Order(StringComparer.Ordinal)], ["agruparPor"]),
         new(
             "ventas_por_articulo", "Ventas por artículo", true, false, true, false,
             [

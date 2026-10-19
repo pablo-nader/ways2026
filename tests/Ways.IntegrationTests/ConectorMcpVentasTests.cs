@@ -199,7 +199,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         await SembrarVentasDeHoyAsync(e);
         object argumentos = herramienta == "ventas_resumen"
             ? new { periodo = "hoy" }
-            : new { periodo = "hoy", agrupar_por = "dia" };
+            : new { periodo = "hoy", agruparPor = "dia" };
 
         await using var host = _apoyo.HostConReloj(RelojDelMediodia, e.Vendedor.Mail, e.Supervisor.Mail, e.Admin.Mail);
         using var cliente = ApoyoDeConectorMcp.Cliente(host);
@@ -230,7 +230,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         // Diez días (ocho sin ventas, que igual aparecen), del más reciente al más antiguo: límite 3 => los tres
         // últimos días y "… y 7 más".
         var porDia = await LlamarHerramientaAsync(
-            cliente, token, "ventas_agrupadas", new { agrupar_por = "dia", desde = "2026-10-09", hasta = "2026-10-18", limite = 3 });
+            cliente, token, "ventas_agrupadas", new { agruparPor = "dia", desde = "2026-10-09", hasta = "2026-10-18", limite = 3 });
         Assert.False(porDia.EsError, porDia.Texto);
         Assert.Equal(["2026-10-18 | 1.700,00 | 3 | 68,6%", "2026-10-17 | 777,00 | 1 | 31,4%", "2026-10-16 | 0,00 | 0 | 0,0%"], FilasDeFecha(porDia.Texto));
         Assert.Contains("… y 7 más", Lineas(porDia.Texto));
@@ -238,7 +238,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
 
         // Dos vendedores (admin 1300 en 2, supervisor 400 en 1): límite 1 => el mayor y "… y 1 más".
         var porVendedor = await LlamarHerramientaAsync(
-            cliente, token, "ventas_agrupadas", new { agrupar_por = "vendedor", periodo = "hoy", limite = 1 });
+            cliente, token, "ventas_agrupadas", new { agruparPor = "vendedor", periodo = "hoy", limite = 1 });
         Assert.False(porVendedor.EsError, porVendedor.Texto);
         Assert.Equal(
             [
@@ -253,7 +253,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
 
         // Sin tope de por medio, las dos filas completas.
         var todos = await LlamarHerramientaAsync(
-            cliente, token, "ventas_agrupadas", new { agrupar_por = "vendedor", periodo = "hoy" });
+            cliente, token, "ventas_agrupadas", new { agruparPor = "vendedor", periodo = "hoy" });
         Assert.Contains($"{NombreDeUsuario(e.Supervisor)} | 400,00 | 1 | 23,5%", Lineas(todos.Texto));
         Assert.DoesNotContain(Lineas(todos.Texto), l => l.StartsWith("… y", StringComparison.Ordinal));
     }
@@ -272,7 +272,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         var token = await AccessTokenAsync(cliente, e.Admin.Mail);
 
         var agrupada = await LlamarHerramientaAsync(
-            cliente, token, "ventas_agrupadas", new { agrupar_por = "medio_pago", periodo = "hoy" });
+            cliente, token, "ventas_agrupadas", new { agruparPor = "medio_pago", periodo = "hoy" });
         var resumen = await LlamarHerramientaAsync(cliente, token, "ventas_resumen", new { periodo = "hoy" });
 
         Assert.Contains($"{t.NombreEfectivo} | 800,00 | 1 | 100,0%", Lineas(agrupada.Texto));
@@ -287,9 +287,9 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
     [InlineData("ventas_resumen", """{}""", "Indicá 'periodo'", null)]
     [InlineData("ventas_resumen", """{"desde":"2026-01-01","hasta":"2027-06-01"}""", "366 días", null)]
     [InlineData("ventas_resumen", """{"periodo":"hoy","empresa":"no-existe"}""", "No encontré la empresa 'no-existe'", null)]
-    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agrupar_por":"color"}""", "punto_venta, medio_pago, vendedor, dia", null)]
-    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agrupar_por":"dia","limite":0}""", "entre 1 y 50", null)]
-    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agrupar_por":"dia","limite":51}""", "entre 1 y 50", null)]
+    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"color"}""", "punto_venta, medio_pago, vendedor, dia", null)]
+    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"dia","limite":0}""", "entre 1 y 50", null)]
+    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"dia","limite":51}""", "entre 1 y 50", null)]
     public async Task UnaEntradaInvalidaDevuelveUnResultadoDeErrorConElMotivo(
         string herramienta, string argumentosJson, string fragmento, string? otroFragmento)
     {
@@ -326,11 +326,11 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         var todas = await LlamarHerramientaAsync(cliente, token, "ventas_resumen", new { periodo = "hoy" });
         var soloSegunda = await LlamarHerramientaAsync(cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = "segunda" });
         var porId = await LlamarHerramientaAsync(
-            cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = idEmpresa2.ToString(), punto_venta = idPuntoEmpresa2.ToString() });
+            cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = idEmpresa2.ToString(), puntoVenta = idPuntoEmpresa2.ToString() });
         var puntoAjeno = await LlamarHerramientaAsync(
-            cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = "segunda", punto_venta = t.IdPuntoVenta.ToString() });
+            cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = "segunda", puntoVenta = t.IdPuntoVenta.ToString() });
         var porNombreDeLaEmpresa = await LlamarHerramientaAsync(
-            cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = "segunda", punto_venta = "local 1" });
+            cliente, token, "ventas_resumen", new { periodo = "hoy", empresa = "segunda", puntoVenta = "local 1" });
 
         Assert.Contains("Total vendido: 1.250,00", Lineas(todas.Texto));
         Assert.Contains(
@@ -355,7 +355,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
     }
 
     /// <summary>Las herramientas de ventas se anuncian con los argumentos que sus descripciones prometen;
-    /// <c>agrupar_por</c> es el único obligatorio de <c>ventas_agrupadas</c>. Las anotaciones y el conjunto de
+    /// <c>agruparPor</c> es el único obligatorio de <c>ventas_agrupadas</c>. Las anotaciones y el conjunto de
     /// herramientas los fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
     public async Task ToolsListAnunciaLasHerramientasDeVentasConSusArgumentos()
@@ -371,11 +371,11 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
             .ToDictionary(h => h.GetProperty("name").GetString()!);
         var agrupadas = herramientas["ventas_agrupadas"].GetProperty("inputSchema");
         Assert.Equal(
-            ["agrupar_por", "desde", "empresa", "hasta", "limite", "periodo", "punto_venta"],
+            ["agruparPor", "desde", "empresa", "hasta", "limite", "periodo", "puntoVenta"],
             agrupadas.GetProperty("properties").EnumerateObject().Select(p => p.Name).Order().ToArray());
-        Assert.Equal(["agrupar_por"], agrupadas.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ToArray());
+        Assert.Equal(["agruparPor"], agrupadas.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ToArray());
         Assert.Equal(
-            ["desde", "empresa", "hasta", "periodo", "punto_venta"],
+            ["desde", "empresa", "hasta", "periodo", "puntoVenta"],
             herramientas["ventas_resumen"].GetProperty("inputSchema").GetProperty("properties")
                 .EnumerateObject().Select(p => p.Name).Order().ToArray());
     }

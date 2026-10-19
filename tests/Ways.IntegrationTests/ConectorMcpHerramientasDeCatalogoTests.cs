@@ -193,10 +193,10 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
     private static Task<(string Texto, bool EsError)> AsociarCodigoDeBarrasAsync(
         Escenario e, int idArticulo, string codigo, bool? confirmar = null)
     {
-        var argumentos = new Dictionary<string, object?> { ["id_articulo"] = idArticulo, ["codigo"] = codigo };
+        var argumentos = new Dictionary<string, object?> { ["idArticulo"] = idArticulo, ["codigo"] = codigo };
         if (confirmar is { } valor)
         {
-            argumentos["confirmar_codigo_no_estandar"] = valor;
+            argumentos["confirmarCodigoNoEstandar"] = valor;
         }
 
         return LlamarAsync(e, "asociar_codigo_de_barras", argumentos);
@@ -209,7 +209,7 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
             "asociar_codigo_de_proveedor",
             new Dictionary<string, object?>
             {
-                ["id_articulo"] = idArticulo, ["id_proveedor"] = idProveedor, ["codigo"] = codigo
+                ["idArticulo"] = idArticulo, ["idProveedor"] = idProveedor, ["codigo"] = codigo
             });
 
     /// <summary>Las anotaciones las fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
@@ -227,17 +227,17 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
             [.. herramientas[nombre].GetProperty("inputSchema").GetProperty(lista).EnumerateObject().Select(p => p.Name)];
 
         Assert.Equal(
-            ["codigo", "confirmar_codigo_no_estandar", "id_articulo"],
+            ["codigo", "confirmarCodigoNoEstandar", "idArticulo"],
             ParametrosDe("asociar_codigo_de_barras", "properties").Order());
         Assert.Equal(
-            ["codigo", "id_articulo", "id_proveedor"],
+            ["codigo", "idArticulo", "idProveedor"],
             ParametrosDe("asociar_codigo_de_proveedor", "properties").Order());
 
         string[] Requeridos(string nombre) =>
             [.. herramientas[nombre].GetProperty("inputSchema").GetProperty("required").EnumerateArray().Select(p => p.GetString()!)];
 
-        Assert.Equal(["codigo", "id_articulo"], Requeridos("asociar_codigo_de_barras").Order());
-        Assert.Equal(["codigo", "id_articulo", "id_proveedor"], Requeridos("asociar_codigo_de_proveedor").Order());
+        Assert.Equal(["codigo", "idArticulo"], Requeridos("asociar_codigo_de_barras").Order());
+        Assert.Equal(["codigo", "idArticulo", "idProveedor"], Requeridos("asociar_codigo_de_proveedor").Order());
     }
 
     [Fact]
@@ -324,7 +324,7 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
 
         Assert.True(sinConfirmar.EsError, sinConfirmar.Texto);
         Assert.Contains("dígito verificador", sinConfirmar.Texto);
-        Assert.Contains("confirmar_codigo_no_estandar", sinConfirmar.Texto);
+        Assert.Contains("confirmarCodigoNoEstandar", sinConfirmar.Texto);
         Assert.Contains("No se escribió nada", sinConfirmar.Texto);
         Assert.True(confirmandoEnFalse.EsError, confirmandoEnFalse.Texto);
         Assert.Empty(await CodigosDeBarrasEnLaBaseAsync(articulo.Id));

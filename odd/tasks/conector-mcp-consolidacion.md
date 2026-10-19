@@ -134,8 +134,33 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
   estructural (`["cuit"]` esperado, `["cuit", "nombre"]` publicado). Retirado lo que quedó cubierto del todo: los
   tests de anotaciones de `quien_soy` (flujo) y de las tres de compras, y las aserciones de anotaciones, título y
   `Subset` de los tests de ventas, ficha, catálogo y borrador; se conservan sus aserciones de esquema.
-- [ ] R2-T3 — Constantes en las descripciones (límites, candidatos, días), el `MaximoDeCandidatos`
-  repetido y la convención de nombres de argumentos.
+- [x] R2-T3 — Constantes en las descripciones, el `MaximoDeCandidatos` repetido y la convención de nombres de
+  argumentos. Ruta: inline (writer único de la rebanada).
+  - Constantes: `ConectorMcpDescripcionesYConstantesTests` compara cada número de las descripciones con su
+    constante (la `[Description]` no admite interpolar un `int`): palabras (6), candidatos por línea (5) y líneas
+    (100) de `buscar_articulos`; líneas del borrador (100); candidatos listados (10), días de ventas (30) y compras
+    (1 a 20, 5) de `articulo_info`; días de la tabla por día (31) de `ventas_resumen`; el tope del rango (366, la
+    constante privada de `RangoDeReporte` leída por reflexión) en las tres de ventas y su `desde`; `limite` (1 a
+    50, 20) de dos de ventas; y que los "N días" de las instrucciones sean exactamente {30, 366}. Para eso pasan a
+    públicas `LimitePorDefecto`, `LimiteMaximo`, `MaximoDePalabras` y `DiasMaximosDeLaTablaPorDia`. Sin RED: hoy
+    no había deriva. Mutaciones (una corrida): `LimiteMaximo` 60 → caen las dos filas de `limite`;
+    `MaximoDeOpcionesListadasEnUnError` 9 → cae la fila de candidatos de la ficha; `DiasDeVentas` 31 → caen la
+    fila de la ficha y el test de las instrucciones.
+  - Nombres: el privado de 10 de `ServicioDeConsultasDeVentas` pasa a `MaximoDeOpcionesListadasEnUnError`
+    (público) y reemplaza también el `Take(10)` literal del error de alcance; el público de 5 de compras pasa a
+    `MaximoDeCandidatosPorLinea`.
+  - Convención de argumentos: camelCase. Conteo de nombres publicados de más de una palabra: en snake_case
+    `punto_venta`, `agrupar_por`, `id_articulo`, `id_proveedor` y `confirmar_codigo_no_estandar` (5 tools); en
+    camelCase los 12 argumentos de `buscar_articulos` y `crear_borrador_de_compra` más todos los campos de las
+    listas anidadas (`codigoProveedor`, `idArticulo`, `costoUnitario`…, que el SDK serializa en camelCase).
+    **Cambio de contrato** de cinco tools: `ventas_resumen`, `ventas_agrupadas` y `ventas_por_articulo`
+    (`punto_venta` → `puntoVenta`, `agrupar_por` → `agruparPor`; los valores de `agruparPor`, como
+    `punto_venta`, no cambian), `asociar_codigo_de_barras` (`id_articulo` → `idArticulo`,
+    `confirmar_codigo_no_estandar` → `confirmarCodigoNoEstandar`) y `asociar_codigo_de_proveedor` (`id_articulo`,
+    `id_proveedor` → `idArticulo`, `idProveedor`). Claude relee el esquema en cada sesión; el mensaje de
+    agrupación desconocida, las descripciones, las instrucciones, docs/07 y los tests usan los nombres nuevos.
+  - Verificado: filtro `ConectorMcpVentas|…Catalogo|…BuscarArticulos|…Conjunto|…Descripciones|…FichaDeArticulo`
+    123/123.
 - [ ] R2-T4 — Test de paridad de `AcotarComoElReporteAsync` con `ObtenerVentasPorArticuloAsync` (L11), sin
   cambios de producción.
 

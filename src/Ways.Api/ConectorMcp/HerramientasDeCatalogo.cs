@@ -14,8 +14,8 @@ namespace Ways.Api.ConectorMcp;
 /// <summary>
 /// Escritura de códigos sobre artículos existentes. Las dos herramientas aplican la misma política
 /// que los endpoints del ABM (<see cref="Politicas.GestionDeCatalogo"/>) y escriben a través de
-/// <see cref="ServicioDeArticulos"/>, el mismo camino que usa la web. Los nombres de los parámetros
-/// están en snake_case porque el SDK los publica tal cual en el esquema de la herramienta.
+/// <see cref="ServicioDeArticulos"/>, el mismo camino que usa la web. El SDK publica los nombres de los
+/// parámetros tal cual en el esquema de la herramienta; van en camelCase, como en el resto del conector.
 /// </summary>
 [McpServerToolType]
 public sealed class HerramientasDeCatalogo
@@ -36,7 +36,7 @@ public sealed class HerramientasDeCatalogo
         "Asocia un código de barras a un artículo de Ways. Requiere el rol Admin. " +
         "Si el código ya estaba asociado a ese artículo no cambia nada; si pertenece a otro artículo no escribe y lo informa. " +
         "Si el código no es un GTIN estándar (EAN-8, UPC-A, EAN-13 o GTIN-14 con dígito verificador correcto) no escribe hasta que " +
-        "se repita la llamada con confirmar_codigo_no_estandar en true. " +
+        "se repita la llamada con confirmarCodigoNoEstandar en true. " +
         "Cuando asocia el código, o ya estaba asociado, devuelve los códigos de barras actuales del artículo.")]
     public static Task<CallToolResult> AsociarCodigoDeBarrasAsync(
         IAuthorizationService autorizacion,
@@ -44,10 +44,10 @@ public sealed class HerramientasDeCatalogo
         ServicioDeArticulos articulos,
         IWaysDbContext db,
         ILogger<HerramientasDeCatalogo> log,
-        [Description("Id del artículo en Ways al que se asocia el código.")] int id_articulo,
+        [Description("Id del artículo en Ways al que se asocia el código.")] int idArticulo,
         [Description("Código de barras tal como se lee (hasta 50 caracteres); se recortan los espacios de los extremos.")] string codigo,
         [Description("Dejarlo en false salvo que el usuario haya confirmado que los dígitos leídos son correctos aunque no sean un GTIN estándar.")]
-        bool confirmar_codigo_no_estandar = false,
+        bool confirmarCodigoNoEstandar = false,
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
@@ -55,16 +55,16 @@ public sealed class HerramientasDeCatalogo
                 autorizacion, contextoHttp, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinRolAdminParaEscribir);
 
             return await AsociarCodigoDeBarrasComoAdminAsync(
-                articulos, db, log, id_articulo, codigo, confirmar_codigo_no_estandar, ct);
+                articulos, db, log, idArticulo, codigo, confirmarCodigoNoEstandar, ct);
         }, log);
 
     private static async Task<string> AsociarCodigoDeBarrasComoAdminAsync(
         ServicioDeArticulos articulos,
         IWaysDbContext db,
         ILogger log,
-        int id_articulo,
+        int idArticulo,
         string codigo,
-        bool confirmar_codigo_no_estandar,
+        bool confirmarCodigoNoEstandar,
         CancellationToken ct)
     {
         var limpio = (codigo ?? string.Empty).Trim();
@@ -73,49 +73,49 @@ public sealed class HerramientasDeCatalogo
             throw Error("El código de barras está vacío. No se escribió nada.");
         }
 
-        var articulo = await BuscarArticuloAsync(db, id_articulo, ct);
+        var articulo = await BuscarArticuloAsync(db, idArticulo, ct);
         if (articulo is null)
         {
-            throw Error($"No existe el artículo {id_articulo}. No se escribió nada.");
+            throw Error($"No existe el artículo {idArticulo}. No se escribió nada.");
         }
 
         if (await BuscarDuenoDelCodigoDeBarrasAsync(db, limpio, ct) is { } dueno)
         {
-            return await RespuestaPorDuenoDelCodigoDeBarrasAsync(articulos, id_articulo, articulo.Value, limpio, dueno, ct);
+            return await RespuestaPorDuenoDelCodigoDeBarrasAsync(articulos, idArticulo, articulo.Value, limpio, dueno, ct);
         }
 
-        if (!confirmar_codigo_no_estandar && ReglaDeGtin.MotivoDeNoEstandar(limpio) is { } motivo)
+        if (!confirmarCodigoNoEstandar && ReglaDeGtin.MotivoDeNoEstandar(limpio) is { } motivo)
         {
             throw Error(
                 $"El código {limpio} no parece un código de barras estándar: {motivo} " +
                 "No se escribió nada. Hay que pedirle al usuario que confirme los dígitos leídos de la foto; " +
-                "si el código es correcto tal como está, se puede volver a llamar con confirmar_codigo_no_estandar en true.");
+                "si el código es correcto tal como está, se puede volver a llamar con confirmarCodigoNoEstandar en true.");
         }
 
         try
         {
-            await articulos.AgregarCodigoBarraAsync(id_articulo, new AltaCodigoBarra(limpio), ct);
+            await articulos.AgregarCodigoBarraAsync(idArticulo, new AltaCodigoBarra(limpio), ct);
         }
         catch (ErrorDominio error) when (error.Codigo == CodigoBarraDuplicado)
         {
-            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, id_articulo, articulo.Value, limpio, error.Message, ct);
+            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, idArticulo, articulo.Value, limpio, error.Message, ct);
         }
         catch (DbUpdateException error) when (ResultadoDeHerramienta.Clasificar(error, log) is { Codigo: CodigoBarraDuplicado } clasificado)
         {
-            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, id_articulo, articulo.Value, limpio, clasificado.Titulo, ct);
+            return await RespuestaTrasCarreraDeCodigoDeBarrasAsync(articulos, db, idArticulo, articulo.Value, limpio, clasificado.Titulo, ct);
         }
         catch (ErrorDominio error) when (error.EstadoHttp == 404)
         {
-            throw Error($"No existe el artículo {id_articulo}. No se escribió nada.");
+            throw Error($"No existe el artículo {idArticulo}. No se escribió nada.");
         }
         catch (ErrorDominio error)
         {
             throw Error($"No se pudo asociar el código: {error.Message} No se escribió nada.");
         }
 
-        var actuales = await ListarCodigosDeBarrasAsync(articulos, id_articulo, ct);
+        var actuales = await ListarCodigosDeBarrasAsync(articulos, idArticulo, ct);
         return
-            $"Listo: se asoció el código de barras {limpio} al artículo {Describir(articulo.Value.Nombre, articulo.Value.CodigoInterno, id_articulo)}. " +
+            $"Listo: se asoció el código de barras {limpio} al artículo {Describir(articulo.Value.Nombre, articulo.Value.CodigoInterno, idArticulo)}. " +
             $"Se escribió en la base. Códigos de barras actuales del artículo: {actuales}.";
     }
 
@@ -136,8 +136,8 @@ public sealed class HerramientasDeCatalogo
         ServicioDeArticulos articulos,
         IWaysDbContext db,
         ILogger<HerramientasDeCatalogo> log,
-        [Description("Id del artículo en Ways al que se asocia el código.")] int id_articulo,
-        [Description("Id del proveedor en Ways que imprime ese código.")] int id_proveedor,
+        [Description("Id del artículo en Ways al que se asocia el código.")] int idArticulo,
+        [Description("Id del proveedor en Ways que imprime ese código.")] int idProveedor,
         [Description("Código del proveedor tal como figura en su factura (hasta 50 caracteres); se recortan los espacios de los extremos.")] string codigo,
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
@@ -145,32 +145,32 @@ public sealed class HerramientasDeCatalogo
             await PermisoDelConector.ExigirAsync(
                 autorizacion, contextoHttp, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinRolAdminParaEscribir);
 
-            return await AsociarCodigoDeProveedorComoAdminAsync(articulos, db, log, id_articulo, id_proveedor, codigo, ct);
+            return await AsociarCodigoDeProveedorComoAdminAsync(articulos, db, log, idArticulo, idProveedor, codigo, ct);
         }, log);
 
     private static async Task<string> AsociarCodigoDeProveedorComoAdminAsync(
         ServicioDeArticulos articulos,
         IWaysDbContext db,
         ILogger log,
-        int id_articulo,
-        int id_proveedor,
+        int idArticulo,
+        int idProveedor,
         string codigo,
         CancellationToken ct)
     {
-        var articulo = await BuscarArticuloAsync(db, id_articulo, ct);
+        var articulo = await BuscarArticuloAsync(db, idArticulo, ct);
         if (articulo is null)
         {
-            throw Error($"No existe el artículo {id_articulo}. No se escribió nada.");
+            throw Error($"No existe el artículo {idArticulo}. No se escribió nada.");
         }
 
         var razonSocial = await db.Proveedores
             .AsNoTracking()
-            .Where(p => p.Id == id_proveedor)
+            .Where(p => p.Id == idProveedor)
             .Select(p => p.RazonSocial)
             .FirstOrDefaultAsync(ct);
         if (razonSocial is null)
         {
-            throw Error($"No existe el proveedor {id_proveedor}. No se escribió nada.");
+            throw Error($"No existe el proveedor {idProveedor}. No se escribió nada.");
         }
 
         var limpio = (codigo ?? string.Empty).Trim();
@@ -179,15 +179,15 @@ public sealed class HerramientasDeCatalogo
         try
         {
             creado = (await articulos.AgregarCodigoProveedorAsync(
-                id_articulo, new AltaCodigoProveedor(id_proveedor, limpio), ct)).Creado;
+                idArticulo, new AltaCodigoProveedor(idProveedor, limpio), ct)).Creado;
         }
         catch (ErrorDominio error) when (error.Codigo == CodigoProveedorDuplicado)
         {
-            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, id_articulo, id_proveedor, razonSocial, limpio, error.Message, ct);
+            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, idArticulo, idProveedor, razonSocial, limpio, error.Message, ct);
         }
         catch (DbUpdateException error) when (ResultadoDeHerramienta.Clasificar(error, log) is { Codigo: CodigoProveedorDuplicado } clasificado)
         {
-            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, id_articulo, id_proveedor, razonSocial, limpio, clasificado.Titulo, ct);
+            return await RespuestaPorCodigoDeProveedorTomadoAsync(db, idArticulo, idProveedor, razonSocial, limpio, clasificado.Titulo, ct);
         }
         catch (ErrorDominio error) when (error.EstadoHttp == 404)
         {
@@ -202,8 +202,8 @@ public sealed class HerramientasDeCatalogo
             throw Error($"No se pudo asociar el código: {error.Message} No se escribió nada.");
         }
 
-        var actuales = await ListarCodigosDeProveedorAsync(db, id_articulo, id_proveedor, ct);
-        var destino = $"{Describir(articulo.Value.Nombre, articulo.Value.CodigoInterno, id_articulo)} para el proveedor {razonSocial} (id {id_proveedor})";
+        var actuales = await ListarCodigosDeProveedorAsync(db, idArticulo, idProveedor, ct);
+        var destino = $"{Describir(articulo.Value.Nombre, articulo.Value.CodigoInterno, idArticulo)} para el proveedor {razonSocial} (id {idProveedor})";
 
         return creado
             ? $"Listo: se asoció el código de proveedor {limpio} al artículo {destino}. Se escribió en la base. Códigos del artículo para ese proveedor: {actuales}."

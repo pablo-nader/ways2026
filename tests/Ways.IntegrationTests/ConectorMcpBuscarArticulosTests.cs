@@ -163,7 +163,7 @@ public class ConectorMcpBuscarArticulosTests(WaysApiFixture fixture) : IClassFix
         var resultado = await BuscarAsync(conexion, idProveedor, new { descripcion = "tope" });
 
         List<string> esperado = [Encabezado, "Línea 1: nombre"];
-        foreach (var (nombre, articulo) in sembrados.OrderBy(s => s.Nombre, StringComparer.Ordinal).Take(HerramientasDeCompras.MaximoDeCandidatos))
+        foreach (var (nombre, articulo) in sembrados.OrderBy(s => s.Nombre, StringComparer.Ordinal).Take(HerramientasDeCompras.MaximoDeCandidatosPorLinea))
         {
             esperado.Add(await CandidatoAsync(articulo, nombre, "Unidad"));
         }

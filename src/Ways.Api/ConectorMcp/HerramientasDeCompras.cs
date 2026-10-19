@@ -25,9 +25,9 @@ public sealed class HerramientasDeCompras
 
     public const int MaximoDeLineas = 100;
 
-    public const int MaximoDeCandidatos = 5;
+    public const int MaximoDeCandidatosPorLinea = 5;
 
-    private const int MaximoDePalabras = 6;
+    public const int MaximoDePalabras = 6;
 
     [McpServerTool(
         Name = "contexto_de_compras",
@@ -297,7 +297,7 @@ public sealed class HerramientasDeCompras
          orderby a.Nombre, a.Id
          select new Candidato(
              a.Id, a.Nombre, a.CodigoInterno, a.UnidadVenta, iva != null ? iva.Id : null, iva != null ? iva.Nombre : null, a.Activo))
-        .Take(MaximoDeCandidatos)
+        .Take(MaximoDeCandidatosPorLinea)
         .AsNoTracking()
         .ToListAsync(ct);
 

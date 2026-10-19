@@ -49,7 +49,7 @@ public static class RegistroDelConectorMcp
         "Para asociar códigos a un artículo (solo Admin, escriben y solo agregan): " +
         "asociar_codigo_de_barras con los dígitos impresos debajo de las barras, y asociar_codigo_de_proveedor " +
         "con el código que un proveedor imprime en su factura. Si el código de barras no es un GTIN estándar, " +
-        "hay que confirmar los dígitos con el usuario antes de repetir la llamada con confirmar_codigo_no_estandar.";
+        "hay que confirmar los dígitos con el usuario antes de repetir la llamada con confirmarCodigoNoEstandar.";
 
     private static readonly string[] EsquemasDelConector =
     [
