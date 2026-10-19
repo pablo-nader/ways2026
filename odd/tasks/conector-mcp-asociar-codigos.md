@@ -63,14 +63,14 @@ Resultados observados (writer de T1, 2026-10-18):
   `ConectorMcpFlujoTests.ToolsListAnunciaQuienSoyDeSoloLecturaNoDestructivaIdempotenteYDeMundoCerrado`,
   que hace `Assert.Single` sobre `tools/list`; ahora hay tres herramientas. Está fuera de la
   superficie del writer: el arreglo es filtrar por nombre `quien_soy` en esa prueba.
-- Pendiente fuera de la superficie del writer: la constante `Instrucciones` de
-  `RegistroDelConectorMcp.cs` dice que el servidor "ahora solo expone la herramienta quien_soy".
+- La constante `Instrucciones` de `RegistroDelConectorMcp.cs` queda para la consolidación de la
+  sesión orquestadora.
 
 Evidencia de mutación (`mutation-proof-tests`):
 
-- Cláusula del rol: `EsAdminAsync` devolviendo `true` en lugar de evaluar `GestionDeCatalogo`.
-  Fallan `UnUsuarioSinRolAdminNoEscribeUnCodigoDeBarras` y `UnUsuarioSinRolAdminNoEscribeUnCodigoDeProveedor`
-  (2 de 2). Revertido: verdes.
+- Cláusula del rol, repetida sobre el código final: `ExigirAdminAsync` con la condición anulada
+  (`if (false && …)`), así que nunca corta. Fallan `UnUsuarioSinRolAdminNoEscribeUnCodigoDeBarras` y
+  `UnUsuarioSinRolAdminNoEscribeUnCodigoDeProveedor` (2 de 2). Revertido: verdes.
 - Cláusula del tenant: `IgnoreQueryFilters(["Tenant"])` en la lectura del artículo. Las 3 pruebas de otro
   tenant siguen verdes: lo cubre RLS (`ways_app`), así que el filtro de EF de la herramienta no queda
   demostrado por separado y solo se declara defensa en profundidad. Revertido.
@@ -93,6 +93,12 @@ Rebase sobre #464 (pedido de la sesión orquestadora):
 - `dotnet test tests/Ways.Domain.Tests --filter "FullyQualifiedName~ReglaDeGtin"`: 17 superadas.
 - `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ConectorMcp"`: 129 superadas, 0 fallas.
 
+Judgment-day sobre 52495b0a: APPROVED en la ronda 1. Ningún juez reportó hallazgos severos.
+Quedan como informativas: la rama de carrera del código de proveedor sobre el mismo artículo no lista
+los códigos actuales; `ExigirAdminAsync` repite el chequeo de `PermisoDeCompras` con otro mensaje; un
+código de barras de más de 50 caracteres pide confirmación del GTIN antes de que el servicio lo rechace
+por largo; el fallback de carrera sin dueño muestra el mensaje genérico de EF.
+
 ## Próximo paso
 
-Judgment-day sobre el commit de S6 y PR.
+PR contra `main`, que depende de #464.
