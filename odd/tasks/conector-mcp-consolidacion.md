@@ -71,8 +71,9 @@ Rebanada 1:
   las dos filas. GREEN: ventas por artículo + ficha 42/42. Mutaciones (una por hermano): el "contiene" de `texto`
   vuelto a `LIKE` → cae la fila texto; el "contiene" de la búsqueda vuelto a `LIKE` → cae la fila articulo; el paso
   exacto de código interno o de código de barras roto (cada uno en una corrida distinta) → cae
-  `LaCoincidenciaExactaGanaAntesDeBuscarPorContenidoYLaAmbiguaListaHastaDiezCandidatos`. El paso de nombre exacto
-  no tiene una mutación propia probada.
+  `LaCoincidenciaExactaGanaAntesDeBuscarPorContenidoYLaAmbiguaListaHastaDiezCandidatos`. Paso de nombre exacto
+  roto (`a.Nombre == buscado + "#"`, corrido en la ronda 1 del judgment-day) → cae ese mismo test en
+  `Buscar("GASEOSA")`: "'GASEOSA' es ambiguo…" en lugar de la ficha de Gaseosa.
 - [x] T4 — Sin doble pasada en ventas por artículo. Ruta: inline (writer único). Commit `31cecfae`.
   Una lectura sin filtros por empresa; `AcotarComoElReporteAsync` aplica en memoria (más una consulta de ids de
   artículos) los criterios del reporte. RED: `VentasPorArticuloConUnFiltroDelReporteLeeLasLineasUnaSolaVezPorEmpresa`
