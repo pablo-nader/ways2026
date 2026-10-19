@@ -260,6 +260,7 @@ function PanelPorMedioPago({ idEmpresa, desde, hasta, idPuntoVenta, mediosPago }
               ))}
             </tbody>
           </table>
+          <p className="text-muted small mb-0 mt-2">El efectivo es neto del vuelto: lo que quedó en caja.</p>
         </>
       )}
     </div>
