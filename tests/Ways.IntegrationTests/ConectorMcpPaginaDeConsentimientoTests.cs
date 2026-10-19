@@ -77,9 +77,12 @@ public class ConectorMcpPaginaDeConsentimientoTests
                 "Ver su nombre de usuario, su correo, su rol y su tenant.",
                 "Consultar datos de ventas, compras, artículos y proveedores, según los permisos de su rol.",
                 "Crear borradores de compra, que usted revisa y confirma en Ways.",
-                "Asociar códigos de barras y de proveedor a artículos."
+                "Asociar códigos de barras y de proveedor a artículos.",
+                "Seguir conectado sin volver a pedirle la contraseña, aunque Ways se reinicie o se actualice: la conexión " +
+                "vence si pasan 14 días sin usarla y, mientras se use, no vence. No se puede cortar una sola conexión: las " +
+                "suyas se cortan desactivando su usuario en Ways, lo que también le quita el acceso a Ways."
             ],
-            permisos.Take(4));
+            permisos);
         Assert.Contains(
             "<p>Claude no podrá confirmar compras, mover stock ni dinero, ni crear artículos o proveedores.</p>", html);
         Assert.DoesNotContain("ningún otro dato", html);

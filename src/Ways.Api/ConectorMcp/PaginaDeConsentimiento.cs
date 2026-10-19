@@ -142,7 +142,12 @@ public sealed class PaginaDeConsentimiento(
             "Crear borradores de compra, que usted revisa y confirma en Ways.",
             "Asociar códigos de barras y de proveedor a artículos."
         ],
-        Scopes.OfflineAccess => ["Seguir conectado sin volver a pedirle la contraseña. La conexión se pierde cuando el servidor se reinicia."],
+        Scopes.OfflineAccess =>
+        [
+            "Seguir conectado sin volver a pedirle la contraseña, aunque Ways se reinicie o se actualice: la conexión " +
+            "vence si pasan 14 días sin usarla y, mientras se use, no vence. No se puede cortar una sola conexión: las " +
+            "suyas se cortan desactivando su usuario en Ways, lo que también le quita el acceso a Ways."
+        ],
         Scopes.OpenId => ["Confirmar su identidad con su identificador interno de usuario."],
         _ => [alcance]
     };
