@@ -8,7 +8,9 @@ using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Compras;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
@@ -163,11 +165,14 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         return area.Id;
     }
 
-    public async Task<int> SembrarCategoriaAsync(TenantDeVentas tenant, string nombre)
+    public async Task<int> SembrarCategoriaAsync(TenantDeVentas tenant, string nombre, int? idEmpresa = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
         var ahora = DateTimeOffset.UtcNow;
-        var categoria = new Categoria { IdTenant = tenant.IdTenant, Nombre = nombre, Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
+        var categoria = new Categoria
+        {
+            IdTenant = tenant.IdTenant, Nombre = nombre, Orden = 1, IdEmpresa = idEmpresa, CreatedAt = ahora, UpdatedAt = ahora
+        };
         db.Categorias.Add(categoria);
         await db.SaveChangesAsync();
         return categoria.Id;
@@ -255,7 +260,7 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
     /// Cantidad y total de cada línea llevan el signo (negativos en una NCX).</summary>
     public async Task SembrarComprobanteConLineasAsync(
         TenantDeVentas tenant, DateTimeOffset fecha, int idEmpleado, IReadOnlyList<LineaSembrada> lineas,
-        bool esNcx = false, EstadoComprobante estado = EstadoComprobante.Emitido)
+        bool esNcx = false, EstadoComprobante estado = EstadoComprobante.Emitido, int? idPuntoVenta = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -267,7 +272,7 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
             IdTipoComprobante = esNcx ? tenant.IdTipoNcx : tenant.IdTipoTx,
             Numero = Interlocked.Increment(ref _numeroSecuencial),
             Fecha = fecha,
-            IdPuntoVenta = tenant.IdPuntoVenta,
+            IdPuntoVenta = idPuntoVenta ?? tenant.IdPuntoVenta,
             IdEmpleado = idEmpleado,
             IdCliente = tenant.IdCliente,
             Subtotal = total,
@@ -326,6 +331,147 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
             UpdatedAt = ahora
         });
         await db.SaveChangesAsync();
+    }
+
+    public async Task<int> IdDeLaListaGeneralAsync(TenantDeVentas tenant)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        return await db.ListasPrecio.Where(l => l.EsDefault).Select(l => l.Id).SingleAsync();
+    }
+
+    public async Task<int> SembrarListaDePreciosAsync(
+        TenantDeVentas tenant, string nombre, ModoLista modo = ModoLista.Fija, int? idListaBase = null,
+        decimal? porcentaje = null, bool activa = true, int? idEmpresa = null)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var lista = new ListaPrecio
+        {
+            IdTenant = tenant.IdTenant,
+            Nombre = nombre,
+            Activo = activa,
+            Modo = modo,
+            IdListaBase = idListaBase,
+            Porcentaje = porcentaje,
+            IdEmpresa = idEmpresa,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(lista);
+        await db.SaveChangesAsync();
+        return lista.Id;
+    }
+
+    /// <summary>Una fila del historial de precios tal cual: <paramref name="hasta"/> nulo es la fila abierta.</summary>
+    public async Task SembrarPrecioAsync(
+        TenantDeVentas tenant, int idArticulo, int idLista, decimal monto, DateTimeOffset desde, DateTimeOffset? hasta = null)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        db.Precios.Add(new Precio
+        {
+            IdTenant = tenant.IdTenant,
+            IdArticulo = idArticulo,
+            IdListaPrecio = idLista,
+            Monto = monto,
+            VigenteDesde = desde,
+            VigenteHasta = hasta,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    public async Task SembrarStockAsync(
+        TenantDeVentas tenant, int idArticulo, int idPuntoVenta, decimal cantidad, decimal? minimo = null)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        db.Stock.Add(new Ways.Domain.Stock.Stock
+        {
+            IdTenant = tenant.IdTenant,
+            IdArticulo = idArticulo,
+            IdPuntoVenta = idPuntoVenta,
+            Cantidad = cantidad,
+            Minimo = minimo
+        });
+        await db.SaveChangesAsync();
+    }
+
+    public sealed record LineaDeCompraSembrada(
+        int IdArticulo, decimal Cantidad, decimal CostoUnitario, decimal Descuento = 0m, decimal PorcentajeIva = 0m);
+
+    /// <summary>Una compra con tipo C-FA. Un borrador no lleva número ni fechas, como lo exige el esquema; el resto
+    /// los lleva todos. El total de cada línea es <c>cantidad × costo − descuento</c>.</summary>
+    public async Task<int> SembrarCompraAsync(
+        TenantDeVentas tenant, int idProveedor, int idEmpleado, EstadoCompra estado, DateTimeOffset recepcion,
+        DateOnly fechaComprobante, string numero, IReadOnlyList<LineaDeCompraSembrada> lineas, int? idPuntoVenta = null,
+        bool discriminaIva = false, bool preciosIncluyenIva = false)
+    {
+        await using var dbPlataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var idTipo = await dbPlataforma.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
+
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var esBorrador = estado == EstadoCompra.Borrador;
+        var bruto = lineas.Sum(l => l.Cantidad * l.CostoUnitario);
+        var descuento = lineas.Sum(l => l.Descuento);
+
+        var compra = new ComprobanteCompra
+        {
+            IdTenant = tenant.IdTenant,
+            IdProveedor = idProveedor,
+            IdTipoComprobante = idTipo,
+            NumeroExterno = esBorrador ? null : numero,
+            FechaComprobante = esBorrador ? null : fechaComprobante,
+            FechaRecepcion = esBorrador ? null : recepcion,
+            IdPuntoVenta = idPuntoVenta ?? tenant.IdPuntoVenta,
+            IdEmpleado = idEmpleado,
+            Subtotal = bruto,
+            DescuentoTotal = descuento,
+            Total = bruto - descuento,
+            DiscriminaIva = discriminaIva,
+            PreciosIncluyenIva = preciosIncluyenIva,
+            Estado = estado,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ComprobantesCompra.Add(compra);
+        await db.SaveChangesAsync();
+
+        var idAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync();
+        var orden = 0;
+        foreach (var linea in lineas)
+        {
+            db.ItemsComprobanteCompra.Add(new ItemComprobanteCompra
+            {
+                IdTenant = tenant.IdTenant,
+                IdComprobanteCompra = compra.Id,
+                Orden = ++orden,
+                IdArticulo = linea.IdArticulo,
+                Descripcion = "Línea de compra",
+                Cantidad = linea.Cantidad,
+                CostoUnitario = linea.CostoUnitario,
+                Descuento = linea.Descuento,
+                IdAlicuotaIva = idAlicuotaIva,
+                PorcentajeIva = linea.PorcentajeIva,
+                Total = linea.Cantidad * linea.CostoUnitario - linea.Descuento,
+                ActualizaCosto = false,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return compra.Id;
+    }
+
+    /// <summary>Baja lógica de un punto de venta que todavía tiene stock: el dato heredado que la ficha tiene que tolerar.</summary>
+    public async Task DarDeBajaPuntoVentaAsync(TenantDeVentas tenant, int idPuntoVenta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var filas = await db.PuntosVenta.Where(p => p.Id == idPuntoVenta).ExecuteUpdateAsync(p => p.SetProperty(x => x.DeletedAt, ahora));
+        Assert.Equal(1, filas);
     }
 
     /// <summary>Host del conector con un reloj fijo y los mails dados habilitados.</summary>

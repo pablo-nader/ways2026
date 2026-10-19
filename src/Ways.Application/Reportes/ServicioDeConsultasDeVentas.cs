@@ -64,6 +64,15 @@ public sealed record VentasPorArticuloConsultadas(
     IReadOnlyList<string> Filtros, OrdenDeArticulos Orden, decimal ImporteDeTodosLosArticulos, decimal ImporteFiltrado,
     int CantidadDeArticulos, IReadOnlyList<FilaDeArticulo> Filas);
 
+public sealed record EmpresaResuelta(int Id, string Nombre);
+
+public sealed record ArticuloResuelto(int Id, string Codigo, string Nombre);
+
+/// <param name="Desde">Primer día de la ventana (el más antiguo entre las zonas de las empresas).</param>
+/// <param name="Hasta">Último día de la ventana: el "hoy" local de la empresa (el más reciente entre las zonas).</param>
+public sealed record VentasDeArticuloEnVentana(
+    DateOnly Desde, DateOnly Hasta, IReadOnlyList<string> Zonas, decimal Cantidad, decimal Importe);
+
 /// <param name="Total">Suma de <see cref="Filas"/>: para punto de venta, vendedor y día coincide con
 /// lo vendido; para medio de pago es lo cobrado neto de vuelto.</param>
 public sealed record AgrupacionConsultada(
@@ -315,37 +324,60 @@ public class ServicioDeConsultasDeVentas(
     }
 
     /// <summary>Ventas por área, grupo, categoría o marca del artículo ACTUAL, a partir de las filas del
-    /// reporte de ventas por artículo sin filtros. Una etiqueta nula (artículo sin esa clasificación, con la
-    /// clasificación dada de baja, o artículo que ya no es visible) va a "(sin …)". La marca no está en las
-    /// filas del reporte: se resuelve por id de artículo con un LEFT JOIN a marcas.</summary>
+    /// reporte de ventas por artículo sin filtros. Se agrupa por el ID de la clasificación, no por su nombre: dos
+    /// categorías con el mismo nombre siguen siendo dos filas, y solo en ese caso la etiqueta lleva "(id N)". Un
+    /// artículo sin esa clasificación, con la clasificación dada de baja o que ya no es visible va a "(sin …)". La
+    /// clasificación se lee por id de artículo, con los nombres de un catálogo que solo trae filas visibles.</summary>
     private async Task<AgrupacionConsultada> AgruparPorClasificacionAsync(
         SolicitudDeConsultaDeVentas solicitud, AgrupacionDeVentas por, AlcanceResuelto alcance, CancellationToken ct)
     {
         var filas = await LeerArticulosVendidosAsync(alcance, null, null, null, null, ct);
+        var idsDeArticulo = filas.Select(f => f.IdArticulo).ToList();
 
-        var (sin, etiquetaDe) = por switch
+        var clasificacion = await db.Articulos.AsNoTracking()
+            .Where(a => idsDeArticulo.Contains(a.Id))
+            .Select(a => new
+            {
+                a.Id,
+                Clave = por == AgrupacionDeVentas.Area ? (int?)a.IdArea
+                    : por == AgrupacionDeVentas.Grupo ? a.IdGrupo
+                    : por == AgrupacionDeVentas.Categoria ? a.IdCategoria
+                    : a.IdMarca
+            })
+            .ToDictionaryAsync(a => a.Id, a => a.Clave, ct);
+
+        var idsDeClasificacion = clasificacion.Values.Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
+        var (sin, nombres) = por switch
         {
-            AgrupacionDeVentas.Area => ("(sin área)", (Func<FilaDeArticulo, string?>)(f => f.Area)),
-            AgrupacionDeVentas.Grupo => ("(sin grupo)", f => f.Grupo),
-            AgrupacionDeVentas.Categoria => ("(sin categoría)", f => f.Categoria),
-            _ => ("(sin marca)", f => f.Marca)
+            AgrupacionDeVentas.Area => ("(sin área)", await NombresVisiblesAsync(db.Areas, idsDeClasificacion, ct)),
+            AgrupacionDeVentas.Grupo => ("(sin grupo)", await NombresVisiblesAsync(db.Grupos, idsDeClasificacion, ct)),
+            AgrupacionDeVentas.Categoria => ("(sin categoría)", await NombresVisiblesAsync(db.Categorias, idsDeClasificacion, ct)),
+            _ => ("(sin marca)", await NombresVisiblesAsync(db.Marcas, idsDeClasificacion, ct))
         };
 
-        if (por == AgrupacionDeVentas.Marca)
-        {
-            var ids = filas.Select(f => f.IdArticulo).ToList();
-            var marcas = await (
-                from a in db.Articulos
-                where ids.Contains(a.Id)
-                join m in db.Marcas on a.IdMarca equals (int?)m.Id into marcasUnidas
-                from m in marcasUnidas.DefaultIfEmpty()
-                select new { a.Id, Marca = m != null ? m.Nombre : null }).ToDictionaryAsync(x => x.Id, x => x.Marca, ct);
-            filas = [.. filas.Select(f => f with { Marca = marcas.GetValueOrDefault(f.IdArticulo) })];
-        }
+        var agrupadas = filas
+            .GroupBy(f => clasificacion.GetValueOrDefault(f.IdArticulo) is { } id && nombres.ContainsKey(id) ? id : (int?)null)
+            .Select(g => new { Clave = g.Key, Importe = g.Sum(f => f.Importe), Cantidad = g.Sum(f => f.Cantidad) })
+            .ToList();
 
-        var grupos = filas
-            .GroupBy(f => etiquetaDe(f) ?? sin)
-            .Select(g => new FilaDeVentas(g.Key, g.Sum(f => f.Importe), g.Sum(f => f.Cantidad)))
+        var homonimos = agrupadas
+            .Where(g => g.Clave is not null)
+            .GroupBy(g => nombres[g.Clave!.Value], StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var grupos = agrupadas
+            .Select(g =>
+            {
+                if (g.Clave is not { } clave)
+                {
+                    return new FilaDeVentas(sin, g.Importe, g.Cantidad);
+                }
+
+                var nombre = nombres[clave];
+                return new FilaDeVentas(homonimos.Contains(nombre) ? $"{nombre} (id {clave})" : nombre, g.Importe, g.Cantidad);
+            })
             .OrderByDescending(f => f.Importe)
             .ThenBy(f => f.Grupo, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -360,6 +392,10 @@ public class ServicioDeConsultasDeVentas(
             grupos.Sum(f => f.Importe),
             grupos);
     }
+
+    private static async Task<Dictionary<int, string>> NombresVisiblesAsync<T>(
+        IQueryable<T> catalogo, IReadOnlyCollection<int> ids, CancellationToken ct) where T : CatalogoSimple =>
+        await catalogo.Where(c => ids.Contains(c.Id)).Select(c => new { c.Id, c.Nombre }).ToDictionaryAsync(c => c.Id, c => c.Nombre, ct);
 
     /// <summary>Una llamada al reporte por empresa del alcance, sumando por artículo entre empresas.</summary>
     private async Task<List<FilaDeArticulo>> LeerArticulosVendidosAsync(
@@ -409,7 +445,6 @@ public class ServicioDeConsultasDeVentas(
     private static string PatronLike(string texto) =>
         texto.ToLowerInvariant().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
-    /// <summary>Un artículo por id, por código interno o por nombre (exacto, o el único que lo contiene).</summary>
     private async Task<CandidatoSimple?> ResolverArticuloAsync(string? texto, List<string> descripciones, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(texto))
@@ -417,20 +452,93 @@ public class ServicioDeConsultasDeVentas(
             return null;
         }
 
-        var buscado = texto.Trim();
-        var patron = $"%{PatronLike(buscado)}%";
-        var tieneId = int.TryParse(buscado, NumberStyles.None, CultureInfo.InvariantCulture, out var id);
-        var candidatos = await db.Articulos.AsNoTracking()
-            .Where(a => (tieneId && a.Id == id)
-                || EF.Functions.Like(a.Nombre.ToLower(), patron) || EF.Functions.Like(a.CodigoInterno.ToLower(), patron))
-            .OrderBy(a => a.Id)
-            .Take(200)
-            .Select(a => new CandidatoArticulo(a.Id, a.Nombre, a.CodigoInterno))
-            .ToListAsync(ct);
-
-        var elegido = Buscar(buscado, "el artículo", candidatos, c => c.Id, c => [c.Nombre, c.Codigo], c => $"{c.Codigo} {c.Nombre}");
+        var elegido = await BuscarArticuloAsync(texto, ct);
         descripciones.Add($"artículo {elegido.Nombre}");
         return new CandidatoSimple(elegido.Id, elegido.Nombre);
+    }
+
+    private const int MaximoDeCandidatos = 10;
+
+    /// <summary>Un artículo visible por texto, con coincidencia exacta primero y cada paso resuelto en SQL antes de
+    /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo (sin distinguir
+    /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código. Un
+    /// paso con una sola coincidencia termina la búsqueda; con más de una es ambiguo (hasta 10 candidatos listados) y
+    /// no sigue al paso siguiente; si ningún paso encuentra nada, no existe.</summary>
+    public async Task<ArticuloResuelto> BuscarArticuloAsync(string texto, CancellationToken ct = default)
+    {
+        var buscado = texto.Trim();
+        var exacto = PatronLike(buscado);
+        var patron = $"%{PatronLike(buscado)}%";
+        var visibles = db.Articulos.AsNoTracking();
+
+        var pasos = new List<IQueryable<Domain.Articulos.Articulo>>();
+        if (int.TryParse(buscado, NumberStyles.None, CultureInfo.InvariantCulture, out var id))
+        {
+            pasos.Add(visibles.Where(a => a.Id == id));
+        }
+
+        pasos.Add(visibles.Where(a => EF.Functions.Like(a.CodigoInterno.ToLower(), exacto)));
+        pasos.Add(visibles.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Activo && EF.Functions.Like(c.Codigo.ToLower(), exacto))));
+        pasos.Add(visibles.Where(a => EF.Functions.Like(a.Nombre.ToLower(), exacto)));
+        pasos.Add(visibles.Where(a => EF.Functions.Like(a.Nombre.ToLower(), patron) || EF.Functions.Like(a.CodigoInterno.ToLower(), patron)));
+
+        foreach (var paso in pasos)
+        {
+            var coinciden = await paso
+                .OrderBy(a => a.Id)
+                .Take(MaximoDeCandidatos + 1)
+                .Select(a => new ArticuloResuelto(a.Id, a.CodigoInterno, a.Nombre))
+                .ToListAsync(ct);
+            if (coinciden.Count == 1)
+            {
+                return coinciden[0];
+            }
+
+            if (coinciden.Count > 1)
+            {
+                var lista = string.Join(Environment.NewLine, coinciden.Take(MaximoDeCandidatos).Select(c => $"{c.Id} | {c.Codigo} | {c.Nombre}"));
+                var mas = coinciden.Count > MaximoDeCandidatos ? $"{Environment.NewLine}… y más" : string.Empty;
+                throw new ErrorDominio(
+                    "alcance_ambiguo",
+                    $"'{texto}' es ambiguo para el artículo; coincide con (id | código | nombre):{Environment.NewLine}{lista}{mas}" +
+                    $"{Environment.NewLine}Indicá el id o el código exacto.",
+                    400);
+            }
+        }
+
+        throw new ErrorDominio("alcance_no_encontrado", $"No encontré el artículo '{texto}'.", 404);
+    }
+
+    /// <summary>Empresa del tenant por id o por nombre, o <c>null</c> si no se indicó ninguna.</summary>
+    public async Task<EmpresaResuelta?> ResolverEmpresaAsync(string? texto, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(texto))
+        {
+            return null;
+        }
+
+        var empresas = await db.Empresas.AsNoTracking().OrderBy(e => e.Id)
+            .Select(e => new CandidatoEmpresa(e.Id, e.NombreFantasia ?? e.RazonSocial, e.RazonSocial))
+            .ToListAsync(ct);
+        var elegida = Buscar(texto, "la empresa", empresas, e => e.Id, e => [e.Nombre, e.RazonSocial], e => e.Nombre);
+        return new EmpresaResuelta(elegida.Id, elegida.Nombre);
+    }
+
+    /// <summary>Cantidad e importe vendidos de un artículo en los últimos <paramref name="dias"/> días, contando el
+    /// de hoy: desde <c>hoy - (dias - 1)</c> hasta <c>hoy</c>, con el "hoy" y la zona de cada empresa del alcance
+    /// (todas las del tenant si no se indica una). Es la misma fila del reporte de ventas por artículo.</summary>
+    public async Task<VentasDeArticuloEnVentana> VentasDeUnArticuloAsync(
+        int idArticulo, string? empresa, int dias, CancellationToken ct = default)
+    {
+        var alcance = await ResolverAlcanceAsync(new SolicitudDeConsultaDeVentas(null, null, null, empresa, null), ct, dias);
+        var filas = await LeerArticulosVendidosAsync(alcance, null, null, null, idArticulo, ct);
+
+        return new VentasDeArticuloEnVentana(
+            alcance.Contextos.Min(c => c.Desde),
+            alcance.Contextos.Max(c => c.Hasta),
+            alcance.Contextos.Select(c => c.ZonaId).Distinct().ToList(),
+            filas.Sum(f => f.Cantidad),
+            filas.Sum(f => f.Importe));
     }
 
     public static OrdenDeArticulos ParsearOrden(string? texto) =>
@@ -502,7 +610,8 @@ public class ServicioDeConsultasDeVentas(
             : await db.PuntosVenta.Where(pv => pv.IdEmpresa == empresa.Id).Select(pv => pv.Id).ToListAsync(ct);
     }
 
-    private async Task<AlcanceResuelto> ResolverAlcanceAsync(SolicitudDeConsultaDeVentas solicitud, CancellationToken ct)
+    private async Task<AlcanceResuelto> ResolverAlcanceAsync(
+        SolicitudDeConsultaDeVentas solicitud, CancellationToken ct, int? ultimosDias = null)
     {
         var empresasDelTenant = await db.Empresas
             .AsNoTracking()
@@ -575,7 +684,9 @@ public class ServicioDeConsultasDeVentas(
             var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
 
             var hoy = PeriodoDeConsulta.HoyLocal(reloj.Ahora, zona);
-            var (desde, hasta) = PeriodoDeConsulta.Resolver(solicitud.Periodo, solicitud.Desde, solicitud.Hasta, hoy);
+            var (desde, hasta) = ultimosDias is { } n
+                ? (hoy.AddDays(-(n - 1)), hoy)
+                : PeriodoDeConsulta.Resolver(solicitud.Periodo, solicitud.Desde, solicitud.Hasta, hoy);
             var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
             contextos.Add(new ContextoDeEmpresa(empresa, zonaId, desde, hasta, rango));
         }

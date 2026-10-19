@@ -34,7 +34,11 @@ public static class RegistroDelConectorMcp
         "marca y proveedor ('¿cuánto se vendió de Coca-Cola el mes pasado?'). El período se indica con un " +
         "nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona " +
         "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
-        "366 días). Para preparar la carga de una factura de proveedor (solo " +
+        "366 días). articulo_info es la ficha de un artículo y está abierta a todos los roles ('¿qué precio y " +
+        "stock tiene Cola 2L?', '¿a qué precio lo compramos la última vez y a quién?'): precios vigentes por " +
+        "lista, stock por punto de venta, ventas de los últimos 30 días y últimas compras; las ventas, el costo " +
+        "y las compras solo se muestran a Supervisor y Admin. " +
+        "Para preparar la carga de una factura de proveedor (solo " +
         "Admin): primero contexto_de_compras (puntos de venta, tipos de comprobante de compra y alícuotas de " +
         "IVA), después buscar_proveedor (por CUIT o nombre) y por último buscar_articulos con todas las líneas " +
         "de la factura en una sola llamada. La carga del borrador de compra todavía no está disponible. " +
