@@ -243,10 +243,20 @@ Rebanada 2, observado sobre `e3b795c7` (antes del rebase; el árbol es idéntico
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 380/380.
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 71/71.
 
+Ronda 1 del judgment-day de la rebanada 2, observado sobre `b73fe3df` (main sigue en `8dd66b39`):
+
+- `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 381/381.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 72/72.
+
 ## Progreso
 
 - Rebanada 1 mergeada en main (#478, `8dd66b39`).
-- Rebanada 2 completa (R2-T1…R2-T4) en `pnader/mcp-consolidacion-2`, sobre main. Ronda 1 del judgment-day en
-  corrección (L1–L9 del ledger, un commit por ítem): L1 `706a1b59`, L2 `d1cf2456`, L3 `6c301fd1`, L4 `f9eed76d`,
-  L5 `bca2b60f`. Siguiente paso: L6–L9, verificación y re-juicio. Pendiente fuera de alcance: la doble resolución
-  de empresa de la ficha.
+- Rebanada 2 completa (R2-T1…R2-T4) en `pnader/mcp-consolidacion-2`, sobre main. Ronda 1 del judgment-day
+  corregida (L1–L9 del ledger, un commit por ítem): L1 `706a1b59` (paridad con códigos por fila y combinaciones que
+  discriminan), L2 `d1cf2456` (`agruparPor` y `puntoVenta` fijados), L3 `6c301fd1` (transición del renombre),
+  L4 `f9eed76d` (resumen de `MaximoDeOpcionesListadasEnUnError`), L5 `bca2b60f` (las dos formas de la
+  `McpException`), L6 `f4f432e0` (este documento), L7 `74a7b90f` (línea en blanco, using, recorte de %), L8
+  `c13056d3` (`MinimoDeLetrasPorPalabra` y `MinimoDeCaracteresDelNombre`; mutación: el mínimo en 3 → cae la fila de
+  `buscar_articulos` del test de descripciones), L9 `b73fe3df` ("código interno" en `articulo_info`). Siguiente
+  paso: re-juicio del orquestador y PR. Pendiente fuera de alcance: la doble resolución de empresa de la ficha.
