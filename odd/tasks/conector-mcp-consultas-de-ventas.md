@@ -28,7 +28,7 @@ El conector MCP (PR #350) solo expone `quien_soy`. Las respuestas a esas pregunt
 - [x] T1 — `ventas_resumen` y `ventas_agrupadas` por punto de venta, medio de pago, vendedor y día, con la resolución de períodos. Reusa `ServicioDeReportesDeVentas`. PR 1.
 - [x] T2 — `ventas_agrupadas` por área, grupo, categoría y marca, y `ventas_por_articulo` con filtros y top N, sobre `ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync` (PR #458) en lugar de una consulta por línea propia. PR 2, apilado sobre el 1.
 - [x] T3 — `articulo_info`: precios vigentes por lista, stock por punto de venta, ventas de 30 días y últimas compras (costos y compras solo Admin y Supervisor). PR 3, apilado sobre el 2.
-- [ ] T4 — `Instrucciones` del servidor MCP y la sección del conector en `docs/07-despliegue.md` (se reparte entre los tres PRs, cada uno documenta sus tools).
+- [x] T4 — `Instrucciones` del servidor MCP y la sección del conector en `docs/07-despliegue.md` (se reparte entre los tres PRs, cada uno documenta sus tools).
 
 ## Criterios de aceptación y checks
 - Build sin advertencias nuevas en `src`.
@@ -93,7 +93,16 @@ Mutaciones (aplicada, test rojo, revertida y verde):
 - Decisión de producto: el proveedor habitual figura en la cabecera para todos los roles (como en la grilla de artículos); no es costo.
 
 ## Próximo paso
-Judgment-day de T3.
+Etapa cerrada. Hay tres PRs:
+- #463 se cerró: su contenido entró con #469.
+- #469 está en main.
+- #474 lleva T3 y la corrección del judgment-day, con auto-merge y Auto-fix.
+
+Follow-ups abiertos:
+- Con filtros del reporte, `ventas_por_articulo` llama dos veces por empresa a `ObtenerVentasPorArticuloAsync`, que además carga todas las líneas del rango.
+- El paso exacto del código de barras (`LIKE` sobre `lower(codigo)`) no usa el índice de `codigos_barra.codigo`.
+- Las tools de ventas y de la ficha tienen su propio `EjecutarAsync` y no usan `ResultadoDeHerramienta`/`ErrorDeHerramienta` del conector.
+- El reporte web por medio de pago suma el importe sin restar el vuelto. Lo corrige la orquestadora aparte.
 
 ### Judgment-day de T3 (ronda 1) y corrección
 - Juez A y juez B (relanzado con Opus porque el primero se cortó por límite de uso): sin hallazgos severos.
