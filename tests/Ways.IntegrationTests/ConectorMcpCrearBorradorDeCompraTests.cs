@@ -651,8 +651,9 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
 
     /// <summary>El commit ambiguo de verdad: el borrador se comitea y recién después llega un <c>40001</c>
     /// (<see cref="InterceptorQueRompeElCommitAmbiguo"/>). La herramienta no puede saber si quedó creado: no
-    /// reintenta, pide verificar el listado y deja el error en el log. El borrador existe, que es justo por qué un
-    /// reintento a ciegas crearía otro.</summary>
+    /// reintenta, pide que el usuario lo busque en el listado y deja el error en el log. El borrador existe, y como la
+    /// factura tiene número, repetir la carga devuelve esa compra como duplicada en vez de crear otra: solo un remito
+    /// sin número se cargaría dos veces.</summary>
     [Fact]
     public async Task UnFalloTransitorioAlComitearDiceQueElResultadoEsInciertoYNoReintenta()
     {
@@ -670,7 +671,11 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, FacturaSimple(e));
 
         Assert.True(resultado.EsError);
-        Assert.Equal(TextosDelBorradorDeCompra.ResultadoIncierto, resultado.Texto);
+        Assert.Equal(
+            "Resultado incierto: no se pudo confirmar si el borrador quedó creado. Pedile al usuario que lo busque en el " +
+            "listado de compras de la web antes de volver a cargar el comprobante, y nunca repitas la carga de un remito sin " +
+            "número: no tiene control de duplicado.",
+            resultado.Texto);
         Assert.Equal(1, interceptor.CommitsRotos);
         Assert.Equal(1, interceptor.Inserciones);
         var creada = Assert.Single(await _borrador.ComprasDelProveedorAsync(e.IdProveedor));
@@ -679,6 +684,12 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
             entrada.Categoria == typeof(HerramientasDeCargaDeCompras).FullName
             && entrada.Nivel == LogLevel.Error
             && entrada.Mensaje == "Conector MCP: no se pudo confirmar si quedó creado el borrador de compra.");
+
+        var repetida = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, FacturaSimple(e));
+
+        Assert.False(repetida.EsError, repetida.Texto);
+        Assert.Contains($"- {creada.Id} | borrador | asistente |", repetida.Texto, StringComparison.Ordinal);
+        Assert.Single(await _borrador.ComprasDelProveedorAsync(e.IdProveedor));
     }
 
     /// <summary>La carrera que el chequeo previo no puede ver: otra carga guarda el mismo número entre el chequeo y

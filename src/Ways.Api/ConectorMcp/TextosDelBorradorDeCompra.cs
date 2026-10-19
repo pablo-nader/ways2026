@@ -15,7 +15,9 @@ public static class TextosDelBorradorDeCompra
         "tipo y número de comprobante. Volvé a llamar a crear_borrador_de_compra con los mismos datos para ver cuál es.";
 
     public const string ResultadoIncierto =
-        "Resultado incierto: verificá en el listado de compras si el borrador quedó creado antes de reintentar.";
+        "Resultado incierto: no se pudo confirmar si el borrador quedó creado. Pedile al usuario que lo busque en el " +
+        "listado de compras de la web antes de volver a cargar el comprobante, y nunca repitas la carga de un remito sin " +
+        "número: no tiene control de duplicado.";
 
     public const string ValorFueraDeRango =
         "No se creó el borrador. Un importe o una cantidad no entra en Ways: revisá contra la factura las cantidades, " +
