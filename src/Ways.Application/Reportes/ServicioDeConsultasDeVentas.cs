@@ -504,7 +504,6 @@ public class ServicioDeConsultasDeVentas(
         return new CandidatoSimple(elegido.Id, elegido.Nombre);
     }
 
-
     /// <summary>Un artículo visible por texto, con coincidencia exacta primero y cada paso resuelto en SQL antes de
     /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo (sin distinguir
     /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código

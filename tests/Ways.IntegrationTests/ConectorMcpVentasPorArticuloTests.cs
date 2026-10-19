@@ -588,7 +588,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
     };
 
     private static decimal Numero(string texto) =>
-        decimal.Parse(texto.TrimEnd('%'), NumberStyles.Number, FormatoDeLaHerramienta);
+        decimal.Parse(texto, NumberStyles.Number, FormatoDeLaHerramienta);
 
     /// <summary>Paridad del acotado en memoria de <c>ventas_por_articulo</c> (<c>AcotarComoElReporteAsync</c>) con el
     /// reporte web <c>GET /api/reportes/ventas/por-articulo</c>, que filtra en SQL: para cada filtro del reporte
