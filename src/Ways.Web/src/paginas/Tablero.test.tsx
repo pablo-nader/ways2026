@@ -523,6 +523,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
 
     expect(await screen.findByText('Medio #88')).toBeInTheDocument() // idMedioPago 88 no está en el catálogo mockeado
     expect(screen.getByText('$ 1.200,00')).toBeInTheDocument()
+    expect(screen.getByText('El efectivo es neto del vuelto: lo que quedó en caja.')).toBeInTheDocument()
   })
 
   it('el panel top artículos renderiza la tabla: descripción, cantidad y moneda', async () => {

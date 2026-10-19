@@ -8,6 +8,7 @@ import type {
   CompraListada,
   EstadoCompra,
   EstadoPago,
+  OrigenCompra,
   PaginaDe,
   PaginaDeCompras,
   ProveedorListado,
@@ -26,6 +27,12 @@ const OPCIONES_ESTADO: { valor: EstadoCompra | ''; etiqueta: string }[] = [
   { valor: 'Borrador', etiqueta: 'Borrador' },
   { valor: 'Confirmada', etiqueta: 'Confirmada' },
   { valor: 'Anulada', etiqueta: 'Anulada' },
+]
+
+const OPCIONES_ORIGEN: { valor: OrigenCompra | ''; etiqueta: string }[] = [
+  { valor: '', etiqueta: 'Todas' },
+  { valor: 'Manual', etiqueta: 'Manual' },
+  { valor: 'Asistente', etiqueta: 'Asistente' },
 ]
 
 function formatearMoneda(valor: number): string {
@@ -244,6 +251,23 @@ export function Compras() {
             </select>
           </div>
           <div className="col-md-2">
+            <label className="form-label" htmlFor="compras-filtro-origen">
+              Origen
+            </label>
+            <select
+              id="compras-filtro-origen"
+              className="form-select"
+              value={filtros.origen ?? ''}
+              onChange={(e) => cambiarFiltro({ origen: e.target.value === '' ? null : (e.target.value as OrigenCompra) })}
+            >
+              {OPCIONES_ORIGEN.map((o) => (
+                <option key={o.valor} value={o.valor}>
+                  {o.etiqueta}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-md-2">
             <label className="form-label" htmlFor="compras-filtro-desde">
               Desde
             </label>
@@ -306,6 +330,7 @@ export function Compras() {
                         <Link className="link-underline-opacity-0" to={`/compras/${c.id}`}>
                           {c.numeroExterno ?? `#${c.id}`}
                         </Link>
+                        {c.origen === 'Asistente' && <span className="badge text-bg-info ms-2">Asistente</span>}
                       </td>
                       <td>{proveedorPorId[c.idProveedor]?.razonSocial ?? `Proveedor #${c.idProveedor}`}</td>
                       <td>{tipoPorId[c.idTipoComprobante]?.codigo ?? `#${c.idTipoComprobante}`}</td>

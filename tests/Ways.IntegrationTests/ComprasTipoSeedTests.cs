@@ -139,6 +139,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<OrigenCompra>("origen_compra");
                     // stage-15-cc-proveedores-ledger, Slice 2 (hallazgo registrado en tasks.md):
                     // sin este mapeo, migrar hasta HEAD dispara PendingModelChangesWarning — el
                     // modelo vivo de este contexto manualmente curado diverge del snapshot real

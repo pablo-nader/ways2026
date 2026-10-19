@@ -2401,6 +2401,9 @@ export type ResultadoDeReliquidacion = {
 
 export type EstadoCompra = 'Borrador' | 'Confirmada' | 'Anulada'
 
+/** Quién cargó la compra (espejo de `OrigenCompra`). Solo lo fija el servidor: ningún request lo lleva. */
+export type OrigenCompra = 'Manual' | 'Asistente'
+
 /** Una línea del cuerpo de `POST`/`PUT /api/compras` (espejo de `LineaDeCompraSolicitada`).
  * `idArticulo: null` declara una línea por concepto: no admite lote, bultos ni `actualizaCosto`
  * verdadero (el servidor responde 400 en vez de descartarlos). */
@@ -2526,6 +2529,7 @@ export type CompraDetalle = {
   total: number
   observaciones: string | null
   estado: EstadoCompra
+  origen: OrigenCompra
   items: ItemDeCompra[]
   idOrdenCompra: number | null
   discriminaIva: boolean
@@ -2550,6 +2554,18 @@ export type CompraListada = {
   fechaRecepcion: string | null
   total: number
   saldoPendiente: number
+  origen: OrigenCompra
+}
+
+/** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo
+ * proveedor y tipo con el número buscado. `numeroExterno` es el texto guardado, que puede estar en otro
+ * formato que el buscado (filas anteriores a la forma canónica `PPPPP-NNNNNNNN`). */
+export type CompraDuplicada = {
+  id: number
+  estado: EstadoCompra
+  numeroExterno: string
+  fechaComprobante: string | null
+  origen: OrigenCompra
 }
 
 /** Cuerpo de `POST /api/compras/{id}/pagos` (espejo de `SolicitudDePagoDeCompra`). `fecha` viaja como
@@ -2989,6 +3005,31 @@ export type TopArticulos = {
   hasta: string
   zonaHoraria: string
   articulos: ArticuloTop[]
+}
+
+/** Fila de `GET /api/reportes/ventas/por-articulo` — espejo de `ArticuloVendido`. `area`/`grupo`/
+ * `categoria` son la clasificación ACTUAL del artículo y vienen `null` cuando no la tiene o apunta a una
+ * fila dada de baja; la UI decide el rótulo. `cantidad`/`total` son netos (una nota de crédito resta). */
+export type ArticuloVendido = {
+  idArticulo: number
+  codigo: string | null
+  descripcion: string
+  area: string | null
+  grupo: string | null
+  categoria: string | null
+  cantidad: number
+  total: number
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-articulo` — espejo de `VentasPorArticulo`. `articulos` viene
+ * por `total` descendente, sin paginar; `cantidadTotal` y `total` suman esas mismas filas. */
+export type VentasPorArticulo = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  cantidadTotal: number
+  total: number
+  articulos: ArticuloVendido[]
 }
 
 /** Fila de `GET /api/reportes/articulos` (reporte de completitud de catálogo) — espejo de

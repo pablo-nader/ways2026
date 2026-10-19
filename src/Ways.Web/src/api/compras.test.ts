@@ -4,6 +4,8 @@ import {
   calcularTotalesDeCompra,
   costoDeLineaIncluyeIva,
   construirQueryDeCompras,
+  construirQueryDeDuplicados,
+  esBorradorCargadoPorElAsistente,
   etiquetaDeEstadoCompra,
   filtrosDeComprasVacios,
   lineaDeCompraVacia,
@@ -254,6 +256,11 @@ describe('construirQueryDeCompras', () => {
     expect(query).toContain('estado=Confirmada')
   })
 
+  it('origen viaja tal cual y sin filtro no se manda', () => {
+    expect(construirQueryDeCompras({ ...filtrosDeComprasVacios(), origen: 'Asistente' })).toContain('origen=Asistente')
+    expect(construirQueryDeCompras(filtrosDeComprasVacios())).not.toContain('origen')
+  })
+
   it('desde/hasta expanden a los bordes del día con el offset horario local', () => {
     const offsetDesde = offsetEsperado(2026, 7, 1)
     const offsetHasta = offsetEsperado(2026, 7, 31)
@@ -262,6 +269,19 @@ describe('construirQueryDeCompras', () => {
     )
     expect(query).toContain(`desde=2026-07-01T00:00:00${offsetDesde}`)
     expect(query).toContain(`hasta=2026-07-31T23:59:59.999${offsetHasta}`)
+  })
+})
+
+describe('esBorradorCargadoPorElAsistente', () => {
+  it('solo un borrador del asistente pide revisión', () => {
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Borrador', origen: 'Asistente' })).toBe(true)
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Borrador', origen: 'Manual' })).toBe(false)
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Confirmada', origen: 'Asistente' })).toBe(false)
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Anulada', origen: 'Asistente' })).toBe(false)
+  })
+
+  it('sin compra cargada no hay aviso', () => {
+    expect(esBorradorCargadoPorElAsistente(null)).toBe(false)
   })
 })
 
@@ -274,5 +294,27 @@ describe('construirQueryDeCompras — offset fijo (sin espejar la fórmula de la
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(180)
     const query = decodeURIComponent(construirQueryDeCompras({ ...filtrosDeComprasVacios(), desde: '2026-07-01' }))
     expect(query).toContain('desde=2026-07-01T00:00:00-03:00')
+  })
+})
+
+describe('construirQueryDeDuplicados', () => {
+  it('lleva proveedor, tipo y número, y excluirId solo al editar una compra existente', () => {
+    const base = { idProveedor: 4, idTipoComprobante: 5, numeroExterno: '00003-00012345' }
+
+    const alCrear = new URLSearchParams(construirQueryDeDuplicados({ ...base, excluirId: null }))
+    expect(alCrear.get('idProveedor')).toBe('4')
+    expect(alCrear.get('idTipoComprobante')).toBe('5')
+    expect(alCrear.get('numeroExterno')).toBe('00003-00012345')
+    expect(alCrear.has('excluirId')).toBe(false)
+
+    const alEditar = new URLSearchParams(construirQueryDeDuplicados({ ...base, excluirId: 9 }))
+    expect(alEditar.get('excluirId')).toBe('9')
+  })
+
+  it('codifica el número para que un texto libre con espacios o barras llegue intacto', () => {
+    const query = construirQueryDeDuplicados({ idProveedor: 1, idTipoComprobante: 2, numeroExterno: 'Rem 3/12&5', excluirId: null })
+
+    expect(query.startsWith('?')).toBe(true)
+    expect(new URLSearchParams(query).get('numeroExterno')).toBe('Rem 3/12&5')
   })
 })

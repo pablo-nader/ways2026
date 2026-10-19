@@ -158,7 +158,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         // deuda previa REAL (≠ 0) de otra compra que se queda VIVA — discrimina el
         // saldo_resultante del RETURNING de un mutante de valor (hallazgo del juez B, slice 2:
         // ningún assert de saldo/saldo_resultante contra un proveedor "fresco").
-        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 30m, numeroExterno: "resto-imputado"); // 300
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 30m, numeroExterno: "0001-00000101"); // 300
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // total 1000
         await AbrirTurnoAsync(ctx);
 
@@ -350,7 +350,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var ctx = await PrepararAsync(nameof(ElPagoQueGanaLaCarreraDejaSuMovimientoVisibleEnElLedgerQueLaAnulacionQueLlegaDespuesComputa));
         // deuda previa REAL de otra compra viva — discrimina el saldo_resultante del RETURNING de
         // un mutante de valor (hallazgo del juez B, slice 2).
-        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 50m, numeroExterno: "resto-carrera"); // 500
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 50m, numeroExterno: "0001-00000102"); // 500
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // total 1000
         await AbrirTurnoAsync(ctx);
 
@@ -418,7 +418,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         // Otra compra confirmada que se queda VIVA — deuda previa REAL (≠ 0) que discrimina el
         // saldo_resultante del RETURNING de un mutante de valor (mismo criterio, hallazgo del juez
         // B en slice 2: ningún assert de saldo contra un proveedor "fresco").
-        var otraCompra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 30m, numeroExterno: "resto-race"); // 300
+        var otraCompra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 30m, numeroExterno: "0001-00000103"); // 300
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // 1000 — saldo previo a anular = 1300
         await AbrirTurnoAsync(ctx);
 
@@ -489,7 +489,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         // deuda previa REAL (≠ 0) — para que "sin cambios" sea una prueba real de que el saldo NO
         // se movió, no una coincidencia con el 0 inicial de un proveedor fresco (hallazgo del juez
         // B, slice 2).
-        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 70m, numeroExterno: "resto-falla"); // 700
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 70m, numeroExterno: "0001-00000104"); // 700
         await AbrirTurnoAsync(ctx);
 
         await RevocarAsync("movimientos_cuenta_corriente_proveedor", "INSERT");
@@ -525,7 +525,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var ctx = await PrepararAsync(nameof(ElSaldoDelProveedorIgualaLaSumaDeMovimientosTrasCompraYPago));
         // deuda previa REAL de otra compra viva — discrimina el saldo final de un mutante de valor
         // (hallazgo del juez B, slice 2).
-        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 20m, numeroExterno: "resto-invariante"); // 200
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 20m, numeroExterno: "0001-00000105"); // 200
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // +1000
         await AbrirTurnoAsync(ctx);
 

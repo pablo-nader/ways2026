@@ -410,4 +410,87 @@ public class ServicioDeProveedoresTests
         Assert.Equal("no_encontrado", error.Codigo);
         Assert.Equal(404, error.EstadoHttp);
     }
+
+    // ---- búsqueda por CUIT: igualdad exacta sobre los dígitos ----------------------------------------
+
+    /// <summary>La cláusula bajo prueba es la comparación de DÍGITOS del lado guardado: sin ella
+    /// <c>30-71234567-9</c> no matchea el pedido sin guiones. La traducción a SQL la cubre
+    /// <c>ProveedoresEndpointsTests</c>; acá se prueba la regla sobre InMemory.</summary>
+    [Theory]
+    [InlineData("30712345679")]
+    [InlineData("30-71234567-9")]
+    [InlineData("30 71234567 9")]
+    [InlineData("30.71234567.9")]
+    [InlineData("  30-71234567-9 ")]
+    public async Task BuscarPorCuitComparaSoloLosDigitosDeAmbosLados(string pedido)
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idCondicionFiscal = await SembrarCondicionFiscalAsync(nombreDeBase);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+        var conGuiones = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Beta con guiones", "30-71234567-9"));
+        var sinGuiones = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Alfa sin guiones", "30712345679"));
+        await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Otro cuit", "30-71234567-8"));
+        await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Sin cuit"));
+
+        var encontrados = await servicio.BuscarPorCuitAsync(pedido);
+
+        Assert.Equal([sinGuiones.Id, conGuiones.Id], encontrados.Select(p => p.Id));
+    }
+
+    [Fact]
+    public async Task BuscarPorCuitNoDevuelveProveedoresDeOtroTenantNiDadosDeBaja()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idCondicionFiscal = await SembrarCondicionFiscalAsync(nombreDeBase);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+        var vivo = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Vivo", "30-71234567-9"));
+        var dadoDeBaja = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Dado de baja", "30712345679"));
+        await MarcarComoEliminadoAsync(nombreDeBase, dadoDeBaja.Id);
+        await CrearServicio(nombreDeBase, idTenant: 2).CrearAsync(AltaValida(idCondicionFiscal, "De otro tenant", "30 71234567 9"));
+
+        var encontrados = await servicio.BuscarPorCuitAsync("30712345679");
+
+        Assert.Equal([vivo.Id], encontrados.Select(p => p.Id));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("3071234567")]
+    [InlineData("307123456790")]
+    [InlineData("30-7123456-9")]
+    [InlineData("abcdefghijk")]
+    public async Task UnCuitSinOnceDigitosEsRechazadoConCodigoEstable(string pedido)
+    {
+        var servicio = CrearServicio(Guid.NewGuid().ToString(), idTenant: 1);
+
+        var errorDeBusqueda = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.BuscarPorCuitAsync(pedido));
+        var errorDeListado = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ListarAsync(cuit: pedido));
+
+        foreach (var error in new[] { errorDeBusqueda, errorDeListado })
+        {
+            Assert.Equal("cuit_invalido", error.Codigo);
+            Assert.Equal(400, error.EstadoHttp);
+        }
+    }
+
+    [Fact]
+    public async Task ElListadoFiltraPorCuitYRespetaLosEliminados()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idCondicionFiscal = await SembrarCondicionFiscalAsync(nombreDeBase);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+        var alfa = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Alfa", "30-71234567-9"));
+        var beta = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Beta", "30712345679"));
+        var gamma = await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Gamma", "30 71234567 9"));
+        await servicio.CrearAsync(AltaValida(idCondicionFiscal, "Delta", "20-11111111-2"));
+        await MarcarComoEliminadoAsync(nombreDeBase, gamma.Id);
+
+        var porCuit = await servicio.ListarAsync(cuit: "30712345679");
+        var conEliminados = await servicio.ListarAsync(incluirEliminados: true, cuit: "30712345679");
+
+        Assert.Equal([alfa.Id, beta.Id], porCuit.Items.Select(p => p.Id));
+        Assert.Equal(2, porCuit.Total);
+        Assert.Equal([alfa.Id, beta.Id, gamma.Id], conEliminados.Items.Select(p => p.Id));
+    }
 }

@@ -162,7 +162,7 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
     public async Task ConfirmarConCambioDeTotalConcurrentePorUnPutUsaElTotalQueElLockRealmenteVio()
     {
         var ctx = await PrepararAsync(nameof(ConfirmarConCambioDeTotalConcurrentePorUnPutUsaElTotalQueElLockRealmenteVio));
-        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m, numeroExterno: "total-race"));
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m, numeroExterno: "0001-00000201"));
 
         var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,7 +183,7 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         // El PUT gana la carrera: sube costoUnitario (100 → 250, total 1000 → 2500) y COMMITEA
         // antes de que el lock del header de confirmar corra.
         var respuestaPut = await ctx.Admin.PutAsJsonAsync(
-            $"/api/compras/{creada.Id}", SolicitudSimple(ctx, unidades: 10m, costoUnitario: 250m, numeroExterno: "total-race"));
+            $"/api/compras/{creada.Id}", SolicitudSimple(ctx, unidades: 10m, costoUnitario: 250m, numeroExterno: "0001-00000201"));
         var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
         Assert.True(respuestaPut.StatusCode == HttpStatusCode.OK, cuerpoPut);
 
@@ -216,10 +216,10 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
     {
         var ctx = await PrepararAsync(nameof(ConfirmarConDeudaPreviaEscribeElSaldoResultanteDelReturningNoElTotalDeEstaCompra));
 
-        var compraPrevia = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 8m, costoUnitario: 100m, numeroExterno: "previa"));
+        var compraPrevia = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 8m, costoUnitario: 100m, numeroExterno: "0001-00000202"));
         await ConfirmarViaApiAsync(ctx, compraPrevia.Id); // saldo previo = 800
 
-        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 15m, costoUnitario: 100m, numeroExterno: "sujeto"));
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 15m, costoUnitario: 100m, numeroExterno: "0001-00000203"));
         await ConfirmarViaApiAsync(ctx, creada.Id); // total de esta compra = 1500
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
@@ -245,7 +245,7 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         // mutante de VALOR que target #16 (si saldo_resultante del ajuste viniera de un valor
         // local como "el importe" en vez del RETURNING, este resto de 300 desenmascara la
         // diferencia; con saldo previo 0 el resultado hubiera sido 0 en ambos casos).
-        var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 3m, costoUnitario: 100m, numeroExterno: "resto"));
+        var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 3m, costoUnitario: 100m, numeroExterno: "0001-00000205"));
         await ConfirmarViaApiAsync(ctx, otraCompra.Id); // 300
 
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m));
@@ -378,7 +378,7 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
 
         // Otra compra confirmada que se queda con su movimiento `compra` intacto — deuda previa
         // que discrimina el mismo mutante de VALOR que en el caso impago (mutation target #16).
-        var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 4m, costoUnitario: 100m, numeroExterno: "resto-precutover"));
+        var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 4m, costoUnitario: 100m, numeroExterno: "0001-00000204"));
         await ConfirmarViaApiAsync(ctx, otraCompra.Id); // 400
 
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 200m));

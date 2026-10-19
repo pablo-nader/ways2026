@@ -18,9 +18,13 @@ public static class ProveedoresEndpoints
             bool? incluirEliminados,
             int? pagina,
             int? tamanio,
+            string? cuit,
             CancellationToken ct) =>
-            servicio.ListarAsync(busqueda, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista proveedores con búsqueda y paginado.");
+            servicio.ListarAsync(busqueda, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, cuit, ct))
+        .WithSummary(
+            "Lista proveedores con búsqueda y paginado. cuit filtra por igualdad exacta comparando solo " +
+            "dígitos (con o sin guiones y espacios) y se combina con los demás filtros; si no tiene 11 " +
+            "dígitos responde 400 cuit_invalido.");
 
         grupo.MapGet("/{id:int}", (ServicioDeProveedores servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))

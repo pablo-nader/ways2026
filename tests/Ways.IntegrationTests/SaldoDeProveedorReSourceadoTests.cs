@@ -256,9 +256,9 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
 
         // Tres compras con Total/Pagado/EstadoPago TODOS distintos entre sí — ningún valor
         // coincide con otro campo de otra fila (mutation-proof-tests rule 6).
-        var pagada = await CrearYConfirmarCompraDeTotalAsync(ctx, 1111m, "byte-compat-pagada");
-        var parcial = await CrearYConfirmarCompraDeTotalAsync(ctx, 2222m, "byte-compat-parcial");
-        var impaga = await CrearYConfirmarCompraDeTotalAsync(ctx, 3333m, "byte-compat-impaga");
+        var pagada = await CrearYConfirmarCompraDeTotalAsync(ctx, 1111m, "0001-00000501");
+        var parcial = await CrearYConfirmarCompraDeTotalAsync(ctx, 2222m, "0001-00000502");
+        var impaga = await CrearYConfirmarCompraDeTotalAsync(ctx, 3333m, "0001-00000503");
         var idTurno = await AbrirTurnoAsync(ctx);
 
         var pagoPagada = await ctx.Admin.PostAsJsonAsync(
@@ -283,19 +283,19 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(3, saldo.Compras.Count);
 
         var lineaPagada = saldo.Compras.Single(c => c.IdComprobanteCompra == pagada.Id);
-        Assert.Equal("byte-compat-pagada", lineaPagada.NumeroExterno);
+        Assert.Equal("00001-00000501", lineaPagada.NumeroExterno);
         Assert.Equal(1111m, lineaPagada.Total);
         Assert.Equal(1111m, lineaPagada.Pagado);
         Assert.Equal(EstadoPago.Pagada, lineaPagada.EstadoPago);
 
         var lineaParcial = saldo.Compras.Single(c => c.IdComprobanteCompra == parcial.Id);
-        Assert.Equal("byte-compat-parcial", lineaParcial.NumeroExterno);
+        Assert.Equal("00001-00000502", lineaParcial.NumeroExterno);
         Assert.Equal(2222m, lineaParcial.Total);
         Assert.Equal(777m, lineaParcial.Pagado);
         Assert.Equal(EstadoPago.Parcial, lineaParcial.EstadoPago);
 
         var lineaImpaga = saldo.Compras.Single(c => c.IdComprobanteCompra == impaga.Id);
-        Assert.Equal("byte-compat-impaga", lineaImpaga.NumeroExterno);
+        Assert.Equal("00001-00000503", lineaImpaga.NumeroExterno);
         Assert.Equal(3333m, lineaImpaga.Total);
         Assert.Equal(0m, lineaImpaga.Pagado);
         Assert.Equal(EstadoPago.Impaga, lineaImpaga.EstadoPago);
@@ -317,7 +317,7 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
     {
         var ctx = await PrepararAsync(nameof(ElSaldoLeeLaCacheAunDesincronizadaDelAgregadoDelLedger));
 
-        var pagada = await CrearYConfirmarCompraDeTotalAsync(ctx, 1111m, "cache-vs-agregado-pagada");
+        var pagada = await CrearYConfirmarCompraDeTotalAsync(ctx, 1111m, "0001-00000504");
         var idTurno = await AbrirTurnoAsync(ctx);
         var pagoPagada = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",

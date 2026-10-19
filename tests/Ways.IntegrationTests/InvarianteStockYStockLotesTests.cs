@@ -198,7 +198,7 @@ public class InvarianteStockYStockLotesTests(WaysApiFixture fixture) : IClassFix
     private static SolicitudDeCompra SolicitudCompra(
         Contexto ctx, int idArticulo, decimal unidades, string? codigoLote, DateOnly? fechaVencimiento) =>
         new(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVentaOrigen, $"NE-{Guid.NewGuid():N}",
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVentaOrigen, DatosDePrueba.NumeroExternoUnico(),
             DateOnly.FromDateTime(DateTime.UtcNow), null,
             [
                 new LineaDeCompraSolicitada(

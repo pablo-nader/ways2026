@@ -83,12 +83,13 @@ public class ServicioDeCompras(
         int? idEmpresa = null,
         int pagina = 1,
         int tamanio = 25,
+        OrigenCompra? origen = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa);
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa, origen);
 
         var total = await query.CountAsync(ct);
 
@@ -96,7 +97,7 @@ public class ServicioDeCompras(
             .OrderByDescending(c => c.Id)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
             .ToListAsync(ct);
 
         return new PaginaDeCompras(await ConSaldoPendienteAsync(items, ct), total, pagina, tamanio);
@@ -114,9 +115,10 @@ public class ServicioDeCompras(
         DateTimeOffset? hasta,
         int topeDeFilas,
         int? idEmpresa = null,
+        OrigenCompra? origen = null,
         CancellationToken ct = default)
     {
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa);
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa, origen);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
@@ -124,7 +126,7 @@ public class ServicioDeCompras(
         var items = await query
             .OrderByDescending(c => c.Id)
             .Take(topeDeFilas + 1)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
             .ToListAsync(ct);
 
         GuardaDeTope.Exigir(items.Count, topeDeFilas);
@@ -150,7 +152,8 @@ public class ServicioDeCompras(
     /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> (design decisión 7).</summary>
     private IQueryable<ComprobanteCompra> ConstruirQuery(
-        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null)
+        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null,
+        OrigenCompra? origen = null)
     {
         var query = db.ComprobantesCompra.AsQueryable();
 
@@ -162,6 +165,11 @@ public class ServicioDeCompras(
         if (estado is { } e)
         {
             query = query.Where(c => c.Estado == e);
+        }
+
+        if (origen is { } o)
+        {
+            query = query.Where(c => c.Origen == o);
         }
 
         if (desde is { } d)
@@ -188,7 +196,13 @@ public class ServicioDeCompras(
 
     // ---- borrador: crear + replace-set (design decisión 2) ---------------------------------------
 
-    public async Task<CompraDetalle> CrearBorradorAsync(SolicitudDeCompra solicitud, CancellationToken ct = default)
+    public Task<CompraDetalle> CrearBorradorAsync(SolicitudDeCompra solicitud, CancellationToken ct = default) =>
+        CrearBorradorAsync(solicitud, OrigenCompra.Manual, ct);
+
+    /// <summary>El origen lo fija solo quien llama a este método (la API REST siempre crea
+    /// <see cref="OrigenCompra.Manual"/>); <see cref="ActualizarBorradorAsync"/> no lo toca.</summary>
+    public async Task<CompraDetalle> CrearBorradorAsync(
+        SolicitudDeCompra solicitud, OrigenCompra origen, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -202,6 +216,7 @@ public class ServicioDeCompras(
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
@@ -209,11 +224,27 @@ public class ServicioDeCompras(
             solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso),
             solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia);
 
-        // stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
-        // "Ligadura Invariant"): sin transacción propia acá (CrearBorradorAsync no abre una), así
-        // que el FOR SHARE de ExigirOrdenLigableAsync se toma y libera de inmediato — validación de
-        // coherencia, no lock TOCTOU (design: "honest residue"). La autoridad VINCULANTE contra una
-        // carrera real es el lock de posición 2 de EjecutarConfirmarAsync.
+        // Una sola transacción sin reintento (forma (b) de ef-retry-safe-writes): encabezado, líneas,
+        // alícuotas y percepciones se confirman juntos o ninguno. Sin reintento, porque repetir el alta
+        // tras un commit ambiguo duplicaría la compra; ese residual lo cubre el 503 resultado_incierto
+        // central de ManejadorDeErrores.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarAltaDeBorradorAsync(
+                idTenant, idEmpleado, solicitud, origen, numeroExterno, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
+    }
+
+    private async Task<CompraDetalle> EjecutarAltaDeBorradorAsync(
+        int idTenant, int idEmpleado, SolicitudDeCompra solicitud, OrigenCompra origen, string? numeroExterno, bool discriminaIva,
+        IReadOnlyList<LineaDeCompra> lineas,
+        CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        // stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra: "Ligadura
+        // Invariant"): DENTRO de la transacción, así que el FOR SHARE de ExigirOrdenLigableAsync se
+        // sostiene hasta el commit y es un guard TOCTOU real contra una anulación concurrente de la OC
+        // (la anulación toma su propio lock EXCLUSIVO como primer statement). Misma garantía que el PUT.
         if (solicitud.IdOrdenCompra is { } idOrdenCompraSolicitada)
         {
             await ExigirOrdenLigableAsync(idOrdenCompraSolicitada, idTenant, solicitud.IdProveedor, solicitud.IdPuntoVenta, ct);
@@ -224,7 +255,7 @@ public class ServicioDeCompras(
             IdTenant = idTenant,
             IdProveedor = solicitud.IdProveedor,
             IdTipoComprobante = solicitud.IdTipoComprobante,
-            NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno),
+            NumeroExterno = numeroExterno,
             FechaComprobante = solicitud.FechaComprobante,
             FechaRecepcion = null,
             IdPuntoVenta = solicitud.IdPuntoVenta,
@@ -237,6 +268,7 @@ public class ServicioDeCompras(
             Total = calculada.Total,
             Observaciones = NormalizarOpcional(solicitud.Observaciones),
             Estado = EstadoCompra.Borrador,
+            Origen = origen,
             IdOrdenCompra = solicitud.IdOrdenCompra,
             CreatedAt = momento,
             UpdatedAt = momento
@@ -251,6 +283,7 @@ public class ServicioDeCompras(
         var percepcionesEntidad = MaterializarPercepciones(comprobante.Id, idTenant, calculada, momento);
         db.PercepcionesComprobanteCompra.AddRange(percepcionesEntidad);
         await db.SaveChangesAsync(ct);
+        await transaccion.CommitAsync(ct);
 
         return Proyectar(comprobante, itemsEntidad, alicuotasEntidad, percepcionesEntidad, pagado: 0m);
     }
@@ -262,6 +295,15 @@ public class ServicioDeCompras(
     public async Task<CompraDetalle> ActualizarBorradorAsync(int id, SolicitudDeCompra solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
+
+        // update-404-first: una compra inexistente, de otro tenant o dada de baja responde 404 antes de
+        // validar el cuerpo. La lectura que manda sigue siendo la de EjecutarActualizacionAsync, bajo el lock.
+        var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+        if (!existe)
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+        }
+
         var momento = reloj.Ahora;
 
         // Etapa 12, slice 5: mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
@@ -270,6 +312,7 @@ public class ServicioDeCompras(
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
+        var numeroExterno = NormalizarNumeroExterno(tipo, solicitud.NumeroExterno);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
@@ -280,12 +323,13 @@ public class ServicioDeCompras(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarActualizacionAsync(
-                id, idTenant, solicitud, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
+                id, idTenant, solicitud, numeroExterno, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarActualizacionAsync(
-        int id, int idTenant, SolicitudDeCompra solicitud, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
-        CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor, DateTimeOffset momento, CancellationToken ct)
+        int id, int idTenant, SolicitudDeCompra solicitud, string? numeroExterno, bool discriminaIva,
+        IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor,
+        DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -330,7 +374,7 @@ public class ServicioDeCompras(
 
         comprobante.IdProveedor = solicitud.IdProveedor;
         comprobante.IdTipoComprobante = solicitud.IdTipoComprobante;
-        comprobante.NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno);
+        comprobante.NumeroExterno = numeroExterno;
         comprobante.FechaComprobante = solicitud.FechaComprobante;
         comprobante.IdPuntoVenta = solicitud.IdPuntoVenta;
         comprobante.Observaciones = NormalizarOpcional(solicitud.Observaciones);
@@ -354,6 +398,163 @@ public class ServicioDeCompras(
         await transaccion.CommitAsync(ct);
 
         return Proyectar(comprobante, itemsNuevos, alicuotasNuevas, percepcionesNuevas, pagado: 0m);
+    }
+
+    // ---- chequeo de duplicado por número normalizado -----------------------------------------------
+
+    /// <summary>Compras no anuladas del mismo proveedor y tipo cuyo número es el pedido. Mismo alcance que
+    /// <c>ux_comprobantes_compra_numero_externo</c>, pero en tipos que registran el libro IVA compara el valor
+    /// numérico de cada segmento (<see cref="NumeroDeComprobanteDeCompra.TryObtenerSegmentos"/>), así que
+    /// <c>3-12345</c> encuentra una fila vieja guardada como <c>0003-00012345</c>; el número guardado como
+    /// texto libre sin guion no es comparable y no aparece. En los demás tipos (remito) compara el texto
+    /// recortado sin distinguir mayúsculas. Un número vacío no tiene duplicados; un número fiscal que no se
+    /// puede interpretar es 400 <c>numero_comprobante_invalido</c>. <paramref name="excluirIdCompra"/> deja
+    /// afuera la compra que se está editando.</summary>
+    public async Task<IReadOnlyList<CompraDuplicada>> BuscarDuplicadosAsync(
+        int idProveedor, int idTipoComprobante, string? numeroExterno, int? excluirIdCompra, CancellationToken ct = default)
+    {
+        var tipo = await ResolverTipoDeCompraAsync(idTipoComprobante, ct);
+
+        var pedido = NormalizarOpcional(numeroExterno);
+        if (pedido is null)
+        {
+            return [];
+        }
+
+        Func<string, bool> coincide;
+        if (tipo.RegistraLibroIva)
+        {
+            var canonico = NormalizarNumeroExterno(tipo, pedido)!;
+            NumeroDeComprobanteDeCompra.TryObtenerSegmentos(canonico, out var buscados);
+            coincide = guardado =>
+                NumeroDeComprobanteDeCompra.TryObtenerSegmentos(guardado, out var segmentos) && segmentos == buscados;
+        }
+        else
+        {
+            coincide = guardado => string.Equals(guardado.Trim(), pedido, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var candidatos = await db.ComprobantesCompra
+            .AsNoTracking()
+            .Where(c => c.IdProveedor == idProveedor && c.IdTipoComprobante == idTipoComprobante
+                && c.Estado != EstadoCompra.Anulada && c.NumeroExterno != null
+                && (excluirIdCompra == null || c.Id != excluirIdCompra))
+            .OrderBy(c => c.Id)
+            .Select(c => new CompraDuplicada(c.Id, c.Estado, c.NumeroExterno!, c.FechaComprobante, c.Origen))
+            .ToListAsync(ct);
+
+        return candidatos.Where(c => coincide(c.NumeroExterno)).ToList();
+    }
+
+    /// <summary>Número listo para guardar: en los tipos que registran el libro IVA, la forma canónica
+    /// <c>PPPPP-NNNNNNNN</c> o 400 <c>numero_comprobante_invalido</c>; en los demás, el texto libre recortado.
+    /// Sin número devuelve <c>null</c>.</summary>
+    private static string? NormalizarNumeroExterno(TipoComprobante tipo, string? numero)
+    {
+        var limpio = NormalizarOpcional(numero);
+        if (limpio is null || !tipo.RegistraLibroIva)
+        {
+            return limpio;
+        }
+
+        if (!NumeroDeComprobanteDeCompra.TryNormalizar(limpio, out var canonico))
+        {
+            throw new ErrorDominio(
+                "numero_comprobante_invalido",
+                "El número del comprobante no es válido. Se espera punto de venta y número separados por un guion, " +
+                "por ejemplo 0003-00012345 (hasta 5 dígitos de punto de venta y 8 de número, ninguno en cero).",
+                400);
+        }
+
+        return canonico;
+    }
+
+    // ---- descartar un borrador (borrado físico) -----------------------------------------------------
+
+    /// <summary>Borra de verdad un borrador con sus líneas, alícuotas y percepciones, y deja la fila de
+    /// auditoría <c>compra.descarte</c> en la misma transacción. Solo un borrador puede descartarse: una
+    /// confirmada o anulada ya movió stock y cuenta corriente, y su historia no se borra.
+    ///
+    /// <para>Ninguna otra tabla puede referenciar un borrador: los gastos se ligan únicamente a una compra
+    /// confirmada (<c>ServicioDeGastos.ExigirCompraLigableAsync</c>, bajo <c>FOR SHARE</c> sobre este mismo
+    /// encabezado), y los movimientos de stock y de cuenta corriente nacen en <c>EjecutarConfirmarAsync</c>,
+    /// después de pasar el estado a confirmada, que nunca vuelve a borrador. Por eso no hay un rechazo
+    /// previo por referencias y la baja no necesita un código propio para la FK.</para></summary>
+    public async Task DescartarBorradorAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+
+        var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+        if (!existe)
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+        }
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        await estrategia.ExecuteAsync(async () => await EjecutarDescarteAsync(id, idTenant, ct));
+    }
+
+    private async Task EjecutarDescarteAsync(int id, int idTenant, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var bloqueado = await BloquearBorradorAsync(conexion, transaccionCruda, id, idTenant, ct);
+        if (!bloqueado)
+        {
+            var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+            }
+
+            throw new ErrorDominio("compra_no_descartable", "Solo una compra en borrador puede descartarse.", 409);
+        }
+
+        // Única lectura del encabezado, nacida después del lock: ya no puede cambiar hasta el commit.
+        var encabezado = await db.ComprobantesCompra
+            .AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => new { c.IdPuntoVenta, c.IdProveedor, c.NumeroExterno, c.Total })
+            .SingleAsync(ct);
+
+        // Hijos primero: las FK compuestas al encabezado son Restrict.
+        var cantidadDeItems = await BorrarAsync(
+            conexion, transaccionCruda,
+            "DELETE FROM items_comprobante_compra WHERE id_comprobante_compra = $1 AND id_tenant = $2", id, idTenant, ct);
+        await BorrarAsync(
+            conexion, transaccionCruda,
+            "DELETE FROM alicuotas_comprobante_compra WHERE id_comprobante_compra = $1 AND id_tenant = $2", id, idTenant, ct);
+        await BorrarAsync(
+            conexion, transaccionCruda,
+            "DELETE FROM percepciones_comprobante_compra WHERE id_comprobante_compra = $1 AND id_tenant = $2", id, idTenant, ct);
+        await BorrarAsync(
+            conexion, transaccionCruda,
+            "DELETE FROM comprobantes_compra WHERE id_comprobante_compra = $1 AND id_tenant = $2", id, idTenant, ct);
+
+        var servicioDeAuditoria = new ServicioDeAuditoria(db, reloj, contexto);
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.DescarteDeCompra(
+            encabezado.IdProveedor, encabezado.NumeroExterno, encabezado.Total, cantidadDeItems);
+        await servicioDeAuditoria.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(
+                idTenant, encabezado.IdPuntoVenta, AccionAuditada.CompraDescarte, id, valorAnterior, valorNuevo),
+            ct);
+
+        await transaccion.CommitAsync(ct);
+    }
+
+    private static async Task<int> BorrarAsync(
+        DbConnection conexion, DbTransaction? transaccion, string sql, int id, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = sql;
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        return await comando.ExecuteNonQueryAsync(ct);
     }
 
     // ---- confirmar (design: Transactions — CONFIRMAR COMPRA) --------------------------------------
@@ -1027,11 +1228,10 @@ public class ServicioDeCompras(
     /// "Ligadura Invariant"; spec comprobantes-compra: "A Comprobante Compra MAY Carry A Linked
     /// Orden De Compra") — <c>SELECT ... FOR SHARE</c> crudo, MISMO shape que
     /// <c>ServicioDeGastos.ExigirCompraLigableAsync</c> (<c>:224-267</c>): bajo la transacción de
-    /// <see cref="EjecutarActualizacionAsync"/> es un guard TOCTOU real contra una anulación
-    /// concurrente de la MISMA OC (la anulación toma su propio lock EXCLUSIVO como primer
-    /// statement, slice 4); en <see cref="CrearBorradorAsync"/> (sin transacción propia) se toma y
-    /// libera de inmediato — validación de coherencia, no lock (design: "honest residue"). La
-    /// autoridad VINCULANTE contra la carrera real es el lock de posición 2 de
+    /// <see cref="EjecutarActualizacionAsync"/> y de <see cref="EjecutarAltaDeBorradorAsync"/>
+    /// es un guard TOCTOU real contra una anulación concurrente de la MISMA OC (la anulación toma su
+    /// propio lock EXCLUSIVO como primer statement, slice 4): el <c>FOR SHARE</c> se sostiene hasta el
+    /// commit del borrador. La autoridad VINCULANTE al confirmar sigue siendo el lock de posición 2 de
     /// <see cref="EjecutarConfirmarAsync"/> (<c>EscriturasDeOrdenDeCompra.BloquearYExigirNoAnuladaAsync</c>).
     /// Linkable: <c>enviada</c>/<c>recibida_parcial</c>/<c>cerrada</c> (design decisión 8, conflicto
     /// #2 de tasks.md — `state.yaml` OD8/T2 ratifica que `cerrada` SIGUE ligable: una entrega tardía
@@ -1511,8 +1711,8 @@ public class ServicioDeCompras(
     }
 
     /// <summary>Recorta el código de proveedor de cada línea (vacío equivale a ninguno) y rechaza con 400 el que
-    /// supera el máximo. Corre antes de escribir nada: <see cref="CrearBorradorAsync"/> guarda el encabezado antes
-    /// que las líneas y un rechazo tardío lo dejaría huérfano.</summary>
+    /// supera el máximo. Corre antes de abrir la transacción de escritura, así que un rechazo no toma ningún lock
+    /// ni llega a la base.</summary>
     private static List<string?> NormalizarCodigosDeProveedor(IReadOnlyList<LineaDeCompraSolicitada> items) =>
         items.Select(i => ReglaDeCodigoProveedor.NormalizarOpcional(i.CodigoProveedor, "codigo_proveedor")).ToList();
 
@@ -1655,5 +1855,6 @@ public class ServicioDeCompras(
                 x.Tipo, x.Alicuota, PuedeVerCostos ? x.BaseImponible : null, PuedeVerCostos ? x.Importe : null))
             .ToList(),
         pagado,
-        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado));
+        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado),
+        comprobante.Origen);
 }

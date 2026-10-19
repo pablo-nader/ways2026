@@ -589,6 +589,7 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
                 npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<Ways.Domain.Gastos.CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<Ways.Domain.Compras.EstadoCompra>("estado_compra");
+                npgsql.MapEnum<Ways.Domain.Compras.OrigenCompra>("origen_compra");
                 npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<Ways.Domain.Ventas.EstadoPresupuesto>("estado_presupuesto");

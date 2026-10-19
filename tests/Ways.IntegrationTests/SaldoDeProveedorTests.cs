@@ -187,7 +187,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task ElSaldoRefleneComprasConfirmadasNetoDeGastos()
     {
         var ctx = await PrepararAsync(nameof(ElSaldoRefleneComprasConfirmadasNetoDeGastos));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 5000m, "saldo-0001");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 5000m, "0001-00000401");
         await AbrirTurnoAsync(ctx);
         var gasto = await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 3000m);
         Assert.Equal(HttpStatusCode.Created, gasto.StatusCode);
@@ -202,12 +202,12 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     {
         var ctx = await PrepararAsync(nameof(LosBorradoresYAnuladasQuedanExcluidosDelSaldo));
 
-        var respuestaBorrador = await ctx.Admin.PostAsJsonAsync("/api/compras", SolicitudSimple(ctx, 826.45m, "saldo-borrador"));
+        var respuestaBorrador = await ctx.Admin.PostAsJsonAsync("/api/compras", SolicitudSimple(ctx, 826.45m, "0001-00000402"));
         Assert.Equal(HttpStatusCode.Created, respuestaBorrador.StatusCode);
 
-        await CrearYConfirmarCompraDeTotalAsync(ctx, 2000m, "saldo-confirmada");
+        await CrearYConfirmarCompraDeTotalAsync(ctx, 2000m, "0001-00000403");
 
-        var paraAnular = await CrearYConfirmarCompraDeTotalAsync(ctx, 500m, "saldo-anulada");
+        var paraAnular = await CrearYConfirmarCompraDeTotalAsync(ctx, 500m, "0001-00000404");
         var anulacion = await ctx.Admin.PostAsync($"/api/compras/{paraAnular.Id}/anular", null);
         Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
 
@@ -228,7 +228,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnGastoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo()
     {
         var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-dangling");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000405");
         await AbrirTurnoAsync(ctx);
         var gasto = await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 100m);
         Assert.Equal(HttpStatusCode.Created, gasto.StatusCode);
@@ -262,7 +262,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnaCompraTotalmentePagadaQuedaPagada()
     {
         var ctx = await PrepararAsync(nameof(UnaCompraTotalmentePagadaQuedaPagada));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-pagada");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000406");
         await AbrirTurnoAsync(ctx);
         await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 1000m);
 
@@ -277,7 +277,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnGastoSinLigarNoMarcaUnaCompraComoPagadaPeroReduceElSaldoTotal()
     {
         var ctx = await PrepararAsync(nameof(UnGastoSinLigarNoMarcaUnaCompraComoPagadaPeroReduceElSaldoTotal));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 2000m, "saldo-sin-ligar");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 2000m, "0001-00000407");
         await AbrirTurnoAsync(ctx);
 
         // Gasto de categoría proveedor, mismo proveedor, SIN idComprobanteCompra.
@@ -301,7 +301,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnPagoParcialLigadoDaEstadoParcial()
     {
         var ctx = await PrepararAsync(nameof(UnPagoParcialLigadoDaEstadoParcial));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-parcial");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000408");
         await AbrirTurnoAsync(ctx);
         await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 400m);
 
@@ -317,7 +317,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada()
     {
         var ctx = await PrepararAsync(nameof(VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-multi-gasto");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000410");
         await AbrirTurnoAsync(ctx);
         await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 300m);
         await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 200m);
@@ -344,7 +344,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task LaCompraDelSaldoCoincideConLaQueApareceEnElListadoDeCompras()
     {
         var ctx = await PrepararAsync(nameof(LaCompraDelSaldoCoincideConLaQueApareceEnElListadoDeCompras));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1200m, "saldo-entry-point");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1200m, "0001-00000409");
 
         var detalleProveedor = await ctx.Admin.GetAsync($"/api/proveedores/{ctx.IdProveedor}");
         Assert.Equal(HttpStatusCode.OK, detalleProveedor.StatusCode);
@@ -364,7 +364,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnVendedorLeeElSaldoDeUnProveedor()
     {
         var ctx = await PrepararAsync(nameof(UnVendedorLeeElSaldoDeUnProveedor));
-        await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-vendedor");
+        await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000411");
 
         var respuesta = await ctx.Vendedor.GetAsync($"/api/proveedores/{ctx.IdProveedor}/saldo");
 
@@ -396,7 +396,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnVendedorPagaUnaCompraBajoElGateInalteradoDeGastos()
     {
         var ctx = await PrepararAsync(nameof(UnVendedorPagaUnaCompraBajoElGateInalteradoDeGastos));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-pago-vendedor");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000412");
         await AbrirTurnoAsync(ctx, ctx.Vendedor);
 
         var respuesta = await RegistrarGastoLigadoAsync(ctx, ctx.Vendedor, compra.Id, 1000m);
@@ -459,6 +459,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
+                npgsql.MapEnum<OrigenCompra>("origen_compra");
                 // stage-15-cc-proveedores-ledger, Slice 4 (deviación registrada, mismo patrón
                 // que slice 2 deviación 20): ServicioDeSaldoDeProveedor ahora consulta
                 // MovimientosCuentaCorrienteProveedor (re-sourcing OD7) — este contexto
@@ -480,7 +481,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     {
         for (var i = 0; i < cantidadDeCompras; i++)
         {
-            await CrearYConfirmarCompraDeTotalAsync(ctx, 100m, $"presupuesto-{Guid.NewGuid():N}");
+            await CrearYConfirmarCompraDeTotalAsync(ctx, 100m, DatosDePrueba.NumeroExternoUnico());
         }
 
         var contador = new ContadorDeComandos();
@@ -558,7 +559,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnGastoDeProveedorLigadoAUnaCompraReduceElEsperadoAtravesDelTerminoExistente()
     {
         var ctx = await PrepararAsync(nameof(UnGastoDeProveedorLigadoAUnaCompraReduceElEsperadoAtravesDelTerminoExistente));
-        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-arqueo");
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000413");
         var idTurno = await AbrirTurnoAsync(ctx);
 
         await SembrarPagoAsync(ctx, idTurno, importe: 1500m);
@@ -582,7 +583,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task UnaEliminacionFisicaDeProveedorReferenciadoPorUnaCompraViolaLaFk()
     {
         var ctx = await PrepararAsync(nameof(UnaEliminacionFisicaDeProveedorReferenciadoPorUnaCompraViolaLaFk));
-        await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-fk-restrict");
+        await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000414");
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
 

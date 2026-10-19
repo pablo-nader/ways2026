@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,7 @@ import type {
   AlicuotaIvaListado,
   ArticuloListado,
   CompraDetalle,
+  CompraDuplicada,
   GastoDeAdministracionListado,
   ItemDeCompra,
   ListaPrecioListado,
@@ -25,6 +26,7 @@ import type {
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 // Permite retener la navegación para observar la pantalla en la ventana entre guardar y que la
 // navegación la reemplace; por defecto navega de verdad.
@@ -52,7 +54,7 @@ vi.mock('../api/cliente', () => ({
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown?])),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -235,6 +237,7 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     total: 1149.5,
     observaciones: null,
     estado: 'Borrador',
+    origen: 'Manual',
     items: [itemFixture()],
     idOrdenCompra: null,
     discriminaIva: true,
@@ -316,6 +319,7 @@ beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
   navegacion.retener = false
   navegacion.llamadas = []
   usuarioActual = usuarioFixture()
@@ -505,6 +509,39 @@ describe('CompraEditor — borrador existente', () => {
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(2))
     expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras')).toHaveLength(0)
+  })
+})
+
+describe('CompraEditor — aviso de carga asistida', () => {
+  const AVISO = 'Cargado por el asistente: revisá contra la factura antes de confirmar.'
+
+  it('un borrador cargado por el asistente muestra el aviso de revisión', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Borrador', origen: 'Asistente' })) : undefined,
+    )
+    renderEditor()
+
+    expect(await screen.findByText(AVISO)).toBeInTheDocument()
+  })
+
+  it('un borrador manual no muestra el aviso', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Borrador', origen: 'Manual' })) : undefined,
+    )
+    renderEditor()
+
+    await screen.findByDisplayValue('00012345')
+    expect(screen.queryByText(AVISO)).not.toBeInTheDocument()
+  })
+
+  it('una compra confirmada del asistente ya no muestra el aviso', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada', origen: 'Asistente' })) : undefined,
+    )
+    renderEditor()
+
+    await screen.findByText('Fideos 500g')
+    expect(screen.queryByText(AVISO)).not.toBeInTheDocument()
   })
 })
 
@@ -963,6 +1000,177 @@ describe('CompraEditor — cancelar', () => {
   })
 })
 
+describe('CompraEditor — descartar borrador', () => {
+  function pendiente<T>() {
+    let resolver!: (valor: T) => void
+    const promesa = new Promise<T>((res) => {
+      resolver = res
+    })
+    return { promesa, resolver }
+  }
+
+  async function abrirPuerta(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: 'Descartar borrador' }))
+    return screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+  }
+
+  async function renderizarBorrador() {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+  }
+
+  it('el botón aparece en un borrador existente', async () => {
+    await renderizarBorrador()
+
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeEnabled()
+  })
+
+  it('no aparece en una compra nueva, que todavía no existe en el servidor', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
+  })
+
+  it.each(['Confirmada', 'Anulada'] as const)('no aparece en una compra %s', async (estado) => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado })) : undefined))
+    renderEditor()
+    await screen.findByText('0003-00012345', { exact: false })
+
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [ROL.Supervisor, 'Supervisor'],
+    [ROL.Vendedor, 'Vendedor'],
+  ] as const)('no aparece para un %s, que no escribe compras', async (rolId, rol) => {
+    usuarioActual = usuarioFixture({ rolId, rol })
+    await renderizarBorrador()
+
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
+  })
+
+  it('pide confirmación: abrir la puerta no borra nada y Cancelar la cierra', async () => {
+    await renderizarBorrador()
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+
+    expect(within(puerta).getByText(/Descartar este borrador/)).toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    // La puerta deja inerte el resto de la pantalla.
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeDisabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeEnabled()
+    expect(screen.queryByText('Listado de compras')).not.toBeInTheDocument()
+  })
+
+  it('al confirmar manda un solo DELETE y vuelve al listado', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockResolvedValue(undefined)
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar descarte' }))
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/compras/1')
+  })
+
+  it('un rechazo del servidor se muestra, cierra la puerta y deja reintentar', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'compra_no_descartable', 'Solo una compra en borrador puede descartarse.'))
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar descarte' }))
+
+    expect(await screen.findByText('Solo una compra en borrador puede descartarse.')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Listado de compras')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Descartar borrador' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('un error que no es del servidor muestra la copia genérica', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockRejectedValue(new Error('se cortó'))
+    const usuario = userEvent.setup()
+
+    await usuario.click(within(await abrirPuerta(usuario)).getByRole('button', { name: 'Confirmar descarte' }))
+
+    expect(await screen.findByText('No se pudo descartar el borrador.')).toBeInTheDocument()
+  })
+
+  it('abrir la puerta de nuevo borra el rechazo anterior', async () => {
+    await renderizarBorrador()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'compra_no_descartable', 'Solo una compra en borrador puede descartarse.'))
+    const usuario = userEvent.setup()
+
+    await usuario.click(within(await abrirPuerta(usuario)).getByRole('button', { name: 'Confirmar descarte' }))
+    await screen.findByText('Solo una compra en borrador puede descartarse.')
+
+    await abrirPuerta(usuario)
+
+    expect(screen.queryByText('Solo una compra en borrador puede descartarse.')).not.toBeInTheDocument()
+  })
+
+  it('mientras el DELETE está en vuelo la pantalla entera queda inerte y un doble clic manda un solo pedido', async () => {
+    await renderizarBorrador()
+    const enVuelo = pendiente<undefined>()
+    apiDeleteMock.mockReturnValue(enVuelo.promesa)
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    const confirmar = within(puerta).getByRole('button', { name: 'Confirmar descarte' })
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(await within(puerta).findByRole('button', { name: 'Descartando…' })).toBeDisabled()
+    expect(within(puerta).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
+    expect(screen.getByLabelText('Observaciones')).toBeDisabled()
+
+    await act(async () => {
+      enVuelo.resolver(undefined)
+    })
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('si la pantalla ya no está montada cuando llega la respuesta, no navega', async () => {
+    await renderizarBorrador()
+    navegacion.retener = true
+    const enVuelo = pendiente<undefined>()
+    apiDeleteMock.mockReturnValue(enVuelo.promesa)
+    const usuario = userEvent.setup()
+
+    const puerta = await abrirPuerta(usuario)
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar descarte' }))
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledTimes(1))
+    cleanup()
+
+    await act(async () => {
+      enVuelo.resolver(undefined)
+    })
+
+    expect(navegacion.llamadas).toHaveLength(0)
+  })
+})
+
 describe('CompraEditor — selectores del encabezado', () => {
   it('el proveedor se rotula con el nombre de fantasía y cae a la razón social', async () => {
     mockearReferencia(undefined, [tipoFixture()], [puntoVentaFixture()], [
@@ -1021,7 +1229,7 @@ describe('CompraEditor — selectores del encabezado', () => {
 })
 
 describe('CompraEditor — número de comprobante', () => {
-  it('rellena con ceros al salir de cada campo y manda PPPP-NNNNNNNN', async () => {
+  it('rellena con ceros al salir de cada campo y manda PPPPP-NNNNNNNN', async () => {
     mockearReferencia()
     apiPostMock.mockImplementation((ruta: string) =>
       ruta === '/compras' ? Promise.resolve(compraFixture({ id: 99 })) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
@@ -1039,12 +1247,12 @@ describe('CompraEditor — número de comprobante', () => {
     await usuario.type(screen.getByLabelText('Número del comprobante'), '9985')
     await usuario.tab()
 
-    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0010')
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('00010')
     expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00009985')
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('0010-00009985')
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('00010-00009985')
   })
 
   it('solo admite dígitos y respeta el largo máximo de cada campo', async () => {
@@ -1056,7 +1264,7 @@ describe('CompraEditor — número de comprobante', () => {
     await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), 'a1b2c3d4e5')
     await usuario.type(screen.getByLabelText('Número del comprobante'), '1x2345678901')
 
-    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('1234')
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('12345')
     expect(screen.getByLabelText('Número del comprobante')).toHaveValue('12345678')
   })
 
@@ -1098,7 +1306,7 @@ describe('CompraEditor — número de comprobante', () => {
     expect(numero).not.toHaveClass('is-invalid')
 
     await usuario.tab()
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveClass('is-invalid')
     expect(puntoVenta).not.toHaveClass('is-invalid')
     expect(screen.getByText(/Falta el número\./)).toBeInTheDocument()
@@ -1155,21 +1363,28 @@ describe('CompraEditor — número de comprobante', () => {
 
     await usuario.click(puntoVenta)
     await usuario.paste('0010-00009985')
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveValue('00009985')
 
     await usuario.clear(puntoVenta)
     await usuario.clear(numero)
     await usuario.click(numero)
     await usuario.paste('10-9985')
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveValue('00009985')
 
     await usuario.clear(puntoVenta)
     await usuario.clear(numero)
     await usuario.click(puntoVenta)
     await usuario.paste('001000009985')
-    expect(puntoVenta).toHaveValue('0010')
+    expect(puntoVenta).toHaveValue('00010')
+    expect(numero).toHaveValue('00009985')
+
+    await usuario.clear(puntoVenta)
+    await usuario.clear(numero)
+    await usuario.click(numero)
+    await usuario.paste('0001000009985')
+    expect(puntoVenta).toHaveValue('00010')
     expect(numero).toHaveValue('00009985')
   })
 
@@ -1386,6 +1601,7 @@ describe('CompraEditor — role gating', () => {
     expect(screen.queryByRole('button', { name: 'Guardar borrador' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Guardar' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descartar borrador' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Proveedor')).toBeDisabled()
     expect(screen.queryByLabelText(/^Importe, línea \d+$/)).not.toBeInTheDocument()
   })
@@ -2725,5 +2941,144 @@ describe('CompraEditor — datos del artículo que completa la pantalla (lote e 
 
     expect(await screen.findByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
     expect(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3')
+  })
+})
+
+describe('CompraEditor — aviso de número duplicado', () => {
+  const duplicadoFixture = (sobrescribir: Partial<CompraDuplicada> = {}): CompraDuplicada => ({
+    id: 7,
+    estado: 'Confirmada',
+    numeroExterno: '3-12345',
+    fechaComprobante: '2026-07-01',
+    origen: 'Manual',
+    ...sobrescribir,
+  })
+
+  const llamadasADuplicados = () =>
+    apiGetMock.mock.calls.map((c) => c[0] as string).filter((ruta) => ruta.startsWith('/compras/duplicados'))
+
+  const mockearDuplicados = (respuesta: (ruta: string) => Promise<unknown>) =>
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta.startsWith('/compras/duplicados')) return respuesta(ruta)
+      return undefined
+    })
+
+  it('avisa sin bloquear qué compra ya tiene el número, con un vínculo a ella', async () => {
+    mockearDuplicados(() => Promise.resolve([duplicadoFixture({ id: 7 }), duplicadoFixture({ id: 9, estado: 'Borrador' })]))
+    renderEditor()
+
+    const texto = await screen.findByText(/Ya hay compras con ese número/, {}, { timeout: 3000 })
+
+    expect(texto).toHaveTextContent('#7 (Confirmada), #9 (Borrador).')
+    expect(within(texto).getByRole('link', { name: '#7' })).toHaveAttribute('href', '/compras/7')
+    expect(within(texto).getByRole('link', { name: '#9' })).toHaveAttribute('href', '/compras/9')
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeEnabled()
+  })
+
+  it('con una sola compra usa el singular', async () => {
+    mockearDuplicados(() => Promise.resolve([duplicadoFixture()]))
+    renderEditor()
+
+    expect(await screen.findByText(/Ya hay una compra con ese número/, {}, { timeout: 3000 })).toHaveTextContent('#7 (Confirmada).')
+  })
+
+  it('sin duplicados no muestra ningún aviso', async () => {
+    mockearDuplicados(() => Promise.resolve([]))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+    await act(async () => {})
+
+    expect(screen.queryByText(/Ya hay/)).not.toBeInTheDocument()
+  })
+
+  it('al editar una compra existente la consulta lleva el proveedor, el tipo, el número y su propio id', async () => {
+    mockearDuplicados(() => Promise.resolve([]))
+    renderEditor()
+
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+
+    const parametros = new URLSearchParams(llamadasADuplicados()[0].split('?')[1])
+    expect(parametros.get('idProveedor')).toBe('1')
+    expect(parametros.get('idTipoComprobante')).toBe('5')
+    expect(parametros.get('numeroExterno')).toBe('0003-00012345')
+    expect(parametros.get('excluirId')).toBe('1')
+  })
+
+  it('en una compra nueva consulta con el número tipeado y sin excluirId', async () => {
+    mockearReferencia((ruta) => (ruta.startsWith('/compras/duplicados') ? Promise.resolve([]) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), '3')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '12345')
+
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+
+    const parametros = new URLSearchParams(llamadasADuplicados()[0].split('?')[1])
+    expect(parametros.get('numeroExterno')).toBe('00003-12345')
+    expect(parametros.has('excluirId')).toBe(false)
+  })
+
+  it('una respuesta tardía de un número anterior no muestra su aviso sobre el número vigente', async () => {
+    let resolverViejo!: (valor: CompraDuplicada[]) => void
+    const viejo = new Promise<CompraDuplicada[]>((r) => {
+      resolverViejo = r
+    })
+    mockearDuplicados((ruta) =>
+      new URLSearchParams(ruta.split('?')[1]).get('numeroExterno') === '0003-00012345' ? viejo : Promise.resolve([]),
+    )
+    const usuario = userEvent.setup()
+    renderEditor()
+    const numero = await screen.findByDisplayValue('00012345')
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(1), { timeout: 3000 })
+
+    await usuario.clear(numero)
+    await usuario.type(numero, '777')
+    await waitFor(() => expect(llamadasADuplicados()).toHaveLength(2), { timeout: 3000 })
+    expect(new URLSearchParams(llamadasADuplicados()[1].split('?')[1]).get('numeroExterno')).toBe('0003-777')
+
+    await act(async () => {
+      resolverViejo([duplicadoFixture()])
+    })
+
+    expect(screen.queryByText(/Ya hay/)).not.toBeInTheDocument()
+  })
+
+  it('un rol sin escritura no consulta duplicados', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearDuplicados(() => Promise.resolve([duplicadoFixture()]))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700))
+    })
+
+    expect(llamadasADuplicados()).toHaveLength(0)
+    expect(screen.queryByText(/Ya hay/)).not.toBeInTheDocument()
+  })
+
+  it('una compra confirmada no consulta duplicados', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-02T10:00:00Z' }))
+      if (ruta.startsWith('/compras/duplicados')) return Promise.resolve([duplicadoFixture()])
+      return undefined
+    })
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700))
+    })
+
+    expect(llamadasADuplicados()).toHaveLength(0)
   })
 })

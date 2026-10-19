@@ -40,20 +40,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         var lineas = idsPuntoVenta.Count == 0
             ? []
-            : await db.ItemsComprobanteVenta
-                .Where(i => i.IdArticulo != null)
-                .Join(db.ComprobantesVenta.SinEspejosFiscales(), i => i.IdComprobanteVenta, c => c.Id, (i, c) => new { Item = i, Comprobante = c })
-                .Join(db.TiposComprobante, x => x.Comprobante.IdTipoComprobante, t => t.Id, (x, t) => new { x.Item, x.Comprobante, Tipo = t })
-                // spec: "clase venta, estado <> anulado" — mismo par de filtros que
-                // ventas/por-punto-venta y ventas/por-vendedor (design: Raw-SQL Invariant
-                // Checklist, fila articulos/top: "idem").
-                .Where(x => x.Tipo.Clase == ClaseComprobante.Venta
-                    && x.Comprobante.Estado != EstadoComprobante.Anulado
-                    && idsPuntoVenta.Contains(x.Comprobante.IdPuntoVenta)
-                    && x.Comprobante.Fecha >= rango.DesdeUtc
-                    && x.Comprobante.Fecha < rango.HastaUtcExclusivo)
-                .Select(x => new { x.Item.IdArticulo, x.Item.Descripcion, x.Item.Cantidad, x.Item.Total, x.Comprobante.Fecha })
-                .ToListAsync(ct);
+            : await LineasVendidas(idsPuntoVenta, rango).ToListAsync(ct);
 
         var articulos = lineas
             .GroupBy(l => l.IdArticulo!.Value)
@@ -74,6 +61,160 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         }
 
         return new TopArticulos(desde, hasta, zonaId, articulos);
+    }
+
+    /// <summary>Línea de venta neta de un artículo: base compartida de
+    /// <see cref="ObtenerTopArticulosAsync"/> y <see cref="ObtenerVentasPorArticuloAsync"/>.</summary>
+    private sealed record LineaVendida(int? IdArticulo, string Descripcion, decimal Cantidad, decimal Total, DateTimeOffset Fecha);
+
+    private IQueryable<LineaVendida> LineasVendidas(
+        IReadOnlyList<int> idsPuntoVenta, RangoDeReporte rango, int? idArticulo = null,
+        IReadOnlyCollection<int?>? soloArticulos = null)
+    {
+        var consulta = db.ItemsComprobanteVenta
+            .Where(i => i.IdArticulo != null)
+            .Join(db.ComprobantesVenta.SinEspejosFiscales(), i => i.IdComprobanteVenta, c => c.Id, (i, c) => new { Item = i, Comprobante = c })
+            .Join(db.TiposComprobante, x => x.Comprobante.IdTipoComprobante, t => t.Id, (x, t) => new { x.Item, x.Comprobante, Tipo = t })
+            // spec: "clase venta, estado <> anulado" — mismo par de filtros que
+            // ventas/por-punto-venta y ventas/por-vendedor (design: Raw-SQL Invariant
+            // Checklist, fila articulos/top: "idem").
+            .Where(x => x.Tipo.Clase == ClaseComprobante.Venta
+                && x.Comprobante.Estado != EstadoComprobante.Anulado
+                && idsPuntoVenta.Contains(x.Comprobante.IdPuntoVenta)
+                && x.Comprobante.Fecha >= rango.DesdeUtc
+                && x.Comprobante.Fecha < rango.HastaUtcExclusivo);
+
+        if (idArticulo is { } id)
+        {
+            consulta = consulta.Where(x => x.Item.IdArticulo == id);
+        }
+
+        if (soloArticulos is not null)
+        {
+            consulta = consulta.Where(x => soloArticulos.Contains(x.Item.IdArticulo));
+        }
+
+        return consulta.Select(x => new LineaVendida(x.Item.IdArticulo, x.Item.Descripcion, x.Item.Cantidad, x.Item.Total, x.Comprobante.Fecha));
+    }
+
+    /// <summary>Ventas netas por artículo del período, filtrables por la clasificación ACTUAL del
+    /// artículo (área, grupo, categoría con sus descendientes) o por un artículo puntual; los
+    /// filtros se combinan con AND. Un id de filtro de baja lógica o ajeno no matchea ninguna fila
+    /// (dangling-fk-read-models regla 2). Las etiquetas salen de un LEFT JOIN: un FK nulo o
+    /// colgante es <c>null</c>, y un artículo dado de baja conserva la fila con el snapshot de la
+    /// línea. Sin costo ni margen.</summary>
+    public async Task<VentasPorArticulo> ObtenerVentasPorArticuloAsync(
+        int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+        int? idArea, int? idGrupo, int? idCategoria, int? idArticulo,
+        CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var sinResultados = idsPuntoVenta.Count == 0;
+
+        if (idArea is { } idAreaPedida && !await db.Areas.AnyAsync(x => x.Id == idAreaPedida, ct))
+        {
+            sinResultados = true;
+        }
+
+        if (idGrupo is { } idGrupoPedido && !await db.Grupos.AnyAsync(x => x.Id == idGrupoPedido, ct))
+        {
+            sinResultados = true;
+        }
+
+        HashSet<int>? categorias = null;
+        if (idCategoria is { } idCategoriaPedida)
+        {
+            if (await db.Categorias.AnyAsync(x => x.Id == idCategoriaPedida, ct))
+            {
+                var padrePorCategoria = await db.Categorias
+                    .Select(c => new { c.Id, c.IdCategoriaPadre })
+                    .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+                categorias = CadenaDeCategorias.ConstruirDescendientes(idCategoriaPedida, padrePorCategoria).ToHashSet();
+            }
+            else
+            {
+                sinResultados = true;
+            }
+        }
+
+        if (sinResultados)
+        {
+            return new VentasPorArticulo(desde, hasta, zonaId, 0m, 0m, []);
+        }
+
+        List<int?>? idsQueCoinciden = null;
+
+        if (idArea is not null || idGrupo is not null || categorias is not null)
+        {
+            var articulosQuery = db.Articulos.AsQueryable();
+
+            if (idArea is { } areaFiltro)
+            {
+                articulosQuery = articulosQuery.Where(a => a.IdArea == areaFiltro);
+            }
+
+            if (idGrupo is { } grupoFiltro)
+            {
+                articulosQuery = articulosQuery.Where(a => a.IdGrupo == grupoFiltro);
+            }
+
+            if (categorias is not null)
+            {
+                articulosQuery = articulosQuery.Where(a => a.IdCategoria != null && categorias.Contains(a.IdCategoria.Value));
+            }
+
+            idsQueCoinciden = await articulosQuery.Select(a => (int?)a.Id).ToListAsync(ct);
+        }
+
+        var lineasQuery = LineasVendidas(idsPuntoVenta, rango, idArticulo, idsQueCoinciden);
+
+        var lineas = await lineasQuery.ToListAsync(ct);
+        var idsVendidos = lineas.Select(l => l.IdArticulo!.Value).Distinct().ToList();
+
+        // LEFT JOIN: un artículo dado de baja, o un FK de clasificación nulo o colgante, deja la
+        // fila con etiquetas null en vez de perderla.
+        var etiquetas = await (
+            from a in db.Articulos
+            where idsVendidos.Contains(a.Id)
+            join area in db.Areas on a.IdArea equals area.Id into areasUnidas
+            from area in areasUnidas.DefaultIfEmpty()
+            join grupo in db.Grupos on a.IdGrupo equals grupo.Id into gruposUnidos
+            from grupo in gruposUnidos.DefaultIfEmpty()
+            join categoria in db.Categorias on a.IdCategoria equals categoria.Id into categoriasUnidas
+            from categoria in categoriasUnidas.DefaultIfEmpty()
+            select new
+            {
+                a.Id,
+                a.CodigoInterno,
+                a.Nombre,
+                Area = area != null ? area.Nombre : null,
+                Grupo = grupo != null ? grupo.Nombre : null,
+                Categoria = categoria != null ? categoria.Nombre : null
+            }).ToDictionaryAsync(x => x.Id, ct);
+
+        var filas = lineas
+            .GroupBy(l => l.IdArticulo!.Value)
+            .Select(g =>
+            {
+                var snapshot = g.OrderByDescending(l => l.Fecha).First().Descripcion;
+                return etiquetas.TryGetValue(g.Key, out var e)
+                    ? new ArticuloVendido(
+                        g.Key, e.CodigoInterno, e.Nombre, e.Area, e.Grupo, e.Categoria,
+                        g.Sum(l => l.Cantidad), g.Sum(l => l.Total))
+                    : new ArticuloVendido(
+                        g.Key, null, snapshot, null, null, null,
+                        g.Sum(l => l.Cantidad), g.Sum(l => l.Total));
+            })
+            .OrderByDescending(f => f.Total)
+            .ThenBy(f => f.Descripcion, StringComparer.Ordinal)
+            .ThenBy(f => f.IdArticulo)
+            .ToList();
+
+        return new VentasPorArticulo(desde, hasta, zonaId, filas.Sum(f => f.Cantidad), filas.Sum(f => f.Total), filas);
     }
 
     private async Task ExigirEmpresaAsync(int idEmpresa, CancellationToken ct)
