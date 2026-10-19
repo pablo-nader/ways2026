@@ -563,8 +563,11 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
             Lineas(resultado.Texto).Skip(2).ToArray());
     }
 
+    /// <param name="Codigos">Los códigos que la fila tiene que devolver, en orden ordinal: fijan la semilla, de modo
+    /// que la paridad no pueda pasar con dos listas vacías ni con una combinación que no discrimina.</param>
     private sealed record FiltroDeParidad(
-        string Nombre, Dictionary<string, object?> Herramienta, int? IdArea, int? IdGrupo, int? IdCategoria, int? IdArticulo);
+        string Nombre, Dictionary<string, object?> Herramienta, int? IdArea, int? IdGrupo, int? IdCategoria, int? IdArticulo,
+        string[] Codigos);
 
     /// <summary>Cantidad e importe como texto invariante sin ceros de más: el reporte trae la escala de la columna
     /// (2,000) y la herramienta la de su formato.</summary>
@@ -591,8 +594,10 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
     /// reporte web <c>GET /api/reportes/ventas/por-articulo</c>, que filtra en SQL: para cada filtro del reporte
     /// (área, grupo, categoría con una subcategoría, artículo) y tres combinaciones, la herramienta devuelve las
     /// mismas filas que el endpoint con los mismos ids, con el código, el nombre, la cantidad y el importe de cada una,
-    /// y el mismo total. El escenario suma un grupo (Combos, solo Cola 500) y una subcategoría de Gaseosas (Light,
-    /// solo Cola 500); Viejo, dado de baja, sigue contando en Almacén en los dos lados.</summary>
+    /// y el mismo total. El escenario suma un grupo (Combos: Cola 2L y Cola 500), una subcategoría de Gaseosas (Light,
+    /// solo Cola 500) y pasa Cola 2L al área Almacén; Viejo, dado de baja, sigue contando en Almacén en los dos lados.
+    /// Así cada combinación devuelve un conjunto distinto del de cada uno de sus dos filtros solos: un Y que deja caer
+    /// un criterio, o que se queda con el primero, cambia esa fila.</summary>
     [Fact]
     public async Task VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte()
     {
@@ -600,13 +605,14 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         var cola500 = await _apoyo.IdDeArticuloAsync(e.Tenant, "COLA-500");
         var cola2 = await _apoyo.IdDeArticuloAsync(e.Tenant, "COLA-2L");
         var combos = await _apoyo.SembrarGrupoDeArticuloAsync(e.Tenant, "Combos", cola500);
+        await _apoyo.AsignarGrupoDeArticuloAsync(e.Tenant, cola2, combos);
         var gaseosas = await _apoyo.IdDeCategoriaAsync(e.Tenant, "Gaseosas");
         var light = await _apoyo.SembrarCategoriaAsync(e.Tenant, "Light");
         await _apoyo.AsignarCategoriaPadreAsync(e.Tenant, light, gaseosas);
         await _apoyo.CambiarCategoriaDeArticuloAsync(e.Tenant, cola500, light);
         var aguas = await _apoyo.IdDeCategoriaAsync(e.Tenant, "Aguas");
-        var bebidas = await _apoyo.IdDeAreaAsync(e.Tenant, "Bebidas");
         var almacen = await _apoyo.IdDeAreaAsync(e.Tenant, "Almacén");
+        await _apoyo.CambiarAreaDeArticuloAsync(e.Tenant, cola2, almacen);
 
         static Dictionary<string, object?> Argumentos(params (string Nombre, string Valor)[] filtros)
         {
@@ -621,15 +627,19 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
 
         FiltroDeParidad[] matriz =
         [
-            new("sin filtros", Argumentos(), null, null, null, null),
-            new("área", Argumentos(("area", "almacén")), almacen, null, null, null),
-            new("grupo", Argumentos(("grupo", "combos")), null, combos, null, null),
-            new("categoría con subcategoría", Argumentos(("categoria", "gaseosas")), null, null, gaseosas, null),
-            new("subcategoría", Argumentos(("categoria", "light")), null, null, light, null),
-            new("artículo", Argumentos(("articulo", "cola-2l")), null, null, null, cola2),
-            new("área y categoría", Argumentos(("area", "bebidas"), ("categoria", "gaseosas")), bebidas, null, gaseosas, null),
-            new("grupo y categoría", Argumentos(("grupo", "combos"), ("categoria", "light")), null, combos, light, null),
-            new("artículo y categoría", Argumentos(("articulo", "cola-2l"), ("categoria", "aguas")), null, null, aguas, cola2)
+            new("sin filtros", Argumentos(), null, null, null, null, ["(sin código)", "AGUA-1L", "COLA-2L", "COLA-500", "FID-500"]),
+            new("área", Argumentos(("area", "almacén")), almacen, null, null, null, ["(sin código)", "COLA-2L", "FID-500"]),
+            new("grupo", Argumentos(("grupo", "combos")), null, combos, null, null, ["COLA-2L", "COLA-500"]),
+            new(
+                "categoría con subcategoría", Argumentos(("categoria", "gaseosas")), null, null, gaseosas, null,
+                ["AGUA-1L", "COLA-2L", "COLA-500"]),
+            new("subcategoría", Argumentos(("categoria", "light")), null, null, light, null, ["COLA-500"]),
+            new("artículo", Argumentos(("articulo", "cola-2l")), null, null, null, cola2, ["COLA-2L"]),
+            new(
+                "área y categoría", Argumentos(("area", "almacén"), ("categoria", "gaseosas")), almacen, null, gaseosas, null,
+                ["COLA-2L"]),
+            new("grupo y área", Argumentos(("grupo", "combos"), ("area", "almacén")), almacen, combos, null, null, ["COLA-2L"]),
+            new("artículo y categoría", Argumentos(("articulo", "cola-2l"), ("categoria", "aguas")), null, null, aguas, cola2, [])
         ];
 
         var (host, cliente, token) = await ConectarAsync(e.Admin);
@@ -639,7 +649,6 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         var login = await web.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(e.Admin.Mail, ApoyoDeConectorMcp.Password));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        var filasNoVacias = 0;
         foreach (var filtro in matriz)
         {
             var reporte = await web.GetFromJsonAsync<VentasPorArticulo>(
@@ -656,6 +665,8 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
             var deLaHerramienta = lineas.Skip(encabezado + 1)
                 .TakeWhile(l => !l.StartsWith("Total de los", StringComparison.Ordinal))
                 .Select(l => l.Split(" | "))
+                .ToList();
+            var filasDeLaHerramienta = deLaHerramienta
                 .Select(c => $"{filtro.Nombre}: {new FilaDeParidad(c[0], c[1], Numero(c[2]), Numero(c[3]))}")
                 .Order(StringComparer.Ordinal)
                 .ToList();
@@ -665,14 +676,14 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
                 .ToList();
 
             Assert.True(encabezado > 0, filtro.Nombre);
-            Assert.Equal(delReporte, deLaHerramienta);
+            Assert.Equal(delReporte, filasDeLaHerramienta);
+            Assert.Equal(
+                $"{filtro.Nombre}: {string.Join(", ", filtro.Codigos)}",
+                $"{filtro.Nombre}: {string.Join(", ", deLaHerramienta.Select(c => c[0]).Order(StringComparer.Ordinal))}");
             Assert.Contains(
                 $"Total de los artículos filtrados: {reporte.Articulos.Sum(f => f.Total).ToString("N2", FormatoDeLaHerramienta)} " +
                 $"en {reporte.Articulos.Count} artículos",
                 lineas);
-            filasNoVacias += delReporte.Count > 0 ? 1 : 0;
         }
-
-        Assert.Equal(matriz.Length - 1, filasNoVacias);
     }
 }

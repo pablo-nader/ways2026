@@ -250,6 +250,20 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         Assert.Equal(1, filas);
     }
 
+    public async Task CambiarAreaDeArticuloAsync(TenantDeVentas tenant, int idArticulo, int idArea)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.IdArea, idArea));
+        Assert.Equal(1, filas);
+    }
+
+    public async Task AsignarGrupoDeArticuloAsync(TenantDeVentas tenant, int idArticulo, int idGrupo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.IdGrupo, (int?)idGrupo));
+        Assert.Equal(1, filas);
+    }
+
     public async Task<int> IdDeArticuloAsync(TenantDeVentas tenant, string codigoInterno)
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));

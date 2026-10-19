@@ -182,13 +182,17 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
 - [x] R2-T4 — Paridad de `AcotarComoElReporteAsync` con el reporte web (cierra L11), sin cambios de producción.
   Ruta: inline (writer único de la rebanada). `VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte`
   compara, para nueve filtros (sin filtros; área; grupo; categoría con una subcategoría; la subcategoría;
-  artículo; área + categoría; grupo + categoría; artículo + categoría), las filas de `ventas_por_articulo` con las
+  artículo; área + categoría; grupo + área; artículo + categoría), las filas de `ventas_por_articulo` con las
   de `GET /api/reportes/ventas/por-articulo` con los mismos ids: código, nombre, cantidad e importe de cada fila y
-  el total filtrado; exige además que solo la última combinación quede vacía (la paridad no es vacía). Sin
-  divergencias. Sin RED (el acotado ya coincidía). Mutaciones en `AcotarComoElReporteAsync`, una corrida cada
-  una: área anulada → cae la fila área; grupo anulado → cae grupo; sin descendientes → cae categoría con
-  subcategoría; restricción de artículo anulada → cae artículo; sin `IgnoreQueryFilters(["BajaLogica"])` → cae
-  área (Viejo, dado de baja, falta en la herramienta).
+  el total filtrado. Además cada fila fija sus códigos esperados: solo artículo + categoría queda vacía, y cada
+  combinación devuelve un conjunto distinto del de sus dos filtros solos (Cola 2L pasa a Almacén y al grupo
+  Combos), así que las tres combinaciones discriminan el Y. Sin divergencias. Sin RED (el acotado ya coincidía).
+  Mutaciones en `AcotarComoElReporteAsync`, una corrida cada una: área anulada → cae la fila área; grupo anulado
+  → cae grupo; sin descendientes → cae categoría con subcategoría; restricción de artículo anulada → cae
+  artículo; sin `IgnoreQueryFilters(["BajaLogica"])` → cae área (Viejo, dado de baja, falta en la herramienta).
+  Ronda 1 del judgment-day (L1): la categoría que rehace la consulta (deja caer el área) → cae área + categoría;
+  el grupo que rehace la consulta → cae grupo + área; la fila vacía cambiada a `["COLA-2L"]` en el test → cae
+  artículo + categoría.
 
 ## Criterios de aceptación
 
