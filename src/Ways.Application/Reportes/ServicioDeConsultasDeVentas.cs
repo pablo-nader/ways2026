@@ -516,7 +516,8 @@ public class ServicioDeConsultasDeVentas(
             pasos.Add(visibles.Where(a => a.Id == id));
         }
 
-        // Las tres columnas son citext: la igualdad ya ignora mayúsculas y usa los índices únicos.
+        // Las tres columnas son citext: la igualdad ya ignora mayúsculas. Código interno y código de barras pueden
+        // usar sus índices únicos; el nombre no tiene índice.
         pasos.Add(visibles.Where(a => a.CodigoInterno == buscado));
         pasos.Add(visibles.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Activo && c.Codigo == buscado)));
         pasos.Add(visibles.Where(a => a.Nombre == buscado));
