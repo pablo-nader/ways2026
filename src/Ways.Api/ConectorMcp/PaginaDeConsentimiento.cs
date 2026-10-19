@@ -51,9 +51,9 @@ public sealed class PaginaDeConsentimiento(
         var cliente = codificador.Encode(nombreDelCliente);
 
         var permisos = new StringBuilder();
-        foreach (var alcance in alcances)
+        foreach (var permiso in alcances.SelectMany(DescribirAlcance))
         {
-            permisos.Append("<li>").Append(codificador.Encode(DescribirAlcance(alcance))).Append("</li>");
+            permisos.Append("<li>").Append(codificador.Encode(permiso)).Append("</li>");
         }
 
         var recursosHtml = string.Join(", ", recursos.Select(r => $"<code>{codificador.Encode(r)}</code>"));
@@ -106,7 +106,7 @@ public sealed class PaginaDeConsentimiento(
             <h1>{{cliente}} solicita acceso a Ways</h1>
             <p>Si aprueba, {{cliente}} podrá:</p>
             <ul>{{permisos}}</ul>
-            <p>Esta versión experimental no da acceso a ningún otro dato de Ways.</p>
+            <p>{{cliente}} no podrá confirmar compras, mover stock ni dinero, ni crear artículos o proveedores.</p>
             <p class="nota">Recurso: {{recursosHtml}}</p>
             {{bloqueDeError}}
             <form method="post" action="{{codificador.Encode(accionDelFormulario)}}">
@@ -131,11 +131,19 @@ public sealed class PaginaDeConsentimiento(
         ocultos.Append("<input type=\"hidden\" name=\"").Append(codificador.Encode(nombre))
             .Append("\" value=\"").Append(codificador.Encode(valor)).Append("\">");
 
-    private static string DescribirAlcance(string alcance) => alcance switch
+    /// <summary>Lo que permite cada alcance. El del conector cubre todas sus herramientas; las de ventas, compras y
+    /// códigos exigen además el rol que piden en la web.</summary>
+    private static IReadOnlyList<string> DescribirAlcance(string alcance) => alcance switch
     {
-        ConstantesDeMcp.AlcanceMcp => "Ver su nombre de usuario, su correo, su rol y su tenant.",
-        Scopes.OfflineAccess => "Seguir conectado sin volver a pedirle la contraseña. La conexión se pierde cuando el servidor se reinicia.",
-        Scopes.OpenId => "Confirmar su identidad con su identificador interno de usuario.",
-        _ => alcance
+        ConstantesDeMcp.AlcanceMcp =>
+        [
+            "Ver su nombre de usuario, su correo, su rol y su tenant.",
+            "Consultar datos de ventas, compras, artículos y proveedores, según los permisos de su rol.",
+            "Crear borradores de compra, que usted revisa y confirma en Ways.",
+            "Asociar códigos de barras y de proveedor a artículos."
+        ],
+        Scopes.OfflineAccess => ["Seguir conectado sin volver a pedirle la contraseña. La conexión se pierde cuando el servidor se reinicia."],
+        Scopes.OpenId => ["Confirmar su identidad con su identificador interno de usuario."],
+        _ => [alcance]
     };
 }
