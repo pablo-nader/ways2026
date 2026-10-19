@@ -124,6 +124,23 @@ public static class PayloadDeAuditoria
             new Dictionary<string, object?> { ["estado"] = estadoAnterior },
             new Dictionary<string, object?> { ["estado"] = estadoNuevo });
 
+    /// <summary><c>compra.descarte</c>. Borrado físico de un borrador: la fila deja de existir, así que el
+    /// rastro no puede apuntar a ella para saber qué era. <c>existe</c> pasa de <c>true</c> a
+    /// <c>false</c>, y el valor nuevo conserva lo que identificaba al borrador (<c>id_proveedor</c>,
+    /// <c>numero_externo</c>, <c>total</c> y cuántas líneas tenía). El estado anterior es siempre
+    /// <see cref="EstadoCompra.Borrador"/>: lo garantiza el lock <c>FOR UPDATE … WHERE estado='borrador'</c>.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        DescarteDeCompra(int idProveedor, string? numeroExterno, decimal total, int cantidadDeItems) => (
+            new Dictionary<string, object?> { ["existe"] = true },
+            new Dictionary<string, object?>
+            {
+                ["existe"] = false,
+                ["id_proveedor"] = idProveedor,
+                ["numero_externo"] = numeroExterno,
+                ["total"] = total,
+                ["cantidad_de_items"] = cantidadDeItems
+            });
+
     /// <summary><c>stock.ajuste</c> — call site 9. <paramref name="cantidadAnterior"/> se deriva
     /// de <c>nueva − delta</c> (design decisión 9), nunca de un <c>SELECT</c> extra.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)

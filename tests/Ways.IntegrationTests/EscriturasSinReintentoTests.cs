@@ -857,6 +857,80 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             problema.GetProperty("title").GetString());
     }
 
+    // ---- 11b. compras: el alta del borrador es UNA transacción ---------------------------------
+
+    /// <summary>
+    /// <c>CrearBorradorAsync</c> guardaba el encabezado y, aparte, las líneas: una falla al guardar las
+    /// líneas dejaba un encabezado huérfano que además retenía el número del proveedor en
+    /// <c>ux_comprobantes_compra_numero_externo</c>. Ahora todo corre en una transacción sin reintento.
+    ///
+    /// <para>El interceptor rompe el INSERT de <c>items_comprobante_compra</c>, que ocurre DESPUÉS del
+    /// del encabezado: (a) el <c>40001</c> sale como <c>503 resultado_incierto</c> (central), se intentó
+    /// una sola vez y NO queda ningún encabezado; (b) sin el interceptor la misma alta escribe exactamente
+    /// un encabezado con sus líneas. Mutante: volver a los dos <c>SaveChangesAsync</c> sin transacción deja
+    /// el encabezado en la base y la primera mitad se pone en rojo.</para>
+    /// </summary>
+    [Fact]
+    public async Task UnaFallaAlGuardarLasLineasDelBorradorNoDejaEncabezadoHuerfano()
+    {
+        var s = await AprovisionarAsync("sin-reintento-compras");
+        var idArticulo = await SembrarArticuloAsync(s, "Artículo de compra");
+
+        int idProveedor;
+        int idTipo;
+        await using (var db = ContextoDelTenant(s))
+        {
+            var proveedor = new Ways.Domain.Proveedores.Proveedor
+            {
+                IdTenant = s.IdTenant, RazonSocial = $"Proveedor {Guid.NewGuid().ToString("N")[..8]}",
+                IdCondicionFiscal = s.IdCondicionFiscal, Margen = 50m, CreatedAt = Ahora, UpdatedAt = Ahora
+            };
+            db.Proveedores.Add(proveedor);
+            await db.SaveChangesAsync();
+            idProveedor = proveedor.Id;
+            idTipo = await db.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
+        }
+
+        using var admin = fixture.CreateClient();
+        var login = await admin.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(s.MailAdmin, s.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var alta = new Ways.Application.Compras.SolicitudDeCompra(
+            idProveedor, idTipo, s.IdPuntoVenta, "0001-00000042", new DateOnly(2026, 3, 1), null,
+            [
+                new Ways.Application.Compras.LineaDeCompraSolicitada(
+                    idArticulo, "Línea 1", 2m, null, null, 100m, 0m, s.IdAlicuotaIva, true),
+                new Ways.Application.Compras.LineaDeCompraSolicitada(
+                    idArticulo, "Línea 2", 1m, null, null, 50m, 0m, s.IdAlicuotaIva, true)
+            ]);
+
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("items_comprobante_compra", SqlStateTransitorio);
+        HttpResponseMessage rota;
+        using (fixture.ConInterceptorEnElHost(interceptor))
+        {
+            rota = await admin.PostAsJsonAsync("/api/compras", alta);
+        }
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, rota.StatusCode);
+        var problema = await rota.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("resultado_incierto", problema.GetProperty("codigo").GetString());
+        Assert.Equal(1, interceptor.Intentos);
+        Assert.Equal((0, 0), await ContarComprasAsync(s, idProveedor));
+
+        var buena = await admin.PostAsJsonAsync("/api/compras", alta);
+        Assert.Equal(HttpStatusCode.Created, buena.StatusCode);
+        Assert.Equal((1, 2), await ContarComprasAsync(s, idProveedor));
+    }
+
+    private async Task<(int Encabezados, int Items)> ContarComprasAsync(Sembrado s, int idProveedor)
+    {
+        await using var db = ContextoDelTenant(s);
+        return (
+            await db.ComprobantesCompra.CountAsync(c => c.IdProveedor == idProveedor),
+            await db.ItemsComprobanteCompra.CountAsync(i => i.IdTenant == s.IdTenant));
+    }
+
     // ---- 12. ventas: el ÚNICO sitio del audit que SÍ reintenta ---------------------------------
 
     /// <summary>

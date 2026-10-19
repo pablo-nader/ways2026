@@ -4,6 +4,7 @@ import {
   calcularTotalesDeCompra,
   costoDeLineaIncluyeIva,
   construirQueryDeCompras,
+  esBorradorCargadoPorElAsistente,
   etiquetaDeEstadoCompra,
   filtrosDeComprasVacios,
   lineaDeCompraVacia,
@@ -254,6 +255,11 @@ describe('construirQueryDeCompras', () => {
     expect(query).toContain('estado=Confirmada')
   })
 
+  it('origen viaja tal cual y sin filtro no se manda', () => {
+    expect(construirQueryDeCompras({ ...filtrosDeComprasVacios(), origen: 'Asistente' })).toContain('origen=Asistente')
+    expect(construirQueryDeCompras(filtrosDeComprasVacios())).not.toContain('origen')
+  })
+
   it('desde/hasta expanden a los bordes del día con el offset horario local', () => {
     const offsetDesde = offsetEsperado(2026, 7, 1)
     const offsetHasta = offsetEsperado(2026, 7, 31)
@@ -262,6 +268,19 @@ describe('construirQueryDeCompras', () => {
     )
     expect(query).toContain(`desde=2026-07-01T00:00:00${offsetDesde}`)
     expect(query).toContain(`hasta=2026-07-31T23:59:59.999${offsetHasta}`)
+  })
+})
+
+describe('esBorradorCargadoPorElAsistente', () => {
+  it('solo un borrador del asistente pide revisión', () => {
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Borrador', origen: 'Asistente' })).toBe(true)
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Borrador', origen: 'Manual' })).toBe(false)
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Confirmada', origen: 'Asistente' })).toBe(false)
+    expect(esBorradorCargadoPorElAsistente({ estado: 'Anulada', origen: 'Asistente' })).toBe(false)
+  })
+
+  it('sin compra cargada no hay aviso', () => {
+    expect(esBorradorCargadoPorElAsistente(null)).toBe(false)
   })
 })
 

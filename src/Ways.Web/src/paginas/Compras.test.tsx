@@ -99,6 +99,7 @@ function compraListadaFixture(sobrescribir: Partial<CompraListada> = {}): Compra
     fechaRecepcion: '2026-08-05T12:00:00Z',
     total: 1149.5,
     saldoPendiente: 0,
+    origen: 'Manual',
     ...sobrescribir,
   }
 }
@@ -285,5 +286,43 @@ describe('Compras — listado', () => {
     resolverPrimera(paginaFixture([compraListadaFixture({ id: 1, numeroExterno: 'primera-respuesta-vieja' })]))
     await waitFor(() => expect(screen.queryByText('primera-respuesta-vieja')).not.toBeInTheDocument())
     expect(screen.getByText('segunda-respuesta')).toBeInTheDocument()
+  })
+})
+
+describe('Compras — origen', () => {
+  it('muestra la insignia "Asistente" solo en las filas cargadas por el asistente', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/compras?')) {
+        return Promise.resolve(
+          paginaFixture([
+            compraListadaFixture({ id: 1, numeroExterno: 'fila-manual', origen: 'Manual' }),
+            compraListadaFixture({ id: 2, numeroExterno: 'fila-asistida', origen: 'Asistente' }),
+          ]),
+        )
+      }
+      return undefined
+    })
+    renderCompras()
+
+    await screen.findByText('fila-asistida')
+    expect(within(screen.getByRole('row', { name: /fila-asistida/ })).getByText('Asistente')).toBeInTheDocument()
+    expect(within(screen.getByRole('row', { name: /fila-manual/ })).queryByText('Asistente')).not.toBeInTheDocument()
+  })
+
+  it('el filtro de origen manda el parámetro al listado y "Todas" lo quita', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('No hay compras que coincidan con los filtros.')
+
+    const consultas = () =>
+      apiGetMock.mock.calls.map((call: unknown[]) => call[0] as string).filter((ruta: string) => ruta.startsWith('/compras?'))
+    expect(consultas()[0]).not.toContain('origen=')
+
+    await usuario.selectOptions(screen.getByLabelText('Origen'), 'Asistente')
+    await waitFor(() => expect(consultas().at(-1)).toContain('origen=Asistente'))
+
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '')
+    await waitFor(() => expect(consultas().at(-1)).not.toContain('origen='))
   })
 })
