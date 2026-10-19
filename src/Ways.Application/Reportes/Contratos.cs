@@ -58,6 +58,22 @@ public sealed record ArticuloTop(int IdArticulo, string Descripcion, decimal Can
 public sealed record TopArticulos(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<ArticuloTop> Articulos);
 
+/// <summary>Una fila de <c>GET /api/reportes/ventas/por-articulo</c>. <see cref="Codigo"/>,
+/// <see cref="Descripcion"/> y las tres etiquetas salen del artículo ACTUAL; la descripción cae al
+/// snapshot de la línea si el artículo ya no es visible. <see cref="Area"/>, <see cref="Grupo"/> y
+/// <see cref="Categoria"/> son <c>null</c> con FK nulo o colgante (baja lógica). Cantidad y total
+/// son netos: una NCX resta. Sin costo ni margen.</summary>
+public sealed record ArticuloVendido(
+    int IdArticulo, string? Codigo, string Descripcion, string? Area, string? Grupo, string? Categoria,
+    decimal Cantidad, decimal Total);
+
+/// <summary>Respuesta de <c>GET /api/reportes/ventas/por-articulo</c>, ordenada por
+/// <see cref="Total"/> descendente y luego por descripción. <see cref="CantidadTotal"/> y
+/// <see cref="Total"/> suman las filas devueltas (no hay paginado).</summary>
+public sealed record VentasPorArticulo(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, decimal CantidadTotal, decimal Total,
+    IReadOnlyList<ArticuloVendido> Articulos);
+
 /// <summary>Fila de <c>GET /api/reportes/articulos</c> (reporte de completitud de catálogo) — a
 /// diferencia de <see cref="ArticuloTop"/>/<see cref="FilaExistencia"/>, no hay ninguna figura de
 /// venta ni de stock: es el catálogo actual con sus cinco clasificaciones resueltas a nombre en
