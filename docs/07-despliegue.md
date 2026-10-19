@@ -154,21 +154,37 @@ ventas de la sección siguiente.
 
 | Herramienta | Qué responde |
 |---|---|
-| `ventas_resumen` | Total vendido, comprobantes, ticket promedio y notas de crédito del período, con desglose por medio de pago, por punto de venta y por día (la tabla por día solo hasta 31 días) |
-| `ventas_agrupadas` | Lo vendido agrupado por `punto_venta`, `medio_pago`, `vendedor` o `dia`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto) |
+| `ventas_resumen` | Total vendido, comprobantes, ticket promedio y notas de crédito del período, con desglose por medio de pago, por punto de venta y por día (la tabla por día solo aparece si el período abarca 31 días distintos o menos, contados entre todas las empresas) |
+| `ventas_agrupadas` | Lo vendido agrupado por `punto_venta`, `medio_pago`, `vendedor`, `dia`, `area`, `grupo`, `categoria` o `marca`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto). `dia` va del más reciente al más antiguo, así que el límite descarta los días viejos |
+| `ventas_por_articulo` | Los artículos más vendidos, con filtros `texto`, `area`, `grupo`, `categoria`, `marca`, `proveedor` y `articulo`, `orden` por importe o cantidad y `limite`; el % es sobre todo lo vendido en artículos, sin los filtros |
+
+Preguntas que responde: "¿cuánto vendimos hoy?", "¿cuánto vendió cada vendedor esta semana?", "¿qué
+marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de la categoría Bebidas?",
+"¿cuánto se vendió de Coca-Cola ayer?".
 
 - **Rol:** solo Supervisor y Admin, igual que los reportes de la web (`LecturaDeReportes`). Un
   Vendedor recibe un texto que lo explica, no un error.
 - **"Vendido":** el criterio del reporte de ventas de la web: comprobantes de venta no anulados, sin
   los espejos fiscales, con las notas de crédito restadas, al importe final.
 - **Período:** un nombre (`hoy`, `ayer`, `esta_semana`, `semana_pasada`, `este_mes`, `mes_pasado`) o
-  `desde` y `hasta` (`yyyy-MM-dd`, ambos inclusivos, hasta 366 días). El "hoy" y el corte de cada día se
+  `desde` y `hasta` (`yyyy-MM-dd`, ambos inclusivos, separados como máximo 366 días). El "hoy" y el corte de cada día se
   toman en la zona horaria de la empresa (parámetro `zona_horaria`), no en UTC; la semana va de lunes
   a domingo y `esta_semana` y `este_mes` terminan hoy.
 - **Alcance:** `empresa` y `punto_venta` por id o por nombre. Sin ellos se suman todas las empresas
   del tenant, cada una con su zona, y se muestra el desglose por empresa.
 - **Medio de pago:** lo cobrado neto del vuelto (`importe - vuelto`). La tabla por medio de pago de la
   web suma el importe entregado, sin descontar el vuelto, así que en efectivo puede diferir.
+- **Por artículo:** `area`, `grupo`, `categoria`, `marca` y `ventas_por_articulo` salen del reporte de
+  ventas por artículo de la web (`ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync`): suman por
+  línea de comprobante, el importe es la suma del total de las líneas, la cantidad son unidades, las notas
+  de crédito restan y las líneas sin artículo no cuentan. La clasificación (área, grupo, categoría con sus
+  subcategorías, marca y proveedor habitual) es la ACTUAL del artículo: si hoy cambió de categoría, sus
+  ventas pasadas van a la nueva. Un artículo sin esa clasificación, o cuya clasificación está dada de baja,
+  o que ya no es visible, cae en "(sin área)", "(sin grupo)", "(sin categoría)" o "(sin marca)". En
+  `ventas_por_articulo`, `area`, `grupo`, `categoria` y `articulo` se pasan al reporte; `texto`, `marca` y
+  `proveedor` recortan sus filas, y el % es siempre sobre las ventas de todos los artículos del período, sin
+  filtros. Un filtro por nombre que no coincide con nada, o que coincide con varios, devuelve un error que
+  lo nombra y lista hasta 10 candidatos con su id.
 - La salida es texto con tablas `a | b | c`; cada tabla se corta en 31 filas y avisa cuántas faltan.
 
 ### Encenderlo

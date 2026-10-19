@@ -143,7 +143,8 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         var reloj = new RelojFijo(RelojDelMediodia);
         var parametros = new ServicioDeParametros(db, reloj, new ServicioDeLotes(db, reloj, new ContextoFijo(a.Admin.IdUsuario, a.Tenant.IdTenant)));
         var servicio = new ServicioDeConsultasDeVentas(
-            db, reloj, parametros, new ServicioDeReportesDeVentas(db, new LectorDeSerieTemporal(db), parametros));
+            db, reloj, parametros, new ServicioDeReportesDeVentas(db, new LectorDeSerieTemporal(db), parametros),
+            new ServicioDeReportesDeArticulos(db, parametros));
 
         var resumen = await servicio.ResumirAsync(new SolicitudDeConsultaDeVentas("hoy", null, null, null, null));
 
@@ -223,11 +224,12 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         using var cliente = ApoyoDeConectorMcp.Cliente(host);
         var token = await AccessTokenAsync(cliente, e.Admin.Mail);
 
-        // Diez días (nueve sin ventas, que igual aparecen): límite 3 => 3 filas y "… y 7 más".
+        // Diez días (ocho sin ventas, que igual aparecen), del más reciente al más antiguo: límite 3 => los tres
+        // últimos días y "… y 7 más".
         var porDia = await LlamarHerramientaAsync(
             cliente, token, "ventas_agrupadas", new { agrupar_por = "dia", desde = "2026-10-09", hasta = "2026-10-18", limite = 3 });
         Assert.False(porDia.EsError, porDia.Texto);
-        Assert.Equal(["2026-10-09 | 0,00 | 0 | 0,0%", "2026-10-10 | 0,00 | 0 | 0,0%", "2026-10-11 | 0,00 | 0 | 0,0%"], FilasDeFecha(porDia.Texto).Select(f => f).ToArray());
+        Assert.Equal(["2026-10-18 | 1.700,00 | 3 | 68,6%", "2026-10-17 | 777,00 | 1 | 31,4%", "2026-10-16 | 0,00 | 0 | 0,0%"], FilasDeFecha(porDia.Texto));
         Assert.Contains("… y 7 más", Lineas(porDia.Texto));
         Assert.Contains("Total: 2.477,00 en 10 grupos", Lineas(porDia.Texto));
 
@@ -363,7 +365,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
 
         var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .ToDictionary(h => h.GetProperty("name").GetString()!);
-        Assert.Equal(["quien_soy", "ventas_agrupadas", "ventas_resumen"], herramientas.Keys.Order().ToArray());
+        Assert.Equal(["quien_soy", "ventas_agrupadas", "ventas_por_articulo", "ventas_resumen"], herramientas.Keys.Order().ToArray());
         foreach (var herramienta in herramientas.Values)
         {
             var anotaciones = herramienta.GetProperty("annotations");

@@ -6,7 +6,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
@@ -144,6 +147,165 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
         return comprobante.Id;
+    }
+
+    public sealed record LineaSembrada(int? IdArticulo, string Descripcion, int IdArea, decimal Cantidad, decimal Total);
+
+    private static TenantActualFijo DeTenant(TenantDeVentas tenant) => new(ModoDeAcceso.Tenant, tenant.IdTenant);
+
+    public async Task<int> SembrarAreaAsync(TenantDeVentas tenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var area = new Area { IdTenant = tenant.IdTenant, Nombre = nombre, Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Areas.Add(area);
+        await db.SaveChangesAsync();
+        return area.Id;
+    }
+
+    public async Task<int> SembrarCategoriaAsync(TenantDeVentas tenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var categoria = new Categoria { IdTenant = tenant.IdTenant, Nombre = nombre, Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Categorias.Add(categoria);
+        await db.SaveChangesAsync();
+        return categoria.Id;
+    }
+
+    public async Task<int> SembrarMarcaAsync(TenantDeVentas tenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var marca = new Marca { IdTenant = tenant.IdTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Marcas.Add(marca);
+        await db.SaveChangesAsync();
+        return marca.Id;
+    }
+
+    public async Task<int> SembrarProveedorAsync(TenantDeVentas tenant, string razonSocial)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var proveedor = new Proveedor
+        {
+            IdTenant = tenant.IdTenant,
+            RazonSocial = razonSocial,
+            IdCondicionFiscal = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync(),
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Proveedores.Add(proveedor);
+        await db.SaveChangesAsync();
+        return proveedor.Id;
+    }
+
+    public async Task<int> SembrarArticuloAsync(
+        TenantDeVentas tenant, string nombre, string codigo, int idArea, int? idCategoria = null, int? idMarca = null,
+        int? idProveedor = null)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var articulo = new Articulo
+        {
+            IdTenant = tenant.IdTenant,
+            CodigoInterno = codigo,
+            Nombre = nombre,
+            IdArea = idArea,
+            IdCategoria = idCategoria,
+            IdMarca = idMarca,
+            IdProveedorHabitual = idProveedor,
+            IdAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync(),
+            UnidadVenta = UnidadVenta.Unidad,
+            EsProducto = true,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Articulos.Add(articulo);
+        await db.SaveChangesAsync();
+        return articulo.Id;
+    }
+
+    /// <summary>Baja lógica de una categoría que los artículos siguen referenciando: es el dato heredado que
+    /// los listados tienen que tolerar (el borrado por la API lo rechaza con 409).</summary>
+    public async Task DarDeBajaCategoriaAsync(TenantDeVentas tenant, int idCategoria)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var filas = await db.Categorias.Where(c => c.Id == idCategoria).ExecuteUpdateAsync(c => c.SetProperty(x => x.DeletedAt, ahora));
+        Assert.Equal(1, filas);
+    }
+
+    public async Task CambiarCategoriaDeArticuloAsync(TenantDeVentas tenant, int idArticulo, int idCategoria)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.IdCategoria, (int?)idCategoria));
+        Assert.Equal(1, filas);
+    }
+
+    public async Task DarDeBajaArticuloAsync(TenantDeVentas tenant, int idArticulo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.DeletedAt, ahora));
+        Assert.Equal(1, filas);
+    }
+
+    /// <summary>Un comprobante con las líneas dadas, cuyo total es la suma de los totales de las líneas.
+    /// Cantidad y total de cada línea llevan el signo (negativos en una NCX).</summary>
+    public async Task SembrarComprobanteConLineasAsync(
+        TenantDeVentas tenant, DateTimeOffset fecha, int idEmpleado, IReadOnlyList<LineaSembrada> lineas,
+        bool esNcx = false, EstadoComprobante estado = EstadoComprobante.Emitido)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var total = lineas.Sum(l => l.Total);
+
+        var comprobante = new ComprobanteVenta
+        {
+            IdTenant = tenant.IdTenant,
+            IdTipoComprobante = esNcx ? tenant.IdTipoNcx : tenant.IdTipoTx,
+            Numero = Interlocked.Increment(ref _numeroSecuencial),
+            Fecha = fecha,
+            IdPuntoVenta = tenant.IdPuntoVenta,
+            IdEmpleado = idEmpleado,
+            IdCliente = tenant.IdCliente,
+            Subtotal = total,
+            DescuentoTotal = 0m,
+            Total = total,
+            Estado = estado,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ComprobantesVenta.Add(comprobante);
+        await db.SaveChangesAsync();
+
+        var idListaPrecio = await db.ListasPrecio.Select(l => l.Id).FirstAsync();
+        var idAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync();
+        var orden = 0;
+        foreach (var linea in lineas)
+        {
+            db.ItemsComprobanteVenta.Add(new ItemComprobanteVenta
+            {
+                IdTenant = tenant.IdTenant,
+                IdComprobanteVenta = comprobante.Id,
+                Orden = ++orden,
+                IdArticulo = linea.IdArticulo,
+                Descripcion = linea.Descripcion,
+                IdArea = linea.IdArea,
+                IdListaPrecio = idListaPrecio,
+                IdAlicuotaIva = idAlicuotaIva,
+                PorcentajeIva = 0m,
+                Cantidad = linea.Cantidad,
+                PrecioUnitario = linea.Total / linea.Cantidad,
+                Descuento = 0m,
+                Total = linea.Total,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
     }
 
     /// <summary><c>importe</c> es lo entregado por el cliente (nunca negativo) y <c>vuelto</c> lo devuelto;

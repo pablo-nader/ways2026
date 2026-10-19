@@ -25,11 +25,15 @@ public static class RegistroDelConectorMcp
 
     private const string Instrucciones =
         "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental y de solo " +
-        "lectura. quien_soy informa con qué usuario y tenant quedó autorizada la conexión. ventas_resumen y " +
-        "ventas_agrupadas responden cuánto se vendió: total vendido, por medio de pago, por punto de venta, " +
-        "por vendedor o por día (solo Supervisor y Admin). El período se indica con un nombre (hoy, ayer, " +
-        "esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona horaria de cada empresa, " +
-        "o con desde y hasta (yyyy-MM-dd, ambos inclusivos).";
+        "lectura. quien_soy informa con qué usuario y tenant quedó autorizada la conexión. Las consultas de " +
+        "ventas son solo para Supervisor y Admin: ventas_resumen responde cuánto se vendió (por ejemplo, " +
+        "'¿cuánto vendimos hoy?'); ventas_agrupadas lo abre por punto de venta, medio de pago, vendedor, día, " +
+        "área, grupo, categoría o marca ('¿cuánto vendió cada vendedor esta semana?', '¿qué marca vendió más este " +
+        "mes?'); ventas_por_articulo lista los artículos más vendidos, con filtros por texto, área, grupo, categoría, " +
+        "marca y proveedor ('¿cuánto se vendió de Coca-Cola el mes pasado?'). El período se indica con un " +
+        "nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona " +
+        "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
+        "366 días).";
 
     private static readonly string[] EsquemasDelConector =
     [

@@ -26,7 +26,7 @@ El conector MCP (PR #350) solo expone `quien_soy`. Las respuestas a esas pregunt
 
 ## Tareas
 - [x] T1 — `ventas_resumen` y `ventas_agrupadas` por punto de venta, medio de pago, vendedor y día, con la resolución de períodos. Reusa `ServicioDeReportesDeVentas`. PR 1.
-- [ ] T2 — Consulta por línea nueva: `ventas_agrupadas` por área, categoría y marca, y `ventas_por_articulo` con filtros y top N. PR 2, apilado sobre el 1.
+- [x] T2 — `ventas_agrupadas` por área, grupo, categoría y marca, y `ventas_por_articulo` con filtros y top N, sobre `ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync` (PR #458) en lugar de una consulta por línea propia. PR 2, apilado sobre el 1.
 - [ ] T3 — `articulo_info`: precios vigentes por lista, stock por punto de venta, ventas de 30 días y últimas compras (solo Admin y Supervisor). PR 3, apilado sobre el 2.
 - [ ] T4 — `Instrucciones` del servidor MCP y la sección del conector en `docs/07-despliegue.md` (se reparte entre los tres PRs, cada uno documenta sus tools).
 
@@ -56,5 +56,17 @@ Mutaciones (cada una aplicada, test fallando, revertida y verde):
 - Política `LecturaDeReportes` reemplazada por `OperacionDePos` (admite al Vendedor) en `HerramientasDeVentas.EjecutarAsync`: `SoloSupervisorYAdminConsultanVentas` falla en las dos herramientas ("Assert.Equal() Failure: Strings differ"); revertida, pasa.
 - `.IgnoreQueryFilters()` en el listado de `db.Empresas` del servicio: el test de punta a punta por HTTP (`VentasResumenSumaLoVendidoDelTenantYNuncaMuestraLasVentasDeOtro`) SOBREVIVE, porque como `ways_app` el RLS ya oculta las empresas del otro tenant. No se afirma aislamiento probado con ese test. Se bajó por debajo del confound con `SinRlsElFiltroDeEmpresasDelTenantAlcanzaParaNoSumarOtroTenant` (el servicio sobre un contexto de owner, sin RLS): con la mutación falla (`ErrorDominio : No existe la empresa 1.`, porque la empresa del otro tenant entra al alcance y el reporte la rechaza); sin ella pasa. Lo que aísla el listado es el filtro de EF; en producción lo respalda el RLS.
 
+## Evidencia T2
+- Diseño: se reutiliza `ObtenerVentasPorArticuloAsync` (una llamada por empresa). La clasificación es la ACTUAL del artículo, las líneas sin artículo no cuentan y una etiqueta nula va a "(sin área)", "(sin grupo)", "(sin categoría)" o "(sin marca)". `texto`, `marca` y `proveedor` recortan las filas del reporte por ids de artículo; el % es sobre la suma de las filas de una llamada al reporte sin ningún filtro. Se descartó el lector de líneas propio.
+- `dotnet build src/Ways.Api/Ways.Api.csproj -p:NuGetAudit=false`: 0 advertencias, 0 errores.
+- `dotnet test tests/Ways.Domain.Tests --filter "FullyQualifiedName~PeriodoDeConsulta"`: 35 de 35.
+- `dotnet test tests/Ways.IntegrationTests -p:NuGetAudit=false --filter "FullyQualifiedName~ConectorMcp"`: 154 de 154.
+- Mutaciones sobre cláusulas propias (aplicada, test rojo, revertida):
+  - Sin el recorte por marca/proveedor/texto: 7 casos de `VentasPorArticuloAcotaLasFilasPeroElPorcentajeSigueSiendoSobreTodoLoVendido` fallan.
+  - Etiqueta nula descartada en lugar de "(sin …)": fallan los tests de área, grupo, categoría y marca.
+  - Denominador del % tomado de las filas filtradas: 5 casos del mismo test fallan (el de categoría+marca fija que el % sigue siendo sobre 1.650).
+- Aislamiento: por construcción del reporte reutilizado; `LasConsultasPorLineaNuncaMuestranLasLineasDeOtroTenant` no aísla una cláusula propia y, como `ways_app`, el RLS ya oculta las filas del otro tenant.
+- Estructurales: sin tabla, endpoint no GET, delete ni estrategia nuevos.
+
 ## Próximo paso
-Autorizar el ajuste de `ConectorMcpFlujoTests.ToolsList…`, tildar T1 y pasar a judgment-day.
+Judgment-day de T2 y pasar a T3.
