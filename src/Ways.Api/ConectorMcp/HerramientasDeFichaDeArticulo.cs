@@ -5,7 +5,6 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Ways.Api.Seguridad;
 using Ways.Application.Reportes;
-using Ways.Domain.Common;
 
 namespace Ways.Api.ConectorMcp;
 
@@ -28,7 +27,8 @@ public sealed class HerramientasDeFichaDeArticulo
         "Ficha de un artículo: qué precio y stock tiene, cuánto se vendió en el último mes y, solo para Supervisor y " +
         "Admin, a qué costo y a quién se le compró por última vez. El artículo se indica por id, código interno, " +
         "código de barras o nombre; se prueba en ese orden y la primera coincidencia exacta (sin distinguir " +
-        "mayúsculas) gana; recién si no hay ninguna se busca el texto contenido en el nombre o en el código. Si " +
+        "mayúsculas) gana; recién si no hay ninguna se busca el texto contenido en el nombre o en el código (sin distinguir " +
+        "mayúsculas ni acentos). Si " +
         "queda más de un candidato devuelve hasta 10 para que se elija uno por id o código. Muestra: la " +
         "clasificación actual del artículo (un dato sin asignar o dado de baja figura como '(sin …)'); el precio " +
         "vigente hoy en cada lista de precios activa (el que rige en este momento, nunca uno vencido ni uno " +
@@ -45,32 +45,26 @@ public sealed class HerramientasDeFichaDeArticulo
         "(total de la línea neto del descuento, más el IVA si el comprobante lo discrimina y los costos cargados " +
         "no lo incluyen, dividido por la cantidad; no indica si esa línea actualizó el costo). Con empresa, los precios son los de las listas compartidas y " +
         "las de esa empresa, y el stock, las ventas y las compras son los de esa empresa; sin empresa, todo el tenant.")]
-    public static async Task<CallToolResult> ArticuloInfoAsync(
+    public static Task<CallToolResult> ArticuloInfoAsync(
         IAuthorizationService autorizacion,
         IHttpContextAccessor http,
         ServicioDeFichaDeArticulo fichas,
+        ILogger<HerramientasDeFichaDeArticulo> log,
         [Description("El artículo: id, código interno, código de barras o nombre (o parte del nombre).")]
         string articulo,
         [Description("Empresa, por id o por nombre. Si se omite, todas las empresas del tenant.")]
         string? empresa = null,
         [Description("Cuántas compras recientes listar, de 1 a 20. Por defecto 5.")]
         int compras = ServicioDeFichaDeArticulo.ComprasPorDefecto,
-        CancellationToken ct = default)
-    {
-        var usuario = http.HttpContext!.User;
-        var verVentas = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeReportes)).Succeeded;
-        var verCostos = (await autorizacion.AuthorizeAsync(usuario, Politicas.LecturaDeCostos)).Succeeded;
+        CancellationToken ct = default) =>
+        ResultadoDeHerramienta.EjecutarAsync(async () =>
+        {
+            var verVentas = await PermisoDelConector.CumpleAsync(autorizacion, http, Politicas.LecturaDeReportes);
+            var verCostos = await PermisoDelConector.CumpleAsync(autorizacion, http, Politicas.LecturaDeCostos);
 
-        try
-        {
             var ficha = await fichas.ObtenerAsync(new SolicitudDeFichaDeArticulo(articulo, empresa, compras, verVentas, verCostos), ct);
-            return HerramientasDeVentas.Resultado(Formatear(ficha, verVentas), esError: false);
-        }
-        catch (ErrorDominio error)
-        {
-            return HerramientasDeVentas.Resultado(error.Message, esError: true);
-        }
-    }
+            return Formatear(ficha, verVentas);
+        }, log);
 
     private static string Formatear(FichaDeArticulo f, bool verMinimo)
     {

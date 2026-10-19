@@ -311,7 +311,8 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
     }
 
     /// <summary>Cláusula bajo prueba: la resolución exacta primero de <c>BuscarArticuloAsync</c>. "A1" es un código
-    /// exacto aunque A10 y A11 también lo contengan; el código de barras, el nombre exacto y el id también ganan antes
+    /// exacto aunque A10 y A11 también lo contengan, y "a1" también: el paso exacto ignora mayúsculas (si no, el
+    /// "contiene" lo haría ambiguo); el código de barras, el nombre exacto y el id también ganan antes
     /// de buscar por contenido; un código de barras inactivo no resuelve; con más de un candidato se listan hasta 10.</summary>
     [Fact]
     public async Task LaCoincidenciaExactaGanaAntesDeBuscarPorContenidoYLaAmbiguaListaHastaDiezCandidatos()
@@ -335,6 +336,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         async Task<ResultadoDeHerramienta> Buscar(string texto) => await LlamarComoAsync(admin, new { articulo = texto });
 
         Assert.StartsWith($"Ficha de artículo: Alfa uno (id {a1}, código A1)", (await Buscar("A1")).Texto);
+        Assert.StartsWith($"Ficha de artículo: Alfa uno (id {a1}, código A1)", (await Buscar("a1")).Texto);
         Assert.StartsWith($"Ficha de artículo: Alfa diez (id {a10}, código A10)", (await Buscar("a10")).Texto);
         Assert.StartsWith($"Ficha de artículo: Alfa once (id {a11}, código A11)", (await Buscar(a11.ToString())).Texto);
         Assert.StartsWith($"Ficha de artículo: Alfa diez (id {a10}, código A10)", (await Buscar("7791234567890")).Texto);

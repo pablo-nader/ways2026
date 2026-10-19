@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
@@ -15,6 +16,7 @@ using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -245,6 +247,38 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
         var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.IdCategoria, (int?)idCategoria));
+        Assert.Equal(1, filas);
+    }
+
+    public async Task<int> IdDeArticuloAsync(TenantDeVentas tenant, string codigoInterno)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        return await db.Articulos.IgnoreQueryFilters().Where(x => x.IdTenant == tenant.IdTenant && x.CodigoInterno == codigoInterno).Select(x => x.Id).SingleAsync();
+    }
+
+    public async Task<int> IdDeCategoriaAsync(TenantDeVentas tenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        return await db.Categorias.IgnoreQueryFilters().Where(x => x.IdTenant == tenant.IdTenant && x.Nombre == nombre).Select(x => x.Id).SingleAsync();
+    }
+
+    /// <summary>Un grupo nuevo asignado al artículo dado.</summary>
+    public async Task<int> SembrarGrupoDeArticuloAsync(TenantDeVentas tenant, string nombre, int idArticulo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var grupo = new Grupo { IdTenant = tenant.IdTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Grupos.Add(grupo);
+        await db.SaveChangesAsync();
+        var filas = await db.Articulos.Where(x => x.Id == idArticulo).ExecuteUpdateAsync(x => x.SetProperty(y => y.IdGrupo, (int?)grupo.Id));
+        Assert.Equal(1, filas);
+        return grupo.Id;
+    }
+
+    public async Task AsignarCategoriaPadreAsync(TenantDeVentas tenant, int idCategoria, int idPadre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var filas = await db.Categorias.Where(c => c.Id == idCategoria).ExecuteUpdateAsync(c => c.SetProperty(x => x.IdCategoriaPadre, (int?)idPadre));
         Assert.Equal(1, filas);
     }
 
@@ -481,6 +515,17 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
             string.Join(';', mails),
             configurarMas: builder => builder.ConfigureServices(
                 servicios => servicios.AddSingleton<IRelojDelSistema>(new RelojFijo(ahora))));
+
+    /// <summary>Como <see cref="HostConReloj"/>, con un interceptor más en el contexto de la aplicación.</summary>
+    public Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> HostConRelojEInterceptor(
+        DateTimeOffset ahora, IInterceptor interceptor, params string[] mails) =>
+        conector.HostConConector(
+            string.Join(';', mails),
+            configurarMas: builder => builder.ConfigureServices(servicios =>
+            {
+                servicios.AddSingleton<IRelojDelSistema>(new RelojFijo(ahora));
+                servicios.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor));
+            }));
 
     public static async Task<string> AccessTokenAsync(HttpClient cliente, string mail) =>
         (await ApoyoDeConectorMcp.ObtenerTokensAsync(cliente, mail)).GetProperty("access_token").GetString()!;

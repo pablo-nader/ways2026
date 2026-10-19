@@ -184,9 +184,10 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   subcategorías, marca y proveedor habitual) es la ACTUAL del artículo: si hoy cambió de categoría, sus
   ventas pasadas van a la nueva. Un artículo sin esa clasificación, o cuya clasificación está dada de baja,
   o que ya no es visible, cae en "(sin área)", "(sin grupo)", "(sin categoría)" o "(sin marca)". En
-  `ventas_por_articulo`, `area`, `grupo`, `categoria` y `articulo` se pasan al reporte; `texto`, `marca` y
-  `proveedor` recortan sus filas, y el % es siempre sobre las ventas de todos los artículos del período, sin
-  filtros. Un filtro por nombre que no coincide con nada, o que coincide con varios, devuelve un error que
+  `ventas_por_articulo` el reporte se lee una sola vez por empresa, sin filtros; `area`, `grupo`, `categoria`
+  y `articulo` acotan esas filas con los mismos criterios del reporte, `texto`, `marca` y `proveedor` las
+  recortan por los artículos que coinciden, y el % es siempre sobre las ventas de todos los artículos del
+  período, sin filtros. Un filtro por nombre que no coincide con nada, o que coincide con varios, devuelve un error que
   lo nombra y lista hasta 10 candidatos con su id.
   `articulo` se resuelve igual que en `articulo_info` (ver abajo). En `ventas_agrupadas` por área, grupo,
   categoría o marca se agrupa por el id de la clasificación, no por su nombre: dos categorías con el mismo
@@ -278,8 +279,12 @@ regla es solo de la herramienta: la web solo advierte y la API acepta códigos n
 Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
 todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`
 y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sale como resultado con
-`isError` y ese mensaje; una excepción que escapa de la herramienta, incluso una `McpException`, le
-llega a Claude con un mensaje genérico del SDK.
+`isError` y ese mensaje. El mismo runner devuelve con `isError` el mensaje de un `ErrorDominio` de los
+servicios y, para un `DbUpdateException` cuya `PostgresException` clasifica
+`ManejadorDeErrores.ClasificarPostgresException` (violaciones de restricciones y de rangos), el mismo
+título que daría el endpoint. Cualquier otra excepción que escapa de la herramienta, incluso una
+`McpException`, le llega a Claude con un mensaje genérico del SDK; entre ellas, el fallo transitorio y el
+conflicto de concurrencia, que en la API sí tienen su respuesta (503 y 409).
 
 ### Encenderlo
 

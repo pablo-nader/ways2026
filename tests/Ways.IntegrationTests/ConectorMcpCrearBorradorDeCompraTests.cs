@@ -470,7 +470,7 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, FacturaSimple(e));
 
         Assert.True(resultado.EsError);
-        Assert.Equal(PermisoDeCompras.MensajeSinPermiso, resultado.Texto);
+        Assert.Equal(PermisoDelConector.MensajeSinPermisoDeCompras, resultado.Texto);
         Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
     }
 

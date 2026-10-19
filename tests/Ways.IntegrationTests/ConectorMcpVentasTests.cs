@@ -186,7 +186,10 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         Assert.Contains("Total vendido: 4.000,00", Lineas(ayer.Texto));
     }
 
-    /// <summary>Cláusula bajo prueba: la evaluación de <c>Politicas.LecturaDeReportes</c> en <c>HerramientasDeVentas.EjecutarAsync</c>, en las dos herramientas.</summary>
+    /// <summary>Cláusula bajo prueba: la evaluación de <c>Politicas.LecturaDeReportes</c> en
+    /// <c>HerramientasDeVentas.NegacionDeRolAsync</c> (vía <c>PermisoDelConector.CumpleAsync</c>) para
+    /// <c>ventas_resumen</c> y <c>ventas_agrupadas</c>; la de <c>ventas_por_articulo</c> la fija
+    /// <c>ConectorMcpVentasPorArticuloTests.SoloSupervisorYAdminVenVentasPorArticulo</c>.</summary>
     [Theory]
     [InlineData("ventas_resumen")]
     [InlineData("ventas_agrupadas")]

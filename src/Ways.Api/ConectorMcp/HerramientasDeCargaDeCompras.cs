@@ -91,7 +91,8 @@ public sealed class HerramientasDeCargaDeCompras
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
-            await PermisoDeCompras.ExigirAsync(autorizacion, accesor);
+            await PermisoDelConector.ExigirAsync(
+                autorizacion, accesor, Politicas.GestionDeCatalogo, PermisoDelConector.MensajeSinPermisoDeCompras);
 
             var factura = new FacturaParaBorrador(
                 idProveedor, idTipoComprobante, idPuntoVenta, fechaComprobante, lineas, puntoVentaFactura, numeroFactura,
@@ -147,5 +148,5 @@ public sealed class HerramientasDeCargaDeCompras
             }
 
             return TextosDelBorradorDeCompra.DescribirCreado(compra, tipo.Nombre, Link(compra.Id), factura.TotalImpreso);
-        });
+        }, log);
 }

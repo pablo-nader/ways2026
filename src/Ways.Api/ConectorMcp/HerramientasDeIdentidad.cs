@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Ways.Application.Abstracciones;
 
@@ -21,11 +22,16 @@ public sealed class HerramientasDeIdentidad
         Idempotent = true,
         OpenWorld = false)]
     [Description("Informa el usuario de Ways con el que se autorizó la conexión: nombre, correo, rol, tenant y la hora del servidor.")]
-    public static async Task<string> QuienSoyAsync(
+    public static Task<CallToolResult> QuienSoyAsync(
         IContextoDeUsuario actual,
         IWaysDbContext db,
         IRelojDelSistema reloj,
-        CancellationToken ct)
+        ILogger<HerramientasDeIdentidad> log,
+        CancellationToken ct) =>
+        ResultadoDeHerramienta.EjecutarAsync(() => LeerAsync(actual, db, reloj, ct), log);
+
+    private static async Task<string> LeerAsync(
+        IContextoDeUsuario actual, IWaysDbContext db, IRelojDelSistema reloj, CancellationToken ct)
     {
         var usuario = await db.Usuarios
             .AsNoTracking()
