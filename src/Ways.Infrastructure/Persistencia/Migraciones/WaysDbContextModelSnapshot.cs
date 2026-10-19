@@ -50,6 +50,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_punto_venta", new[] { "escritorio", "web" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_facturacion", new[] { "cupo_alcanzado", "forzada", "medio_exige_factura", "no_requerida" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_stock", new[] { "ajuste", "anulacion", "compra", "decomiso", "inventario", "reclasificacion", "remito", "transferencia", "venta" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_compra", new[] { "asistente", "manual" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_fondos_gasto", new[] { "caja_turno", "tesoreria" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "resultado_fiscal", new[] { "aprobado", "aprobado_con_observaciones", "pendiente", "rechazado" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_documento", new[] { "cuil", "cuit", "dni", "otro", "pasaporte" });
@@ -2338,6 +2339,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<string>("Observaciones")
                         .HasColumnType("text")
                         .HasColumnName("observaciones");
+
+                    b.Property<OrigenCompra>("Origen")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("origen_compra")
+                        .HasColumnName("origen")
+                        .HasDefaultValueSql("'manual'::origen_compra");
 
                     b.Property<bool>("PreciosIncluyenIva")
                         .ValueGeneratedOnAdd()

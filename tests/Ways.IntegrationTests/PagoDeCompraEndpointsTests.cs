@@ -202,7 +202,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(ctx.IdPuntoVenta, gastoCreado.IdPuntoVenta);
         Assert.Equal(compra.Id, gastoCreado.IdComprobanteCompra);
         Assert.Null(gastoCreado.IdTurnoCaja);
-        Assert.Equal("Pago Factura A de compra 0001-00000001", gastoCreado.Concepto);
+        Assert.Equal("Pago Factura A de compra 00001-00000001", gastoCreado.Concepto);
         Assert.Equal(fechaDeNegocio, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(gastoCreado.Fecha, ZonaDelNegocio).DateTime));
 
         await using var db = ContextoDelTenant(ctx);

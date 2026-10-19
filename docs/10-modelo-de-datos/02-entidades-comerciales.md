@@ -30,7 +30,7 @@ clientes (                    -- [catálogo]
 proveedores (                 -- [catálogo]
     id_proveedor,
     razon_social citext, nombre_fantasia citext NULL,
-    cuit varchar(13) NULL,
+    cuit varchar(13) NULL,                  -- se guarda como se cargó; la búsqueda (?cuit=) compara solo dígitos
     id_condicion_fiscal integer NOT NULL,
     domicilio, telefono, email,
     vendedor, celular_vendedor, supervisor, celular_supervisor,   -- los contactos del legacy

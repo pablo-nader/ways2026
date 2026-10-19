@@ -9,6 +9,7 @@ using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using OpenIddict.Validation;
 using OpenIddict.Validation.AspNetCore;
+using Ways.Infrastructure.Persistencia;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace Ways.Api.ConectorMcp;
@@ -24,8 +25,8 @@ public static class RegistroDelConectorMcp
     private const string CategoriaDeLog = "Ways.Api.ConectorMcp";
 
     private const string Instrucciones =
-        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental y de solo " +
-        "lectura. quien_soy informa con qué usuario y tenant quedó autorizada la conexión. Las consultas de " +
+        "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental. " +
+        "quien_soy informa con qué usuario y tenant quedó autorizada la conexión. Las consultas de " +
         "ventas son solo para Supervisor y Admin: ventas_resumen responde cuánto se vendió (por ejemplo, " +
         "'¿cuánto vendimos hoy?'); ventas_agrupadas lo abre por punto de venta, medio de pago, vendedor, día, " +
         "área, grupo, categoría o marca ('¿cuánto vendió cada vendedor esta semana?', '¿qué marca vendió más este " +
@@ -36,7 +37,15 @@ public static class RegistroDelConectorMcp
         "366 días). articulo_info es la ficha de un artículo y está abierta a todos los roles ('¿qué precio y " +
         "stock tiene Cola 2L?', '¿a qué precio lo compramos la última vez y a quién?'): precios vigentes por " +
         "lista, stock por punto de venta, ventas de los últimos 30 días y últimas compras; las ventas, el costo " +
-        "y las compras solo se muestran a Supervisor y Admin.";
+        "y las compras solo se muestran a Supervisor y Admin. " +
+        "Para preparar la carga de una factura de proveedor (solo " +
+        "Admin): primero contexto_de_compras (puntos de venta, tipos de comprobante de compra y alícuotas de " +
+        "IVA), después buscar_proveedor (por CUIT o nombre) y por último buscar_articulos con todas las líneas " +
+        "de la factura en una sola llamada. La carga del borrador de compra todavía no está disponible. " +
+        "Para asociar códigos a un artículo (solo Admin, escriben y solo agregan): " +
+        "asociar_codigo_de_barras con los dígitos impresos debajo de las barras, y asociar_codigo_de_proveedor " +
+        "con el código que un proveedor imprime en su factura. Si el código de barras no es un GTIN estándar, " +
+        "hay que confirmar los dígitos con el usuario antes de repetir la llamada con confirmar_codigo_no_estandar.";
 
     private static readonly string[] EsquemasDelConector =
     [
@@ -84,22 +93,21 @@ public static class RegistroDelConectorMcp
         // queda en Warning aunque Logging:LogLevel:OpenIddict pida otro nivel.
         builder.Logging.AddFilter("OpenIddict", LogLevel.Warning);
 
-        // Nombre único por host: el almacén InMemory de EF se comparte entre todos los hosts del
-        // mismo proceso que usan el mismo nombre.
-        var baseEnMemoria = $"ways-conector-mcp-{Guid.NewGuid():N}";
+        var cadena = CadenaDeConexion.Resolver(builder.Configuration);
         builder.Services.AddDbContext<ContextoOAuthDelConector>(opcionesDeEf =>
-        {
-            opcionesDeEf.UseInMemoryDatabase(baseEnMemoria);
-            opcionesDeEf.UseOpenIddict();
-        });
+            ContextoOAuthDelConector.Configurar(opcionesDeEf, cadena));
+
+        var estado = EstadoDelConectorMcp.Registrado();
+        builder.Services.AddHostedService(servicios => new PodaDelAlmacenDelConector(
+            servicios.GetRequiredService<IServiceScopeFactory>(),
+            estado,
+            servicios.GetRequiredService<TimeProvider>(),
+            servicios.GetRequiredService<ILogger<PodaDelAlmacenDelConector>>()));
 
         builder.Services.AddOpenIddict()
             .AddCore(core => core
                 .UseEntityFrameworkCore()
-                .UseDbContext<ContextoOAuthDelConector>()
-                // InMemory no soporta las operaciones masivas de EF (actualizar filas sin cargarlas):
-                // sin esto OpenIddict registra un warning y la revocación de la cadena de tokens no ocurre.
-                .DisableBulkOperations())
+                .UseDbContext<ContextoOAuthDelConector>())
             .AddServer(servidor =>
             {
                 servidor
@@ -117,6 +125,11 @@ public static class RegistroDelConectorMcp
                     servidor.SetRefreshTokenReuseLeeway(TimeSpan.FromSeconds(segundos));
                 }
 
+                // Access tokens, códigos y refresh tokens se protegen con el anillo de claves de Data
+                // Protection de la app, que vive en la base: siguen siendo válidos después de un
+                // reinicio o un deploy. OpenIddict exige igual credenciales de firma y cifrado; las
+                // efímeras no protegen ningún token emitido porque el flujo no emite identity tokens.
+                servidor.UseDataProtection();
                 servidor.AddEphemeralEncryptionKey().AddEphemeralSigningKey();
 
                 if (urlPublica is not null)
@@ -152,6 +165,7 @@ public static class RegistroDelConectorMcp
             .AddValidation(validacionDeTokens =>
             {
                 validacionDeTokens.UseLocalServer();
+                validacionDeTokens.UseDataProtection();
 
                 // Sin estas dos validaciones un access token sigue sirviendo hasta vencer aunque
                 // OpenIddict haya revocado su entrada (por ejemplo, toda la cadena al detectar el
@@ -211,11 +225,9 @@ public static class RegistroDelConectorMcp
                 servidorMcp.ServerInstructions = Instrucciones;
             })
             .WithHttpTransport(transporte => transporte.SessionMode = HttpServerSessionMode.Stateless)
-            .WithTools<HerramientasDeIdentidad>()
-            .WithTools<HerramientasDeVentas>()
-            .WithTools<HerramientasDeFichaDeArticulo>();
+            .WithToolsFromAssembly(typeof(RegistroDelConectorMcp).Assembly);
 
-        return EstadoDelConectorMcp.Registrado();
+        return estado;
     }
 
     public static WebApplication UsarConectorMcp(this WebApplication app, EstadoDelConectorMcp estado)
@@ -296,8 +308,8 @@ public static class RegistroDelConectorMcp
         var urls = servicios.GetRequiredService<UrlsDelConector>();
         var aplicaciones = servicios.GetRequiredService<IOpenIddictApplicationManager>();
 
-        // El almacén en memoria es nuevo en cada arranque (nombre único por host): el cliente todavía
-        // no existe.
+        await servicios.GetRequiredService<ContextoOAuthDelConector>().Database.MigrateAsync();
+
         var descriptor = new OpenIddictApplicationDescriptor
         {
             ClientId = opciones.IdDeCliente,
@@ -322,7 +334,7 @@ public static class RegistroDelConectorMcp
             .. urls.RecursosRegistrados.Select(recurso => Permissions.Prefixes.Resource + recurso)
         ]);
 
-        await aplicaciones.CreateAsync(descriptor);
+        await SincronizarClienteAsync(aplicaciones, descriptor);
 
         Logueador(app).LogInformation(
             "Conector MCP (experimental) habilitado: cliente {Cliente}, recursos registrados {Recursos}, " +
@@ -331,6 +343,37 @@ public static class RegistroDelConectorMcp
             string.Join(", ", urls.RecursosRegistrados),
             urls.UrlPublica?.ToString() ?? "(derivada de cada request)",
             new ListaDeMailsHabilitados(opciones.MailsHabilitados).Cantidad);
+    }
+
+    /// <summary>El cliente configurado queda igual a <paramref name="descriptor"/> (redirect URIs,
+    /// permisos y recursos salen de la configuración de este arranque) y cualquier otro cliente se
+    /// borra con sus autorizaciones y tokens: cambiar <c>Mcp:IdDeCliente</c> deja sin acceso al
+    /// anterior.</summary>
+    private static async Task SincronizarClienteAsync(
+        IOpenIddictApplicationManager aplicaciones, OpenIddictApplicationDescriptor descriptor)
+    {
+        if (await aplicaciones.FindByClientIdAsync(descriptor.ClientId!) is { } existente)
+        {
+            await aplicaciones.UpdateAsync(existente, descriptor);
+        }
+        else
+        {
+            await aplicaciones.CreateAsync(descriptor);
+        }
+
+        var otros = new List<object>();
+        await foreach (var aplicacion in aplicaciones.ListAsync())
+        {
+            if (!string.Equals(await aplicaciones.GetClientIdAsync(aplicacion), descriptor.ClientId, StringComparison.Ordinal))
+            {
+                otros.Add(aplicacion);
+            }
+        }
+
+        foreach (var aplicacion in otros)
+        {
+            await aplicaciones.DeleteAsync(aplicacion);
+        }
     }
 
     private static void MapearEndpoints(WebApplication app)

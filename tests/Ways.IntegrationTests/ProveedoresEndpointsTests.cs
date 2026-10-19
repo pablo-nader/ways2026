@@ -333,4 +333,95 @@ public class ProveedoresEndpointsTests(WaysApiFixture fixture) : IClassFixture<W
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
+
+    // ---- GET /api/proveedores?cuit=: igualdad exacta sobre los dígitos, en SQL -----------------------
+
+    private static async Task<List<int>> IdsPorCuitAsync(HttpClient cliente, string consulta)
+    {
+        var listado = await cliente.GetFromJsonAsync<PaginaDe<ProveedorListado>>($"/api/proveedores?{consulta}");
+        return listado!.Items.Select(p => p.Id).ToList();
+    }
+
+    private static async Task<int> CrearAsync(HttpClient cliente, int idCondicionFiscal, string razonSocial, string? cuit = null)
+    {
+        var alta = await cliente.PostAsJsonAsync("/api/proveedores", AltaValida(idCondicionFiscal, razonSocial, cuit));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        return (await alta.Content.ReadFromJsonAsync<ProveedorListado>())!.Id;
+    }
+
+    /// <summary>Cláusula bajo prueba: el patrón <c>^[^0-9]*d[^0-9]*d...$</c> con <c>Regex.IsMatch</c>, traducido a
+    /// <c>cuit ~ patrón</c> sobre el lado guardado. Los tres cuits equivalentes están guardados en formatos
+    /// distintos (la unicidad es sobre el texto exacto) y los tres tienen que aparecer con cualquier forma
+    /// del pedido; los que tienen dos separadores prueban que no se quita solo el primero (así se comporta el
+    /// <c>regexp_replace</c> que Npgsql genera para <c>Regex.Replace</c>, sin la bandera <c>g</c>).</summary>
+    [Fact]
+    public async Task ElFiltroPorCuitComparaSoloLosDigitosEnSqlDeAmbosLados()
+    {
+        var (idCondicionFiscal, mailAdmin, passwordAdmin, _) =
+            await AprovisionarTenantAsync(nameof(ElFiltroPorCuitComparaSoloLosDigitosEnSqlDeAmbosLados));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var conGuiones = await CrearAsync(admin, idCondicionFiscal, "Beta con guiones", "30-71234567-9");
+        var sinSeparadores = await CrearAsync(admin, idCondicionFiscal, "Alfa sin separadores", "30712345679");
+        var conEspacios = await CrearAsync(admin, idCondicionFiscal, "Gamma con espacios", "30 71234567 9");
+        await CrearAsync(admin, idCondicionFiscal, "Otro cuit", "30-71234567-8");
+        await CrearAsync(admin, idCondicionFiscal, "Sin cuit");
+
+        foreach (var pedido in new[] { "30712345679", "30-71234567-9", "30%2071234567%209", "30.71234567.9" })
+        {
+            Assert.Equal(
+                [sinSeparadores, conGuiones, conEspacios], await IdsPorCuitAsync(admin, $"cuit={pedido}"));
+        }
+    }
+
+    [Fact]
+    public async Task ElFiltroPorCuitSeCombinaConLaBusquedaYNuncaTraeProveedoresDeOtroTenant()
+    {
+        var (idCondicionFiscalA, mailAdminA, passwordAdminA, _) =
+            await AprovisionarTenantAsync(nameof(ElFiltroPorCuitSeCombinaConLaBusquedaYNuncaTraeProveedoresDeOtroTenant) + "-A");
+        var (idCondicionFiscalB, mailAdminB, passwordAdminB, _) =
+            await AprovisionarTenantAsync(nameof(ElFiltroPorCuitSeCombinaConLaBusquedaYNuncaTraeProveedoresDeOtroTenant) + "-B");
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+
+        var alfa = await CrearAsync(adminA, idCondicionFiscalA, "Alfa", "30-71234567-9");
+        await CrearAsync(adminA, idCondicionFiscalA, "Beta", "30712345679");
+        await CrearAsync(adminB, idCondicionFiscalB, "Alfa de otro tenant", "30712345679");
+
+        Assert.Equal([alfa], await IdsPorCuitAsync(adminA, "cuit=30712345679&busqueda=alfa"));
+        Assert.Equal(2, (await IdsPorCuitAsync(adminA, "cuit=30712345679")).Count);
+    }
+
+    [Fact]
+    public async Task ElFiltroPorCuitExcluyeLosDadosDeBajaSalvoQueSePidanLosEliminados()
+    {
+        var (idCondicionFiscal, mailAdmin, passwordAdmin, _) =
+            await AprovisionarTenantAsync(nameof(ElFiltroPorCuitExcluyeLosDadosDeBajaSalvoQueSePidanLosEliminados));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var vivo = await CrearAsync(admin, idCondicionFiscal, "Vivo", "30-71234567-9");
+        var dadoDeBaja = await CrearAsync(admin, idCondicionFiscal, "Dado de baja", "30712345679");
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/api/proveedores/{dadoDeBaja}")).StatusCode);
+
+        Assert.Equal([vivo], await IdsPorCuitAsync(admin, "cuit=30712345679"));
+        Assert.Equal([dadoDeBaja, vivo], await IdsPorCuitAsync(admin, "cuit=30712345679&incluirEliminados=true"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("3071234567")]
+    [InlineData("307123456790")]
+    [InlineData("abcdefghijk")]
+    public async Task UnCuitSinOnceDigitosEsUnaSolicitudInvalidaConCodigoEstable(string cuit)
+    {
+        var (_, mailAdmin, passwordAdmin, _) =
+            await AprovisionarTenantAsync(nameof(UnCuitSinOnceDigitosEsUnaSolicitudInvalidaConCodigoEstable) + cuit.Length);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.GetAsync($"/api/proveedores?cuit={cuit}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cuit_invalido", problema.GetProperty("codigo").GetString());
+    }
 }

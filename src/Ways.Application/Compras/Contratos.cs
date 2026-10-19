@@ -150,7 +150,8 @@ public sealed record CompraDetalle(
     bool PreciosIncluyenIva,
     IReadOnlyList<PercepcionDeCompraDetalle> Percepciones,
     decimal Pagado,
-    decimal SaldoPendiente);
+    decimal SaldoPendiente,
+    OrigenCompra Origen);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve
@@ -165,7 +166,17 @@ public sealed record CompraListada(
     EstadoCompra Estado,
     DateTimeOffset? FechaRecepcion,
     decimal Total,
-    decimal SaldoPendiente);
+    decimal SaldoPendiente,
+    OrigenCompra Origen);
+
+/// <summary>Una compra que ya tiene el número que se está por cargar (<c>GET /api/compras/duplicados</c>).
+/// <see cref="NumeroExterno"/> es el texto guardado, que puede estar en otro formato que el buscado.</summary>
+public sealed record CompraDuplicada(
+    int Id,
+    EstadoCompra Estado,
+    string NumeroExterno,
+    DateOnly? FechaComprobante,
+    OrigenCompra Origen);
 
 /// <summary>Página de resultados de <c>GET /api/compras</c> — mismo shape que
 /// <c>PaginaDeVentas</c>/<c>PaginaDeGastos</c>.</summary>

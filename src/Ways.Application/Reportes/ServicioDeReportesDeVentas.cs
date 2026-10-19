@@ -270,11 +270,16 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
             .ToList();
     }
 
-    /// <summary><c>pagos_comprobante.importe</c> nunca es negativo (CHECK
-    /// <c>ck_pagos_comprobante_importe_no_negativo</c>, <c>ValidadorDePagos</c> regla 0) — el
-    /// signo lo aporta el <c>Signo</c> del tipo de comprobante del encabezado, mismo discriminador
-    /// que las otras dos rutas, así que una NCX resta sin ninguna rama condicional (design
-    /// decisión 9).</summary>
+    /// <summary><c>pagos_comprobante.importe</c> es lo que entregó el cliente y
+    /// <c>pagos_comprobante.vuelto</c> el cambio devuelto, así que lo que quedó en caja por cada
+    /// pago es <c>importe − vuelto</c>, restado en el medio del propio pago, igual que
+    /// <see cref="Ways.Application.Ventas.MedioDeVentaNeto"/>. El arqueo de
+    /// <see cref="Ways.Application.Caja.LectorDeMovimientosDelTurno"/> resta todos los vueltos del
+    /// medio ancla, así que ambos coinciden mientras el vuelto se dé en efectivo.
+    /// Ninguno de los dos es negativo (CHECK <c>ck_pagos_comprobante_importe_no_negativo</c> y
+    /// <c>ck_pagos_comprobante_vuelto_no_negativo</c>, <c>ValidadorDePagos</c> regla 0) — el signo lo aporta el <c>Signo</c> del tipo de
+    /// comprobante del encabezado, mismo discriminador que las otras dos rutas, así que una NCX
+    /// resta sin ninguna rama condicional (design decisión 9).</summary>
     private async Task<IReadOnlyList<FilaVentasPorMedioPago>> ConsultarPorMedioPagoAsync(
         IReadOnlyCollection<int> idsPuntoVenta, RangoDeReporte rango, CancellationToken ct)
     {
@@ -287,11 +292,13 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
             .Join(
                 db.TiposComprobante.Where(t => t.Clase == ClaseComprobante.Venta),
                 cv => cv.IdTipoComprobante, t => t.Id, (cv, t) => new { cv.Id, t.Signo })
-            .Join(db.PagosComprobante, cv => cv.Id, p => p.IdComprobanteVenta, (cv, p) => new { cv.Signo, p.IdMedioPago, p.Importe })
+            .Join(
+                db.PagosComprobante,
+                cv => cv.Id,
+                p => p.IdComprobanteVenta,
+                (cv, p) => new { cv.Signo, p.IdMedioPago, p.Importe, p.Vuelto })
             .GroupBy(x => x.IdMedioPago)
-            // mutation-proof-tests: la cláusula "x.Signo" es lo único que hace que una NCX reste
-            // acá (probado por PorMedioPagoUnaNcxReduceElSubtotalDelMedioSinRamaEspecial).
-            .Select(g => new { Clave = g.Key, Neto = g.Sum(x => x.Importe * x.Signo), CantidadPagos = g.Count() })
+            .Select(g => new { Clave = g.Key, Neto = g.Sum(x => (x.Importe - x.Vuelto) * x.Signo), CantidadPagos = g.Count() })
             .ToListAsync(ct);
 
         return agregados

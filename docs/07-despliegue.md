@@ -145,10 +145,11 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 ## Conector MCP (experimental)
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
-Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas sus
-herramientas son de solo lectura: `quien_soy`, que devuelve el nombre de usuario, el correo, el rol
-y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, las consultas de
-ventas de la sección siguiente y la ficha de un artículo (`articulo_info`).
+Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Las
+herramientas corren con la identidad y el tenant de la cuenta que autorizó. Son de solo lectura
+`quien_soy`, que devuelve el nombre de usuario, el correo, el rol y el tenant de la cuenta que
+autorizó la conexión, más la hora del servidor, las consultas de ventas y de compras y la ficha
+de un artículo (`articulo_info`) de las secciones siguientes. Las dos de códigos de artículos escriben, y solo agregan.
 
 ### Consultas de ventas
 
@@ -219,6 +220,42 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   unitario cargado, el descuento (un importe de la línea, no un porcentaje) y el costo efectivo por unidad que esa
   compra escribe en el costo nominal (`CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`).
 
+### Consultas de compras
+
+| Herramienta | Qué devuelve |
+|---|---|
+| `contexto_de_compras` | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
+| `buscar_proveedor` | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
+| `buscar_articulos` | Hasta 100 líneas de una factura en una llamada: por línea, el primer match entre código del proveedor, código de barras y nombre, con hasta 5 candidatos, sin costos. |
+
+Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
+cargarla; la carga del borrador todavía no está disponible. Son solo para Admin, igual que las
+escrituras de compras de la API (`GestionDeCatalogo`): con otro rol responden un error sin datos.
+
+### Códigos de artículos
+
+| Herramienta | Qué hace |
+|---|---|
+| `asociar_codigo_de_barras(id_articulo, codigo, confirmar_codigo_no_estandar)` | Asocia un código de barras a un artículo y devuelve sus códigos actuales. |
+| `asociar_codigo_de_proveedor(id_articulo, id_proveedor, codigo)` | Asocia a un artículo el código con que un proveedor lo imprime en su factura. |
+
+Las herramientas de códigos escriben con `ServicioDeArticulos`, el mismo camino que la web, y
+exigen la política `GestionDeCatalogo` de los endpoints del ABM: con otro rol devuelven un error
+sin escribir. Son idempotentes: repetir la misma asociación no agrega nada y responde que ya
+estaba. Si el código pertenece a otro artículo, no escriben y el error nombra a ese artículo
+(nombre, código interno e id, y si está dado de baja) para que decida el usuario. Un artículo o
+proveedor que no existe, o que es de otro tenant, da el mismo error de "no existe". Además,
+`asociar_codigo_de_barras` no escribe un código que no sea un GTIN estándar (8, 12, 13 o 14 dígitos
+con dígito verificador GS1 correcto) mientras la llamada no traiga `confirmar_codigo_no_estandar`
+en `true`: el error le indica a Claude que le pida al usuario confirmar los dígitos leídos. Esa
+regla es solo de la herramienta: la web solo advierte y la API acepta códigos no estándar.
+
+Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
+todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`
+y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sale como resultado con
+`isError` y ese mensaje; una excepción que escapa de la herramienta, incluso una `McpException`, le
+llega a Claude con un mensaje genérico del SDK.
+
 ### Encenderlo
 
 ```env
@@ -259,15 +296,24 @@ node src/Ways.Api/scripts/probar-conector-mcp.mjs https://aipos.site --solo-publ
 
 ### Límites
 
-- **Las conexiones viven en memoria.** Cada deploy o reinicio las borra (claves y tokens
-  incluidos) y hay que volver a autorizar desde Claude.
-- **Una sola instancia.** Con más de una réplica, cada una tendría sus propias claves y
-  conexiones.
+- **Las conexiones sobreviven a los deploys.** El cliente, las autorizaciones y los tokens se
+  guardan en la base (tablas `*_oauth`, ver [doc 10 §11](10-modelo-de-datos/11-conector-mcp.md)),
+  y los tokens se protegen con las mismas claves de Data Protection que la cookie de sesión. Un
+  deploy o un reinicio no obliga a volver a autorizar desde Claude.
+- La app crea esas tablas al arrancar con el flag encendido (migraciones propias del conector,
+  historial en `historial_migraciones_conector_mcp`). Con el flag apagado no las crea ni las toca.
+- Cambiar `Mcp__IdDeCliente` borra el cliente anterior con todas sus conexiones en el siguiente
+  arranque.
+- Una vez por día se borran los tokens y las autorizaciones que ya no sirven y tienen más de 14
+  días.
+- **Una sola instancia.** El cliente se sincroniza en cada arranque, y dos réplicas arrancando a la
+  vez podrían chocar al crearlo.
 - El access token dura 60 minutos (`Mcp__MinutosDeAccessToken`) y se renueva con el refresh token.
 - El refresh token vence a los 14 días sin usarse y cada renovación entrega uno nuevo, así que una
-  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola: se cortan todas
-  reiniciando la app o apagando el flag, y las de un usuario desactivándolo en Ways (lo que también
-  le corta el acceso a Ways).
+  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola desde la app: las
+  de un usuario se cortan desactivándolo en Ways (lo que también le corta el acceso a Ways), y
+  apagar el flag deja todas sin efecto mientras siga apagado (al volver a encenderlo, las que no
+  vencieron vuelven a servir). Reiniciar ya no corta ninguna.
 - La página de autorización no limita los intentos y comparte el bloqueo de cuenta del login: quien
   conozca un mail de `Mcp__MailsHabilitados` puede bloquear esa cuenta probando contraseñas
   incorrectas, igual que desde `/admin/login`.

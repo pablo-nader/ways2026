@@ -763,6 +763,7 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                     npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
                     npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");
@@ -867,6 +868,7 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                     npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
                     npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCuenta>("tipo_movimiento_cuenta");

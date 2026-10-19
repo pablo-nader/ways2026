@@ -40,7 +40,7 @@ task) per the owner's standing preference.
 ## Tasks
 
 - [x] T1 — Backend read model + endpoint + export + tests. Route: delegated (2+ non-trivial files). Evidence: 19 new integration tests + 270 Reportes/Exportacion/Espejo tests green, Ways.Application.Tests 1042 green, SuperficieDeAutorizacion 5 green; mutation proof on category descendants and group filter. Commit: see git log (feat(reportes): ventas por artículo).
-- [ ] T2 — Web page, menu entry, route, API client + Vitest. Route: delegated (2+ non-trivial files).
+- [x] T2 — Web page, menu entry, route, API client + Vitest. Route: delegated (2+ non-trivial files). Evidence: build (tsc -b + vite) OK; oxlint 0 errors; new tests green (reportes.test.ts, ReporteDeVentasPorArticulo.test.tsx, menu.test.ts: 101 passed); full web suite 7540 passed, 1 failed in SeccionDeCuentas.test.tsx (fixed fixture date vs real clock, untouched by this task, fails in isolation). `/reportes` is already in RutasDeLaSpa, no .NET change.
 
 ## Acceptance criteria
 
@@ -60,4 +60,4 @@ task) per the owner's standing preference.
 
 ## Next step
 
-T2.
+T1 shipped in #458, T2 in #460 (judgment-day APPROVED). Follow-ups in #461.
