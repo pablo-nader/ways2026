@@ -10384,6 +10384,8 @@ describe('Pos — artículos por importe', () => {
       servidorConAtajos()
       await montar()
       await screen.findByRole('button', { name: /^Fiambrería/ })
+      // El botón aparece en el commit; el handler del atajo se actualiza en un efecto posterior.
+      await userEvent.click(campoDeCodigo())
 
       fireEvent.keyDown(document, { key: 'F5' })
 
