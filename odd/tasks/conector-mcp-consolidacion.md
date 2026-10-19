@@ -109,6 +109,10 @@ Judgment-day, ronda 1 de correcciones (ledger congelado sobre `7203e061`, sin CR
   acota a "sin request". Commit `12a560dc`. Mutación: sin el chequeo de nulo → cae `SinRequestNingunaPoliticaSeCumple`.
 - [x] L9 Mutación del paso de nombre exacto corrida y registrada en T3. Commit `cdfe8e02`.
 - Verificado: el sha de T0 es `2b008799` (commit que crea este documento), no `e5a1d43c`.
+- Ronda 2 (re-juicio ciego del delta `7203e061..ceebdf48`): L2–L9 FIXED; L1 PARCIAL por la cláusula del
+  resumen de clase de `ServicioDeConsultasDeVentas` que generalizaba "leen sin filtros y acotan acá" a la
+  consulta de un solo artículo, que le pasa su id al reporte. Corregida en el commit `docs(mcp): el resumen
+  de clase distingue el listado de la consulta de un artículo` (prosa, sin regla que mutar).
 - Diferidos a la rebanada 2: L10 (esquemas de entrada de las 11 tools y que ninguna publique `log`), L11 (paridad
   de `AcotarComoElReporteAsync` con el reporte: helper compartido o test de paridad) y verificar con un test si el
   mensaje de una `McpException` llega al cliente antes de tocar esa prosa.
@@ -151,5 +155,6 @@ Ronda 1 del judgment-day, observado sobre `cdfe8e02` (main sigue en `e22281db`):
 ## Progreso
 
 - Rebanada 1 completa en `pnader/mcp-consolidacion-1`, rebaseada sobre `origin/main` después del merge de #477.
-- Ronda 1 del judgment-day corregida (L1–L9). Siguiente paso: re-juicio de la ronda 1 (orquestador) y después la
+- Rondas 1 y 2 del judgment-day corregidas (L1–L9 y el resumen de clase). Siguiente paso: re-juicio de la ronda 2
+  (orquestador), PR con auto-merge y después la
   rebanada 2.

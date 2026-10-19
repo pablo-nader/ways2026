@@ -86,9 +86,10 @@ public sealed record AgrupacionConsultada(
 /// <see cref="ServicioDeReportesDeVentas"/> (mismo criterio que el reporte de la web) y solo suma lo
 /// que el reporte entrega por empresa. La excepción es el desglose por medio de pago, que es una
 /// consulta propia porque descuenta el vuelto (ver <see cref="ConsultarMediosDePagoAsync"/>), y las
-/// consultas por artículo (área, grupo, categoría, marca y artículo), que leen sin filtros
-/// <see cref="ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync"/> y acotan o agrupan sus filas acá:
-/// la clasificación es la ACTUAL del artículo y las líneas sin artículo no cuentan.
+/// consultas por artículo, que leen <see cref="ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync"/>:
+/// el listado y la agrupación (área, grupo, categoría, marca y artículo) lo leen sin filtros y acotan o
+/// agrupan sus filas acá, y la consulta de un solo artículo le pasa su id. La clasificación es la ACTUAL
+/// del artículo y las líneas sin artículo no cuentan.
 /// Cada empresa resuelve su propia zona horaria y su propio "hoy".
 /// </summary>
 public class ServicioDeConsultasDeVentas(
