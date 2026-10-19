@@ -6,6 +6,7 @@ import {
   calcularTotalesDeCompra,
   clienteDeCompras,
   discriminaIvaEfectivo,
+  esBorradorCargadoPorElAsistente,
   etiquetaDeEstadoCompra,
   itemAFormulario,
   ivaImpresoDesdeDetalle,
@@ -714,6 +715,15 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [errorAnular, setErrorAnular] = useState('')
   const [resultadoAnulacion, setResultadoAnulacion] = useState<ResultadoAnulacion | null>(null)
 
+  // Descartar el borrador (borrado físico): puerta de confirmación + escritura propia. La puerta sigue abierta durante
+  // todo el DELETE, así que `ocupado` deja inerte el resto de la pantalla hasta que la respuesta llega y nada puede
+  // reemplazar lo que ella escribe; la respuesta navega, por eso pregunta si la pantalla sigue montada. Su rechazo se muestra en el `error` de la
+  // pantalla, que ningún otro flujo escribe mientras éste está en curso.
+  const [descartandoBorrador, setDescartandoBorrador] = useState(false)
+  const descartandoBorradorRef = useRef(false)
+  const [descartarBorradorAbierto, setDescartarBorradorAbierto] = useState(false)
+  const [disparadorDeDescartarBorrador, setDisparadorDeDescartarBorrador] = useState<HTMLElement | null>(null)
+
   const [pagoAbierto, setPagoAbierto] = useState(false)
 
   // El pago ya trae el pagado y el saldo pendiente leídos bajo el lock de la compra: se vuelcan al
@@ -734,7 +744,14 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   // Las puertas de "descartar cambios" y de "cambiar el proveedor" dejan inerte el resto de la
   // pantalla mientras están abiertas.
-  const ocupado = guardando || anulando || aplicandoPrecios || vinculandoGasto || descartarAbierto || proveedorPendiente !== null
+  const ocupado =
+    guardando ||
+    anulando ||
+    aplicandoPrecios ||
+    vinculandoGasto ||
+    descartarBorradorAbierto ||
+    descartarAbierto ||
+    proveedorPendiente !== null
 
   function cambiarTipo(valor: string) {
     if (ocupado) return
@@ -984,6 +1001,32 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     setErrorVincularGasto(errorDelVinculo ?? '')
   }
 
+  function pedirDescartarBorrador(evento: MouseEvent<HTMLButtonElement>) {
+    // Se captura acá, sincrónicamente: para cuando corra un efecto el botón ya está deshabilitado.
+    setDisparadorDeDescartarBorrador(evento.currentTarget)
+    setError('')
+    setDescartarBorradorAbierto(true)
+  }
+
+  async function descartarBorrador() {
+    if (descartandoBorradorRef.current) return
+    if (idCompra === null) return
+
+    descartandoBorradorRef.current = true
+    setDescartandoBorrador(true)
+
+    try {
+      await clienteDeCompras.descartar(idCompra)
+      if (montado.current) navigate('/compras')
+    } catch (e) {
+      setDescartarBorradorAbierto(false)
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo descartar el borrador.')
+    } finally {
+      descartandoBorradorRef.current = false
+      setDescartandoBorrador(false)
+    }
+  }
+
   async function anular() {
     // regla 9: guard de reentrancia de primera línea.
     if (ocupado) return
@@ -1069,6 +1112,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
           <div className="alert alert-info py-1 px-2 small">
             Vinculada a la orden de compra{' '}
             <Link to={`/ordenes-compra/${encabezado.idOrdenCompra}`}>#{encabezado.idOrdenCompra}</Link>.
+          </div>
+        )}
+        {esBorradorCargadoPorElAsistente(compra) && (
+          <div className="alert alert-warning py-1 px-2 small" role="status">
+            Cargado por el asistente: revisá contra la factura antes de confirmar.
           </div>
         )}
         {idDesdeGasto !== null && !gastoVinculado && (
@@ -1335,7 +1383,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={pedirCancelar}>
                     Cancelar
                   </button>
+                  {!esNuevo && (
+                    <button type="button" className="btn btn-outline-danger ms-auto" disabled={ocupado} onClick={pedirDescartarBorrador}>
+                      Descartar borrador
+                    </button>
+                  )}
                 </div>
+
                 <div className="small text-muted mb-3">
                   {lineasCompletas.some((l) => l.idArticulo !== '')
                     ? 'Guardar confirma la compra y es irreversible: el stock entra, el costo del artículo se actualiza y no se puede volver a borrador.'
@@ -1358,6 +1412,20 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   setProveedorPendiente(null)
                 }}
                 onCancelar={() => setProveedorPendiente(null)}
+              />
+            )}
+
+            {descartarBorradorAbierto && (
+              <ConfirmacionDeBaja
+                titulo="este borrador"
+                pregunta="Descartar"
+                nota="Se borra con todas sus líneas y no se puede recuperar. El número de comprobante del proveedor queda libre para cargarlo de nuevo."
+                etiquetaConfirmar="Confirmar descarte"
+                etiquetaEnCurso="Descartando…"
+                ocupado={descartandoBorrador}
+                disparador={disparadorDeDescartarBorrador}
+                onConfirmar={() => void descartarBorrador()}
+                onCancelar={() => setDescartarBorradorAbierto(false)}
               />
             )}
 

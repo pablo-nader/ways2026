@@ -79,6 +79,12 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
             .HasColumnType("estado_compra")
             .IsRequired();
 
+        builder.Property(c => c.Origen)
+            .HasColumnName("origen")
+            .HasColumnType("origen_compra")
+            .HasDefaultValueSql("'manual'::origen_compra")
+            .IsRequired();
+
         // Etapa 16 (proposal §D): ALTER aditivo, metadata-only en PG 11+ — NULL = una compra
         // que llegó sin orden, el 100% del tráfico previo a esta etapa y un estado
         // permanentemente legítimo.

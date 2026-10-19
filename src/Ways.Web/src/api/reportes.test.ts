@@ -9,6 +9,7 @@ import type {
   FiltrosDeReporteDeArticulos,
   FiltrosDeTesoreria,
   FiltrosDeTopArticulos,
+  FiltrosDeVentasPorArticulo,
 } from './reportes'
 
 const apiGetMock = vi.fn(() => Promise.resolve(undefined))
@@ -27,8 +28,10 @@ const {
   construirQueryDeReporte,
   construirQueryDeReporteDeArticulos,
   construirQueryDeTesoreria,
+  construirQueryDeVentasPorArticulo,
   filtrosDeHistoricoDeCajasVacios,
   filtrosDeReporteDeArticulosVacios,
+  rangoDeLaSemanaActual,
   rangoDelMesActual,
   rangoUltimosSieteDias,
   rutasDeExportacion,
@@ -498,5 +501,73 @@ describe('libro de una cuenta de tesorería', () => {
 
     expect(apiGetMock).toHaveBeenNthCalledWith(1, '/reportes/tesoreria/cuentas?idEmpresa=7')
     expect(apiGetMock).toHaveBeenNthCalledWith(2, '/reportes/tesoreria/cuentas/12/libro?pagina=1&tamanio=25')
+  })
+})
+
+function filtrosVentasPorArticuloFixture(sobrescribir: Partial<FiltrosDeVentasPorArticulo> = {}): FiltrosDeVentasPorArticulo {
+  return {
+    idEmpresa: 1,
+    idPuntoVenta: null,
+    desde: '2026-10-12',
+    hasta: '2026-10-18',
+    idArea: null,
+    idGrupo: null,
+    idCategoria: null,
+    idArticulo: null,
+    ...sobrescribir,
+  }
+}
+
+describe('construirQueryDeVentasPorArticulo', () => {
+  it('sin filtros opcionales manda solo empresa y rango', () => {
+    expect(construirQueryDeVentasPorArticulo(filtrosVentasPorArticuloFixture())).toBe(
+      '?idEmpresa=1&desde=2026-10-12&hasta=2026-10-18',
+    )
+  })
+
+  it('agrega cada filtro seteado exactamente una vez', () => {
+    const query = construirQueryDeVentasPorArticulo(
+      filtrosVentasPorArticuloFixture({ idPuntoVenta: 7, idArea: 2, idGrupo: 3, idCategoria: 4, idArticulo: 5 }),
+    )
+    const parametros = new URLSearchParams(query)
+
+    expect(parametros.getAll('idPuntoVenta')).toEqual(['7'])
+    expect(parametros.getAll('idArea')).toEqual(['2'])
+    expect(parametros.getAll('idGrupo')).toEqual(['3'])
+    expect(parametros.getAll('idCategoria')).toEqual(['4'])
+    expect(parametros.getAll('idArticulo')).toEqual(['5'])
+  })
+
+  it('un id en cero se manda: null y 0 no son lo mismo', () => {
+    expect(construirQueryDeVentasPorArticulo(filtrosVentasPorArticuloFixture({ idArea: 0 }))).toContain('idArea=0')
+  })
+
+  it('el cliente y el export comparten el mismo query; el export suma formato=xlsx una sola vez', async () => {
+    const filtros = filtrosVentasPorArticuloFixture({ idGrupo: 3 })
+    const query = construirQueryDeVentasPorArticulo(filtros)
+    apiGetMock.mockClear()
+
+    await clienteDeReportes.ventasPorArticulo(filtros)
+
+    expect(apiGetMock).toHaveBeenCalledWith(`/reportes/ventas/por-articulo${query}`)
+    expect(rutasDeExportacion.ventasPorArticulo(filtros)).toBe(`/reportes/ventas/por-articulo/export${query}&formato=xlsx`)
+  })
+})
+
+describe('rangoDeLaSemanaActual', () => {
+  it('desde el lunes hasta hoy cuando hoy es miércoles', () => {
+    expect(rangoDeLaSemanaActual(new Date(2026, 9, 14))).toEqual({ desde: '2026-10-12', hasta: '2026-10-14' })
+  })
+
+  it('un lunes es solo ese día', () => {
+    expect(rangoDeLaSemanaActual(new Date(2026, 9, 12))).toEqual({ desde: '2026-10-12', hasta: '2026-10-12' })
+  })
+
+  it('un domingo abarca la semana completa que empezó el lunes anterior', () => {
+    expect(rangoDeLaSemanaActual(new Date(2026, 9, 18))).toEqual({ desde: '2026-10-12', hasta: '2026-10-18' })
+  })
+
+  it('cruza el cambio de mes hacia atrás', () => {
+    expect(rangoDeLaSemanaActual(new Date(2026, 10, 1))).toEqual({ desde: '2026-10-26', hasta: '2026-11-01' })
   })
 })
