@@ -40,7 +40,7 @@ proveedor como BORRADOR de compra. La confirmación sigue siendo humana, en la w
 
 ## Tareas
 
-- [ ] **T1 — Alta transaccional + descartar borrador** (PR 1)
+- [x] **T1 — Alta transaccional + descartar borrador** (PR 1)
   - Alta en una transacción sin reintento; test con falla al guardar hijos sin header huérfano.
   - `DELETE /api/compras/{id}` con 404 primero, 409 estable, lock, auditoría, guardas estructurales.
   - Web: botón "Descartar borrador" con confirmación en el editor.
@@ -63,7 +63,7 @@ proveedor como BORRADOR de compra. La confirmación sigue siendo humana, en la w
 
 Ruta por tarea, commits y resultado de judgment-day se anotan acá al cerrar cada una.
 
-- **T1** (escritor delegado, sin commitear): alta en `EjecutarAltaDeBorradorAsync` (forma (b), una transacción,
+- **T1** (ruta: escritor delegado, disparador: 2+ archivos no triviales; commit be976719): alta en `EjecutarAltaDeBorradorAsync` (forma (b), una transacción,
   `ExigirOrdenLigableAsync` adentro); `DescartarBorradorAsync` + `DELETE /api/compras/{id}` (404 primero, lock
   `FOR UPDATE ... estado='borrador'`, 409 `compra_no_descartable`, borrado físico de hijos y encabezado por ADO, auditoría
   `compra.descarte` sin migración: la columna `accion` es `text`). Ninguna tabla puede referenciar un borrador: los seis
@@ -73,6 +73,12 @@ Ruta por tarea, commits y resultado de judgment-day se anotan acá al cerrar cad
   `BajasEstructuralesTests` (`DELETE FROM` permitido en `ServicioDeCompras.cs`). Web: botón "Descartar borrador" con
   `ConfirmacionDeBaja`, ref de reentrancia y `useMontado` antes de navegar.
 
+- **T1 checks**: Domain 1706 ok; Application 1046 ok (proyecto entero); integración filtrada (ComprasDescarte,
+  EscriturasSinReintento, SuperficieDeAutorizacion, ComprasLifecycle, Ligadura, AuditoriaAnulacionCompra,
+  ManejadorDeErroresCompras) 106 ok; Vitest CompraEditor 150 ok; tsc y oxlint ok. Judgment-day: APPROVED en ronda 1, sin
+  hallazgos severos. Info: el catálogo web de acciones auditadas no incluye `compra.descarte` (ya le faltaban siete
+  acciones previas: seguimiento aparte); el descarte no tiene test de reintento conductual, solo el estructural.
+
 ## Próximo paso
 
-T1.
+T2.
