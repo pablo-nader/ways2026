@@ -120,9 +120,27 @@ Judgment-day, ronda 1 de correcciones (ledger congelado sobre `7203e061`, sin CR
 Rebanada 2, rama `pnader/mcp-consolidacion-2`, apilada sobre `pnader/mcp-consolidacion-1` (#478). Orden de
 ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la prosa se reescribe una sola vez, después).
 
-- [ ] R2-T1 — Prosa de `Instrucciones` y docs/07 (matriz de roles por tool, identidad, herramientas de
-  asociación atadas al flujo de factura, `zona_horaria` no es argumento, "código de barras activo"), la afirmación
-  sobre `McpException` verificada o retirada, y un test de que `instructions` nombra las once tools.
+- [x] R2-T1 — Prosa de `Instrucciones` y docs/07, la `McpException` verificada y un test de que `instructions`
+  nombra las once tools. Ruta: inline (writer único de la rebanada).
+  - `McpException`: verificada con `ConectorMcpErroresQueEscapanTests`, que registra dos tools de prueba solo en
+    el host del test (`ConfigureTestServices` + `McpServerTool.Create`). Resultado observado con el SDK 2.2.0:
+    las dos llegan como resultado con `isError`; una excepción común trae solo
+    `An error occurred invoking '<tool>'.` y una `McpException` trae ese texto seguido de `: <su mensaje>`. La
+    afirmación de docs/07 y del resumen de `ResultadoDeHerramienta` ("incluso el de una `McpException`") era
+    falsa y se corrigió; el primer borrador del test, que imprimía las dos respuestas, es la evidencia.
+  - `Instrucciones`: matriz de roles por tool (todos: `quien_soy`, `articulo_info`; Supervisor y Admin: las tres
+    de ventas; Admin: las cuatro de compras y las dos de códigos), la negación de ventas como texto y la de
+    compras y códigos como error, `contexto_de_compras` con percepciones y rol, las dos de asociación atadas a la
+    factura (si `buscar_articulos` no encontró la línea por el código del proveedor y el usuario confirma el
+    artículo), y sin el fragmento `"Las consultas de " +` en una línea propia.
+  - docs/07: tabla de roles e identidad (`quien_soy`), argumentos en camelCase, `zona_horaria` como parámetro de
+    Ways resuelto por empresa o punto de venta (no argumento), el contiene "ni acentos" sobre nombre o código
+    interno, las de códigos atadas a la factura, y la conducta real de la `McpException`. La descripción de
+    `articulo_info` y de su argumento pasan a decir "código de barras activo", como el código (`c.Activo`).
+  - Test: `LasInstruccionesNombranCadaHerramientaYLaFraseDeEscrituraNombraLasQueNoSonDeSoloLectura` (en la clase
+    del conjunto; reemplaza al test de las tres de escritura de `ConectorMcpCrearBorradorDeCompraTests`). Sin RED
+    (la prosa vieja también nombraba las once). Mutación: `ventas_resumen` → `ventas_total` en `Instrucciones` →
+    cae con `Item: "ventas_resumen"`.
 - [x] R2-T2 — Test del conjunto exacto de once tools. Ruta: inline (writer único de la rebanada).
   `ConectorMcpConjuntoDeHerramientasTests`: `tools/list` anuncia exactamente las once, cada una con su título, sus
   cuatro anotaciones, sus argumentos y sus requeridos (cierra L10: antes había esquemas fijados para 6 de 11); y

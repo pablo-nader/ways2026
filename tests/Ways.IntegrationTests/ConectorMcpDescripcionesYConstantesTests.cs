@@ -61,7 +61,8 @@ public partial class ConectorMcpDescripcionesYConstantesTests
             { "articulo_info", null, $"de los últimos {ServicioDeFichaDeArticulo.DiasDeVentas} días contando hoy" },
             {
                 "articulo_info", "compras",
-                $"de 1 a {ServicioDeFichaDeArticulo.ComprasMaximas}. Por defecto {ServicioDeFichaDeArticulo.ComprasPorDefecto}."
+                $"de 1 a {ServicioDeFichaDeArticulo.ComprasMaximas}. " +
+                $"Por defecto {ServicioDeFichaDeArticulo.ComprasPorDefecto}."
             },
             {
                 "ventas_resumen", null,
@@ -95,7 +96,9 @@ public partial class ConectorMcpDescripcionesYConstantesTests
     [Fact]
     public void LosDiasQueNombranLasInstruccionesSalenDeSusConstantes()
     {
-        var dias = DiasNombrados().Matches(Instrucciones()).Select(m => int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).ToHashSet();
+        var dias = DiasNombrados().Matches(Instrucciones())
+            .Select(m => int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture))
+            .ToHashSet();
 
         Assert.Equal(
             new[] { ServicioDeFichaDeArticulo.DiasDeVentas, SpanMaximoEnDias }.Order(),

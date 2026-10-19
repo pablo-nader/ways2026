@@ -32,7 +32,9 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
 
     private static readonly Esperada[] Herramientas =
     [
-        new("articulo_info", "Ficha de artículo", true, false, true, false, ["articulo", "compras", "empresa"], ["articulo"]),
+        new(
+            "articulo_info", "Ficha de artículo", true, false, true, false,
+            ["articulo", "compras", "empresa"], ["articulo"]),
         new(
             "asociar_codigo_de_barras", "Asociar código de barras a un artículo", false, false, true, false,
             ["codigo", "confirmarCodigoNoEstandar", "idArticulo"], ["codigo", "idArticulo"]),
@@ -60,7 +62,8 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
             "ventas_por_articulo", "Ventas por artículo", true, false, true, false,
             [
                 .. AlcanceDeVentas
-                    .Concat(["area", "articulo", "categoria", "grupo", "limite", "marca", "orden", "proveedor", "texto"])
+                    .Concat(
+                        ["area", "articulo", "categoria", "grupo", "limite", "marca", "orden", "proveedor", "texto"])
                     .Order(StringComparer.Ordinal)
             ],
             []),
@@ -76,18 +79,30 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
                 ? Ordenados(valor.EnumerateArray().Select(r => r.GetString()!))
                 : Ordenados(valor.EnumerateObject().Select(p => p.Name));
 
-    private async Task<Dictionary<string, JsonElement>> ListarAsync(string nombre)
+    private async Task<Dictionary<string, JsonElement>> ListarAsync(string nombre) =>
+        (await ListarConInstruccionesAsync(nombre)).Herramientas;
+
+    private async Task<(Dictionary<string, JsonElement> Herramientas, string Instrucciones)> ListarConInstruccionesAsync(
+        string nombre)
     {
         var usuario = await _apoyo.SembrarUsuarioDeTenantAsync(nombre);
         await using var host = _apoyo.HostConConector(usuario.Mail);
         using var cliente = Cliente(host);
         var token = (await ObtenerTokensAsync(cliente, usuario.Mail)).GetProperty("access_token").GetString()!;
 
-        var (estado, mensaje) = await LlamarMcpAsync(cliente, token, "tools/list");
+        var (estado, lista) = await LlamarMcpAsync(cliente, token, "tools/list");
+        var (_, inicio) = await LlamarMcpAsync(cliente, token, "initialize", new
+        {
+            protocolVersion = "2025-11-25",
+            capabilities = new { },
+            clientInfo = new { name = "pruebas", version = "1.0" }
+        });
 
         Assert.Equal(HttpStatusCode.OK, estado);
-        return mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
-            .ToDictionary(h => h.GetProperty("name").GetString()!, h => h.Clone());
+        return (
+            lista!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
+                .ToDictionary(h => h.GetProperty("name").GetString()!, h => h.Clone()),
+            inicio!.Value.GetProperty("result").GetProperty("instructions").GetString()!);
     }
 
     [Fact]
@@ -120,7 +135,8 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
     /// <summary>Una línea por herramienta: si algo difiere, el mensaje del assert dice qué y en cuál.</summary>
     private static string Describir(Esperada h) =>
         $"{h.Nombre} | {h.Titulo} | readOnly={h.SoloLectura} destructive={h.Destructiva} idempotent={h.Idempotente} " +
-        $"openWorld={h.MundoAbierto} | argumentos: {string.Join(", ", h.Argumentos)} | requeridos: {string.Join(", ", h.Requeridos)}";
+        $"openWorld={h.MundoAbierto} | argumentos: {string.Join(", ", h.Argumentos)} | " +
+        $"requeridos: {string.Join(", ", h.Requeridos)}";
 
     /// <summary>Del lado del código: cada parámetro de un método <see cref="McpServerToolAttribute"/> que lleva
     /// <see cref="DescriptionAttribute"/> es un argumento y se publica con su nombre; los que no la llevan (el
@@ -145,7 +161,28 @@ public class ConectorMcpConjuntoDeHerramientasTests(WaysApiFixture fixture) : IC
                 .Where(p => p.GetCustomAttribute<DescriptionAttribute>() is not null)
                 .Select(p => p.Name!);
 
-            Assert.Equal(Ordenados(argumentos), Nombres(publicadas[atributo!.Name!].GetProperty("inputSchema"), "properties"));
+            Assert.Equal(
+                Ordenados(argumentos), Nombres(publicadas[atributo!.Name!].GetProperty("inputSchema"), "properties"));
         }
+    }
+
+    /// <summary>Las instrucciones del servidor nombran cada herramienta que anuncia <c>tools/list</c>, y su frase de
+    /// escritura nombra exactamente las que se anuncian sin solo lectura, en el orden en que la prosa las pone.</summary>
+    [Fact]
+    public async Task LasInstruccionesNombranCadaHerramientaYLaFraseDeEscrituraNombraLasQueNoSonDeSoloLectura()
+    {
+        var (publicadas, instrucciones) = await ListarConInstruccionesAsync("mcp-conjunto-instrucciones");
+
+        Assert.All(publicadas.Keys, nombre => Assert.Matches($@"\b{nombre}\b", instrucciones));
+        var deEscritura = publicadas
+            .Where(h => !h.Value.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean())
+            .Select(h => h.Key)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        Assert.Equal(["asociar_codigo_de_barras", "asociar_codigo_de_proveedor", "crear_borrador_de_compra"], deEscritura);
+        Assert.Contains(
+            $"todas sus herramientas son de solo lectura salvo {deEscritura[2]}, {deEscritura[0]} y {deEscritura[1]}.",
+            instrucciones,
+            StringComparison.Ordinal);
     }
 }

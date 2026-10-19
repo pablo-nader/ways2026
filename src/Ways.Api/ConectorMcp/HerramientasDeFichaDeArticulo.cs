@@ -26,7 +26,7 @@ public sealed class HerramientasDeFichaDeArticulo
     [Description(
         "Ficha de un artículo: qué precio y stock tiene, cuánto se vendió en el último mes y, solo para Supervisor y " +
         "Admin, a qué costo y a quién se le compró por última vez. El artículo se indica por id, código interno, " +
-        "código de barras o nombre; se prueba en ese orden y la primera coincidencia exacta (sin distinguir " +
+        "código de barras activo o nombre; se prueba en ese orden y la primera coincidencia exacta (sin distinguir " +
         "mayúsculas) gana; recién si no hay ninguna se busca el texto contenido en el nombre o en el código (sin distinguir " +
         "mayúsculas ni acentos). Si " +
         "queda más de un candidato devuelve hasta 10 para que se elija uno por id o código. Muestra: la " +
@@ -50,7 +50,7 @@ public sealed class HerramientasDeFichaDeArticulo
         IHttpContextAccessor http,
         ServicioDeFichaDeArticulo fichas,
         ILogger<HerramientasDeFichaDeArticulo> log,
-        [Description("El artículo: id, código interno, código de barras o nombre (o parte del nombre).")]
+        [Description("El artículo: id, código interno, código de barras activo o nombre (o parte del nombre).")]
         string articulo,
         [Description("Empresa, por id o por nombre. Si se omite, todas las empresas del tenant.")]
         string? empresa = null,

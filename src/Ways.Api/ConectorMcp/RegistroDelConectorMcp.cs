@@ -27,29 +27,35 @@ public static class RegistroDelConectorMcp
     private const string Instrucciones =
         "Servidor MCP de Ways, un sistema de gestión comercial y punto de venta. Es experimental y todas sus " +
         "herramientas son de solo lectura salvo crear_borrador_de_compra, asociar_codigo_de_barras y " +
-        "asociar_codigo_de_proveedor. quien_soy informa con qué usuario y tenant quedó autorizada la conexión. " +
-        "Las consultas de " +
-        "ventas son solo para Supervisor y Admin: ventas_resumen responde cuánto se vendió (por ejemplo, " +
-        "'¿cuánto vendimos hoy?'); ventas_agrupadas lo abre por punto de venta, medio de pago, vendedor, día, " +
-        "área, grupo, categoría o marca ('¿cuánto vendió cada vendedor esta semana?', '¿qué marca vendió más este " +
-        "mes?'); ventas_por_articulo lista los artículos más vendidos, con filtros por texto, área, grupo, categoría, " +
-        "marca y proveedor ('¿cuánto se vendió de Coca-Cola el mes pasado?'). El período se indica con un " +
-        "nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona " +
-        "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
-        "366 días). articulo_info es la ficha de un artículo y está abierta a todos los roles ('¿qué precio y " +
-        "stock tiene Cola 2L?', '¿a qué precio lo compramos la última vez y a quién?'): precios vigentes por " +
-        "lista, stock por punto de venta, ventas de los últimos 30 días y últimas compras; las ventas, el costo " +
-        "y las compras solo se muestran a Supervisor y Admin. " +
-        "Para cargar una factura de proveedor (solo Admin): primero contexto_de_compras (puntos de " +
-        "venta, tipos de comprobante de compra y alícuotas de IVA), después buscar_proveedor (por CUIT o nombre), " +
-        "después buscar_articulos con todas las líneas de la factura en una sola llamada y, con los ids resueltos, " +
-        "crear_borrador_de_compra, que la guarda como borrador sin mover stock ni cuenta corriente; si el " +
-        "proveedor ya tiene una compra no anulada con ese número, la informa y no crea nada. La compra la " +
-        "confirma el usuario en la web, desde el link que devuelve. " +
-        "Para asociar códigos a un artículo (solo Admin, escriben y solo agregan): " +
-        "asociar_codigo_de_barras con los dígitos impresos debajo de las barras, y asociar_codigo_de_proveedor " +
-        "con el código que un proveedor imprime en su factura. Si el código de barras no es un GTIN estándar, " +
-        "hay que confirmar los dígitos con el usuario antes de repetir la llamada con confirmarCodigoNoEstandar.";
+        "asociar_codigo_de_proveedor. Cada herramienta corre con el usuario y el tenant que autorizaron la conexión, " +
+        "y el rol de ese usuario decide cuáles puede usar: quien_soy y articulo_info, todos los roles; " +
+        "ventas_resumen, ventas_agrupadas y ventas_por_articulo, Supervisor y Admin; contexto_de_compras, " +
+        "buscar_proveedor, buscar_articulos, crear_borrador_de_compra, asociar_codigo_de_barras y " +
+        "asociar_codigo_de_proveedor, solo Admin. Con un rol sin permiso, las consultas de ventas responden un texto " +
+        "que lo explica, no un error; las de compras y las de códigos responden un error sin datos y no escriben " +
+        "nada. quien_soy informa el usuario, el rol y el tenant de la conexión. " +
+        "Las consultas de ventas: ventas_resumen responde cuánto se vendió (por ejemplo, '¿cuánto vendimos hoy?'); " +
+        "ventas_agrupadas lo abre por punto de venta, medio de pago, vendedor, día, área, grupo, categoría o marca " +
+        "('¿cuánto vendió cada vendedor esta semana?', '¿qué marca vendió más este mes?'); ventas_por_articulo lista " +
+        "los artículos más vendidos, con filtros por texto, área, grupo, categoría, marca y proveedor ('¿cuánto se " +
+        "vendió de Coca-Cola el mes pasado?'). El período se indica con un nombre (hoy, ayer, esta_semana, " +
+        "semana_pasada, este_mes, mes_pasado), que se resuelve en la zona horaria de cada empresa, o con desde y " +
+        "hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo 366 días). articulo_info es la ficha de un " +
+        "artículo ('¿qué precio y stock tiene Cola 2L?', '¿a qué precio lo compramos la última vez y a quién?'): " +
+        "precios vigentes por lista, stock por punto de venta, ventas de los últimos 30 días y últimas compras; las " +
+        "ventas, el costo y las compras solo se muestran a Supervisor y Admin. " +
+        "Para cargar una factura de proveedor: primero contexto_de_compras (puntos de venta, percepciones por " +
+        "defecto de cada empresa, tipos de comprobante de compra, alícuotas de IVA y el rol del usuario), después " +
+        "buscar_proveedor (por CUIT o nombre), después buscar_articulos con todas las líneas de la factura en una " +
+        "sola llamada y, con los ids resueltos, crear_borrador_de_compra, que la guarda como borrador sin mover " +
+        "stock ni cuenta corriente; si el proveedor ya tiene una compra no anulada con ese número, la informa y no " +
+        "crea nada. La compra la confirma el usuario en la web, desde el link que devuelve. " +
+        "Los códigos de la factura se pueden dejar asociados para la próxima: si buscar_articulos no encontró una " +
+        "línea por el código del proveedor y el usuario confirma cuál es el artículo, asociar_codigo_de_proveedor " +
+        "guarda ese código para ese proveedor, y la próxima factura con ese código lo encuentra; lo mismo hace " +
+        "asociar_codigo_de_barras con los dígitos impresos debajo de las barras. Las dos solo agregan códigos. Si " +
+        "el código de barras no es un GTIN estándar, hay que confirmar los dígitos con el usuario antes de repetir " +
+        "la llamada con confirmarCodigoNoEstandar.";
 
     private static readonly string[] EsquemasDelConector =
     [
