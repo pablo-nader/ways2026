@@ -26,6 +26,7 @@ import type {
   Rotacion,
   TopArticulos,
   Vencimientos,
+  VentasPorArticulo,
   VentasPorMedioPago,
   VentasPorPuntoVenta,
   VentasPorVendedor,
@@ -158,6 +159,8 @@ export const clienteDeReportes = {
     api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
   articulos: (filtros: FiltrosDeReporteDeArticulos) =>
     api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros)}`),
+  ventasPorArticulo: (filtros: FiltrosDeVentasPorArticulo) =>
+    api.get<VentasPorArticulo>(`/reportes/ventas/por-articulo${construirQueryDeVentasPorArticulo(filtros)}`),
   libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
     api.get<LibroIva>(`/reportes/libro-iva-compras${construirQueryDeLibroIva(filtros)}`),
   libroIvaVentas: (filtros: FiltrosDeLibroIva) =>
@@ -309,11 +312,43 @@ export const rutasDeExportacion = {
     `/reportes/libro-iva-compras/export${construirQueryDeLibroIva(filtros)}&formato=xlsx`,
   libroIvaVentas: (filtros: FiltrosDeLibroIva) =>
     `/reportes/libro-iva-ventas/export${construirQueryDeLibroIva(filtros)}&formato=xlsx`,
+  /** Mismo query que la ruta JSON hermana (un solo builder) + `formato=xlsx`, que viaja una única vez. */
+  ventasPorArticulo: (filtros: FiltrosDeVentasPorArticulo) =>
+    `/reportes/ventas/por-articulo/export${construirQueryDeVentasPorArticulo(filtros)}&formato=xlsx`,
   articulos: (filtros: FiltrosDeReporteDeArticulos) => {
     const query = construirQueryDeAlcanceDeArticulos(filtros)
     const separador = query === '' ? '?' : `${query}&`
     return `/reportes/articulos/export${separador}formato=xlsx`
   },
+}
+
+/** Filtro de `GET /api/reportes/ventas/por-articulo`: `idEmpresa`, `desde` y `hasta` son obligatorios del lado
+ * del servidor; el resto se combina con AND y `null` significa "sin filtrar". */
+export type FiltrosDeVentasPorArticulo = {
+  idEmpresa: number
+  idPuntoVenta: number | null
+  desde: string
+  hasta: string
+  idArea: number | null
+  idGrupo: number | null
+  idCategoria: number | null
+  idArticulo: number | null
+}
+
+/** ÚNICO builder de filtros de `/reportes/ventas/por-articulo`: lo usan el listado y el export, así que la
+ * descarga nunca filtra distinto de lo que se ve (dto-contract-honesty). Cada parámetro viaja una sola vez y
+ * los opcionales sin valor se omiten. */
+export function construirQueryDeVentasPorArticulo(filtros: FiltrosDeVentasPorArticulo): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
+  if (filtros.idArea !== null) parametros.set('idArea', String(filtros.idArea))
+  if (filtros.idGrupo !== null) parametros.set('idGrupo', String(filtros.idGrupo))
+  if (filtros.idCategoria !== null) parametros.set('idCategoria', String(filtros.idCategoria))
+  if (filtros.idArticulo !== null) parametros.set('idArticulo', String(filtros.idArticulo))
+  return `?${parametros.toString()}`
 }
 
 /** Filtro de `GET /api/reportes/articulos` — reporte de completitud de catálogo (owner: "sin
@@ -401,6 +436,14 @@ export function rangoUltimosSieteDias(ahora: Date = new Date()): { desde: string
   const hace6Dias = new Date(ahora)
   hace6Dias.setDate(hace6Dias.getDate() - 6)
   return { desde: aFechaIso(hace6Dias), hasta: aFechaIso(ahora) }
+}
+
+/** Semana en curso: del lunes de la semana de `ahora` hasta `ahora` (hoy). Recibe `ahora` como parámetro para
+ * quedar testeable sin mockear el reloj. */
+export function rangoDeLaSemanaActual(ahora: Date = new Date()): { desde: string; hasta: string } {
+  const lunes = new Date(ahora)
+  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7))
+  return { desde: aFechaIso(lunes), hasta: aFechaIso(ahora) }
 }
 
 /** Período por defecto del libro IVA: del primer al último día del mes de `ahora`. Recibe `ahora`

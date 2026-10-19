@@ -145,19 +145,59 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 ## Conector MCP (experimental)
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
-Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas las
-herramientas son **de solo lectura** y corren con la identidad y el tenant de la cuenta que autorizó:
+Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas sus
+herramientas son de solo lectura: `quien_soy`, que devuelve el nombre de usuario, el correo, el rol
+y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, y las consultas de
+ventas y de compras de las secciones siguientes.
 
-| Herramienta | Quién | Qué devuelve |
-| --- | --- | --- |
-| `quien_soy` | cualquier rol | Usuario, correo, rol y tenant de la cuenta, más la hora del servidor. |
-| `contexto_de_compras` | Admin | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
-| `buscar_proveedor` | Admin | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
-| `buscar_articulos` | Admin | Hasta 100 líneas de una factura en una llamada: por línea, el primer match entre código del proveedor, código de barras y nombre, con hasta 5 candidatos, sin costos. |
+### Consultas de ventas
+
+| Herramienta | Qué responde |
+|---|---|
+| `ventas_resumen` | Total vendido, comprobantes, ticket promedio y notas de crédito del período, con desglose por medio de pago, por punto de venta y por día (la tabla por día solo aparece si el período abarca 31 días distintos o menos, contados entre todas las empresas) |
+| `ventas_agrupadas` | Lo vendido agrupado por `punto_venta`, `medio_pago`, `vendedor`, `dia`, `area`, `grupo`, `categoria` o `marca`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto). `dia` va del más reciente al más antiguo, así que el límite descarta los días viejos |
+| `ventas_por_articulo` | Los artículos más vendidos, con filtros `texto`, `area`, `grupo`, `categoria`, `marca`, `proveedor` y `articulo`, `orden` por importe o cantidad y `limite`; el % es sobre todo lo vendido en artículos, sin los filtros |
+
+Preguntas que responde: "¿cuánto vendimos hoy?", "¿cuánto vendió cada vendedor esta semana?", "¿qué
+marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de la categoría Bebidas?",
+"¿cuánto se vendió de Coca-Cola ayer?".
+
+- **Rol:** solo Supervisor y Admin, igual que los reportes de la web (`LecturaDeReportes`). Un
+  Vendedor recibe un texto que lo explica, no un error.
+- **"Vendido":** el criterio del reporte de ventas de la web: comprobantes de venta no anulados, sin
+  los espejos fiscales, con las notas de crédito restadas, al importe final.
+- **Período:** un nombre (`hoy`, `ayer`, `esta_semana`, `semana_pasada`, `este_mes`, `mes_pasado`) o
+  `desde` y `hasta` (`yyyy-MM-dd`, ambos inclusivos, separados como máximo 366 días). El "hoy" y el corte de cada día se
+  toman en la zona horaria de la empresa (parámetro `zona_horaria`), no en UTC; la semana va de lunes
+  a domingo y `esta_semana` y `este_mes` terminan hoy.
+- **Alcance:** `empresa` y `punto_venta` por id o por nombre. Sin ellos se suman todas las empresas
+  del tenant, cada una con su zona, y se muestra el desglose por empresa.
+- **Medio de pago:** lo cobrado neto del vuelto (`importe - vuelto`). La tabla por medio de pago de la
+  web suma el importe entregado, sin descontar el vuelto, así que en efectivo puede diferir.
+- **Por artículo:** `area`, `grupo`, `categoria`, `marca` y `ventas_por_articulo` salen del reporte de
+  ventas por artículo de la web (`ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync`): suman por
+  línea de comprobante, el importe es la suma del total de las líneas, la cantidad son unidades, las notas
+  de crédito restan y las líneas sin artículo no cuentan. La clasificación (área, grupo, categoría con sus
+  subcategorías, marca y proveedor habitual) es la ACTUAL del artículo: si hoy cambió de categoría, sus
+  ventas pasadas van a la nueva. Un artículo sin esa clasificación, o cuya clasificación está dada de baja,
+  o que ya no es visible, cae en "(sin área)", "(sin grupo)", "(sin categoría)" o "(sin marca)". En
+  `ventas_por_articulo`, `area`, `grupo`, `categoria` y `articulo` se pasan al reporte; `texto`, `marca` y
+  `proveedor` recortan sus filas, y el % es siempre sobre las ventas de todos los artículos del período, sin
+  filtros. Un filtro por nombre que no coincide con nada, o que coincide con varios, devuelve un error que
+  lo nombra y lista hasta 10 candidatos con su id.
+- La salida es texto con tablas `a | b | c`; cada tabla se corta en 31 filas y avisa cuántas faltan.
+
+### Consultas de compras
+
+| Herramienta | Qué devuelve |
+|---|---|
+| `contexto_de_compras` | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
+| `buscar_proveedor` | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
+| `buscar_articulos` | Hasta 100 líneas de una factura en una llamada: por línea, el primer match entre código del proveedor, código de barras y nombre, con hasta 5 candidatos, sin costos. |
 
 Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
-cargarla; la carga del borrador todavía no está disponible. Con otro rol responden un error sin
-datos (misma política que las escrituras de compras de la API).
+cargarla; la carga del borrador todavía no está disponible. Son solo para Admin, igual que las
+escrituras de compras de la API (`GestionDeCatalogo`): con otro rol responden un error sin datos.
 
 Para sumar una herramienta: una clase de `Ways.Api` con `[McpServerToolType]` (el conector registra
 todas las del ensamblado) que devuelva `CallToolResult` a través de `ResultadoDeHerramienta.EjecutarAsync`
@@ -205,15 +245,24 @@ node src/Ways.Api/scripts/probar-conector-mcp.mjs https://aipos.site --solo-publ
 
 ### Límites
 
-- **Las conexiones viven en memoria.** Cada deploy o reinicio las borra (claves y tokens
-  incluidos) y hay que volver a autorizar desde Claude.
-- **Una sola instancia.** Con más de una réplica, cada una tendría sus propias claves y
-  conexiones.
+- **Las conexiones sobreviven a los deploys.** El cliente, las autorizaciones y los tokens se
+  guardan en la base (tablas `*_oauth`, ver [doc 10 §11](10-modelo-de-datos/11-conector-mcp.md)),
+  y los tokens se protegen con las mismas claves de Data Protection que la cookie de sesión. Un
+  deploy o un reinicio no obliga a volver a autorizar desde Claude.
+- La app crea esas tablas al arrancar con el flag encendido (migraciones propias del conector,
+  historial en `historial_migraciones_conector_mcp`). Con el flag apagado no las crea ni las toca.
+- Cambiar `Mcp__IdDeCliente` borra el cliente anterior con todas sus conexiones en el siguiente
+  arranque.
+- Una vez por día se borran los tokens y las autorizaciones que ya no sirven y tienen más de 14
+  días.
+- **Una sola instancia.** El cliente se sincroniza en cada arranque, y dos réplicas arrancando a la
+  vez podrían chocar al crearlo.
 - El access token dura 60 minutos (`Mcp__MinutosDeAccessToken`) y se renueva con el refresh token.
 - El refresh token vence a los 14 días sin usarse y cada renovación entrega uno nuevo, así que una
-  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola: se cortan todas
-  reiniciando la app o apagando el flag, y las de un usuario desactivándolo en Ways (lo que también
-  le corta el acceso a Ways).
+  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola desde la app: las
+  de un usuario se cortan desactivándolo en Ways (lo que también le corta el acceso a Ways), y
+  apagar el flag deja todas sin efecto mientras siga apagado (al volver a encenderlo, las que no
+  vencieron vuelven a servir). Reiniciar ya no corta ninguna.
 - La página de autorización no limita los intentos y comparte el bloqueo de cuenta del login: quien
   conozca un mail de `Mcp__MailsHabilitados` puede bloquear esa cuenta probando contraseñas
   incorrectas, igual que desde `/admin/login`.

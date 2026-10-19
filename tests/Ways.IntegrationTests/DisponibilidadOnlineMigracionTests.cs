@@ -219,6 +219,7 @@ public class DisponibilidadOnlineMigracionTests(WaysApiFixture fixture) : IClass
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
+                npgsql.MapEnum<OrigenCompra>("origen_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");

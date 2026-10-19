@@ -190,6 +190,7 @@ public static class DependencyInjection
         // primer consumidor.
         services.AddScoped<LectorDeSerieTemporal>();
         services.AddScoped<ServicioDeReportesDeVentas>();
+        services.AddScoped<ServicioDeConsultasDeVentas>();
 
         // stage-10-agregacion-dashboard, Slice 5: ServicioDeReportesDeEgresos reusa
         // LectorDeSerieTemporal para gastos/resumen; compras/por-proveedor es LINQ puro.

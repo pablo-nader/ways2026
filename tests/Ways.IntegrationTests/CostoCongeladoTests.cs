@@ -534,6 +534,7 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
                     npgsql.MapEnum<Ways.Domain.Fiscal.MotivoDeFacturacion>("motivo_facturacion");

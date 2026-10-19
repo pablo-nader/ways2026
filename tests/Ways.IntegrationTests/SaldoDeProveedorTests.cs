@@ -459,6 +459,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
+                npgsql.MapEnum<OrigenCompra>("origen_compra");
                 // stage-15-cc-proveedores-ledger, Slice 4 (deviación registrada, mismo patrón
                 // que slice 2 deviación 20): ServicioDeSaldoDeProveedor ahora consulta
                 // MovimientosCuentaCorrienteProveedor (re-sourcing OD7) — este contexto

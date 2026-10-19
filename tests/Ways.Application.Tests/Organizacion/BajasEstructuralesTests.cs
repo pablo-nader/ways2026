@@ -65,9 +65,15 @@ public class BajasEstructuralesTests
     /// —tablas de ventas, no de organización—, acotado a UN espejo pendiente (el creado por la misma llamada o uno que dejó una
     /// llamada anterior), identificado por su id, bloqueado y releído como pendiente, y bajo el lock de su serie fiscal. No es la
     /// baja de una entidad ni de una venta.
+    ///
+    /// <c>ServicioDeCompras</c> (descarte de un borrador) borra el encabezado de <c>comprobantes_compra</c> con sus líneas,
+    /// alícuotas y percepciones. Es un borrador sin efecto de stock ni de cuenta corriente (ningún asiento lo referencia), tomado
+    /// con <c>FOR UPDATE ... WHERE estado='borrador'</c> y por su id, y deja la fila de auditoría <c>compra.descarte</c> en la misma
+    /// transacción. Una compra confirmada o anulada conserva su historia: el lock no la toma. No toca tablas de organización.
     /// </summary>
     private static readonly string[] DeleteFromPermitidos =
     [
+        Path.Combine("Ways.Application", "Compras", "ServicioDeCompras.cs"),
         Path.Combine("Ways.Application", "Fiscal", "ServicioDeFacturacionDeVentas.cs"),
         Path.Combine("Ways.Infrastructure", "Persistencia", "Migraciones", "20260917025328_QuitarVueltoMaximo.cs"),
     ];

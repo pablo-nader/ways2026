@@ -46,13 +46,7 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // DATABASE_URL es la convención de los paneles de hosting; si está, gana.
-        var cruda = configuration["DATABASE_URL"]
-            ?? configuration.GetConnectionString("Ways")
-            ?? throw new InvalidOperationException(
-                "Falta la cadena de conexión: definí 'ConnectionStrings__Ways' o 'DATABASE_URL'.");
-
-        var cadena = CadenaDeConexion.Normalizar(cruda);
+        var cadena = CadenaDeConexion.Resolver(configuration);
 
         services.AddScoped<TenantActualDeSesion>();
         services.AddScoped<ITenantActual>(sp => sp.GetRequiredService<TenantActualDeSesion>());
@@ -182,6 +176,7 @@ public static class DependencyInjection
             npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
             npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
             npgsql.MapEnum<EstadoCompra>("estado_compra");
+            npgsql.MapEnum<OrigenCompra>("origen_compra");
             npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
             npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
             npgsql.MapEnum<TipoMovimientoCuenta>("tipo_movimiento_cuenta");
