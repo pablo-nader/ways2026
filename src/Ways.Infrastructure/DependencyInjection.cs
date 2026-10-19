@@ -46,13 +46,7 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // DATABASE_URL es la convención de los paneles de hosting; si está, gana.
-        var cruda = configuration["DATABASE_URL"]
-            ?? configuration.GetConnectionString("Ways")
-            ?? throw new InvalidOperationException(
-                "Falta la cadena de conexión: definí 'ConnectionStrings__Ways' o 'DATABASE_URL'.");
-
-        var cadena = CadenaDeConexion.Normalizar(cruda);
+        var cadena = CadenaDeConexion.Resolver(configuration);
 
         services.AddScoped<TenantActualDeSesion>();
         services.AddScoped<ITenantActual>(sp => sp.GetRequiredService<TenantActualDeSesion>());

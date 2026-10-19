@@ -189,15 +189,24 @@ node src/Ways.Api/scripts/probar-conector-mcp.mjs https://aipos.site --solo-publ
 
 ### Límites
 
-- **Las conexiones viven en memoria.** Cada deploy o reinicio las borra (claves y tokens
-  incluidos) y hay que volver a autorizar desde Claude.
-- **Una sola instancia.** Con más de una réplica, cada una tendría sus propias claves y
-  conexiones.
+- **Las conexiones sobreviven a los deploys.** El cliente, las autorizaciones y los tokens se
+  guardan en la base (tablas `*_oauth`, ver [doc 10 §11](10-modelo-de-datos/11-conector-mcp.md)),
+  y los tokens se protegen con las mismas claves de Data Protection que la cookie de sesión. Un
+  deploy o un reinicio no obliga a volver a autorizar desde Claude.
+- La app crea esas tablas al arrancar con el flag encendido (migraciones propias del conector,
+  historial en `historial_migraciones_conector_mcp`). Con el flag apagado no las crea ni las toca.
+- Cambiar `Mcp__IdDeCliente` borra el cliente anterior con todas sus conexiones en el siguiente
+  arranque.
+- Una vez por día se borran los tokens y las autorizaciones que ya no sirven y tienen más de 14
+  días.
+- **Una sola instancia.** El cliente se sincroniza en cada arranque, y dos réplicas arrancando a la
+  vez podrían chocar al crearlo.
 - El access token dura 60 minutos (`Mcp__MinutosDeAccessToken`) y se renueva con el refresh token.
 - El refresh token vence a los 14 días sin usarse y cada renovación entrega uno nuevo, así que una
-  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola: se cortan todas
-  reiniciando la app o apagando el flag, y las de un usuario desactivándolo en Ways (lo que también
-  le corta el acceso a Ways).
+  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola desde la app: las
+  de un usuario se cortan desactivándolo en Ways (lo que también le corta el acceso a Ways), y
+  apagar el flag deja todas sin efecto mientras siga apagado (al volver a encenderlo, las que no
+  vencieron vuelven a servir). Reiniciar ya no corta ninguna.
 - La página de autorización no limita los intentos y comparte el bloqueo de cuenta del login: quien
   conozca un mail de `Mcp__MailsHabilitados` puede bloquear esa cuenta probando contraseñas
   incorrectas, igual que desde `/admin/login`.

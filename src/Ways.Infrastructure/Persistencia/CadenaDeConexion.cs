@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Npgsql;
 
 namespace Ways.Infrastructure.Persistencia;
@@ -11,6 +12,14 @@ namespace Ways.Infrastructure.Persistencia;
 /// </summary>
 public static class CadenaDeConexion
 {
+    /// <summary>La cadena normalizada de la configuración. <c>DATABASE_URL</c>, la convención de los
+    /// paneles de hosting, gana sobre <c>ConnectionStrings:Ways</c>.</summary>
+    public static string Resolver(IConfiguration configuracion) =>
+        Normalizar(configuracion["DATABASE_URL"]
+            ?? configuracion.GetConnectionString("Ways")
+            ?? throw new InvalidOperationException(
+                "Falta la cadena de conexión: definí 'ConnectionStrings__Ways' o 'DATABASE_URL'."));
+
     public static string Normalizar(string cadena)
     {
         if (string.IsNullOrWhiteSpace(cadena))
