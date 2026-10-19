@@ -93,8 +93,10 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
 
     private static string Link(int idCompra) => $"{UrlPublica}/admin/compras/{idCompra}";
 
+    /// <summary>Los argumentos y los campos de cada elemento de sus listas, que nombran los mensajes de error. Las
+    /// anotaciones las fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
-    public async Task ToolsListLaAnunciaComoEscrituraNoDestructivaNoIdempotenteDeMundoCerradoConLosArgumentosQueNombranSusMensajes()
+    public async Task ToolsListPublicaLosArgumentosYLosCamposDeSusListasQueNombranSusMensajes()
     {
         await using var e = await PrepararAsync("mcp-borrador-anuncio");
 
@@ -103,12 +105,6 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         Assert.Equal(HttpStatusCode.OK, estado);
         var herramienta = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .Single(h => h.GetProperty("name").GetString() == Herramienta);
-
-        var anotaciones = herramienta.GetProperty("annotations");
-        Assert.False(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("idempotentHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
 
         var esquema = herramienta.GetProperty("inputSchema");
         Assert.Equal(
@@ -131,37 +127,6 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         Assert.Equal(
             ["alicuota", "baseImponible", "importe", "tipo"],
             Propiedades(Elementos(esquema, "percepciones")).Order(StringComparer.Ordinal));
-    }
-
-    /// <summary>Sobre el conjunto completo de herramientas: se anuncian sin solo lectura exactamente las tres de
-    /// escritura, y las instrucciones del servidor nombran esas mismas tres. Una herramienta de escritura nueva, o
-    /// una anotación equivocada, rompe esta prueba hasta que la lista y la prosa digan lo mismo.</summary>
-    [Fact]
-    public async Task SoloLasTresDeEscrituraSeAnuncianSinSoloLecturaYLasInstruccionesNombranEsasTres()
-    {
-        await using var e = await PrepararAsync("mcp-borrador-escritura");
-
-        var (_, lista) = await LlamarMcpAsync(e.Cliente, e.AccessToken, "tools/list");
-        var (_, inicio) = await LlamarMcpAsync(e.Cliente, e.AccessToken, "initialize", new
-        {
-            protocolVersion = "2025-11-25",
-            capabilities = new { },
-            clientInfo = new { name = "pruebas", version = "1.0" }
-        });
-
-        var soloLecturaPorNombre = lista!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
-            .ToDictionary(
-                h => h.GetProperty("name").GetString()!,
-                h => h.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
-        Assert.Equal(
-            ["asociar_codigo_de_barras", "asociar_codigo_de_proveedor", "crear_borrador_de_compra"],
-            soloLecturaPorNombre.Where(h => !h.Value).Select(h => h.Key).Order(StringComparer.Ordinal));
-        Assert.Contains("quien_soy", soloLecturaPorNombre.Keys);
-        Assert.Contains(
-            "todas sus herramientas son de solo lectura salvo crear_borrador_de_compra, asociar_codigo_de_barras y " +
-            "asociar_codigo_de_proveedor.",
-            inicio!.Value.GetProperty("result").GetProperty("instructions").GetString(),
-            StringComparison.Ordinal);
     }
 
     [Fact]

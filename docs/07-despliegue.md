@@ -146,19 +146,42 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
 Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Las
-herramientas corren con la identidad y el tenant de la cuenta que autorizó: `quien_soy`, que
-devuelve el nombre de usuario, el correo, el rol y el tenant de esa cuenta, más la hora del servidor,
-y las de ventas, la ficha de un artículo (`articulo_info`) y las de compras y de códigos de artículos
-de las secciones siguientes. Todas son de solo lectura salvo tres que escriben:
+herramientas corren con la identidad y el tenant de la cuenta que autorizó: la de identidad, las de
+ventas, la ficha de un artículo (`articulo_info`) y las de compras y de códigos de artículos de las
+secciones siguientes. Todas son de solo lectura salvo tres que escriben:
 `crear_borrador_de_compra`, que guarda una factura de proveedor como borrador de compra, y
 `asociar_codigo_de_barras` y `asociar_codigo_de_proveedor`, que solo agregan códigos a un artículo.
+Los argumentos van en camelCase (`puntoVenta`, `idArticulo`); hasta octubre de 2026 cinco de ellos iban en
+snake_case (`punto_venta`, `agrupar_por`, `id_articulo`, `id_proveedor`, `confirmar_codigo_no_estandar`). El SDK
+solo liga los argumentos que la herramienta declara: un cliente que todavía mande `punto_venta` no recibe un
+error, recibe el total sin acotar (la línea `Alcance:` de la respuesta lo deja ver), y uno que mande con el nombre
+viejo un argumento obligatorio (`agrupar_por`, `id_articulo`) falla porque le falta ese argumento. Se supone que
+Claude vuelve a leer el esquema (`tools/list`) al conectarse; no hay alias de los nombres viejos.
+
+Quién puede usar cada una, según el rol de la cuenta (las mismas políticas que la web):
+
+| Rol | Herramientas |
+|---|---|
+| Todos | `quien_soy`, `articulo_info` (las ventas, el costo y las compras de la ficha, solo Supervisor y Admin) |
+| Supervisor y Admin | `ventas_resumen`, `ventas_agrupadas`, `ventas_por_articulo` (`LecturaDeReportes`) |
+| Admin | `contexto_de_compras`, `buscar_proveedor`, `buscar_articulos`, `crear_borrador_de_compra`, `asociar_codigo_de_barras`, `asociar_codigo_de_proveedor` (`GestionDeCatalogo`) |
+
+Con un rol sin permiso, las de ventas responden un texto que lo explica, sin `isError`; las de compras y
+de códigos responden un error sin datos y no escriben nada. Las instrucciones que el servidor le da a
+Claude al conectarse repiten esta tabla y el flujo de carga de una factura.
+
+### Identidad
+
+| Herramienta | Qué responde |
+|---|---|
+| `quien_soy` | El nombre de usuario y el correo de la cuenta que autorizó la conexión, su rol, el tenant (nombre e id) y la hora del servidor. No tiene argumentos. |
 
 ### Consultas de ventas
 
 | Herramienta | Qué responde |
 |---|---|
 | `ventas_resumen` | Total vendido, comprobantes, ticket promedio y notas de crédito del período, con desglose por medio de pago, por punto de venta y por día (la tabla por día solo aparece si el período abarca 31 días distintos o menos, contados entre todas las empresas) |
-| `ventas_agrupadas` | Lo vendido agrupado por `punto_venta`, `medio_pago`, `vendedor`, `dia`, `area`, `grupo`, `categoria` o `marca`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto). `dia` va del más reciente al más antiguo, así que el límite descarta los días viejos |
+| `ventas_agrupadas` | Lo vendido agrupado (`agruparPor`) por `punto_venta`, `medio_pago`, `vendedor`, `dia`, `area`, `grupo`, `categoria` o `marca`, con importe, cantidad y % del total; `limite` de 1 a 50 grupos (20 por defecto). `dia` va del más reciente al más antiguo, así que el límite descarta los días viejos |
 | `ventas_por_articulo` | Los artículos más vendidos, con filtros `texto`, `area`, `grupo`, `categoria`, `marca`, `proveedor` y `articulo`, `orden` por importe o cantidad y `limite`; el % es sobre todo lo vendido en artículos, sin los filtros |
 
 Preguntas que responde: "¿cuánto vendimos hoy?", "¿cuánto vendió cada vendedor esta semana?", "¿qué
@@ -171,9 +194,10 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   los espejos fiscales, con las notas de crédito restadas, al importe final.
 - **Período:** un nombre (`hoy`, `ayer`, `esta_semana`, `semana_pasada`, `este_mes`, `mes_pasado`) o
   `desde` y `hasta` (`yyyy-MM-dd`, ambos inclusivos, separados como máximo 366 días). El "hoy" y el corte de cada día se
-  toman en la zona horaria de la empresa (parámetro `zona_horaria`), no en UTC; la semana va de lunes
-  a domingo y `esta_semana` y `este_mes` terminan hoy.
-- **Alcance:** `empresa` y `punto_venta` por id o por nombre. Sin ellos se suman todas las empresas
+  toman en la zona horaria de cada empresa, no en UTC: la del parámetro de Ways `zona_horaria`, resuelto para la
+  empresa (o para el punto de venta, si se filtra por uno); no es un argumento de las herramientas. La semana va
+  de lunes a domingo y `esta_semana` y `este_mes` terminan hoy.
+- **Alcance:** `empresa` y `puntoVenta` por id o por nombre. Sin ellos se suman todas las empresas
   del tenant, cada una con su zona, y se muestra el desglose por empresa.
 - **Medio de pago:** lo cobrado neto del vuelto (`importe - vuelto`). La tabla por medio de pago de la
   web suma el importe entregado, sin descontar el vuelto, así que en efectivo puede diferir.
@@ -202,8 +226,8 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
 
 - **Artículo:** por id, código interno, código de barras activo o nombre. Se prueban en ese orden y la primera
   coincidencia exacta (sin distinguir mayúsculas) gana, antes de cualquier tope de filas; solo si no hay ninguna se
-  busca el texto contenido en el nombre o en el código. Más de un candidato en un paso devuelve un error con hasta
-  10 (`id | código | nombre`); ninguno, un error que lo dice.
+  busca el texto contenido en el nombre o en el código interno (sin distinguir mayúsculas ni acentos). Más de un
+  candidato en un paso devuelve un error con hasta 10 (`id | código | nombre`); ninguno, un error que lo dice.
 - **Rol:** la tool está abierta a todos los roles. Los precios, el stock y la clasificación los ven todos. Las
   ventas de los últimos 30 días requieren `LecturaDeReportes` (Supervisor y Admin) y el costo nominal y las
   últimas compras requieren `LecturaDeCostos` (Supervisor y Admin); sin esos permisos la sección se reemplaza por
@@ -262,8 +286,13 @@ de volver a cargarlo.
 
 | Herramienta | Qué hace |
 |---|---|
-| `asociar_codigo_de_barras(id_articulo, codigo, confirmar_codigo_no_estandar)` | Asocia un código de barras a un artículo y devuelve sus códigos actuales. |
-| `asociar_codigo_de_proveedor(id_articulo, id_proveedor, codigo)` | Asocia a un artículo el código con que un proveedor lo imprime en su factura. |
+| `asociar_codigo_de_barras(idArticulo, codigo, confirmarCodigoNoEstandar)` | Asocia un código de barras a un artículo y devuelve sus códigos actuales. |
+| `asociar_codigo_de_proveedor(idArticulo, idProveedor, codigo)` | Asocia a un artículo el código con que un proveedor lo imprime en su factura. |
+
+Acompañan la carga de una factura: si `buscar_articulos` no encontró una línea por el código del
+proveedor y el usuario confirma cuál es el artículo, `asociar_codigo_de_proveedor` guarda ese código
+para ese proveedor y la próxima factura con ese código encuentra el artículo en el primer paso; con un
+código de barras impreso, `asociar_codigo_de_barras` hace que la próxima lo encuentre por ese código.
 
 Las herramientas de códigos escriben con `ServicioDeArticulos`, el mismo camino que la web, y
 exigen la política `GestionDeCatalogo` de los endpoints del ABM: con otro rol devuelven un error
@@ -272,7 +301,7 @@ estaba. Si el código pertenece a otro artículo, no escriben y el error nombra 
 (nombre, código interno e id, y si está dado de baja) para que decida el usuario. Un artículo o
 proveedor que no existe, o que es de otro tenant, da el mismo error de "no existe". Además,
 `asociar_codigo_de_barras` no escribe un código que no sea un GTIN estándar (8, 12, 13 o 14 dígitos
-con dígito verificador GS1 correcto) mientras la llamada no traiga `confirmar_codigo_no_estandar`
+con dígito verificador GS1 correcto) mientras la llamada no traiga `confirmarCodigoNoEstandar`
 en `true`: el error le indica a Claude que le pida al usuario confirmar los dígitos leídos. Esa
 regla es solo de la herramienta: la web solo advierte y la API acepta códigos no estándar.
 
@@ -282,9 +311,13 @@ y corte con `ErrorDeHerramienta` cuando Claude tenga que ver el motivo. Así sal
 `isError` y ese mensaje. El mismo runner devuelve con `isError` el mensaje de un `ErrorDominio` de los
 servicios y, para un `DbUpdateException` cuya `PostgresException` clasifica
 `ManejadorDeErrores.ClasificarPostgresException` (violaciones de restricciones y de rangos), el mismo
-título que daría el endpoint. Cualquier otra excepción que escapa de la herramienta, incluso una
-`McpException`, le llega a Claude con un mensaje genérico del SDK; entre ellas, el fallo transitorio y el
-conflicto de concurrencia, que en la API sí tienen su respuesta (503 y 409).
+título que daría el endpoint. Una excepción que escapa de la herramienta le llega a Claude como resultado
+con `isError` y un texto del SDK en inglés. Si no es una `McpException` (probado con una
+`InvalidOperationException`), el texto es solo `An error occurred invoking '<herramienta>'.`, sin su
+mensaje; así llegan, por ejemplo, el fallo transitorio y el conflicto de concurrencia, que en la API sí
+tienen su respuesta (503 y 409). Si es una `McpException`, el texto es
+`An error occurred invoking '<herramienta>': <mensaje>`. Las herramientas usan `ErrorDeHerramienta` para
+que Claude reciba solo el mensaje (`ConectorMcpErroresQueEscapanTests` fija las dos formas).
 
 ### Encenderlo
 

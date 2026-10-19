@@ -495,10 +495,11 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         Assert.Contains("No encontré la empresa 'Tercera'", inexistente.Texto);
     }
 
+    /// <summary>El título y las anotaciones los fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
-    public async Task ToolsListAnunciaArticuloInfoDeSoloLecturaConSusArgumentos()
+    public async Task ToolsListAnunciaArticuloInfoConSusArgumentos()
     {
-        var e = await SembrarEscenarioAsync(nameof(ToolsListAnunciaArticuloInfoDeSoloLecturaConSusArgumentos));
+        var e = await SembrarEscenarioAsync(nameof(ToolsListAnunciaArticuloInfoConSusArgumentos));
         await using var host = _apoyo.HostConReloj(RelojDelMediodia, e.Vendedor.Mail);
         using var cliente = ApoyoDeConectorMcp.Cliente(host);
 
@@ -506,12 +507,6 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
 
         var herramienta = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .Single(h => h.GetProperty("name").GetString() == "articulo_info");
-        Assert.Equal("Ficha de artículo", herramienta.GetProperty("title").GetString());
-        var anotaciones = herramienta.GetProperty("annotations");
-        Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-        Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
         var esquema = herramienta.GetProperty("inputSchema");
         Assert.Equal(["articulo", "compras", "empresa"], esquema.GetProperty("properties").EnumerateObject().Select(p => p.Name).Order().ToArray());
         Assert.Equal(["articulo"], esquema.GetProperty("required").EnumerateArray().Select(r => r.GetString()!).ToArray());

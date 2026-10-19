@@ -920,25 +920,4 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Equal(HttpStatusCode.OK, (await LlamarMcpAsync(cliente, Campo(tokens, "access_token"), "tools/list")).Estado);
     }
-
-    [Fact]
-    public async Task ToolsListAnunciaQuienSoyDeSoloLecturaNoDestructivaIdempotenteYDeMundoCerrado()
-    {
-        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-anotaciones");
-        await using var host = _apoyo.HostConConector(usuario.Mail);
-        using var cliente = Cliente(host);
-        var accessToken = Campo(await ObtenerTokensAsync(cliente, usuario.Mail), "access_token");
-
-        var (estado, mensaje) = await LlamarMcpAsync(cliente, accessToken, "tools/list");
-
-        Assert.Equal(HttpStatusCode.OK, estado);
-        var herramienta = Assert.Single(
-            mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray(),
-            h => Campo(h, "name") == "quien_soy");
-        var anotaciones = herramienta.GetProperty("annotations");
-        Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-        Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-        Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
-    }
 }

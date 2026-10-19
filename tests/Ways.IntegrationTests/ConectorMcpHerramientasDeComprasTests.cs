@@ -1,4 +1,3 @@
-using System.Net;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Ways.Api.ConectorMcp;
 using Ways.Domain.Usuarios;
@@ -42,27 +41,6 @@ public class ConectorMcpHerramientasDeComprasTests(WaysApiFixture fixture) : ICl
         var cliente = Cliente(host);
         var tokens = await ObtenerTokensAsync(cliente, usuario.Mail);
         return new Conexion(host, cliente, tokens.GetProperty("access_token").GetString()!, usuario);
-    }
-
-    [Fact]
-    public async Task ToolsListAnunciaQuienSoyYLasHerramientasDeComprasDeSoloLecturaNoDestructivasIdempotentesYDeMundoCerrado()
-    {
-        await using var conexion = await ConectarAsync("mcp-compras-anotaciones");
-
-        var (estado, mensaje) = await LlamarMcpAsync(conexion.Cliente, conexion.AccessToken, "tools/list");
-
-        Assert.Equal(HttpStatusCode.OK, estado);
-        var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
-            .ToDictionary(h => h.GetProperty("name").GetString()!);
-        Assert.Contains("quien_soy", herramientas.Keys);
-        foreach (var nombre in new[] { "contexto_de_compras", "buscar_proveedor", "buscar_articulos" })
-        {
-            var anotaciones = herramientas[nombre].GetProperty("annotations");
-            Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-            Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
-        }
     }
 
     [Fact]

@@ -193,10 +193,10 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
     private static Task<(string Texto, bool EsError)> AsociarCodigoDeBarrasAsync(
         Escenario e, int idArticulo, string codigo, bool? confirmar = null)
     {
-        var argumentos = new Dictionary<string, object?> { ["id_articulo"] = idArticulo, ["codigo"] = codigo };
+        var argumentos = new Dictionary<string, object?> { ["idArticulo"] = idArticulo, ["codigo"] = codigo };
         if (confirmar is { } valor)
         {
-            argumentos["confirmar_codigo_no_estandar"] = valor;
+            argumentos["confirmarCodigoNoEstandar"] = valor;
         }
 
         return LlamarAsync(e, "asociar_codigo_de_barras", argumentos);
@@ -209,44 +209,35 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
             "asociar_codigo_de_proveedor",
             new Dictionary<string, object?>
             {
-                ["id_articulo"] = idArticulo, ["id_proveedor"] = idProveedor, ["codigo"] = codigo
+                ["idArticulo"] = idArticulo, ["idProveedor"] = idProveedor, ["codigo"] = codigo
             });
 
+    /// <summary>Las anotaciones las fija <see cref="ConectorMcpConjuntoDeHerramientasTests"/>.</summary>
     [Fact]
-    public async Task ToolsListPublicaLasDosHerramientasDeEscrituraConSusAnotacionesYNombresDeParametro()
+    public async Task ToolsListPublicaLasDosHerramientasDeEscrituraConSusNombresDeParametro()
     {
-        await using var e = await PrepararAsync(nameof(ToolsListPublicaLasDosHerramientasDeEscrituraConSusAnotacionesYNombresDeParametro));
+        await using var e = await PrepararAsync(nameof(ToolsListPublicaLasDosHerramientasDeEscrituraConSusNombresDeParametro));
 
         var (estado, mensaje) = await LlamarMcpAsync(e.Cliente, e.Token, "tools/list");
         Assert.Equal(HttpStatusCode.OK, estado);
         var herramientas = mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray()
             .ToDictionary(t => t.GetProperty("name").GetString()!);
 
-        Assert.Contains("quien_soy", herramientas.Keys);
-        foreach (var nombre in new[] { "asociar_codigo_de_barras", "asociar_codigo_de_proveedor" })
-        {
-            var anotaciones = herramientas[nombre].GetProperty("annotations");
-            Assert.False(anotaciones.GetProperty("readOnlyHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
-            Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
-            Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
-        }
-
         string[] ParametrosDe(string nombre, string lista) =>
             [.. herramientas[nombre].GetProperty("inputSchema").GetProperty(lista).EnumerateObject().Select(p => p.Name)];
 
         Assert.Equal(
-            ["codigo", "confirmar_codigo_no_estandar", "id_articulo"],
+            ["codigo", "confirmarCodigoNoEstandar", "idArticulo"],
             ParametrosDe("asociar_codigo_de_barras", "properties").Order());
         Assert.Equal(
-            ["codigo", "id_articulo", "id_proveedor"],
+            ["codigo", "idArticulo", "idProveedor"],
             ParametrosDe("asociar_codigo_de_proveedor", "properties").Order());
 
         string[] Requeridos(string nombre) =>
             [.. herramientas[nombre].GetProperty("inputSchema").GetProperty("required").EnumerateArray().Select(p => p.GetString()!)];
 
-        Assert.Equal(["codigo", "id_articulo"], Requeridos("asociar_codigo_de_barras").Order());
-        Assert.Equal(["codigo", "id_articulo", "id_proveedor"], Requeridos("asociar_codigo_de_proveedor").Order());
+        Assert.Equal(["codigo", "idArticulo"], Requeridos("asociar_codigo_de_barras").Order());
+        Assert.Equal(["codigo", "idArticulo", "idProveedor"], Requeridos("asociar_codigo_de_proveedor").Order());
     }
 
     [Fact]
@@ -333,7 +324,7 @@ public class ConectorMcpHerramientasDeCatalogoTests(WaysApiFixture fixture) : IC
 
         Assert.True(sinConfirmar.EsError, sinConfirmar.Texto);
         Assert.Contains("dígito verificador", sinConfirmar.Texto);
-        Assert.Contains("confirmar_codigo_no_estandar", sinConfirmar.Texto);
+        Assert.Contains("confirmarCodigoNoEstandar", sinConfirmar.Texto);
         Assert.Contains("No se escribió nada", sinConfirmar.Texto);
         Assert.True(confirmandoEnFalse.EsError, confirmandoEnFalse.Texto);
         Assert.Empty(await CodigosDeBarrasEnLaBaseAsync(articulo.Id));

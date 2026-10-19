@@ -108,7 +108,13 @@ public class ServicioDeConsultasDeVentas(
         ["marca"] = AgrupacionDeVentas.Marca
     };
 
-    private const int DiasMaximosDeLaTablaPorDia = 31;
+    public const int DiasMaximosDeLaTablaPorDia = 31;
+
+    /// <summary>Cuántas opciones lista un error de búsqueda: el de un artículo ambiguo (un artículo que no existe no
+    /// lista ninguna) y, para la empresa, el punto de venta y los filtros de área, grupo, categoría, marca y
+    /// proveedor, tanto el ambiguo (las coincidencias) como el sin resultado (las disponibles). No es un tope de filas
+    /// de ningún reporte.</summary>
+    public const int MaximoDeOpcionesListadasEnUnError = 10;
 
     public static IReadOnlyCollection<string> NombresDeAgrupacion => Agrupaciones.Keys.ToList();
 
@@ -117,7 +123,7 @@ public class ServicioDeConsultasDeVentas(
             ? agrupacion
             : throw new ErrorDominio(
                 "agrupacion_desconocida",
-                $"'agrupar_por' tiene que ser uno de: {string.Join(", ", Agrupaciones.Keys)}.",
+                $"'agruparPor' tiene que ser uno de: {string.Join(", ", Agrupaciones.Keys)}.",
                 400);
 
     public async Task<ResumenDeVentasConsultado> ResumirAsync(SolicitudDeConsultaDeVentas solicitud, CancellationToken ct = default)
@@ -498,13 +504,11 @@ public class ServicioDeConsultasDeVentas(
         return new CandidatoSimple(elegido.Id, elegido.Nombre);
     }
 
-    private const int MaximoDeCandidatos = 10;
-
     /// <summary>Un artículo visible por texto, con coincidencia exacta primero y cada paso resuelto en SQL antes de
     /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo (sin distinguir
     /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código
-    /// (sin distinguir mayúsculas ni acentos). Un
-    /// paso con una sola coincidencia termina la búsqueda; con más de una es ambiguo (hasta 10 candidatos listados) y
+    /// interno (sin distinguir mayúsculas ni acentos). Un
+    /// paso con una sola coincidencia termina la búsqueda; con más de una es ambiguo (hasta <see cref="MaximoDeOpcionesListadasEnUnError"/> candidatos listados) y
     /// no sigue al paso siguiente; si ningún paso encuentra nada, no existe.</summary>
     public async Task<ArticuloResuelto> BuscarArticuloAsync(string texto, CancellationToken ct = default)
     {
@@ -529,7 +533,7 @@ public class ServicioDeConsultasDeVentas(
         {
             var coinciden = await paso
                 .OrderBy(a => a.Id)
-                .Take(MaximoDeCandidatos + 1)
+                .Take(MaximoDeOpcionesListadasEnUnError + 1)
                 .Select(a => new ArticuloResuelto(a.Id, a.CodigoInterno, a.Nombre))
                 .ToListAsync(ct);
             if (coinciden.Count == 1)
@@ -539,8 +543,10 @@ public class ServicioDeConsultasDeVentas(
 
             if (coinciden.Count > 1)
             {
-                var lista = string.Join(Environment.NewLine, coinciden.Take(MaximoDeCandidatos).Select(c => $"{c.Id} | {c.Codigo} | {c.Nombre}"));
-                var mas = coinciden.Count > MaximoDeCandidatos ? $"{Environment.NewLine}… y más" : string.Empty;
+                var lista = string.Join(
+                    Environment.NewLine,
+                    coinciden.Take(MaximoDeOpcionesListadasEnUnError).Select(c => $"{c.Id} | {c.Codigo} | {c.Nombre}"));
+                var mas = coinciden.Count > MaximoDeOpcionesListadasEnUnError ? $"{Environment.NewLine}… y más" : string.Empty;
                 throw new ErrorDominio(
                     "alcance_ambiguo",
                     $"'{texto}' es ambiguo para el artículo; coincide con (id | código | nombre):{Environment.NewLine}{lista}{mas}" +
@@ -764,7 +770,11 @@ public class ServicioDeConsultasDeVentas(
             return coincidencias[0];
         }
 
-        var lista = string.Join(", ", (coincidencias.Count > 1 ? coincidencias : candidatos).Take(10).Select(c => $"{etiqueta(c)} (id {id(c)})"));
+        var lista = string.Join(
+            ", ",
+            (coincidencias.Count > 1 ? coincidencias : candidatos)
+                .Take(MaximoDeOpcionesListadasEnUnError)
+                .Select(c => $"{etiqueta(c)} (id {id(c)})"));
         throw coincidencias.Count > 1
             ? new ErrorDominio("alcance_ambiguo", $"'{texto}' es ambiguo para {que}; coincide con: {lista}. Indicá el id.", 400)
             : new ErrorDominio("alcance_no_encontrado", $"No encontré {que} '{texto}'. Disponibles: {lista}.", 404);

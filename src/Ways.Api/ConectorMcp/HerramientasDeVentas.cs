@@ -19,8 +19,8 @@ namespace Ways.Api.ConectorMcp;
 public sealed class HerramientasDeVentas
 {
     private const int TopeDeFilasPorTabla = 31;
-    private const int LimitePorDefecto = 20;
-    private const int LimiteMaximo = 50;
+    public const int LimitePorDefecto = 20;
+    public const int LimiteMaximo = 50;
 
     // Coma decimal y punto de miles (es-AR) armados a mano: no dependen de que el host tenga ICU.
     internal static readonly NumberFormatInfo FormatoDeNumeros = new()
@@ -62,7 +62,7 @@ public sealed class HerramientasDeVentas
         [Description("Empresa, por id o por nombre. Si se omite, todas las empresas del tenant.")]
         string? empresa = null,
         [Description("Punto de venta, por id o por nombre. Si se omite, todos los de la empresa.")]
-        string? punto_venta = null,
+        string? puntoVenta = null,
         CancellationToken ct = default) =>
         ResultadoDeHerramienta.EjecutarAsync(async () =>
         {
@@ -71,7 +71,7 @@ public sealed class HerramientasDeVentas
                 return negacion;
             }
 
-            var resumen = await consultas.ResumirAsync(new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, punto_venta), ct);
+            var resumen = await consultas.ResumirAsync(new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, puntoVenta), ct);
             return FormatearResumen(resumen);
         }, log);
 
@@ -103,7 +103,7 @@ public sealed class HerramientasDeVentas
         ServicioDeConsultasDeVentas consultas,
         ILogger<HerramientasDeVentas> log,
         [Description("Cómo agrupar: punto_venta, medio_pago, vendedor, dia, area, grupo, categoria o marca.")]
-        string agrupar_por,
+        string agruparPor,
         [Description("Nombre del período: hoy, ayer, esta_semana, semana_pasada, este_mes o mes_pasado. No se combina con desde/hasta.")]
         string? periodo = null,
         [Description("Primer día del rango, yyyy-MM-dd, inclusivo. Va junto con hasta, que puede estar como máximo 366 días después.")]
@@ -113,7 +113,7 @@ public sealed class HerramientasDeVentas
         [Description("Empresa, por id o por nombre. Si se omite, todas las empresas del tenant.")]
         string? empresa = null,
         [Description("Punto de venta, por id o por nombre. Si se omite, todos los de la empresa.")]
-        string? punto_venta = null,
+        string? puntoVenta = null,
         [Description("Cantidad máxima de grupos a devolver, de 1 a 50. Por defecto 20.")]
         int limite = LimitePorDefecto,
         CancellationToken ct = default) =>
@@ -125,9 +125,9 @@ public sealed class HerramientasDeVentas
             }
 
             ValidarLimite(limite);
-            var por = ServicioDeConsultasDeVentas.ParsearAgrupacion(agrupar_por);
+            var por = ServicioDeConsultasDeVentas.ParsearAgrupacion(agruparPor);
             var agrupacion = await consultas.AgruparAsync(
-                new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, punto_venta), por, ct);
+                new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, puntoVenta), por, ct);
             return FormatearAgrupacion(agrupacion, limite);
         }, log);
 
@@ -165,7 +165,7 @@ public sealed class HerramientasDeVentas
         [Description("Empresa, por id o por nombre. Si se omite, todas las empresas del tenant.")]
         string? empresa = null,
         [Description("Punto de venta, por id o por nombre. Si se omite, todos los de la empresa.")]
-        string? punto_venta = null,
+        string? puntoVenta = null,
         [Description("Texto contenido en el nombre o en el código interno del artículo, sin distinguir mayúsculas ni acentos.")]
         string? texto = null,
         [Description("Área actual del artículo, por id o por nombre.")]
@@ -195,7 +195,7 @@ public sealed class HerramientasDeVentas
             ValidarLimite(limite);
             var resultado = await consultas.PorArticuloAsync(
                 new SolicitudDeVentasPorArticulo(
-                    new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, punto_venta),
+                    new SolicitudDeConsultaDeVentas(periodo, desde, hasta, empresa, puntoVenta),
                     texto, area, grupo, categoria, marca, proveedor, articulo, ServicioDeConsultasDeVentas.ParsearOrden(orden), limite),
                 ct);
             return FormatearPorArticulo(resultado);

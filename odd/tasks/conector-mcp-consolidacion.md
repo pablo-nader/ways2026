@@ -35,8 +35,9 @@ Rebanada 1 (código), rama `pnader/mcp-consolidacion-1`, apilada sobre la S4 (#4
   `Coincide` para los "contiene".
 - Una sola lectura del reporte por empresa en `ventas_por_articulo`.
 
-Rebanada 2 (prosa y tests del conjunto), pendiente: `Instrucciones` y la sección de docs/07, un test
-del conjunto exacto de once tools, y constantes y nombres de argumentos.
+Rebanada 2 (prosa y tests del conjunto), rama `pnader/mcp-consolidacion-2`, completa: `Instrucciones` y la
+sección de docs/07, un test del conjunto exacto de once tools, constantes y nombres de argumentos, y la paridad
+del acotado de ventas por artículo con el reporte web.
 
 ## Restricciones
 
@@ -117,13 +118,95 @@ Judgment-day, ronda 1 de correcciones (ledger congelado sobre `7203e061`, sin CR
   de `AcotarComoElReporteAsync` con el reporte: helper compartido o test de paridad) y verificar con un test si el
   mensaje de una `McpException` llega al cliente antes de tocar esa prosa.
 
-Rebanada 2 (pendiente):
+Rebanada 2, rama `pnader/mcp-consolidacion-2`: nació apilada sobre `pnader/mcp-consolidacion-1` y se rebaseó sobre
+`origin/main` `8dd66b39` cuando #478 mergeó. Orden de ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la
+prosa, así que la prosa se reescribe una sola vez, después). Commits de unidad de trabajo, después del rebase: T2
+`4fda73e5`, T3 `12db4041`, T1 `36405fa8`, T4 `a47ad0e2`; verificación y progreso `9d604815`.
 
-- [ ] R2-T1 — Prosa de `Instrucciones` y docs/07 (matriz de roles por tool, identidad, herramientas de
-  asociación atadas al flujo de factura, `zona_horaria` no es argumento, "código de barras activo").
-- [ ] R2-T2 — Test del conjunto exacto de once tools (nombres, anotaciones, títulos).
-- [ ] R2-T3 — Constantes en las descripciones (límites, candidatos, días), el `MaximoDeCandidatos`
-  repetido y la convención de nombres de argumentos.
+- [x] R2-T1 — Prosa de `Instrucciones` y docs/07, la `McpException` verificada y un test de que `instructions`
+  nombra las once tools. Ruta: inline (writer único de la rebanada). Commit `36405fa8`.
+  - `McpException`: verificada con `ConectorMcpErroresQueEscapanTests`, que registra dos tools de prueba solo en
+    el host del test (`ConfigureTestServices` + `McpServerTool.Create`). Resultado observado con el SDK 2.2.0:
+    las dos llegan como resultado con `isError`; una `InvalidOperationException` trae solo
+    `An error occurred invoking '<tool>'.` y una `McpException` trae `An error occurred invoking '<tool>': <mensaje>`
+    (el punto final se reemplaza por los dos puntos; ronda 1, L5: las tres prosas citan las dos formas). La
+    afirmación de docs/07 y del resumen de `ResultadoDeHerramienta` ("incluso el de una `McpException`") era
+    falsa y se corrigió; el primer borrador del test, que imprimía las dos respuestas, es la evidencia.
+  - `Instrucciones`: matriz de roles por tool (todos: `quien_soy`, `articulo_info`; Supervisor y Admin: las tres
+    de ventas; Admin: las cuatro de compras y las dos de códigos), la negación de ventas como texto y la de
+    compras y códigos como error, `contexto_de_compras` con percepciones y rol, las dos de asociación atadas a la
+    factura (si `buscar_articulos` no encontró la línea por el código del proveedor y el usuario confirma el
+    artículo), y sin el fragmento `"Las consultas de " +` en una línea propia.
+  - docs/07: tabla de roles e identidad (`quien_soy`), argumentos en camelCase, `zona_horaria` como parámetro de
+    Ways resuelto por empresa o punto de venta (no argumento), el contiene "ni acentos" sobre nombre o código
+    interno, las de códigos atadas a la factura, y la conducta real de la `McpException`. La descripción de
+    `articulo_info` y de su argumento pasan a decir "código de barras activo", como el código (`c.Activo`).
+  - Test: `LasInstruccionesNombranCadaHerramientaYLaFraseDeEscrituraNombraLasQueNoSonDeSoloLectura` (en la clase
+    del conjunto; reemplaza al test de las tres de escritura de `ConectorMcpCrearBorradorDeCompraTests`). Sin RED
+    (la prosa vieja también nombraba las once). Mutación: `ventas_resumen` → `ventas_total` en `Instrucciones` →
+    cae con `Item: "ventas_resumen"`.
+- [x] R2-T2 — Test del conjunto exacto de once tools. Ruta: inline (writer único de la rebanada). Commit `4fda73e5`.
+  `ConectorMcpConjuntoDeHerramientasTests`: `tools/list` anuncia exactamente las once, cada una con su título, sus
+  cuatro anotaciones, sus argumentos y sus requeridos (cierra L10: antes había esquemas fijados para 6 de 11); y
+  un test estructural por reflexión: los argumentos publicados de cada método `[McpServerTool]` son exactamente sus
+  parámetros con `[Description]`, así que ningún parámetro inyectado (`log`, `db`, servicios, autorización,
+  accesor, urls, token) aparece en un esquema. Sin RED: el contrato actual ya cumple; el test fija lo que no estaba
+  fijado. Mutaciones (una corrida, dos mutantes en archivos distintos): `buscar_articulos` con `Idempotent = false`
+  → cae el test del conjunto en esa línea; `[Description]` quitado de `nombre` en `buscar_proveedor` → cae el
+  estructural (`["cuit"]` esperado, `["cuit", "nombre"]` publicado). Retirado lo que quedó cubierto del todo: los
+  tests de anotaciones de `quien_soy` (flujo) y de las tres de compras, y las aserciones de anotaciones, título y
+  `Subset` de los tests de ventas, ficha, catálogo y borrador; se conservan sus aserciones de esquema.
+- [x] R2-T3 — Constantes en las descripciones, el `MaximoDeCandidatos` repetido y la convención de nombres de
+  argumentos. Ruta: inline (writer único de la rebanada). Commit `12db4041`.
+  - Constantes: `ConectorMcpDescripcionesYConstantesTests` compara los límites numéricos de las descripciones con
+    su constante (la `[Description]` no admite interpolar un `int`): palabras (6), candidatos por línea (5) y líneas
+    (100) de `buscar_articulos`; líneas del borrador (100); candidatos listados (10), días de ventas (30) y compras
+    (1 a 20, 5) de `articulo_info`; días de la tabla por día (31) de `ventas_resumen`; el tope del rango (366, la
+    constante privada de `RangoDeReporte` leída por reflexión) en las tres de ventas y su `desde`; `limite` (1 a
+    50, 20) de dos de ventas; y que los "N días" de las instrucciones sean exactamente {30, 366}. Para eso pasan a
+    públicas `LimitePorDefecto`, `LimiteMaximo`, `MaximoDePalabras` y `DiasMaximosDeLaTablaPorDia`. Sin RED: hoy
+    no había deriva. Mutaciones (una corrida): `LimiteMaximo` 60 → caen las dos filas de `limite`;
+    `MaximoDeOpcionesListadasEnUnError` 9 → cae la fila de candidatos de la ficha; `DiasDeVentas` 31 → caen la
+    fila de la ficha y el test de las instrucciones.
+  - Nombres: el privado de 10 de `ServicioDeConsultasDeVentas` pasa a `MaximoDeOpcionesListadasEnUnError`
+    (público) y reemplaza también el `Take(10)` literal del error de alcance; el público de 5 de compras pasa a
+    `MaximoDeCandidatosPorLinea`.
+  - Convención de argumentos: camelCase. Conteo de nombres publicados de más de una palabra: en snake_case
+    `punto_venta`, `agrupar_por`, `id_articulo`, `id_proveedor` y `confirmar_codigo_no_estandar` (5 tools); en
+    camelCase los 12 argumentos de `buscar_articulos` y `crear_borrador_de_compra` más todos los campos de las
+    listas anidadas (`codigoProveedor`, `idArticulo`, `costoUnitario`…, que el SDK serializa en camelCase).
+    **Cambio de contrato** de cinco tools: `ventas_resumen`, `ventas_agrupadas` y `ventas_por_articulo`
+    (`punto_venta` → `puntoVenta`, `agrupar_por` → `agruparPor`; los valores de `agruparPor`, como
+    `punto_venta`, no cambian), `asociar_codigo_de_barras` (`id_articulo` → `idArticulo`,
+    `confirmar_codigo_no_estandar` → `confirmarCodigoNoEstandar`) y `asociar_codigo_de_proveedor` (`id_articulo`,
+    `id_proveedor` → `idArticulo`, `idProveedor`). El mensaje de agrupación desconocida, las descripciones, las
+    instrucciones, docs/07 y los tests usan los nombres nuevos. Transición (L3 de la ronda 1, sin alias ni rechazo
+    por ser un despliegue de un solo dueño): el SDK solo liga los argumentos declarados, así que un `punto_venta`
+    viejo se ignora sin error y el total vuelve sin acotar (lo delata la línea `Alcance:`), y un obligatorio con el
+    nombre viejo falla por faltante. Es un supuesto, no algo verificado, que Claude relee `tools/list` al
+    conectarse; docs/07 lo dice en la nota de camelCase.
+  - Verificado: filtro `ConectorMcpVentas|…Catalogo|…BuscarArticulos|…Conjunto|…Descripciones|…FichaDeArticulo`
+    123/123.
+  - Ronda 1 del judgment-day (L2): el error de agrupación desconocida fija `'agruparPor'`;
+    `PuntoVentaAcotaVentasAgrupadasYVentasPorArticulo` agrupa con `agruparPor = "punto_venta"` (el valor que se
+    escribe como el nombre viejo) y manda `puntoVenta` a `ventas_agrupadas` y a `ventas_por_articulo`. Mutaciones:
+    el mensaje vuelto a `'agrupar_por'` → cae la fila `color` del test de entradas inválidas; `puntoVenta`
+    ignorado en `ventas_agrupadas` → cae el test nuevo; ídem en `ventas_por_articulo` → cae el test nuevo.
+- [x] R2-T4 — Paridad de `AcotarComoElReporteAsync` con el reporte web (cierra L11), sin cambios de producción.
+  Ruta: inline (writer único de la rebanada). Commit `a47ad0e2`.
+  `VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte`
+  compara, para nueve filtros (sin filtros; área; grupo; categoría con una subcategoría; la subcategoría;
+  artículo; área + categoría; grupo + área; artículo + categoría), las filas de `ventas_por_articulo` con las
+  de `GET /api/reportes/ventas/por-articulo` con los mismos ids: código, nombre, cantidad e importe de cada fila y
+  el total filtrado. Además cada fila fija sus códigos esperados: solo artículo + categoría queda vacía, y cada
+  combinación devuelve un conjunto distinto del de sus dos filtros solos (Cola 2L pasa a Almacén y al grupo
+  Combos), así que las tres combinaciones discriminan el Y. Sin divergencias. Sin RED (el acotado ya coincidía).
+  Mutaciones en `AcotarComoElReporteAsync`, una corrida cada una: área anulada → cae la fila área; grupo anulado
+  → cae grupo; sin descendientes → cae categoría con subcategoría; restricción de artículo anulada → cae
+  artículo; sin `IgnoreQueryFilters(["BajaLogica"])` → cae área (Viejo, dado de baja, falta en la herramienta).
+  Ronda 1 del judgment-day (L1): la categoría que rehace la consulta (deja caer el área) → cae área + categoría;
+  el grupo que rehace la consulta → cae grupo + área; la fila vacía cambiada a `["COLA-2L"]` en el test → cae
+  artículo + categoría.
 
 ## Criterios de aceptación
 
@@ -152,9 +235,28 @@ Ronda 1 del judgment-day, observado sobre `cdfe8e02` (main sigue en `e22281db`):
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 361/361.
 - `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 70/70.
 
+Rebanada 2, observado sobre `e3b795c7` (antes del rebase; el rebase sobre `origin/main` `8dd66b39` no cambió
+contenido: su pick es `a47ad0e2`), 2026-10-19:
+
+- `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
+- `dotnet test tests/Ways.Application.Tests -c Release`: 1059/1059.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 380/380.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 71/71.
+
+Ronda 1 del judgment-day de la rebanada 2, observado sobre `b73fe3df` (main sigue en `8dd66b39`):
+
+- `dotnet build Ways.slnx -c Release`: compilación correcta, 0 errores.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~ConectorMcp"`: 381/381.
+- `dotnet test tests/Ways.IntegrationTests -c Release --filter "FullyQualifiedName~VentasPorArticulo|FullyQualifiedName~FichaDeArticulo|FullyQualifiedName~ConsultasDeVentas"`: 72/72.
+
 ## Progreso
 
-- Rebanada 1 completa en `pnader/mcp-consolidacion-1`, rebaseada sobre `origin/main` después del merge de #477.
-- Rondas 1 y 2 del judgment-day corregidas (L1–L9 y el resumen de clase). Siguiente paso: re-juicio de la ronda 2
-  (orquestador), PR con auto-merge y después la
-  rebanada 2.
+- Rebanada 1 mergeada en main (#478, `8dd66b39`).
+- Rebanada 2 completa (R2-T1…R2-T4) en `pnader/mcp-consolidacion-2`, sobre main. Ronda 1 del judgment-day
+  corregida (L1–L9 del ledger, un commit por ítem): L1 `706a1b59` (paridad con códigos por fila y combinaciones que
+  discriminan), L2 `d1cf2456` (`agruparPor` y `puntoVenta` fijados), L3 `6c301fd1` (transición del renombre),
+  L4 `f9eed76d` (resumen de `MaximoDeOpcionesListadasEnUnError`), L5 `bca2b60f` (las dos formas de la
+  `McpException`), L6 `f4f432e0` (este documento), L7 `74a7b90f` (línea en blanco, using, recorte de %), L8
+  `c13056d3` (`MinimoDeLetrasPorPalabra` y `MinimoDeCaracteresDelNombre`; mutación: el mínimo en 3 → cae la fila de
+  `buscar_articulos` del test de descripciones), L9 `b73fe3df` ("código interno" en `articulo_info`). Siguiente
+  paso: re-juicio del orquestador y PR. Pendiente fuera de alcance: la doble resolución de empresa de la ficha.

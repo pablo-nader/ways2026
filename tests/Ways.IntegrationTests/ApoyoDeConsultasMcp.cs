@@ -250,10 +250,30 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         Assert.Equal(1, filas);
     }
 
+    public async Task CambiarAreaDeArticuloAsync(TenantDeVentas tenant, int idArticulo, int idArea)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.IdArea, idArea));
+        Assert.Equal(1, filas);
+    }
+
+    public async Task AsignarGrupoDeArticuloAsync(TenantDeVentas tenant, int idArticulo, int idGrupo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        var filas = await db.Articulos.Where(a => a.Id == idArticulo).ExecuteUpdateAsync(a => a.SetProperty(x => x.IdGrupo, (int?)idGrupo));
+        Assert.Equal(1, filas);
+    }
+
     public async Task<int> IdDeArticuloAsync(TenantDeVentas tenant, string codigoInterno)
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
         return await db.Articulos.IgnoreQueryFilters().Where(x => x.IdTenant == tenant.IdTenant && x.CodigoInterno == codigoInterno).Select(x => x.Id).SingleAsync();
+    }
+
+    public async Task<int> IdDeAreaAsync(TenantDeVentas tenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        return await db.Areas.IgnoreQueryFilters().Where(x => x.IdTenant == tenant.IdTenant && x.Nombre == nombre).Select(x => x.Id).SingleAsync();
     }
 
     public async Task<int> IdDeCategoriaAsync(TenantDeVentas tenant, string nombre)
