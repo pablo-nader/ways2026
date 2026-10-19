@@ -164,7 +164,13 @@ public class ReportesVentasPorHoraTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(168, reporte.Celdas.Count);
         Assert.Equal(7, reporte.Dias.Count);
         Assert.All(reporte.Dias, d => Assert.Equal(1, d.Ocurrencias));
-        Assert.All(reporte.Celdas, c => Assert.Equal(0m, c.Total + c.Tickets + c.PromedioTotal + c.PromedioTickets));
+        Assert.All(reporte.Celdas, c =>
+        {
+            Assert.Equal(0m, c.Total);
+            Assert.Equal(0, c.Tickets);
+            Assert.Equal(0m, c.PromedioTotal);
+            Assert.Equal(0m, c.PromedioTickets);
+        });
         Assert.Equal(0m, reporte.Total);
         Assert.Equal(0, reporte.Tickets);
         Assert.Equal(ZonaArgentina, reporte.ZonaHoraria);
@@ -195,7 +201,7 @@ public class ReportesVentasPorHoraTests(WaysApiFixture fixture) : IClassFixture<
     /// <summary>Cláusula bajo prueba: <c>TimeZoneInfo.ConvertTime(v.Fecha, zona)</c> en
     /// <c>ObtenerVentasPorHoraAsync</c>. La venta de las 23:30 locales del lunes es martes 02:30Z: sin
     /// la conversión caería en martes/2. El rango incluye ambos días para que la admisión de la fila
-    /// no explique el resultado. Mutación aplicada (convertir a UTC): este test falló; revertida, pasó.</summary>
+    /// no explique el resultado.</summary>
     [Fact]
     public async Task UnaVentaDeLas2330LocalesDelLunesCaeEnLunesHora23()
     {
