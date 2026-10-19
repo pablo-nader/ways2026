@@ -383,12 +383,15 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         }
     }
 
-    /// <summary>Cláusulas bajo prueba, una por fila: el "contiene" de <c>texto</c> (sobre nombre y código interno) y el
-    /// paso "contiene" de la búsqueda de <c>articulo</c>, los dos con <c>BusquedaSinAcentos.Coincide</c>. "FIDÉOS" y
-    /// "fidéo" no coinciden con ningún paso exacto, así que solo el "contiene" sin acentos encuentra Fideos.</summary>
+    /// <summary>Cláusulas bajo prueba, una por fila: los dos brazos (nombre y código interno) del "contiene" de
+    /// <c>texto</c> y del paso "contiene" de la búsqueda de <c>articulo</c>, todos con
+    /// <c>BusquedaSinAcentos.Coincide</c>. "FIDÉOS" y "fidéo" coinciden solo con el nombre Fideos; "fíd-5" solo con
+    /// el código FID-500. Ninguno coincide con un paso exacto, así que solo el "contiene" sin acentos los encuentra.</summary>
     [Theory]
     [InlineData("texto", "FIDÉOS", "texto 'FIDÉOS'")]
+    [InlineData("texto", "fíd-5", "texto 'fíd-5'")]
     [InlineData("articulo", "fidéo", "artículo Fideos")]
+    [InlineData("articulo", "fíd-5", "artículo Fideos")]
     public async Task VentasPorArticuloBuscaElTextoYElArticuloSinDistinguirAcentos(string filtro, string valor, string filtroEsperado)
     {
         var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloBuscaElTextoYElArticuloSinDistinguirAcentos));
