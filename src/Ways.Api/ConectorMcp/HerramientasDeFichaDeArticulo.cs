@@ -27,7 +27,8 @@ public sealed class HerramientasDeFichaDeArticulo
         "Ficha de un artículo: qué precio y stock tiene, cuánto se vendió en el último mes y, solo para Supervisor y " +
         "Admin, a qué costo y a quién se le compró por última vez. El artículo se indica por id, código interno, " +
         "código de barras o nombre; se prueba en ese orden y la primera coincidencia exacta (sin distinguir " +
-        "mayúsculas) gana; recién si no hay ninguna se busca el texto contenido en el nombre o en el código. Si " +
+        "mayúsculas) gana; recién si no hay ninguna se busca el texto contenido en el nombre o en el código (sin distinguir " +
+        "mayúsculas ni acentos). Si " +
         "queda más de un candidato devuelve hasta 10 para que se elija uno por id o código. Muestra: la " +
         "clasificación actual del artículo (un dato sin asignar o dado de baja figura como '(sin …)'); el precio " +
         "vigente hoy en cada lista de precios activa (el que rige en este momento, nunca uno vencido ni uno " +

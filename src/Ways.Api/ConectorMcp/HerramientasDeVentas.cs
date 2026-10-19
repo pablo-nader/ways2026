@@ -144,7 +144,7 @@ public sealed class HerramientasDeVentas
         "restan. El importe es la suma del total de las líneas (con descuentos y recargos de la línea) y la cantidad son " +
         "unidades. Los filtros area, grupo, categoria (incluye sus subcategorías), articulo, marca y proveedor (el " +
         "habitual), por id o por nombre, y texto (contenido en el nombre o en el código interno, sin distinguir " +
-        "mayúsculas) acotan los artículos devueltos; todos usan la clasificación ACTUAL del artículo. El porcentaje es " +
+        "mayúsculas ni acentos) acotan los artículos devueltos; todos usan la clasificación ACTUAL del artículo. El porcentaje es " +
         "sobre el total de todos los artículos vendidos en el período y alcance, sin ningún filtro, así que sirve para " +
         "saber qué parte de lo vendido es un rubro o una marca. Ordena por importe (por defecto) o por cantidad y devuelve hasta 'limite' " +
         "artículos. El período se indica con un nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), " +
@@ -166,7 +166,7 @@ public sealed class HerramientasDeVentas
         string? empresa = null,
         [Description("Punto de venta, por id o por nombre. Si se omite, todos los de la empresa.")]
         string? punto_venta = null,
-        [Description("Texto contenido en el nombre o en el código interno del artículo, sin distinguir mayúsculas.")]
+        [Description("Texto contenido en el nombre o en el código interno del artículo, sin distinguir mayúsculas ni acentos.")]
         string? texto = null,
         [Description("Área actual del artículo, por id o por nombre.")]
         string? area = null,

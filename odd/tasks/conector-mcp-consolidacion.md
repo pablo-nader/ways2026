@@ -61,7 +61,11 @@ Rebanada 1:
   Mutaciones: brazo `ErrorDominio` anulado → caen el unitario, 10 casos de `ventas_por_articulo` y 3 de
   la ficha; brazo `DbUpdateException` anulado → cae el unitario; la captura clasificada de catálogo
   anulada → cae la carrera de su hermano (barras y proveedor, uno por uno).
-- [ ] T2 — Una sola guarda de rol. Ruta: inline (writer único de la rebanada).
+- [x] T2 — Una sola guarda de rol. Ruta: inline (writer único de la rebanada). Commit `6ae907b9`.
+  `PermisoDelConector` (antes `PermisoDeCompras`): `CumpleAsync(política)` y `ExigirAsync(política, mensaje)`;
+  ventas y ficha usan `CumpleAsync` y conservan su texto sin `isError`. Refactor sin comportamiento nuevo.
+  Mutación: `CumpleAsync` siempre verdadero → caen los 14 tests de rol (compras ×6, carga ×2, catálogo ×2,
+  ventas ×2, ficha del Vendedor ×1, más el de ventas por artículo).
 - [ ] T3 — Búsquedas de artículos en consultas de ventas sin `LIKE`. Ruta: inline (writer único).
 - [ ] T4 — Sin doble pasada en ventas por artículo. Ruta: inline (writer único).
 

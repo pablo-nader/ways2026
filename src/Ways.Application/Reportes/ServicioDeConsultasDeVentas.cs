@@ -7,6 +7,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Reportes;
 using Ways.Domain.Ventas;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Reportes;
 
@@ -425,8 +426,8 @@ public class ServicioDeConsultasDeVentas(
 
         if (texto is not null)
         {
-            var patron = $"%{PatronLike(texto)}%";
-            consulta = consulta.Where(a => EF.Functions.Like(a.Nombre.ToLower(), patron) || EF.Functions.Like(a.CodigoInterno.ToLower(), patron));
+            var patron = PatronDeContiene(texto);
+            consulta = consulta.Where(a => Coincide(a.Nombre, patron) || Coincide(a.CodigoInterno, patron));
         }
 
         if (idMarca is { } marca)
@@ -441,9 +442,6 @@ public class ServicioDeConsultasDeVentas(
 
         return [.. await consulta.Select(a => a.Id).ToListAsync(ct)];
     }
-
-    private static string PatronLike(string texto) =>
-        texto.ToLowerInvariant().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
     private async Task<CandidatoSimple?> ResolverArticuloAsync(string? texto, List<string> descripciones, CancellationToken ct)
     {
@@ -461,14 +459,14 @@ public class ServicioDeConsultasDeVentas(
 
     /// <summary>Un artículo visible por texto, con coincidencia exacta primero y cada paso resuelto en SQL antes de
     /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo (sin distinguir
-    /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código. Un
+    /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código
+    /// (sin distinguir mayúsculas ni acentos). Un
     /// paso con una sola coincidencia termina la búsqueda; con más de una es ambiguo (hasta 10 candidatos listados) y
     /// no sigue al paso siguiente; si ningún paso encuentra nada, no existe.</summary>
     public async Task<ArticuloResuelto> BuscarArticuloAsync(string texto, CancellationToken ct = default)
     {
         var buscado = texto.Trim();
-        var exacto = PatronLike(buscado);
-        var patron = $"%{PatronLike(buscado)}%";
+        var patron = PatronDeContiene(buscado);
         var visibles = db.Articulos.AsNoTracking();
 
         var pasos = new List<IQueryable<Domain.Articulos.Articulo>>();
@@ -477,10 +475,11 @@ public class ServicioDeConsultasDeVentas(
             pasos.Add(visibles.Where(a => a.Id == id));
         }
 
-        pasos.Add(visibles.Where(a => EF.Functions.Like(a.CodigoInterno.ToLower(), exacto)));
-        pasos.Add(visibles.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Activo && EF.Functions.Like(c.Codigo.ToLower(), exacto))));
-        pasos.Add(visibles.Where(a => EF.Functions.Like(a.Nombre.ToLower(), exacto)));
-        pasos.Add(visibles.Where(a => EF.Functions.Like(a.Nombre.ToLower(), patron) || EF.Functions.Like(a.CodigoInterno.ToLower(), patron)));
+        // Las tres columnas son citext: la igualdad ya ignora mayúsculas y usa los índices únicos.
+        pasos.Add(visibles.Where(a => a.CodigoInterno == buscado));
+        pasos.Add(visibles.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Activo && c.Codigo == buscado)));
+        pasos.Add(visibles.Where(a => a.Nombre == buscado));
+        pasos.Add(visibles.Where(a => Coincide(a.Nombre, patron) || Coincide(a.CodigoInterno, patron)));
 
         foreach (var paso in pasos)
         {

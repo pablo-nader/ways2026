@@ -292,6 +292,29 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         }
     }
 
+    /// <summary>Cláusulas bajo prueba, una por fila: el "contiene" de <c>texto</c> (sobre nombre y código interno) y el
+    /// paso "contiene" de la búsqueda de <c>articulo</c>, los dos con <c>BusquedaSinAcentos.Coincide</c>. "FIDÉOS" y
+    /// "fidéo" no coinciden con ningún paso exacto, así que solo el "contiene" sin acentos encuentra Fideos.</summary>
+    [Theory]
+    [InlineData("texto", "FIDÉOS", "texto 'FIDÉOS'")]
+    [InlineData("articulo", "fidéo", "artículo Fideos")]
+    public async Task VentasPorArticuloBuscaElTextoYElArticuloSinDistinguirAcentos(string filtro, string valor, string filtroEsperado)
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloBuscaElTextoYElArticuloSinDistinguirAcentos));
+        var (host, cliente, token) = await ConectarAsync(e.Admin);
+        await using var _ = host;
+        using var __ = cliente;
+
+        var resultado = await LlamarHerramientaAsync(
+            cliente, token, "ventas_por_articulo", new Dictionary<string, object?> { ["periodo"] = "hoy", [filtro] = valor });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        var lineas = Lineas(resultado.Texto);
+        Assert.Equal(filtroEsperado, lineas[2].Replace("Filtros: ", string.Empty, StringComparison.Ordinal));
+        Assert.Contains("FID-500 | Fideos | 1 | 150,00 | 9,1%", lineas);
+        Assert.Contains("Total de los artículos filtrados: 150,00 en 1 artículos", lineas);
+    }
+
     [Theory]
     [InlineData("""{"periodo":"hoy","categoria":"inexistente"}""", new[] { "No encontré la categoría 'inexistente'" })]
     [InlineData("""{"periodo":"hoy","categoria":"descontinuada"}""", new[] { "No encontré la categoría 'descontinuada'" })]
