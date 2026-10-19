@@ -146,10 +146,12 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
 Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Las
-herramientas corren con la identidad y el tenant de la cuenta que autorizó. Son de solo lectura
-`quien_soy`, que devuelve el nombre de usuario, el correo, el rol y el tenant de la cuenta que
-autorizó la conexión, más la hora del servidor, las consultas de ventas y de compras y la ficha
-de un artículo (`articulo_info`) de las secciones siguientes. Las dos de códigos de artículos escriben, y solo agregan.
+herramientas corren con la identidad y el tenant de la cuenta que autorizó: `quien_soy`, que
+devuelve el nombre de usuario, el correo, el rol y el tenant de esa cuenta, más la hora del servidor,
+y las de ventas, la ficha de un artículo (`articulo_info`) y las de compras y de códigos de artículos
+de las secciones siguientes. Todas son de solo lectura salvo tres que escriben:
+`crear_borrador_de_compra`, que guarda una factura de proveedor como borrador de compra, y
+`asociar_codigo_de_barras` y `asociar_codigo_de_proveedor`, que solo agregan códigos a un artículo.
 
 ### Consultas de ventas
 
@@ -222,17 +224,38 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   línea, con el mismo cálculo que usa la confirmación para el costo nominal
   (`CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`); no indica si esa línea actualizó el costo.
 
-### Consultas de compras
+### Compras
 
 | Herramienta | Qué devuelve |
 |---|---|
 | `contexto_de_compras` | Puntos de venta con su empresa, percepciones por defecto de cada empresa, tipos de comprobante de compra activos, alícuotas de IVA activas y el rol del usuario. |
 | `buscar_proveedor` | Proveedores por CUIT (ignorando guiones, puntos y espacios) o por nombre, hasta 10, con sus datos fiscales. |
 | `buscar_articulos` | Hasta 100 líneas de una factura en una llamada: por línea, el primer match entre código del proveedor, código de barras y nombre, con hasta 5 candidatos, sin costos. |
+| `crear_borrador_de_compra` | Carga una factura de proveedor como borrador de compra con origen asistente y devuelve su link con los totales calculados, o la compra no anulada que ya tiene ese número. |
 
-Las herramientas de compras sirven para resolver los ids de una factura de proveedor antes de
-cargarla; la carga del borrador todavía no está disponible. Son solo para Admin, igual que las
-escrituras de compras de la API (`GestionDeCatalogo`): con otro rol responden un error sin datos.
+Las de lectura resuelven los ids de una factura de proveedor y `crear_borrador_de_compra` la carga.
+Son solo para Admin, igual que las escrituras de compras de la API (`GestionDeCatalogo`): con otro rol
+responden un error sin datos y sin escribir nada.
+
+`crear_borrador_de_compra` guarda la factura con el mismo alta que `POST /api/compras`
+(`ServicioDeCompras.CrearBorradorAsync`) y origen `asistente`: el borrador no mueve stock, costos ni
+cuenta corriente, y la respuesta trae su link (`https://<UrlPublica>/admin/compras/{id}`) para que el
+usuario lo revise contra la factura y lo confirme con **Guardar**. Antes de crear busca una compra no
+anulada del proveedor con el mismo tipo y número (`BuscarDuplicadosAsync`): si la hay, no crea nada y
+la devuelve con su link; dos cargas simultáneas del mismo número las frena el índice único y la
+segunda recibe un error que lo explica. En una factura el número llega como punto de venta y número
+por separado y la herramienta arma `PPPPP-NNNNNNNN`; un remito trae texto libre. Cada línea es un
+artículo de Ways, cuyo detalle es el nombre del artículo, o un concepto con su texto; el costo va por
+unidad y la bonificación en pesos, y lo que la base guardaría distinto (más decimales que la columna,
+bultos sin unidades por bulto) o no puede guardar (más dígitos enteros que la columna) se rechaza antes
+de escribir, con el número de línea. Los totales los calcula el servidor, que acepta el IVA
+impreso de cada alícuota si difiere del calculado en hasta $1: la respuesta muestra la diferencia con
+el total impreso si se lo mandó y advierte si no es cero o si quedó un IVA impreso distinto del
+calculado. Cada error conocido del servicio vuelve como un texto que dice qué argumento corregir o qué
+preguntarle al usuario; un error de la base pasa por la misma clasificación que en la API
+(`ManejadorDeErrores`), y un fallo transitorio al guardar vuelve como resultado incierto, sin
+reintento: el borrador pudo haber quedado creado, así que hay que verificar el listado de compras antes
+de volver a cargarlo.
 
 ### Códigos de artículos
 

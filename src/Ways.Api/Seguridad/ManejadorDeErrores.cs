@@ -159,7 +159,7 @@ public class ManejadorDeErrores(
     /// <see cref="ClasificarUnicidad"/>) es IDÉNTICO al que tenía el switch antes de esta
     /// extracción — cero cambio de comportamiento en el camino EF, que es el único que corría
     /// hasta ahora.</summary>
-    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarPostgresException(
+    internal static (int EstadoHttp, string Titulo, string Codigo)? ClasificarPostgresException(
         PostgresException pg, ILogger log) =>
         pg switch
         {
