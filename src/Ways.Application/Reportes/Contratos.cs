@@ -74,6 +74,16 @@ public sealed record VentasPorArticulo(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, decimal CantidadTotal, decimal Total,
     IReadOnlyList<ArticuloVendido> Articulos);
 
+/// <summary>Respuesta de <c>GET /api/reportes/ventas/por-hora</c>: la grilla completa de 7 días
+/// (<c>diaDeLaSemana</c> 1 = lunes … 7 = domingo) × 24 horas locales (0..23) de la zona devuelta.
+/// <see cref="Celdas"/> siempre trae las 168 celdas, con ceros donde no hubo ventas;
+/// <c>total</c> es neto de notas de crédito y <c>tickets</c> no cuenta las notas de crédito.
+/// Los promedios dividen por las <see cref="Dias"/> (ocurrencias de ese día de la semana en el
+/// rango inclusivo), hayan tenido ventas o no. Sin costo ni margen.</summary>
+public sealed record VentasPorHora(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, decimal Total, int Tickets,
+    IReadOnlyList<OcurrenciasDeDia> Dias, IReadOnlyList<CeldaDeVentasPorHora> Celdas);
+
 /// <summary>Fila de <c>GET /api/reportes/articulos</c> (reporte de completitud de catálogo) — a
 /// diferencia de <see cref="ArticuloTop"/>/<see cref="FilaExistencia"/>, no hay ninguna figura de
 /// venta ni de stock: es el catálogo actual con sus cinco clasificaciones resueltas a nombre en

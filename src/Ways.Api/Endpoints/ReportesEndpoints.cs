@@ -160,6 +160,14 @@ public static class ReportesEndpoints
             "(con descendientes) y artículo — clasificación actual, filtros combinados con AND. " +
             "Sin costo ni margen: ver /rentabilidad.");
 
+        grupo.MapGet("/ventas/por-hora", (
+            ServicioDeReportesDeArticulos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            CancellationToken ct) =>
+            servicio.ObtenerVentasPorHoraAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
+        .WithSummary(
+            "Monto neto y tickets por día de la semana y hora local (grilla 7×24), con el promedio " +
+            "por ocurrencia del día en el rango. Sin costo ni margen: ver /rentabilidad.");
+
         grupo.MapGet("/ventas/por-articulo/export", async (
             ServicioDeReportesDeArticulos servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
             IContextoDeUsuario usuario, IRelojDelSistema reloj,
