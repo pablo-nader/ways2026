@@ -209,16 +209,18 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   (la misma regla que el POS y la grilla: no se muestra un precio vencido ni uno programado a futuro; las listas
   derivadas se calculan sobre su lista base con el porcentaje). Con `empresa` solo las listas compartidas y las
   propias de esa empresa.
-- **Stock:** una fila por punto de venta con saldo registrado (cantidad y mínimo); un punto de venta dado de baja
-  que conserva stock figura como `(punto de venta id N)`. Un servicio no maneja stock. Con `empresa`, solo sus
+- **Stock:** una fila por punto de venta con saldo registrado, con la cantidad (y el mínimo solo para Supervisor y
+  Admin, como en la web). Sin `empresa`, un punto de venta dado de baja que conserva stock figura como
+  `(punto de venta id N)`; con `empresa` no aparece. Un servicio no maneja stock. Con `empresa`, solo sus
   puntos de venta.
 - **Ventas:** cantidad e importe de los últimos 30 días contando hoy (`hoy - 29` a `hoy`), con el "hoy" y la zona
   horaria de cada empresa, sobre la misma fila del reporte de ventas por artículo de la web.
 - **Costos y compras:** el costo nominal del artículo y las últimas `compras` compras confirmadas (no cuentan
   borradores ni anuladas) con una línea de ese artículo, de la más reciente a la más antigua por momento de
   recepción. Cada fila trae la fecha del comprobante, el proveedor, el número del comprobante, la cantidad, el costo
-  unitario cargado, el descuento (un importe de la línea, no un porcentaje) y el costo efectivo por unidad que esa
-  compra escribe en el costo nominal (`CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`).
+  unitario cargado, el descuento (un importe de la línea, no un porcentaje) y el costo efectivo por unidad de esa
+  línea, con el mismo cálculo que usa la confirmación para el costo nominal
+  (`CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`); no indica si esa línea actualizó el costo.
 
 ### Consultas de compras
 

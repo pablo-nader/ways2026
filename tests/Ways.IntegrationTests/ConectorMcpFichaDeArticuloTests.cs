@@ -153,7 +153,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         return await LlamarHerramientaAsync(cliente, await AccessTokenAsync(cliente, usuario.Mail), "articulo_info", argumentos);
     }
 
-    private static string[] FichaDeColaEsperada(int idCola, int idCerrado, int comprasMostradas = 4) =>
+    private static string[] FichaDeColaEsperada(int idCola, int idCerrado, int comprasMostradas = 4, bool conMinimo = true) =>
     [
         $"Ficha de artículo: Cola 2L (id {idCola}, código COLA-2L)",
         "Estado: activo | producto | unidad de venta: unidad",
@@ -167,10 +167,10 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         "Mayorista | 120,00",
         "",
         "Stock por punto de venta (solo los que tienen saldo registrado):",
-        "punto de venta | cantidad | mínimo",
-        "Local 1 | 12 | 5",
-        "Depósito | 3,5 | -",
-        $"(punto de venta id {idCerrado}) | 7 | -",
+        conMinimo ? "punto de venta | cantidad | mínimo" : "punto de venta | cantidad",
+        conMinimo ? "Local 1 | 12 | 5" : "Local 1 | 12",
+        conMinimo ? "Depósito | 3,5 | -" : "Depósito | 3,5",
+        conMinimo ? $"(punto de venta id {idCerrado}) | 7 | -" : $"(punto de venta id {idCerrado}) | 7",
         "",
         "Ventas de los últimos 30 días (2026-09-19 a 2026-10-18, zona horaria: America/Argentina/Buenos_Aires): 2 unidades, importe 800,00",
         "",
@@ -225,7 +225,8 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
 
     /// <summary>Cláusula bajo prueba: la política <c>LecturaDeCostos</c> en <c>ArticuloInfoAsync</c> y la de
     /// <c>LecturaDeReportes</c> para las ventas. El Vendedor ve precios y stock, y ninguna cifra de costo, de compra ni de
-    /// venta ni el proveedor de la compra (el habitual de la clasificación sí, como en la grilla de artículos).</summary>
+    /// venta ni el proveedor de la compra (el habitual de la clasificación sí, como en la grilla de artículos), y el
+    /// stock sin el mínimo, que en la web solo leen los reportes.</summary>
     [Fact]
     public async Task ElVendedorVePreciosYStockPeroNingunCostoCompraNiVenta()
     {
@@ -236,7 +237,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         Assert.False(resultado.EsError, resultado.Texto);
         Assert.Equal(
             [
-                .. FichaDeColaEsperada(e.IdCola, e.IdPuntoVentaCerrado).Take(16),
+                .. FichaDeColaEsperada(e.IdCola, e.IdPuntoVentaCerrado, conMinimo: false).Take(16),
                 "",
                 "Ventas: requiere Supervisor o Admin.",
                 "Costos y compras: no disponibles para tu rol."

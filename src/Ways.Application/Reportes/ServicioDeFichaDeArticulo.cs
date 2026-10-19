@@ -19,7 +19,8 @@ public sealed record VentasDeFicha(DateOnly Desde, DateOnly Hasta, IReadOnlyList
 
 /// <param name="Comprobante">Número del comprobante del proveedor.</param>
 /// <param name="Descuento">Importe de la línea (no un porcentaje).</param>
-/// <param name="CostoEfectivo">Costo por unidad que la compra escribe en el costo nominal, o nulo si la cantidad es cero.</param>
+/// <param name="CostoEfectivo">Costo efectivo por unidad de la línea, con el mismo cálculo que usa la confirmación de la
+/// compra para el costo nominal (no indica si esta línea lo actualizó), o nulo si la cantidad es cero.</param>
 public sealed record CompraDeFicha(
     DateOnly Fecha, string Proveedor, string Comprobante, decimal Cantidad, decimal CostoUnitario, decimal Descuento,
     decimal? CostoEfectivo);
@@ -64,7 +65,7 @@ public class ServicioDeFichaDeArticulo(
 
         var cabecera = await LeerCabeceraAsync(articulo.Id, ct);
         var listas = await LeerPreciosAsync(articulo.Id, idEmpresa, ct);
-        var stock = await LeerStockAsync(articulo.Id, idEmpresa, ct);
+        var stock = await LeerStockAsync(articulo.Id, idEmpresa, solicitud.VerVentas, ct);
 
         VentasDeFicha? ventas = null;
         if (solicitud.VerVentas)
@@ -173,9 +174,10 @@ public class ServicioDeFichaDeArticulo(
 
     /// <summary>Una fila por punto de venta con saldo registrado. El tenant lo aísla el filtro de EF de <c>stock</c> y
     /// la FK compuesta <c>(id_articulo, id_tenant)</c>: las filas de stock de un artículo solo pueden ser de su tenant,
-    /// y el artículo ya salió de una búsqueda con el filtro de tenant. Un punto de venta dado de baja que conserva
-    /// stock se muestra como "(punto de venta id N)".</summary>
-    private async Task<IReadOnlyList<StockDeFicha>> LeerStockAsync(int idArticulo, int? idEmpresa, CancellationToken ct)
+    /// y el artículo ya salió de una búsqueda con el filtro de tenant. Sin empresa, un punto de venta dado de baja que
+    /// conserva stock se muestra como "(punto de venta id N)"; con empresa no aparece, porque no se puede saber de qué
+    /// empresa era. El mínimo solo se lee con permiso de reportes, igual que en la web.</summary>
+    private async Task<IReadOnlyList<StockDeFicha>> LeerStockAsync(int idArticulo, int? idEmpresa, bool verMinimo, CancellationToken ct)
     {
         var filas = await (
             from s in db.Stock.AsNoTracking()
@@ -209,7 +211,7 @@ public class ServicioDeFichaDeArticulo(
                     nombre = $"{nombre} ({nombresDeEmpresa.GetValueOrDefault(empresa) ?? $"empresa id {empresa}"})";
                 }
 
-                return new StockDeFicha(nombre, f.Cantidad, f.Minimo);
+                return new StockDeFicha(nombre, f.Cantidad, verMinimo ? f.Minimo : null);
             })
         ];
     }

@@ -460,8 +460,8 @@ public class ServicioDeConsultasDeVentas(
     private const int MaximoDeCandidatos = 10;
 
     /// <summary>Un artículo visible por texto, con coincidencia exacta primero y cada paso resuelto en SQL antes de
-    /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo, nombre
-    /// exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código. Un
+    /// cualquier tope de filas: id, código interno (sin distinguir mayúsculas), código de barras activo (sin distinguir
+    /// mayúsculas), nombre exacto (sin distinguir mayúsculas) y, recién entonces, el que contiene el texto en el nombre o en el código. Un
     /// paso con una sola coincidencia termina la búsqueda; con más de una es ambiguo (hasta 10 candidatos listados) y
     /// no sigue al paso siguiente; si ningún paso encuentra nada, no existe.</summary>
     public async Task<ArticuloResuelto> BuscarArticuloAsync(string texto, CancellationToken ct = default)
@@ -478,7 +478,7 @@ public class ServicioDeConsultasDeVentas(
         }
 
         pasos.Add(visibles.Where(a => EF.Functions.Like(a.CodigoInterno.ToLower(), exacto)));
-        pasos.Add(visibles.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Activo && c.Codigo == buscado)));
+        pasos.Add(visibles.Where(a => db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Activo && EF.Functions.Like(c.Codigo.ToLower(), exacto))));
         pasos.Add(visibles.Where(a => EF.Functions.Like(a.Nombre.ToLower(), exacto)));
         pasos.Add(visibles.Where(a => EF.Functions.Like(a.Nombre.ToLower(), patron) || EF.Functions.Like(a.CodigoInterno.ToLower(), patron)));
 

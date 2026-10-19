@@ -94,3 +94,12 @@ Mutaciones (aplicada, test rojo, revertida y verde):
 
 ## Próximo paso
 Judgment-day de T3.
+
+### Judgment-day de T3 (ronda 1) y corrección
+- Juez A y juez B (relanzado con Opus porque el primero se cortó por límite de uso): sin hallazgos severos.
+- Corregido por la regla "el conector nunca es más permisivo que la web": el stock mínimo solo aparece con `LecturaDeReportes`. En la web, el Vendedor no lo lee.
+  - Mutación: `LeerStockAsync` y `Formatear` con el mínimo siempre visible. Falla `ElVendedorVePreciosYStockPeroNingunCostoCompraNiVenta`. Revertida.
+- Prosa que coincide con el código (advertencia de los dos jueces): el costo efectivo de cada compra usa el mismo cálculo que la confirmación, pero no indica si esa línea actualizó el costo nominal.
+- Código de barras sin distinguir mayúsculas, como dice la descripción.
+- Un punto de venta dado de baja figura solo sin `empresa`.
+- Evidencia: build sin advertencias; `ConectorMcpFichaDeArticuloTests` + `ConectorMcpVentasPorArticuloTests` 40/40; la suite `ConectorMcp` completa, sobre el merge de main previo a la corrección, 217/217.

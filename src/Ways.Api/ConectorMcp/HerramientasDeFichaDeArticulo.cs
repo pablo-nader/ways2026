@@ -33,7 +33,7 @@ public sealed class HerramientasDeFichaDeArticulo
         "clasificación actual del artículo (un dato sin asignar o dado de baja figura como '(sin …)'); el precio " +
         "vigente hoy en cada lista de precios activa (el que rige en este momento, nunca uno vencido ni uno " +
         "programado a futuro; en las listas derivadas es el de su lista base con el porcentaje de la lista, igual " +
-        "que en el POS); el stock de cada punto de venta que tiene saldo registrado, con su mínimo; y las ventas " +
+        "que en el POS); el stock de cada punto de venta que tiene saldo registrado (el mínimo, solo para Supervisor y Admin); y las ventas " +
         "de los últimos 30 días contando hoy (con el 'hoy' y la zona horaria de cada empresa), en unidades e " +
         "importe, igual que el reporte de ventas por artículo de la web. Las ventas son solo para Supervisor y " +
         "Admin; el Vendedor ve una línea que lo avisa. El costo nominal del artículo y las últimas compras son " +
@@ -41,9 +41,9 @@ public sealed class HerramientasDeFichaDeArticulo
         "compras son las confirmadas con una línea de este artículo (no cuentan borradores ni anuladas), de la más " +
         "reciente a la más antigua por momento de recepción; cada fila trae la fecha del comprobante, el " +
         "proveedor, el número del comprobante, la cantidad, el costo unitario cargado, el descuento (un importe de " +
-        "la línea, no un porcentaje) y el costo efectivo por unidad que esa compra escribe en el costo nominal " +
+        "la línea, no un porcentaje) y el costo efectivo por unidad de la línea, con el cálculo que usa la confirmación para el costo nominal " +
         "(total de la línea neto del descuento, más el IVA si el comprobante lo discrimina y los costos cargados " +
-        "no lo incluyen, dividido por la cantidad). Con empresa, los precios son los de las listas compartidas y " +
+        "no lo incluyen, dividido por la cantidad; no indica si esa línea actualizó el costo). Con empresa, los precios son los de las listas compartidas y " +
         "las de esa empresa, y el stock, las ventas y las compras son los de esa empresa; sin empresa, todo el tenant.")]
     public static async Task<CallToolResult> ArticuloInfoAsync(
         IAuthorizationService autorizacion,
@@ -64,7 +64,7 @@ public sealed class HerramientasDeFichaDeArticulo
         try
         {
             var ficha = await fichas.ObtenerAsync(new SolicitudDeFichaDeArticulo(articulo, empresa, compras, verVentas, verCostos), ct);
-            return HerramientasDeVentas.Resultado(Formatear(ficha), esError: false);
+            return HerramientasDeVentas.Resultado(Formatear(ficha, verVentas), esError: false);
         }
         catch (ErrorDominio error)
         {
@@ -72,7 +72,7 @@ public sealed class HerramientasDeFichaDeArticulo
         }
     }
 
-    private static string Formatear(FichaDeArticulo f)
+    private static string Formatear(FichaDeArticulo f, bool verMinimo)
     {
         var lineas = new List<string>
         {
@@ -93,13 +93,16 @@ public sealed class HerramientasDeFichaDeArticulo
         if (f.EsProducto)
         {
             HerramientasDeVentas.AgregarTabla(
-                lineas, "Stock por punto de venta (solo los que tienen saldo registrado)", ["punto de venta", "cantidad", "mínimo"],
-                f.Stock.Select(s => new[]
-                {
-                    s.PuntoVenta,
-                    HerramientasDeVentas.Cantidad(s.Cantidad),
-                    s.Minimo is { } minimo ? HerramientasDeVentas.Cantidad(minimo) : "-"
-                }).ToList());
+                lineas, "Stock por punto de venta (solo los que tienen saldo registrado)",
+                verMinimo ? ["punto de venta", "cantidad", "mínimo"] : ["punto de venta", "cantidad"],
+                f.Stock.Select(s => verMinimo
+                    ? new[]
+                    {
+                        s.PuntoVenta,
+                        HerramientasDeVentas.Cantidad(s.Cantidad),
+                        s.Minimo is { } minimo ? HerramientasDeVentas.Cantidad(minimo) : "-"
+                    }
+                    : [s.PuntoVenta, HerramientasDeVentas.Cantidad(s.Cantidad)]).ToList());
         }
         else
         {
