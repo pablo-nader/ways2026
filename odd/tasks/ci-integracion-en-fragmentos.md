@@ -42,7 +42,7 @@ y bloqueaban `main`. El PR #386 sube el tope a 75 como parche; la suite sigue cr
 - Listado real: 2.777 métodos en 239 clases. Con N=2: 120 clases / 1.360 métodos y 119 / 1.417; filtros de unos 8.300 caracteres.
 - Punta a punta sin Docker, con `PoliticasTests` y `RutasDeLaSpaTests`: un `dotnet test` por fragmento (20 y 43 resultados) y `verificar` en verde; con un solo fragmento falla por tests no ejecutados.
 - Judgment-day: dos jueces ciegos, sin hallazgos severos.
-- Tope inicial de 40 minutos por fragmento con N=2: la mitad de la peor corrida observada (43 min) son unos 22, más 1–2 de preparación. Después la suite creció con las etapas del conector MCP y, ya con N=3, los fragmentos rozaron el tope (ver T3): desde el 2026-10-19 corren N=4 fragmentos con tope de 60 minutos, unos 28 minutos de tests más la preparación por fragmento según esa medición.
+- Tope inicial de 40 minutos por fragmento con N=2: la mitad de la peor corrida observada (43 min) son unos 22, más 1–2 de preparación. La suite siguió creciendo y, ya con N=3, los fragmentos rozaron el tope (ver T3): desde el 2026-10-19 corren N=4 fragmentos con tope de 60 minutos. Estimación, no medición: el único fragmento de N=3 que terminó (37 m 48 s) reescalado por 3/4 da unos 28 minutos de tests por fragmento; el otro fragmento observado fue cancelado antes de terminar, así que el peor caso con N=3 no se conoce.
 - No se corrió la suite de integración en local. RDD apagado en este clon: sin revisión nativa.
 
 ## Entrega
