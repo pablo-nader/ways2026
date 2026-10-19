@@ -110,8 +110,10 @@ public class ServicioDeConsultasDeVentas(
 
     public const int DiasMaximosDeLaTablaPorDia = 31;
 
-    /// <summary>Cuántas opciones lista el error de una búsqueda ambigua o sin resultado (artículo, empresa, punto de
-    /// venta y los filtros de área, grupo, categoría, marca y proveedor): no es un tope de filas de ningún reporte.</summary>
+    /// <summary>Cuántas opciones lista un error de búsqueda: el de un artículo ambiguo (un artículo que no existe no
+    /// lista ninguna) y, para la empresa, el punto de venta y los filtros de área, grupo, categoría, marca y
+    /// proveedor, tanto el ambiguo (las coincidencias) como el sin resultado (las disponibles). No es un tope de filas
+    /// de ningún reporte.</summary>
     public const int MaximoDeOpcionesListadasEnUnError = 10;
 
     public static IReadOnlyCollection<string> NombresDeAgrupacion => Agrupaciones.Keys.ToList();
