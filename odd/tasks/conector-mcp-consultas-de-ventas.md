@@ -27,7 +27,7 @@ El conector MCP (PR #350) solo expone `quien_soy`. Las respuestas a esas pregunt
 ## Tareas
 - [x] T1 — `ventas_resumen` y `ventas_agrupadas` por punto de venta, medio de pago, vendedor y día, con la resolución de períodos. Reusa `ServicioDeReportesDeVentas`. PR 1.
 - [x] T2 — `ventas_agrupadas` por área, grupo, categoría y marca, y `ventas_por_articulo` con filtros y top N, sobre `ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync` (PR #458) en lugar de una consulta por línea propia. PR 2, apilado sobre el 1.
-- [ ] T3 — `articulo_info`: precios vigentes por lista, stock por punto de venta, ventas de 30 días y últimas compras (solo Admin y Supervisor). PR 3, apilado sobre el 2.
+- [x] T3 — `articulo_info`: precios vigentes por lista, stock por punto de venta, ventas de 30 días y últimas compras (costos y compras solo Admin y Supervisor). PR 3, apilado sobre el 2.
 - [ ] T4 — `Instrucciones` del servidor MCP y la sección del conector en `docs/07-despliegue.md` (se reparte entre los tres PRs, cada uno documenta sus tools).
 
 ## Criterios de aceptación y checks
@@ -68,5 +68,29 @@ Mutaciones (cada una aplicada, test fallando, revertida y verde):
 - Aislamiento: por construcción del reporte reutilizado; `LasConsultasPorLineaNuncaMuestranLasLineasDeOtroTenant` no aísla una cláusula propia y, como `ways_app`, el RLS ya oculta las filas del otro tenant.
 - Estructurales: sin tabla, endpoint no GET, delete ni estrategia nuevos.
 
+## Evidencia T3
+- Diseño: `ServicioDeFichaDeArticulo` (nuevo) compone `ServicioDePrecios.PreciosVigentesEnLoteAsync` (la regla de vigente del POS y la grilla, derivadas incluidas) sobre las listas activas, `db.Stock` con LEFT JOIN a puntos de venta, `ServicioDeConsultasDeVentas.VentasDeUnArticuloAsync` (ventana `hoy-29` a `hoy` con el "hoy" y la zona de cada empresa, sobre `ObtenerVentasPorArticuloAsync`) y compras confirmadas (`ItemsComprobanteCompra` ⋈ `ComprobantesCompra`, `Estado == Confirmada`) por recepción descendente, con el costo efectivo de `CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`. Ventas con `LecturaDeReportes`, costos y compras con `LecturaDeCostos`, ambas evaluadas con `IAuthorizationService`.
+- Resolución exacta primero (también arregla T2): `BuscarArticuloAsync` resuelve en SQL, antes de cualquier tope, id, código interno, código de barras activo, nombre exacto y por último contiene; un paso con más de un candidato es ambiguo (hasta 10 como `id | código | nombre`). `ventas_por_articulo` y `ventas_agrupadas` la reusan.
+- Clasificación por id (arregla T2): `AgruparPorClasificacionAsync` agrupa por el id del área, grupo, categoría o marca; dos filas con el mismo nombre se desambiguan con `(id N)`. El índice único de nombre de categorías es por alcance (compartida o de empresa), no por padre: el test usa una compartida y una de empresa.
+- Hallazgo sobre el tenant de `stock`: `db.Stock` SÍ tiene filtro de tenant de EF escrito a mano y la FK compuesta `(id_articulo, id_tenant)` impide una fila de otro tenant para un artículo. Una cláusula de tenant propia sobre `stock` sería inmatable, así que no se agregó. Lo que aísla es el id del artículo ya resuelto con el filtro de EF de `articulos`.
+- `dotnet build src/Ways.Api/Ways.Api.csproj -p:NuGetAudit=false`: 0 advertencias, 0 errores.
+- `dotnet test tests/Ways.IntegrationTests -p:NuGetAudit=false --filter "FullyQualifiedName~ConectorMcp"`: 165 de 165.
+- Estructurales: ninguna aplica (sin tabla, `RemoveRange`/delete, endpoint no GET —`/mcp` ya existía—, estrategia de ejecución ni ruta de la SPA).
+- Cambio fuera de las superficies de T3 que hizo falta: `ConectorMcpVentasTests.ToolsListAnunciaLasHerramientasDeVentas…` asertaba la lista exacta de tools; se agregó `articulo_info` a la lista esperada.
+
+Mutaciones (aplicada, test rojo, revertida y verde):
+- Compras sin el filtro `Confirmada` (`!= Anulada` y `!= Borrador`, por separado): `AdminYSupervisorVen…` falla (5 de 5 compras en lugar de 4 de 4).
+- Orden por fecha del comprobante en lugar de recepción: falla (la última compra pasa a ser 2026-10-17).
+- Sin el filtro de listas activas: falla (aparece "Vieja | 1,00").
+- Precio resuelto a `Ahora + 1 año`: falla (Mayorista muestra el programado, 999,00).
+- Ventana de 31 días (`hoy - n`): falla (rango desde 2026-09-18).
+- "Hoy" tomado en UTC: `LaVentanaDeTreintaDiasTerminaEnElHoyLocalDeLaEmpresaYNoEnElDeUtc` falla. Detalle: el rango de fechas del reporte lo resuelve el propio reporte con la zona de la empresa, así que cambiar la zona de `RangoDeReporte` en el alcance no afecta a esta consulta (mutante sobreviviente, irrelevante para ella).
+- `LecturaDeCostos` → `OperacionDePos` (admite al Vendedor): `ElVendedorVePreciosYStock…` falla; `LecturaDeReportes` → `OperacionDePos`: falla.
+- Búsqueda de artículo con las coincidencias por contenido primero: `LaCoincidenciaExactaGana…` falla.
+- Agrupar categorías por nombre: `DosCategoriasConElMismoNombre…` falla (una fila "Varios" de 300,00).
+- `.IgnoreQueryFilters()` en la búsqueda de artículos: `SinRlsLaBusquedaDelArticuloAlcanzaParaNoMezclarOtroTenant` (contexto de owner, sin RLS) falla; el test de punta a punta `ElOtroTenantConElMismoCodigoNuncaAparece` SOBREVIVE porque como `ways_app` el RLS ya oculta el otro tenant.
+- Alcance por empresa: compras sin el filtro de puntos de venta, stock sin el filtro, ventas sin la empresa y listas sin el filtro de empresa fallan cada una en `ConEmpresaLaFicha…`.
+- Decisión de producto: el proveedor habitual figura en la cabecera para todos los roles (como en la grilla de artículos); no es costo.
+
 ## Próximo paso
-Judgment-day de T2 y pasar a T3.
+Judgment-day de T3.

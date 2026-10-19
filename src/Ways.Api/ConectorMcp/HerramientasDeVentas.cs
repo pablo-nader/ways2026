@@ -23,7 +23,7 @@ public sealed class HerramientasDeVentas
     private const int LimiteMaximo = 50;
 
     // Coma decimal y punto de miles (es-AR) armados a mano: no dependen de que el host tenga ICU.
-    private static readonly NumberFormatInfo FormatoDeNumeros = new()
+    internal static readonly NumberFormatInfo FormatoDeNumeros = new()
     {
         NumberDecimalSeparator = ",",
         NumberGroupSeparator = ".",
@@ -215,7 +215,7 @@ public sealed class HerramientasDeVentas
         }
     }
 
-    private static CallToolResult Resultado(string texto, bool esError) =>
+    internal static CallToolResult Resultado(string texto, bool esError) =>
         new() { IsError = esError, Content = [new TextContentBlock { Text = texto }] };
 
     private static string FormatearResumen(ResumenDeVentasConsultado r)
@@ -345,7 +345,7 @@ public sealed class HerramientasDeVentas
         return string.Join(Environment.NewLine, lineas);
     }
 
-    private static void AgregarTabla(List<string> lineas, string titulo, string[] encabezado, IReadOnlyList<string[]> filas)
+    internal static void AgregarTabla(List<string> lineas, string titulo, string[] encabezado, IReadOnlyList<string[]> filas)
     {
         lineas.Add(string.Empty);
         lineas.Add($"{titulo}:");
@@ -366,17 +366,17 @@ public sealed class HerramientasDeVentas
     private static string Encabezado(string? periodo, DateOnly desde, DateOnly hasta, IReadOnlyList<string> zonas) =>
         $"{(periodo is null ? string.Empty : periodo + " ")}({Rango(desde, hasta)}), zona horaria: {string.Join(", ", zonas)}";
 
-    private static string Rango(DateOnly desde, DateOnly hasta) =>
+    internal static string Rango(DateOnly desde, DateOnly hasta) =>
         desde == hasta
             ? Fecha(desde)
             : $"{Fecha(desde)} a {Fecha(hasta)}";
 
-    private static string Fecha(DateOnly fecha) => fecha.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    internal static string Fecha(DateOnly fecha) => fecha.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    private static string Dinero(decimal importe) => importe.ToString("N2", FormatoDeNumeros);
+    internal static string Dinero(decimal importe) => importe.ToString("N2", FormatoDeNumeros);
 
     private static string Entero(decimal valor) => valor.ToString("N0", FormatoDeNumeros);
 
     // Unidades de línea: enteras o con hasta tres decimales (artículos por peso).
-    private static string Cantidad(decimal valor) => valor.ToString("#,##0.###", FormatoDeNumeros);
+    internal static string Cantidad(decimal valor) => valor.ToString("#,##0.###", FormatoDeNumeros);
 }

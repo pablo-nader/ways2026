@@ -33,7 +33,10 @@ public static class RegistroDelConectorMcp
         "marca y proveedor ('¿cuánto se vendió de Coca-Cola el mes pasado?'). El período se indica con un " +
         "nombre (hoy, ayer, esta_semana, semana_pasada, este_mes, mes_pasado), que se resuelve en la zona " +
         "horaria de cada empresa, o con desde y hasta (yyyy-MM-dd, ambos inclusivos, separados como máximo " +
-        "366 días).";
+        "366 días). articulo_info es la ficha de un artículo y está abierta a todos los roles ('¿qué precio y " +
+        "stock tiene Cola 2L?', '¿a qué precio lo compramos la última vez y a quién?'): precios vigentes por " +
+        "lista, stock por punto de venta, ventas de los últimos 30 días y últimas compras; las ventas, el costo " +
+        "y las compras solo se muestran a Supervisor y Admin.";
 
     private static readonly string[] EsquemasDelConector =
     [
@@ -209,7 +212,8 @@ public static class RegistroDelConectorMcp
             })
             .WithHttpTransport(transporte => transporte.SessionMode = HttpServerSessionMode.Stateless)
             .WithTools<HerramientasDeIdentidad>()
-            .WithTools<HerramientasDeVentas>();
+            .WithTools<HerramientasDeVentas>()
+            .WithTools<HerramientasDeFichaDeArticulo>();
 
         return EstadoDelConectorMcp.Registrado();
     }

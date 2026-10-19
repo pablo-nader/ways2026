@@ -298,7 +298,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
     [InlineData("""{"periodo":"hoy","area":"zzz"}""", new[] { "No encontré el área 'zzz'" })]
     [InlineData("""{"periodo":"hoy","grupo":"zzz"}""", new[] { "No encontré el grupo 'zzz'" })]
     [InlineData("""{"periodo":"hoy","articulo":"zzz"}""", new[] { "No encontré el artículo 'zzz'" })]
-    [InlineData("""{"periodo":"hoy","articulo":"cola"}""", new[] { "'cola' es ambiguo para el artículo", "COLA-2L Cola 2L (id ", "COLA-500 Cola 500 (id " })]
+    [InlineData("""{"periodo":"hoy","articulo":"cola"}""", new[] { "'cola' es ambiguo para el artículo", "| COLA-2L | Cola 2L", "| COLA-500 | Cola 500" })]
     [InlineData("""{"periodo":"hoy","marca":"fres"}""", new[] { "'fres' es ambiguo para la marca", "Fresh (id ", "Fresco (id " })]
     [InlineData("""{"periodo":"hoy","orden":"precio"}""", new[] { "'orden' tiene que ser importe o cantidad" })]
     [InlineData("""{"periodo":"hoy","limite":51}""", new[] { "entre 1 y 50" })]
@@ -371,5 +371,40 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
         Assert.Contains("Gaseosas | 1.300,00 | 9 | 78,8%", Lineas(porCategoria.Texto));
         Assert.DoesNotContain("123.456", porArticulo.Texto);
         Assert.DoesNotContain("123.456", porCategoria.Texto);
+    }
+
+    /// <summary>Cláusula bajo prueba: el agrupamiento por ID de la clasificación en <c>AgruparPorClasificacionAsync</c>.
+    /// Dos categorías llamadas "Varios", una compartida y otra propia de la empresa (el índice único de nombre es por
+    /// alcance, no por padre), son dos filas; la etiqueta lleva el id solo porque comparten nombre y "Solo" no lo lleva.</summary>
+    [Fact]
+    public async Task DosCategoriasConElMismoNombreEnAlcancesDistintosSiguenSiendoDosFilas()
+    {
+        var t = await _apoyo.SembrarTenantAsync(nameof(DosCategoriasConElMismoNombreEnAlcancesDistintosSiguenSiendoDosFilas));
+        var supervisor = await _apoyo.SembrarUsuarioAsync(t, RolConocido.Supervisor);
+        var area = await _apoyo.SembrarAreaAsync(t, "Bebidas");
+        var variosUno = await _apoyo.SembrarCategoriaAsync(t, "Varios");
+        var variosDos = await _apoyo.SembrarCategoriaAsync(t, "Varios", t.IdEmpresa);
+        var solo = await _apoyo.SembrarCategoriaAsync(t, "Solo");
+        var articuloUno = await _apoyo.SembrarArticuloAsync(t, "Uno", "UNO", area, variosUno);
+        var articuloDos = await _apoyo.SembrarArticuloAsync(t, "Dos", "DOS", area, variosDos);
+        var articuloSolo = await _apoyo.SembrarArticuloAsync(t, "Tres", "TRES", area, solo);
+        await _apoyo.SembrarComprobanteConLineasAsync(t, HoyAlMediodia, supervisor.IdUsuario,
+            [new(articuloUno, "Uno", area, 1m, 100m), new(articuloDos, "Dos", area, 2m, 200m), new(articuloSolo, "Tres", area, 1m, 50m)]);
+        await using var host = _apoyo.HostConReloj(RelojDelMediodia, supervisor.Mail);
+        using var cliente = ApoyoDeConectorMcp.Cliente(host);
+
+        var resultado = await LlamarHerramientaAsync(
+            cliente, await AccessTokenAsync(cliente, supervisor.Mail), "ventas_agrupadas", new { agrupar_por = "categoria", periodo = "hoy" });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        Assert.Equal(
+            [
+                "categoría | importe | unidades | % del total",
+                $"Varios (id {variosDos}) | 200,00 | 2 | 57,1%",
+                $"Varios (id {variosUno}) | 100,00 | 1 | 28,6%",
+                "Solo | 50,00 | 1 | 14,3%",
+                "Total (suma de las líneas con artículo): 350,00 en 3 grupos"
+            ],
+            Lineas(resultado.Texto).Skip(2).ToArray());
     }
 }

@@ -147,8 +147,8 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
 Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Todas sus
 herramientas son de solo lectura: `quien_soy`, que devuelve el nombre de usuario, el correo, el rol
-y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, y las consultas de
-ventas de la sección siguiente.
+y el tenant de la cuenta que autorizó la conexión, más la hora del servidor, las consultas de
+ventas de la sección siguiente y la ficha de un artículo (`articulo_info`).
 
 ### Consultas de ventas
 
@@ -185,7 +185,39 @@ marca vendió más este mes?", "¿qué parte de lo vendido el mes pasado fue de 
   `proveedor` recortan sus filas, y el % es siempre sobre las ventas de todos los artículos del período, sin
   filtros. Un filtro por nombre que no coincide con nada, o que coincide con varios, devuelve un error que
   lo nombra y lista hasta 10 candidatos con su id.
+  `articulo` se resuelve igual que en `articulo_info` (ver abajo). En `ventas_agrupadas` por área, grupo,
+  categoría o marca se agrupa por el id de la clasificación, no por su nombre: dos categorías con el mismo
+  nombre son dos filas, y solo en ese caso la etiqueta lleva `(id N)`.
 - La salida es texto con tablas `a | b | c`; cada tabla se corta en 31 filas y avisa cuántas faltan.
+
+### Ficha de artículo
+
+| Herramienta | Qué responde |
+|---|---|
+| `articulo_info` | "¿Qué precio y stock tiene X?", "¿cuánto se vendió de X en el último mes?", "¿a qué precio lo compramos la última vez y a quién?". Argumentos: `articulo` (obligatorio), `empresa` y `compras` (1 a 20, 5 por defecto) |
+
+- **Artículo:** por id, código interno, código de barras activo o nombre. Se prueban en ese orden y la primera
+  coincidencia exacta (sin distinguir mayúsculas) gana, antes de cualquier tope de filas; solo si no hay ninguna se
+  busca el texto contenido en el nombre o en el código. Más de un candidato en un paso devuelve un error con hasta
+  10 (`id | código | nombre`); ninguno, un error que lo dice.
+- **Rol:** la tool está abierta a todos los roles. Los precios, el stock y la clasificación los ven todos. Las
+  ventas de los últimos 30 días requieren `LecturaDeReportes` (Supervisor y Admin) y el costo nominal y las
+  últimas compras requieren `LecturaDeCostos` (Supervisor y Admin); sin esos permisos la sección se reemplaza por
+  una línea que lo avisa y no aparece ningún costo ni proveedor de compra.
+- **Precios:** el vigente hoy en cada lista activa, resuelto con `ServicioDePrecios.PreciosVigentesEnLoteAsync`
+  (la misma regla que el POS y la grilla: no se muestra un precio vencido ni uno programado a futuro; las listas
+  derivadas se calculan sobre su lista base con el porcentaje). Con `empresa` solo las listas compartidas y las
+  propias de esa empresa.
+- **Stock:** una fila por punto de venta con saldo registrado (cantidad y mínimo); un punto de venta dado de baja
+  que conserva stock figura como `(punto de venta id N)`. Un servicio no maneja stock. Con `empresa`, solo sus
+  puntos de venta.
+- **Ventas:** cantidad e importe de los últimos 30 días contando hoy (`hoy - 29` a `hoy`), con el "hoy" y la zona
+  horaria de cada empresa, sobre la misma fila del reporte de ventas por artículo de la web.
+- **Costos y compras:** el costo nominal del artículo y las últimas `compras` compras confirmadas (no cuentan
+  borradores ni anuladas) con una línea de ese artículo, de la más reciente a la más antigua por momento de
+  recepción. Cada fila trae la fecha del comprobante, el proveedor, el número del comprobante, la cantidad, el costo
+  unitario cargado, el descuento (un importe de la línea, no un porcentaje) y el costo efectivo por unidad que esa
+  compra escribe en el costo nominal (`CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`).
 
 ### Encenderlo
 
