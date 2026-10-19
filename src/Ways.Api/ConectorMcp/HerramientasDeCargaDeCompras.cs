@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Npgsql;
+using Ways.Api.Seguridad;
 using Ways.Api.Spa;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
@@ -41,6 +42,7 @@ public sealed class HerramientasDeCargaDeCompras
         IWaysDbContext db,
         ServicioDeCompras compras,
         UrlsDelConector urls,
+        ILogger<HerramientasDeCargaDeCompras> log,
         [Description("Id del proveedor que emite la factura, el de buscar_proveedor (buscalo por el CUIT impreso).")]
         int idProveedor,
         [Description(
@@ -93,7 +95,7 @@ public sealed class HerramientasDeCargaDeCompras
 
             var factura = new FacturaParaBorrador(
                 idProveedor, idTipoComprobante, idPuntoVenta, fechaComprobante, lineas, puntoVentaFactura, numeroFactura,
-                numeroRemito, discriminaIva, preciosIncluyenIva, ivaImpreso, percepciones, observaciones);
+                numeroRemito, discriminaIva, preciosIncluyenIva, ivaImpreso, percepciones, observaciones, totalImpreso);
             ArmadoDelBorradorDeCompra.ValidarForma(factura);
 
             var tipo = await db.TiposComprobante
@@ -130,17 +132,20 @@ public sealed class HerramientasDeCargaDeCompras
             {
                 throw new ErrorDeHerramienta(TextosDelBorradorDeCompra.Traducir(error));
             }
-            catch (DbUpdateException error) when (error.InnerException is PostgresException
+            catch (DbUpdateException error) when (error.InnerException is PostgresException pg
+                && ManejadorDeErrores.ClasificarPostgresException(pg, log) is { } clasificado)
             {
-                SqlState: PostgresErrorCodes.UniqueViolation,
-                ConstraintName: "ux_comprobantes_compra_numero_externo"
-            })
+                // Misma clasificación que la API: el 23505 del número es la carrera de dos cargas simultáneas, que
+                // pasan las dos el chequeo de duplicado previo a la transacción.
+                throw new ErrorDeHerramienta(TextosDelBorradorDeCompra.TraducirFalloDeBase(clasificado.Codigo, clasificado.Titulo));
+            }
+            catch (Exception error) when (FallosTransitorios.EsTransitorioEnLaCadena(error))
             {
-                // El chequeo de duplicado es previo a la transacción: dos cargas del mismo número a la vez pasan
-                // las dos y la segunda choca con el índice único.
-                throw new ErrorDeHerramienta(TextosDelBorradorDeCompra.ErrorDeCarrera);
+                // Sin reintento automático: el alta no tiene clave de idempotencia y el commit pudo haber llegado.
+                log.LogError(error, "Conector MCP: no se pudo confirmar si quedó creado el borrador de compra.");
+                throw new ErrorDeHerramienta(TextosDelBorradorDeCompra.ResultadoIncierto);
             }
 
-            return TextosDelBorradorDeCompra.DescribirCreado(compra, tipo.Nombre, Link(compra.Id), totalImpreso);
+            return TextosDelBorradorDeCompra.DescribirCreado(compra, tipo.Nombre, Link(compra.Id), factura.TotalImpreso);
         });
 }

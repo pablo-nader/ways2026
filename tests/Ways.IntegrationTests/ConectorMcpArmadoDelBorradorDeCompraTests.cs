@@ -191,14 +191,26 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         ["sin alicuota"] = (Concepto() with { IdAlicuotaIva = null }, "Línea 2: necesita costoUnitario e idAlicuotaIva."),
         ["bultos sin unidades por bulto"] = (Concepto() with { Bultos = 2m }, BultosJuntos),
         ["unidades por bulto sin bultos"] = (Concepto() with { UnidadesPorBulto = 12m }, BultosJuntos),
-        ["unidades con 4 decimales"] = (Concepto() with { Unidades = 1.0005m }, "Línea 2: unidades admite hasta 3 decimales."),
-        ["bultos con 3 decimales"] = (
-            Concepto() with { Bultos = 1.005m, UnidadesPorBulto = 2m }, "Línea 2: bultos admite hasta 2 decimales."),
+        ["unidades con 4 decimales"] = (Concepto() with { Unidades = 1.0005m }, PrecisionDeUnidades),
+        ["unidades de un código de barras"] = (Concepto() with { Unidades = 7790001234567m }, PrecisionDeUnidades),
+        ["unidades en el borde de 10 dígitos"] = (Concepto() with { Unidades = 1_000_000_000m }, PrecisionDeUnidades),
+        ["bultos con 3 decimales"] = (Concepto() with { Bultos = 1.005m, UnidadesPorBulto = 2m }, PrecisionDeBultos),
+        ["bultos de 9 dígitos"] = (Concepto() with { Bultos = 100_000_000m, UnidadesPorBulto = 1m }, PrecisionDeBultos),
         ["unidades por bulto con 3 decimales"] = (
-            Concepto() with { Bultos = 2m, UnidadesPorBulto = 1.005m }, "Línea 2: unidadesPorBulto admite hasta 2 decimales."),
-        ["costo con 5 decimales"] = (
-            Concepto() with { CostoUnitario = 1.00005m }, "Línea 2: costoUnitario admite hasta 4 decimales."),
-        ["descuento con 3 decimales"] = (Concepto() with { Descuento = 1.005m }, "Línea 2: descuento admite hasta 2 decimales."),
+            Concepto() with { Bultos = 2m, UnidadesPorBulto = 1.005m }, PrecisionDeUnidadesPorBulto),
+        ["unidades por bulto de 9 dígitos"] = (
+            Concepto() with { Bultos = 1m, UnidadesPorBulto = 100_000_000m }, PrecisionDeUnidadesPorBulto),
+        ["costo con 5 decimales"] = (Concepto() with { CostoUnitario = 1.00005m }, PrecisionDeCosto),
+        ["costo de 11 dígitos"] = (Concepto() with { CostoUnitario = 10_000_000_000m }, PrecisionDeCosto),
+        ["costo negativo de 11 dígitos"] = (Concepto() with { CostoUnitario = -10_000_000_000m }, PrecisionDeCosto),
+        ["descuento con 3 decimales"] = (Concepto() with { Descuento = 1.005m }, PrecisionDeDescuento),
+        ["descuento de 13 dígitos"] = (Concepto() with { Descuento = 1_000_000_000_000m }, PrecisionDeDescuento),
+        ["cantidad de bultos en el borde de 10 dígitos"] = (
+            Concepto() with { Unidades = 0m, Bultos = 10_000_000m, UnidadesPorBulto = 100m },
+            "Línea 2: la cantidad (unidades + bultos × unidadesPorBulto) admite hasta 9 dígitos enteros."),
+        ["bruto en el borde de 13 dígitos"] = (
+            Concepto() with { Unidades = 100_000_000m, CostoUnitario = 10_000m },
+            "Línea 2: el importe bruto (cantidad × costoUnitario) admite hasta 12 dígitos enteros."),
         ["vencimiento que no es yyyy-MM-dd"] = (
             Concepto() with { FechaVencimiento = "01/03/2027" },
             "Línea 2: fechaVencimiento tiene que ser una fecha yyyy-MM-dd, por ejemplo 2026-10-15."),
@@ -221,6 +233,12 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
     private const string CantidadPositiva =
         "Línea 2: la cantidad (unidades + bultos × unidadesPorBulto) tiene que ser positiva.";
 
+    private const string PrecisionDeUnidades = "Línea 2: unidades admite hasta 9 dígitos enteros y 3 decimales.";
+    private const string PrecisionDeBultos = "Línea 2: bultos admite hasta 8 dígitos enteros y 2 decimales.";
+    private const string PrecisionDeUnidadesPorBulto = "Línea 2: unidadesPorBulto admite hasta 8 dígitos enteros y 2 decimales.";
+    private const string PrecisionDeCosto = "Línea 2: costoUnitario admite hasta 10 dígitos enteros y 4 decimales.";
+    private const string PrecisionDeDescuento = "Línea 2: descuento admite hasta 12 dígitos enteros y 2 decimales.";
+
     [Theory]
     [InlineData("nula")]
     [InlineData("sin articulo ni concepto")]
@@ -230,10 +248,19 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
     [InlineData("bultos sin unidades por bulto")]
     [InlineData("unidades por bulto sin bultos")]
     [InlineData("unidades con 4 decimales")]
+    [InlineData("unidades de un código de barras")]
+    [InlineData("unidades en el borde de 10 dígitos")]
     [InlineData("bultos con 3 decimales")]
+    [InlineData("bultos de 9 dígitos")]
     [InlineData("unidades por bulto con 3 decimales")]
+    [InlineData("unidades por bulto de 9 dígitos")]
     [InlineData("costo con 5 decimales")]
+    [InlineData("costo de 11 dígitos")]
+    [InlineData("costo negativo de 11 dígitos")]
     [InlineData("descuento con 3 decimales")]
+    [InlineData("descuento de 13 dígitos")]
+    [InlineData("cantidad de bultos en el borde de 10 dígitos")]
+    [InlineData("bruto en el borde de 13 dígitos")]
     [InlineData("vencimiento que no es yyyy-MM-dd")]
     [InlineData("cantidad cero")]
     [InlineData("cantidad que redondea a cero")]
@@ -254,6 +281,23 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         {
             Unidades = 1.125m, Bultos = 1.25m, UnidadesPorBulto = 2.50m, CostoUnitario = 1.1234m, Descuento = 0.10m
         }));
+
+    /// <summary>El máximo de cada columna, un dígito antes del borde que rechazan los casos de
+    /// <see cref="UnaLineaInvalidaEsUnErrorQueNombraLaLinea"/>.</summary>
+    [Fact]
+    public void ElMaximoDeCadaColumnaSeAcepta() =>
+        ArmadoDelBorradorDeCompra.ValidarForma(Factura(
+            Concepto() with { Unidades = 999_999_999.999m, CostoUnitario = 1m },
+            Concepto() with { Unidades = 0m, Bultos = 99_999_999.99m, UnidadesPorBulto = 1m },
+            Concepto() with { Unidades = 0m, Bultos = 1m, UnidadesPorBulto = 99_999_999.99m },
+            Concepto() with { CostoUnitario = 9_999_999_999.9999m },
+            Concepto() with { Unidades = 99_999_999.999m, CostoUnitario = 10_000m, Descuento = 999_999_999_990m })
+            with
+            {
+                IvaImpreso = [new IvaImpresoDeLaFactura(5, 999_999_999_999.99m)],
+                Percepciones = [new PercepcionDeLaFactura("iibb", 999_999_999_999.99m, 999_999_999_999.99m)],
+                TotalImpreso = 999_999_999_999.99m
+            });
 
     /// <summary>Los bordes de las reglas de línea, con el redondeo del servicio: un descuento igual al bruto, un
     /// bruto que redondea hacia arriba (3 × 0,3333 = 0,9999 → 1,00), una cantidad que redondea a 0,001 y un
@@ -282,15 +326,19 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         ["nulo"] = (null, "ivaImpreso 1: necesita idAlicuotaIva e iva."),
         ["sin alicuota"] = (new IvaImpresoDeLaFactura(Iva: 21m), "ivaImpreso 1: necesita idAlicuotaIva e iva."),
         ["sin iva"] = (new IvaImpresoDeLaFactura(IdAlicuotaIva: 5), "ivaImpreso 1: necesita idAlicuotaIva e iva."),
-        ["iva con 3 decimales"] = (new IvaImpresoDeLaFactura(5, 21.005m), "ivaImpreso 1: iva admite hasta 2 decimales.")
+        ["iva con 3 decimales"] = (new IvaImpresoDeLaFactura(5, 21.005m), PrecisionDelIvaImpreso),
+        ["iva de 13 dígitos"] = (new IvaImpresoDeLaFactura(5, 1_000_000_000_000m), PrecisionDelIvaImpreso)
     };
+
+    private const string PrecisionDelIvaImpreso = "ivaImpreso 1: iva admite hasta 12 dígitos enteros y 2 decimales.";
 
     [Theory]
     [InlineData("nulo")]
     [InlineData("sin alicuota")]
     [InlineData("sin iva")]
     [InlineData("iva con 3 decimales")]
-    public void UnIvaImpresoIncompletoOConMasDeDosDecimalesEsUnError(string caso)
+    [InlineData("iva de 13 dígitos")]
+    public void UnIvaImpresoIncompletoOQueNoEntraEnSuColumnaEsUnError(string caso)
     {
         var (ivaImpreso, mensaje) = IvaImpresoInvalido[caso];
 
@@ -303,6 +351,30 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         Assert.Equal("Percepción 1: falta el importe.", ErrorDeForma(Factura() with { Percepciones = [new PercepcionDeLaFactura("iibb")] }));
         Assert.Equal("Percepción 1: falta el importe.", ErrorDeForma(Factura() with { Percepciones = [null] }));
     }
+
+    [Theory]
+    [InlineData("1.005", "1", "importe")]
+    [InlineData("1000000000000", "1", "importe")]
+    [InlineData("1", "1.005", "baseImponible")]
+    [InlineData("1", "1000000000000", "baseImponible")]
+    public void UnaPercepcionQueNoEntraEnSuColumnaEsUnError(string importe, string baseImponible, string campo) =>
+        Assert.Equal(
+            $"Percepción 1: {campo} admite hasta 12 dígitos enteros y 2 decimales.",
+            ErrorDeForma(Factura() with
+            {
+                Percepciones = [new PercepcionDeLaFactura("iibb", Decimal(importe), Decimal(baseImponible))]
+            }));
+
+    private static decimal Decimal(string texto) => decimal.Parse(texto, System.Globalization.CultureInfo.InvariantCulture);
+
+    [Theory]
+    [InlineData("1000000000000")]
+    [InlineData("-79228162514264337593543950335")]
+    [InlineData("1.005")]
+    public void UnTotalImpresoQueNoEntraEnLaColumnaDelTotalEsUnError(string totalImpreso) =>
+        Assert.Equal(
+            "totalImpreso admite hasta 12 dígitos enteros y 2 decimales.",
+            ErrorDeForma(Factura() with { TotalImpreso = Decimal(totalImpreso) }));
 
     [Fact]
     public void UnaPercepcionSinTipoLlegaAlServicioConElTipoVacio()
@@ -348,6 +420,17 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         Assert.Equal(
             "No se creó el borrador. Un motivo que la herramienta no conoce.",
             TextosDelBorradorDeCompra.Traducir(new ErrorDominio("codigo_nuevo", "Un motivo que la herramienta no conoce.", 400)));
+
+    [Fact]
+    public void LosFallosDeLaBaseClasificadosSeTraducenYLosDemasConservanSuTitulo()
+    {
+        Assert.Equal(
+            TextosDelBorradorDeCompra.ErrorDeCarrera, TextosDelBorradorDeCompra.TraducirFalloDeBase("compra_duplicada", "Título"));
+        Assert.Equal(
+            TextosDelBorradorDeCompra.ValorFueraDeRango, TextosDelBorradorDeCompra.TraducirFalloDeBase("valor_fuera_de_rango", "Título"));
+        Assert.Equal(
+            "No se creó el borrador. Ya existe ese lote.", TextosDelBorradorDeCompra.TraducirFalloDeBase("lote_duplicado", "Ya existe ese lote."));
+    }
 
     [Fact]
     public void LasComprasDuplicadasSeListanConSuEstadoOrigenFechaNumeroYLink()

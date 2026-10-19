@@ -247,11 +247,15 @@ segunda recibe un error que lo explica. En una factura el número llega como pun
 por separado y la herramienta arma `PPPPP-NNNNNNNN`; un remito trae texto libre. Cada línea es un
 artículo de Ways, cuyo detalle es el nombre del artículo, o un concepto con su texto; el costo va por
 unidad y la bonificación en pesos, y lo que la base guardaría distinto (más decimales que la columna,
-bultos sin unidades por bulto) se rechaza. Los totales los calcula el servidor, que acepta el IVA
+bultos sin unidades por bulto) o no puede guardar (más dígitos enteros que la columna) se rechaza antes
+de escribir, con el número de línea. Los totales los calcula el servidor, que acepta el IVA
 impreso de cada alícuota si difiere del calculado en hasta $1: la respuesta muestra la diferencia con
 el total impreso si se lo mandó y advierte si no es cero o si quedó un IVA impreso distinto del
 calculado. Cada error conocido del servicio vuelve como un texto que dice qué argumento corregir o qué
-preguntarle al usuario.
+preguntarle al usuario; un error de la base pasa por la misma clasificación que en la API
+(`ManejadorDeErrores`), y un fallo transitorio al guardar vuelve como resultado incierto, sin
+reintento: el borrador pudo haber quedado creado, así que hay que verificar el listado de compras antes
+de volver a cargarlo.
 
 ### Códigos de artículos
 

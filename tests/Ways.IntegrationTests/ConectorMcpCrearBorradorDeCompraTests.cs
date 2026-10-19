@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Ways.Api.ConectorMcp;
 using Ways.Domain.Compras;
 using Ways.Domain.Usuarios;
@@ -451,6 +452,107 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
             resultado.Texto);
         Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
         Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(otro.IdTenant));
+    }
+
+    /// <summary>Un número que no entra en su columna se rechaza antes de escribir: unas unidades que en realidad son
+    /// un código de barras, y un total impreso que haría desbordar la resta contra el total calculado.</summary>
+    [Theory]
+    [InlineData("unidades de un código de barras")]
+    [InlineData("total impreso mínimo de decimal")]
+    public async Task UnNumeroQueNoEntraEnSuColumnaSeRechazaSinEscribir(string caso)
+    {
+        await using var e = await PrepararAsync("mcp-borrador-magnitud");
+        var (argumentos, mensaje) = caso switch
+        {
+            "unidades de un código de barras" => (
+                (object)new
+                {
+                    idProveedor = e.IdProveedor,
+                    idTipoComprobante = e.IdFacturaA,
+                    idPuntoVenta = e.IdPuntoVenta,
+                    fechaComprobante = "2026-10-15",
+                    puntoVentaFactura = 3,
+                    numeroFactura = 12345,
+                    lineas = new object[] { new { concepto = "Flete", unidades = 7790001234567m, costoUnitario = 10m, idAlicuotaIva = e.IdIva21 } }
+                },
+                "Línea 1: unidades admite hasta 9 dígitos enteros y 3 decimales."),
+            _ => (
+                new
+                {
+                    idProveedor = e.IdProveedor,
+                    idTipoComprobante = e.IdFacturaA,
+                    idPuntoVenta = e.IdPuntoVenta,
+                    fechaComprobante = "2026-10-15",
+                    puntoVentaFactura = 3,
+                    numeroFactura = 12345,
+                    lineas = new object[] { new { concepto = "Flete", unidades = 1, costoUnitario = 10m, idAlicuotaIva = e.IdIva21 } },
+                    totalImpreso = decimal.MinValue
+                },
+                "totalImpreso admite hasta 12 dígitos enteros y 2 decimales.")
+        };
+
+        var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, argumentos);
+
+        Assert.True(resultado.EsError);
+        Assert.Equal(mensaje, resultado.Texto);
+        Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
+    }
+
+    /// <summary>Cada línea entra en sus columnas, pero el subtotal (2 × 600.000.000.000) no entra en el
+    /// <c>numeric(14,2)</c> del encabezado: la base rechaza la fila con <c>22003</c> y la herramienta lo traduce con
+    /// la clasificación de la API (<c>valor_fuera_de_rango</c>).</summary>
+    [Fact]
+    public async Task UnSubtotalQueNoEntraEnLaBaseVuelveComoValorFueraDeRangoSinEscribir()
+    {
+        await using var e = await PrepararAsync("mcp-borrador-fuera-de-rango");
+        var linea = new { concepto = "Mercadería", unidades = 600_000_000m, costoUnitario = 1_000m, idAlicuotaIva = e.IdIva21 };
+
+        var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, new
+        {
+            idProveedor = e.IdProveedor,
+            idTipoComprobante = e.IdFacturaA,
+            idPuntoVenta = e.IdPuntoVenta,
+            fechaComprobante = "2026-10-15",
+            puntoVentaFactura = 3,
+            numeroFactura = 12345,
+            lineas = new object[] { linea, linea }
+        });
+
+        Assert.True(resultado.EsError);
+        Assert.Equal(TextosDelBorradorDeCompra.ValorFueraDeRango, resultado.Texto);
+        Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
+    }
+
+    /// <summary>El commit ambiguo de verdad: el borrador se comitea y recién después llega un <c>40001</c>
+    /// (<see cref="InterceptorQueRompeElCommitAmbiguo"/>). La herramienta no puede saber si quedó creado: no
+    /// reintenta, pide verificar el listado y deja el error en el log. El borrador existe, que es justo por qué un
+    /// reintento a ciegas crearía otro.</summary>
+    [Fact]
+    public async Task UnFalloTransitorioAlComitearDiceQueElResultadoEsInciertoYNoReintenta()
+    {
+        var interceptor = new InterceptorQueRompeElCommitAmbiguo("comprobantes_compra", "40001");
+        var captura = new CapturaDeLogs();
+        await using var e = await PrepararAsync(
+            "mcp-borrador-incierto",
+            configurarMas: builder =>
+            {
+                builder.ConfigureServices(servicios =>
+                    servicios.AddDbContext<WaysDbContext>((_, opciones) => opciones.AddInterceptors(interceptor.Interceptores)));
+                builder.ConfigureLogging(logging => logging.AddProvider(captura));
+            });
+
+        var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, FacturaSimple(e));
+
+        Assert.True(resultado.EsError);
+        Assert.Equal(TextosDelBorradorDeCompra.ResultadoIncierto, resultado.Texto);
+        Assert.Equal(1, interceptor.CommitsRotos);
+        Assert.Equal(1, interceptor.Inserciones);
+        var creada = Assert.Single(await _borrador.ComprasDelProveedorAsync(e.IdProveedor));
+        Assert.Equal(OrigenCompra.Asistente, creada.Origen);
+        Assert.Contains(captura.Entradas, entrada =>
+            entrada.Categoria == typeof(HerramientasDeCargaDeCompras).FullName
+            && entrada.Nivel == LogLevel.Error
+            && entrada.Mensaje == "Conector MCP: no se pudo confirmar si quedó creado el borrador de compra.");
     }
 
     /// <summary>La carrera que el chequeo previo no puede ver: otra carga guarda el mismo número entre el chequeo y

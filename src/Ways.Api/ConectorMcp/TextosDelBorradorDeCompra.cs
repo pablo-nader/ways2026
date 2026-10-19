@@ -14,6 +14,22 @@ public static class TextosDelBorradorDeCompra
         "No se creó el borrador. Mientras se cargaba se guardó otra compra no anulada de ese proveedor con el mismo " +
         "tipo y número de comprobante. Volvé a llamar a crear_borrador_de_compra con los mismos datos para ver cuál es.";
 
+    public const string ResultadoIncierto =
+        "Resultado incierto: verificá en el listado de compras si el borrador quedó creado antes de reintentar.";
+
+    public const string ValorFueraDeRango =
+        "No se creó el borrador. Un importe o una cantidad no entra en Ways: revisá contra la factura las cantidades, " +
+        "los costos unitarios, las bonificaciones y los importes.";
+
+    /// <summary>Un fallo de la base ya clasificado por <c>ManejadorDeErrores.ClasificarPostgresException</c>, la
+    /// misma clasificación que usa la API; uno sin traducción conserva su título.</summary>
+    public static string TraducirFalloDeBase(string codigo, string titulo) => codigo switch
+    {
+        "compra_duplicada" => ErrorDeCarrera,
+        "valor_fuera_de_rango" => ValorFueraDeRango,
+        _ => "No se creó el borrador. " + titulo
+    };
+
     private static readonly IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> SinMargenes =
         new Dictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)>();
 

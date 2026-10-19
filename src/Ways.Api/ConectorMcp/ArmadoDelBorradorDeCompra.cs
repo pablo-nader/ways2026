@@ -65,8 +65,9 @@ public sealed record PercepcionDeLaFactura(
     [property: Description("Alícuota impresa, en porcentaje (3 para 3 %); 0 si la factura no la imprime.")]
     decimal Alicuota = 0m);
 
-/// <summary>Los argumentos de <c>crear_borrador_de_compra</c> que van a la <see cref="SolicitudDeCompra"/>,
-/// tal como llegan.</summary>
+/// <summary>Los argumentos de <c>crear_borrador_de_compra</c> tal como llegan. Todos van a la
+/// <see cref="SolicitudDeCompra"/> salvo <see cref="TotalImpreso"/>, que solo se compara con el total que calcula
+/// el servidor.</summary>
 public sealed record FacturaParaBorrador(
     int IdProveedor,
     int IdTipoComprobante,
@@ -80,14 +81,15 @@ public sealed record FacturaParaBorrador(
     bool PreciosIncluyenIva = false,
     IReadOnlyList<IvaImpresoDeLaFactura?>? IvaImpreso = null,
     IReadOnlyList<PercepcionDeLaFactura?>? Percepciones = null,
-    string? Observaciones = null);
+    string? Observaciones = null,
+    decimal? TotalImpreso = null);
 
 /// <summary>
 /// Pasa los argumentos de <c>crear_borrador_de_compra</c> a una <see cref="SolicitudDeCompra"/>. Puro, sin
 /// base de datos. <see cref="ValidarForma"/> rechaza con <see cref="ErrorDeHerramienta"/> lo que el contrato
 /// aceptaría y guardaría distinto (un valor faltante que sería cero, bultos sin unidades por bulto, más decimales
-/// que la columna) y las reglas de cada línea que no necesitan la base; el resto (IVA, percepciones, conceptos
-/// con lote o bultos, mercadería vencida) lo valida el servicio.
+/// que la columna), lo que no entra en la columna donde se guarda y las reglas de cada línea que no necesitan la
+/// base; el resto (IVA, percepciones, conceptos con lote o bultos, mercadería vencida) lo valida el servicio.
 /// </summary>
 public static class ArmadoDelBorradorDeCompra
 {
@@ -95,9 +97,18 @@ public static class ArmadoDelBorradorDeCompra
 
     private const string FormatoDeFecha = "yyyy-MM-dd";
 
+    // Dígitos enteros de las columnas de compras: cantidad numeric(12,3), bultos y unidades por bulto
+    // numeric(10,2), costo unitario numeric(14,4) e importes numeric(14,2).
+    private const int EnterosDeCantidad = 9;
+    private const int EnterosDeBultos = 8;
+    private const int EnterosDeCosto = 10;
+    private const int EnterosDeImporte = 12;
+
     /// <summary>Valida, sin la base: entre 1 y <see cref="MaximoDeLineas"/> líneas, cada una con
-    /// <see cref="ValidarLinea"/>; <c>fechaComprobante</c> en yyyy-MM-dd; cada IVA impreso con alícuota e importe
-    /// de hasta 2 decimales; y cada percepción con importe. <see cref="Armar"/> supone que esto pasó.</summary>
+    /// <see cref="ValidarLinea"/>; <c>fechaComprobante</c> en yyyy-MM-dd; cada IVA impreso con alícuota e importe;
+    /// cada percepción con importe; y que el IVA impreso, el importe y la base de cada percepción y
+    /// <c>totalImpreso</c> entren en una columna <c>numeric(14,2)</c>. La alícuota de una percepción la acota el
+    /// servicio (de 0 a 100). <see cref="Armar"/> supone que esto pasó.</summary>
     public static void ValidarForma(FacturaParaBorrador factura)
     {
         if (factura.Lineas is not { Count: > 0 and <= MaximoDeLineas } lineas)
@@ -121,17 +132,23 @@ public static class ArmadoDelBorradorDeCompra
                 throw new ErrorDeHerramienta($"ivaImpreso {numero}: necesita idAlicuotaIva e iva.");
             }
 
-            ExigirDecimales(iva, 2, $"ivaImpreso {numero}: iva");
+            ExigirPrecision(iva, EnterosDeImporte, 2, $"ivaImpreso {numero}: iva");
         }
 
         var percepciones = factura.Percepciones ?? [];
         for (var i = 0; i < percepciones.Count; i++)
         {
-            if (percepciones[i] is not { Importe: not null })
+            var numero = i + 1;
+            if (percepciones[i] is not { Importe: { } importe } percepcion)
             {
-                throw new ErrorDeHerramienta($"Percepción {i + 1}: falta el importe.");
+                throw new ErrorDeHerramienta($"Percepción {numero}: falta el importe.");
             }
+
+            ExigirPrecision(importe, EnterosDeImporte, 2, $"Percepción {numero}: importe");
+            ExigirPrecision(percepcion.BaseImponible, EnterosDeImporte, 2, $"Percepción {numero}: baseImponible");
         }
+
+        ExigirPrecision(factura.TotalImpreso, EnterosDeImporte, 2, "totalImpreso");
     }
 
     public static IReadOnlyList<int> IdsDeArticulo(FacturaParaBorrador factura) =>
@@ -198,9 +215,10 @@ public static class ArmadoDelBorradorDeCompra
     }
 
     /// <summary>Una línea, con su número en cada error: es un objeto; trae <c>idArticulo</c> o <c>concepto</c>,
-    /// no los dos; trae costo y alícuota; bultos y unidades por bulto van juntos; cada número tiene los decimales
-    /// de su columna; la cantidad es positiva, el costo y el descuento no son negativos y el descuento no supera el
-    /// bruto; un lote trae vencimiento, y el vencimiento es yyyy-MM-dd.</summary>
+    /// no los dos; trae costo y alícuota; bultos y unidades por bulto van juntos; cada número, la cantidad y el
+    /// bruto entran en su columna (dígitos enteros y decimales); la cantidad es positiva, el costo y el descuento no
+    /// son negativos y el descuento no supera el bruto; un lote trae vencimiento, y el vencimiento es
+    /// yyyy-MM-dd.</summary>
     private static void ValidarLinea(LineaDeBorradorDeCompra? linea, int numero)
     {
         if (linea is null)
@@ -227,14 +245,15 @@ public static class ArmadoDelBorradorDeCompra
                 $"Línea {numero}: bultos y unidadesPorBulto van juntos (la cantidad es unidades + bultos × unidadesPorBulto).");
         }
 
-        ExigirDecimales(linea.Unidades, 3, $"Línea {numero}: unidades");
-        ExigirDecimales(linea.Bultos, 2, $"Línea {numero}: bultos");
-        ExigirDecimales(linea.UnidadesPorBulto, 2, $"Línea {numero}: unidadesPorBulto");
-        ExigirDecimales(linea.CostoUnitario, 4, $"Línea {numero}: costoUnitario");
-        ExigirDecimales(linea.Descuento, 2, $"Línea {numero}: descuento");
+        ExigirPrecision(linea.Unidades, EnterosDeCantidad, 3, $"Línea {numero}: unidades");
+        ExigirPrecision(linea.Bultos, EnterosDeBultos, 2, $"Línea {numero}: bultos");
+        ExigirPrecision(linea.UnidadesPorBulto, EnterosDeBultos, 2, $"Línea {numero}: unidadesPorBulto");
+        ExigirPrecision(linea.CostoUnitario, EnterosDeCosto, 4, $"Línea {numero}: costoUnitario");
+        ExigirPrecision(linea.Descuento, EnterosDeImporte, 2, $"Línea {numero}: descuento");
 
         var costo = linea.CostoUnitario.Value;
         var cantidad = Redondear(linea.Unidades + (linea.Bultos ?? 0m) * (linea.UnidadesPorBulto ?? 0m), 3);
+        ExigirEnteros(cantidad, EnterosDeCantidad, $"Línea {numero}: la cantidad (unidades + bultos × unidadesPorBulto)");
         if (cantidad <= 0m)
         {
             throw new ErrorDeHerramienta(
@@ -252,6 +271,7 @@ public static class ArmadoDelBorradorDeCompra
         }
 
         var bruto = Redondear(cantidad * costo, 2);
+        ExigirEnteros(bruto, EnterosDeImporte, $"Línea {numero}: el importe bruto (cantidad × costoUnitario)");
         if (linea.Descuento > bruto)
         {
             throw new ErrorDeHerramienta(
@@ -312,11 +332,33 @@ public static class ArmadoDelBorradorDeCompra
             ? fecha
             : throw new ErrorDeHerramienta($"{argumento} tiene que ser una fecha {FormatoDeFecha}, por ejemplo 2026-10-15.");
 
-    private static void ExigirDecimales(decimal? valor, int decimales, string campo)
+    /// <summary>Lo que entra en una columna <c>numeric</c> con <paramref name="enteros"/> dígitos enteros y
+    /// <paramref name="decimales"/> decimales: con más enteros la base rechaza la fila (<c>22003</c>) y con más
+    /// decimales la redondea en silencio.</summary>
+    private static void ExigirPrecision(decimal? valor, int enteros, int decimales, string campo)
     {
-        if (valor is { } v && v != Math.Round(v, decimales))
+        if (valor is { } v && (Math.Abs(v) >= Limite(enteros) || v != Math.Round(v, decimales)))
         {
-            throw new ErrorDeHerramienta($"{campo} admite hasta {decimales} decimales.");
+            throw new ErrorDeHerramienta($"{campo} admite hasta {enteros} dígitos enteros y {decimales} decimales.");
         }
+    }
+
+    private static void ExigirEnteros(decimal valor, int enteros, string campo)
+    {
+        if (Math.Abs(valor) >= Limite(enteros))
+        {
+            throw new ErrorDeHerramienta($"{campo} admite hasta {enteros} dígitos enteros.");
+        }
+    }
+
+    private static decimal Limite(int enteros)
+    {
+        var limite = 1m;
+        for (var i = 0; i < enteros; i++)
+        {
+            limite *= 10m;
+        }
+
+        return limite;
     }
 }
