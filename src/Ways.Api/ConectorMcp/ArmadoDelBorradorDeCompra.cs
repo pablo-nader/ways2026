@@ -84,9 +84,10 @@ public sealed record FacturaParaBorrador(
 
 /// <summary>
 /// Pasa los argumentos de <c>crear_borrador_de_compra</c> a una <see cref="SolicitudDeCompra"/>. Puro, sin
-/// base de datos. Rechaza con <see cref="ErrorDeHerramienta"/> lo que el contrato aceptaría y guardaría
-/// distinto (un valor faltante que sería cero, bultos sin unidades por bulto, más decimales que la columna);
-/// el resto de las reglas (IVA, percepciones, lotes, cantidades) las valida el servicio.
+/// base de datos. <see cref="ValidarForma"/> rechaza con <see cref="ErrorDeHerramienta"/> lo que el contrato
+/// aceptaría y guardaría distinto (un valor faltante que sería cero, bultos sin unidades por bulto, más decimales
+/// que la columna) y las reglas de cada línea que no necesitan la base; el resto (IVA, percepciones, conceptos
+/// con lote o bultos, mercadería vencida) lo valida el servicio.
 /// </summary>
 public static class ArmadoDelBorradorDeCompra
 {
@@ -94,7 +95,9 @@ public static class ArmadoDelBorradorDeCompra
 
     private const string FormatoDeFecha = "yyyy-MM-dd";
 
-    /// <summary>Todo lo que se puede validar sin la base. <see cref="Armar"/> supone que esto pasó.</summary>
+    /// <summary>Valida, sin la base: entre 1 y <see cref="MaximoDeLineas"/> líneas, cada una con
+    /// <see cref="ValidarLinea"/>; <c>fechaComprobante</c> en yyyy-MM-dd; cada IVA impreso con alícuota e importe
+    /// de hasta 2 decimales; y cada percepción con importe. <see cref="Armar"/> supone que esto pasó.</summary>
     public static void ValidarForma(FacturaParaBorrador factura)
     {
         if (factura.Lineas is not { Count: > 0 and <= MaximoDeLineas } lineas)
@@ -194,6 +197,10 @@ public static class ArmadoDelBorradorDeCompra
         return numeroRemito;
     }
 
+    /// <summary>Una línea, con su número en cada error: es un objeto; trae <c>idArticulo</c> o <c>concepto</c>,
+    /// no los dos; trae costo y alícuota; bultos y unidades por bulto van juntos; cada número tiene los decimales
+    /// de su columna; la cantidad es positiva, el costo y el descuento no son negativos y el descuento no supera el
+    /// bruto; un lote trae vencimiento, y el vencimiento es yyyy-MM-dd.</summary>
     private static void ValidarLinea(LineaDeBorradorDeCompra? linea, int numero)
     {
         if (linea is null)
@@ -226,11 +233,48 @@ public static class ArmadoDelBorradorDeCompra
         ExigirDecimales(linea.CostoUnitario, 4, $"Línea {numero}: costoUnitario");
         ExigirDecimales(linea.Descuento, 2, $"Línea {numero}: descuento");
 
+        var costo = linea.CostoUnitario.Value;
+        var cantidad = Redondear(linea.Unidades + (linea.Bultos ?? 0m) * (linea.UnidadesPorBulto ?? 0m), 3);
+        if (cantidad <= 0m)
+        {
+            throw new ErrorDeHerramienta(
+                $"Línea {numero}: la cantidad (unidades + bultos × unidadesPorBulto) tiene que ser positiva.");
+        }
+
+        if (costo < 0m)
+        {
+            throw new ErrorDeHerramienta($"Línea {numero}: costoUnitario no puede ser negativo.");
+        }
+
+        if (linea.Descuento < 0m)
+        {
+            throw new ErrorDeHerramienta($"Línea {numero}: descuento no puede ser negativo.");
+        }
+
+        var bruto = Redondear(cantidad * costo, 2);
+        if (linea.Descuento > bruto)
+        {
+            throw new ErrorDeHerramienta(
+                $"Línea {numero}: descuento supera el importe bruto de la línea (cantidad × costoUnitario = " +
+                $"{bruto.ToString("0.00", CultureInfo.InvariantCulture)}): es la bonificación en pesos, no un porcentaje.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(linea.CodigoLote) && string.IsNullOrWhiteSpace(linea.FechaVencimiento))
+        {
+            throw new ErrorDeHerramienta($"Línea {numero}: codigoLote va con fechaVencimiento.");
+        }
+
         if (!string.IsNullOrWhiteSpace(linea.FechaVencimiento))
         {
             LeerFecha(linea.FechaVencimiento, $"Línea {numero}: fechaVencimiento");
         }
     }
+
+    /// <summary>El redondeo de <see cref="Ways.Domain.Compras.CalculadorDeCompra"/>: la cantidad de la línea va a 3
+    /// decimales y su bruto a 2, lejos del cero en el punto medio. Con las mismas cuentas, una línea que pasa
+    /// <see cref="ValidarForma"/> pasa también las reglas de cantidad, costo y descuento del servicio.</summary>
+    private static decimal Redondear(decimal valor, int decimales) =>
+        Math.Round(valor, decimales, MidpointRounding.AwayFromZero);
 
     private static LineaDeCompraSolicitada ArmarLinea(
         LineaDeBorradorDeCompra linea, int numero, IReadOnlyDictionary<int, string> nombreDeArticulo)

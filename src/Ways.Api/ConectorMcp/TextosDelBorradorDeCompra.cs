@@ -64,22 +64,12 @@ public static class TextosDelBorradorDeCompra
                 "La alicuota de una percepción va de 0 a 100, en porcentaje (3 para 3 %).",
             "percepcion_decimales_invalidos" =>
                 "En una percepción, importe y baseImponible admiten hasta 2 decimales y alicuota hasta 3.",
-            "costo_de_item_invalido" =>
-                "costoUnitario no puede ser negativo: es el precio de una unidad (0 en una línea bonificada).",
-            "importes_de_item_invalidos" =>
-                "descuento no puede ser negativo: es el importe de la bonificación de la línea.",
             "concepto_con_bultos" =>
                 "Una línea de concepto no lleva bultos ni unidadesPorBulto: mandá su cantidad en unidades.",
             "concepto_con_lote" =>
                 "Una línea de concepto no lleva codigoLote ni fechaVencimiento.",
-            "lote_input_incompleto" =>
-                $"{error.Message} En la herramienta son codigoLote y fechaVencimiento: mandá los dos o ninguno.",
             "lote_vencido_en_recepcion" =>
                 $"{error.Message} Preguntale al usuario qué hacer con esa línea.",
-            "cantidad_de_item_invalida" =>
-                "Cada línea necesita una cantidad positiva: unidades + bultos × unidadesPorBulto.",
-            "descuento_de_item_invalido" =>
-                $"{error.Message} descuento es el importe en pesos de la bonificación de la línea, no un porcentaje.",
             "codigo_proveedor_muy_largo" =>
                 $"codigoProveedor admite hasta {ReglaDeCodigoProveedor.LongitudMaxima} caracteres.",
             _ => error.Message

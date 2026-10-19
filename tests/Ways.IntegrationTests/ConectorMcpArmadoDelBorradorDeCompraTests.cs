@@ -201,8 +201,25 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         ["descuento con 3 decimales"] = (Concepto() with { Descuento = 1.005m }, "Línea 2: descuento admite hasta 2 decimales."),
         ["vencimiento que no es yyyy-MM-dd"] = (
             Concepto() with { FechaVencimiento = "01/03/2027" },
-            "Línea 2: fechaVencimiento tiene que ser una fecha yyyy-MM-dd, por ejemplo 2026-10-15.")
+            "Línea 2: fechaVencimiento tiene que ser una fecha yyyy-MM-dd, por ejemplo 2026-10-15."),
+        ["cantidad cero"] = (Concepto() with { Unidades = 0m }, CantidadPositiva),
+        ["cantidad que redondea a cero"] = (
+            new LineaDeBorradorDeCompra(
+                IdArticulo: IdArticulo, Bultos: 0.01m, UnidadesPorBulto: 0.04m, CostoUnitario: 1m, IdAlicuotaIva: 5),
+            CantidadPositiva),
+        ["costo negativo"] = (Concepto() with { CostoUnitario = -1m }, "Línea 2: costoUnitario no puede ser negativo."),
+        ["descuento negativo"] = (Concepto() with { Descuento = -1m }, "Línea 2: descuento no puede ser negativo."),
+        ["descuento mayor al bruto"] = (
+            Concepto() with { Descuento = 500.01m },
+            "Línea 2: descuento supera el importe bruto de la línea (cantidad × costoUnitario = 500.00): es la " +
+            "bonificación en pesos, no un porcentaje."),
+        ["lote sin vencimiento"] = (
+            new LineaDeBorradorDeCompra(IdArticulo: IdArticulo, Unidades: 1m, CostoUnitario: 1m, IdAlicuotaIva: 5, CodigoLote: "L-1"),
+            "Línea 2: codigoLote va con fechaVencimiento.")
     };
+
+    private const string CantidadPositiva =
+        "Línea 2: la cantidad (unidades + bultos × unidadesPorBulto) tiene que ser positiva.";
 
     [Theory]
     [InlineData("nula")]
@@ -218,7 +235,13 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
     [InlineData("costo con 5 decimales")]
     [InlineData("descuento con 3 decimales")]
     [InlineData("vencimiento que no es yyyy-MM-dd")]
-    public void UnaLineaQueElContratoGuardariaDistintoEsUnErrorQueNombraLaLinea(string caso)
+    [InlineData("cantidad cero")]
+    [InlineData("cantidad que redondea a cero")]
+    [InlineData("costo negativo")]
+    [InlineData("descuento negativo")]
+    [InlineData("descuento mayor al bruto")]
+    [InlineData("lote sin vencimiento")]
+    public void UnaLineaInvalidaEsUnErrorQueNombraLaLinea(string caso)
     {
         var (linea, mensaje) = LineasInvalidas[caso];
 
@@ -231,6 +254,19 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         {
             Unidades = 1.125m, Bultos = 1.25m, UnidadesPorBulto = 2.50m, CostoUnitario = 1.1234m, Descuento = 0.10m
         }));
+
+    /// <summary>Los bordes de las reglas de línea, con el redondeo del servicio: un descuento igual al bruto, un
+    /// bruto que redondea hacia arriba (3 × 0,3333 = 0,9999 → 1,00), una cantidad que redondea a 0,001 y un
+    /// vencimiento sin lote.</summary>
+    [Fact]
+    public void LosBordesDeLasReglasDeLineaSeAceptan() =>
+        ArmadoDelBorradorDeCompra.ValidarForma(Factura(
+            Concepto() with { Descuento = 500m },
+            Concepto() with { Unidades = 3m, CostoUnitario = 0.3333m, Descuento = 1m },
+            new LineaDeBorradorDeCompra(
+                IdArticulo: IdArticulo, Bultos: 0.01m, UnidadesPorBulto: 0.05m, CostoUnitario: 1m, IdAlicuotaIva: 5),
+            new LineaDeBorradorDeCompra(
+                IdArticulo: IdArticulo, Unidades: 1m, CostoUnitario: 1m, IdAlicuotaIva: 5, FechaVencimiento: "2027-03-01")));
 
     [Theory]
     [InlineData(null)]
@@ -295,14 +331,9 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
     [InlineData("percepcion_importes_invalidos", "El importe y la baseImponible de una percepción no pueden ser negativos.")]
     [InlineData("percepcion_alicuota_invalida", "La alicuota de una percepción va de 0 a 100")]
     [InlineData("percepcion_decimales_invalidos", "importe y baseImponible admiten hasta 2 decimales y alicuota hasta 3.")]
-    [InlineData("costo_de_item_invalido", "costoUnitario no puede ser negativo")]
-    [InlineData("importes_de_item_invalidos", "descuento no puede ser negativo")]
     [InlineData("concepto_con_bultos", "Una línea de concepto no lleva bultos ni unidadesPorBulto")]
     [InlineData("concepto_con_lote", "Una línea de concepto no lleva codigoLote ni fechaVencimiento.")]
-    [InlineData("lote_input_incompleto", "En la herramienta son codigoLote y fechaVencimiento")]
     [InlineData("lote_vencido_en_recepcion", "Preguntale al usuario qué hacer con esa línea.")]
-    [InlineData("cantidad_de_item_invalida", "unidades + bultos × unidadesPorBulto")]
-    [InlineData("descuento_de_item_invalido", "no un porcentaje.")]
     [InlineData("codigo_proveedor_muy_largo", "codigoProveedor admite hasta 50 caracteres.")]
     public void CadaErrorConocidoDelServicioDiceQueCorregirEnLosArgumentosDeLaHerramienta(string codigo, string indicacion)
     {
