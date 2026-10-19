@@ -112,6 +112,9 @@ public static class TextosDelBorradorDeCompra
         var deArticulo = compra.Items.Count(i => i.IdArticulo is not null);
         var percepciones = compra.Percepciones.Sum(p => p.Importe ?? 0m);
         var iva = compra.IvaTotal is { } ivaTotal ? Importe(ivaTotal) : "no discriminado";
+        var (subtotal, descuentos, rotuloDelIva) = compra.PreciosIncluyenIva
+            ? ("Subtotal con IVA incluido", "Descuentos con IVA incluido", "IVA (incluido en el subtotal)")
+            : ("Subtotal", "Descuentos", "IVA");
 
         List<string> lineas =
         [
@@ -121,9 +124,15 @@ public static class TextosDelBorradorDeCompra
             $"Comprobante: {nombreDelTipo} {compra.NumeroExterno?.ReplaceLineEndings(" ") ?? "sin número"}, " +
             $"fecha {Fecha(compra.FechaComprobante)}",
             $"Líneas: {deArticulo} de artículo y {compra.Items.Count - deArticulo} de concepto",
-            $"Subtotal: {Importe(compra.Subtotal)} | Descuentos: {Importe(compra.DescuentoTotal)} | IVA: {iva} | " +
+            $"{subtotal}: {Importe(compra.Subtotal)} | {descuentos}: {Importe(compra.DescuentoTotal)} | {rotuloDelIva}: {iva} | " +
             $"Percepciones: {Importe(percepciones)} | Total: {Importe(compra.Total)}"
         ];
+
+        if (compra.PreciosIncluyenIva)
+        {
+            lineas.Add(
+                "Los precios incluyen IVA: el total es subtotal - descuentos + percepciones, sin sumar el IVA de nuevo.");
+        }
 
         List<string> advertencias = [];
         if (totalImpreso is { } impreso)

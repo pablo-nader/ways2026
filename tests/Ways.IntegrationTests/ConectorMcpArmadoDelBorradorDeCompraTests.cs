@@ -488,7 +488,15 @@ public class ConectorMcpArmadoDelBorradorDeCompraTests
         var lineas = TextosDelBorradorDeCompra.DescribirCreado(compra, "Factura A de compra", "link", totalImpreso: null)
             .Split(Environment.NewLine);
 
-        Assert.Equal("- Alícuota 21 %: quedó el IVA impreso (210.30), que difiere del calculado (210.00) en 0.30.", lineas[^1]);
+        Assert.Equal(
+            [
+                "Subtotal con IVA incluido: 1210.00 | Descuentos con IVA incluido: 0.00 | IVA (incluido en el subtotal): " +
+                "210.30 | Percepciones: 0.00 | Total: 1210.00",
+                "Los precios incluyen IVA: el total es subtotal - descuentos + percepciones, sin sumar el IVA de nuevo.",
+                "Advertencias:",
+                "- Alícuota 21 %: quedó el IVA impreso (210.30), que difiere del calculado (210.00) en 0.30."
+            ],
+            lineas[^4..]);
     }
 
     [Fact]

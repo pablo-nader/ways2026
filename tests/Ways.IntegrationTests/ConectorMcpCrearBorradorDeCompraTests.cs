@@ -267,7 +267,9 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
                 "entonces no mueve stock, costos ni la cuenta corriente del proveedor.",
                 "Comprobante: Remito / comprobante no fiscal R-0001-000555, fecha 2026-10-02",
                 "Líneas: 1 de artículo y 0 de concepto",
-                "Subtotal: 1573.00 | Descuentos: 0.00 | IVA: 273.00 | Percepciones: 0.00 | Total: 1573.00"
+                "Subtotal con IVA incluido: 1573.00 | Descuentos con IVA incluido: 0.00 | IVA (incluido en el subtotal): " +
+                "273.00 | Percepciones: 0.00 | Total: 1573.00",
+                "Los precios incluyen IVA: el total es subtotal - descuentos + percepciones, sin sumar el IVA de nuevo."
             ],
             resultado.Texto.Split(Environment.NewLine));
     }
