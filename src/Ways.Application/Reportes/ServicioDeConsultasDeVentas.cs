@@ -86,9 +86,9 @@ public sealed record AgrupacionConsultada(
 /// <see cref="ServicioDeReportesDeVentas"/> (mismo criterio que el reporte de la web) y solo suma lo
 /// que el reporte entrega por empresa. La excepción es el desglose por medio de pago, que es una
 /// consulta propia porque descuenta el vuelto (ver <see cref="ConsultarMediosDePagoAsync"/>), y las
-/// consultas por artículo (área, grupo, categoría, marca y artículo), que salen de
-/// <see cref="ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync"/>: la clasificación es la ACTUAL
-/// del artículo y las líneas sin artículo no cuentan.
+/// consultas por artículo (área, grupo, categoría, marca y artículo), que leen sin filtros
+/// <see cref="ServicioDeReportesDeArticulos.ObtenerVentasPorArticuloAsync"/> y acotan o agrupan sus filas acá:
+/// la clasificación es la ACTUAL del artículo y las líneas sin artículo no cuentan.
 /// Cada empresa resuelve su propia zona horaria y su propio "hoy".
 /// </summary>
 public class ServicioDeConsultasDeVentas(
@@ -262,12 +262,13 @@ public class ServicioDeConsultasDeVentas(
     }
 
     /// <summary>Artículos vendidos, tal como los entrega el reporte de ventas por artículo de la web (por
-    /// empresa, sin líneas sin artículo; área, grupo y categoría con sus descendientes son los ACTUALES del
-    /// artículo). El área, el grupo, la categoría y el artículo se pasan al reporte; el texto, la marca y el
-    /// proveedor, que el reporte no conoce, recortan sus filas acá por los ids de los artículos que coinciden.
-    /// El denominador del porcentaje (<see cref="VentasPorArticuloConsultadas.ImporteDeTodosLosArticulos"/>) es
-    /// la suma de las filas de una llamada al reporte SIN ningún filtro, de modo que "qué parte de lo vendido es X"
-    /// no depende de lo que se filtró. Cada filtro por nombre se resuelve contra los registros visibles.</summary>
+    /// empresa, sin líneas sin artículo). El reporte se lee una sola vez por empresa, SIN ningún filtro: la suma
+    /// de esas filas es el denominador del porcentaje
+    /// (<see cref="VentasPorArticuloConsultadas.ImporteDeTodosLosArticulos"/>), de modo que "qué parte de lo
+    /// vendido es X" no depende de lo que se filtró. El área, el grupo, la categoría (con sus descendientes) y el
+    /// artículo acotan esas filas con los criterios del reporte (<see cref="AcotarComoElReporteAsync"/>, sobre la
+    /// clasificación ACTUAL del artículo); el texto, la marca y el proveedor las recortan por los ids de los
+    /// artículos que coinciden. Cada filtro por nombre se resuelve contra los registros visibles.</summary>
     public async Task<VentasPorArticuloConsultadas> PorArticuloAsync(
         SolicitudDeVentasPorArticulo solicitud, CancellationToken ct = default)
     {

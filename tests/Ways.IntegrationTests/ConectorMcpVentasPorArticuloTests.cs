@@ -242,9 +242,10 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
             Lineas(cortado.Texto).Skip(4).Take(4).ToArray());
     }
 
-    // Cada caso fija una cláusula: categoria/area/articulo van al reporte; marca, proveedor y texto recortan sus filas.
-    // Agua 1L ya es Gaseosas (cambió después de vender). Viejo está dado de baja: los filtros del reporte (categoría y
-    // área) lo siguen contando con su clasificación, los propios del conector (marca, proveedor, texto) no lo alcanzan.
+    // Cada caso fija una cláusula: categoria/area/articulo acotan con los criterios del reporte (AcotarComoElReporteAsync);
+    // marca, proveedor y texto recortan por los artículos que coinciden. Agua 1L ya es Gaseosas (cambió después de
+    // vender). Viejo está dado de baja: los criterios del reporte (categoría y área) lo siguen contando con su
+    // clasificación, los propios del conector (marca, proveedor, texto) no lo alcanzan.
     [Theory]
     [InlineData("""{"categoria":"gaseosas"}""", "categoría Gaseosas", "1.300,00", new[] { "COLA-2L", "COLA-500", "AGUA-1L" })]
     [InlineData("""{"categoria":"aguas"}""", "categoría Aguas", "200,00", new[] { "(sin código)" })]
