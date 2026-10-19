@@ -179,8 +179,16 @@ ejecución: T2, T3, T1, T4 (los renombres de T3 tocan la prosa, así que la pros
     agrupación desconocida, las descripciones, las instrucciones, docs/07 y los tests usan los nombres nuevos.
   - Verificado: filtro `ConectorMcpVentas|…Catalogo|…BuscarArticulos|…Conjunto|…Descripciones|…FichaDeArticulo`
     123/123.
-- [ ] R2-T4 — Test de paridad de `AcotarComoElReporteAsync` con `ObtenerVentasPorArticuloAsync` (L11), sin
-  cambios de producción.
+- [x] R2-T4 — Paridad de `AcotarComoElReporteAsync` con el reporte web (cierra L11), sin cambios de producción.
+  Ruta: inline (writer único de la rebanada). `VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte`
+  compara, para nueve filtros (sin filtros; área; grupo; categoría con una subcategoría; la subcategoría;
+  artículo; área + categoría; grupo + categoría; artículo + categoría), las filas de `ventas_por_articulo` con las
+  de `GET /api/reportes/ventas/por-articulo` con los mismos ids: código, nombre, cantidad e importe de cada fila y
+  el total filtrado; exige además que solo la última combinación quede vacía (la paridad no es vacía). Sin
+  divergencias. Sin RED (el acotado ya coincidía). Mutaciones en `AcotarComoElReporteAsync`, una corrida cada
+  una: área anulada → cae la fila área; grupo anulado → cae grupo; sin descendientes → cae categoría con
+  subcategoría; restricción de artículo anulada → cae artículo; sin `IgnoreQueryFilters(["BajaLogica"])` → cae
+  área (Viejo, dado de baja, falta en la herramienta).
 
 ## Criterios de aceptación
 

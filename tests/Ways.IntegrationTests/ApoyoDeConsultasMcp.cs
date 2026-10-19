@@ -256,6 +256,12 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         return await db.Articulos.IgnoreQueryFilters().Where(x => x.IdTenant == tenant.IdTenant && x.CodigoInterno == codigoInterno).Select(x => x.Id).SingleAsync();
     }
 
+    public async Task<int> IdDeAreaAsync(TenantDeVentas tenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));
+        return await db.Areas.IgnoreQueryFilters().Where(x => x.IdTenant == tenant.IdTenant && x.Nombre == nombre).Select(x => x.Id).SingleAsync();
+    }
+
     public async Task<int> IdDeCategoriaAsync(TenantDeVentas tenant, string nombre)
     {
         await using var db = fixture.CrearContextoDeAplicacion(DeTenant(tenant));

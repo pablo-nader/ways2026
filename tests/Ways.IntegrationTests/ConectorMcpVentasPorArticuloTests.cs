@@ -1,5 +1,10 @@
 using System.Data.Common;
+using System.Globalization;
+using System.Net;
+using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Ways.Application.Reportes;
+using Ways.Application.Usuarios;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using static Ways.IntegrationTests.ApoyoDeConsultasMcp;
@@ -18,6 +23,7 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
     private static readonly DateTimeOffset RelojDelMediodia = new(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset HoyAlMediodia = new(2026, 10, 18, 10, 0, 0, TimeSpan.Zero);
 
+    private readonly WaysApiFixture _fixture = fixture;
     private readonly ApoyoDeConsultasMcp _apoyo = new(fixture, new ApoyoDeConectorMcp(fixture));
 
     private sealed record Escenario(
@@ -555,5 +561,118 @@ public class ConectorMcpVentasPorArticuloTests(WaysApiFixture fixture) : IClassF
                 "Total (suma de las líneas con artículo): 350,00 en 3 grupos"
             ],
             Lineas(resultado.Texto).Skip(2).ToArray());
+    }
+
+    private sealed record FiltroDeParidad(
+        string Nombre, Dictionary<string, object?> Herramienta, int? IdArea, int? IdGrupo, int? IdCategoria, int? IdArticulo);
+
+    /// <summary>Cantidad e importe como texto invariante sin ceros de más: el reporte trae la escala de la columna
+    /// (2,000) y la herramienta la de su formato.</summary>
+    private sealed record FilaDeParidad(string Codigo, string Articulo, string Cantidad, string Importe)
+    {
+        public FilaDeParidad(string codigo, string articulo, decimal cantidad, decimal importe)
+            : this(codigo, articulo, Normal(cantidad), Normal(importe))
+        {
+        }
+
+        private static string Normal(decimal valor) => valor.ToString("0.####", CultureInfo.InvariantCulture);
+    }
+
+    private static readonly NumberFormatInfo FormatoDeLaHerramienta = new()
+    {
+        NumberDecimalSeparator = ",",
+        NumberGroupSeparator = "."
+    };
+
+    private static decimal Numero(string texto) =>
+        decimal.Parse(texto.TrimEnd('%'), NumberStyles.Number, FormatoDeLaHerramienta);
+
+    /// <summary>Paridad del acotado en memoria de <c>ventas_por_articulo</c> (<c>AcotarComoElReporteAsync</c>) con el
+    /// reporte web <c>GET /api/reportes/ventas/por-articulo</c>, que filtra en SQL: para cada filtro del reporte
+    /// (área, grupo, categoría con una subcategoría, artículo) y tres combinaciones, la herramienta devuelve las
+    /// mismas filas que el endpoint con los mismos ids, con el código, el nombre, la cantidad y el importe de cada una,
+    /// y el mismo total. El escenario suma un grupo (Combos, solo Cola 500) y una subcategoría de Gaseosas (Light,
+    /// solo Cola 500); Viejo, dado de baja, sigue contando en Almacén en los dos lados.</summary>
+    [Fact]
+    public async Task VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte()
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasPorArticuloAcotaComoElReporteWebParaCadaFiltroDelReporte));
+        var cola500 = await _apoyo.IdDeArticuloAsync(e.Tenant, "COLA-500");
+        var cola2 = await _apoyo.IdDeArticuloAsync(e.Tenant, "COLA-2L");
+        var combos = await _apoyo.SembrarGrupoDeArticuloAsync(e.Tenant, "Combos", cola500);
+        var gaseosas = await _apoyo.IdDeCategoriaAsync(e.Tenant, "Gaseosas");
+        var light = await _apoyo.SembrarCategoriaAsync(e.Tenant, "Light");
+        await _apoyo.AsignarCategoriaPadreAsync(e.Tenant, light, gaseosas);
+        await _apoyo.CambiarCategoriaDeArticuloAsync(e.Tenant, cola500, light);
+        var aguas = await _apoyo.IdDeCategoriaAsync(e.Tenant, "Aguas");
+        var bebidas = await _apoyo.IdDeAreaAsync(e.Tenant, "Bebidas");
+        var almacen = await _apoyo.IdDeAreaAsync(e.Tenant, "Almacén");
+
+        static Dictionary<string, object?> Argumentos(params (string Nombre, string Valor)[] filtros)
+        {
+            var argumentos = new Dictionary<string, object?> { ["desde"] = "2026-10-18", ["hasta"] = "2026-10-18" };
+            foreach (var (nombre, valor) in filtros)
+            {
+                argumentos[nombre] = valor;
+            }
+
+            return argumentos;
+        }
+
+        FiltroDeParidad[] matriz =
+        [
+            new("sin filtros", Argumentos(), null, null, null, null),
+            new("área", Argumentos(("area", "almacén")), almacen, null, null, null),
+            new("grupo", Argumentos(("grupo", "combos")), null, combos, null, null),
+            new("categoría con subcategoría", Argumentos(("categoria", "gaseosas")), null, null, gaseosas, null),
+            new("subcategoría", Argumentos(("categoria", "light")), null, null, light, null),
+            new("artículo", Argumentos(("articulo", "cola-2l")), null, null, null, cola2),
+            new("área y categoría", Argumentos(("area", "bebidas"), ("categoria", "gaseosas")), bebidas, null, gaseosas, null),
+            new("grupo y categoría", Argumentos(("grupo", "combos"), ("categoria", "light")), null, combos, light, null),
+            new("artículo y categoría", Argumentos(("articulo", "cola-2l"), ("categoria", "aguas")), null, null, aguas, cola2)
+        ];
+
+        var (host, cliente, token) = await ConectarAsync(e.Admin);
+        await using var _ = host;
+        using var __ = cliente;
+        using var web = _fixture.CreateClient();
+        var login = await web.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(e.Admin.Mail, ApoyoDeConectorMcp.Password));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var filasNoVacias = 0;
+        foreach (var filtro in matriz)
+        {
+            var reporte = await web.GetFromJsonAsync<VentasPorArticulo>(
+                $"/api/reportes/ventas/por-articulo?idEmpresa={e.Tenant.IdEmpresa}&desde=2026-10-18&hasta=2026-10-18" +
+                (filtro.IdArea is { } a ? $"&idArea={a}" : string.Empty) +
+                (filtro.IdGrupo is { } g ? $"&idGrupo={g}" : string.Empty) +
+                (filtro.IdCategoria is { } c ? $"&idCategoria={c}" : string.Empty) +
+                (filtro.IdArticulo is { } ar ? $"&idArticulo={ar}" : string.Empty));
+            var resultado = await LlamarHerramientaAsync(cliente, token, "ventas_por_articulo", filtro.Herramienta);
+
+            Assert.False(resultado.EsError, $"{filtro.Nombre}: {resultado.Texto}");
+            var lineas = Lineas(resultado.Texto);
+            var encabezado = Array.IndexOf(lineas, "código | artículo | cantidad | importe | % del total");
+            var deLaHerramienta = lineas.Skip(encabezado + 1)
+                .TakeWhile(l => !l.StartsWith("Total de los", StringComparison.Ordinal))
+                .Select(l => l.Split(" | "))
+                .Select(c => $"{filtro.Nombre}: {new FilaDeParidad(c[0], c[1], Numero(c[2]), Numero(c[3]))}")
+                .Order(StringComparer.Ordinal)
+                .ToList();
+            var delReporte = reporte!.Articulos
+                .Select(f => $"{filtro.Nombre}: {new FilaDeParidad(f.Codigo ?? "(sin código)", f.Descripcion, f.Cantidad, f.Total)}")
+                .Order(StringComparer.Ordinal)
+                .ToList();
+
+            Assert.True(encabezado > 0, filtro.Nombre);
+            Assert.Equal(delReporte, deLaHerramienta);
+            Assert.Contains(
+                $"Total de los artículos filtrados: {reporte.Articulos.Sum(f => f.Total).ToString("N2", FormatoDeLaHerramienta)} " +
+                $"en {reporte.Articulos.Count} artículos",
+                lineas);
+            filasNoVacias += delReporte.Count > 0 ? 1 : 0;
+        }
+
+        Assert.Equal(matriz.Length - 1, filasNoVacias);
     }
 }
