@@ -1,15 +1,52 @@
-import type { ClienteListado } from '../api/tipos'
+import type { ClienteListado, InstantaneaDePos } from '../api/tipos'
 import { redondearAPeso } from '../formato/importes'
 
 export const MENSAJE_DE_ENVIO_SIN_CLIENTE = 'Elegí un cliente con domicilio para el envío.'
 export const MENSAJE_DE_ENVIO_SIN_DOMICILIO = 'El cliente no tiene domicilio cargado: cargalo o elegí otro cliente para el envío.'
-export const MENSAJE_DE_ENVIO_SIN_CONEXION =
-  'La venta con envío necesita conexión: destildá "Con envío" para vender sin conexión.'
 export const MENSAJE_DE_ENVIO_SIN_IMPORTE = 'Calculando el importe del envío…'
 export const MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE =
   'No se pudo leer el importe del envío. Destildá y volvé a tildar "Con envío" para reintentar.'
+export const MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL =
+  'Sin conexión no se conoce el importe del envío: recuperá la señal para actualizar los datos del dispositivo o destildá "Con envío".'
 
-type ClienteParaEnvio = Pick<ClienteListado, 'esConsumidorFinal' | 'domicilio'>
+/** Espejo de `ReglaDeEnvio.DescripcionDeLaLinea` y de la alícuota del 21 % con la que el servidor factura la línea Envío. */
+export const DESCRIPCION_DE_LA_LINEA_DE_ENVIO = 'Envío'
+export const PORCENTAJE_IVA_DEL_ENVIO = 21
+
+type ClienteParaEnvio =Pick<ClienteListado, 'esConsumidorFinal' | 'domicilio'>
+
+/** Importe del envío que trae la instantánea guardada, o `null` si no lo trae (copia anterior al campo) o es inválido: sin
+ * importe local no se vende con envío sin red. */
+export function importeDeEnvioDeInstantanea(instantanea: Pick<InstantaneaDePos, 'importeEnvio'> | null): number | null {
+  const importe = instantanea?.importeEnvio
+  return typeof importe === 'number' && Number.isFinite(importe) && importe >= 0 ? importe : null
+}
+
+/** Importe del envío que se muestra y se cobra: con conexión, el último leído del servidor para este punto de venta (`null`
+ * mientras se lee o si falló); sin conexión, el de la instantánea. */
+export function importeDeEnvioVigente(params: {
+  hayConexion: boolean
+  importeEnLinea: number | null
+  instantanea: Pick<InstantaneaDePos, 'importeEnvio'> | null
+}): number | null {
+  return params.hayConexion ? params.importeEnLinea : importeDeEnvioDeInstantanea(params.instantanea)
+}
+
+/** Por qué no se puede cerrar una venta con envío (cliente o importe), o `null` si puede cerrarse o no lleva envío. */
+export function motivoDeEnvioPendiente(params: {
+  conEnvio: boolean
+  cliente: ClienteParaEnvio | null
+  hayConexion: boolean
+  importeVigente: number | null
+  errorAlLeerElImporte: boolean
+}): string | null {
+  if (!params.conEnvio) return null
+  const delCliente = motivoDeEnvioBloqueado(params.cliente)
+  if (delCliente !== null) return delCliente
+  if (params.importeVigente !== null) return null
+  if (!params.hayConexion) return MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL
+  return params.errorAlLeerElImporte ? MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE : MENSAJE_DE_ENVIO_SIN_IMPORTE
+}
 
 /** Motivo por el que una venta con envío no puede cerrarse con este cliente (misma regla que el servidor: cliente
  * identificado y con domicilio), o `null` si puede. */

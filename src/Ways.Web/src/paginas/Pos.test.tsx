@@ -7108,43 +7108,170 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     return apiPostMock.mock.calls.filter((c) => c[0] === ruta)
   }
 
-  it('con envío, aunque la vista previa sea local y haya red, la venta va online con conEnvio y nunca se encola sin la línea Envío', async () => {
-    const puntoVenta = puntoVentaFixture({ envioPorDefecto: true })
-    estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
-    const clienteDelServidor = clienteFixture({
-      id: 30,
-      numero: 30,
-      nombre: 'José',
-      apellido: 'Gómez',
-      esConsumidorFinal: false,
-      domicilio: 'Mitre 123',
-    })
-    await prepararAlmacenOffline({
-      instantanea: instantaneaFixture({
-        clientes: [clienteDeInstantaneaFixture(), clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false })],
-      }),
-      bloque: { desde: 1, hasta: 50, proximo: 1 },
-    })
-    mockearApiGet((ruta) => {
-      if (ruta.startsWith('/parametros/importe_envio')) return Promise.resolve<ParametroResuelto>({ clave: 'importe_envio', valor: '1500' })
-      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve({ items: [clienteDelServidor], total: 1, pagina: 1, tamanio: 25 })
-      if (ruta === '/clientes/30') return Promise.resolve(clienteDelServidor)
-      return undefined
-    })
-    await montarConInstantanea()
-    await buscarYElegirCliente('gómez', /José Gómez/)
-    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
-    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-    await screen.findByText('Envío', { selector: 'td' })
-    await cobrarConEfectivo('1600')
-    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  describe('venta con envío en la cola local (T4)', () => {
+    const clienteDeLaCopiaLocal = () =>
+      clienteDeInstantaneaFixture({
+        idCliente: 30,
+        numero: 30,
+        nombre: 'José',
+        apellido: 'Gómez',
+        esConsumidorFinal: false,
+        domicilio: 'Mitre 123',
+        telefono: null,
+        celular: '341-5550000',
+      })
 
-    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
-    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+    const clienteDelServidor = () =>
+      clienteFixture({
+        id: 30,
+        numero: 30,
+        nombre: 'José',
+        apellido: 'Gómez',
+        esConsumidorFinal: false,
+        domicilio: 'Mitre 123',
+        celular: '341-5550000',
+      })
 
-    expect(llamadasPost('/ventas')).toHaveLength(1)
-    expect(llamadasPost('/ventas')[0][1]).toMatchObject({ idCliente: 30, conEnvio: true })
-    expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    function ventaColgada() {
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+    }
+
+    it('con red y vista previa local, la venta se encola con conEnvio e importeEnvio y el ticket sintético lleva la línea Envío, el domicilio y el teléfono', async () => {
+      const puntoVenta = puntoVentaFixture({ envioPorDefecto: true })
+      estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ clientes: [clienteDeInstantaneaFixture(), clienteDeLaCopiaLocal()], importeEnvio: 1500 }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/parametros/importe_envio')) return Promise.resolve<ParametroResuelto>({ clave: 'importe_envio', valor: '1500' })
+        if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve({ items: [clienteDelServidor()], total: 1, pagina: 1, tamanio: 25 })
+        if (ruta === '/clientes/30') return Promise.resolve(clienteDelServidor())
+        return undefined
+      })
+      ventaColgada()
+      const alEmitir = vi.fn()
+      renderPos('/pos', { alEmitir })
+      await esperarAlConsumidorFinal()
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+      await buscarYElegirCliente('gómez', /José Gómez/)
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Envío', { selector: 'td' })
+      await cobrarConEfectivo('1600')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const [venta] = await leerOutbox(crearAlmacenIndexedDb())
+      expect(venta.solicitud).toMatchObject({ idCliente: 30, conEnvio: true, importeEnvio: 1500, numeroPreasignado: 500 })
+      expect(venta.solicitud.lineas).toHaveLength(1)
+
+      const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
+      expect(comprobante).toMatchObject({ subtotal: 1600, total: 1600, direccionEntrega: 'Mitre 123' })
+      expect(comprobante.items).toHaveLength(2)
+      expect(comprobante.items[1]).toMatchObject({ idArticulo: null, descripcion: 'Envío', cantidad: 1, precioUnitario: 1500, total: 1500, porcentajeIva: 21 })
+      expect((alEmitir.mock.calls[0][1] as ClienteListado).celular).toBe('341-5550000')
+    })
+
+    it('sin conexión, la casilla se puede tildar, el carrito usa el importe de la copia local y se encola con ese importe', async () => {
+      const puntoVenta = puntoVentaFixture({ envioPorDefecto: false })
+      estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ clientes: [clienteDeInstantaneaFixture(), clienteDeLaCopiaLocal()], importeEnvio: 1800 }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+      ventaColgada()
+      const alEmitir = vi.fn()
+      renderPos('/pos', { alEmitir })
+      await esperarAlConsumidorFinal()
+      await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+
+      const casilla = screen.getByLabelText('Con envío')
+      expect(casilla).toBeEnabled()
+      await userEvent.click(casilla)
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      const fila = (await screen.findByText('Envío', { selector: 'td' })).closest('tr') as HTMLElement
+      expect(within(fila).getAllByText('$ 1.800,00')).toHaveLength(2)
+      expect(llamadasGet('/parametros/importe_envio')).toHaveLength(0)
+      await cobrarConEfectivo('1900')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const [venta] = await leerOutbox(crearAlmacenIndexedDb())
+      expect(venta.solicitud).toMatchObject({ idCliente: 30, conEnvio: true, importeEnvio: 1800 })
+      const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
+      expect(comprobante.total).toBe(1900)
+      expect(comprobante.items[1]).toMatchObject({ idArticulo: null, descripcion: 'Envío', total: 1800 })
+      expect(comprobante.direccionEntrega).toBe('Mitre 123')
+    })
+
+    it('sin conexión, un cliente de la copia local sin domicilio no deja cobrar con envío', async () => {
+      const puntoVenta = puntoVentaFixture({ envioPorDefecto: true })
+      estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({
+          clientes: [clienteDeInstantaneaFixture(), { ...clienteDeLaCopiaLocal(), domicilio: undefined }],
+          importeEnvio: 1800,
+        }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+      ventaColgada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await cobrarConEfectivo('1900')
+
+      expect(await screen.findByText(/no tiene domicilio cargado/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+      expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+    })
+
+    it('sin conexión y con una copia local sin importe de envío no deja cobrar con envío y se puede destildar', async () => {
+      const puntoVenta = puntoVentaFixture({ envioPorDefecto: true })
+      estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ clientes: [clienteDeInstantaneaFixture(), clienteDeLaCopiaLocal()] }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await cobrarConEfectivo('100')
+
+      expect(await screen.findByText(/Sin conexión no se conoce el importe del envío/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+
+      await userEvent.click(screen.getByLabelText('Con envío'))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    })
   })
 
   describe('escaneo local primero (Consumidor Final con instantánea)', () => {
@@ -11203,38 +11330,28 @@ describe('Pos — venta con envío', () => {
     expect(botonCobrar()).toBeDisabled()
   })
 
-  describe('sin conexión', () => {
-    let sinRed: { mockRestore: () => void }
-    beforeEach(() => {
-      sinRed = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+  it('al empezar una lectura nueva del importe descarta el anterior: no se muestra ni deja cobrar hasta que llegue el vigente', async () => {
+    conPuntoDeVenta(true)
+    let lecturas = 0
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/parametros/importe_envio')) {
+        lecturas += 1
+        return lecturas === 1 ? Promise.resolve<ParametroResuelto>({ clave: 'importe_envio', valor: '1500' }) : new Promise(() => {})
+      }
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve({ items: [clienteConDomicilio], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta === '/clientes/' + clienteConDomicilio.id) return Promise.resolve(clienteConDomicilio)
+      return undefined
     })
-    afterEach(() => sinRed.mockRestore())
+    await armarVentaConEnvio()
+    await cargarPagoEnEfectivo('1600')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
 
-    it('no se puede tildar el envío y se avisa que necesita conexión', async () => {
-      conPuntoDeVenta(false)
-      mockearEnvio()
-      renderPos()
-      await esperarAlConsumidorFinal()
+    // Destildar y volver a tildar dispara otra lectura, que nunca llega: el importe viejo no puede quedar a la vista.
+    await userEvent.click(casilla())
+    await userEvent.click(casilla())
 
-      expect(casilla()).toBeDisabled()
-      expect(casilla()).toHaveAttribute('title', 'Sin conexión: la venta con envío necesita conexión.')
-      expect(seLeyoElImporteDelEnvio()).toBe(false)
-    })
-
-    it('con el envío ya tildado (por defecto) bloquea el cobro con un mensaje en vez de encolar sin envío, y se puede destildar', async () => {
-      conPuntoDeVenta(true)
-      mockearEnvio()
-      renderPos()
-      await esperarAlConsumidorFinal()
-      await agregarGaseosa()
-      await cargarPagoEnEfectivo('100')
-
-      expect(await screen.findByText(/necesita conexión: destildá "Con envío"/)).toBeInTheDocument()
-      expect(botonCobrar()).toBeDisabled()
-      expect(casilla()).toBeEnabled()
-
-      await userEvent.click(casilla())
-      await waitFor(() => expect(screen.queryByText(/necesita conexión: destildá "Con envío"/)).not.toBeInTheDocument())
-    })
+    expect(await screen.findByText('Calculando el importe del envío…')).toBeInTheDocument()
+    expect(screen.queryByText('Envío', { selector: 'td' })).not.toBeInTheDocument()
+    expect(botonCobrar()).toBeDisabled()
   })
 })

@@ -894,6 +894,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         pagos: paramsVenta.pagos,
         todasLasLineasConPrecio: todasConPrecio,
         hayNumeroDisponible,
+        ...(paramsVenta.solicitudBase.conEnvio ? { envio: { importe: paramsVenta.solicitudBase.importeEnvio ?? null } } : {}),
       })
 
     // La consulta del límite corre antes de tomar un número: un rechazo no consume ninguno.

@@ -569,6 +569,14 @@ describe('aClienteListado / aMedioPagoListado', () => {
     })
   })
 
+  it('lleva el domicilio y los teléfonos de la copia local para la venta con envío; ausentes quedan en null', () => {
+    const conContacto = aClienteListado(clienteFixture({ domicilio: 'Mitre 123', telefono: '4444-0000', celular: '11-5555' }))
+    expect(conContacto).toMatchObject({ domicilio: 'Mitre 123', telefono: '4444-0000', celular: '11-5555' })
+
+    const sinContacto = aClienteListado(clienteFixture())
+    expect(sinContacto).toMatchObject({ domicilio: null, telefono: null, celular: null })
+  })
+
   // Lista dada de baja (null): un id que ninguna lista tiene, así ningún precio local aplica.
   it('un cliente con la lista dada de baja no resuelve ningún precio local', () => {
     const listado = aClienteListado(clienteFixture({ idListaPrecio: null }))

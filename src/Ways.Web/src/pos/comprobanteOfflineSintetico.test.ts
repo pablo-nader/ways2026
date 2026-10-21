@@ -765,3 +765,58 @@ describe('construirComprobanteOfflineSintetico — artículo por importe', () =>
     expect(construir({ ...base, lineas: [lineaPorImporte(150)], instantanea: instantaneaConLista([articuloFixture()]) })).toBeNull()
   })
 })
+
+describe('construirComprobanteOfflineSintetico — venta con envío', () => {
+  const base = {
+    numero: 21,
+    numeroVisible: '0007-00000021',
+    idPuntoVenta: 7,
+    idCliente: 30,
+    lineas: [lineaFixture({ cantidad: 1 })],
+    instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 })]),
+    pagos: [{ idMedioPago: 1, importe: 1600, referencia: null, vuelto: 0 }],
+    ahora: new Date('2026-09-20T10:05:00.000Z'),
+  }
+
+  it('suma la línea Envío al final, sin artículo ni área, al 21 %, y lleva el domicilio de entrega', () => {
+    const comprobante = construir({ ...base, envio: { importe: 1500, direccionEntrega: '  Mitre 123 ' } })
+
+    expect(comprobante).toMatchObject({ subtotal: 1600, descuentoTotal: 0, total: 1600, direccionEntrega: 'Mitre 123' })
+    expect(comprobante?.items).toHaveLength(2)
+    expect(comprobante?.items[1]).toMatchObject({
+      orden: 2,
+      idArticulo: null,
+      descripcion: 'Envío',
+      idArea: null,
+      idOferta: null,
+      idCombo: null,
+      porcentajeIva: 21,
+      cantidad: 1,
+      precioUnitario: 1500,
+      descuento: 0,
+      total: 1500,
+      ajusteManual: 0,
+    })
+  })
+
+  it('el importe del envío se redondea al peso como toda línea', () => {
+    const comprobante = construir({ ...base, envio: { importe: 1500.4, direccionEntrega: 'Mitre 123' } })
+
+    expect(comprobante?.items[1]).toMatchObject({ precioUnitario: 1500.4, total: 1500 })
+    expect(comprobante?.total).toBe(1600)
+  })
+
+  it('con el envío en 0 no hay línea pero el domicilio de entrega igual figura', () => {
+    const comprobante = construir({ ...base, envio: { importe: 0, direccionEntrega: 'Mitre 123' } })
+
+    expect(comprobante?.items).toHaveLength(1)
+    expect(comprobante).toMatchObject({ total: 100, direccionEntrega: 'Mitre 123' })
+  })
+
+  it('sin envío el comprobante no lleva línea ni dirección', () => {
+    const comprobante = construir(base)
+
+    expect(comprobante?.items).toHaveLength(1)
+    expect(comprobante?.direccionEntrega).toBeNull()
+  })
+})

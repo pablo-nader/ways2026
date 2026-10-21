@@ -718,6 +718,75 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
   })
 
+  describe('venta con envío', () => {
+    const clienteConDomicilio: ClienteDeInstantanea = {
+      idCliente: 42, numero: 42, nombre: 'Cliente', apellido: null, razonSocial: null, tipoDocumento: null, numeroDocumento: null,
+      idCondicionFiscal: 1, idEmpresa: null, idListaPrecio: LISTA_CF, esConsumidorFinal: false, saldo: 0, limiteCredito: 0,
+      creditoIlimitado: true, domicilio: 'Mitre 123',
+    }
+
+    async function montarConCliente(cliente: ClienteDeInstantanea = clienteConDomicilio) {
+      const almacen = almacenFake()
+      await guardarLocal(almacen, instantaneaFixture({ clientes: [cliente] }))
+      await guardarBloque(almacen, bloqueFixture())
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+      return { almacen, result }
+    }
+
+    const pedido = (solicitud: Partial<SolicitudDeVenta>) => ({
+      solicitudBase: solicitudFixture({ idCliente: 42, ...solicitud }),
+      esConsumidorFinal: false,
+      idListaPrecio: LISTA_CF,
+      pagos: [{ comportamiento: 'Efectivo' as const, importe: 1600 }],
+    })
+
+    it('encola la solicitud con conEnvio e importeEnvio tal cual, sin reconstruirlos', async () => {
+      const { almacen, result } = await montarConCliente()
+
+      const resultado = await result.current.encolarVentaOffline(pedido({ conEnvio: true, importeEnvio: 1500 }))
+
+      expect(resultado).toMatchObject({ ok: true })
+      const [venta] = await leerOutbox(almacen)
+      expect(venta.solicitud).toMatchObject({ idCliente: 42, conEnvio: true, importeEnvio: 1500, numeroPreasignado: 100 })
+    })
+
+    it('con importe 0 también encola: el envío gratis viaja como 0', async () => {
+      const { almacen, result } = await montarConCliente()
+
+      expect(await result.current.encolarVentaOffline(pedido({ conEnvio: true, importeEnvio: 0 }))).toMatchObject({ ok: true })
+      expect((await leerOutbox(almacen))[0].solicitud.importeEnvio).toBe(0)
+    })
+
+    it('rechaza un cliente de la copia local sin domicilio sin tomar número ni tocar la cola', async () => {
+      const { almacen, result } = await montarConCliente({ ...clienteConDomicilio, domicilio: undefined })
+
+      const resultado = await result.current.encolarVentaOffline(pedido({ conEnvio: true, importeEnvio: 1500 }))
+
+      expect(resultado).toEqual({ ok: false, motivo: 'envio_sin_cliente_con_domicilio' })
+      await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture())
+      await expect(leerOutbox(almacen)).resolves.toEqual([])
+    })
+
+    it('rechaza una solicitud con envío que no trae el importe', async () => {
+      const { almacen, result } = await montarConCliente()
+
+      const resultado = await result.current.encolarVentaOffline(pedido({ conEnvio: true }))
+
+      expect(resultado).toEqual({ ok: false, motivo: 'envio_sin_importe' })
+      await expect(leerOutbox(almacen)).resolves.toEqual([])
+    })
+
+    it('una venta sin envío no lleva conEnvio ni importeEnvio', async () => {
+      const { almacen, result } = await montarConCliente()
+
+      expect(await result.current.encolarVentaOffline(pedido({}))).toMatchObject({ ok: true })
+      const [venta] = await leerOutbox(almacen)
+      expect(venta.solicitud).not.toHaveProperty('conEnvio')
+      expect(venta.solicitud).not.toHaveProperty('importeEnvio')
+    })
+  })
+
   it('rechaza la cuenta corriente del Consumidor Final, aunque haya instantánea y números disponibles', async () => {
     const almacen = almacenFake()
     await guardarLocal(almacen, instantaneaFixture())

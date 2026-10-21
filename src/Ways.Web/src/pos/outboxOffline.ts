@@ -10,6 +10,7 @@
  * número, admitir o rechazar una venta antes de encolarla, leer/escribir la cola.
  */
 import type { AlmacenClaveValor } from './almacenPos'
+import { MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL } from './envio'
 import { clienteAdmitidoOffline, pagosAdmitidosOffline } from './reglasOffline'
 import type { ComportamientoMedioPago, InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
 
@@ -193,6 +194,8 @@ export type MotivoRechazoOffline =
   | 'error_al_guardar'
   | 'limite_credito_excedido'
   | 'cuenta_corriente_no_verificada'
+  | 'envio_sin_cliente_con_domicilio'
+  | 'envio_sin_importe'
 
 const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final o a un cliente de la copia local de este dispositivo.',
@@ -207,6 +210,9 @@ const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   limite_credito_excedido: 'El pago supera el límite de crédito del cliente.',
   cuenta_corriente_no_verificada:
     'El servidor no aceptó la consulta de la cuenta corriente del cliente — la venta no se registró. Cobrá con otro medio o revisá el cliente.',
+  envio_sin_cliente_con_domicilio:
+    'Una venta con envío necesita un cliente identificado con domicilio en la copia local de este dispositivo — elegí otro cliente o destildá "Con envío".',
+  envio_sin_importe: MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL,
 }
 
 /** Rechazos que el servidor ya contestó: la venta no se registra, ni local ni por el camino online
@@ -230,8 +236,16 @@ export function admisibilidadDeVentaOffline(params: {
   pagos: readonly { comportamiento: ComportamientoMedioPago }[]
   todasLasLineasConPrecio: boolean
   hayNumeroDisponible: boolean
+  /** Presente en una venta con envío: `importe` es el que cobró la caja (`null` si no se conoce). */
+  envio?: { importe: number | null }
 }): MotivoRechazoOffline | null {
   if (!clienteAdmitidoOffline(params.cliente, params.instantanea)) return 'cliente_no_admitido'
+  if (params.envio) {
+    // Mismo criterio que el servidor (cliente identificado con domicilio), contra la copia local del cliente.
+    const delCliente = params.instantanea?.clientes.find((c) => c.idCliente === params.cliente.id)
+    if (params.cliente.esConsumidorFinal || !delCliente?.domicilio?.trim()) return 'envio_sin_cliente_con_domicilio'
+    if (params.envio.importe === null) return 'envio_sin_importe'
+  }
   if (!pagosAdmitidosOffline(params.pagos, params.cliente.esConsumidorFinal)) return 'medio_no_admitido'
   if (!params.instantanea) return 'sin_instantanea'
   if (!params.todasLasLineasConPrecio) return 'linea_sin_precio'

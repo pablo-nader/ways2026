@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   importeDeEnvioAplicado,
+  importeDeEnvioDeInstantanea,
+  importeDeEnvioVigente,
+  MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE,
   MENSAJE_DE_ENVIO_SIN_CLIENTE,
   MENSAJE_DE_ENVIO_SIN_DOMICILIO,
+  MENSAJE_DE_ENVIO_SIN_IMPORTE,
+  MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL,
   mensajeDeRechazoDeEnvio,
   motivoDeEnvioBloqueado,
+  motivoDeEnvioPendiente,
   telefonoDeContacto,
 } from './envio'
 
@@ -61,5 +67,58 @@ describe('telefonoDeContacto', () => {
 
   it('devuelve null sin ninguno de los dos', () => {
     expect(telefonoDeContacto({ telefono: null, celular: ' ' })).toBeNull()
+  })
+})
+
+describe('importeDeEnvioDeInstantanea', () => {
+  it('devuelve el importe de la copia local', () => {
+    expect(importeDeEnvioDeInstantanea({ importeEnvio: 1800 })).toBe(1800)
+    expect(importeDeEnvioDeInstantanea({ importeEnvio: 0 })).toBe(0)
+  })
+
+  it.each([
+    ['sin instantánea', null],
+    ['una copia anterior al campo', {}],
+    ['un importe negativo', { importeEnvio: -1 }],
+    ['un importe no numérico', { importeEnvio: 'mil' as unknown as number }],
+    ['un importe infinito', { importeEnvio: Number.POSITIVE_INFINITY }],
+  ])('es null con %s', (_, instantanea) => {
+    expect(importeDeEnvioDeInstantanea(instantanea)).toBeNull()
+  })
+})
+
+describe('importeDeEnvioVigente', () => {
+  it('con conexión manda el leído del servidor, aunque la copia local traiga otro', () => {
+    expect(importeDeEnvioVigente({ hayConexion: true, importeEnLinea: 1500, instantanea: { importeEnvio: 1800 } })).toBe(1500)
+    expect(importeDeEnvioVigente({ hayConexion: true, importeEnLinea: null, instantanea: { importeEnvio: 1800 } })).toBeNull()
+  })
+
+  it('sin conexión manda el de la copia local, aunque haya uno leído antes', () => {
+    expect(importeDeEnvioVigente({ hayConexion: false, importeEnLinea: 1500, instantanea: { importeEnvio: 1800 } })).toBe(1800)
+    expect(importeDeEnvioVigente({ hayConexion: false, importeEnLinea: 1500, instantanea: {} })).toBeNull()
+  })
+})
+
+describe('motivoDeEnvioPendiente', () => {
+  const cliente = { esConsumidorFinal: false, domicilio: 'Mitre 123' }
+  const base = { conEnvio: true, cliente, hayConexion: true, importeVigente: 1500, errorAlLeerElImporte: false }
+
+  it('sin envío o con todo en orden no hay motivo', () => {
+    expect(motivoDeEnvioPendiente({ ...base, conEnvio: false, cliente: null, importeVigente: null })).toBeNull()
+    expect(motivoDeEnvioPendiente(base)).toBeNull()
+    expect(motivoDeEnvioPendiente({ ...base, hayConexion: false })).toBeNull()
+  })
+
+  it('el cliente se juzga antes que el importe', () => {
+    expect(motivoDeEnvioPendiente({ ...base, cliente: null, importeVigente: null })).toBe(MENSAJE_DE_ENVIO_SIN_CLIENTE)
+    expect(motivoDeEnvioPendiente({ ...base, cliente: { esConsumidorFinal: false, domicilio: ' ' } })).toBe(MENSAJE_DE_ENVIO_SIN_DOMICILIO)
+  })
+
+  it('sin importe: calculando, error de lectura o sin importe local según la conexión', () => {
+    expect(motivoDeEnvioPendiente({ ...base, importeVigente: null })).toBe(MENSAJE_DE_ENVIO_SIN_IMPORTE)
+    expect(motivoDeEnvioPendiente({ ...base, importeVigente: null, errorAlLeerElImporte: true })).toBe(MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE)
+    expect(motivoDeEnvioPendiente({ ...base, importeVigente: null, hayConexion: false, errorAlLeerElImporte: true })).toBe(
+      MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL,
+    )
   })
 })
