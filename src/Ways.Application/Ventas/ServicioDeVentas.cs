@@ -197,7 +197,8 @@ public class ServicioDeVentas(
 
         // Una venta con número pre-asignado ya se cobró en la caja, que validó el cliente y su domicilio contra su
         // instantánea (decisión del dueño 2026-10-21, como la cuenta corriente offline): si el domicilio se borró después,
-        // la venta se registra igual, sin dirección de entrega, en vez de quedar rechazada para siempre.
+        // la venta se registra igual, sin dirección de entrega, en vez de quedar rechazada para siempre. La confianza cubre toda
+        // la regla, también la de Consumidor Final.
         if (solicitud.ConEnvio && solicitud.NumeroPreasignado is null)
         {
             ReglaDeEnvio.ExigirClienteConDomicilio(cliente.EsConsumidorFinal, cliente.Domicilio);

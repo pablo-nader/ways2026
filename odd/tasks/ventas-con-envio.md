@@ -243,5 +243,7 @@ stacked PRs.
   `ExigirClienteConDomicilio`: the register already charged it after validating client and domicilio against its snapshot
   (same trust as offline cuenta corriente). If the domicilio was cleared afterwards the sale is recorded with its Envío line
   and no `DireccionEntrega` instead of landing in "rechazadas" forever; online sales keep the rule. Mutation evidence:
-  always validating -> the new offline test fails; never validating -> 5 online tests fail. Evidence: IntegrationTests
-  `VentaConEnvioTests` 21 ok.
+  always validating -> the new offline test fails; never validating -> 5 online tests fail. The trust covers the whole rule,
+  Consumidor Final included (both judges flagged it as unpinned): pinned by its own test, killed by re-checking Consumidor
+  Final for pre-numbered sales; the `SolicitudDeVenta.ConEnvio` doc states the exception. Judgment-day: no severe findings.
+  Evidence: IntegrationTests `VentaConEnvioTests` 22 ok.
