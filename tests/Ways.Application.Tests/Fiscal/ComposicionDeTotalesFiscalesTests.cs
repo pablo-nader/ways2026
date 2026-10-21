@@ -112,4 +112,27 @@ public class ComposicionDeTotalesFiscalesTests
         Assert.Equal(9642.15m, entrada.BaseImp);
         Assert.Equal(2024.85m, entrada.Importe);
     }
+
+    /// <summary>La línea de envío (concepto libre, sin artículo) llega a la factura por su snapshot de alícuota como cualquier
+    /// otra: su neto y su IVA suman a sus propios 21 % sin mezclarse con el 10,5 % del producto.</summary>
+    [Fact]
+    public void LaLineaDeEnvioAl21PorCientoSumaSuNetoYSuIvaSinMezclarseConLaAlicuotaDelProducto()
+    {
+        var calculados = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(1m, 100m, 0m), ReglaDeEnvio.LineaParaCalcular(1500m)]);
+
+        var totales = ComposicionDeTotalesFiscales.Componer(
+        [
+            new LineaFiscal(2, "10.5%", 4, 10.5m, calculados.Items[0].Total),
+            new LineaFiscal(1, "21%", 5, 21m, calculados.Items[1].Total)
+        ]);
+
+        Assert.Equal(1600m, totales.ImpTotal);
+        Assert.Equal(1330.17m, totales.ImpNeto); // 90.50 + 1239.67
+        Assert.Equal(269.83m, totales.ImpIVA); // 9.50 + 260.33
+        Assert.Collection(
+            totales.Iva.OrderBy(i => i.Id),
+            e => { Assert.Equal((short)4, e.Id); Assert.Equal(90.50m, e.BaseImp); Assert.Equal(9.50m, e.Importe); },
+            e => { Assert.Equal((short)5, e.Id); Assert.Equal(1239.67m, e.BaseImp); Assert.Equal(260.33m, e.Importe); });
+    }
 }

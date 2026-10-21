@@ -57,8 +57,7 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         builder.Property(i => i.IdComprobanteVenta).HasColumnName("id_comprobante_venta").IsRequired();
         builder.Property(i => i.Orden).HasColumnName("orden").IsRequired();
 
-        // NULL solo en líneas de concepto libre (doc 10 §4) — sin camino de escritura en esta
-        // etapa, la columna queda lista.
+        // NULL solo en líneas de concepto libre (doc 10 §4): hoy, el "Envío" de una venta con envío.
         builder.Property(i => i.IdArticulo).HasColumnName("id_articulo");
 
         builder.Property(i => i.Descripcion).HasColumnName("descripcion").HasColumnType("text").IsRequired();

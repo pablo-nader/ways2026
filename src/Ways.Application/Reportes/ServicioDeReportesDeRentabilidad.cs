@@ -95,9 +95,10 @@ public class ServicioDeReportesDeRentabilidad(IWaysDbContext db, ServicioDeParam
     /// nunca re-join contra <c>articulos</c> (design decisión 10).</summary>
     private static IReadOnlyList<RentabilidadPorArticulo> ArmarPorArticulo(IReadOnlyList<LineaDeCosto> consideradas) =>
         consideradas
-            // Lineas de concepto libre (IdArticulo null) se agruparian juntas bajo una sola
-            // etiqueta; hoy ningun camino de escritura las produce — si la etapa que las
-            // habilite llega, agrupar por (IdArticulo, Descripcion) o excluirlas de PorArticulo.
+            // Las líneas de concepto libre (IdArticulo null) se agruparían juntas bajo una sola etiqueta. La única que
+            // se escribe hoy, el envío, no llega acá: su costo es NULL, así que es una línea "sin costo" de la cobertura y
+            // nunca una considerada. Si alguna línea de concepto libre con costo real aparece, agrupar por
+            // (IdArticulo, Descripcion) o excluirlas de PorArticulo.
             .GroupBy(l => l.IdArticulo)
             .Select(grupo =>
             {

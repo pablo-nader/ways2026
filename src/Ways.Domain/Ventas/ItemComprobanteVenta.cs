@@ -27,13 +27,15 @@ public class ItemComprobanteVenta : EntidadTenant
 
     public int Orden { get; set; }
 
-    /// <summary><c>NULL</c> solo en líneas de concepto libre (doc 10 §4) — stage 5 no construye
-    /// ese camino todavía, la columna queda lista.</summary>
+    /// <summary><c>NULL</c> solo en líneas de concepto libre (doc 10 §4). Hoy la única es el "Envío" de una venta con
+    /// envío (<see cref="ReglaDeEnvio"/>): sin stock, costo, lote, oferta ni combo. Todo lector de items tolera el NULL.</summary>
     public int? IdArticulo { get; set; }
 
     public required string Descripcion { get; set; }
     public string? CodigoBarra { get; set; }
 
+    /// <summary>Área del snapshot. Obligatoria también en una línea de concepto libre: la de "Envío" lleva la del primer
+    /// artículo de la venta, así que el cierre de caja la cuenta como ingreso de esa área.</summary>
     public int IdArea { get; set; }
 
     /// <summary>Con qué lista se vendió — snapshot, no re-derivable.</summary>

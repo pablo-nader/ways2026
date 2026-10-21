@@ -56,9 +56,9 @@ Forecast ~1,600 authored lines over four tasks.
 
 - [x] T1 — PV flag `envio_por_defecto` (migration, entity, contracts, PV screen) + known
   parameter `importe_envio` + docs. Route: delegated (2+ non-trivial files).
-- [ ] T2 — Server: concept line "Envío" in sales (`ConEnvio`, amount from parameter, 21% IVA,
+- [x] T2 — Server: concept line "Envío" in sales (`ConEnvio`, amount from parameter, 21% IVA,
   client/domicilio validation, `DireccionEntrega`), NULL-article tolerance in every reader.
-  Route: delegated.
+  Route: delegated (one read-only explorer for the reader sweep + one bounded writer).
 - [ ] T3 — POS web online: toggle defaulted from the PV flag, line + total, close blocked,
   ticket prints domicilio + teléfono. Route: delegated.
 - [ ] T4 — POS offline: snapshot carries amount + flag, outbox/synthetic ticket with the Envío
@@ -93,6 +93,54 @@ Forecast ~1,600 authored lines over four tasks.
   AltaDePuntoVenta, ProyeccionDeOrganizacion, SuperficieDeAutorizacion, AislamientoDeTenant,
   Migracion, Schema) 360 ok; web `npm run build` ok, vitest PuntosVenta/Parametros/api 1686 ok.
 
+- 2026-10-21: T2 done (route: delegated). `SolicitudDeVenta.ConEnvio` (trailing, default false).
+  `ReglaDeEnvio` (domain): `envio_requiere_cliente` (Consumidor Final / no client) and
+  `envio_requiere_domicilio` (null/blank) are 400s; the line goes through `CalculadorDeTotales` like any
+  other (qty 1, no discount/offer/combo/adjustment) so subtotal/total/fiscal breakdown include it. In
+  `ServicioDeVentas`: `importe_envio` is resolved in the same parameters query as `tolerancia_pago` and
+  `lotes_habilitado` (no extra read for a sale without envío); the 21% alícuota is found by ARCA code 5
+  (`alicuotas_iva.codigo_afip`, one extra query only when there is a line) and snapshotted (id + 21);
+  `LineaDelPlan.IdArticulo` is now nullable; the Envío item is always LAST, `EsProducto = false`, cost NULL,
+  no lot, so stock/FEFO skip it. `IdArea` is NOT NULL on items, so the Envío line carries the area of the
+  sale's first line (the shift summary counts it as that area's income; no migration). `DireccionEntrega`
+  = the request's if present, else the client's domicilio (only with ConEnvio).
+  Decisions: (1) importe 0 or no parameter => no line, but validation and `DireccionEntrega` still apply;
+  (2) offline pre-numbered sales with ConEnvio use the SERVER parameter for now (T4 adds the device amount
+  override); a resend with the same number and the same ConEnvio is idempotent because the Envío item is part
+  of the compared identity, and a resend with a different ConEnvio is a 409 `numero_preasignado_con_otro_contenido`;
+  (3) `ConEnvio` on a nota de crédito or on a presupuesto conversion is a 400 `envio_no_admitido`
+  (dto-contract-honesty; checked right after the tipo is resolved, before the presupuesto is read); remito
+  -> factura and presupuestos build their own documents and never carry an Envío line; (4) a nota de crédito
+  of a sale with envío returns only the article lines requested and does NOT refund the envío (a NC line is
+  chosen by article and the Envío has none), the already-NULL-safe readers skip it; (5) `anulación` reverses
+  stock from `movimientos_stock`, so the Envío item is irrelevant to it.
+  NULL-article sweep (code reading + tests): ServicioDeVentas (`ResolverDevolucionesDeComboAsync`,
+  `ExigirImportesDeLaVentaAsociadaAsync`, `ExigirMismoContenido`, `Proyectar`, `BuscarPorNumeroComprometidoAsync`,
+  `ObtenerAsync`, stock loop, lote block, anulación) ok; Reportes: `ServicioDeReportesDeRentabilidad` unchanged on purpose (the
+  Envío line has cost NULL, so it counts as a "sin costo" line of the coverage banner and never reaches the margin or
+  `PorArticulo`; excluding every null-article line would break `RentabilidadTests`, whose fixtures use null-article lines
+  with real costs, and a discriminating flag needs a schema change; known effect: each delivery sale lowers the
+  coverage %), `ServicioDeReportesDeArticulos.LineasVendidas` (top / ventas por artículo) and
+  `ServicioDeConsultasDeVentas` (MCP por artículo / por área, grupo, marca) already drop it (acceptable: their
+  totals exclude envíos), `ServicioDeLibroIva` ok (reads alícuota + total); Caja `LectorDeContenidoDeResumen`
+  ok with a real area; CuentaCorriente `LectorDeConsumosReliquidables` / `ServicioDeReliquidacion` /
+  `ReliquidadorDeConsumos` ok (the free-concept line already keeps its historic total); Fiscal
+  `ServicioDeFacturacionDeVentas` (mirror copies the NULL), `ComponerLineasFiscalesDesdeItemsAsync` (alícuota
+  snapshot + total only), `ComposicionDeTotalesFiscales` ok; `ServicioDeLotes.ListarAsync` ok; Ways.Api has no
+  item readers. Evidence: `dotnet build` 0 errors; Domain.Tests 1860 ok; Application.Tests 1060 ok (structural guards
+  included); IntegrationTests filtered on Venta/Ventas/NotaDeCredito/Devolucion 1050 ok, and on
+  Reportes/Caja/Turno/Cierre/Fiscal/Facturacion/Mcp/SuperficieDeAutorizacion/Reliquid/Rentabilidad 1512 ok
+  (the first pass failed 5 `RentabilidadTests` because of a null-article filter that was then dropped, see above).
+  Mutation evidence (mutate -> failing test -> revert): removing the `ExigirClienteConDomicilio` call -> 5
+  integration tests fail; `envio_no_admitido` guard (each half) -> `ConEnvioEnUnaNotaDeCredito...` fails;
+  `DireccionDeEntrega` fallback removed / applied without ConEnvio -> 3 / 1 tests fail; ARCA code 5 -> 4 -> the
+  21% test fails; domain rule clauses (domicilio / whitespace / Consumidor Final) -> `ReglaDeEnvioTests` fail.
+  Tests: `ReglaDeEnvioTests` (domain), `ComposicionDeTotalesFiscalesTests` (envío at 21% next to 10.5%),
+  `VentaConEnvioTests` (integration).
+
 ## Next step
 
-T2.
+T3 (POS web online): send `conEnvio` in the sale request, show the Envío line from the response, block closing
+without a client with domicilio (same two codes), ticket with domicilio + teléfono. T4: device amount override
+for pre-numbered sales (`ExigirPreciosOfflineValidos`-style gate, DTO honesty) and the `ExigirMismoContenido` identity
+for the device amount.
