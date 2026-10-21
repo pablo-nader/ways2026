@@ -595,7 +595,7 @@ public class ServicioDeVentas(
             // así que no puede llegar acá con un plan distinto bajo el mismo número.
             if (solicitud.NumeroPreasignado is not null)
             {
-                ExigirMismoContenido(existente, plan);
+                ExigirMismoContenido(existente, plan, solicitud.ImporteEnvio);
             }
 
             return existente;
@@ -724,7 +724,7 @@ public class ServicioDeVentas(
     /// pre-asignado es el que cobró la caja (el que mandó el dispositivo, o el importe tipeado si no mandó precio) y nunca
     /// se vuelve a derivar con la lista de hoy (el precio de una línea de lista, en cambio, se deriva y no entra).
     /// Compara contra los propios items/pagos ya persistidos del comprobante encontrado.</summary>
-    private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
+    private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan, decimal? importeEnvioDelDispositivo)
     {
         var lineasExistentes = existente.Items
             .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, ImporteTipeado: i.PorImporte ? i.PrecioUnitario : (decimal?)null))
@@ -791,17 +791,21 @@ public class ServicioDeVentas(
         // y el outbox reenvía siempre la misma solicitud guardada, así que un reenvío legítimo trae
         // el mismo valor. El reenvío tampoco depende del límite: EmitirAsync saltea la regla 6 para
         // un número que ya tiene comprobante.
-        // El importe del envío tampoco entra aparte, y no hace falta: en una venta con número pre-asignado lo fija el
-        // dispositivo (SolicitudDeVenta.ImporteEnvio), así que un cambio del parámetro importe_envio entre dos reenvíos no
-        // altera el total; y un reenvío con OTRO importe cambia el total, y con él los pagos que se aplican al total, que sí
-        // se comparan. La línea Envío sí entra en la comparación de líneas (existencia), como cualquier línea sin artículo.
+        // El importe del envío entra solo cuando lo fijó el dispositivo (SolicitudDeVenta.ImporteEnvio): es lo que cobró
+        // la caja, así que otro importe es otra venta. Los pagos no alcanzan para delatarlo porque se comparan por el
+        // importe pedido, y una diferencia dentro de tolerancia_pago pasa la validación con los mismos pagos. Sin ese
+        // campo (un dispositivo anterior) el importe sale del parámetro, que puede cambiar entre dos reenvíos del mismo
+        // pedido, y por eso no se compara, igual que el total. La línea Envío es la única sin artículo.
         // ForzarFactura SÍ entra: lo tipeó el cajero y decide si el ticket sale facturado, así que reenviar el mismo
         // número con otro valor no es un reenvío del mismo pedido.
         if (existente.IdCliente != plan.IdCliente
             || existente.IdComprobanteAsociado != plan.IdComprobanteAsociado
             || existente.FacturaForzada != plan.ForzarFactura
             || !lineasExistentes.SequenceEqual(lineasSolicitadas)
-            || !pagosExistentes.SequenceEqual(pagosSolicitados))
+            || !pagosExistentes.SequenceEqual(pagosSolicitados)
+            || (importeEnvioDelDispositivo is not null
+                && ImporteDeEnvio(existente.Items.Where(i => i.IdArticulo is null).Select(i => i.PrecioUnitario))
+                    != ImporteDeEnvio(plan.Items.Where(i => i.IdArticulo is null).Select(i => i.PrecioUnitario))))
         {
             throw new ErrorDominio(
                 "numero_preasignado_con_otro_contenido",
@@ -809,6 +813,9 @@ public class ServicioDeVentas(
                 409);
         }
     }
+
+    private static decimal? ImporteDeEnvio(IEnumerable<decimal> preciosDeLineasSinArticulo) =>
+        preciosDeLineasSinArticulo.Select(p => (decimal?)p).SingleOrDefault();
 
     /// <summary>Detección de idempotencia (ver el comentario de <see cref="EmitirAsync"/> sobre
     /// el commit ambiguo): <c>null</c> ⇒ el número todavía no tiene comprobante, esta es la
