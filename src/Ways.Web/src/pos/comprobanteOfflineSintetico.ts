@@ -24,6 +24,9 @@
  * resolvió la vista previa, así que sin ese lookup el ticket impreso quedaría con el descuento de
  * cantidad 1 mientras la pantalla y el payload encolado cobran el del tramo.
  *
+ * Con envío, la línea "Envío" (sin artículo ni área, al 21 %, id de alícuota en `0` por el mismo motivo que abajo) cierra el
+ * comprobante y `direccionEntrega` lleva el domicilio del cliente, como el servidor.
+ *
  * `idArea`/`idListaPrecio` de cada item quedan en `0` — sentinels deliberados, nunca valores
  * inventados que alguien pudiera leer como reales: el servidor los resuelve del artículo FRESCO
  * recién al sincronizar (mismo motivo documentado en `ArticuloDeInstantanea.IdArea` del backend),
@@ -36,6 +39,7 @@ import { calcularTotalesDeLineaConCombo } from '../api/combos'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
 import { redondearAPeso } from '../formato/importes'
+import { DESCRIPCION_DE_LA_LINEA_DE_ENVIO, PORCENTAJE_IVA_DEL_ENVIO } from './envio'
 
 export type ParametrosDeComprobanteOfflineSintetico = {
   numero: number
@@ -48,6 +52,8 @@ export type ParametrosDeComprobanteOfflineSintetico = {
   idListaPrecio: number
   pagos: PagoDeVenta[]
   ahora: Date
+  /** Venta con envío: el importe que cobró la caja (sin la línea si no es mayor a 0) y el domicilio al que se entrega. */
+  envio?: { importe: number; direccionEntrega: string | null }
 }
 
 /**
@@ -109,6 +115,35 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     })
   }
 
+  // Como el servidor: la línea Envío va al final, sin artículo, área, oferta ni ajuste, al 21 %, y suma al subtotal.
+  if (params.envio && params.envio.importe > 0) {
+    const totalDelEnvio = redondearAPeso(params.envio.importe)
+    subtotal += totalDelEnvio
+    items.push({
+      orden: items.length + 1,
+      idArticulo: null,
+      descripcion: DESCRIPCION_DE_LA_LINEA_DE_ENVIO,
+      codigoBarra: null,
+      idArea: null,
+      idListaPrecio: 0,
+      idOferta: null,
+      idCombo: null,
+      idAlicuotaIva: 0,
+      porcentajeIva: PORCENTAJE_IVA_DEL_ENVIO,
+      cantidad: 1,
+      precioUnitario: params.envio.importe,
+      descuento: 0,
+      total: totalDelEnvio,
+      idLote: null,
+      codigoLote: null,
+      loteVencido: false,
+      precioDiscrepante: false,
+      ajusteManualPorcentaje: null,
+      ajusteManual: 0,
+      porImporte: false,
+    })
+  }
+
   subtotal = redondearAPeso(subtotal)
   descuentoTotal = redondearAPeso(descuentoTotal)
   const { descuentoManualTotal, recargoManualTotal } = totalesDeAjusteManual(ajustes)
@@ -127,7 +162,7 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     descuentoManualTotal,
     recargoManualTotal,
     total: redondearAPeso(subtotal - descuentoTotal - descuentoManualTotal + recargoManualTotal),
-    direccionEntrega: null,
+    direccionEntrega: params.envio?.direccionEntrega?.trim() || null,
     observaciones: null,
     items,
     pagos: params.pagos.map((p) => ({ idMedioPago: p.idMedioPago, importe: p.importe, referencia: p.referencia, vuelto: p.vuelto })),

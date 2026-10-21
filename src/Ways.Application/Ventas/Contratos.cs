@@ -60,8 +60,15 @@ namespace Ways.Application.Ventas;
 /// resuelve el parámetro <c>importe_envio</c> del punto de venta y, si es mayor a cero, agrega UNA línea de concepto libre
 /// "Envío" (sin artículo, a 21 % de IVA) que suma al subtotal y al total. Sin <see cref="DireccionEntrega"/> propia, la
 /// dirección de entrega del comprobante sale del domicilio del cliente. Solo tiene sentido en una venta común: en una
-/// nota de crédito o en la conversión de un presupuesto se rechaza (400 <c>envio_no_admitido</c>) en vez de ignorarse. El
-/// importe nunca viaja en el pedido: lo pone el servidor, también en una venta con número pre-asignado.</summary>
+/// nota de crédito o en la conversión de un presupuesto se rechaza (400 <c>envio_no_admitido</c>) en vez de ignorarse.
+///
+/// <see cref="ImporteEnvio"/> (importe que cobró la caja): solo lo manda un dispositivo en una venta con número pre-asignado
+/// y <see cref="ConEnvio"/>, porque el precio de esa venta es el que ya cobró offline; el servidor lo graba tal cual en la
+/// línea Envío en vez de leer <c>importe_envio</c>, así que un cambio del parámetro entre
+/// dos reenvíos no altera el total que ve la guarda de idempotencia. En cualquier otra venta se rechaza (400 <c>importe_envio_no_admitido</c>) en vez de ignorarse,
+/// y un valor negativo, con más de dos decimales o que no entra en <c>numeric(14,2)</c> es 400 <c>importe_envio_invalido</c>.
+/// Ausente en una venta con número pre-asignado y <see cref="ConEnvio"/> (un dispositivo anterior), el importe sigue
+/// saliendo del parámetro.</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -75,7 +82,8 @@ public sealed record SolicitudDeVenta(
     long? NumeroPreasignado = null,
     bool LimiteDeCreditoNoValidado = false,
     bool ForzarFactura = false,
-    bool ConEnvio = false);
+    bool ConEnvio = false,
+    decimal? ImporteEnvio = null);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>

@@ -630,8 +630,8 @@ export function buscarClientesOffline(instantanea: InstantaneaDePos, termino: st
 
 /**
  * Lleva un cliente de la instantánea a la forma `ClienteListado` que usa la pantalla de venta.
- * Los datos de contacto no viajan en la instantánea y quedan en `null`; la pantalla de venta no
- * los lee. Una lista dada de baja (`idListaPrecio: null`) se lleva a `0`, un id que ninguna lista
+ * El domicilio y los teléfonos viajan para la venta con envío sin red; el resto de los datos de contacto no viaja y queda
+ * en `null`. Una lista dada de baja (`idListaPrecio: null`) se lleva a `0`, un id que ninguna lista
  * tiene: la vista previa local no encuentra precios y la online rechaza igual que con la FK real.
  */
 export function aClienteListado(c: ClienteDeInstantanea): ClienteListado {
@@ -645,9 +645,9 @@ export function aClienteListado(c: ClienteDeInstantanea): ClienteListado {
     numeroDocumento: c.numeroDocumento,
     idCondicionFiscal: c.idCondicionFiscal,
     nacimiento: null,
-    domicilio: null,
-    telefono: null,
-    celular: null,
+    domicilio: c.domicilio ?? null,
+    telefono: c.telefono ?? null,
+    celular: c.celular ?? null,
     email: null,
     observaciones: null,
     idListaPrecio: c.idListaPrecio ?? 0,

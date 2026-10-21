@@ -32,6 +32,11 @@ EmitirAsync`/`ServicioDePrecios`), nunca "por si acaso":
 - Medios de pago activos (recorte de flags: nombre, comportamiento, admite vuelto, requiere
   referencia) y `tolerancia_pago` resuelta con la MISMA precedencia (punto de venta > empresa >
   default) que el checkout.
+- Venta con envío sin red (formato `?version=2`, ausentes en una instantánea guardada antes): `importeEnvio`, el parámetro
+  `importe_envio` resuelto con la misma precedencia (punto de venta > empresa > default 0); `envioPorDefecto`, el flag
+  `puntos_venta.envio_por_defecto`; y en cada cliente `domicilio`, `telefono` y `celular` (recortados, y la clave se omite si
+  queda vacío) para la regla "cliente con domicilio" y el teléfono del ticket de entrega. Una instantánea sin `importeEnvio`
+  no permite vender con envío sin red.
 - `momento`: el instante en que el servidor resolvió TODO lo de arriba — el dispositivo lo
   muestra para que el operador sepa cuán vieja es su última instantánea.
 
@@ -116,6 +121,14 @@ dedicado, ESE es el momento de proponer las columnas y pedir la aprobación.
 **Combos (feature combos).** La instantánea trae `combos[]` y la línea offline puede traer las unidades
 consumidas por un combo, la parte del combo y el combo; el servidor los graba tal cual y audita la diferencia contra su
 propia detección. Contrato y decisiones en "Combos en el POS offline" (sección Combos).
+
+**Venta con envío offline (`SolicitudDeVenta.ImporteEnvio`).** Con `NumeroPreasignado` y `ConEnvio`, el dispositivo manda
+el importe del envío que cobró (el de la instantánea, `importeEnvio`): el servidor lo graba tal cual en la línea "Envío" en vez
+de leer `importe_envio` (con 0 no hay línea). Es otro caso del precio que ya cobró la caja: sin `NumeroPreasignado` o sin
+`ConEnvio` se rechaza (400 `importe_envio_no_admitido`), y uno negativo, con más de 2 decimales o fuera de `numeric(14,2)` es
+400 `importe_envio_invalido`. Sin el campo (un dispositivo anterior) sigue el parámetro. El reenvío de una venta ya emitida
+devuelve su comprobante aunque el domicilio del cliente se haya borrado después: la búsqueda por número corre antes de la
+validación de cliente con domicilio. Ver "Venta con envío" en §4.
 
 **El camino online/web queda byte-idéntico.** Ningún actor sin `NumeroPreasignado` puede mandar
 precio de línea (guard arriba); sin precio de línea, `MaterializarItems` sigue exactamente la

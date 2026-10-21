@@ -4,6 +4,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Stock;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Parametros;
 
@@ -186,11 +187,11 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         if (conocido.Clave == ParametroConocido.ImporteEnvio.Clave)
         {
             var importe = (decimal)valor;
-            if (importe < 0m || decimal.Round(importe, 2) != importe || importe > ImporteMaximoDeEnvio)
+            if (!ReglaDeEnvio.ImporteEsValido(importe))
             {
                 throw new ErrorDominio(
                     "parametro_importe_envio_invalido",
-                    $"El importe del envío tiene que ser de 0 a {ImporteMaximoDeEnvio:0.00} y tener como máximo 2 decimales.",
+                    $"El importe del envío tiene que ser de 0 a {ReglaDeEnvio.ImporteMaximo:0.00} y tener como máximo 2 decimales.",
                     400);
             }
         }

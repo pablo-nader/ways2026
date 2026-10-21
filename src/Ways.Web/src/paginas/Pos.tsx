@@ -45,14 +45,7 @@ import { clienteDeClientes } from '../api/clientes'
 import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
-import {
-  importeDeEnvioAplicado,
-  MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE,
-  MENSAJE_DE_ENVIO_SIN_CONEXION,
-  MENSAJE_DE_ENVIO_SIN_IMPORTE,
-  mensajeDeRechazoDeEnvio,
-  motivoDeEnvioBloqueado,
-} from '../pos/envio'
+import { importeDeEnvioAplicado, importeDeEnvioVigente, mensajeDeRechazoDeEnvio, motivoDeEnvioPendiente } from '../pos/envio'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
@@ -1117,8 +1110,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
 
-  // Bajo un presupuesto la venta nunca lleva envío (el servidor lo rechaza con `envio_no_admitido`).
-  const conEnvio = !modoPresupuesto && (conEnvioElegido ?? puntoVentaSeleccionada?.envioPorDefecto ?? false)
 
   // Cada vez que el drenado saca ventas de la cola, lo que el servidor sabe del saldo cambió: el que está en
   // pantalla deja de estar confirmado (y los recibos y tickets en vuelo que lo leyeron antes lo saben por el
@@ -1149,6 +1140,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizacionOffline.instantanea.idPuntoVenta === puntoVentaSeleccionada?.id
       ? sincronizacionOffline.instantanea
       : null
+
+  // Bajo un presupuesto la venta nunca lleva envío (el servidor lo rechaza con `envio_no_admitido`). El valor de arranque es
+  // el flag del punto de venta; la instantánea, que se refresca, manda sobre el listado leído al iniciar la sesión.
+  const conEnvio =
+    !modoPresupuesto &&
+    (conEnvioElegido ?? instantaneaDelPuntoVenta?.envioPorDefecto ?? puntoVentaSeleccionada?.envioPorDefecto ?? false)
 
   // Los atajos F5 a F8 salen de la instantánea; sin ella (la sesión de un navegador no puede pedirla, y el escritorio no la tiene antes de
   // su primera sincronización) salen de una lectura aparte del servidor, que no exige un dispositivo y se pide una vez por punto de venta.
@@ -1451,15 +1448,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     })
   }, [claveBorrador, almacenBorradores, lineas, precios, cantidadesEnEdicion, filasPago, clienteSeleccionado, conEnvioElegido])
 
-  // react-async-state regla 2: el importe del envío se pide solo con el envío tildado y con conexión (la venta con envío
-  // no se encola sin red); una respuesta desactualizada nunca pisa a la más reciente. Destildar y volver a tildar
-  // reintenta una lectura fallida.
+  // react-async-state regla 2: el importe del envío se pide solo con el envío tildado y con conexión (sin ella se usa el de la
+  // instantánea); una respuesta desactualizada nunca pisa a la más reciente. Destildar y volver a tildar reintenta una
+  // lectura fallida. Al empezar una lectura nueva (otro punto de venta, otra conexión, otro tildado) el importe anterior se
+  // descarta: uno viejo no se muestra ni deja cobrar mientras llega el vigente.
   const hayConexion = sincronizacionOffline.enLinea
   useEffect(() => {
     if (!conEnvio || !hayConexion || !puntoVentaSeleccionada) return
 
     const generacion = (generacionImporteEnvioRef.current += 1)
     let vigente = true
+    setImporteEnvio(null)
     setErrorImporteEnvio(false)
 
     api
@@ -2943,16 +2942,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const lineasEnPantalla = [...lineas].reverse()
 
   const subtotalDeLineas = calcularSubtotalPrevia(lineas, precios)
-  // La línea Envío entra al total como una línea más; el servidor la calcula con su propio `importe_envio` al cobrar.
-  const importeDelEnvio = importeDeEnvioAplicado({ conEnvio, importe: importeEnvio, hayLineas: lineas.length > 0 })
+  // La línea Envío entra al total como una línea más. Con conexión el importe es el leído del servidor; sin ella, el de la
+  // instantánea. Online el servidor lo vuelve a calcular al cobrar; en una venta local es el que se manda y se cobra.
+  const importeVigenteDelEnvio = importeDeEnvioVigente({
+    hayConexion,
+    importeEnLinea: importeEnvio,
+    instantanea: instantaneaDelPuntoVenta,
+  })
+  const importeDelEnvio = importeDeEnvioAplicado({ conEnvio, importe: importeVigenteDelEnvio, hayLineas: lineas.length > 0 })
   const subtotalPrevia = subtotalDeLineas === null ? null : subtotalDeLineas + importeDelEnvio
-  // Por qué no se puede cerrar la venta con envío (cliente, conexión o importe); `null` sin envío o con todo en orden.
-  const motivoDeEnvio = !conEnvio
-    ? null
-    : !hayConexion
-      ? MENSAJE_DE_ENVIO_SIN_CONEXION
-      : (motivoDeEnvioBloqueado(clienteSeleccionado) ??
-        (errorImporteEnvio ? MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE : importeEnvio === null ? MENSAJE_DE_ENVIO_SIN_IMPORTE : null))
+  // Por qué no se puede cerrar la venta con envío (cliente o importe); `null` sin envío o con todo en orden.
+  const motivoDeEnvio = motivoDeEnvioPendiente({
+    conEnvio,
+    cliente: clienteSeleccionado,
+    hayConexion,
+    importeVigente: importeVigenteDelEnvio,
+    errorAlLeerElImporte: errorImporteEnvio,
+  })
   const ajustesManuales = calcularAjustesManualesPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
   // resolución de precios (que ni siquiera corre) — sale del propio presupuesto congelado.
@@ -2994,8 +3000,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           saldoCliente: clienteSeleccionado.saldo,
           limiteCredito: clienteSeleccionado.limiteCredito,
           creditoIlimitado: clienteSeleccionado.creditoIlimitado,
-          // Una venta con envío nunca se cobra por la vista previa local: el límite lo juzga el servidor al cobrar.
-          exigirLimiteDeCredito: !previaLocal || conEnvio,
+          exigirLimiteDeCredito: !previaLocal,
         })
 
   // Aviso, nunca bloqueo: con la vista previa local el límite lo decide el servidor al cobrar (o,
@@ -3367,8 +3372,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         | { tipo: 'sinComprobante'; idLocal: string; numeroVisible: string; avisoLimiteDeCredito: string | null }
         | { tipo: 'rechazada'; motivo: MotivoRechazoOffline }
       > => {
+        // El importe que se muestra en el carrito es el que cobra la caja: viaja en la solicitud de la cola y el servidor lo
+        // graba (solo una venta con número pre-asignado puede mandarlo).
         const resultado = await sincronizacionOffline.encolarVentaOffline({
-          solicitudBase: solicitud,
+          solicitudBase: conEnvio && importeVigenteDelEnvio !== null ? { ...solicitud, importeEnvio: importeVigenteDelEnvio } : solicitud,
           esConsumidorFinal: clienteSeleccionado.esConsumidorFinal,
           idListaPrecio: clienteSeleccionado.idListaPrecio,
           pagos: pagosConVuelto,
@@ -3387,6 +3394,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           idListaPrecio: clienteSeleccionado.idListaPrecio,
           pagos: aPagosDeVenta(pagosConVuelto),
           ahora: new Date(),
+          ...(conEnvio && importeVigenteDelEnvio !== null
+            ? { envio: { importe: importeVigenteDelEnvio, direccionEntrega: clienteSeleccionado.domicilio } }
+            : {}),
         })
         // Defensa en profundidad: `ok: true` ya exigió que todas las líneas tengan precio en esta
         // misma instantánea, que es lo único que puede dejar al comprobante sin armar.
@@ -3448,8 +3458,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // las líneas con precio, números reservados): si rechaza, sigue el camino online de
         // siempre. Salvo un rechazo que el servidor ya contestó (límite superado o consulta
         // rechazada): ese se informa y la venta no se manda online sin número.
-        // Una venta con envío nunca entra al outbox: la cola no lleva la línea Envío y se la perdería en silencio.
-        const instantaneaDeLaPrevia = conEnvio ? null : instantaneaDeLaVistaPreviaRef.current
+        const instantaneaDeLaPrevia = instantaneaDeLaVistaPreviaRef.current
         if (instantaneaDeLaPrevia !== null) {
           const local = await encolarLocal(instantaneaDeLaPrevia)
           if (generacionCobroRef.current !== miGeneracion) return null
@@ -3997,9 +4006,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                       type="checkbox"
                       className="form-check-input"
                       checked={conEnvio}
-                      // Sin conexión no se puede tildar (la venta con envío no se encola); sí destildar.
-                      disabled={pantallaCobroInerte || bloqueadoPorTurno || (!hayConexion && !conEnvio)}
-                      title={!hayConexion && !conEnvio ? 'Sin conexión: la venta con envío necesita conexión.' : undefined}
+                      disabled={pantallaCobroInerte || bloqueadoPorTurno}
                       onChange={(e) => setConEnvioElegido(e.target.checked)}
                     />
                     <label className="form-check-label" htmlFor="pos-con-envio">

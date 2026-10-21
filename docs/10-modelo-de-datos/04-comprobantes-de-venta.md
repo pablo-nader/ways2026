@@ -107,8 +107,14 @@ servidor:
 - exige un cliente que no sea Consumidor Final (400 `envio_requiere_cliente`) con `domicilio` no vacío (400
   `envio_requiere_domicilio`);
 - sin `direccion_entrega` en el pedido, el comprobante guarda el domicilio del cliente;
-- el importe nunca viaja en el pedido: lo resuelve el servidor, también en una venta con número pre-asignado (la excepción
-  del importe que cobró el dispositivo offline es de la tarea del POS offline);
+- el importe lo resuelve el servidor; la única excepción es una venta con número pre-asignado (offline), donde el pedido
+  puede traer `ImporteEnvio` (el que cobró la caja): se graba tal cual en la línea (con 0 no hay línea) y así un cambio de
+  `importe_envio` entre dos reenvíos no altera el total. Sin `ImporteEnvio` (un dispositivo anterior) sigue el parámetro. En
+  cualquier otra venta, o sin `ConEnvio`, `ImporteEnvio` se rechaza (400 `importe_envio_no_admitido`), y uno negativo, con más
+  de 2 decimales o que no entra en `numeric(14,2)` es 400 `importe_envio_invalido`;
+- el reenvío de una venta con número pre-asignado que ya tiene comprobante se resuelve antes de validar al cliente: aunque el
+  domicilio se haya borrado después, devuelve el comprobante existente (la identidad que compara la guarda no incluye el
+  importe del envío aparte: lo cubre el total que reciben los pagos);
 - una nota de crédito o la conversión de un presupuesto con `ConEnvio` se rechaza (400 `envio_no_admitido`); la nota de crédito
   de una venta con envío devuelve las líneas de artículo que se piden y NO devuelve el envío (no tiene artículo que elegir),
   y la anulación revierte el stock por los movimientos, así que la línea sin artículo no estorba;

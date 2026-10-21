@@ -382,5 +382,22 @@ public class ArmadorDeInstantaneaTests
         Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(otraUnidad));
 
         Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(base_ with { ToleranciaPago = 11m }));
+
+        // El envío también es contenido: un cambio de importe, del flag del punto de venta o del domicilio de un cliente
+        // tiene que llegar al dispositivo con un 200 y no con un 304.
+        Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(base_ with { ImporteEnvio = 1500m }));
+        Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(base_ with { EnvioPorDefecto = true }));
+        var otroDomicilio = base_ with { Clientes = [base_.Clientes[0], base_.Clientes[1] with { Domicilio = "Av. Siempreviva 742" }] };
+        Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(otroDomicilio));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData("  Av. Siempreviva 742 ", "Av. Siempreviva 742")]
+    public void ElContactoDelClienteViajaRecortadoYVacioEsNulo(string? valor, string? esperado)
+    {
+        Assert.Equal(esperado, TextoOpcional(valor));
     }
 }

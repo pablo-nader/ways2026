@@ -713,6 +713,82 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.DoesNotContain(instantanea.Clientes, c => c.IdCliente == deOtraEmpresa.Id);
     }
 
+    /// <summary>La venta con envío sin red necesita el importe (resuelto como online: punto de venta &gt; empresa), el flag del
+    /// punto de venta y el contacto de los clientes: domicilio y teléfonos viajan recortados y los vacíos se omiten.</summary>
+    [Fact]
+    public async Task LaVersion2TraeElImporteDelEnvioElFlagDelPuntoDeVentaYElContactoDeLosClientes()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVersion2TraeElImporteDelEnvioElFlagDelPuntoDeVentaYElContactoDeLosClientes));
+        var idListaDefault = await IdListaDefaultAsync(idTenant);
+        await SembrarArticuloConPrecioYBarrasAsync(idTenant, "envio", 100m);
+        var conContacto = await SembrarClienteAsync(idTenant, "ConContacto", idListaDefault);
+        var sinContacto = await SembrarClienteAsync(idTenant, "SinContacto", idListaDefault);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var puntoVenta = await db.PuntosVenta.SingleAsync(p => p.Id == idPuntoVenta);
+            puntoVenta.EnvioPorDefecto = true;
+            db.Parametros.Add(new Parametro
+            {
+                IdTenant = idTenant, IdEmpresa = puntoVenta.IdEmpresa, Clave = "importe_envio", Valor = "1500",
+                CreatedAt = ahora, UpdatedAt = ahora
+            });
+            db.Parametros.Add(new Parametro
+            {
+                IdTenant = idTenant, IdEmpresa = puntoVenta.IdEmpresa, IdPuntoVenta = idPuntoVenta, Clave = "importe_envio",
+                Valor = "1800.50", CreatedAt = ahora, UpdatedAt = ahora
+            });
+
+            var cliente = await db.Clientes.SingleAsync(c => c.Id == conContacto.Id);
+            cliente.Domicilio = "  Av. Corrientes 1234  ";
+            cliente.Telefono = "   ";
+            cliente.Celular = "11 5555-0000";
+            var vacio = await db.Clientes.SingleAsync(c => c.Id == sinContacto.Id);
+            vacio.Domicilio = "  ";
+            await db.SaveChangesAsync();
+        }
+
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "envio");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        Assert.Equal(1800.50m, instantanea.ImporteEnvio);
+        Assert.True(instantanea.EnvioPorDefecto);
+        // Una fila de importe_envio del punto de venta no puede ganar la resolución de otra clave (la tolerancia sigue en su default).
+        Assert.Equal(10m, instantanea.ToleranciaPago);
+
+        var enviable = Assert.Single(instantanea.Clientes, c => c.IdCliente == conContacto.Id);
+        Assert.Equal("Av. Corrientes 1234", enviable.Domicilio);
+        Assert.Null(enviable.Telefono);
+        Assert.Equal("11 5555-0000", enviable.Celular);
+
+        var sinDatos = Assert.Single(instantanea.Clientes, c => c.IdCliente == sinContacto.Id);
+        Assert.Null(sinDatos.Domicilio);
+        Assert.Null(sinDatos.Telefono);
+        Assert.Null(sinDatos.Celular);
+    }
+
+    [Fact]
+    public async Task LaVersion2SinConfiguracionDeEnvioTraeImporteCeroYElFlagApagado()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVersion2SinConfiguracionDeEnvioTraeImporteCeroYElFlagApagado));
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "envio0");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var instantanea = (await (await cajero.GetAsync(RutaV2)).Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        Assert.Equal(0m, instantanea.ImporteEnvio);
+        Assert.False(instantanea.EnvioPorDefecto);
+    }
+
     /// <summary>La unidad de venta viaja en cada artículo de la versión 2 y es parte del contenido
     /// de la etiqueta: un dispositivo con una instantánea guardada antes de este campo manda su
     /// etiqueta vieja y recibe 200, no 304. El formato original (sin <c>version</c>) no la expone.</summary>

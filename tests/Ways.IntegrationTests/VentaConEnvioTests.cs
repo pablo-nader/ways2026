@@ -628,8 +628,8 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
 
     // ---- venta offline (número pre-asignado) ---------------------------------------------------
 
-    /// <summary>Una venta con número pre-asignado y ConEnvio usa por ahora el importe del servidor (la excepción del importe
-    /// del dispositivo es de otra tarea), y reenviar el MISMO pedido con el mismo número devuelve el mismo comprobante: la
+    /// <summary>Una venta con número pre-asignado y ConEnvio usa el importe del servidor cuando el dispositivo no manda el
+    /// suyo, y reenviar el MISMO pedido con el mismo número devuelve el mismo comprobante: la
     /// línea de envío entra en la identidad que compara la guarda de idempotencia.</summary>
     [Fact]
     public async Task UnaVentaOfflineConEnvioUsaElImporteDelServidorYSuReenvioEsIdempotente()
@@ -660,5 +660,161 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(
             "numero_preasignado_con_otro_contenido",
             (await otroContenido.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString());
+    }
+
+    // ---- importe del dispositivo (ImporteEnvio) ----------------------------------------------
+
+    private async Task CambiarImporteDeEnvioAsync(Contexto ctx, string importe)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var parametro = await db.Parametros.SingleAsync(p => p.Clave == "importe_envio" && p.IdPuntoVenta == null);
+        parametro.Valor = importe;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task BorrarDomicilioAsync(Contexto ctx, int idCliente)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        (await db.Clientes.SingleAsync(c => c.Id == idCliente)).Domicilio = null;
+        await db.SaveChangesAsync();
+    }
+
+    private static SolicitudDeVenta PedidoOffline(
+        Contexto ctx, int idCliente, int idArticulo, decimal pagado, long numero, bool conEnvio = true, decimal? importeEnvio = null) =>
+        new(ctx.IdPuntoVenta, idCliente, "TX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, pagado, null, 0m)], null, null,
+            IdPresupuestoOrigen: null, NumeroPreasignado: numero, ConEnvio: conEnvio, ImporteEnvio: importeEnvio);
+
+    /// <summary>El precio de una venta con número pre-asignado es el que ya cobró la caja: el servidor graba el importe del
+    /// dispositivo en la línea Envío en vez del parámetro.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineConEnvioGrabaElImporteQueCobroElDispositivoYNoElDelParametro()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineConEnvioGrabaElImporteQueCobroElDispositivoYNoElDelParametro));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(ctx, Domicilio);
+
+        var emitido = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+
+        Assert.Equal(1100m, emitido.Total);
+        var envio = emitido.Items[1];
+        Assert.Null(envio.IdArticulo);
+        Assert.Equal(1000m, envio.PrecioUnitario);
+        Assert.Equal(1000m, envio.Total);
+        var (_, items) = await LeerPersistidoAsync(ctx.IdTenant, emitido.Id);
+        Assert.Equal(1000m, items[1].Total);
+    }
+
+    /// <summary>El importe cero que cobró la caja es un envío gratis: no hay línea aunque el parámetro valga más.</summary>
+    [Fact]
+    public async Task UnImporteDeDispositivoEnCeroNoAgregaLineaAunqueElParametroValga()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnImporteDeDispositivoEnCeroNoAgregaLineaAunqueElParametroValga));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(ctx, Domicilio);
+
+        var emitido = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 100m, 1L, importeEnvio: 0m));
+
+        Assert.Single(emitido.Items);
+        Assert.Equal(100m, emitido.Total);
+        Assert.Equal(Domicilio, emitido.DireccionEntrega);
+    }
+
+    /// <summary>Un dispositivo anterior no manda el importe: la venta sigue usando el parámetro.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineConEnvioSinImporteDelDispositivoSigueUsandoElParametro()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineConEnvioSinImporteDelDispositivoSigueUsandoElParametro));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(ctx, Domicilio);
+
+        var emitido = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1600m, 1L));
+
+        Assert.Equal(1500m, emitido.Items[1].Total);
+    }
+
+    /// <summary>Reenviar el mismo pedido después de que el parámetro cambió devuelve el mismo comprobante: la identidad usa el
+    /// importe del dispositivo. Reenviar con OTRO importe sigue siendo otro contenido.</summary>
+    [Fact]
+    public async Task ElReenvioTrasCambiarElParametroDevuelveElMismoComprobanteYConOtroImporteEsOtroContenido()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(ElReenvioTrasCambiarElParametroDevuelveElMismoComprobanteYConOtroImporteEsOtroContenido));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(ctx, Domicilio);
+
+        var primera = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+
+        await CambiarImporteDeEnvioAsync(ctx, "2000");
+
+        var reenvio = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+        Assert.Equal(primera.Id, reenvio.Id);
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+
+        var otroImporte = await ctx.Cliente.PostAsJsonAsync(
+            "/api/ventas", PedidoOffline(ctx, idCliente, idArticulo, 1300m, 1L, importeEnvio: 1200m));
+        Assert.Equal(HttpStatusCode.Conflict, otroImporte.StatusCode);
+        Assert.Equal(
+            "numero_preasignado_con_otro_contenido",
+            (await otroImporte.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString());
+    }
+
+    /// <summary>El reenvío legítimo de una venta ya emitida se resuelve antes de juzgar al cliente: aunque su domicilio se haya
+    /// borrado después, devuelve el comprobante existente. Un número nuevo con ese mismo cliente sí se rechaza.</summary>
+    [Fact]
+    public async Task ElReenvioDeUnaVentaYaEmitidaDevuelveElComprobanteAunqueElDomicilioSeHayaBorrado()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(ElReenvioDeUnaVentaYaEmitidaDevuelveElComprobanteAunqueElDomicilioSeHayaBorrado));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(ctx, Domicilio);
+
+        var primera = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+        await BorrarDomicilioAsync(ctx, idCliente);
+
+        var reenvio = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+        Assert.Equal(primera.Id, reenvio.Id);
+        Assert.Equal(Domicilio, reenvio.DireccionEntrega);
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+
+        Assert.Equal(
+            "envio_requiere_domicilio",
+            await CodigoDeRechazoAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 2L, importeEnvio: 1000m)));
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+    }
+
+    /// <summary>dto-contract-honesty: el importe del dispositivo se rechaza donde no tiene destino y cuando no es un importe válido.</summary>
+    [Fact]
+    public async Task ElImporteDelDispositivoSeRechazaEnUnaVentaOnlineSinEnvioOInvalido()
+    {
+        var online = await PrepararOnlineAsync(nameof(ElImporteDelDispositivoSeRechazaEnUnaVentaOnlineSinEnvioOInvalido) + "On");
+        await SembrarImporteDeEnvioAsync(online, "1500");
+        var idArticuloOnline = await SembrarArticuloAsync(online, 100m, esProducto: false);
+        var idClienteOnline = await SembrarClienteAsync(online, Domicilio);
+
+        var enLinea = VentaConEnvio(online, idClienteOnline, 1100m, true, null, new LineaDeVenta(idArticuloOnline, 1m, null))
+            with { ImporteEnvio = 1000m };
+        Assert.Equal("importe_envio_no_admitido", await CodigoDeRechazoAsync(online.Cliente, enLinea));
+        Assert.Equal(0, await ContarComprobantesAsync(online.IdTenant));
+
+        var offline = await PrepararOfflineAsync(nameof(ElImporteDelDispositivoSeRechazaEnUnaVentaOnlineSinEnvioOInvalido) + "Off");
+        await SembrarImporteDeEnvioAsync(offline, "1500");
+        var idArticulo = await SembrarArticuloAsync(offline, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(offline, Domicilio);
+
+        Assert.Equal(
+            "importe_envio_no_admitido",
+            await CodigoDeRechazoAsync(
+                offline.Cliente, PedidoOffline(offline, idCliente, idArticulo, 100m, 1L, conEnvio: false, importeEnvio: 1000m)));
+        Assert.Equal(
+            "importe_envio_invalido",
+            await CodigoDeRechazoAsync(offline.Cliente, PedidoOffline(offline, idCliente, idArticulo, 100m, 1L, importeEnvio: -1m)));
+        Assert.Equal(
+            "importe_envio_invalido",
+            await CodigoDeRechazoAsync(offline.Cliente, PedidoOffline(offline, idCliente, idArticulo, 100m, 1L, importeEnvio: 10.001m)));
+        Assert.Equal(0, await ContarComprobantesAsync(offline.IdTenant));
     }
 }

@@ -195,6 +195,36 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
     ).toBe('cliente_no_admitido')
   })
 
+  describe('venta con envío', () => {
+    const conDomicilio = { ...instantanea, clientes: [{ ...instantanea.clientes[0], domicilio: ' Mitre 123 ' }] }
+    const conEnvio = { ...admitida, cliente: clienteIdentificado, instantanea: conDomicilio, envio: { importe: 1500 } }
+
+    it('un cliente identificado con domicilio en la copia local y con importe queda admitido; con importe 0 también', () => {
+      expect(admisibilidadDeVentaOffline(conEnvio)).toBeNull()
+      expect(admisibilidadDeVentaOffline({ ...conEnvio, envio: { importe: 0 } })).toBeNull()
+    })
+
+    it('envio_sin_cliente_con_domicilio para el Consumidor Final o un cliente sin domicilio', () => {
+      expect(admisibilidadDeVentaOffline({ ...conEnvio, cliente: admitida.cliente })).toBe('envio_sin_cliente_con_domicilio')
+      expect(admisibilidadDeVentaOffline({ ...conEnvio, instantanea })).toBe('envio_sin_cliente_con_domicilio')
+      expect(
+        admisibilidadDeVentaOffline({ ...conEnvio, instantanea: { ...instantanea, clientes: [{ ...instantanea.clientes[0], domicilio: '  ' }] } }),
+      ).toBe('envio_sin_cliente_con_domicilio')
+    })
+
+    it('envio_sin_importe cuando la caja no conoce el importe', () => {
+      expect(admisibilidadDeVentaOffline({ ...conEnvio, envio: { importe: null } })).toBe('envio_sin_importe')
+    })
+
+    it('un cliente que no está en la copia local sigue siendo cliente_no_admitido (cobra online)', () => {
+      expect(admisibilidadDeVentaOffline({ ...conEnvio, cliente: { id: 43, esConsumidorFinal: false } })).toBe('cliente_no_admitido')
+    })
+
+    it('sin envío el domicilio no se mira', () => {
+      expect(admisibilidadDeVentaOffline({ ...admitida, cliente: clienteIdentificado })).toBeNull()
+    })
+  })
+
   it('mensajeDeRechazoOffline devuelve un mensaje no vacío para cada motivo posible', () => {
     const motivos = [
       'cliente_no_admitido',
@@ -205,6 +235,8 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
       'error_al_guardar',
       'limite_credito_excedido',
       'cuenta_corriente_no_verificada',
+      'envio_sin_cliente_con_domicilio',
+      'envio_sin_importe',
     ] as const
     for (const motivo of motivos) {
       expect(mensajeDeRechazoOffline(motivo).length).toBeGreaterThan(0)
@@ -214,7 +246,16 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
   it('rechazoOfflineEsDefinitivo solo para los rechazos que el servidor ya contestó', () => {
     expect(rechazoOfflineEsDefinitivo('limite_credito_excedido')).toBe(true)
     expect(rechazoOfflineEsDefinitivo('cuenta_corriente_no_verificada')).toBe(true)
-    for (const motivo of ['cliente_no_admitido', 'medio_no_admitido', 'sin_instantanea', 'linea_sin_precio', 'sin_numeracion', 'error_al_guardar'] as const) {
+    for (const motivo of [
+      'cliente_no_admitido',
+      'medio_no_admitido',
+      'sin_instantanea',
+      'linea_sin_precio',
+      'sin_numeracion',
+      'error_al_guardar',
+      'envio_sin_cliente_con_domicilio',
+      'envio_sin_importe',
+    ] as const) {
       expect(rechazoOfflineEsDefinitivo(motivo)).toBe(false)
     }
   })

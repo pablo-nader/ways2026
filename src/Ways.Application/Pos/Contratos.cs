@@ -90,7 +90,13 @@ public sealed record ClienteDeInstantanea(
     bool EsConsumidorFinal,
     decimal Saldo,
     decimal LimiteCredito,
-    bool CreditoIlimitado);
+    bool CreditoIlimitado,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Domicilio = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Telefono = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Celular = null);
 
 /// <summary>
 /// Un componente de un combo de la instantánea: exactamente uno entre <see cref="IdArticulo"/> e
@@ -136,6 +142,11 @@ public sealed record ComboDeInstantanea(
 /// y las activas), ascendentes por id, con lo que una línea por importe necesita para cotizarse sin red: si es derivada, su
 /// porcentaje. Ausente (no <c>[]</c>) en el formato original, que no lo lleva; una instantánea guardada antes de este campo
 /// tampoco lo trae y el dispositivo cotiza online esas líneas.
+///
+/// <see cref="ImporteEnvio"/> es el parámetro <c>importe_envio</c> resuelto para el punto de venta (punto de venta &gt; empresa
+/// &gt; default) y <see cref="EnvioPorDefecto"/> el flag <c>envio_por_defecto</c> del punto de venta: lo que el dispositivo
+/// necesita para vender con envío sin red (el importe que cobra viaja luego en <c>SolicitudDeVenta.ImporteEnvio</c>). Ausentes
+/// en una instantánea guardada antes de este campo: sin importe local el dispositivo no vende con envío sin red.
 /// </summary>
 public sealed record InstantaneaDePos(
     DateTimeOffset Momento,
@@ -147,7 +158,11 @@ public sealed record InstantaneaDePos(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<ComboDeInstantanea>? Combos = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<ListaDeInstantanea>? Listas = null);
+    IReadOnlyList<ListaDeInstantanea>? Listas = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? ImporteEnvio = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    bool? EnvioPorDefecto = null);
 
 /// <summary>Una lista de precios de <see cref="InstantaneaDePos.Listas"/>: <see cref="Porcentaje"/> es el de una lista
 /// <c>Derivada</c> (negativo descuenta, positivo recarga) y <c>null</c> en una <c>Fija</c>.</summary>

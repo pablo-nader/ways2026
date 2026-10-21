@@ -16,6 +16,40 @@ public static class ReglaDeEnvio
     /// fila a snapshotear, no el nombre ni el id, que son datos de la plataforma.</summary>
     public const short CodigoAfipDeLaAlicuota = 5;
 
+    /// <summary>Tope de <c>numeric(14,2)</c>: el mayor importe de envío que entra en la columna.</summary>
+    public const decimal ImporteMaximo = 999_999_999_999.99m;
+
+    /// <summary>Un importe de envío válido: de 0 al tope, con a lo sumo dos decimales (el mismo criterio del parámetro
+    /// <c>importe_envio</c>).</summary>
+    public static bool ImporteEsValido(decimal importe) =>
+        importe >= 0m && decimal.Round(importe, 2) == importe && importe <= ImporteMaximo;
+
+    /// <summary>El importe que trae el dispositivo (<c>SolicitudDeVenta.ImporteEnvio</c>) solo tiene destino en una venta con
+    /// envío y número pre-asignado: en cualquier otra se rechaza en vez de ignorarse, y uno inválido no se graba.</summary>
+    public static void ExigirImporteDelDispositivo(decimal? importe, bool conEnvio, bool tieneNumeroPreasignado)
+    {
+        if (importe is not { } valor)
+        {
+            return;
+        }
+
+        if (!conEnvio || !tieneNumeroPreasignado)
+        {
+            throw new ErrorDominio(
+                "importe_envio_no_admitido",
+                "Solo una venta con envío y número pre-asignado puede traer el importe del envío; en otra lo pone el servidor.",
+                400);
+        }
+
+        if (!ImporteEsValido(valor))
+        {
+            throw new ErrorDominio(
+                "importe_envio_invalido",
+                $"El importe del envío tiene que ser de 0 a {ImporteMaximo:0.00} y tener como máximo 2 decimales.",
+                400);
+        }
+    }
+
     /// <summary>Un envío exige un cliente identificado (no Consumidor Final) con domicilio cargado: es la dirección a la
     /// que se entrega. 400 con un código por causa, para que el POS pueda decir cuál falta.</summary>
     public static void ExigirClienteConDomicilio(bool esConsumidorFinal, string? domicilio)

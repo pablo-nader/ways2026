@@ -61,8 +61,9 @@ Forecast ~1,600 authored lines over four tasks.
   Route: delegated (one read-only explorer for the reader sweep + one bounded writer).
 - [x] T3 — POS web online: toggle defaulted from the PV flag, line + total, close blocked,
   ticket prints domicilio + teléfono. Route: delegated.
-- [ ] T4 — POS offline: snapshot carries amount + flag, outbox/synthetic ticket with the Envío
-  line, server honors the device amount for pre-numbered sales. Route: delegated.
+- [x] T4 — POS offline: snapshot carries amount + flag, outbox/synthetic ticket with the Envío
+  line, server honors the device amount for pre-numbered sales. Route: delegated (one bounded writer across
+  backend, snapshot and POS web).
 
 ## Acceptance criteria
 
@@ -181,3 +182,41 @@ for the device amount.
   -> 2 / 1 fail; the offline "no tildar" guard -> 1 fails; forcing the local queue path with envío -> the online-with-envío
   test fails. Note: these POS web changes reach the registers only after a Ways.Desktop bump + `pos-v*` tag, which needs the
   owner's OK (not done).
+
+- 2026-10-21: T4 done (route: delegated; one bounded writer). Server: `SolicitudDeVenta.ImporteEnvio` (decimal?, trailing) is the
+  amount the register charged; honored ONLY with `NumeroPreasignado` + `ConEnvio` (the line price is that amount; 0 = no line).
+  Any other combination is 400 `importe_envio_no_admitido`; < 0, > 2 decimals or > numeric(14,2) is 400 `importe_envio_invalido`
+  (`ReglaDeEnvio.ExigirImporteDelDispositivo`; the validity predicate `ReglaDeEnvio.ImporteEsValido` is now shared with the
+  parameter validation). Without the field (an old device) a pre-numbered envío sale keeps using the parameter.
+  Idempotency: the `reenvioDeVentaYaEmitida` lookup moved before the ConEnvio client/domicilio rule and skips it when the number
+  already has a comprobante, so a legitimate resend after the client's domicilio was cleared returns the existing comprobante
+  (a new number with that client is still 400). Decision: the envío amount gets no clause of its own in `ExigirMismoContenido`:
+  with the device amount fixed a parameter change cannot alter the total, and a resend with another amount changes the total and
+  with it the payments (the plan stretches them to the total), which are already compared. The explicit clause survived its
+  mutation, so it was not shipped; the reasoning is a comment there.
+  Snapshot (served from `Ways.Application/Pos`, not `Dispositivos`): `InstantaneaDePos.ImporteEnvio` (importe_envio resolved
+  PV > empresa > default, same query as tolerancia_pago with the per-key Where) and `EnvioPorDefecto`; `ClienteDeInstantanea`
+  carries trimmed `Domicilio/Telefono/Celular` (key omitted when blank); the legacy format is untouched. POS: the casilla is
+  enabled offline; the amount is the server read when online and the snapshot amount offline (`importeDeEnvioVigente`);
+  local-first sales with envío go to the outbox with `conEnvio` + `importeEnvio` (the cart amount); the synthetic ticket has the
+  Envío line (no idArticulo/area, 21 %, alícuota id sentinel 0) and `direccionEntrega`; `admisibilidadDeVentaOffline` adds
+  `envio_sin_cliente_con_domicilio` and `envio_sin_importe` (non-definitive: a client missing from the copy still falls to the
+  online path, which never carries `importeEnvio`). The initial casilla value uses the snapshot's `envioPorDefecto` over the PV
+  listing read at login. T3 follow-ups: (a) done, `setImporteEnvio(null)` when a new read starts, with a test that fails
+  without it; (b) NOT done: ShellPos prints the phone when `direccionEntrega` is present, and a delivery sale with
+  `importe_envio` = 0 has no Envío line, so the comprobante alone cannot say it is an envío sale (the POS only fills
+  direccionEntrega through ConEnvio, so it is equivalent in practice). Rendición (9.4) needs no change: the queue is counted by
+  sale. Docs: §04 (envío rules), §9.3 (snapshot fields and ImporteEnvio).
+  Evidence: `dotnet build` 0 errors; Domain.Tests 1870 ok; Application.Tests 1071 ok (structural guards included);
+  IntegrationTests filtered on VentaConEnvio|Offline|Preasignad|Dispositivo|Rendicion|Instantanea|Parametros|SuperficieDeAutorizacion
+  345 ok; web `npm run build` ok, oxlint no findings in touched files, full vitest 7704 ok. Mutation evidence (mutate -> failing
+  test -> revert): removing `ExigirImporteDelDispositivo` -> 1 integration test fails; dropping `&& !reenvioDeVentaYaEmitida` -> the
+  resend-after-domicilio-cleared test fails; using the parameter instead of the device amount -> 4 integration tests fail; removing
+  the per-key `Where` in the snapshot -> 1 fails; no trim in `TextoOpcional` -> 1 fails; removing `setImporteEnvio(null)` -> the
+  stale-amount test fails; not sending `importeEnvio` -> 2 Pos tests fail; dropping the domicilio check in
+  `admisibilidadDeVentaOffline` -> 2 fail.
+
+## Next step (after T4)
+
+Owner OK for the POS release (Ways.Desktop bump + `pos-v*` tag) so the registers get T3 + T4. Then judgment-day per slice and the
+stacked PRs.

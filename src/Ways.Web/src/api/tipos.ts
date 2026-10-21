@@ -1296,6 +1296,10 @@ export type ClienteDeInstantanea = {
   saldo: number
   limiteCredito: number
   creditoIlimitado: boolean
+  /** Contacto para la venta con envío sin red; ausentes si el cliente no los tiene o en una instantánea guardada antes. */
+  domicilio?: string | null
+  telefono?: string | null
+  celular?: string | null
 }
 
 /** Componente de un combo de la instantánea: exactamente uno entre `idArticulo` e `idFamilia`. `cantidad` va en
@@ -1403,6 +1407,10 @@ export type InstantaneaDePos = {
   /** Modo y porcentaje de las listas que la instantánea resuelve, para cotizar sin red el importe de un artículo por importe.
    * Ausente en una instantánea guardada antes de este campo: esas líneas se cotizan online. */
   listas?: ListaDeInstantanea[]
+  /** Parámetro `importe_envio` resuelto para el punto de venta y flag `envio_por_defecto`, para vender con envío sin red.
+   * Ausentes en una instantánea guardada antes de este campo: sin `importeEnvio` no se vende con envío sin red. */
+  importeEnvio?: number
+  envioPorDefecto?: boolean
 }
 
 /** Espejo de `ListaDeInstantanea`: `porcentaje` es el de una lista `Derivada` (negativo descuenta) y `null` en una `Fija`. */
@@ -2109,10 +2117,12 @@ export type SolicitudDeVenta = {
   /** Solo se manda en `true`: el cajero pidió facturar este ticket sí o sí (espejo de
    * `SolicitudDeVenta.ForzarFactura`). Se fija al encolar y viaja dentro de la solicitud de la cola. */
   forzarFactura?: boolean
-  /** Solo se manda en `true`: la venta lleva la línea Envío, que el servidor calcula con `importe_envio` (el POS nunca
-   * manda el importe). Exige un cliente con domicilio; el servidor la rechaza en una nota de crédito o en la conversión de
-   * un presupuesto. */
+  /** Solo se manda en `true`: la venta lleva la línea Envío, que el servidor calcula con `importe_envio`. Exige un cliente
+   * con domicilio; el servidor la rechaza en una nota de crédito o en la conversión de un presupuesto. */
   conEnvio?: boolean
+  /** Importe del envío que cobró la caja: solo en una venta local (con `numeroPreasignado`) y con `conEnvio`; el servidor lo
+   * graba tal cual en vez de leer `importe_envio`. En cualquier otra venta el servidor lo rechaza (`importe_envio_no_admitido`). */
+  importeEnvio?: number
 }
 
 // --- POS: reserva de numeración offline (stage-pos-reserva-de-numeracion) ---
