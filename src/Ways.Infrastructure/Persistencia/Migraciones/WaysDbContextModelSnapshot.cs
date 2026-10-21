@@ -3856,6 +3856,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("character varying(255)")
                         .HasColumnName("domicilio");
 
+                    b.Property<bool>("EnvioPorDefecto")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("envio_por_defecto");
+
                     b.Property<string>("Facebook")
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")

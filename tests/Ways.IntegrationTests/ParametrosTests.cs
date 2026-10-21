@@ -83,6 +83,26 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
     }
 
     [Fact]
+    public async Task ImporteEnvioResuelveSuDefaultYAceptaUnValorDeEmpresa()
+    {
+        var (idEmpresa, idPuntoVenta, _, mail) =
+            await SembrarTenantConAdminAsync(nameof(ImporteEnvioResuelveSuDefaultYAceptaUnValorDeEmpresa));
+        using var cliente = await ClienteLogueadoAsync(mail);
+
+        var sinFilas = await cliente.GetFromJsonAsync<ParametroResuelto>(
+            $"/api/parametros/importe_envio?idEmpresa={idEmpresa}&idPuntoVenta={idPuntoVenta}");
+        Assert.Equal(ParametroConocido.ImporteEnvio.ValorPorDefecto, sinFilas!.Valor);
+
+        var alta = await cliente.PutAsJsonAsync(
+            $"/api/parametros?idEmpresa={idEmpresa}", new ParametroAlta("importe_envio", "1500", null));
+        Assert.Equal(HttpStatusCode.OK, alta.StatusCode);
+
+        var conFila = await cliente.GetFromJsonAsync<ParametroResuelto>(
+            $"/api/parametros/importe_envio?idEmpresa={idEmpresa}&idPuntoVenta={idPuntoVenta}");
+        Assert.Equal("1500", conFila!.Valor);
+    }
+
+    [Fact]
     public async Task ElValorDePuntoDeVentaGanaSobreElDeEmpresaYElDeEmpresaSobreElDefault()
     {
         var (idEmpresa, idPuntoVenta, idOtroPuntoVenta, mail) =

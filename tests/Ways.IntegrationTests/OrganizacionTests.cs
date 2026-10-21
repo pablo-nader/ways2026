@@ -170,6 +170,33 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     [Fact]
+    public async Task ElEnvioPorDefectoDelPuntoDeVentaNaceEnFalseYSeGuardaConElPut()
+    {
+        var (_, _, puntoVenta, mailAdmin) = await SembrarTenantAsync(
+            nameof(ElEnvioPorDefectoDelPuntoDeVentaNaceEnFalseYSeGuardaConElPut));
+        using var cliente = await ClienteComoAdminAsync(mailAdmin);
+
+        async Task<PuntoVentaListado> LeerAsync() =>
+            (await cliente.GetFromJsonAsync<List<PuntoVentaListado>>("/api/puntos-venta", OpcionesJson))!
+                .Single(p => p.Id == puntoVenta.Id);
+
+        Assert.False((await LeerAsync()).EnvioPorDefecto);
+
+        var activado = await cliente.PutAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}",
+            new PuntoVentaEdicion("Local", null, null, null, null, null, null, EnvioPorDefecto: true));
+        Assert.Equal(HttpStatusCode.OK, activado.StatusCode);
+        Assert.True((await activado.Content.ReadFromJsonAsync<PuntoVentaListado>(OpcionesJson))!.EnvioPorDefecto);
+        Assert.True((await LeerAsync()).EnvioPorDefecto);
+
+        var desactivado = await cliente.PutAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}",
+            new PuntoVentaEdicion("Local", null, null, null, null, null, null, EnvioPorDefecto: false));
+        Assert.Equal(HttpStatusCode.OK, desactivado.StatusCode);
+        Assert.False((await LeerAsync()).EnvioPorDefecto);
+    }
+
+    [Fact]
     public async Task UnAdminRecibe404AlEditarLaEmpresaDeOtroTenant()
     {
         var (_, _, _, mailAdminA) = await SembrarTenantAsync(

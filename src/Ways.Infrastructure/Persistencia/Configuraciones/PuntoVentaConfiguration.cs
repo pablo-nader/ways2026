@@ -47,6 +47,11 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
         builder.Property(p => p.Facebook).HasColumnName("facebook").HasMaxLength(150);
         builder.Property(p => p.Web).HasColumnName("web").HasMaxLength(255);
 
+        builder.Property(p => p.EnvioPorDefecto)
+            .HasColumnName("envio_por_defecto")
+            .HasDefaultValue(false)
+            .IsRequired();
+
         // stage-19a (proposal.md §C, decisión 2): NULLABLE — un punto de venta que nunca
         // factura fiscalmente sigue siendo legal para siempre.
         builder.Property(p => p.NumeroFiscal).HasColumnName("numero_fiscal");
