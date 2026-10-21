@@ -59,7 +59,7 @@ Forecast ~1,600 authored lines over four tasks.
 - [x] T2 — Server: concept line "Envío" in sales (`ConEnvio`, amount from parameter, 21% IVA,
   client/domicilio validation, `DireccionEntrega`), NULL-article tolerance in every reader.
   Route: delegated (one read-only explorer for the reader sweep + one bounded writer).
-- [ ] T3 — POS web online: toggle defaulted from the PV flag, line + total, close blocked,
+- [x] T3 — POS web online: toggle defaulted from the PV flag, line + total, close blocked,
   ticket prints domicilio + teléfono. Route: delegated.
 - [ ] T4 — POS offline: snapshot carries amount + flag, outbox/synthetic ticket with the Envío
   line, server honors the device amount for pre-numbered sales. Route: delegated.
@@ -155,3 +155,29 @@ T3 (POS web online): send `conEnvio` in the sale request, show the Envío line f
 without a client with domicilio (same two codes), ticket with domicilio + teléfono. T4: device amount override
 for pre-numbered sales (`ExigirPreciosOfflineValidos`-style gate, DTO honesty) and the `ExigirMismoContenido` identity
 for the device amount.
+
+- 2026-10-21: T3 done (route: delegated; one bounded writer, 2+ non-trivial files). POS web online: checkbox "Con envío"
+  in the cart header (`Pos.tsx`); `conEnvioElegido` is `null` until the cashier touches it, so each sale starts from
+  `puntoVenta.envioPorDefecto ?? false` and a closed sale or an emptied cart resets it to `null`; the choice is part of the
+  borrador (`BorradorDeTicket.conEnvio`). `importe_envio` is read with the existing `GET /parametros/{clave}` pattern,
+  generation-gated, only with envío on and connection; the cart shows a non-editable "Envío" row and the total includes it
+  (`importeDeEnvioAplicado`, rounded to the peso); the request carries only `conEnvio: true` (`aSolicitudDeVenta`), never
+  an amount. Closing is blocked (`motivoDeEnvio`, visible alert) for Consumidor Final / blank domicilio, while the amount
+  is unknown or failed to load, and without connection. The three server codes map to clear messages
+  (`mensajeDeRechazoDeEnvio`). Decision: a sale with envío never takes the local-first path (`instantaneaDeLaPrevia` is
+  forced to `null`) because the outbox would drop the Envío line; offline the box cannot be ticked, and if it is already on
+  (PV default) the cobro is blocked with a message and the box can be unticked (T4 lifts all of this). Pure helpers and
+  messages live in `src/pos/envio.ts`. Ticket: `ENTREGA A DOMICILIO` block with the word-wrapped `direccionEntrega` and
+  `Telefono:` (telefono, celular fallback; `OpcionesDeTicketDeVenta.telefonoDeEntrega`, set by `ShellPos.alEmitirVenta`);
+  reimpresión prints the domicilio only. `TelefonoCliente` was NOT added to `ComprobanteEmitido`: its `Proyectar` has four
+  copies (ventas, facturación de remitos, cuenta corriente) each needing a client read, out of T3's surface. T2 follow-ups:
+  `ItemEmitido.idArea` is `number | null` in `tipos.ts` (no consumer broke); the `ReglaDeEnvio` comment now says cost 0
+  and counted in rentabilidad; `importe_envio` is validated in `ServicioDeParametros.ValidarTipo` (>= 0, max 2 decimals,
+  <= 999999999999.99; 400 `parametro_importe_envio_invalido`; doc 10 §9 updated).
+  Evidence: `dotnet build` 0 errors; Application.Tests 1067 ok; IntegrationTests filtered Parametros|VentaConEnvio|Envio 65 ok
+  (the wider Parametros|Venta filter ran 638 ok, 0 failed, and hit the tool timeout before finishing); web `npm run build`
+  ok, oxlint no findings in touched files, full vitest 7676 ok. Mutation evidence (mutate -> failing test -> revert): removing
+  `motivoDeEnvio === null` from `precondicionesListas` -> 3 tests fail; not clearing the choice after a sale / after vaciar
+  -> 2 / 1 fail; the offline "no tildar" guard -> 1 fails; forcing the local queue path with envío -> the online-with-envío
+  test fails. Note: these POS web changes reach the registers only after a Ways.Desktop bump + `pos-v*` tag, which needs the
+  owner's OK (not done).

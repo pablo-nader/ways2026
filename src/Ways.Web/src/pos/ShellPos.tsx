@@ -29,6 +29,7 @@ import { MenuDeAcciones } from '../componentes/MenuDeAcciones'
 import type { ItemDeMenuDeAcciones } from '../componentes/MenuDeAcciones'
 import { ProveedorDeAccionesDePos, useAccionesDePos } from './AccionesDePosContext'
 import { AvisoDeActualizacion } from './AvisoDeActualizacion'
+import { telefonoDeContacto } from './envio'
 import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
 import { BotonDeTema } from '../tema/BotonDeTema'
@@ -337,7 +338,8 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
       consumoPendiente: saldo?.consumoPendiente ?? null,
       saldoConfirmado: saldo?.saldoConfirmado ?? false,
     })
-    const opciones = clienteConSaldo ? { cliente: clienteConSaldo } : {}
+    const telefonoDeEntrega = comprobante.direccionEntrega?.trim() ? telefonoDeContacto(cliente) : null
+    const opciones = { ...(clienteConSaldo ? { cliente: clienteConSaldo } : {}), ...(telefonoDeEntrega ? { telefonoDeEntrega } : {}) }
     // No bloqueante y sin cambiar el resultado de la venta, que ya se confirmó en el servidor —
     // una falla queda como su propio aviso persistente del shell + "Reimprimir", nunca silenciosa
     // ni descartada por otro trabajo de impresión que esté (o quede) en vuelo.

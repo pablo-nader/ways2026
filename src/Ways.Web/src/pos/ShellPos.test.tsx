@@ -692,6 +692,43 @@ describe('ShellPos — ticket de venta de un cliente identificado', () => {
     )
   })
 
+  it('una venta con envío imprime el domicilio de entrega y el teléfono del cliente (el celular si no tiene teléfono)', async () => {
+    escritorioMock = true
+    const clienteConDomicilio: ClienteListado = { ...clienteIdentificado, domicilio: 'Mitre 123', telefono: null, celular: '11-5555-0000' }
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal, clienteConDomicilio], total: 2, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioCuentaCorriente])
+      if (ruta.startsWith('/parametros/importe_envio')) return Promise.resolve({ clave: 'importe_envio', valor: '0' })
+      return undefined
+    })
+    const comprobante = { ...comprobanteEmitidoFixture(), direccionEntrega: 'Mitre 123' }
+    mockearVentaExitosa(comprobante)
+    renderShell()
+    await esperarAlConsumidorFinal()
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.click(await screen.findByRole('option', { name: /Juan Perez/ }))
+    await userEvent.click(screen.getByLabelText('Con envío'))
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText(/Venta 0007-00000001/)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 500, estimado: true },
+        telefonoDeEntrega: '11-5555-0000',
+      }),
+    )
+  })
+
   it('el Consumidor Final imprime el ticket de siempre, sin cliente ni saldos', async () => {
     escritorioMock = true
     mockearClientesYMedios()
