@@ -31,6 +31,7 @@ type Formulario = {
   instagram: string
   facebook: string
   web: string
+  envioPorDefecto: boolean
 }
 
 /** Alta de un punto de venta. `idEmpresa` y `modo` arrancan en '' (sin elegir) a propósito: el
@@ -204,6 +205,7 @@ export function PuntosVenta() {
           instagram: datos.instagram || null,
           facebook: datos.facebook || null,
           web: datos.web || null,
+          envioPorDefecto: datos.envioPorDefecto,
         })
       } catch (e) {
         if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
@@ -641,6 +643,21 @@ export function PuntosVenta() {
                 disabled={bloqueado}
               />
             </div>
+            <div className="col-12">
+              <div className="form-check">
+                <input
+                  id="pv-envio-por-defecto"
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={formulario.envioPorDefecto}
+                  onChange={(e) => setFormulario({ ...formulario, envioPorDefecto: e.target.checked })}
+                  disabled={bloqueado}
+                />
+                <label className="form-check-label" htmlFor="pv-envio-por-defecto">
+                  Envío por defecto en el POS
+                </label>
+              </div>
+            </div>
             <div className="col-12 d-flex gap-2">
               <button type="submit" className="btn btn-success" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
@@ -801,6 +818,7 @@ export function PuntosVenta() {
                               instagram: p.instagram ?? '',
                               facebook: p.facebook ?? '',
                               web: p.web ?? '',
+                              envioPorDefecto: p.envioPorDefecto ?? false,
                             })
                           }
                           disabled={bloqueado}

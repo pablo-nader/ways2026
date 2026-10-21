@@ -486,7 +486,8 @@ public class ServicioDeOrganizacion(
                 .Where(e => e.Id == p.IdEmpresa && e.DeletedAt == null)
                 .Select(e => e.RazonSocial)
                 .FirstOrDefault(),
-            p.Modo);
+            p.Modo,
+            p.EnvioPorDefecto);
 
     public async Task<IReadOnlyList<PuntoVentaListado>> ListarPuntosVentaAsync(CancellationToken ct = default) =>
         await db.PuntosVenta
@@ -529,6 +530,7 @@ public class ServicioDeOrganizacion(
             puntoVenta.Instagram = instagram;
             puntoVenta.Facebook = facebook;
             puntoVenta.Web = web;
+            puntoVenta.EnvioPorDefecto = datos.EnvioPorDefecto;
             puntoVenta.UpdatedAt = reloj.Ahora;
 
             await db.SaveChangesAsync(ct);

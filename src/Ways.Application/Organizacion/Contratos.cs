@@ -90,7 +90,8 @@ public record PuntoVentaListado(
     string? Web,
     string? NombreTenant,
     string? RazonSocialEmpresa,
-    ModoPuntoVenta Modo);
+    ModoPuntoVenta Modo,
+    bool EnvioPorDefecto);
 
 /// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/modo</c> (stage-desktop-pos, gate aprobado):
 /// el único campo editable acá es el modo — no comparte forma con <see cref="PuntoVentaEdicion"/>
@@ -106,7 +107,8 @@ public record PuntoVentaModoEdicion(ModoPuntoVenta? Modo);
 /// por la misma razón que en <see cref="SolicitudDeAprovisionamiento"/>: un body que los omite
 /// ligaría el valor al default del CLR (<c>0</c> y <see cref="ModoPuntoVenta.Escritorio"/>) en vez
 /// de rechazarse con <c>400</c>. El resto es la misma lista descriptiva de
-/// <see cref="PuntoVentaEdicion"/>, con las mismas validaciones.</summary>
+/// <see cref="PuntoVentaEdicion"/>, con las mismas validaciones; <c>EnvioPorDefecto</c> no se
+/// acepta en el alta: nace en <c>false</c> y se cambia con la edición.</summary>
 public record PuntoVentaAlta(
     int? IdEmpresa,
     string Nombre,
@@ -128,4 +130,5 @@ public record PuntoVentaEdicion(
     string? Whatsapp,
     string? Instagram,
     string? Facebook,
-    string? Web);
+    string? Web,
+    bool EnvioPorDefecto = false);

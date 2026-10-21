@@ -1308,3 +1308,43 @@ describe('PuntosVenta — lectura en vuelo al crear', () => {
     expect(pedidos.listados).toBe(1)
   })
 })
+
+describe('PuntosVenta — envío por defecto', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiPutMock.mockResolvedValue(undefined)
+    usuarioActual = usuarioFixture()
+  })
+
+  it('el checkbox parte del valor del listado y el PUT lleva lo que se tildó', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([pvFixture({ envioPorDefecto: false })])
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    const casilla = screen.getByLabelText('Envío por defecto en el POS')
+    expect(casilla).not.toBeChecked()
+
+    await usuario.click(casilla)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock).toHaveBeenCalledWith(
+      '/puntos-venta/100',
+      expect.objectContaining({ envioPorDefecto: true }),
+    )
+  })
+
+  it('un punto de venta con el envío activo abre el formulario tildado', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([pvFixture({ envioPorDefecto: true })])
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+
+    expect(screen.getByLabelText('Envío por defecto en el POS')).toBeChecked()
+  })
+})

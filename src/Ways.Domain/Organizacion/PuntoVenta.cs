@@ -23,6 +23,10 @@ public class PuntoVenta : EntidadTenant
     public string? Facebook { get; set; }
     public string? Web { get; set; }
 
+    /// <summary>Si es <c>true</c>, las ventas nuevas del POS de este punto de venta arrancan con
+    /// "Con envío" tildado; el cajero puede cambiarlo en cada venta.</summary>
+    public bool EnvioPorDefecto { get; set; }
+
     /// <summary>Punto de venta ARCA asignado (1..99999, stage-19a proposal.md §C, decisión 2) —
     /// SEPARADO de <see cref="Id"/>, que sigue numerando la serie histórica (TX/NCX/TXR/RC/PRE/
     /// REM) sin cambios. NULLABLE: un punto de venta que nunca factura fiscalmente sigue siendo

@@ -8,6 +8,7 @@ public class ParametroConocidoTests
     [Theory]
     [InlineData("tolerancia_pago")]
     [InlineData("importe_adicional_recarga")]
+    [InlineData("importe_envio")]
     [InlineData("slots_tickets_espera")]
     [InlineData("zona_horaria")]
     [InlineData("comision_porcentaje")]
@@ -16,11 +17,18 @@ public class ParametroConocidoTests
     [InlineData("dias_rotacion")]
     [InlineData("dias_cobertura_objetivo")]
     [InlineData("redondeo_sugerencia_precio")]
-    public void LasDiezClavesConocidasEstanRegistradas(string clave)
+    public void LasOnceClavesConocidasEstanRegistradas(string clave)
     {
         var conocido = ParametroConocido.Buscar(clave);
 
         Assert.Equal(clave, conocido.Clave);
+    }
+
+    [Fact]
+    public void ImporteEnvioDeclaraElDefaultEnCero()
+    {
+        Assert.Equal(typeof(decimal), ParametroConocido.ImporteEnvio.TipoClr);
+        Assert.Equal("0", ParametroConocido.ImporteEnvio.ValorPorDefecto);
     }
 
     [Fact]

@@ -321,6 +321,7 @@ export const PARAMETROS_CONOCIDOS: {
     tipo: 'decimal',
     porDefecto: '5',
   },
+  { clave: 'importe_envio', etiqueta: 'Importe del envío ($)', tipo: 'decimal', porDefecto: '0' },
   { clave: 'slots_tickets_espera', etiqueta: 'Tickets en espera (cantidad)', tipo: 'entero', porDefecto: '10' },
   {
     clave: 'zona_horaria',
@@ -521,6 +522,9 @@ export type PuntoVentaListado = {
   nombreTenant: string | null
   razonSocialEmpresa: string | null
   modo: ModoPuntoVenta
+  /** Las ventas nuevas del POS arrancan con "Con envío" tildado. El servidor siempre lo envía;
+   * es opcional en el tipo solo para no obligar a cada fixture de pruebas a declararlo. */
+  envioPorDefecto?: boolean
 }
 
 /** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el
@@ -535,6 +539,7 @@ export type PuntoVentaEdicion = {
   instagram: string | null
   facebook: string | null
   web: string | null
+  envioPorDefecto: boolean
 }
 
 /** Cuerpo de `POST /api/puntos-venta` — espejo de `Ways.Application.Organizacion.PuntoVentaAlta`.

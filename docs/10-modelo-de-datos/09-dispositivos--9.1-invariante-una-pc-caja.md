@@ -59,6 +59,11 @@ puntos_venta (
 );
 ```
 
+`puntos_venta` también lleva `envio_por_defecto boolean NOT NULL DEFAULT false` (ventas con
+envío): si es `true`, las ventas nuevas del POS de ese punto de venta arrancan con "Con envío"
+tildado y el cajero puede cambiarlo en cada venta. Se edita con `PUT /api/puntos-venta/{id}`
+(no en el alta: nace en `false`) y el POS lo lee del mismo listado (`GET /api/puntos-venta`).
+
 El backstop físico de "a lo sumo un dispositivo activo por punto de venta" es
 `ux_dispositivos_punto_venta_activo` (§9). La aplicación agrega dos capas más, ambas en
 `ServicioDeVentas.ResolverPuntoVentaAsync` (checkout) y `ServicioDeDispositivos.CrearAsync`

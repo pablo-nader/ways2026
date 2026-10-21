@@ -25,6 +25,10 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     public static readonly ParametroConocido ImporteAdicionalRecarga =
         new("importe_adicional_recarga", typeof(decimal), "5");
 
+    /// <summary>Importe de la línea "Envío" de una venta con envío.</summary>
+    public static readonly ParametroConocido ImporteEnvio =
+        new("importe_envio", typeof(decimal), "0");
+
     public static readonly ParametroConocido SlotsTicketsEspera =
         new("slots_tickets_espera", typeof(int), "10");
 
@@ -80,7 +84,7 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     private static readonly IReadOnlyDictionary<string, ParametroConocido> PorClave =
         new[]
         {
-            ToleranciaPago, ImporteAdicionalRecarga, SlotsTicketsEspera,
+            ToleranciaPago, ImporteAdicionalRecarga, ImporteEnvio, SlotsTicketsEspera,
             ZonaHoraria, ComisionPorcentaje, LotesHabilitado, DiasAlertaVencimiento,
             DiasRotacion, DiasCoberturaObjetivo, RedondeoSugerenciaPrecio
         }.ToDictionary(p => p.Clave, p => p, StringComparer.OrdinalIgnoreCase);
