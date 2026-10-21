@@ -7108,6 +7108,45 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     return apiPostMock.mock.calls.filter((c) => c[0] === ruta)
   }
 
+  it('con envío, aunque la vista previa sea local y haya red, la venta va online con conEnvio y nunca se encola sin la línea Envío', async () => {
+    const puntoVenta = puntoVentaFixture({ envioPorDefecto: true })
+    estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
+    const clienteDelServidor = clienteFixture({
+      id: 30,
+      numero: 30,
+      nombre: 'José',
+      apellido: 'Gómez',
+      esConsumidorFinal: false,
+      domicilio: 'Mitre 123',
+    })
+    await prepararAlmacenOffline({
+      instantanea: instantaneaFixture({
+        clientes: [clienteDeInstantaneaFixture(), clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false })],
+      }),
+      bloque: { desde: 1, hasta: 50, proximo: 1 },
+    })
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/parametros/importe_envio')) return Promise.resolve<ParametroResuelto>({ clave: 'importe_envio', valor: '1500' })
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve({ items: [clienteDelServidor], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta === '/clientes/30') return Promise.resolve(clienteDelServidor)
+      return undefined
+    })
+    await montarConInstantanea()
+    await buscarYElegirCliente('gómez', /José Gómez/)
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Envío', { selector: 'td' })
+    await cobrarConEfectivo('1600')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(llamadasPost('/ventas')).toHaveLength(1)
+    expect(llamadasPost('/ventas')[0][1]).toMatchObject({ idCliente: 30, conEnvio: true })
+    expect(await leerOutbox(crearAlmacenIndexedDb())).toEqual([])
+  })
+
   describe('escaneo local primero (Consumidor Final con instantánea)', () => {
     it('un código que está en la instantánea se agrega sin llamar al escaneo online', async () => {
       await prepararAlmacenOffline()
@@ -10913,6 +10952,289 @@ describe('Pos — ergonomía del carrito', () => {
 
       expect(dialogoDeVaciado()).not.toBeInTheDocument()
       expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    })
+  })
+})
+
+describe('Pos — venta con envío', () => {
+  const clienteConDomicilio = clienteFixture({
+    id: 2,
+    numero: 2,
+    nombre: 'Juan',
+    apellido: 'Pérez',
+    esConsumidorFinal: false,
+    domicilio: 'Mitre 123',
+    telefono: '341-5550000',
+  })
+  const clienteSinDomicilio = clienteFixture({ ...otroCliente, domicilio: '   ' })
+
+  function conPuntoDeVenta(envioPorDefecto: boolean | undefined) {
+    const puntoVenta = puntoVentaFixture({ envioPorDefecto })
+    estadoDePuntoVenta = { ...estadoDePuntoVentaPorDefecto(), puntoVenta, puntosVenta: [puntoVenta] }
+  }
+
+  /** `importe` `null` hace fallar la lectura del parámetro. */
+  function mockearEnvio({ importe = '1500', cliente = clienteConDomicilio }: { importe?: string | null; cliente?: ClienteListado } = {}) {
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/parametros/importe_envio')) {
+        return importe === null
+          ? Promise.reject(new Error('sin parámetro'))
+          : Promise.resolve<ParametroResuelto>({ clave: 'importe_envio', valor: importe })
+      }
+      if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve({ items: [cliente], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta === '/clientes/' + cliente.id) return Promise.resolve(cliente)
+      return undefined
+    })
+  }
+
+  const casilla = () => screen.getByLabelText('Con envío') as HTMLInputElement
+  const botonCobrar = () => screen.getByRole('button', { name: /Cobrar/ })
+  const filaDeEnvio = () => screen.getByText('Envío', { selector: 'td' }).closest('tr') as HTMLElement
+  const solicitudDeVenta = () => apiPostMock.mock.calls.find((c) => c[0] === '/ventas')?.[1] as Record<string, unknown> | undefined
+  const seLeyoElImporteDelEnvio = () => apiGetMock.mock.calls.some((c) => (c[0] as string).startsWith('/parametros/importe_envio'))
+
+  async function agregarGaseosa() {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+  }
+
+  async function cargarPagoEnEfectivo(importe: string) {
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), importe)
+  }
+
+  /** Carrito con una gaseosa (100) y, si se pide, el cliente con domicilio; espera a que llegue el importe del envío (el dato, no la casilla). */
+  async function armarVentaConEnvio({ elegirCliente = true }: { elegirCliente?: boolean } = {}) {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    if (elegirCliente) await buscarYElegirCliente('perez', /Juan Pérez/)
+    await agregarGaseosa()
+    await screen.findByText('Envío', { selector: 'td' })
+  }
+
+  it('cada venta arranca con la casilla según el envío por defecto del punto de venta', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio()
+    const { unmount } = renderPos()
+    await esperarAlConsumidorFinal()
+    expect(casilla()).toBeChecked()
+    unmount()
+
+    conPuntoDeVenta(false)
+    renderPos()
+    await esperarAlConsumidorFinal()
+    expect(casilla()).not.toBeChecked()
+  })
+
+  it('un punto de venta que no informa el campo arranca sin envío y no lee el importe', async () => {
+    conPuntoDeVenta(undefined)
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    expect(casilla()).not.toBeChecked()
+    expect(seLeyoElImporteDelEnvio()).toBe(false)
+  })
+
+  it('el cajero puede tildar y destildar el envío en cualquier venta', async () => {
+    conPuntoDeVenta(false)
+    mockearEnvio()
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    await userEvent.click(casilla())
+    expect(casilla()).toBeChecked()
+    await userEvent.click(casilla())
+    expect(casilla()).not.toBeChecked()
+  })
+
+  it('con envío el carrito suma la línea Envío no editable y el total la incluye; sin envío no hay línea', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio()
+    await armarVentaConEnvio()
+
+    const fila = filaDeEnvio()
+    expect(within(fila).getAllByText('$ 1.500,00')).toHaveLength(2)
+    expect(within(fila).queryAllByRole('textbox')).toHaveLength(0)
+    expect(within(fila).queryAllByRole('button')).toHaveLength(0)
+    expect(screen.getByText('$ 1.600,00', { selector: 'strong' })).toBeInTheDocument()
+
+    await userEvent.click(casilla())
+    expect(screen.queryByText('Envío', { selector: 'td' })).not.toBeInTheDocument()
+    expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
+  })
+
+  it('con el importe del envío en 0 no hay línea y el total no cambia', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio({ importe: '0' })
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await agregarGaseosa()
+    await waitFor(() => expect(seLeyoElImporteDelEnvio()).toBe(true))
+
+    expect(screen.queryByText('Envío', { selector: 'td' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+  })
+
+  it('no deja cobrar con Consumidor Final y dice por qué; con un cliente sin domicilio, también', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio({ cliente: clienteSinDomicilio })
+    await armarVentaConEnvio({ elegirCliente: false })
+    await cargarPagoEnEfectivo('1600')
+
+    expect(await screen.findByText('Elegí un cliente con domicilio para el envío.')).toBeInTheDocument()
+    expect(botonCobrar()).toBeDisabled()
+
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    expect(await screen.findByText(/no tiene domicilio cargado/)).toBeInTheDocument()
+    expect(botonCobrar()).toBeDisabled()
+  })
+
+  it('con un cliente con domicilio deja cobrar y manda conEnvio sin ningún importe', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio()
+    await armarVentaConEnvio()
+    await cargarPagoEnEfectivo('1600')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+    await userEvent.click(botonCobrar())
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    const solicitud = solicitudDeVenta()
+    expect(solicitud).toMatchObject({ idCliente: 2, conEnvio: true })
+    expect(JSON.stringify(solicitud)).not.toContain('1500')
+  })
+
+  it('destildar el envío permite cobrar a Consumidor Final y la solicitud no lleva conEnvio', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.click(casilla())
+    await agregarGaseosa()
+    await cargarPagoEnEfectivo('100')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+    await userEvent.click(botonCobrar())
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(solicitudDeVenta()).not.toHaveProperty('conEnvio')
+  })
+
+  it('al cerrar una venta sin envío la siguiente vuelve a arrancar con el envío por defecto del punto de venta', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.click(casilla())
+    await agregarGaseosa()
+    await cargarPagoEnEfectivo('100')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+    await userEvent.click(botonCobrar())
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(casilla()).toBeChecked()
+  })
+
+  it('un punto de venta sin envío por defecto vuelve a destildado después de una venta con envío', async () => {
+    conPuntoDeVenta(false)
+    mockearEnvio()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await userEvent.click(casilla())
+    await agregarGaseosa()
+    await screen.findByText('Envío', { selector: 'td' })
+    await cargarPagoEnEfectivo('1600')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+    await userEvent.click(botonCobrar())
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    expect(casilla()).not.toBeChecked()
+  })
+
+  it('vaciar el carrito también devuelve la casilla al valor por defecto', async () => {
+    conPuntoDeVenta(false)
+    mockearEnvio()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.click(casilla())
+    await agregarGaseosa()
+
+    await userEvent.click(screen.getByRole('button', { name: /Vaciar carrito/ }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Sí' }))
+
+    await waitFor(() => expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument())
+    expect(casilla()).not.toBeChecked()
+  })
+
+  it('si el servidor rechaza la venta con un código de envío, muestra el mensaje claro', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+        return Promise.resolve(
+          resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]),
+        )
+      }
+      if (ruta === '/ventas') return Promise.reject(new ErrorApi(400, 'envio_requiere_domicilio', 'texto del servidor'))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await armarVentaConEnvio()
+    await cargarPagoEnEfectivo('1600')
+    await waitFor(() => expect(botonCobrar()).toBeEnabled())
+
+    await userEvent.click(botonCobrar())
+
+    expect(await screen.findByText(/cargalo o elegí otro cliente para el envío/)).toBeInTheDocument()
+    expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
+  })
+
+  it('si no se puede leer el importe del envío no deja cobrar y avisa cómo reintentar', async () => {
+    conPuntoDeVenta(true)
+    mockearEnvio({ importe: null })
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await agregarGaseosa()
+    await cargarPagoEnEfectivo('100')
+
+    expect(await screen.findByText(/No se pudo leer el importe del envío/)).toBeInTheDocument()
+    expect(botonCobrar()).toBeDisabled()
+  })
+
+  describe('sin conexión', () => {
+    let sinRed: { mockRestore: () => void }
+    beforeEach(() => {
+      sinRed = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    })
+    afterEach(() => sinRed.mockRestore())
+
+    it('no se puede tildar el envío y se avisa que necesita conexión', async () => {
+      conPuntoDeVenta(false)
+      mockearEnvio()
+      renderPos()
+      await esperarAlConsumidorFinal()
+
+      expect(casilla()).toBeDisabled()
+      expect(casilla()).toHaveAttribute('title', 'Sin conexión: la venta con envío necesita conexión.')
+      expect(seLeyoElImporteDelEnvio()).toBe(false)
+    })
+
+    it('con el envío ya tildado (por defecto) bloquea el cobro con un mensaje en vez de encolar sin envío, y se puede destildar', async () => {
+      conPuntoDeVenta(true)
+      mockearEnvio()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await agregarGaseosa()
+      await cargarPagoEnEfectivo('100')
+
+      expect(await screen.findByText(/necesita conexión: destildá "Con envío"/)).toBeInTheDocument()
+      expect(botonCobrar()).toBeDisabled()
+      expect(casilla()).toBeEnabled()
+
+      await userEvent.click(casilla())
+      await waitFor(() => expect(screen.queryByText(/necesita conexión: destildá "Con envío"/)).not.toBeInTheDocument())
     })
   })
 })
