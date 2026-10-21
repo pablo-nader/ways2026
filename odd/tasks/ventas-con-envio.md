@@ -61,6 +61,9 @@ Forecast ~1,600 authored lines over four tasks.
   Route: delegated (one read-only explorer for the reader sweep + one bounded writer).
 - [x] T3 — POS web online: toggle defaulted from the PV flag, line + total, close blocked,
   ticket prints domicilio + teléfono. Route: delegated.
+- [ ] T5 — Judgment-day follow-ups of #480–#483: F1 offline sale vs current domicilio (owner decision), F2 envío
+  amount in the resend identity, F3 snapshot fallback when the online read fails, F4 teléfono en reimpresión
+  (optional), F5 style nit.
 - [x] T4 — POS offline: snapshot carries amount + flag, outbox/synthetic ticket with the Envío
   line, server honors the device amount for pre-numbered sales. Route: delegated (one bounded writer across
   backend, snapshot and POS web).
@@ -220,3 +223,20 @@ for the device amount.
 
 Owner OK for the POS release (Ways.Desktop bump + `pos-v*` tag) so the registers get T3 + T4. Then judgment-day per slice and the
 stacked PRs.
+
+## T5 — judgment-day follow-ups (2026-10-21)
+
+- F2 done (route: inline, one file + its test). The comment in `ExigirMismoContenido` claimed a resend with another
+  `ImporteEnvio` is caught through the payments; false: payments compare the requested amount, and a difference within
+  `tolerancia_pago` passes `ValidadorDePagos` with the same payments (RED: the new test got 201 Created). Now the Envío
+  line price (the only line without an article) enters the identity ONLY when the request carries `ImporteEnvio`; an old
+  device's resend after a parameter change still returns the same comprobante. Mutation evidence: dropping the clause ->
+  2 tests fail; dropping the `ImporteEnvio is not null` guard -> 1 fails (the old-device resend after `1500 -> 1505`).
+  Evidence: IntegrationTests `VentaConEnvioTests|Idempot|Preasignado` 48 ok.
+- F3 done (route: inline). `importeDeEnvioVigente` takes `errorAlLeerEnLinea`: online with a failed read it uses the
+  snapshot amount (null without one, so the old "no se pudo leer" message still applies). The common online path is
+  local-first, which sends that same amount as `ImporteEnvio`. Mutation: dropping the error check -> 1 test fails.
+  Evidence: vitest `src/pos` + `src/paginas/Pos` 1438 ok.
+- F5 done (`ClienteParaEnvio = Pick<`).
+- F4 not done: optional, needs a client read in four `Proyectar` copies; left as a follow-up.
+- F1 pending: asked the owner whether pre-numbered sales trust the device's domicilio check.
