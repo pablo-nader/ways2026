@@ -788,12 +788,14 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
-    /// <summary>El reenvío legítimo de una venta ya emitida se resuelve antes de juzgar al cliente: aunque su domicilio se haya
-    /// borrado después, devuelve el comprobante existente. Un número nuevo con ese mismo cliente sí se rechaza.</summary>
+    /// <summary>Una venta con número pre-asignado ya se cobró en la caja, que validó el domicilio contra su instantánea: si
+    /// el domicilio se borró después, el reenvío devuelve el comprobante existente y una venta que llega por primera vez se
+    /// registra igual, con su línea Envío y sin dirección de entrega. La venta online sigue exigiéndolo (ver
+    /// ConEnvioYUnClienteSinDomicilioSeRechazaConEnvioRequiereDomicilio).</summary>
     [Fact]
-    public async Task ElReenvioDeUnaVentaYaEmitidaDevuelveElComprobanteAunqueElDomicilioSeHayaBorrado()
+    public async Task UnaVentaOfflineConEnvioSeRegistraAunqueElDomicilioSeHayaBorradoDespuesDeCobrarla()
     {
-        var ctx = await PrepararOfflineAsync(nameof(ElReenvioDeUnaVentaYaEmitidaDevuelveElComprobanteAunqueElDomicilioSeHayaBorrado));
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineConEnvioSeRegistraAunqueElDomicilioSeHayaBorradoDespuesDeCobrarla));
         await SembrarImporteDeEnvioAsync(ctx, "1500");
         var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
         var idCliente = await SembrarClienteAsync(ctx, Domicilio);
@@ -804,12 +806,14 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         var reenvio = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
         Assert.Equal(primera.Id, reenvio.Id);
         Assert.Equal(Domicilio, reenvio.DireccionEntrega);
-        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
 
-        Assert.Equal(
-            "envio_requiere_domicilio",
-            await CodigoDeRechazoAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 2L, importeEnvio: 1000m)));
-        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+        var cobradaAntesDelBorrado = await EmitirOkAsync(
+            ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 2L, importeEnvio: 1000m));
+        Assert.NotEqual(primera.Id, cobradaAntesDelBorrado.Id);
+        Assert.Null(cobradaAntesDelBorrado.DireccionEntrega);
+        Assert.Equal(1100m, cobradaAntesDelBorrado.Total);
+        Assert.Equal(1000m, Assert.Single(cobradaAntesDelBorrado.Items, i => i.IdArticulo is null).Total);
+        Assert.Equal(2, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
     /// <summary>dto-contract-honesty: el importe del dispositivo se rechaza donde no tiene destino y cuando no es un importe válido.</summary>
