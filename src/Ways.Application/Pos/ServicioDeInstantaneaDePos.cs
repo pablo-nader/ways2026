@@ -120,7 +120,8 @@ public class ServicioDeInstantaneaDePos(
             .Select(c => new
             {
                 c.Id, c.Numero, c.Nombre, c.Apellido, c.RazonSocial, c.TipoDocumento, c.NumeroDocumento,
-                c.IdCondicionFiscal, c.IdEmpresa, c.IdListaPrecio, c.Saldo, c.LimiteCredito, c.CreditoIlimitado
+                c.IdCondicionFiscal, c.IdEmpresa, c.IdListaPrecio, c.Saldo, c.LimiteCredito, c.CreditoIlimitado,
+                c.Domicilio, c.Telefono, c.Celular
             })
             .ToListAsync(ct);
 
@@ -133,7 +134,9 @@ public class ServicioDeInstantaneaDePos(
             .Select(c => new ClienteDeInstantanea(
                 c.Id, c.Numero, c.Nombre, c.Apellido, c.RazonSocial, c.TipoDocumento, c.NumeroDocumento,
                 c.IdCondicionFiscal, c.IdEmpresa, ArmadorDeInstantanea.ListaEfectiva(c.IdListaPrecio, idsListaVisibles),
-                ReglaDeClientes.EsConsumidorFinal(c.Numero), c.Saldo, c.LimiteCredito, c.CreditoIlimitado))
+                ReglaDeClientes.EsConsumidorFinal(c.Numero), c.Saldo, c.LimiteCredito, c.CreditoIlimitado,
+                ArmadorDeInstantanea.TextoOpcional(c.Domicilio), ArmadorDeInstantanea.TextoOpcional(c.Telefono),
+                ArmadorDeInstantanea.TextoOpcional(c.Celular)))
             .ToList();
 
         var idsLista = ArmadorDeInstantanea.ListasAResolver(listasVisibles, idEmpresa, clientes.Select(c => c.IdListaPrecio));
@@ -191,12 +194,18 @@ public class ServicioDeInstantaneaDePos(
         // > default) que ServicioDeVentas.ResolverParametrosDeVentaAsync — una sola clave, sin el
         // riesgo de mezcla multi-clave que ese método documenta (acá no hace falta el Where extra
         // por clave: el candidate set ya es de una sola).
-        var candidatosTolerancia = await db.Parametros.AsNoTracking()
-            .Where(p => p.Clave == ParametroConocido.ToleranciaPago.Clave && p.IdEmpresa == puntoVenta.IdEmpresa
+        // El importe del envío se resuelve en la misma consulta que la tolerancia; el Where por clave de abajo evita la mezcla
+        // multi-clave que documenta ServicioDeVentas.ResolverParametrosDeVentaAsync.
+        ParametroConocido[] conocidos = [ParametroConocido.ToleranciaPago, ParametroConocido.ImporteEnvio];
+        var clavesConocidas = conocidos.Select(c => c.Clave).ToList();
+        var candidatos = await db.Parametros.AsNoTracking()
+            .Where(p => clavesConocidas.Contains(p.Clave) && p.IdEmpresa == puntoVenta.IdEmpresa
                 && (p.IdPuntoVenta == null || p.IdPuntoVenta == puntoVenta.Id))
             .ToListAsync(ct);
-        var toleranciaPago = JsonSerializer.Deserialize<decimal>(
-            ResolucionDeParametros.Resolver(ParametroConocido.ToleranciaPago.Clave, candidatosTolerancia, puntoVenta.Id));
+        decimal ResolverDecimal(ParametroConocido conocido) => JsonSerializer.Deserialize<decimal>(
+            ResolucionDeParametros.Resolver(conocido.Clave, candidatos.Where(p => p.Clave == conocido.Clave).ToList(), puntoVenta.Id));
+        var toleranciaPago = ResolverDecimal(ParametroConocido.ToleranciaPago);
+        var importeEnvio = ResolverDecimal(ParametroConocido.ImporteEnvio);
 
         // Combos: UNA consulta (combos vivos y activos de la empresa del punto de venta o de todo el tenant, con todos sus
         // componentes), solo para el formato nuevo; el original no los lleva. Se filtran contra los artículos que
@@ -209,6 +218,7 @@ public class ServicioDeInstantaneaDePos(
         var listas = soloListaDelConsumidorFinal ? null : ArmadorDeInstantanea.ArmarListas(listasVisibles, idsLista);
 
         return new InstantaneaDePos(
-            momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago, combos, listas);
+            momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago, combos, listas,
+            importeEnvio, puntoVenta.EnvioPorDefecto);
     }
 }

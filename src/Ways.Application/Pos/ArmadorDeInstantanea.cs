@@ -57,6 +57,14 @@ public static class ArmadorDeInstantanea
         return listas.Count == 0 ? null : listas;
     }
 
+    /// <summary>Un texto de contacto del cliente tal como viaja: sin espacios sobrantes y <c>null</c> si queda vacío, así la
+    /// clave se omite del JSON y la regla del envío (domicilio no vacío) decide igual que el servidor.</summary>
+    public static string? TextoOpcional(string? valor)
+    {
+        var limpio = valor?.Trim();
+        return string.IsNullOrEmpty(limpio) ? null : limpio;
+    }
+
     /// <summary>Proyecta la lista de un cliente: una FK a una lista dada de baja (fuera de
     /// <paramref name="idsListaVisibles"/>) se devuelve <c>null</c>, igual que una FK nula.</summary>
     public static int? ListaEfectiva(int idListaPrecio, IReadOnlySet<int> idsListaVisibles) =>
