@@ -49,6 +49,46 @@ public class ReglaDeEnvioTests
     }
 
     [Fact]
+    public void SinImporteDelDispositivoNoHayNadaQueExigir()
+    {
+        ReglaDeEnvio.ExigirImporteDelDispositivo(importe: null, conEnvio: false, tieneNumeroPreasignado: false);
+        ReglaDeEnvio.ExigirImporteDelDispositivo(importe: null, conEnvio: true, tieneNumeroPreasignado: false);
+    }
+
+    [Theory]
+    [InlineData(true, true, 0)]
+    [InlineData(true, true, 1500.5)]
+    [InlineData(true, true, 999_999_999_999.99)]
+    public void ElImporteDelDispositivoValidoDeUnaVentaConEnvioYNumeroPreasignadoSeAdmite(bool conEnvio, bool preasignado, double importe)
+    {
+        ReglaDeEnvio.ExigirImporteDelDispositivo((decimal)importe, conEnvio, preasignado);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public void ElImporteDelDispositivoFueraDeUnaVentaConEnvioYNumeroPreasignadoSeRechaza(bool conEnvio, bool preasignado)
+    {
+        var error = Assert.Throws<ErrorDominio>(() => ReglaDeEnvio.ExigirImporteDelDispositivo(1500m, conEnvio, preasignado));
+
+        Assert.Equal("importe_envio_no_admitido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData(-0.01)]
+    [InlineData(1500.001)]
+    [InlineData(1000000000000.00)]
+    public void ElImporteDelDispositivoNegativoConDemasiadosDecimalesOQueNoEntraSeRechaza(double importe)
+    {
+        var error = Assert.Throws<ErrorDominio>(() => ReglaDeEnvio.ExigirImporteDelDispositivo((decimal)importe, true, true));
+
+        Assert.Equal("importe_envio_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
     public void LaLineaDeEnvioPasaPorElCalculadorSinDescuentoNiAjusteYSumaAlTotalDelDocumento()
     {
         var totales = CalculadorDeTotales.Calcular(

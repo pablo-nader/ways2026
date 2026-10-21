@@ -89,6 +89,10 @@ public class ServicioDeVentas(
         // idPresupuestoOrigen, lineas tiene que llegar vacío/ausente (400 lineas_no_admitidas,
         // dto-contract-honesty regla 1) — el valor REAL (los items del presupuesto) se resuelve
         // más abajo, en la rama del snapshot (p6), reasignando esta misma variable.
+        // dto-contract-honesty: el importe que cobró la caja solo tiene destino en una venta con envío y número pre-asignado.
+        ReglaDeEnvio.ExigirImporteDelDispositivo(
+            solicitud.ImporteEnvio, solicitud.ConEnvio, solicitud.NumeroPreasignado is not null);
+
         var lineas = solicitud.IdPresupuestoOrigen is null
             ? ExigirLineasValidas(solicitud.Lineas, solicitud.NumeroPreasignado)
             : ExigirSinLineas(solicitud.Lineas);
@@ -187,7 +191,14 @@ public class ServicioDeVentas(
             cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
         }
 
-        if (solicitud.ConEnvio)
+        // Un reenvío de una venta offline que ya se emitió se resuelve ANTES de juzgar al cliente: el domicilio pudo
+        // borrarse después de la venta y el reenvío legítimo tiene que devolver el comprobante existente, no un 400. La
+        // guarda de idempotencia del final sigue comparando el contenido.
+        var reenvioDeVentaYaEmitida = solicitud.NumeroPreasignado is { } numeroDelReenvio
+            && await db.ComprobantesVenta.AnyAsync(
+                c => c.IdPuntoVenta == puntoVenta.Id && c.IdTipoComprobante == tipo.Id && c.Numero == numeroDelReenvio, ct);
+
+        if (solicitud.ConEnvio && !reenvioDeVentaYaEmitida)
         {
             ReglaDeEnvio.ExigirClienteConDomicilio(cliente.EsConsumidorFinal, cliente.Domicilio);
         }
@@ -306,8 +317,11 @@ public class ServicioDeVentas(
 
         // El envío es una línea más de la venta: con importe_envio en cero no hay línea (la validación del cliente y la
         // dirección de entrega igual aplican). La alícuota se busca solo cuando hay línea que armar.
-        var lineaDeEnvio = solicitud.ConEnvio && importeEnvio > 0m
-            ? await ResolverLineaDeEnvioAsync(importeEnvio, ct)
+        // En una venta con número pre-asignado manda el importe que cobró la caja; sin él (un dispositivo anterior) o en
+        // una venta online, el del parámetro.
+        var importeDeLaLinea = solicitud.ImporteEnvio ?? importeEnvio;
+        var lineaDeEnvio = solicitud.ConEnvio && importeDeLaLinea > 0m
+            ? await ResolverLineaDeEnvioAsync(importeDeLaLinea, ct)
             : (LineaDeEnvio?)null;
 
         var (items, totales, lineaDeItem) = presupuestoOrigen is null
@@ -475,10 +489,6 @@ public class ServicioDeVentas(
         // servidor ya aceptó. La guarda de idempotencia de abajo la devuelve tal cual, o la rechaza
         // si el contenido difiere; un comprobante nunca se borra, así que no hay inserción nueva
         // posible por este camino.
-        var reenvioDeVentaYaEmitida = solicitud.NumeroPreasignado is { } numeroDelReenvio
-            && await db.ComprobantesVenta.AnyAsync(
-                c => c.IdPuntoVenta == puntoVenta.Id && c.IdTipoComprobante == tipo.Id && c.Numero == numeroDelReenvio, ct);
-
         ValidadorDePagos.Validar(
             totales.Total, pagosAValidar, toleranciaPago,
             cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
@@ -781,6 +791,10 @@ public class ServicioDeVentas(
         // y el outbox reenvía siempre la misma solicitud guardada, así que un reenvío legítimo trae
         // el mismo valor. El reenvío tampoco depende del límite: EmitirAsync saltea la regla 6 para
         // un número que ya tiene comprobante.
+        // El importe del envío tampoco entra aparte, y no hace falta: en una venta con número pre-asignado lo fija el
+        // dispositivo (SolicitudDeVenta.ImporteEnvio), así que un cambio del parámetro importe_envio entre dos reenvíos no
+        // altera el total; y un reenvío con OTRO importe cambia el total, y con él los pagos que se aplican al total, que sí
+        // se comparan. La línea Envío sí entra en la comparación de líneas (existencia), como cualquier línea sin artículo.
         // ForzarFactura SÍ entra: lo tipeó el cajero y decide si el ticket sale facturado, así que reenviar el mismo
         // número con otro valor no es un reenvío del mismo pedido.
         if (existente.IdCliente != plan.IdCliente
