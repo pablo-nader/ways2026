@@ -2942,11 +2942,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const lineasEnPantalla = [...lineas].reverse()
 
   const subtotalDeLineas = calcularSubtotalPrevia(lineas, precios)
-  // La línea Envío entra al total como una línea más. Con conexión el importe es el leído del servidor; sin ella, el de la
-  // instantánea. Online el servidor lo vuelve a calcular al cobrar; en una venta local es el que se manda y se cobra.
+  // La línea Envío entra al total como una línea más. Con conexión el importe es el leído del servidor; sin ella o si esa
+  // lectura falló, el de la instantánea. Online el servidor lo vuelve a calcular al cobrar; en una venta local es el que se
+  // manda y se cobra.
   const importeVigenteDelEnvio = importeDeEnvioVigente({
     hayConexion,
     importeEnLinea: importeEnvio,
+    errorAlLeerEnLinea: errorImporteEnvio,
     instantanea: instantaneaDelPuntoVenta,
   })
   const importeDelEnvio = importeDeEnvioAplicado({ conEnvio, importe: importeVigenteDelEnvio, hayLineas: lineas.length > 0 })

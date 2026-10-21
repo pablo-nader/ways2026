@@ -654,6 +654,11 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(primera.Id, reenvio.Id);
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
 
+        // Sin importe del dispositivo, un cambio del parámetro entre dos reenvíos no vuelve otra venta al mismo pedido.
+        await CambiarImporteDeEnvioAsync(ctx, "1505");
+        var reenvioTrasElCambio = await EmitirOkAsync(ctx.Cliente, Pedido(true, 1600m));
+        Assert.Equal(primera.Id, reenvioTrasElCambio.Id);
+
         // El mismo número con el pedido SIN envío es otro contenido: la línea de envío entra en la identidad.
         var otroContenido = await ctx.Cliente.PostAsJsonAsync("/api/ventas", Pedido(false, 100m));
         Assert.Equal(HttpStatusCode.Conflict, otroContenido.StatusCode);
@@ -760,6 +765,27 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(
             "numero_preasignado_con_otro_contenido",
             (await otroImporte.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Un reenvío con otro importe del dispositivo y los MISMOS pagos es otro contenido: la diferencia cabe en
+    /// tolerancia_pago (10 por defecto), así que los pagos no la delatan y la identidad compara el importe del envío.</summary>
+    [Fact]
+    public async Task UnReenvioConOtroImporteDeEnvioDentroDeLaToleranciaYLosMismosPagosEsOtroContenido()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnReenvioConOtroImporteDeEnvioDentroDeLaToleranciaYLosMismosPagosEsOtroContenido));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+        var idCliente = await SembrarClienteAsync(ctx, Domicilio);
+
+        await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+
+        var otroImporte = await ctx.Cliente.PostAsJsonAsync(
+            "/api/ventas", PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1005m));
+        Assert.Equal(HttpStatusCode.Conflict, otroImporte.StatusCode);
+        Assert.Equal(
+            "numero_preasignado_con_otro_contenido",
+            (await otroImporte.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString());
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
     /// <summary>El reenvío legítimo de una venta ya emitida se resuelve antes de juzgar al cliente: aunque su domicilio se haya

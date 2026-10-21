@@ -13,7 +13,7 @@ export const MENSAJE_DE_ENVIO_SIN_IMPORTE_LOCAL =
 export const DESCRIPCION_DE_LA_LINEA_DE_ENVIO = 'Envío'
 export const PORCENTAJE_IVA_DEL_ENVIO = 21
 
-type ClienteParaEnvio =Pick<ClienteListado, 'esConsumidorFinal' | 'domicilio'>
+type ClienteParaEnvio = Pick<ClienteListado, 'esConsumidorFinal' | 'domicilio'>
 
 /** Importe del envío que trae la instantánea guardada, o `null` si no lo trae (copia anterior al campo) o es inválido: sin
  * importe local no se vende con envío sin red. */
@@ -23,13 +23,15 @@ export function importeDeEnvioDeInstantanea(instantanea: Pick<InstantaneaDePos, 
 }
 
 /** Importe del envío que se muestra y se cobra: con conexión, el último leído del servidor para este punto de venta (`null`
- * mientras se lee o si falló); sin conexión, el de la instantánea. */
+ * mientras se lee); sin conexión o si la lectura falló, el de la instantánea. */
 export function importeDeEnvioVigente(params: {
   hayConexion: boolean
   importeEnLinea: number | null
+  errorAlLeerEnLinea: boolean
   instantanea: Pick<InstantaneaDePos, 'importeEnvio'> | null
 }): number | null {
-  return params.hayConexion ? params.importeEnLinea : importeDeEnvioDeInstantanea(params.instantanea)
+  if (params.hayConexion && !params.errorAlLeerEnLinea) return params.importeEnLinea
+  return importeDeEnvioDeInstantanea(params.instantanea)
 }
 
 /** Por qué no se puede cerrar una venta con envío (cliente o importe), o `null` si puede cerrarse o no lleva envío. */

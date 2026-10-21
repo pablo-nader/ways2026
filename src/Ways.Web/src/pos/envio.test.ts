@@ -88,14 +88,24 @@ describe('importeDeEnvioDeInstantanea', () => {
 })
 
 describe('importeDeEnvioVigente', () => {
+  const base = { hayConexion: true, importeEnLinea: 1500, errorAlLeerEnLinea: false, instantanea: { importeEnvio: 1800 } }
+
   it('con conexión manda el leído del servidor, aunque la copia local traiga otro', () => {
-    expect(importeDeEnvioVigente({ hayConexion: true, importeEnLinea: 1500, instantanea: { importeEnvio: 1800 } })).toBe(1500)
-    expect(importeDeEnvioVigente({ hayConexion: true, importeEnLinea: null, instantanea: { importeEnvio: 1800 } })).toBeNull()
+    expect(importeDeEnvioVigente(base)).toBe(1500)
+  })
+
+  it('con conexión, mientras se lee, no hay importe aunque la copia local traiga uno', () => {
+    expect(importeDeEnvioVigente({ ...base, importeEnLinea: null })).toBeNull()
+  })
+
+  it('con conexión, si la lectura falló, manda el de la copia local', () => {
+    expect(importeDeEnvioVigente({ ...base, importeEnLinea: null, errorAlLeerEnLinea: true })).toBe(1800)
+    expect(importeDeEnvioVigente({ ...base, importeEnLinea: null, errorAlLeerEnLinea: true, instantanea: {} })).toBeNull()
   })
 
   it('sin conexión manda el de la copia local, aunque haya uno leído antes', () => {
-    expect(importeDeEnvioVigente({ hayConexion: false, importeEnLinea: 1500, instantanea: { importeEnvio: 1800 } })).toBe(1800)
-    expect(importeDeEnvioVigente({ hayConexion: false, importeEnLinea: 1500, instantanea: {} })).toBeNull()
+    expect(importeDeEnvioVigente({ ...base, hayConexion: false })).toBe(1800)
+    expect(importeDeEnvioVigente({ ...base, hayConexion: false, instantanea: {} })).toBeNull()
   })
 })
 
