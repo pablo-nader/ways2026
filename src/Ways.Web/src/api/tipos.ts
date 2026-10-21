@@ -2109,6 +2109,10 @@ export type SolicitudDeVenta = {
   /** Solo se manda en `true`: el cajero pidió facturar este ticket sí o sí (espejo de
    * `SolicitudDeVenta.ForzarFactura`). Se fija al encolar y viaja dentro de la solicitud de la cola. */
   forzarFactura?: boolean
+  /** Solo se manda en `true`: la venta lleva la línea Envío, que el servidor calcula con `importe_envio` (el POS nunca
+   * manda el importe). Exige un cliente con domicilio; el servidor la rechaza en una nota de crédito o en la conversión de
+   * un presupuesto. */
+  conEnvio?: boolean
 }
 
 // --- POS: reserva de numeración offline (stage-pos-reserva-de-numeracion) ---
@@ -2228,7 +2232,8 @@ export type ItemEmitido = {
   idArticulo: number | null
   descripcion: string
   codigoBarra: string | null
-  idArea: number
+  /** `null` en la línea Envío, que no es un artículo y no tiene área. */
+  idArea: number | null
   idListaPrecio: number
   idOferta: number | null
   /** Combo que consumió unidades de la línea (el de menor id si fueron varios); `null`/ausente sin combo. */
