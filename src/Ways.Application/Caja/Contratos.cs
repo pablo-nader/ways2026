@@ -81,7 +81,8 @@ public sealed record TicketLimite(long Numero, DateTimeOffset Fecha, string Codi
 /// agrupa <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.Total"/> por
 /// <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.IdArea"/>, el snapshot inmutable del
 /// ítem (nunca re-derivado de <c>articulos</c>, doc 10 principio 6) — mismo criterio de
-/// snapshot que ya rige <c>ItemEmitido</c>.</summary>
+/// snapshot que ya rige <c>ItemEmitido</c>. Las líneas sin área (el envío) no figuran: la suma de este desglose puede quedar
+/// por debajo del total vendido del turno.</summary>
 public sealed record IngresoPorArea(int IdArea, string NombreArea, decimal Total);
 
 /// <summary>Egresos de una categoría de gasto dentro del turno (legacy D6, segundo bloque: "por

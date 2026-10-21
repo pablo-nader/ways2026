@@ -288,7 +288,7 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
     // ---- la línea de envío ------------------------------------------------------------------
 
     /// <summary>Un producto de 100 (10,5 %) y un envío de 1500: subtotal y total 1600, el envío al 21 % (no al 10,5 % del
-    /// artículo), sin artículo, sin costo y sin tocar stock. La misma verdad sale del emit, de la base y del detalle.</summary>
+    /// artículo), sin artículo, sin área, con costo 0 y sin tocar stock. La misma verdad sale del emit, de la base y del detalle.</summary>
     [Fact]
     public async Task UnaVentaConEnvioAgregaLaLineaDeEnvioAl21PorCientoSinArticuloNiStockYSumaAlTotal()
     {
@@ -323,7 +323,8 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(1500m, envio.Total);
         Assert.Equal(ctx.IdAlicuotaDe21, envio.IdAlicuotaIva);
         Assert.Equal(21m, envio.PorcentajeIva);
-        Assert.Equal(ctx.IdArea, envio.IdArea);
+        Assert.Null(envio.IdArea);
+        Assert.Equal(ctx.IdArea, producto.IdArea);
         Assert.Equal(ctx.IdListaPrecio, envio.IdListaPrecio);
         Assert.Null(envio.IdOferta);
         Assert.Null(envio.IdCombo);
@@ -341,7 +342,8 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(ctx.IdAlicuotaDe21, envioPersistido.IdAlicuotaIva);
         Assert.Equal(1500m, envioPersistido.PrecioUnitario);
         Assert.Equal(1500m, envioPersistido.Total);
-        Assert.Null(envioPersistido.CostoUnitario);
+        Assert.Null(envioPersistido.IdArea);
+        Assert.Equal(0m, envioPersistido.CostoUnitario);
         Assert.False(envioPersistido.CostoEsEstimado);
         Assert.Null(envioPersistido.IdLote);
 
@@ -561,8 +563,8 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
     }
 
     /// <summary>Los reportes que leen items siguen respondiendo con una venta con envío: ventas por artículo deja afuera la
-    /// línea sin artículo, rentabilidad la trata como una línea sin costo (no entra al margen) y el resumen del turno y el de
-    /// ventas la incluyen en el total.</summary>
+    /// línea sin artículo, rentabilidad la cuenta con costo 0, el desglose por área del resumen del turno no la
+    /// muestra y el total de ventas sí la incluye.</summary>
     [Fact]
     public async Task LosReportesQueLeenItemsToleranUnaVentaConEnvio()
     {
@@ -586,13 +588,26 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             $"/api/reportes/rentabilidad?idEmpresa={ctx.IdEmpresa}&{Rango()}");
         Assert.Equal(HttpStatusCode.OK, rentabilidadHttp.StatusCode);
         var rentabilidad = (await rentabilidadHttp.Content.ReadFromJsonAsync<Rentabilidad>(OpcionesJson))!;
-        // El envío no tiene costo (NULL, nunca cero): cuenta como línea "sin costo" de la cobertura junto al artículo (que
-        // tampoco tiene costo cargado), no entra al margen ni arma una fila propia de PorArticulo.
+        // El envío tiene costo 0 (no hay mercadería): es una línea de costo real que suma al margen y arma su propia fila
+        // sin artículo; el artículo no tiene costo cargado y queda como la única línea "sin costo".
         Assert.Equal(2, rentabilidad.Cobertura.LineasTotales);
-        Assert.Equal(2, rentabilidad.Cobertura.LineasSinCosto);
-        Assert.Equal(1600m, rentabilidad.Cobertura.VentaSinCosto);
-        Assert.Equal(0m, rentabilidad.VentaConsiderada);
-        Assert.Empty(rentabilidad.PorArticulo);
+        Assert.Equal(1, rentabilidad.Cobertura.LineasSinCosto);
+        Assert.Equal(1, rentabilidad.Cobertura.LineasConCostoReal);
+        Assert.Equal(100m, rentabilidad.Cobertura.VentaSinCosto);
+        Assert.Equal(1500m, rentabilidad.Cobertura.VentaConCostoReal);
+        Assert.Equal(1500m, rentabilidad.VentaConsiderada);
+        Assert.Equal(1500m, rentabilidad.Margen);
+        var filaDelEnvio = Assert.Single(rentabilidad.PorArticulo);
+        Assert.Null(filaDelEnvio.IdArticulo);
+        Assert.Equal("Envío", filaDelEnvio.Descripcion);
+
+        // Un filtro por área (clasificación del artículo) deja afuera el envío, que no tiene artículo ni área.
+        var porArea = await ctx.Cliente.GetAsync(
+            $"/api/reportes/ventas/por-articulo?idEmpresa={ctx.IdEmpresa}&{Rango()}&idArea={ctx.IdArea}");
+        Assert.Equal(HttpStatusCode.OK, porArea.StatusCode);
+        var filaPorArea = Assert.Single((await porArea.Content.ReadFromJsonAsync<VentasPorArticulo>(OpcionesJson))!.Articulos);
+        Assert.Equal(idArticulo, filaPorArea.IdArticulo);
+        Assert.Equal(100m, filaPorArea.Total);
 
         var resumenHttp = await ctx.Cliente.GetAsync(
             $"/api/reportes/ventas/resumen?idEmpresa={ctx.IdEmpresa}&{Rango()}&granularidad=Dia");
@@ -606,7 +621,9 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(1, turno.CantidadTickets);
         var ingresoDelArea = Assert.Single(turno.IngresosPorArea);
         Assert.Equal(ctx.IdArea, ingresoDelArea.IdArea);
-        Assert.Equal(venta.Total, ingresoDelArea.Total);
+        // El desglose por área solo trae el artículo: el envío (sin área) no figura, aunque el total del turno lo incluye.
+        Assert.Equal(100m, ingresoDelArea.Total);
+        Assert.Equal(1600m, venta.Total);
     }
 
     // ---- venta offline (número pre-asignado) ---------------------------------------------------

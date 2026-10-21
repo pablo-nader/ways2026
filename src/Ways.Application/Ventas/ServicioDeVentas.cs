@@ -2315,13 +2315,13 @@ public class ServicioDeVentas(
 
             if (i == SinLineaDeOrigen)
             {
-                // Concepto libre: sin artículo, stock, costo, lote, oferta ni combo. El área es la de la primera línea de la
-                // venta (id_area es obligatorio y un concepto libre no tiene una propia); la lista, la del cliente.
+                // Concepto libre: sin artículo, área, stock, lote, oferta ni combo; la lista, la del cliente. El costo es 0
+                // (no hay mercadería que costear) y no NULL, para que la cobertura de costo no lo cuente como "sin costo".
                 items.Add(new LineaDelPlan(
-                    IdArticulo: null, ReglaDeEnvio.DescripcionDeLaLinea, CodigoBarra: null, items[0].IdArea,
+                    IdArticulo: null, ReglaDeEnvio.DescripcionDeLaLinea, CodigoBarra: null, IdArea: null,
                     idListaPrecio, IdOferta: null, envio!.Value.IdAlicuotaIva, envio.Value.PorcentajeIva,
                     calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
-                    EsProducto: false, CostoUnitario: null));
+                    EsProducto: false, CostoUnitario: 0m));
                 continue;
             }
 
@@ -2907,7 +2907,7 @@ public class ServicioDeVentas(
     /// evitado a propósito). <c>false</c>/<c>null</c> para toda línea online, mismo default que
     /// <see cref="LoteVencido"/> para no exigirle nada a los call sites preexistentes.</summary>
     private readonly record struct LineaDelPlan(
-        int? IdArticulo, string Descripcion, string? CodigoBarra, int IdArea, int IdListaPrecio, int? IdOferta,
+        int? IdArticulo, string Descripcion, string? CodigoBarra, int? IdArea, int IdListaPrecio, int? IdOferta,
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
         decimal Total, bool EsProducto, decimal? CostoUnitario,
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,

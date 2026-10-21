@@ -186,7 +186,7 @@ public sealed record ItemEmitido(
     int? IdArticulo,
     string Descripcion,
     string? CodigoBarra,
-    int IdArea,
+    int? IdArea,
     int IdListaPrecio,
     int? IdOferta,
     int IdAlicuotaIva,

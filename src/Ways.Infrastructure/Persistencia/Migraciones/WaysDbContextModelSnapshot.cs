@@ -5153,7 +5153,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_alicuota_iva");
 
-                    b.Property<int>("IdArea")
+                    b.Property<int?>("IdArea")
                         .HasColumnType("integer")
                         .HasColumnName("id_area");
 
@@ -7513,7 +7513,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasForeignKey("IdArea", "IdTenant")
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("fk_items_comprobante_venta_area");
 
                     b.HasOne("Ways.Domain.Articulos.Articulo", null)

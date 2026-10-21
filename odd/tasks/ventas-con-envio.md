@@ -101,8 +101,7 @@ Forecast ~1,600 authored lines over four tasks.
   `lotes_habilitado` (no extra read for a sale without envío); the 21% alícuota is found by ARCA code 5
   (`alicuotas_iva.codigo_afip`, one extra query only when there is a line) and snapshotted (id + 21);
   `LineaDelPlan.IdArticulo` is now nullable; the Envío item is always LAST, `EsProducto = false`, cost NULL,
-  no lot, so stock/FEFO skip it. `IdArea` is NOT NULL on items, so the Envío line carries the area of the
-  sale's first line (the shift summary counts it as that area's income; no migration). `DireccionEntrega`
+  no lot, so stock/FEFO skip it. (Superseded by the 2026-10-21 owner decision below: the Envío line has NO area.) `DireccionEntrega`
   = the request's if present, else the client's domicilio (only with ConEnvio).
   Decisions: (1) importe 0 or no parameter => no line, but validation and `DireccionEntrega` still apply;
   (2) offline pre-numbered sales with ConEnvio use the SERVER parameter for now (T4 adds the device amount
@@ -116,11 +115,8 @@ Forecast ~1,600 authored lines over four tasks.
   stock from `movimientos_stock`, so the Envío item is irrelevant to it.
   NULL-article sweep (code reading + tests): ServicioDeVentas (`ResolverDevolucionesDeComboAsync`,
   `ExigirImportesDeLaVentaAsociadaAsync`, `ExigirMismoContenido`, `Proyectar`, `BuscarPorNumeroComprometidoAsync`,
-  `ObtenerAsync`, stock loop, lote block, anulación) ok; Reportes: `ServicioDeReportesDeRentabilidad` unchanged on purpose (the
-  Envío line has cost NULL, so it counts as a "sin costo" line of the coverage banner and never reaches the margin or
-  `PorArticulo`; excluding every null-article line would break `RentabilidadTests`, whose fixtures use null-article lines
-  with real costs, and a discriminating flag needs a schema change; known effect: each delivery sale lowers the
-  coverage %), `ServicioDeReportesDeArticulos.LineasVendidas` (top / ventas por artículo) and
+  `ObtenerAsync`, stock loop, lote block, anulación) ok; Reportes: `ServicioDeReportesDeRentabilidad` (see the follow-up: cost 0,
+  so it is a real-cost line and adds to the margin), `ServicioDeReportesDeArticulos.LineasVendidas` (top / ventas por artículo) and
   `ServicioDeConsultasDeVentas` (MCP por artículo / por área, grupo, marca) already drop it (acceptable: their
   totals exclude envíos), `ServicioDeLibroIva` ok (reads alícuota + total); Caja `LectorDeContenidoDeResumen`
   ok with a real area; CuentaCorriente `LectorDeConsumosReliquidables` / `ServicioDeReliquidacion` /
@@ -137,6 +133,21 @@ Forecast ~1,600 authored lines over four tasks.
   21% test fails; domain rule clauses (domicilio / whitespace / Consumidor Final) -> `ReglaDeEnvioTests` fail.
   Tests: `ReglaDeEnvioTests` (domain), `ComposicionDeTotalesFiscalesTests` (envío at 21% next to 10.5%),
   `VentaConEnvioTests` (integration).
+
+- 2026-10-21 (owner decision, follow-up commit): areas belong to articles, so the Envío line has NO area and its cost
+  is 0. Migration `IdAreaNulableEnItemsDeVenta` (DDL only: `items_comprobante_venta.id_area` nullable, composite FK kept,
+  no backfill so no RLS concern; `Down` fails on purpose if area-less lines exist). `ItemComprobanteVenta.IdArea`,
+  `ItemEmitido.IdArea` and `LineaDelPlan.IdArea` are `int?`. Sites swept for a null area: `LectorDeContenidoDeResumen`
+  (ingresos por área: filtered with `IdArea != null`, so the per-area sum is below the shift total by the envío amount,
+  stated in its comment and in `IngresoPorArea`), `ServicioDeFacturacionDeVentas` mirror copy (copies the null),
+  `ServicioDeFacturacionFiscal` (its `IdArea` is a request input, not an item read), `ObtenerItemsDeTxrAsync` (remito
+  items, always an article). Reports by área (`ServicioDeReportesDeArticulos`, MCP `ventas_agrupadas` por área) classify
+  by the ARTICLE's current área and already drop the null-article line; rentabilidad has no per-area view; ventas por
+  hora uses ticket totals. Rentabilidad: cost 0 makes the Envío a real-cost line, so coverage no longer counts it as "sin
+  costo", it adds to the margin and gets a null-article "Envío" row in `PorArticulo`. Web type `ItemEmitido.idArea` is
+  `number` in `tipos.ts` and can now be null (T3 must treat it as `number | null`). Mutation evidence: `IdArea` set to the first
+  line's area -> 2 tests fail; cost 0 -> NULL -> 2 fail; removing the `IdArea != null` filter in the caja reader -> 1 fails.
+  Evidence: `dotnet build` 0 errors; Domain.Tests 1860 ok; Application.Tests 1060 ok; IntegrationTests filtered on Venta|Ventas|NotaDeCredito|Devolucion|Reportes|Caja|Turno|Cierre|Rentabilidad|Mcp|Fiscal|Migracion|Schema|SuperficieDeAutorizacion 2155 ok (sequential).
 
 ## Next step
 

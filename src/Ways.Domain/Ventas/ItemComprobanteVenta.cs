@@ -34,9 +34,9 @@ public class ItemComprobanteVenta : EntidadTenant
     public required string Descripcion { get; set; }
     public string? CodigoBarra { get; set; }
 
-    /// <summary>Área del snapshot. Obligatoria también en una línea de concepto libre: la de "Envío" lleva la del primer
-    /// artículo de la venta, así que el cierre de caja la cuenta como ingreso de esa área.</summary>
-    public int IdArea { get; set; }
+    /// <summary>Área del snapshot. <c>NULL</c> solo en una línea de concepto libre sin artículo (el "Envío"): el área es un
+    /// atributo del artículo, así que esa línea nunca figura en un desglose por área; sí en los totales de la venta y del turno.</summary>
+    public int? IdArea { get; set; }
 
     /// <summary>Con qué lista se vendió — snapshot, no re-derivable.</summary>
     public int IdListaPrecio { get; set; }
