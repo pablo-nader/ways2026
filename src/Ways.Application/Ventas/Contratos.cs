@@ -53,7 +53,15 @@ namespace Ways.Application.Ventas;
 /// en <c>comprobantes_venta.factura_forzada</c> y es lo ÚNICO que viaja de la facturación: la decisión, el porcentaje y
 /// el CAE los pone el servidor. Solo tiene sentido en una venta; en una nota de crédito se rechaza (400
 /// <c>forzar_factura_no_admitido</c>) en vez de ignorarse. Entra en la identidad de un reenvío con número
-/// pre-asignado, igual que el resto de lo que tipea el operador.</summary>
+/// pre-asignado, igual que el resto de lo que tipea el operador.
+///
+/// <see cref="ConEnvio"/> (venta con envío): el cajero pide agregar el envío. El servidor exige un cliente identificado
+/// (no Consumidor Final) con domicilio cargado (400 <c>envio_requiere_cliente</c> / <c>envio_requiere_domicilio</c>),
+/// resuelve el parámetro <c>importe_envio</c> del punto de venta y, si es mayor a cero, agrega UNA línea de concepto libre
+/// "Envío" (sin artículo, a 21 % de IVA) que suma al subtotal y al total. Sin <see cref="DireccionEntrega"/> propia, la
+/// dirección de entrega del comprobante sale del domicilio del cliente. Solo tiene sentido en una venta común: en una
+/// nota de crédito o en la conversión de un presupuesto se rechaza (400 <c>envio_no_admitido</c>) en vez de ignorarse. El
+/// importe nunca viaja en el pedido: lo pone el servidor, también en una venta con número pre-asignado.</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -66,7 +74,8 @@ public sealed record SolicitudDeVenta(
     int? IdPresupuestoOrigen = null,
     long? NumeroPreasignado = null,
     bool LimiteDeCreditoNoValidado = false,
-    bool ForzarFactura = false);
+    bool ForzarFactura = false,
+    bool ConEnvio = false);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>
@@ -177,7 +186,7 @@ public sealed record ItemEmitido(
     int? IdArticulo,
     string Descripcion,
     string? CodigoBarra,
-    int IdArea,
+    int? IdArea,
     int IdListaPrecio,
     int? IdOferta,
     int IdAlicuotaIva,

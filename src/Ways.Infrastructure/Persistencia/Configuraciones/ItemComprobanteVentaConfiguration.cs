@@ -57,14 +57,14 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         builder.Property(i => i.IdComprobanteVenta).HasColumnName("id_comprobante_venta").IsRequired();
         builder.Property(i => i.Orden).HasColumnName("orden").IsRequired();
 
-        // NULL solo en líneas de concepto libre (doc 10 §4) — sin camino de escritura en esta
-        // etapa, la columna queda lista.
+        // NULL solo en líneas de concepto libre (doc 10 §4): hoy, el "Envío" de una venta con envío.
         builder.Property(i => i.IdArticulo).HasColumnName("id_articulo");
 
         builder.Property(i => i.Descripcion).HasColumnName("descripcion").HasColumnType("text").IsRequired();
         builder.Property(i => i.CodigoBarra).HasColumnName("codigo_barra").HasColumnType("text");
 
-        builder.Property(i => i.IdArea).HasColumnName("id_area").IsRequired();
+        // NULL solo en una línea de concepto libre sin artículo (el "Envío"): el área es del artículo.
+        builder.Property(i => i.IdArea).HasColumnName("id_area");
         builder.Property(i => i.IdListaPrecio).HasColumnName("id_lista_precio").IsRequired();
         builder.Property(i => i.IdOferta).HasColumnName("id_oferta");
         builder.Property(i => i.IdCombo).HasColumnName("id_combo");

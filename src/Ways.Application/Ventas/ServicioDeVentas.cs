@@ -130,6 +130,16 @@ public class ServicioDeVentas(
                 400);
         }
 
+        // dto-contract-honesty: el envío es una línea de la venta; una devolución y la conversión de un presupuesto
+        // (sus líneas están congeladas) no tienen dónde llevarla, así que el pedido se rechaza en vez de perderse.
+        if (solicitud.ConEnvio && (tipo.Signo <= 0 || solicitud.IdPresupuestoOrigen is not null))
+        {
+            throw new ErrorDominio(
+                "envio_no_admitido",
+                "Solo una venta común puede llevar envío; una nota de crédito o la conversión de un presupuesto no.",
+                400);
+        }
+
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
         // design decisión 11 (Slice 5): turno SIEMPRE resuelto server-side, inmediatamente
@@ -175,6 +185,11 @@ public class ServicioDeVentas(
         else
         {
             cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
+        }
+
+        if (solicitud.ConEnvio)
+        {
+            ReglaDeEnvio.ExigirClienteConDomicilio(cliente.EsConsumidorFinal, cliente.Domicilio);
         }
 
         var asociado = solicitud.IdComprobanteAsociado is { } idAsociado
@@ -276,10 +291,30 @@ public class ServicioDeVentas(
             await ExigirImportesDeLaVentaAsociadaAsync(asociado.Id, lineas, ct);
         }
 
+        // 1 consulta batcheada (stage-12, design decisión 2): tolerancia_pago + lotes_habilitado + importe_envio,
+        // resueltas directo (sin el pre-chequeo de pertenencia de
+        // ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió arriba, así que
+        // idEmpresa ya es de confianza). `lotesHabilitado` alimenta el plan FEFO de slice 7,
+        // inmediatamente abajo; `importeEnvio` solo importa con ConEnvio, pero va en la misma consulta
+        // para que una venta sin envío no pague nada extra. `vuelto_maximo` YA NO se resuelve acá (decisión del dueño
+        // 2026-09-16, ver BilletesArgentinos): dejó de ser consumido por ValidadorDePagos para
+        // ventas en efectivo, y no tiene sentido seguir pagando la fila extra sin usarla — sigue
+        // siendo autoritativo para ValidadorDePagoACuenta (pago a cuenta corriente), resuelto ahí
+        // por separado (ServicioDeCuentaCorriente).
+        var (toleranciaPago, lotesHabilitado, importeEnvio) =
+            await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+
+        // El envío es una línea más de la venta: con importe_envio en cero no hay línea (la validación del cliente y la
+        // dirección de entrega igual aplican). La alícuota se busca solo cuando hay línea que armar.
+        var lineaDeEnvio = solicitud.ConEnvio && importeEnvio > 0m
+            ? await ResolverLineaDeEnvioAsync(importeEnvio, ct)
+            : (LineaDeEnvio?)null;
+
         var (items, totales, lineaDeItem) = presupuestoOrigen is null
             ? MaterializarItems(
                 tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio,
-                combosDetectados, combosOfflineExistentes, devolucionesDeCombo, solicitud.NumeroPreasignado is not null)
+                combosDetectados, combosOfflineExistentes, devolucionesDeCombo, solicitud.NumeroPreasignado is not null,
+                lineaDeEnvio)
             : ConLineaDeOrigenIdentidad(MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId));
 
         // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
@@ -297,25 +332,13 @@ public class ServicioDeVentas(
                 "El presupuesto está inconsistente con sus items; no se puede convertir.", 409);
         }
 
-        // 1 consulta batcheada (stage-12, design decisión 2): tolerancia_pago + lotes_habilitado,
-        // resueltas directo (sin el pre-chequeo de pertenencia de
-        // ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió arriba, así que
-        // idEmpresa ya es de confianza). `lotesHabilitado` alimenta el plan FEFO de slice 7,
-        // inmediatamente abajo. `vuelto_maximo` YA NO se resuelve acá (decisión del dueño
-        // 2026-09-16, ver BilletesArgentinos): dejó de ser consumido por ValidadorDePagos para
-        // ventas en efectivo, y no tiene sentido seguir pagando la fila extra sin usarla — sigue
-        // siendo autoritativo para ValidadorDePagoACuenta (pago a cuenta corriente), resuelto ahí
-        // por separado (ServicioDeCuentaCorriente).
-        var (toleranciaPago, lotesHabilitado) =
-            await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
-
         // stage-12 slice 7 (design: "Write site 1", decide phase) — decidir si hay línea
         // lote-efectiva es GRATIS: articuloPorId ya está cargado arriba (MaterializarItems),
         // lotesHabilitado ya resolvió en la query batcheada de arriba. Cero queries de sondeo.
         var lineasConLote = items
             .Select((item, indice) => (Item: item, Indice: indice))
             .Where(x => x.Item.EsProducto
-                && ReglaDeLotes.ControlEfectivo(articuloPorId[x.Item.IdArticulo].ControlaLote, lotesHabilitado))
+                && ReglaDeLotes.ControlEfectivo(articuloPorId[x.Item.IdArticulo!.Value].ControlaLote, lotesHabilitado))
             .ToList();
 
         // dto-contract-honesty (WARNING 4 del judgment-day de esta slice): un idLote en una línea
@@ -338,7 +361,7 @@ public class ServicioDeVentas(
                                        // lotes-y-vencimientos: "Module on with a lot-controlled
                                        // articulo nets zero round-trip change")
         {
-            var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo).Distinct().ToList();
+            var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo!.Value).Distinct().ToList();
             var idsLotePedidos = lineasConLote
                 .Select(x => lineas[lineaDeItem[x.Indice]].IdLote)
                 .Where(idLote => idLote is not null)
@@ -358,7 +381,9 @@ public class ServicioDeVentas(
 
             foreach (var (item, indice) in lineasConLote)
             {
-                var saldosDelArticulo = saldosPorArticulo[item.IdArticulo].ToList();
+                // Solo una línea de producto llega acá: la de concepto libre (envío) no tiene lote efectivo.
+                var idArticulo = item.IdArticulo!.Value;
+                var saldosDelArticulo = saldosPorArticulo[idArticulo].ToList();
                 var idLotePedido = lineas[lineaDeItem[indice]].IdLote;
 
                 // stage-12 slice 9 (design: "NCX", decisión 8 del proposal): el default FEFO se
@@ -405,10 +430,10 @@ public class ServicioDeVentas(
                     // presupuesto (misma familia que UpsertStockAsync).
                     var conexionParaLotes = await ObtenerConexionAbiertaAsync(ct);
                     var idSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
-                        conexionParaLotes, transaccion: null, idTenant, item.IdArticulo, momento, ct);
+                        conexionParaLotes, transaccion: null, idTenant, idArticulo, momento, ct);
 
                     loteResuelto = new SaldoDeLote(
-                        item.IdArticulo, idSinIdentificar, ReglaDeLotes.CodigoSinIdentificar,
+                        idArticulo, idSinIdentificar, ReglaDeLotes.CodigoSinIdentificar,
                         EsSinIdentificar: true, FechaVencimiento: null, Cantidad: 0m);
                 }
 
@@ -469,7 +494,7 @@ public class ServicioDeVentas(
             solicitud.IdComprobanteAsociado, items, totales.Subtotal, totales.DescuentoTotal,
             totales.DescuentoManualTotal, totales.RecargoManualTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
-            NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones),
+            DireccionDeEntrega(solicitud, cliente), NormalizarOpcional(solicitud.Observaciones),
             presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado, solicitud.ForzarFactura);
 
         // Corrección de esta slice al decisión 2 original (ver el doc-comment de
@@ -700,7 +725,7 @@ public class ServicioDeVentas(
             .ToList();
 
         var lineasSolicitadas = plan.Items
-            .Select(i => ((int?)i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, i.PorImporte ? i.PrecioUnitario : (decimal?)null))
+            .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje, i.PorImporte ? i.PrecioUnitario : (decimal?)null))
             .OrderBy(l => l.Item1)
             .ThenBy(l => l.Item2)
             .ThenBy(l => l.Item3)
@@ -1738,7 +1763,8 @@ public class ServicioDeVentas(
         // configuración de una secuencia — es el mutation target de la task 8.7. Un artículo con
         // EsProducto = false es un servicio (doc 10 §3: "false = servicio: no toca stock") — se
         // salta ENTERO, ni movimiento ni upsert, en vez de escribir un movimiento sin sentido para
-        // algo que nunca tuvo una fila en stock. El upsert agregado (`stock`, id_lote NULL) corre
+        // algo que nunca tuvo una fila en stock. La línea de concepto libre del envío (sin artículo) cae en el mismo
+        // filtro: EsProducto = false. El upsert agregado (`stock`, id_lote NULL) corre
         // SIEMPRE, primero; el upsert de `stock_lotes` solo cuando el item resolvió un lote.
         foreach (var item in plan.Items
                      .Where(i => i.EsProducto)
@@ -1749,15 +1775,15 @@ public class ServicioDeVentas(
             var delta = -item.Cantidad;
 
             await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, plan.IdTenant, item.IdArticulo, plan.IdPuntoVenta, delta,
+                conexion, transaccionCruda, plan.IdTenant, item.IdArticulo!.Value, plan.IdPuntoVenta, delta,
                 MotivoStock.Venta, comprobante.Id, plan.IdEmpleado, plan.Momento, item.IdLote, ct);
 
-            await UpsertStockAsync(conexion, transaccionCruda, plan.IdTenant, item.IdArticulo, plan.IdPuntoVenta, delta, ct);
+            await UpsertStockAsync(conexion, transaccionCruda, plan.IdTenant, item.IdArticulo!.Value, plan.IdPuntoVenta, delta, ct);
 
             if (item.IdLote is { } idLote)
             {
                 await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, plan.IdTenant, item.IdArticulo, plan.IdPuntoVenta, idLote, delta, ct);
+                    conexion, transaccionCruda, plan.IdTenant, item.IdArticulo!.Value, plan.IdPuntoVenta, idLote, delta, ct);
             }
         }
 
@@ -1939,7 +1965,8 @@ public class ServicioDeVentas(
     /// hacerlo (decisión del dueño 2026-09-16, ver BilletesArgentinos): ese parámetro ya no lo
     /// consume <see cref="ValidadorDePagos"/> para ventas en efectivo, y sigue siendo autoritativo
     /// solo para <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (resuelto aparte por
-    /// <c>ServicioDeCuentaCorriente</c>).
+    /// <c>ServicioDeCuentaCorriente</c>). Resuelve además <c>importe_envio</c> en la misma consulta: una venta sin envío no
+    /// paga ninguna lectura extra.
     ///
     /// <c>ResolucionDeParametros.Resolver</c> filtra los candidatos por punto de venta pero NO
     /// por clave (fue escrita para un candidate set de una sola clave) — pasarle el set
@@ -1951,10 +1978,11 @@ public class ServicioDeVentas(
     /// con una fila solo de empresa de <c>lotes_habilitado</c> (la corrupción se manifiesta como
     /// un <c>JsonException</c> al deserializar el valor de <c>tolerancia_pago</c> como
     /// <c>bool</c>). Evidencia de mutación registrada en ese archivo, junto al test.</summary>
-    private async Task<(decimal ToleranciaPago, bool LotesHabilitado)> ResolverParametrosDeVentaAsync(
+    private async Task<(decimal ToleranciaPago, bool LotesHabilitado, decimal ImporteEnvio)> ResolverParametrosDeVentaAsync(
         int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        ParametroConocido[] conocidos = [ParametroConocido.ToleranciaPago, ParametroConocido.LotesHabilitado];
+        ParametroConocido[] conocidos =
+            [ParametroConocido.ToleranciaPago, ParametroConocido.LotesHabilitado, ParametroConocido.ImporteEnvio];
         var claves = conocidos.Select(c => c.Clave).ToList();
 
         var candidatos = await db.Parametros
@@ -1971,7 +1999,24 @@ public class ServicioDeVentas(
 
         return (
             JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ToleranciaPago.Clave]),
-            JsonSerializer.Deserialize<bool>(resueltoPorClave[ParametroConocido.LotesHabilitado.Clave]));
+            JsonSerializer.Deserialize<bool>(resueltoPorClave[ParametroConocido.LotesHabilitado.Clave]),
+            JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ImporteEnvio.Clave]));
+    }
+
+    /// <summary>La alícuota del 21 % con la que se factura el envío, identificada por su código ARCA
+    /// (<see cref="ReglaDeEnvio.CodigoAfipDeLaAlicuota"/>) y snapshoteada como cualquier línea (id y porcentaje). UNA
+    /// consulta, solo en una venta con envío. Que la fila no exista es un defecto de aprovisionamiento de la plataforma
+    /// (las alícuotas son globales y se siembran al arrancar), no un caso de negocio.</summary>
+    private async Task<LineaDeEnvio> ResolverLineaDeEnvioAsync(decimal importe, CancellationToken ct)
+    {
+        var alicuota = await db.AlicuotasIva
+            .Where(a => a.CodigoAfip == ReglaDeEnvio.CodigoAfipDeLaAlicuota)
+            .Select(a => new { a.Id, a.Porcentaje })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new InvalidOperationException(
+                "No existe la alícuota de IVA con código ARCA 5 (21 %); es necesaria para la línea de envío.");
+
+        return new LineaDeEnvio(importe, alicuota.Id, alicuota.Porcentaje);
     }
 
     // ---- stage-17-presupuestos-y-remitos, Slice 3: rama del snapshot (design: Transactions —
@@ -2162,7 +2207,8 @@ public class ServicioDeVentas(
             IReadOnlyDictionary<int, ComboEnLinea> combosDetectados,
             IReadOnlySet<int> combosOfflineExistentes,
             IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo,
-            bool ventaOffline)
+            bool ventaOffline,
+            LineaDeEnvio? envio)
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
         var origenes = new List<(int Linea, TramoDeDevolucion? Tramo)>(lineas.Count);
@@ -2245,6 +2291,14 @@ public class ServicioDeVentas(
             origenes.Add((i, null));
         }
 
+        // El envío entra al calculador como una línea más (subtotal, total y neto gravado lo incluyen) y queda AL FINAL:
+        // `Proyectar` empareja cada item con el del plan por su orden.
+        if (envio is not null)
+        {
+            lineasParaCalcular.Add(ReglaDeEnvio.LineaParaCalcular(envio.Value.Importe));
+            origenes.Add((SinLineaDeOrigen, null));
+        }
+
         var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);
 
         // Defensa en profundidad (design: Domain rules first) — con el signo ya aplicado arriba,
@@ -2257,9 +2311,22 @@ public class ServicioDeVentas(
         for (var k = 0; k < origenes.Count; k++)
         {
             var (i, tramoDeDevolucion) = origenes[k];
+            var calculado = totales.Items[k];
+
+            if (i == SinLineaDeOrigen)
+            {
+                // Concepto libre: sin artículo, área, stock, lote, oferta ni combo; la lista, la del cliente. El costo es 0
+                // (no hay mercadería que costear) y no NULL, para que la cobertura de costo no lo cuente como "sin costo".
+                items.Add(new LineaDelPlan(
+                    IdArticulo: null, ReglaDeEnvio.DescripcionDeLaLinea, CodigoBarra: null, IdArea: null,
+                    idListaPrecio, IdOferta: null, envio!.Value.IdAlicuotaIva, envio.Value.PorcentajeIva,
+                    calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
+                    EsProducto: false, CostoUnitario: 0m));
+                continue;
+            }
+
             var linea = lineas[i];
             var resultado = resolucion[i];
-            var calculado = totales.Items[k];
             var articulo = articuloPorId[linea.IdArticulo];
 
             if (tramoDeDevolucion is { } tramoDevuelto)
@@ -2753,6 +2820,12 @@ public class ServicioDeVentas(
         }
     }
 
+    /// <summary>La dirección que pide el operador manda; en una venta con envío que no trae una, el comprobante lleva el
+    /// domicilio del cliente (que <see cref="ReglaDeEnvio.ExigirClienteConDomicilio"/> ya garantizó que existe).</summary>
+    private static string? DireccionDeEntrega(SolicitudDeVenta solicitud, Cliente cliente) =>
+        NormalizarOpcional(solicitud.DireccionEntrega)
+        ?? (solicitud.ConEnvio ? NormalizarOpcional(cliente.Domicilio) : null);
+
     private static string? NormalizarOpcional(string? valor)
     {
         var limpio = valor?.Trim();
@@ -2834,7 +2907,7 @@ public class ServicioDeVentas(
     /// evitado a propósito). <c>false</c>/<c>null</c> para toda línea online, mismo default que
     /// <see cref="LoteVencido"/> para no exigirle nada a los call sites preexistentes.</summary>
     private readonly record struct LineaDelPlan(
-        int IdArticulo, string Descripcion, string? CodigoBarra, int IdArea, int IdListaPrecio, int? IdOferta,
+        int? IdArticulo, string Descripcion, string? CodigoBarra, int? IdArea, int IdListaPrecio, int? IdOferta,
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
         decimal Total, bool EsProducto, decimal? CostoUnitario,
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
@@ -2842,6 +2915,13 @@ public class ServicioDeVentas(
         decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null,
         ComboDeAuditoria? ComboDelDispositivo = null, ComboDeAuditoria? ComboEsperado = null,
         bool PorImporte = false);
+
+    /// <summary>La línea de concepto libre "Envío" ya resuelta: el importe del parámetro <c>importe_envio</c> y la alícuota
+    /// del 21 % a snapshotear. Existe solo cuando la venta es con envío y el importe es mayor a cero.</summary>
+    private readonly record struct LineaDeEnvio(decimal Importe, int IdAlicuotaIva, decimal PorcentajeIva);
+
+    /// <summary>Marca en <c>MaterializarItems</c> el item que no sale de ninguna línea del pedido (el envío).</summary>
+    private const int SinLineaDeOrigen = -1;
 
     /// <summary>Datos de combo de una línea offline para el rastro de auditoría: lo que trajo el dispositivo
     /// (<see cref="LineaDelPlan.ComboDelDispositivo"/>) y lo que el servidor detectó

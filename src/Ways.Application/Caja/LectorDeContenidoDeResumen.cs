@@ -47,7 +47,8 @@ public class LectorDeContenidoDeResumen(IWaysDbContext db)
             .Join(db.TiposComprobante, c => c.IdTipoComprobante, t => t.Id, (c, t) => new TicketLimite(c.Numero, c.Fecha, t.Codigo))
             .FirstOrDefaultAsync(ct);
 
-        // 4. ingresos por área — snapshot inmutable de ItemComprobanteVenta.IdArea (doc 10
+        // 4. ingresos por área — las líneas sin área (el envío, concepto libre sin artículo) no figuran en este desglose: la
+        // suma por área queda por debajo del total vendido del turno por el monto de los envíos, a propósito. Snapshot inmutable de ItemComprobanteVenta.IdArea (doc 10
         // principio 6), nunca re-derivado de articulos. Una RC (pago a cuenta) no tiene items —
         // cero por construcción (stage-7-cuenta-corriente) — así que su plata nunca aparece acá;
         // sí aparece en el esperado por medio del arqueo (paso 7 de LectorDeMovimientosDelTurno),
@@ -59,8 +60,8 @@ public class LectorDeContenidoDeResumen(IWaysDbContext db)
                 i => i.IdComprobanteVenta,
                 c => c.Id,
                 (i, c) => new { i.IdArea, i.Total, c.IdTurnoCaja, c.Estado })
-            .Where(x => x.IdTurnoCaja == idTurnoCaja && x.Estado == EstadoComprobante.Emitido)
-            .GroupBy(x => x.IdArea)
+            .Where(x => x.IdTurnoCaja == idTurnoCaja && x.Estado == EstadoComprobante.Emitido && x.IdArea != null)
+            .GroupBy(x => x.IdArea!.Value)
             .Select(g => new { IdArea = g.Key, Total = g.Sum(x => x.Total) })
             .ToDictionaryAsync(x => x.IdArea, x => x.Total, ct);
 

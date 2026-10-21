@@ -51,10 +51,10 @@ comprobantes_venta (          -- [operativa]
 
 items_comprobante_venta (
     id_item, id_comprobante_venta, orden,
-    id_articulo integer NULL,                -- NULL solo en líneas de concepto libre
+    id_articulo integer NULL,                -- NULL solo en líneas de concepto libre (hoy, el "Envío": ver abajo)
     -- snapshot: el ticket se reimprime igual aunque el catálogo cambie
     descripcion text, codigo_barra text NULL,
-    id_area,
+    id_area integer NULL,                    -- el del artículo; NULL solo en líneas de concepto libre sin artículo (Envío)
     cantidad        numeric(12,3),
     precio_unitario numeric(14,2),           -- de la lista aplicada, ya resuelto
     id_lista_precio integer,                 -- con qué lista se vendió
@@ -92,6 +92,30 @@ Cambios de fondo respecto del legacy:
 `movimientos_stock` inversos y el contramovimiento de cuenta corriente si lo hubo.
 El bug de "restaurar suma stock" muere por diseño: el stock solo se mueve por
 movimientos, y los movimientos no se editan.
+
+**Venta con envío (línea de concepto libre).** Con `ConEnvio` en el pedido de venta, el servidor agrega UNA línea
+`items_comprobante_venta` sin artículo (`id_articulo` NULL) ya construida hoy: `descripcion` "Envío", `cantidad` 1,
+`precio_unitario` = el parámetro `importe_envio` del punto de venta (§9; con importe 0 no hay línea), sin descuento,
+oferta, combo, ajuste manual ni lote, con `costo_unitario` 0 (no hay mercadería que costear; así la cobertura de costo de
+rentabilidad no la cuenta como "sin costo" y su importe suma al margen), sin área (`id_area` NULL), y `id_alicuota_iva`/`porcentaje_iva` de la alícuota
+del 21 % (la fila con `codigo_afip` = 5), no la de ningún artículo. Entra al mismo cálculo de totales que el resto, así que
+`subtotal`, `total` y el desglose fiscal (neto gravado, IVA) la incluyen, y queda siempre AL FINAL de la venta. No genera
+`movimientos_stock`. El área es un atributo del artículo, así que `id_area` es NULL (migración `IdAreaNulableEnItemsDeVenta`, solo
+DDL, sin backfill, FK compuesta intacta): el envío nunca figura en un desglose por área, y sí en los totales de la venta y del
+turno (el desglose "ingresos por área" del resumen de turno queda por debajo del total por el monto de los envíos). Reglas del
+servidor:
+- exige un cliente que no sea Consumidor Final (400 `envio_requiere_cliente`) con `domicilio` no vacío (400
+  `envio_requiere_domicilio`);
+- sin `direccion_entrega` en el pedido, el comprobante guarda el domicilio del cliente;
+- el importe nunca viaja en el pedido: lo resuelve el servidor, también en una venta con número pre-asignado (la excepción
+  del importe que cobró el dispositivo offline es de la tarea del POS offline);
+- una nota de crédito o la conversión de un presupuesto con `ConEnvio` se rechaza (400 `envio_no_admitido`); la nota de crédito
+  de una venta con envío devuelve las líneas de artículo que se piden y NO devuelve el envío (no tiene artículo que elegir),
+  y la anulación revierte el stock por los movimientos, así que la línea sin artículo no estorba;
+- los reportes por artículo (top, ventas por artículo, consultas del conector) no ven la línea; rentabilidad la cuenta con costo 0
+  (suma al margen y arma una fila sin artículo "Envío"); el total de ventas y el total del resumen de turno la incluyen, el
+  desglose por área no. El
+  espejo fiscal y el libro IVA leen los items por alícuota, sin mirar el artículo, así que el envío entra a su 21 %.
 
 > **Estado (Etapa 9, stage-9-costo-congelado): implementada.** `items_comprobante_venta`
 > gana dos columnas adicionales al esquema de arriba, agregadas por la migración
