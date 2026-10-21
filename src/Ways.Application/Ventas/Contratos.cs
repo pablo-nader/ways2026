@@ -59,7 +59,9 @@ namespace Ways.Application.Ventas;
 /// (no Consumidor Final) con domicilio cargado (400 <c>envio_requiere_cliente</c> / <c>envio_requiere_domicilio</c>),
 /// resuelve el parámetro <c>importe_envio</c> del punto de venta y, si es mayor a cero, agrega UNA línea de concepto libre
 /// "Envío" (sin artículo, a 21 % de IVA) que suma al subtotal y al total. Sin <see cref="DireccionEntrega"/> propia, la
-/// dirección de entrega del comprobante sale del domicilio del cliente. Solo tiene sentido en una venta común: en una
+/// dirección de entrega del comprobante sale del domicilio del cliente. Una venta con número pre-asignado no pasa por esa
+/// exigencia: la caja ya la cobró después de validar el cliente contra su instantánea, y si el domicilio se borró después la
+/// dirección queda vacía. Solo tiene sentido en una venta común: en una
 /// nota de crédito o en la conversión de un presupuesto se rechaza (400 <c>envio_no_admitido</c>) en vez de ignorarse.
 ///
 /// <see cref="ImporteEnvio"/> (importe que cobró la caja): solo lo manda un dispositivo en una venta con número pre-asignado

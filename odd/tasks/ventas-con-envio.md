@@ -61,7 +61,7 @@ Forecast ~1,600 authored lines over four tasks.
   Route: delegated (one read-only explorer for the reader sweep + one bounded writer).
 - [x] T3 — POS web online: toggle defaulted from the PV flag, line + total, close blocked,
   ticket prints domicilio + teléfono. Route: delegated.
-- [ ] T5 — Judgment-day follow-ups of #480–#483: F1 offline sale vs current domicilio (owner decision), F2 envío
+- [x] T5 — Judgment-day follow-ups of #480–#483: F1 offline sale vs current domicilio (owner decision), F2 envío
   amount in the resend identity, F3 snapshot fallback when the online read fails, F4 teléfono en reimpresión
   (optional), F5 style nit.
 - [x] T4 — POS offline: snapshot carries amount + flag, outbox/synthetic ticket with the Envío
@@ -239,4 +239,11 @@ stacked PRs.
   Evidence: vitest `src/pos` + `src/paginas/Pos` 1438 ok.
 - F5 done (`ClienteParaEnvio = Pick<`).
 - F4 not done: optional, needs a client read in four `Proyectar` copies; left as a follow-up.
-- F1 pending: asked the owner whether pre-numbered sales trust the device's domicilio check.
+- F1 done (owner decision 2026-10-21: "confiar"; route: inline). A pre-numbered sale with envío no longer runs
+  `ExigirClienteConDomicilio`: the register already charged it after validating client and domicilio against its snapshot
+  (same trust as offline cuenta corriente). If the domicilio was cleared afterwards the sale is recorded with its Envío line
+  and no `DireccionEntrega` instead of landing in "rechazadas" forever; online sales keep the rule. Mutation evidence:
+  always validating -> the new offline test fails; never validating -> 5 online tests fail. The trust covers the whole rule,
+  Consumidor Final included (both judges flagged it as unpinned): pinned by its own test, killed by re-checking Consumidor
+  Final for pre-numbered sales; the `SolicitudDeVenta.ConEnvio` doc states the exception. Judgment-day: no severe findings.
+  Evidence: IntegrationTests `VentaConEnvioTests` 22 ok.

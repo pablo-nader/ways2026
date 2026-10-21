@@ -191,14 +191,15 @@ public class ServicioDeVentas(
             cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
         }
 
-        // Un reenvío de una venta offline que ya se emitió se resuelve ANTES de juzgar al cliente: el domicilio pudo
-        // borrarse después de la venta y el reenvío legítimo tiene que devolver el comprobante existente, no un 400. La
-        // guarda de idempotencia del final sigue comparando el contenido.
         var reenvioDeVentaYaEmitida = solicitud.NumeroPreasignado is { } numeroDelReenvio
             && await db.ComprobantesVenta.AnyAsync(
                 c => c.IdPuntoVenta == puntoVenta.Id && c.IdTipoComprobante == tipo.Id && c.Numero == numeroDelReenvio, ct);
 
-        if (solicitud.ConEnvio && !reenvioDeVentaYaEmitida)
+        // Una venta con número pre-asignado ya se cobró en la caja, que validó el cliente y su domicilio contra su
+        // instantánea (decisión del dueño 2026-10-21, como la cuenta corriente offline): si el domicilio se borró después,
+        // la venta se registra igual, sin dirección de entrega, en vez de quedar rechazada para siempre. La confianza cubre toda
+        // la regla, también la de Consumidor Final.
+        if (solicitud.ConEnvio && solicitud.NumeroPreasignado is null)
         {
             ReglaDeEnvio.ExigirClienteConDomicilio(cliente.EsConsumidorFinal, cliente.Domicilio);
         }
@@ -2842,7 +2843,7 @@ public class ServicioDeVentas(
     }
 
     /// <summary>La dirección que pide el operador manda; en una venta con envío que no trae una, el comprobante lleva el
-    /// domicilio del cliente (que <see cref="ReglaDeEnvio.ExigirClienteConDomicilio"/> ya garantizó que existe).</summary>
+    /// domicilio actual del cliente, que una venta con número pre-asignado puede no tener.</summary>
     private static string? DireccionDeEntrega(SolicitudDeVenta solicitud, Cliente cliente) =>
         NormalizarOpcional(solicitud.DireccionEntrega)
         ?? (solicitud.ConEnvio ? NormalizarOpcional(cliente.Domicilio) : null);

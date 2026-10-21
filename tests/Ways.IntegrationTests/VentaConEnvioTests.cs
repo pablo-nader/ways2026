@@ -788,12 +788,14 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
-    /// <summary>El reenvío legítimo de una venta ya emitida se resuelve antes de juzgar al cliente: aunque su domicilio se haya
-    /// borrado después, devuelve el comprobante existente. Un número nuevo con ese mismo cliente sí se rechaza.</summary>
+    /// <summary>Una venta con número pre-asignado ya se cobró en la caja, que validó el domicilio contra su instantánea: si
+    /// el domicilio se borró después, el reenvío devuelve el comprobante existente y una venta que llega por primera vez se
+    /// registra igual, con su línea Envío y sin dirección de entrega. La venta online sigue exigiéndolo (ver
+    /// ConEnvioYUnClienteSinDomicilioSeRechazaConEnvioRequiereDomicilio).</summary>
     [Fact]
-    public async Task ElReenvioDeUnaVentaYaEmitidaDevuelveElComprobanteAunqueElDomicilioSeHayaBorrado()
+    public async Task UnaVentaOfflineConEnvioSeRegistraAunqueElDomicilioSeHayaBorradoDespuesDeCobrarla()
     {
-        var ctx = await PrepararOfflineAsync(nameof(ElReenvioDeUnaVentaYaEmitidaDevuelveElComprobanteAunqueElDomicilioSeHayaBorrado));
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineConEnvioSeRegistraAunqueElDomicilioSeHayaBorradoDespuesDeCobrarla));
         await SembrarImporteDeEnvioAsync(ctx, "1500");
         var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
         var idCliente = await SembrarClienteAsync(ctx, Domicilio);
@@ -804,11 +806,35 @@ public class VentaConEnvioTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         var reenvio = await EmitirOkAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 1L, importeEnvio: 1000m));
         Assert.Equal(primera.Id, reenvio.Id);
         Assert.Equal(Domicilio, reenvio.DireccionEntrega);
-        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
 
-        Assert.Equal(
-            "envio_requiere_domicilio",
-            await CodigoDeRechazoAsync(ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 2L, importeEnvio: 1000m)));
+        var primeraLlegadaTrasElBorrado = await EmitirOkAsync(
+            ctx.Cliente, PedidoOffline(ctx, idCliente, idArticulo, 1100m, 2L, importeEnvio: 1000m));
+        Assert.NotEqual(primera.Id, primeraLlegadaTrasElBorrado.Id);
+        Assert.Null(primeraLlegadaTrasElBorrado.DireccionEntrega);
+        Assert.Equal(1100m, primeraLlegadaTrasElBorrado.Total);
+        Assert.Equal(1000m, Assert.Single(primeraLlegadaTrasElBorrado.Items, i => i.IdArticulo is null).Total);
+        Assert.Equal(2, await ContarComprobantesAsync(ctx.IdTenant));
+    }
+
+    /// <summary>La confianza en la caja cubre toda la regla del cliente, no solo el domicilio: una venta con número
+    /// pre-asignado a Consumidor Final con envío se registra con su línea Envío. La online se rechaza (ver
+    /// ConEnvioSinClienteOConConsumidorFinalSeRechazaConEnvioRequiereClienteYNoEscribeNada).</summary>
+    [Fact]
+    public async Task UnaVentaOfflineConEnvioAConsumidorFinalSeRegistraPorqueLaCajaYaLaCobro()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(UnaVentaOfflineConEnvioAConsumidorFinalSeRegistraPorqueLaCajaYaLaCobro));
+        await SembrarImporteDeEnvioAsync(ctx, "1500");
+        var idArticulo = await SembrarArticuloAsync(ctx, 100m, esProducto: false);
+
+        int idConsumidorFinal;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            idConsumidorFinal = (await db.Clientes.SingleAsync(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal)).Id;
+        }
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente, PedidoOffline(ctx, idConsumidorFinal, idArticulo, 1100m, 1L, importeEnvio: 1000m));
+        Assert.Equal(1000m, Assert.Single(emitido.Items, i => i.IdArticulo is null).Total);
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
