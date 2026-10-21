@@ -45,6 +45,14 @@ import { clienteDeClientes } from '../api/clientes'
 import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
+import {
+  importeDeEnvioAplicado,
+  MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE,
+  MENSAJE_DE_ENVIO_SIN_CONEXION,
+  MENSAJE_DE_ENVIO_SIN_IMPORTE,
+  mensajeDeRechazoDeEnvio,
+  motivoDeEnvioBloqueado,
+} from '../pos/envio'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
@@ -886,6 +894,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [recargaDeParametros, setRecargaDeParametros] = useState(0)
   const generacionParametrosRef = useRef(0)
 
+  // "Con envío": `null` = el cajero todavía no lo tocó en esta venta, y rige el valor por defecto del punto de venta
+  // (`conEnvio`, más abajo). Cada venta nueva (cobrada o con el carrito vaciado) vuelve a `null`.
+  const [conEnvioElegido, setConEnvioElegido] = useState<boolean | null>(() => borradorInicial?.conEnvio ?? null)
+  // Importe de la línea Envío (`importe_envio`) del punto de venta; solo se pide con el envío tildado.
+  const [importeEnvio, setImporteEnvio] = useState<number | null>(null)
+  const [errorImporteEnvio, setErrorImporteEnvio] = useState(false)
+  const generacionImporteEnvioRef = useRef(0)
+
   const proximaFilaPagoIdRef = useRef(borradorInicial?.proximoIdFilaPago ?? 1)
   const [filasPago, setFilasPago] = useState<FilaPago[]>(
     () => borradorInicial?.filasPago ?? [filaPagoInicial(proximaFilaPagoIdRef.current++, null)],
@@ -1100,6 +1116,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // de arranque.
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
+
+  // Bajo un presupuesto la venta nunca lleva envío (el servidor lo rechaza con `envio_no_admitido`).
+  const conEnvio = !modoPresupuesto && (conEnvioElegido ?? puntoVentaSeleccionada?.envioPorDefecto ?? false)
 
   // Cada vez que el drenado saca ventas de la cola, lo que el servidor sabe del saldo cambió: el que está en
   // pantalla deja de estar confirmado (y los recibos y tickets en vuelo que lo leyeron antes lo saben por el
@@ -1428,8 +1447,45 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       filasPago,
       proximoIdFilaPago: proximaFilaPagoIdRef.current,
       clienteSeleccionado,
+      conEnvio: conEnvioElegido,
     })
-  }, [claveBorrador, almacenBorradores, lineas, precios, cantidadesEnEdicion, filasPago, clienteSeleccionado])
+  }, [claveBorrador, almacenBorradores, lineas, precios, cantidadesEnEdicion, filasPago, clienteSeleccionado, conEnvioElegido])
+
+  // react-async-state regla 2: el importe del envío se pide solo con el envío tildado y con conexión (la venta con envío
+  // no se encola sin red); una respuesta desactualizada nunca pisa a la más reciente. Destildar y volver a tildar
+  // reintenta una lectura fallida.
+  const hayConexion = sincronizacionOffline.enLinea
+  useEffect(() => {
+    if (!conEnvio || !hayConexion || !puntoVentaSeleccionada) return
+
+    const generacion = (generacionImporteEnvioRef.current += 1)
+    let vigente = true
+    setErrorImporteEnvio(false)
+
+    api
+      .get<ParametroResuelto>(
+        `/parametros/importe_envio?idEmpresa=${puntoVentaSeleccionada.idEmpresa}&idPuntoVenta=${puntoVentaSeleccionada.id}`,
+      )
+      .then((parametro) => {
+        if (!vigente || generacionImporteEnvioRef.current !== generacion) return
+        const importe = Number(parametro.valor)
+        if (!Number.isFinite(importe)) {
+          setImporteEnvio(null)
+          setErrorImporteEnvio(true)
+          return
+        }
+        setImporteEnvio(importe)
+      })
+      .catch(() => {
+        if (!vigente || generacionImporteEnvioRef.current !== generacion) return
+        setImporteEnvio(null)
+        setErrorImporteEnvio(true)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [conEnvio, hayConexion, puntoVentaSeleccionada])
 
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
   // tolerancia_pago (ADR-13: punto de venta > empresa > default) — una respuesta desactualizada
@@ -2886,7 +2942,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * servidor y el ticket conservan el orden de agregado. */
   const lineasEnPantalla = [...lineas].reverse()
 
-  const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
+  const subtotalDeLineas = calcularSubtotalPrevia(lineas, precios)
+  // La línea Envío entra al total como una línea más; el servidor la calcula con su propio `importe_envio` al cobrar.
+  const importeDelEnvio = importeDeEnvioAplicado({ conEnvio, importe: importeEnvio, hayLineas: lineas.length > 0 })
+  const subtotalPrevia = subtotalDeLineas === null ? null : subtotalDeLineas + importeDelEnvio
+  // Por qué no se puede cerrar la venta con envío (cliente, conexión o importe); `null` sin envío o con todo en orden.
+  const motivoDeEnvio = !conEnvio
+    ? null
+    : !hayConexion
+      ? MENSAJE_DE_ENVIO_SIN_CONEXION
+      : (motivoDeEnvioBloqueado(clienteSeleccionado) ??
+        (errorImporteEnvio ? MENSAJE_DE_ENVIO_IMPORTE_NO_DISPONIBLE : importeEnvio === null ? MENSAJE_DE_ENVIO_SIN_IMPORTE : null))
   const ajustesManuales = calcularAjustesManualesPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
   // resolución de precios (que ni siquiera corre) — sale del propio presupuesto congelado.
@@ -2928,7 +2994,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           saldoCliente: clienteSeleccionado.saldo,
           limiteCredito: clienteSeleccionado.limiteCredito,
           creditoIlimitado: clienteSeleccionado.creditoIlimitado,
-          exigirLimiteDeCredito: !previaLocal,
+          // Una venta con envío nunca se cobra por la vista previa local: el límite lo juzga el servidor al cobrar.
+          exigirLimiteDeCredito: !previaLocal || conEnvio,
         })
 
   // Aviso, nunca bloqueo: con la vista previa local el límite lo decide el servidor al cobrar (o,
@@ -2967,6 +3034,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       lineasPorImporteObsoletas.length === 0 &&
       lineas.length > 0 &&
       lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
+      motivoDeEnvio === null &&
       clienteSeleccionado !== null &&
       puntoVentaSeleccionada !== null &&
       medios !== null &&
@@ -3271,6 +3339,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               direccionEntrega: null,
               observaciones: null,
               forzarFactura,
+              conEnvio,
             })
 
       // Solo una venta que seguro se factura y tiene conexión espera la respuesta fiscal; el resto imprime el ticket al instante.
@@ -3379,7 +3448,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // las líneas con precio, números reservados): si rechaza, sigue el camino online de
         // siempre. Salvo un rechazo que el servidor ya contestó (límite superado o consulta
         // rechazada): ese se informa y la venta no se manda online sin número.
-        const instantaneaDeLaPrevia = instantaneaDeLaVistaPreviaRef.current
+        // Una venta con envío nunca entra al outbox: la cola no lleva la línea Envío y se la perdería en silencio.
+        const instantaneaDeLaPrevia = conEnvio ? null : instantaneaDeLaVistaPreviaRef.current
         if (instantaneaDeLaPrevia !== null) {
           const local = await encolarLocal(instantaneaDeLaPrevia)
           if (generacionCobroRef.current !== miGeneracion) return null
@@ -3455,6 +3525,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
       setFacturar(false)
+      setConEnvioElegido(null)
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
       setErrorEscaneo('')
@@ -3493,7 +3564,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       } else {
         setErrorCobro(
           copiaDeArticuloNoVendible(e) ??
-            (e instanceof ErrorApi ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? e.message) : 'No se pudo registrar la venta.'),
+            (e instanceof ErrorApi
+              ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? mensajeDeRechazoDeEnvio(e.codigo) ?? e.message)
+              : 'No se pudo registrar la venta.'),
         )
       }
     } finally {
@@ -3639,6 +3712,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   function confirmarVaciado() {
     setVaciandoCarrito(false)
+    setConEnvioElegido(null)
     mutarCarrito({ tipo: 'vaciar' })
     pedirFocoEnElCodigo()
   }
@@ -3916,6 +3990,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   />
                 )}
                 {clienteSeleccionado && !clienteSeleccionado.esConsumidorFinal && <ChipDeSaldo cliente={clienteSeleccionado} />}
+                {!modoPresupuesto && (
+                  <div className="form-check mb-0 flex-shrink-0 text-nowrap">
+                    <input
+                      id="pos-con-envio"
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={conEnvio}
+                      // Sin conexión no se puede tildar (la venta con envío no se encola); sí destildar.
+                      disabled={pantallaCobroInerte || bloqueadoPorTurno || (!hayConexion && !conEnvio)}
+                      title={!hayConexion && !conEnvio ? 'Sin conexión: la venta con envío necesita conexión.' : undefined}
+                      onChange={(e) => setConEnvioElegido(e.target.checked)}
+                    />
+                    <label className="form-check-label" htmlFor="pos-con-envio">
+                      Con envío
+                    </label>
+                  </div>
+                )}
               </>
             }
           >
@@ -4168,6 +4259,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                           </tr>
                         )
                       })}
+                  {!modoPresupuesto && importeDelEnvio > 0 && (
+                    <tr>
+                      <td>—</td>
+                      <td>Envío</td>
+                      <td>1</td>
+                      <td className="text-end">{formatearMoneda(importeDelEnvio)}</td>
+                      <td className="text-end">—</td>
+                      <td className="text-end">{formatearMoneda(importeDelEnvio)}</td>
+                      <td className="text-end">—</td>
+                    </tr>
+                  )}
                   {(modoPresupuesto ? (presupuesto?.items.length ?? 0) === 0 : lineas.length === 0) && (
                     <tr>
                       <td colSpan={7} className="text-center text-muted py-4">
@@ -4338,6 +4440,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </div>
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+
+            {motivoDeEnvio && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {motivoDeEnvio}
+              </div>
+            )}
 
             {lineasPorImporteObsoletas.length > 0 && (
               <div className="alert alert-warning py-1 px-2 small" role="status">

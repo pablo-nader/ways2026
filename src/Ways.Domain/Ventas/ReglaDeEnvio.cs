@@ -5,7 +5,7 @@ namespace Ways.Domain.Ventas;
 /// <summary>
 /// Reglas puras de una venta con envío. El envío es una línea de concepto libre del comprobante
 /// (<c>items_comprobante_venta.id_articulo</c> NULL): cantidad 1, sin descuento, oferta, combo ni ajuste manual, y
-/// fuera de stock, costo y lotes. Entra al <see cref="CalculadorDeTotales"/> como cualquier otra línea, así que
+/// fuera de stock y lotes, y con costo 0 (cuenta en la rentabilidad como una línea de costo conocido). Entra al <see cref="CalculadorDeTotales"/> como cualquier otra línea, así que
 /// subtotal, total e IVA la incluyen.
 /// </summary>
 public static class ReglaDeEnvio

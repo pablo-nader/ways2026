@@ -349,6 +349,14 @@ describe('aSolicitudDeVenta — forzarFactura', () => {
     expect(aSolicitudDeVenta(base)).not.toHaveProperty('forzarFactura')
   })
 
+  it('con envío manda conEnvio: true y nunca un importe; apagado o ausente omite la clave', () => {
+    const conEnvio = aSolicitudDeVenta({ ...base, conEnvio: true })
+    expect(conEnvio.conEnvio).toBe(true)
+    expect(conEnvio.lineas.every((l) => !('importe' in l))).toBe(true)
+    expect(aSolicitudDeVenta({ ...base, conEnvio: false })).not.toHaveProperty('conEnvio')
+    expect(aSolicitudDeVenta(base)).not.toHaveProperty('conEnvio')
+  })
+
   it('la solicitud de conversión de un presupuesto nunca lo lleva', () => {
     expect(aSolicitudDeVentaDesdePresupuesto(7, 12, base.pagos)).not.toHaveProperty('forzarFactura')
   })

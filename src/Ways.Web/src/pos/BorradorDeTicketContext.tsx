@@ -28,6 +28,9 @@ export type BorradorDeTicket = {
    * fila restaurada. */
   proximoIdFilaPago: number
   clienteSeleccionado: ClienteListado | null
+  /** Lo que el cajero eligió en "Con envío"; `null` o ausente (un borrador anterior al campo) = sin elegir, la venta
+   * arranca con el valor por defecto del punto de venta. */
+  conEnvio?: boolean | null
 }
 
 export type AlmacenDeBorradoresDeTicket = {

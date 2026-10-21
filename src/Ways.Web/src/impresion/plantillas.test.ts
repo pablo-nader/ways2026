@@ -275,6 +275,57 @@ describe('ticketDeVenta — cliente identificado con su saldo', () => {
   })
 })
 
+describe('ticketDeVenta — entrega a domicilio', () => {
+  const MEDIOS = [medioFixture({ id: 1, comportamiento: 'Efectivo' })]
+  const DOMICILIO = 'Mitre 123, piso 4 depto B, Rosario'
+
+  it('con domicilio de entrega imprime el domicilio y el teléfono debajo del cajero', () => {
+    const lineas = lineasDe(
+      ticketDeVenta(comprobanteFixture({ direccionEntrega: DOMICILIO }), CONTEXTO, MEDIOS, { telefonoDeEntrega: '341-5550000' }),
+    )
+    expect(lineas).toContain('ENTREGA A DOMICILIO')
+    expect(lineas).toContain(`Domicilio: ${DOMICILIO}`)
+    expect(lineas).toContain('Telefono: 341-5550000')
+    expect(lineas.indexOf('ENTREGA A DOMICILIO')).toBeGreaterThan(lineas.indexOf('Cajero: jperez'))
+  })
+
+  it('sin domicilio de entrega no imprime el bloque, aunque haya teléfono', () => {
+    for (const direccionEntrega of [null, '   ']) {
+      const texto = textoPlano(ticketDeVenta(comprobanteFixture({ direccionEntrega }), CONTEXTO, MEDIOS, { telefonoDeEntrega: '341-5550000' }))
+      expect(texto).not.toContain('ENTREGA A DOMICILIO')
+      expect(texto).not.toContain('Telefono')
+    }
+  })
+
+  it('sin teléfono imprime solo el domicilio', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture({ direccionEntrega: DOMICILIO }), CONTEXTO, MEDIOS))
+    expect(texto).toContain(`Domicilio: ${DOMICILIO}`)
+    expect(texto).not.toContain('Telefono')
+  })
+
+  it('una reimpresión imprime el domicilio del comprobante y no inventa un teléfono', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture({ direccionEntrega: DOMICILIO }), CONTEXTO, MEDIOS, { reimpresion: true }))
+    expect(texto).toContain(`Domicilio: ${DOMICILIO}`)
+    expect(texto).not.toContain('Telefono')
+  })
+
+  it('un domicilio largo se parte entre palabras bajo su rótulo y ninguna línea excede el ancho', () => {
+    const largo = 'Avenida Libertador General San Martin 12345, torre norte, piso 12, departamento C, Barrio Parque'
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture({ direccionEntrega: largo }), CONTEXTO, MEDIOS))
+    const desde = lineas.indexOf('ENTREGA A DOMICILIO') + 1
+    const bloque = lineas.slice(desde, desde + 3)
+    expect(bloque[0].startsWith('Domicilio: Avenida Libertador')).toBe(true)
+    expect(bloque[1].startsWith(' '.repeat('Domicilio: '.length))).toBe(true)
+    expect(lineas.every((l) => l.length <= COLUMNAS_FUENTE_A)).toBe(true)
+    expect(bloque.map((l) => l.trim()).join(' ').replace('Domicilio: ', '')).toContain('Barrio Parque')
+  })
+
+  it('una palabra más larga que el ancho se corta en vez de desbordar la línea', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture({ direccionEntrega: 'x'.repeat(120) }), CONTEXTO, MEDIOS))
+    expect(lineas.every((l) => l.length <= COLUMNAS_FUENTE_A)).toBe(true)
+  })
+})
+
 describe('ticketDePagoACuenta', () => {
   const MEDIOS = [
     medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo' }),

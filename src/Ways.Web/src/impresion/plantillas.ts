@@ -57,11 +57,54 @@ export type ClienteConSaldoEnTicket = {
 /** `cliente` solo se pasa para un cliente identificado (nunca el Consumidor Final): agrega su nombre
  * y su saldo antes y después de la venta. Una reimpresión los ignora, porque no conoce los saldos de
  * aquel momento. */
-export type OpcionesDeTicketDeVenta = { reimpresion?: boolean; cliente?: ClienteConSaldoEnTicket }
+export type OpcionesDeTicketDeVenta = {
+  reimpresion?: boolean
+  cliente?: ClienteConSaldoEnTicket
+  /** Teléfono del cliente para quien entrega, solo en la venta recién emitida: el comprobante no lo trae, así que una
+   * reimpresión imprime el domicilio y no el teléfono. */
+  telefonoDeEntrega?: string | null
+}
 
 /** Recortada al ancho del ticket con el mismo helper de columnas, para que un nombre largo no parta la línea. */
 function lineaDeCliente(cliente: { numero: number; nombre: string }): string {
   return dosColumnas(`Cliente: #${cliente.numero} - ${cliente.nombre}`, '').trimEnd()
+}
+
+/** Parte `texto` en líneas de hasta `ancho` columnas cortando entre palabras; una palabra más larga que el ancho se corta. */
+function partirEnLineas(texto: string, ancho: number): string[] {
+  const lineas: string[] = []
+  let actual = ''
+  for (const palabra of texto.split(/\s+/).filter(Boolean)) {
+    let resto = palabra
+    while (resto.length > ancho) {
+      if (actual) {
+        lineas.push(actual)
+        actual = ''
+      }
+      lineas.push(resto.slice(0, ancho))
+      resto = resto.slice(ancho)
+    }
+    if (actual && actual.length + 1 + resto.length > ancho) {
+      lineas.push(actual)
+      actual = resto
+    } else {
+      actual = actual ? `${actual} ${resto}` : resto
+    }
+  }
+  if (actual) lineas.push(actual)
+  return lineas
+}
+
+/** Bloque para quien entrega: solo si el comprobante tiene domicilio de entrega (una venta con envío). El domicilio ocupa
+ * las líneas que necesite, alineadas bajo su rótulo. */
+function bloqueDeEntrega(ticket: ConstructorDeTicket, direccion: string | null, telefono: string | null | undefined): void {
+  if (!direccion?.trim()) return
+  const rotulo = 'Domicilio: '
+  ticket.negrita(true).linea('ENTREGA A DOMICILIO').negrita(false)
+  partirEnLineas(direccion, COLUMNAS_FUENTE_A - rotulo.length).forEach((linea, i) =>
+    ticket.linea(`${i === 0 ? rotulo : ' '.repeat(rotulo.length)}${linea}`),
+  )
+  if (telefono?.trim()) ticket.linea(`Telefono: ${telefono.trim()}`.slice(0, COLUMNAS_FUENTE_A))
 }
 
 const ABREVIATURAS_DE_SALDO: Record<string, string> = {
@@ -212,6 +255,7 @@ function armarComprobanteDeVenta(
   }
   ticket.linea(`Cajero: ${contexto.cajero}`)
   if (clienteConSaldo) ticket.linea(lineaDeCliente(clienteConSaldo))
+  if (!esNotaDeCredito) bloqueDeEntrega(ticket, comprobante.direccionEntrega, opciones.telefonoDeEntrega)
   ticket.lineaDeGuiones()
   if (factura?.receptor) bloqueDeReceptor(ticket, factura.receptor)
 

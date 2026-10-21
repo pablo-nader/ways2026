@@ -227,4 +227,39 @@ public class ServicioDeParametrosTests
         Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
     }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1500.123")]
+    [InlineData("1000000000000")]
+    public async Task EstablecerAsyncRechazaUnImporteDeEnvioInvalido(string valorJson)
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnImporteDeEnvioInvalido) + valorJson;
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = CrearServicio(nombreDeBase);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("importe_envio", valorJson, null)));
+
+        Assert.Equal("parametro_importe_envio_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1500")]
+    [InlineData("1500.5")]
+    [InlineData("999999999999.99")]
+    public async Task EstablecerAsyncAceptaUnImporteDeEnvioValido(string valorJson)
+    {
+        var nombreDeBase = nameof(EstablecerAsyncAceptaUnImporteDeEnvioValido) + valorJson;
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = CrearServicio(nombreDeBase);
+
+        var parametro = await servicio.EstablecerAsync(idEmpresaA, new ParametroAlta("importe_envio", valorJson, null));
+
+        Assert.Equal(valorJson, parametro.Valor);
+    }
 }
