@@ -19,7 +19,8 @@ parametros (                  -- [operativa a nivel punto de venta, con fallback
     clave citext, valor jsonb
 );
 -- tolerancia_pago, importe_adicional_recarga, slots_tickets_espera…
--- importe_envio: importe de la línea "Envío" de una venta con envío (decimal, default 0)
+-- importe_envio: importe de la línea "Envío" de una venta con envío (decimal, default 0; de 0 a
+--   999999999999.99 con hasta 2 decimales, 400 `parametro_importe_envio_invalido`)
 -- redondeo_sugerencia_precio: múltiplo al que se redondea el precio sugerido (decimal, default 100)
 ```
 

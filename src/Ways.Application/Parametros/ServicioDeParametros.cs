@@ -130,6 +130,9 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         return new ParametroListado(existente.Id, existente.Clave, existente.Valor, existente.IdPuntoVenta);
     }
 
+    /// <summary>Tope de <c>numeric(14,2)</c>, la columna donde termina el importe de la línea Envío.</summary>
+    private const decimal ImporteMaximoDeEnvio = 999_999_999_999.99m;
+
     private static bool DeserializarBool(string valorJson) => JsonSerializer.Deserialize<bool>(valorJson);
 
     /// <summary>Sin cambio de esquema (decisión del usuario, judgment-day slice 3 ronda 1):
@@ -178,6 +181,18 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
                 "parametro_tipo_invalido",
                 $"El valor de '{conocido.Clave}' tiene que ser un {conocido.TipoClr.Name} válido.",
                 400);
+        }
+
+        if (conocido.Clave == ParametroConocido.ImporteEnvio.Clave)
+        {
+            var importe = (decimal)valor;
+            if (importe < 0m || decimal.Round(importe, 2) != importe || importe > ImporteMaximoDeEnvio)
+            {
+                throw new ErrorDominio(
+                    "parametro_importe_envio_invalido",
+                    $"El importe del envío tiene que ser de 0 a {ImporteMaximoDeEnvio:0.00} y tener como máximo 2 decimales.",
+                    400);
+            }
         }
 
         if (conocido.Clave == ParametroConocido.ZonaHoraria.Clave)
