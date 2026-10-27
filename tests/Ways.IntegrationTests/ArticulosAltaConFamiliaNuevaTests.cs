@@ -93,7 +93,7 @@ public class ArticulosAltaConFamiliaNuevaTests(WaysApiFixture fixture) : IClassF
     // =================================================================================================
 
     /// <summary>El pedido crea el artículo y la familia (activa, con el nombre sin espacios en los extremos) en la misma
-    /// transacción: el artículo es su único miembro, la respuesta trae su <c>idFamilia</c>, sus quince campos compartidos
+    /// transacción: el artículo es su único miembro, la respuesta trae su <c>idFamilia</c>, sus dieciséis campos compartidos
     /// y sus campos propios son los del pedido, no se escribe ningún precio y la familia y el artículo comparten el
     /// instante de creación.</summary>
     [Fact]

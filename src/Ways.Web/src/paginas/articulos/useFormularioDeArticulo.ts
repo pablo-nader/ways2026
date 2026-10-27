@@ -664,7 +664,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
   }
 
   /** "Confirmar y unir a la familia": suma al artículo a la familia elegida, que lo alinea con su referencia (reemplaza sus
-   * quince valores compartidos y sus precios de lista fija). Después se vuelve a leer el artículo. */
+   * dieciséis valores compartidos y sus precios de lista fija). Después se vuelve a leer el artículo. */
   async function confirmarUnion() {
     if (escrituraEnCursoRef.current) return
     if (!formulario || formulario.id === null || unionElegida === '') return

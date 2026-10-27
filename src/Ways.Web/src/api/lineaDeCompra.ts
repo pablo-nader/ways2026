@@ -1,6 +1,6 @@
 /**
  * Línea del formulario de compras tal como la ve la grilla (Código, Detalle, UM, Cantidad, Importe,
- * Descuento %, IVA) y su traducción a lo que la API guarda (`unidades`/`bultos`/`unidadesPorBulto`/
+ * Descuento %, IVA, Imp. internos) y su traducción a lo que la API guarda (`unidades`/`bultos`/`unidadesPorBulto`/
  * `costoUnitario`/`descuento` en monto). Todo puro y sin DOM: `valoresParaApi` es la única fuente
  * que comparten lo que se envía (`aLineaSolicitada`) y lo que se calcula en pantalla
  * (`lineaFormularioACalculo`), así ninguno puede divergir del otro. La cuenta usa aritmética
@@ -519,7 +519,9 @@ export type AlicuotasDePrecarga = { delArticulo: number | null; deLaFila: number
  * precarga el costo guardado tal cual, sin sumar y volver a quitar el IVA (evita el redondeo de ida y
  * vuelta). Si la lista no se puede usar (bulto sin unidades por bulto, o sin IVA y sin alícuota
  * conocida) o el artículo no tiene lista, se usa el costo nominal (el de reposición, que ya es neto de
- * descuento y viene por unidad con IVA). `null` en ambos = el rol no ve costos o no hay ninguno.
+ * descuento y viene por unidad con IVA). El impuesto interno va en su propia columna cuando el comprobante discrimina
+ * IVA, así que se quita del costo (un costo de lista con IVA ya lo trae; el nominal también); si no discrimina, la línea
+ * lo fuerza a 0 y el costo lo conserva (a una lista sin IVA se le suma). `null` en ambos = el rol no ve costos o no hay ninguno.
  */
 export function costoDeArticuloParaCompra(
   articulo: ArticuloConCosto,
@@ -538,9 +540,17 @@ export function costoDeArticuloParaCompra(
     const descuentoPorcentaje = articulo.descuentoProveedor
     const netea = modo !== undefined && modo.discriminaIva && !modo.preciosIncluyenIva && deLaFila !== null
 
-    if (incluyeIva) return { importe: redondearImporte(importeSegunModoDePrecios(porUnidad, deLaFila, modo), 4), descuentoPorcentaje }
+    const porcentajeInterno = articulo.porcentajeImpuestoInterno ?? 0
+    // Un comprobante que no discrimina IVA fuerza el impuesto interno de la línea a 0: el costo conserva el que trae.
+    const quitaImpuestoInterno = modo?.discriminaIva !== false
+    const interno = quitaImpuestoInterno || !(porcentajeInterno > 0) ? 0 : porcentajeInterno
+
+    if (incluyeIva) {
+      const sinInterno = quitaImpuestoInterno ? costoConIvaSinImpuestoInterno(porUnidad, delArticulo, porcentajeInterno) : porUnidad
+      return { importe: redondearImporte(importeSegunModoDePrecios(sinInterno, deLaFila, modo), 4), descuentoPorcentaje }
+    }
     if (!netea || deLaFila === delArticulo) {
-      const importe = netea ? porUnidad : productoRedondeado([porUnidad, 100 + (delArticulo as number), 0.01], 6)
+      const importe = netea ? porUnidad : productoRedondeado([porUnidad, 100 + (delArticulo as number) + interno, 0.01], 6)
       return { importe: redondearImporte(importe, 4), descuentoPorcentaje }
     }
     const importe = redondearImporte(productoRedondeado([porUnidad, 100 + (delArticulo as number)], 6) / (100 + deLaFila), 4)
@@ -548,8 +558,10 @@ export function costoDeArticuloParaCompra(
   }
 
   if (articulo.costoNominal !== null) {
-    const sinImpuestoInterno = costoConIvaSinImpuestoInterno(articulo.costoNominal, delArticulo, articulo.porcentajeImpuestoInterno ?? 0)
-    return { importe: redondearImporte(importeSegunModoDePrecios(sinImpuestoInterno, deLaFila, modo), 4), descuentoPorcentaje: null }
+    const nominal = modo?.discriminaIva !== false
+      ? costoConIvaSinImpuestoInterno(articulo.costoNominal, delArticulo, articulo.porcentajeImpuestoInterno ?? 0)
+      : articulo.costoNominal
+    return { importe: redondearImporte(importeSegunModoDePrecios(nominal, deLaFila, modo), 4), descuentoPorcentaje: null }
   }
   return null
 }

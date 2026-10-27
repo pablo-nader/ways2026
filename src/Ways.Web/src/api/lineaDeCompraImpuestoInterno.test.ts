@@ -249,10 +249,40 @@ describe('costoDeArticuloParaCompra — el costo nominal de respaldo sale sin el
     expect(costoDeArticuloParaCompra({ ...sinLista, costoNominal: 121, porcentajeImpuestoInterno: null }, { delArticulo: 21, deLaFila: 21 }, FINAL)?.importe).toBe(121)
   })
 
-  it('en un comprobante que no discrimina IVA no hay impuesto interno: el nominal con IVA se usa tal cual menos el excise', () => {
-    // sin discriminar no se admite excise: el costo precargado es el nominal sin el excise, con IVA
+  it('en un comprobante que no discrimina IVA el excise va dentro del costo: el nominal se usa tal cual', () => {
+    // sin discriminar la línea fuerza el excise a 0, así que el costo todo incluido conserva el excise
     const costo = costoDeArticuloParaCompra({ ...sinLista, porcentajeImpuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, SIN_DISCRIMINAR)
 
-    expect(costo?.importe).toBe(121)
+    expect(costo?.importe).toBe(129)
+  })
+})
+
+describe('costoDeArticuloParaCompra — impuesto interno por origen del costo y modo del comprobante', () => {
+  const alicuotasDe21 = { delArticulo: 21, deLaFila: 21 }
+  // Neto 100 con IVA 21 % e impuesto interno 8 %: sin IVA 100, con IVA 121, todo incluido 129.
+  const listaSinIva = { costoLista: 100, costoListaIncluyeIva: false, descuentoProveedor: null, costoNominal: 129, porcentajeImpuestoInterno: 8 }
+  const listaConIva = { costoLista: 129, costoListaIncluyeIva: true, descuentoProveedor: null, costoNominal: 129, porcentajeImpuestoInterno: 8 }
+  const soloNominal = { costoLista: null, descuentoProveedor: null, costoNominal: 129, porcentajeImpuestoInterno: 8 }
+
+  it.each([
+    ['lista sin IVA', listaSinIva, NETO, 100],
+    ['lista sin IVA', listaSinIva, FINAL, 121],
+    ['lista sin IVA', listaSinIva, SIN_DISCRIMINAR, 129],
+    ['lista con IVA', listaConIva, NETO, 100],
+    ['lista con IVA', listaConIva, FINAL, 121],
+    ['lista con IVA', listaConIva, SIN_DISCRIMINAR, 129],
+    ['nominal de respaldo', soloNominal, NETO, 100],
+    ['nominal de respaldo', soloNominal, FINAL, 121],
+    ['nominal de respaldo', soloNominal, SIN_DISCRIMINAR, 129],
+  ])('%s, %j: el importe precargado no cuenta el excise dos veces', (_origen, datos, modo, esperado) => {
+    expect(costoDeArticuloParaCompra(datos, alicuotasDe21, modo)?.importe).toBe(esperado)
+  })
+
+  it('el importe precargado más el excise automático de la línea es el costo todo incluido del servidor', () => {
+    const importe = costoDeArticuloParaCompra(listaConIva, alicuotasDe21, NETO)?.importe ?? 0
+    const sugerido = impuestoInternoSugerido(linea({ importe, cantidad: '1' }), PORCENTAJES, NETO)
+
+    // 100 neto + 21 de IVA + 8 de excise = 129
+    expect(importe * 1.21 + sugerido).toBeCloseTo(129, 2)
   })
 })

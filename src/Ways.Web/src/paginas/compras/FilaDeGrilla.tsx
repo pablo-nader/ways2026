@@ -222,7 +222,7 @@ export function FilaDeGrilla({
               decimales={DECIMALES_DE_IMPUESTO_INTERNO}
               valor={tieneDatos ? impuestoInterno : null}
               disabled={disabled}
-              onChange={(v) => onCambio(clave, { impuestoInterno: v })}
+              onChange={(v) => onCambio(clave, { impuestoInterno: linea.impuestoInterno === null && v === impuestoInterno ? null : v })}
             />
           ) : null}
         </td>

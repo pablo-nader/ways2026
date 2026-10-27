@@ -34,7 +34,7 @@ export function bultoSinUnidades(por: CostoListaPor, unidadesPorBulto: number | 
 /**
  * `true` si alguna entrada que cuenta para el cálculo cambió: el costo de lista, su base, su IVA y el descuento
  * siempre; las unidades por bulto solo mientras la base es bulto, antes o después; el porcentaje de la alícuota
- * solo mientras el costo se guarda sin IVA, antes o después. Es la misma regla del servidor: si ninguna cambió,
+ * y el de impuestos internos (cualquiera de los dos) solo mientras el costo se guarda sin IVA, antes o después. Es la misma regla del servidor: si ninguna cambió,
  * el costo nominal guardado se conserva (puede ser el efectivo que dejó una compra).
  */
 export function cambiaAlgunaEntrada(anterior: EntradasDeCosto, nueva: EntradasDeCosto): boolean {

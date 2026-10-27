@@ -105,6 +105,11 @@ Forecast ~1,000 authored lines over two tasks.
   shows no excise column (always 0). `docs/10-modelo-de-datos/03-articulos--familias-de-articulos.md` still lists fifteen shared columns
   (outside T2 surfaces).
 
+- Judgment day round 2 fixes (JD3-JD6): tabbing through the "Imp. internos" cell no longer freezes an automatic line (a blur that
+  emits the displayed suggestion keeps `impuestoInterno` null); the cost prefill no longer counts the excise twice (a list cost with
+  IVA strips it when the invoice discriminates IVA) and keeps it when the invoice does not discriminate (nominal and list-without-IVA
+  paths); stale "quince" shared-field comments now say "dieciséis". Tests: grid focus/Tab and typed-value cases, mode x origin matrix.
+
 ## Next step
 
 Open the single T1 + T2 PR (judgment-day first).

@@ -80,7 +80,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
 
     /// <summary>La previsualización completa del escenario, con cada campo leído con valores distintos: los artículos que
     /// se pueden alinear (el ya idéntico incluido, sin cambios), ascendentes por id y SIN los de otra familia, dado de baja
-    /// o inexistentes; por cada uno las columnas que difieren con los quince valores actuales y nuevos, y el cambio de
+    /// o inexistentes; por cada uno las columnas que difieren con los dieciséis valores actuales y nuevos, y el cambio de
     /// precios de cada lista fija en la que cambia; y los cuatro problemas, en el orden en que el pedido real los
     /// rechaza: los artículos inexistentes (el dado de baja y el id que no existe, ascendentes), el que ya está en otra
     /// familia, y el precio que no se puede alinear.</summary>

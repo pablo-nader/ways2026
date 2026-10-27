@@ -49,8 +49,8 @@ function sonIguales(fila: LineaDeCompraFormulario, cambios: Partial<LineaDeCompr
 }
 
 /**
- * Grilla de items de un borrador de compra: Código, Detalle, UM, Cantidad, Importe, Descuento, IVA
- * y Total. Siempre cierra con una fila vacía (la mantiene el padre con `normalizarFilas`). Tab y
+ * Grilla de items de un borrador de compra: Código, Detalle, UM, Cantidad, Importe, Descuento, IVA,
+ * Imp. internos y Total. Siempre cierra con una fila vacía (la mantiene el padre con `normalizarFilas`). Tab y
  * Shift+Tab recorren las celdas en orden de lectura y pasan de fila; Enter en una celda (sin lista
  * de artículos abierta) va al Código de la fila siguiente; el botón de quitar queda fuera del
  * orden de tabulación (Alt+Supr quita la fila donde está el foco). Resuelve el código del proveedor al salir de su celda y el alta

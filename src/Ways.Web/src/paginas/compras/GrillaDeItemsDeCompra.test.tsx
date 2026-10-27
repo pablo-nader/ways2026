@@ -2359,6 +2359,33 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
     expect(captura.lineas[0].impuestoInterno).toBeNull()
   })
 
+  it('pasar por la celda sin tocarla (foco y Tab) deja la línea en automático y un cambio de cantidad la recalcula', async () => {
+    const usuario = userEvent.setup()
+    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+
+    await usuario.click(campo(0, 'Imp. internos'))
+    await usuario.tab()
+
+    expect(captura.lineas[0].impuestoInterno).toBeNull()
+
+    await usuario.clear(campo(0, 'Cantidad'))
+    await usuario.type(campo(0, 'Cantidad'), '20')
+
+    expect(captura.lineas[0].impuestoInterno).toBeNull()
+    expect(campo(0, 'Imp. internos')).toHaveValue('160,00')
+  })
+
+  it('tipear un importe distinto del sugerido sí la pasa a manual', async () => {
+    const usuario = userEvent.setup()
+    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+
+    await usuario.click(campo(0, 'Imp. internos'))
+    await usuario.type(campo(0, 'Imp. internos'), '1')
+    await usuario.tab()
+
+    expect(captura.lineas[0].impuestoInterno).toBe(801)
+  })
+
   it('un comprobante que no discrimina IVA no ofrece el campo', () => {
     montar({ discriminaIva: false, inicial: [conPorcentaje({ impuestoInterno: 5 })] })
 

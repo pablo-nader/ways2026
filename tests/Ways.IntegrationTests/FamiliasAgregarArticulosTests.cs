@@ -11,7 +11,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// <c>POST /api/familias/{id}/articulos</c> (doc 10 §3, "Familias de artículos") contra Postgres real: suma artículos a una
-/// familia que ya existe, ALINEADOS con su artículo de referencia —el miembro vivo de menor id— en los quince campos
+/// familia que ya existe, ALINEADOS con su artículo de referencia —el miembro vivo de menor id— en los dieciséis campos
 /// compartidos y en el estado de precios de cada lista fija. Es todo o nada y no mueve a nadie: un artículo de otra familia
 /// se rechaza. Los locks y la atomicidad están en <c>FamiliasAgrupacionConcurrenciaTests</c>.
 ///
@@ -56,7 +56,7 @@ public class FamiliasAgregarArticulosTests(WaysApiFixture fixture) : IClassFixtu
 
     /// <summary>El pedido completo, con los ids desordenados y repetidos: los tres destinos entran a la familia, alineados
     /// con la referencia —no con el miembro dado de baja, que tiene el id más bajo, ni con un destino, que también lo
-    /// tienen más bajo que ella—: sus quince valores, sus precios y la auditoría de cada fila escrita son los del
+    /// tienen más bajo que ella—: sus dieciséis valores, sus precios y la auditoría de cada fila escrita son los del
     /// escenario de crear. Con UN solo "ahora" en los artículos y en las filas de precio. La familia, la referencia, su
     /// gemelo, el miembro dado de baja y todo lo que el pedido no nombra quedan exactamente como estaban, también su
     /// <c>updated_at</c>; el resultado es el de la previsualización del mismo pedido.</summary>

@@ -41,7 +41,7 @@ namespace Ways.Application.Tests.Familias;
 /// una escritura hecha con esa forma dentro de una clase derivada de él. Tampoco ve la baja lógica de un
 /// artículo (<c>DeletedAt</c>), que cambia quién es miembro y no usa ninguna de estas formas, ni la asignación
 /// suelta de <c>IdArea</c>, <c>IdCategoria</c> e <c>IdGrupo</c>: son nombres que comparten ofertas y gastos, y las
-/// pruebas de <c>ValoresCompartidosDeFamilia</c> son las que anclan el mapeo de las quince columnas. El quitador de
+/// pruebas de <c>ValoresCompartidosDeFamilia</c> son las que anclan el mapeo de las dieciséis columnas. El quitador de
 /// comentarios no distingue los literales de cadena: un <c>//</c> dentro de uno le quita a la red el resto de esa
 /// línea, y un <c>/*</c>, todo el código hasta el siguiente <c>*/</c> —si lo hay—, aunque esté en otras
 /// líneas.</para>
@@ -146,12 +146,12 @@ public class EscritoresDeFamiliasEstructuralesTests
     /// <item><c>ServicioDeArticulos</c>: la edición (<c>ActualizarAsync</c>) y el alta
     /// (<c>CrearAsync</c>, con <c>idFamilia</c>) respetan el protocolo y replican a la familia.</item>
     /// <item><c>ServicioDeAgrupacionDeFamilias</c>: agrupar (<c>CrearAsync</c> y <c>AgregarArticulosAsync</c>) asigna
-    /// la familia y los quince campos de los artículos que entran, con el lock de membresía exclusivo.</item>
+    /// la familia y los dieciséis campos de los artículos que entran, con el lock de membresía exclusivo.</item>
     /// <item><c>ServicioDeFamilias</c>: sacar un artículo de su familia y disolverla (<c>UPDATE articulos SET
     /// id_familia</c>), con el lock de membresía exclusivo.</item>
     /// <item><c>ServicioDePrecios</c>: la salida de la familia de "solo este" (<c>UPDATE articulos SET id_familia</c>).</item>
     /// <item><c>ServicioDeCompras</c>: la confirmación actualiza <c>costo_nominal</c>.</item>
-    /// <item><c>ValoresCompartidosDeFamilia</c> (Domain): copia los quince campos sobre un artículo; la usa la
+    /// <item><c>ValoresCompartidosDeFamilia</c> (Domain): copia los dieciséis campos sobre un artículo; la usa la
     /// edición.</item>
     /// </list></summary>
     [Fact]

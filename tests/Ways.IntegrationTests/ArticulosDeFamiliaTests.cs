@@ -28,7 +28,7 @@ namespace Ways.IntegrationTests;
 /// <c>PUT /api/articulos/{id}</c> con alcance de familia (doc 10 §3, "Familias de artículos") contra
 /// Postgres real: qué escribe la edición de un artículo que pertenece a una familia, qué rechaza, y el
 /// protocolo de locks que lo sostiene — membresía (compartida o exclusiva), filas de <c>articulos</c> de
-/// los miembros y catálogos. Las familias y sus miembros se siembran directo por EF, con los quince campos
+/// los miembros y catálogos. Las familias y sus miembros se siembran directo por EF, con los dieciséis campos
 /// compartidos escritos uno por uno.
 ///
 /// <para>Los tests de concurrencia son rendezvous determinísticos: una conexión cruda sostiene un lock, la
@@ -82,7 +82,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     /// <summary>Todo lo que una edición puede tocar de un artículo, para afirmar que NO lo tocó: los campos
-    /// propios, la pertenencia, los quince compartidos, los sellos de auditoría y la baja.</summary>
+    /// propios, la pertenencia, los dieciséis compartidos, los sellos de auditoría y la baja.</summary>
     private static object Huella(Articulo a) => new
     {
         a.CodigoInterno, a.Nombre, a.Descripcion, a.IdMarca, a.Activo, a.DisponibleParaTodas, a.IdFamilia,
@@ -280,7 +280,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         await AfirmarSinCambiosAsync(todos, huellasAntes);
     }
 
-    /// <summary>Cada uno de los quince campos compartidos, cambiado solo, con alcance <c>Familia</c>: llega a
+    /// <summary>Cada uno de los dieciséis campos compartidos, cambiado solo, con alcance <c>Familia</c>: llega a
     /// TODOS los miembros vivos y a ningún otro artículo, y los campos propios del pedido son solo del
     /// artículo editado. Un caso por campo, porque cada uno tiene su mutante: olvidar uno en el mapeo del
     /// pedido, en la comparación o en la copia deja verdes los otros doce.</summary>
