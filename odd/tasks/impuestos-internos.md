@@ -68,7 +68,7 @@ Forecast ~1,000 authored lines over two tasks.
 ## Progress
 
 - 2026-10-27: exploration done (no concept of impuestos internos anywhere: code, docs, legacy).
-- 2026-10-27: T1 done (delegated writer, commit recorded below). Evidence: `dotnet build` 0 errors; Domain.Tests 1886 ok;
+- 2026-10-27: T1 done (delegated writer, commit fce36407). Evidence: `dotnet build` 0 errors; Domain.Tests 1886 ok;
   Application.Tests 1074 ok (includes structural guards); full Ways.IntegrationTests 4958/4959 on first run, the one failure
   (`ReportesLibroIvaTests.ElExportDeComprasEsIgualAlEndpointJsonCeldaPorCelda`, new export column) fixed and `ReportesLibroIva` 29/29;
   new integration tests 49/49 (compras, articulos, MCP). Mutation check: dropping the excise from the total or the cost fails 3 / 2 tests.
