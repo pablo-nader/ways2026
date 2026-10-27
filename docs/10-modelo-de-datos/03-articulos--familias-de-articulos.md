@@ -20,14 +20,14 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 > miembro dado de baja a mitad de camino queda fuera de lo que escriben. Tres operaciones de gestión cambian la
 > pertenencia y siguen el protocolo con el lock de membresía exclusivo ("Gestión de familias"): **agrupar
 > artículos** —crear una familia con un artículo de referencia y agregar artículos que ya existen a una
-> familia—, que los ALINEA con la referencia en los quince campos compartidos y en los precios ("Alinear"), y las dos
+> familia—, que los ALINEA con la referencia en los dieciséis campos compartidos y en los precios ("Alinear"), y las dos
 > que solo SACAN miembros, **sacar un artículo de su familia** y **disolver la familia**, que no cambian ningún
 > campo compartido ni ningún precio. El alta de un artículo con `idFamilia` agrega un miembro NUEVO; agrupar suma
 > artículos que ya existen.
 
 | | Campos |
 |---|---|
-| **Compartidos** (quince columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `acumula_en_venta`, `costo_lista`, `costo_lista_por`, `costo_lista_incluye_iva`, `descuento_proveedor`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
+| **Compartidos** (dieciséis columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `acumula_en_venta`, `costo_lista`, `costo_lista_por`, `costo_lista_incluye_iva`, `descuento_proveedor`, `porcentaje_impuesto_interno`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
 | **Propios** de cada artículo | `nombre`, `descripcion`, `codigo_interno`, códigos de barra, `id_marca`, `activo`, `disponible_para_todas` (con `articulos_empresas`) |
 
 - **"Solo este"** significa que el artículo **sale de la familia** (`id_familia = NULL`) con el
@@ -60,7 +60,7 @@ registra su propia auditoría `precio.cambio`. Los llamadores internos que no ti
 su familia y quien no lo es, solo.
 
 **Edición con alcance de familia.** `PUT /api/articulos/{id}` acepta el mismo `alcance` opcional. Lo que
-decide qué se escribe es si el pedido **cambia algún campo compartido**: se comparan los quince valores
+decide qué se escribe es si el pedido **cambia algún campo compartido**: se comparan los dieciséis valores
 compartidos del pedido con los **actuales** del artículo, leídos bajo los locks (nunca una lectura previa).
 El pedido puede omitir `acumula_en_venta` (`null` conserva el valor guardado): su valor en el pedido es
 entonces el guardado en el artículo editado, leído bajo esos mismos locks, así que no cuenta como cambio y,
@@ -89,7 +89,7 @@ del parámetro; con una empresa inexistente o de otro tenant responde `404`. El 
 | `alcance` | Artículo sin familia | Miembro, sin cambio de campos compartidos | Miembro, con cambio de campos compartidos |
 |---|---|---|---|
 | ausente | se edita solo | se escriben solo los campos propios del artículo | `409 alcance_requerido` (el mensaje nombra la familia y cuántos artículos vivos tiene); no se escribe nada |
-| `Familia` | `409 familia_cambio` | se escriben solo los campos propios (no hay nada que replicar) | los quince campos compartidos del pedido se aplican a **todos** los miembros vivos y los campos propios solo al artículo editado |
+| `Familia` | `409 familia_cambio` | se escriben solo los campos propios (no hay nada que replicar) | los dieciséis campos compartidos del pedido se aplican a **todos** los miembros vivos y los campos propios solo al artículo editado |
 | `SoloEste` | `409 familia_cambio` | el artículo **sale de la familia** y se escriben sus campos propios | el artículo **sale de la familia** y se escribe todo, solo en él |
 
 Los campos propios (`nombre`, `descripcion`, `id_marca`, `activo`, `disponible_para_todas` con su
@@ -117,7 +117,7 @@ difiera de la familia):
    fila de la familia, sea una baja lógica o un cambio de `activo`;
 2. tiene que tener al menos un artículo vivo (`409 familia_sin_articulos`); la **referencia** es el miembro vivo
    de menor `id_articulo`, leído una sola vez bajo esos locks;
-3. los quince campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
+3. los dieciséis campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
    `409 familia_valores_distintos`, que nombra las columnas que difieren. El pedido que no trae
    `acumula_en_venta` lleva su valor por defecto (`true`, o `false` en un artículo por importe) y se compara como cualquier otro. Los rechazos se evalúan en ese orden
    (inactiva, sin artículos, valores distintos) y siempre antes de insertar nada;
@@ -189,7 +189,7 @@ no toman locks.
 - `GET /api/familias`: las familias vivas del tenant, por nombre, cada una con `id`, `nombre`, `activo` y
   `cantidadArticulos`, que cuenta solo los miembros vivos.
 - `GET /api/familias/{id}`: la familia, sus miembros vivos ascendentes por id (`id`, `codigoInterno`, `nombre`,
-  `idMarca`, `activo`), los quince valores compartidos de la **referencia** (el miembro vivo de menor id) y su
+  `idMarca`, `activo`), los dieciséis valores compartidos de la **referencia** (el miembro vivo de menor id) y su
   estado de precios —el precio vigente y, si lo hay, el pendiente con su fecha— en cada lista fija del tenant,
   también las que no tiene precios. Es lo que prellena el alta de un artículo dentro de la familia. Una familia sin
   miembros vivos no tiene referencia: `valores` es `null` y `precios` viene vacío. `404` si la familia no existe,
@@ -207,7 +207,7 @@ no toman locks.
   con otro mensaje que nombra los dos factores, y en la previsualización es un problema más. Si la referencia ya es
   miembro de una familia, agrupar sería sumar a esa familia (`idFamilia`); si no, crear una nueva (`idFamilia: null`).
   Por cada destino que se puede alinear —no los inexistentes, ni los dados de baja, ni los que están en otra
-  familia— trae las columnas compartidas que difieren, con los quince valores actuales y los de la referencia como los lee
+  familia— trae las columnas compartidas que difieren, con los dieciséis valores actuales y los de la referencia como los lee
   el detalle de una familia —un id de catálogo que apunta a una fila dada de baja viaja como `null`: una columna puede
   figurar entre las que difieren con `null` de los dos lados, porque el destino tiene un id colgante y la referencia
   ninguno, y la alineación se lo borra—, y por cada lista fija en la que su estado de precios cambia, el estado actual
@@ -233,7 +233,7 @@ no toman locks.
   otro tenant), `409 articulo_en_otra_familia` (el menor id que ya es miembro de una familia, la referencia incluida:
   agrupar no mueve a nadie; el mensaje nombra la familia también si está dada de baja), `400 referencia_invalida` por
   el primer catálogo de la referencia que no existe o está dado de baja —la alícuota de IVA, el área, la categoría,
-  el grupo y el proveedor habitual, en ese orden y con el código y el mensaje de la edición de artículos: los quince
+  el grupo y el proveedor habitual, en ese orden y con el código y el mensaje de la edición de artículos: los dieciséis
   valores de la referencia son los que se copian a los demás—, `400 demasiados_articulos` si los pares destino-lista
   fija pasan los 1000 y `422 familia_precio_inalineable` (el mensaje nombra el artículo y la lista del primer par que no
   se puede alinear; lo que se había alineado antes de él no queda escrito).
@@ -279,7 +279,7 @@ no toman locks.
   artículos, que se sueltan en la misma transacción. El pre-chequeo de existencia de las
   ofertas no toma lock: queda el residual descrito en la sección de ofertas (§3).
 
-**Alinear.** Alinear un artículo con el de referencia es dejarlo idéntico a él en los quince campos compartidos (los
+**Alinear.** Alinear un artículo con el de referencia es dejarlo idéntico a él en los dieciséis campos compartidos (los
 propios no se tocan) y en el **estado de precios** de cada lista fija —el precio vigente y, si lo hay, el pendiente con su
 fecha—. Dos estados se comparan por valor: vigente, y monto y fecha del pendiente. Un precio nunca se quita, así que hay
 estados que no se pueden alinear:
@@ -303,7 +303,7 @@ escrito—; solo entonces escribe, con ese mismo "ahora":
 
 - la familia, al crear, con `created_at` y `updated_at` en "ahora"; la referencia de una familia nueva recibe solo la
   pertenencia (`id_familia` y `updated_at`);
-- cada destino recibe los quince campos de la referencia y, si no era miembro, `id_familia`; su `updated_at` pasa a
+- cada destino recibe los dieciséis campos de la referencia y, si no era miembro, `id_familia`; su `updated_at` pasa a
   "ahora" si entró o si cambió algún campo, y no se escribe si ya era miembro y estaba alineado;
 - por cada par destino-lista que se alinea, `ServicioDePrecios` cierra la fila abierta del destino con las reglas de un
   cambio de precio —un pendiente se reemplaza cerrándolo en su propio inicio, y se vuelve a cerrar su predecesor en
