@@ -30,7 +30,7 @@ public sealed record AlicuotaDeLibroIva(decimal Porcentaje, decimal Neto, decima
 
 /// <summary>Un comprobante del libro IVA. <see cref="Total"/> es el del comprobante tal como se
 /// guardó, con signo (una nota de crédito resta); <see cref="Diferencia"/> es
-/// <c>Total − (neto gravado + IVA + no gravado + exento + percepciones)</c>: cero en un dato bien
+/// <c>Total − (neto gravado + IVA + no gravado + exento + percepciones + impuestos internos)</c>: cero en un dato bien
 /// formado, distinto de cero cuando los componentes no cierran. Esas filas se informan, nunca se
 /// ocultan ni se corrigen en silencio. En ventas las percepciones son siempre cero (no se emiten
 /// percepciones en ventas). <see cref="Advertencias"/> trae los códigos de

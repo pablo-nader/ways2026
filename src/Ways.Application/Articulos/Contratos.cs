@@ -97,7 +97,7 @@ public record ArticuloListado(
 ///
 /// <para><see cref="PorcentajeImpuestoInterno"/> es el porcentaje de impuestos internos sobre el costo neto (0 o más, hasta
 /// 999,9999; ausente equivale a 0): con un costo de lista sin IVA se suma al costo nominal que calcula el servidor y precarga
-/// el importe de la línea de compra. Un valor negativo o mayor es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo
+/// el importe de la línea de compra. Un valor negativo, mayor o con más de cuatro decimales es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo
 /// compartido de la familia (el costo nominal se deriva de él).</para></summary>
 public record AltaArticulo(
     string? CodigoInterno,
@@ -167,7 +167,7 @@ public record AltaArticulo(
 /// importe mientras otro miembro tiene tecla es <c>409 familia_miembro_con_tecla_atajo</c>.</para>
 ///
 /// <para><see cref="PorcentajeImpuestoInterno"/> <c>null</c> conserva el guardado, igual que <see cref="CostoListaPor"/>;
-/// un valor negativo o mayor que 999,9999 es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo compartido de la
+/// un valor negativo, mayor que 999,9999 o con más de cuatro decimales es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo compartido de la
 /// familia: cambiarlo en un miembro es un cambio compartido y pide el alcance (con <c>Familia</c> se aplica, junto con el
 /// costo nominal recalculado, a todos los miembros vivos).</para></summary>
 public record EdicionArticulo(

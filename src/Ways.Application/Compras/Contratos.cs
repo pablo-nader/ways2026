@@ -21,7 +21,7 @@ namespace Ways.Application.Compras;
 ///
 /// <see cref="ImpuestoInterno"/> es el importe de impuestos internos de toda la línea, tal como lo imprime el proveedor
 /// (0 si no tiene): se suma al total del comprobante fuera de la base del IVA y entra en el costo efectivo. Un importe
-/// negativo, uno distinto de cero en un comprobante que no discrimina IVA o en un concepto es 400.</summary>
+/// negativo, con más de dos decimales, uno distinto de cero en un comprobante que no discrimina IVA o en un concepto es 400.</summary>
 public sealed record LineaDeCompraSolicitada(
     int? IdArticulo,
     string Descripcion,

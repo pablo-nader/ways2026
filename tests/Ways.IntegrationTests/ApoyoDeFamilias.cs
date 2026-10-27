@@ -160,7 +160,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             resultado.PasswordTemporal, alicuotasSembradas[0].Porcentaje);
     }
 
-    /// <summary>Los quince campos compartidos de partida: todos con un valor (los nulleables también), para
+    /// <summary>Los dieciséis campos compartidos de partida: todos con un valor (los nulleables también), para
     /// que cada cambio de <see cref="ValoresConUnCampoCambiado"/> sea de un valor a OTRO y no de nulo a
     /// valor. El costo nominal es el que calcula el servidor con el resto (50 por unidad, con IVA, menos 10%): un
     /// pedido con estos valores no cambia nada.</summary>
@@ -170,7 +170,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, CostoListaPor: CostoListaPor.Unidad,
         CostoListaIncluyeIva: true, DescuentoProveedor: 10m, PorcentajeImpuestoInterno: 0m, CostoNominal: 45m);
 
-    /// <summary>Los quince valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
+    /// <summary>Los dieciséis valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
     /// ningún id de catálogo: para las pruebas cuyos ids apuntan a filas vivas.</summary>
     public static ValoresCompartidosDeLaFamilia ComoLoLeeElCliente(ValoresCompartidosDeFamilia valores) =>
         ValoresCompartidosDeLaFamilia.De(valores);

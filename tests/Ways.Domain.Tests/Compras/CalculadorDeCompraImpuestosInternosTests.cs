@@ -118,6 +118,21 @@ public class CalculadorDeCompraImpuestosInternosTests
     }
 
     [Fact]
+    public void UnImpuestoInternoConMasDeDosDecimalesSeRechaza()
+    {
+        var error = Assert.Throws<ErrorDominio>(() => Calcular([Linea(1, costo: 100m, impuestoInterno: 0.005m)]));
+
+        Assert.Equal("impuesto_interno_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnImpuestoInternoConDosDecimalesSeAcepta()
+    {
+        Assert.Equal(0.01m, Calcular([Linea(1, costo: 100m, impuestoInterno: 0.01m)]).ImpuestosInternos);
+    }
+
+    [Fact]
     public void UnConceptoNoAdmiteImpuestoInterno()
     {
         var error = Assert.Throws<ErrorDominio>(

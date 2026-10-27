@@ -150,6 +150,25 @@ public class ArticulosImpuestoInternoTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(0m, (await apoyo.LeerAsync(creado.Id)).PorcentajeImpuestoInterno);
     }
 
+    [Theory]
+    [InlineData("0.00001")]
+    [InlineData("999.99995")]
+    public async Task UnPorcentajeConMasDeCuatroDecimalesEsUn400EnElAltaYEnLaEdicion(string texto)
+    {
+        var porcentaje = decimal.Parse(texto, System.Globalization.CultureInfo.InvariantCulture);
+        using var e = await apoyo.PrepararAsync(
+            $"{nameof(UnPorcentajeConMasDeCuatroDecimalesEsUn400EnElAltaYEnLaEdicion)}{texto.Length}");
+        var alta = Cuerpo(e, "invalido");
+        alta["porcentajeImpuestoInterno"] = porcentaje;
+        await AssertCodigoAsync(await e.Admin.PostAsJsonAsync("/api/articulos", alta), "porcentaje_impuesto_interno_invalido");
+
+        var creado = await LeerListadoAsync(await e.Admin.PostAsJsonAsync("/api/articulos", Cuerpo(e, "valido")));
+        var edicion = Cuerpo(e, "valido");
+        edicion["porcentajeImpuestoInterno"] = porcentaje;
+        await AssertCodigoAsync(
+            await e.Admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", edicion), "porcentaje_impuesto_interno_invalido");
+    }
+
     [Fact]
     public async Task EditarLaTasaConAlcanceDeFamiliaLaLlevaALosMiembrosVivosJuntoConElCostoNominalRecalculado()
     {

@@ -150,6 +150,14 @@ public static class CalculadorDeCompra
                     "impuesto_interno_invalido", "El impuesto interno de un ítem de compra no puede ser negativo.", 400);
             }
 
+            if (decimal.Round(linea.ImpuestoInterno, 2) != linea.ImpuestoInterno)
+            {
+                throw new ErrorDominio(
+                    "impuesto_interno_invalido",
+                    "El impuesto interno de un ítem de compra admite como máximo dos decimales.",
+                    400);
+            }
+
             if (linea.ImpuestoInterno > 0m && !discriminaIva)
             {
                 throw new ErrorDominio(

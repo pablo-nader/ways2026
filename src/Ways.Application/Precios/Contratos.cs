@@ -49,7 +49,7 @@ public record ProgramarPrecio(
 public enum AlcanceDeFamilia
 {
     /// <summary>Lo que se escribe llega a todos los miembros vivos de la familia, en la misma transacción: el
-    /// precio o, en una edición, los quince campos compartidos del pedido cuando cambia alguno (sin cambio
+    /// precio o, en una edición, los dieciséis campos compartidos del pedido cuando cambia alguno (sin cambio
     /// compartido la edición escribe solo los campos propios del artículo).</summary>
     Familia = 1,
 

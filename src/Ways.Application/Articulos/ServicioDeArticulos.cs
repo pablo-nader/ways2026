@@ -1347,11 +1347,11 @@ public class ServicioDeArticulos(
             return;
         }
 
-        if (v < 0m || v >= 1000m)
+        if (v < 0m || v >= 1000m || decimal.Round(v, 4) != v)
         {
             throw new ErrorDominio(
                 "porcentaje_impuesto_interno_invalido",
-                "El campo porcentaje_impuesto_interno debe estar entre 0 y 999.9999.",
+                "El campo porcentaje_impuesto_interno debe estar entre 0 y 999.9999, con hasta cuatro decimales.",
                 400);
         }
     }

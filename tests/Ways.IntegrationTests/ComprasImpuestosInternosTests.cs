@@ -259,6 +259,18 @@ public class ComprasImpuestosInternosTests(WaysApiFixture fixture) : IClassFixtu
     }
 
     [Fact]
+    public async Task UnImpuestoInternoConMasDeDosDecimalesEsUn400()
+    {
+        var ctx = await PrepararAsync(nameof(UnImpuestoInternoConMasDeDosDecimalesEsUn400));
+
+        await AssertRechazoAsync(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/compras",
+                Solicitud(ctx, ctx.IdTipoCFA, [DeArticulo(ctx, unidades: 1m, costo: 100m, impuestoInterno: 0.005m)])),
+            "impuesto_interno_invalido");
+    }
+
+    [Fact]
     public async Task UnConceptoNoAdmiteImpuestoInterno()
     {
         var ctx = await PrepararAsync(nameof(UnConceptoNoAdmiteImpuestoInterno));
