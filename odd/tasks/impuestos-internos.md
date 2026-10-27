@@ -89,7 +89,7 @@ Forecast ~1,000 authored lines over two tasks.
   (also export column "Impuestos internos" after "Percepción IIBB"). Error codes: `impuesto_interno_invalido`,
   `impuesto_interno_sin_discriminar`, `concepto_con_impuesto_interno`, `porcentaje_impuesto_interno_invalido`.
 
-- 2026-10-27: T2 done (delegated writer, applied on the T1 branch because T1 and T2 ship as ONE PR). Evidence: `npx tsc -b` 0 errors;
+- 2026-10-27: T2 done (commit 24e80a26; delegated writer, applied on the T1 branch because T1 and T2 ship as ONE PR). Evidence: `npx tsc -b` 0 errors;
   `oxlint` 0 errors (only pre-existing warnings); full `npx vitest run` 250 files / 7766 tests ok. Test-first for the pure helpers
   (RED observed: 25/26 failing before implementing). Decisions: the line amount is `null` = automatic (derived each render as
   `round(neto x pct / 100, 2)`, neto = line total, or total without IVA with IVA-included prices) and any typed value, including 0, is the
