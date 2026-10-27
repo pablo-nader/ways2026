@@ -15,7 +15,8 @@ public sealed record CompraParaLibro(
     decimal Total,
     IReadOnlyList<AlicuotaDeCompraParaLibro> Alicuotas,
     decimal PercepcionIva,
-    decimal PercepcionIibb);
+    decimal PercepcionIibb,
+    decimal ImpuestosInternos = 0m);
 
 /// <summary><see cref="Signo"/> viene de <c>tipos_comprobante.signo</c>: la emisión fiscal guarda
 /// los importes de una nota de crédito en positivo (exige cantidades positivas), así que el libro
@@ -97,7 +98,7 @@ public static class ComposicionDeLibroIva
 
         return NuevaFila(
             compra.Fecha, compra.CodigoTipo, compra.Numero, compra.Proveedor, compra.Cuit, alicuotas, noGravado,
-            exento, compra.PercepcionIva, compra.PercepcionIibb, compra.Total, advertencias);
+            exento, compra.PercepcionIva, compra.PercepcionIibb, compra.Total, advertencias, compra.ImpuestosInternos);
     }
 
     private static FilaDeLibroIva FilaDeVenta(VentaParaLibro venta)
@@ -164,14 +165,15 @@ public static class ComposicionDeLibroIva
     private static FilaDeLibroIva NuevaFila(
         DateOnly fecha, string codigoTipo, string numero, string contraparte, string? documento,
         IReadOnlyList<AlicuotaDeLibroIva> alicuotas, decimal noGravado, decimal exento, decimal percepcionIva,
-        decimal percepcionIibb, decimal total, IReadOnlyList<string> advertencias)
+        decimal percepcionIibb, decimal total, IReadOnlyList<string> advertencias, decimal impuestosInternos = 0m)
     {
         var porAlicuota = AgruparPorPorcentaje(alicuotas);
-        var componentes = porAlicuota.Sum(a => a.Neto + a.Iva) + noGravado + exento + percepcionIva + percepcionIibb;
+        var componentes = porAlicuota.Sum(a => a.Neto + a.Iva) + noGravado + exento + percepcionIva + percepcionIibb
+            + impuestosInternos;
 
         return new FilaDeLibroIva(
             fecha, codigoTipo, numero, contraparte, documento, porAlicuota, noGravado, exento, percepcionIva,
-            percepcionIibb, total, total - componentes, advertencias.Distinct().ToList());
+            percepcionIibb, total, total - componentes, advertencias.Distinct().ToList(), impuestosInternos);
     }
 
     private static LibroIva Armar(
@@ -190,7 +192,8 @@ public static class ComposicionDeLibroIva
             ordenadas.Sum(f => f.PercepcionIva),
             ordenadas.Sum(f => f.PercepcionIibb),
             ordenadas.Sum(f => f.Total),
-            ordenadas.Sum(f => f.Diferencia));
+            ordenadas.Sum(f => f.Diferencia),
+            ordenadas.Sum(f => f.ImpuestosInternos));
 
         return new LibroIva(desde, hasta, idEmpresa, zonaHoraria, ordenadas, totales);
     }

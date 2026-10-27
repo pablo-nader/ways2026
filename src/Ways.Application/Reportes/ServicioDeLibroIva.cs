@@ -62,7 +62,8 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
         var comprobantes = await consulta
             .Select(c => new
             {
-                c.Id, c.FechaComprobante, c.IdTipoComprobante, c.NumeroExterno, c.IdProveedor, c.DiscriminaIva, c.Total
+                c.Id, c.FechaComprobante, c.IdTipoComprobante, c.NumeroExterno, c.IdProveedor, c.DiscriminaIva, c.Total,
+                c.ImpuestosInternos
             })
             .ToListAsync(ct);
 
@@ -105,7 +106,8 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
                             a.Iva))
                         .ToList(),
                     percibidas.Where(p => p.Tipo == TiposDePercepcion.Iva).Sum(p => p.Importe),
-                    percibidas.Where(p => p.Tipo == TiposDePercepcion.Iibb).Sum(p => p.Importe));
+                    percibidas.Where(p => p.Tipo == TiposDePercepcion.Iibb).Sum(p => p.Importe),
+                    c.ImpuestosInternos);
             })
             .ToList();
 

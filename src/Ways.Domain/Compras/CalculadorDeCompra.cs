@@ -14,7 +14,7 @@ public sealed record LineaDeCompra(
     int Orden, int? IdArticulo, string Descripcion,
     decimal Unidades, decimal? Bultos, decimal? UnidadesPorBulto,
     decimal CostoUnitario, decimal Descuento,
-    int IdAlicuotaIva, decimal PorcentajeIva, bool ActualizaCosto);
+    int IdAlicuotaIva, decimal PorcentajeIva, bool ActualizaCosto, decimal ImpuestoInterno = 0m);
 
 /// <summary>Una línea ya calculada (design: Compra Arithmetic) — <see cref="CostoEfectivo"/> es
 /// lo que <c>ServicioDeCompras.ConfirmarAsync</c> escribe en <c>articulos.costo_nominal</c>
@@ -42,11 +42,12 @@ public sealed record AlicuotaCalculada(int IdAlicuotaIva, decimal Porcentaje, de
 /// <c>null</c> y, si no, la suma de <see cref="AlicuotaCalculada.Iva"/>. <see cref="Total"/> incluye
 /// las <see cref="Percepciones"/> tal como las informó el proveedor. Con precios finales,
 /// <see cref="Subtotal"/> y <see cref="DescuentoTotal"/> ya traen el IVA y <see cref="Total"/> es
-/// <c>subtotal − descuento + percepciones</c>.</summary>
+/// <c>subtotal − descuento + impuestos internos + percepciones</c>. <see cref="ImpuestosInternos"/> es la suma de los
+/// importes impresos por línea: integra el total fuera de la base del IVA.</summary>
 public sealed record CompraCalculada(
     decimal Subtotal, decimal DescuentoTotal, decimal? IvaTotal, decimal Total,
     IReadOnlyList<ItemCalculado> Items, IReadOnlyList<AlicuotaCalculada> Alicuotas,
-    IReadOnlyList<PercepcionDeCompra> Percepciones);
+    IReadOnlyList<PercepcionDeCompra> Percepciones, decimal ImpuestosInternos = 0m);
 
 /// <summary>
 /// Aritmética de una compra (design: Compra Arithmetic) — pura, sin acceso a base de datos, el
@@ -109,6 +110,7 @@ public static class CalculadorDeCompra
         var items = new List<ItemCalculado>(lineas.Count);
         var subtotal = 0m;
         var descuentoTotal = 0m;
+        var impuestosInternos = 0m;
 
         // Neto por alícuota con precios netos; precio final por alícuota con IVA incluido. El
         // segundo componente se llama Monto porque su significado depende de la modalidad
@@ -142,6 +144,20 @@ public static class CalculadorDeCompra
                     "importes_de_item_invalidos", "El descuento de un ítem de compra no puede ser negativo.", 400);
             }
 
+            if (linea.ImpuestoInterno < 0m)
+            {
+                throw new ErrorDominio(
+                    "impuesto_interno_invalido", "El impuesto interno de un ítem de compra no puede ser negativo.", 400);
+            }
+
+            if (linea.ImpuestoInterno > 0m && !discriminaIva)
+            {
+                throw new ErrorDominio(
+                    "impuesto_interno_sin_discriminar",
+                    "Los impuestos internos solo pueden informarse en un comprobante que discrimina IVA.",
+                    400);
+            }
+
             var bruto = Redondear(cantidad * linea.CostoUnitario, 2);
 
             if (linea.Descuento > bruto)
@@ -159,7 +175,8 @@ public static class CalculadorDeCompra
                     : (linea.PorcentajeIva, total);
             }
 
-            var costoEfectivo = CalcularCostoEfectivo(total, cantidad, linea.PorcentajeIva, discriminaIva, preciosIncluyenIva);
+            var costoEfectivo = CalcularCostoEfectivo(
+                total, cantidad, linea.PorcentajeIva, discriminaIva, preciosIncluyenIva, linea.ImpuestoInterno);
 
             decimal? precioSugerido = null;
             if (linea.IdArticulo is { } idArticulo)
@@ -174,6 +191,7 @@ public static class CalculadorDeCompra
 
             subtotal += bruto;
             descuentoTotal += linea.Descuento;
+            impuestosInternos += linea.ImpuestoInterno;
         }
 
         var alicuotas = ArmarAlicuotas(montoPorAlicuota, ivaImpreso, preciosIncluyenIva);
@@ -185,10 +203,11 @@ public static class CalculadorDeCompra
         var montoSinPercepciones = preciosIncluyenIva
             ? subtotal - descuentoTotal
             : subtotal - descuentoTotal + (ivaTotal ?? 0m);
-        var totalComprobante = montoSinPercepciones + percepcionesDelComprobante.Sum(p => p.Importe);
+        var totalComprobante = montoSinPercepciones + impuestosInternos + percepcionesDelComprobante.Sum(p => p.Importe);
 
         return new CompraCalculada(
-            subtotal, descuentoTotal, ivaTotal, totalComprobante, items, alicuotas, percepcionesDelComprobante);
+            subtotal, descuentoTotal, ivaTotal, totalComprobante, items, alicuotas, percepcionesDelComprobante,
+            impuestosInternos);
     }
 
     /// <summary>IVA por alícuota redondeado una sola vez — la convención de una factura —, y después
@@ -274,6 +293,12 @@ public static class CalculadorDeCompra
                 "concepto_con_bultos", "Una línea por concepto no admite bultos ni unidades por bulto.", 400);
         }
 
+        if (linea.ImpuestoInterno != 0m)
+        {
+            throw new ErrorDominio(
+                "concepto_con_impuesto_interno", "Una línea por concepto no admite impuestos internos.", 400);
+        }
+
         if (linea.ActualizaCosto)
         {
             throw new ErrorDominio(
@@ -289,14 +314,17 @@ public static class CalculadorDeCompra
     /// congelado en la fila. <paramref name="preciosIncluyenIva"/> es el del comprobante: con
     /// precios finales el <c>total</c> de la fila ya trae el IVA.</summary>
     public static decimal CalcularCostoEfectivoDesdeItem(
-        decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva, bool preciosIncluyenIva = false) =>
-        CalcularCostoEfectivo(total, cantidad, porcentajeIva, discriminaIva, preciosIncluyenIva);
+        decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva, bool preciosIncluyenIva = false,
+        decimal impuestoInterno = 0m) =>
+        CalcularCostoEfectivo(total, cantidad, porcentajeIva, discriminaIva, preciosIncluyenIva, impuestoInterno);
 
+    /// <summary>Con IVA y el impuesto interno de la línea, que va aparte de la base del IVA y se suma entero.</summary>
     private static decimal CalcularCostoEfectivo(
-        decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva, bool preciosIncluyenIva) =>
+        decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva, bool preciosIncluyenIva,
+        decimal impuestoInterno) =>
         discriminaIva && !preciosIncluyenIva
-            ? Redondear(total * (1 + porcentajeIva / 100m) / cantidad, 2)
-            : Redondear(total / cantidad, 2);
+            ? Redondear((total * (1 + porcentajeIva / 100m) + impuestoInterno) / cantidad, 2)
+            : Redondear((total + impuestoInterno) / cantidad, 2);
 
     /// <summary>Si la línea cuenta para escribir <c>articulos.costo_nominal</c> (design decisión 4, el guard
     /// anti-bonificación): tiene artículo, pide actualizar el costo y su costo unitario es positivo, y su costo

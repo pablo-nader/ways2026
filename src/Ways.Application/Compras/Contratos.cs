@@ -17,7 +17,11 @@ namespace Ways.Application.Compras;
 /// <see cref="CodigoProveedor"/> es el código que el proveedor imprimió para la línea: se recorta,
 /// vacío equivale a ninguno y más de 50 caracteres es 400. Se guarda en toda línea que lo trae; al
 /// confirmar, una línea con artículo lo asocia a ese artículo y al proveedor de la compra si el
-/// código está libre. Un concepto nunca asocia.</summary>
+/// código está libre. Un concepto nunca asocia.
+///
+/// <see cref="ImpuestoInterno"/> es el importe de impuestos internos de toda la línea, tal como lo imprime el proveedor
+/// (0 si no tiene): se suma al total del comprobante fuera de la base del IVA y entra en el costo efectivo. Un importe
+/// negativo, uno distinto de cero en un comprobante que no discrimina IVA o en un concepto es 400.</summary>
 public sealed record LineaDeCompraSolicitada(
     int? IdArticulo,
     string Descripcion,
@@ -30,7 +34,8 @@ public sealed record LineaDeCompraSolicitada(
     bool? ActualizaCosto = null,
     string? CodigoLote = null,
     DateOnly? FechaVencimiento = null,
-    string? CodigoProveedor = null);
+    string? CodigoProveedor = null,
+    decimal ImpuestoInterno = 0m);
 
 /// <summary>El IVA que el proveedor imprimió para una alícuota: cuando difiere del calculado por
 /// redondeo, gana el impreso mientras no se aleje más de <see cref="CalculadorDeCompra.
@@ -87,7 +92,8 @@ public sealed record SolicitudDeCompra(
 /// <see cref="Total"/> y <see cref="PrecioSugerido"/> son <c>null</c> para el rol vendedor, que
 /// no ve el costo de los artículos. <see cref="IdArticulo"/> nulo es una línea por concepto.
 /// <see cref="CodigoProveedor"/> es el código impreso por el proveedor tal como se guardó, haya
-/// quedado asociado o no a un artículo.</summary>
+/// quedado asociado o no a un artículo. <see cref="ImpuestoInterno"/> es el importe de impuestos internos de la
+/// línea, <c>null</c> para el rol vendedor igual que el resto de los importes de línea.</summary>
 public sealed record ItemDeCompra(
     int Orden,
     int? IdArticulo,
@@ -105,7 +111,8 @@ public sealed record ItemDeCompra(
     string? CodigoLote,
     DateOnly? FechaVencimiento,
     int? IdLote,
-    string? CodigoProveedor);
+    string? CodigoProveedor,
+    decimal? ImpuestoInterno = null);
 
 /// <summary>Una fila del desglose de IVA de una compra que discrimina IVA: neto gravado e IVA de
 /// una alícuota. Exento y no gravado salen con IVA cero. <see cref="Neto"/> e <see cref="Iva"/> son
@@ -128,7 +135,9 @@ public sealed record PercepcionDeCompraDetalle(string Tipo, decimal Alicuota, de
 ///
 /// <see cref="Pagado"/> y <see cref="SaldoPendiente"/> salen de <c>LectorDePagadoPorCompra</c> y de
 /// <c>ReglaDePagoDeCompra</c>; son datos de encabezado (como <see cref="Total"/>), no de costo, así
-/// que los ve también el vendedor. El saldo pendiente es cero fuera de una compra confirmada.</summary>
+/// que los ve también el vendedor. El saldo pendiente es cero fuera de una compra confirmada.
+/// <see cref="ImpuestosInternos"/> es la suma de los impuestos internos de las líneas: integra <see cref="Total"/> y es
+/// un dato de encabezado, que ve también el vendedor.</summary>
 public sealed record CompraDetalle(
     int Id,
     int IdProveedor,
@@ -151,7 +160,8 @@ public sealed record CompraDetalle(
     IReadOnlyList<PercepcionDeCompraDetalle> Percepciones,
     decimal Pagado,
     decimal SaldoPendiente,
-    OrigenCompra Origen);
+    OrigenCompra Origen,
+    decimal ImpuestosInternos = 0m);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve

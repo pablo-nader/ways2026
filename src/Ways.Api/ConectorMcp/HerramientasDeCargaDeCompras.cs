@@ -32,7 +32,8 @@ public sealed class HerramientasDeCargaDeCompras
         "corriente del proveedor hasta esa confirmación. Antes de crear busca una compra no anulada del proveedor con " +
         "el mismo tipo y número: si la hay, no crea nada y la informa. Los ids salen de contexto_de_compras (punto de " +
         "venta, tipo de comprobante, alícuotas de IVA), buscar_proveedor y buscar_articulos; cada línea es un " +
-        "artículo de Ways (idArticulo) o un concepto (concepto, por ejemplo un flete). Ways calcula subtotal, IVA " +
+        "artículo de Ways (idArticulo) o un concepto (concepto, por ejemplo un flete); si la factura imprime " +
+        "impuestos internos por línea, van en impuestoInterno de esa línea. Ways calcula subtotal, IVA " +
         "y total, acepta el IVA impreso de cada alícuota si difiere del calculado en hasta $1 y valida las " +
         "percepciones; si algo no cierra devuelve un error que dice qué corregir. No es idempotente: un remito sin " +
         "número no tiene control de duplicado. Solo para administradores.")]

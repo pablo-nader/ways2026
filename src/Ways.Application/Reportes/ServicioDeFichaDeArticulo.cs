@@ -238,7 +238,8 @@ public class ServicioDeFichaDeArticulo(
             CostoUnitario = i.CostoUnitario,
             Descuento = i.Descuento,
             Total = i.Total,
-            PorcentajeIva = i.PorcentajeIva
+            PorcentajeIva = i.PorcentajeIva,
+            ImpuestoInterno = i.ImpuestoInterno
         };
 
     // Clase con inicializador de miembros y no un record posicional: EF no traduce un OrderBy sobre una proyección por constructor.
@@ -257,6 +258,7 @@ public class ServicioDeFichaDeArticulo(
         public decimal Descuento { get; init; }
         public decimal Total { get; init; }
         public decimal PorcentajeIva { get; init; }
+        public decimal ImpuestoInterno { get; init; }
     }
 
     private Task<int> ContarComprasAsync(int idArticulo, int? idEmpresa, CancellationToken ct) =>
@@ -292,7 +294,7 @@ public class ServicioDeFichaDeArticulo(
                 l.Cantidad == 0m
                     ? null
                     : CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
-                        l.Total, l.Cantidad, l.PorcentajeIva, l.DiscriminaIva, l.PreciosIncluyenIva)))
+                        l.Total, l.Cantidad, l.PorcentajeIva, l.DiscriminaIva, l.PreciosIncluyenIva, l.ImpuestoInterno)))
         ];
     }
 }

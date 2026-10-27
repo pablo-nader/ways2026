@@ -98,6 +98,12 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasColumnType("numeric(5,2)")
             .HasDefaultValue(0m);
 
+        builder.Property(a => a.PorcentajeImpuestoInterno)
+            .HasColumnName("porcentaje_impuesto_interno")
+            .HasColumnType("numeric(7,4)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
         builder.Property(a => a.CostoNominal)
             .HasColumnName("costo_nominal")
             .HasColumnType("numeric(14,2)");

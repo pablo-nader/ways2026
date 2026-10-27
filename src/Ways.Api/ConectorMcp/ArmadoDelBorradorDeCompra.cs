@@ -45,7 +45,12 @@ public sealed record LineaDeBorradorDeCompra(
     [property: Description("Lote impreso para la línea, si lo trae. Solo con idArticulo y junto con fechaVencimiento.")]
     string? CodigoLote = null,
     [property: Description("Vencimiento impreso para la línea, yyyy-MM-dd. Solo con idArticulo; obligatorio si hay codigoLote.")]
-    string? FechaVencimiento = null);
+    string? FechaVencimiento = null,
+    [property: Description(
+        "Importe en pesos de impuestos internos de TODA la línea, tal como lo imprime la factura (no un porcentaje ni " +
+        "por unidad). No integra la base del IVA: se suma al total aparte y entra en el costo del artículo. Solo en " +
+        "una factura que discrimina IVA y solo en una línea de artículo. Hasta 2 decimales. Por defecto 0.")]
+    decimal ImpuestoInterno = 0m);
 
 /// <summary>El IVA que imprime la factura para una alícuota (<see cref="IvaImpresoSolicitado"/>).</summary>
 public sealed record IvaImpresoDeLaFactura(
@@ -250,6 +255,7 @@ public static class ArmadoDelBorradorDeCompra
         ExigirPrecision(linea.UnidadesPorBulto, EnterosDeBultos, 2, $"Línea {numero}: unidadesPorBulto");
         ExigirPrecision(linea.CostoUnitario, EnterosDeCosto, 4, $"Línea {numero}: costoUnitario");
         ExigirPrecision(linea.Descuento, EnterosDeImporte, 2, $"Línea {numero}: descuento");
+        ExigirPrecision(linea.ImpuestoInterno, EnterosDeImporte, 2, $"Línea {numero}: impuestoInterno");
 
         var costo = linea.CostoUnitario.Value;
         var cantidad = Redondear(linea.Unidades + (linea.Bultos ?? 0m) * (linea.UnidadesPorBulto ?? 0m), 3);
@@ -268,6 +274,11 @@ public static class ArmadoDelBorradorDeCompra
         if (linea.Descuento < 0m)
         {
             throw new ErrorDeHerramienta($"Línea {numero}: descuento no puede ser negativo.");
+        }
+
+        if (linea.ImpuestoInterno < 0m)
+        {
+            throw new ErrorDeHerramienta($"Línea {numero}: impuestoInterno no puede ser negativo.");
         }
 
         var bruto = Redondear(cantidad * costo, 2);
@@ -324,7 +335,8 @@ public static class ArmadoDelBorradorDeCompra
             ActualizaCosto: null,
             linea.CodigoLote,
             string.IsNullOrWhiteSpace(linea.FechaVencimiento) ? null : Fecha(linea.FechaVencimiento),
-            linea.CodigoProveedor);
+            linea.CodigoProveedor,
+            linea.ImpuestoInterno);
     }
 
     /// <summary>Solo para una fecha que ya pasó por <see cref="LeerFecha"/> en <see cref="ValidarForma"/>.</summary>

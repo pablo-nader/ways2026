@@ -262,6 +262,7 @@ public class ServicioDeCompras(
             IdEmpleado = idEmpleado,
             Subtotal = calculada.Subtotal,
             DescuentoTotal = calculada.DescuentoTotal,
+            ImpuestosInternos = calculada.ImpuestosInternos,
             DiscriminaIva = discriminaIva,
             PreciosIncluyenIva = solicitud.PreciosIncluyenIva,
             IvaTotal = calculada.IvaTotal,
@@ -381,6 +382,7 @@ public class ServicioDeCompras(
         comprobante.IdOrdenCompra = solicitud.IdOrdenCompra;
         comprobante.Subtotal = calculada.Subtotal;
         comprobante.DescuentoTotal = calculada.DescuentoTotal;
+        comprobante.ImpuestosInternos = calculada.ImpuestosInternos;
         comprobante.DiscriminaIva = discriminaIva;
         comprobante.PreciosIncluyenIva = solicitud.PreciosIncluyenIva;
         comprobante.IvaTotal = calculada.IvaTotal;
@@ -793,7 +795,7 @@ public class ServicioDeCompras(
             .Select(i => (
                 i.Orden, i.IdArticulo, i.ActualizaCosto, i.CostoUnitario,
                 CostoEfectivo: CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
-                    i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva, preciosIncluyenIva)))
+                    i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva, preciosIncluyenIva, i.ImpuestoInterno)))
             .ToList();
         var idsConCosto = itemsParaCosto
             .Where(CalculadorDeCompra.ActualizaElCosto)
@@ -1598,7 +1600,7 @@ public class ServicioDeCompras(
             .Select(i => new LineaDeCompra(
                 orden++, i.IdArticulo, i.Descripcion, i.Unidades, i.Bultos, i.UnidadesPorBulto,
                 i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, porcentajePorAlicuota[i.IdAlicuotaIva],
-                i.ActualizaCosto ?? i.IdArticulo is not null))
+                i.ActualizaCosto ?? i.IdArticulo is not null, i.ImpuestoInterno))
             .ToList();
 
         var calculada = CalculadorDeCompra.Calcular(
@@ -1697,6 +1699,7 @@ public class ServicioDeCompras(
                 IdAlicuotaIva = linea.IdAlicuotaIva,
                 PorcentajeIva = linea.PorcentajeIva,
                 Total = item.Total,
+                ImpuestoInterno = linea.ImpuestoInterno,
                 ActualizaCosto = linea.ActualizaCosto,
                 PrecioSugerido = item.PrecioSugerido,
                 CodigoLote = NormalizarOpcional(solicitudItem.CodigoLote),
@@ -1839,7 +1842,8 @@ public class ServicioDeCompras(
                 i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.Bultos, i.UnidadesPorBulto,
                 PuedeVerCostos ? i.CostoUnitario : null, PuedeVerCostos ? i.Descuento : null, i.IdAlicuotaIva,
                 i.PorcentajeIva, PuedeVerCostos ? i.Total : null, i.ActualizaCosto,
-                PuedeVerCostos ? i.PrecioSugerido : null, i.CodigoLote, i.FechaVencimiento, i.IdLote, i.CodigoProveedor))
+                PuedeVerCostos ? i.PrecioSugerido : null, i.CodigoLote, i.FechaVencimiento, i.IdLote, i.CodigoProveedor,
+                PuedeVerCostos ? i.ImpuestoInterno : null))
             .ToList(),
         comprobante.IdOrdenCompra,
         comprobante.DiscriminaIva,
@@ -1856,5 +1860,6 @@ public class ServicioDeCompras(
             .ToList(),
         pagado,
         ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado),
-        comprobante.Origen);
+        comprobante.Origen,
+        comprobante.ImpuestosInternos);
 }

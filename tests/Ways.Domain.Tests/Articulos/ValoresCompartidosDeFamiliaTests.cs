@@ -341,7 +341,8 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.DisponibleParaTodas),
             nameof(Articulo.DisponibleOnline),
             nameof(Articulo.DisponibleVenta),
-            nameof(Articulo.TeclaAtajo)
+            nameof(Articulo.TeclaAtajo),
+            nameof(Articulo.PorcentajeImpuestoInterno)
         ];
 
         string[] estructurales =

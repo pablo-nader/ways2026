@@ -41,9 +41,13 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     costo_lista_incluye_iva boolean NOT NULL DEFAULT true, -- el costo_lista se cargó con IVA incluido
     descuento_proveedor numeric(5,2) NULL DEFAULT 0, -- el servidor guarda 0 cuando no se carga; la lectura
                                              -- devuelve null solo a quien no ve costos
-    costo_nominal    numeric(14,2) NULL,     -- costo por unidad, con IVA y neto del descuento: el servidor lo
-                                             -- calcula en el alta y cuando una edición cambia alguna entrada del
-                                             -- cálculo; la compra lo pisa con el costo efectivo
+    porcentaje_impuesto_interno numeric(7,4) NOT NULL DEFAULT 0, -- % de impuestos internos sobre el costo neto
+                                             -- (0 a 999,9999); campo propio del artículo, no de la familia. Solo
+                                             -- cuenta con un costo_lista sin IVA y precarga el importe de la línea
+                                             -- de compra (el impreso por el proveedor manda)
+    costo_nominal    numeric(14,2) NULL,     -- costo por unidad, con IVA e impuestos internos y neto del descuento:
+                                             -- el servidor lo calcula en el alta y cuando una edición cambia alguna
+                                             -- entrada del cálculo; la compra lo pisa con el costo efectivo
     disponible_para_todas boolean NOT NULL DEFAULT true,
     activo,
     disponible_online boolean NOT NULL DEFAULT true, -- se ofrece en la tienda online (§3, "Tienda online");

@@ -49,7 +49,8 @@ public sealed record FilaDeLibroIva(
     decimal PercepcionIibb,
     decimal Total,
     decimal Diferencia,
-    IReadOnlyList<string> Advertencias)
+    IReadOnlyList<string> Advertencias,
+    decimal ImpuestosInternos = 0m)
 {
     public decimal NetoGravado => Alicuotas.Sum(a => a.Neto);
 
@@ -63,7 +64,8 @@ public sealed record TotalesDeLibroIva(
     decimal PercepcionIva,
     decimal PercepcionIibb,
     decimal Total,
-    decimal Diferencia)
+    decimal Diferencia,
+    decimal ImpuestosInternos = 0m)
 {
     public decimal NetoGravado => PorAlicuota.Sum(a => a.Neto);
 

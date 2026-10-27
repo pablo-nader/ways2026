@@ -22,9 +22,9 @@ public class ComposicionDeLibroIvaTests
     private static CompraParaLibro Compra(
         string numero = "0001-00000001", string tipo = "C-FA", bool discrimina = true, decimal total = 0m,
         IReadOnlyList<AlicuotaDeCompraParaLibro>? alicuotas = null, decimal percepcionIva = 0m,
-        decimal percepcionIibb = 0m, DateOnly? fecha = null) =>
+        decimal percepcionIibb = 0m, DateOnly? fecha = null, decimal impuestosInternos = 0m) =>
         new(fecha ?? new DateOnly(2026, 5, 10), tipo, numero, "Proveedor SA", "30-11111111-8", discrimina, total,
-            alicuotas ?? [], percepcionIva, percepcionIibb);
+            alicuotas ?? [], percepcionIva, percepcionIibb, impuestosInternos);
 
     private static VentaParaLibro Venta(
         IReadOnlyList<LineaFiscal> lineas, decimal total, short signo = 1, string tipo = "FA",
@@ -58,6 +58,32 @@ public class ComposicionDeLibroIvaTests
         Assert.Equal(0m, fila.Diferencia);
         Assert.Equal("Proveedor SA", fila.Contraparte);
         Assert.Equal("30-11111111-8", fila.Documento);
+    }
+
+    [Fact]
+    public void LosImpuestosInternosSonUnaColumnaPropiaYLaDiferenciaDaCero()
+    {
+        var compra = Compra(
+            total: 1331m, alicuotas: [Gravada(21m, 1000m, 210m)], percepcionIibb: 11m, impuestosInternos: 110m);
+
+        var libro = ComposicionDeLibroIva.DeCompras(Desde, Hasta, null, [compra, Compra("0001-00000002", total: 121m, alicuotas: [Gravada(21m, 100m, 21m)])]);
+
+        var fila = libro.Filas.Single(f => f.Numero == "0001-00000001");
+        Assert.Equal(110m, fila.ImpuestosInternos);
+        Assert.Equal(0m, fila.Diferencia);
+        Assert.Equal(0m, libro.Filas.Single(f => f.Numero == "0001-00000002").ImpuestosInternos);
+        Assert.Equal(110m, libro.Totales.ImpuestosInternos);
+        Assert.Equal(0m, libro.Totales.Diferencia);
+    }
+
+    [Fact]
+    public void UnaFacturaConImpuestosInternosNoCierraSiElLibroLosIgnora()
+    {
+        var compra = Compra(total: 1331m, alicuotas: [Gravada(21m, 1000m, 210m)], percepcionIibb: 11m);
+
+        var fila = Assert.Single(ComposicionDeLibroIva.DeCompras(Desde, Hasta, null, [compra]).Filas);
+
+        Assert.Equal(110m, fila.Diferencia);
     }
 
     [Fact]

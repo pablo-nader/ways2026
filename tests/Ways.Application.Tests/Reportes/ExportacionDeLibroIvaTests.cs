@@ -52,7 +52,7 @@ public class ExportacionDeLibroIvaTests
                 "Fecha", "Tipo", "Número", "Proveedor", "CUIT",
                 "Neto 21%", "IVA 21%", "Neto 10,5%", "IVA 10,5%", "Neto 27%", "IVA 27%", "Neto 5%", "IVA 5%",
                 "Neto 2,5%", "IVA 2,5%", "Neto otras alícuotas", "IVA otras alícuotas", "No gravado", "Exento",
-                "Percepción IVA", "Percepción IIBB", "Total", "Diferencia", "Observaciones"
+                "Percepción IVA", "Percepción IIBB", "Impuestos internos", "Total", "Diferencia", "Observaciones"
             ],
             tabla.Columnas.Select(c => c.Titulo));
     }
@@ -84,7 +84,7 @@ public class ExportacionDeLibroIvaTests
         Assert.Equal(
             new object[]
             {
-                1000m, 210m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 80m, 0m, 30m, 50m, 15m, 7m, 1392m, 0m,
+                1000m, 210m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 80m, 0m, 30m, 50m, 15m, 7m, 0m, 1392m, 0m,
                 "Anulado sin NC; Sin número fiscal de PV"
             },
             tabla.Filas[0].Skip(5).Select(c => c.Valor).ToArray());
@@ -93,7 +93,7 @@ public class ExportacionDeLibroIvaTests
         Assert.Equal(new DateOnly(2026, 5, 4), tabla.Filas[1][0].Valor);
         Assert.Equal("A-2", tabla.Filas[1][2].Valor);
         Assert.Equal(
-            new object[] { 0m, 0m, 200m, 21m, 0m, 0m, 0m, 0m, 40m, 1m, 0m, 0m, 11m, 13m, 3m, 5m, 300m, 6m, "" },
+            new object[] { 0m, 0m, 200m, 21m, 0m, 0m, 0m, 0m, 40m, 1m, 0m, 0m, 11m, 13m, 3m, 5m, 0m, 300m, 6m, "" },
             tabla.Filas[1].Skip(5).Select(c => c.Valor).ToArray());
 
         // Totales: etiqueta en "Tipo", sin fecha, con las alícuotas fijas y las otras sumadas.
@@ -101,8 +101,26 @@ public class ExportacionDeLibroIvaTests
         Assert.Null(total[0].Valor);
         Assert.Equal("Total", total[1].Valor);
         Assert.Equal(
-            new object[] { 1000m, 210m, 200m, 21m, 0m, 0m, 0m, 0m, 40m, 1m, 80m, 0m, 41m, 63m, 18m, 12m, 1692m, 6m, "" },
+            new object[] { 1000m, 210m, 200m, 21m, 0m, 0m, 0m, 0m, 40m, 1m, 80m, 0m, 41m, 63m, 18m, 12m, 0m, 1692m, 6m, "" },
             total.Skip(5).Select(c => c.Valor).ToArray());
+    }
+
+    [Fact]
+    public void LosImpuestosInternosSalenEnSuColumnaDespuesDeLasPercepcionesYEnLosTotales()
+    {
+        var fila = new FilaDeLibroIva(
+            new DateOnly(2026, 5, 3), "C-FA", "A-1", "Proveedor", "CUIT", [new AlicuotaDeLibroIva(21m, 100m, 21m)],
+            0m, 0m, 1m, 2m, 148m, 0m, [], 24m);
+        var libro = new LibroIva(
+            new DateOnly(2026, 5, 1), new DateOnly(2026, 5, 31), null, null, [fila],
+            new TotalesDeLibroIva([new AlicuotaDeLibroIva(21m, 100m, 21m)], 0m, 0m, 1m, 2m, 148m, 0m, 24m));
+
+        var tabla = ExportacionDeLibroIva.DeCompras(libro, Contexto);
+        var posicion = tabla.Columnas.ToList().FindIndex(c => c.Titulo == "Impuestos internos");
+
+        Assert.Equal("Percepción IIBB", tabla.Columnas[posicion - 1].Titulo);
+        Assert.Equal(24m, tabla.Filas[0][posicion].Valor);
+        Assert.Equal(24m, tabla.Filas[1][posicion].Valor);
     }
 
     [Fact]
