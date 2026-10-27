@@ -55,8 +55,8 @@ computed over their whole net price; `ImpTrib = 0` stays correct).
 
 ## Delivery strategy
 
-`ask-on-risk` with the standing chain preference `stacked-to-main`: one PR per task.
-Forecast ~1,000 authored lines over two tasks.
+`single-pr` (changed from one PR per task on 2026-10-27): judgment-day showed that T1 alone in main
+would let a web save of an MCP draft drop its excise, so T1 and T2 ship together.
 
 ## Tasks
 
@@ -112,4 +112,10 @@ Forecast ~1,000 authored lines over two tasks.
 
 ## Next step
 
-Open the single T1 + T2 PR (judgment-day first).
+PR open with auto-merge. Judgment-day: APPROVED after two fix rounds (39f30689 backend decimals +
+comments; 0d3ececb web tab-freeze, list-with-IVA double count, non-discriminating prefill, comments).
+
+Follow-ups (not in this PR):
+- Editing only the rate (or the IVA alícuota, pre-existing) on an article without list cost recomputes
+  `costo_nominal` to null, losing the purchase-derived cost (Judge A, single-judge suspect).
+- A reopened draft shows its saved excise as manual; it does not rescale with later quantity changes.
