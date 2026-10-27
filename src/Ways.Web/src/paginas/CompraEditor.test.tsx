@@ -212,6 +212,7 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     idAlicuotaIva: 3,
     porcentajeIva: 21,
     total: 950,
+    impuestoInterno: 0,
     actualizaCosto: true,
     precioSugerido: 114.95,
     codigoLote: null,
@@ -234,6 +235,7 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     subtotal: 1000,
     descuentoTotal: 50,
     ivaTotal: 199.5,
+    impuestosInternos: 0,
     total: 1149.5,
     observaciones: null,
     estado: 'Borrador',
@@ -411,6 +413,7 @@ describe('CompraEditor — borrador existente', () => {
         costoUnitario: 10,
         descuento: 0.07,
         idAlicuotaIva: 3,
+        impuestoInterno: 0,
         actualizaCosto: true,
         codigoLote: null,
         fechaVencimiento: null,
@@ -1513,6 +1516,8 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
 
     await usuario.click(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/))
     await usuario.tab()
+    expect(screen.getByLabelText(/^Imp\. internos, línea \d+$/)).toHaveFocus()
+    await usuario.tab()
     expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toHaveFocus()
     await usuario.tab()
     expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toHaveFocus()
@@ -1606,13 +1611,59 @@ describe('CompraEditor — role gating', () => {
     expect(screen.queryByLabelText(/^Importe, línea \d+$/)).not.toBeInTheDocument()
   })
 
+  it('una compra confirmada con impuestos internos los muestra por línea y en los totales', async () => {
+    const conExcise = compraFixture({
+      estado: 'Confirmada',
+      impuestosInternos: 80,
+      total: 1229.5,
+      items: [itemFixture({ impuestoInterno: 80 })],
+    })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(conExcise) : undefined))
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    const fila = screen.getByRole('row', { name: /Fideos 500g/ })
+    expect(fila).toHaveTextContent('$ 80,00')
+    expect(screen.getByText('Impuestos internos', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 80,00')
+    expect(screen.getByText('Total', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 1.229,50')
+  })
+
+  it('un borrador con impuestos internos los suma al total del mirror, fuera de la base del IVA, y los envía al guardar', async () => {
+    const conExcise = compraFixture({ items: [itemFixture({ impuestoInterno: 80 })] })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(conExcise) : undefined))
+    apiPutMock.mockResolvedValue(conExcise)
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.getByText('Impuestos internos', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 80,00')
+    expect(screen.getByText('IVA', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 199,50')
+    expect(screen.getByText('Total', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 1.229,50')
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(cuerpo.items[0].impuestoInterno).toBe(80)
+  })
+
+  it('una compra confirmada sin impuestos internos no muestra el bloque de totales', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.queryByText('Impuestos internos', { selector: 'div' })).not.toBeInTheDocument()
+  })
+
   it.each(['Borrador', 'Confirmada'] as const)(
     'un Vendedor con una compra %s sin costos por línea ve — y conserva los totales del encabezado',
     async (estado) => {
       usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
       const sinCostos = compraFixture({
         estado,
-        items: [itemFixture({ costoUnitario: null, descuento: null, total: null, precioSugerido: null })],
+        items: [itemFixture({ costoUnitario: null, descuento: null, total: null, impuestoInterno: null, precioSugerido: null })],
       })
       mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(sinCostos) : undefined))
 
@@ -1620,8 +1671,8 @@ describe('CompraEditor — role gating', () => {
       await screen.findByDisplayValue('00012345')
 
       const fila = screen.getByRole('row', { name: /Fideos 500g/ })
-      // lote, vencimiento, costo unitario, descuento, total y precio sugerido.
-      expect(within(fila).getAllByText('—')).toHaveLength(6)
+      // lote, vencimiento, costo unitario, descuento, impuestos internos, total y precio sugerido.
+      expect(within(fila).getAllByText('—')).toHaveLength(7)
       expect(fila.textContent).not.toMatch(/\$|NaN|0,00/)
       expect(screen.getByText('Total', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 1.149,50')
       expect(screen.getByText('Subtotal', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 1.000,00')
@@ -1954,6 +2005,7 @@ describe('CompraEditor — líneas por concepto', () => {
         costoUnitario: 1234.56,
         descuento: 0,
         idAlicuotaIva: 3,
+        impuestoInterno: 0,
         actualizaCosto: false,
         codigoLote: null,
         fechaVencimiento: null,

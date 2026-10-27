@@ -36,6 +36,35 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
   }
 }
 
+describe('FormularioArticulo — impuestos internos (%)', () => {
+  it('un alta nueva arranca en 0 y lo manda como número', () => {
+    expect(formularioVacio().porcentajeImpuestoInterno).toBe('0')
+    expect(aAlta({ ...formularioVacio(), porcentajeImpuestoInterno: '8,5' }).porcentajeImpuestoInterno).toBe(8.5)
+    expect(aAlta({ ...formularioVacio(), porcentajeImpuestoInterno: '' }).porcentajeImpuestoInterno).toBe(0)
+  })
+
+  it('aFormulario lo lee tal como está guardado y aEdicion lo devuelve', () => {
+    const formulario = aFormulario(articuloFixture({ porcentajeImpuestoInterno: 12.3456 }))
+
+    expect(formulario.porcentajeImpuestoInterno).toBe('12.3456')
+    expect(formulario.costoGuardado?.porcentajeImpuestoInterno).toBe('12.3456')
+    expect(aEdicion(formulario).porcentajeImpuestoInterno).toBe(12.3456)
+  })
+
+  it('un artículo que llega sin el campo (payload viejo) se carga con 0', () => {
+    expect(aFormulario(articuloFixture()).porcentajeImpuestoInterno).toBe('0')
+  })
+
+  it('quien no ve los costos (el campo llega null y el costo de lista por también) no lo manda: el servidor conserva el guardado', () => {
+    const formulario = aFormulario(articuloFixture({ costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, porcentajeImpuestoInterno: null }))
+
+    expect(formulario.costosOcultos).toBe(true)
+    expect(formulario.porcentajeImpuestoInterno).toBe('')
+    expect(aEdicion(formulario).porcentajeImpuestoInterno).toBeNull()
+    expect(aAlta(formulario).porcentajeImpuestoInterno).toBeNull()
+  })
+})
+
 describe('FormularioArticulo — acumulaEnVenta', () => {
   it('un formulario vacío (artículo nuevo) arranca acumulando', () => {
     expect(formularioVacio().acumulaEnVenta).toBe(true)
@@ -148,7 +177,7 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
   it.each<Pick<ArticuloListado, 'esProducto' | 'controlaLote' | 'acumulaEnVenta'>>([
     { esProducto: false, controlaLote: true, acumulaEnVenta: false },
     { esProducto: true, controlaLote: false, acumulaEnVenta: false },
-  ])('ida y vuelta: editar un miembro conserva sus quince campos compartidos y no manda su familia (booleanos %j)', (booleanos) => {
+  ])('ida y vuelta: editar un miembro conserva sus dieciséis campos compartidos y no manda su familia (booleanos %j)', (booleanos) => {
     const compartidos = {
       idArea: 11,
       idCategoria: 12,
@@ -162,6 +191,7 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
       costoListaPor: 'Bulto',
       costoListaIncluyeIva: false,
       descuentoProveedor: 7,
+      porcentajeImpuestoInterno: 8.5,
       costoNominal: 200,
     } satisfies Partial<ArticuloListado>
     const { costoNominal, ...enviados } = compartidos

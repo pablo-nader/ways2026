@@ -6,10 +6,10 @@ export type PestanaDeLibroIva = 'compras' | 'ventas'
  * percepciones (en ventas el backend las manda siempre en cero y no se muestran). */
 export const CONFIGURACION_DE_PESTANA: Record<
   PestanaDeLibroIva,
-  { titulo: string; contraparte: string; documento: string; conPercepciones: boolean }
+  { titulo: string; contraparte: string; documento: string; conPercepciones: boolean; conImpuestosInternos: boolean }
 > = {
-  compras: { titulo: 'Compras', contraparte: 'Proveedor', documento: 'CUIT', conPercepciones: true },
-  ventas: { titulo: 'Ventas', contraparte: 'Cliente', documento: 'Documento', conPercepciones: false },
+  compras: { titulo: 'Compras', contraparte: 'Proveedor', documento: 'CUIT', conPercepciones: true, conImpuestosInternos: true },
+  ventas: { titulo: 'Ventas', contraparte: 'Cliente', documento: 'Documento', conPercepciones: false, conImpuestosInternos: false },
 }
 
 const ETIQUETA_DE_ADVERTENCIA: Record<string, string> = {

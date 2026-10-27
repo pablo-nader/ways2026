@@ -2,7 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { aLineaSolicitada, lineaCompletaParaEnvio, normalizarFilas, type LineaDeCompraFormulario } from '../../api/lineaDeCompra'
+import {
+  aLineaSolicitada,
+  lineaCompletaParaEnvio,
+  lineaDeCompraVacia,
+  normalizarFilas,
+  type LineaDeCompraFormulario,
+} from '../../api/lineaDeCompra'
 import { ErrorApi } from '../../api/cliente'
 import type { AlicuotaIvaListado, ArticuloListado, ItemDeCompra } from '../../api/tipos'
 import { itemAFormulario } from '../../api/lineaDeCompra'
@@ -85,6 +91,7 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     idAlicuotaIva: 3,
     porcentajeIva: 21,
     total: 950,
+    impuestoInterno: 0,
     actualizaCosto: true,
     precioSugerido: null,
     codigoLote: null,
@@ -241,12 +248,12 @@ beforeEach(() => {
 })
 
 describe('GrillaDeItemsDeCompra — estructura', () => {
-  it('muestra las columnas Código, Detalle, UM, Cantidad, Importe, Descuento, IVA y Total, en ese orden', () => {
+  it('muestra las columnas Código, Detalle, UM, Cantidad, Importe, Descuento, IVA, Imp. internos y Total, en ese orden', () => {
     montar()
     const encabezados = within(screen.getByRole('table', { name: 'Items de la compra' }))
       .getAllByRole('columnheader')
       .map((c) => c.textContent)
-    expect(encabezados.slice(0, 8)).toEqual(['Código', 'Detalle', 'UM', 'Cantidad', 'Importe', 'Descuento', 'IVA', 'Total'])
+    expect(encabezados.slice(0, 9)).toEqual(['Código', 'Detalle', 'UM', 'Cantidad', 'Importe', 'Descuento', 'IVA', 'Imp. internos', 'Total'])
   })
 
   it('siempre hay exactamente una fila vacía al final: al tipear en ella aparece otra, y al vaciarla vuelve a haber una sola', async () => {
@@ -2291,6 +2298,89 @@ describe('GrillaDeItemsDeCompra — costo de lista cargado por bulto y sin IVA',
     await escribirCodigoYSalir(usuario, 0, 'AB-1')
 
     await waitFor(() => expect(campo(0, 'Importe')).toHaveValue('121,0000'))
+  })
+})
+
+describe('GrillaDeItemsDeCompra — impuestos internos', () => {
+  const conPorcentaje = (sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeCompraFormulario => ({
+    ...lineaDeCompraVacia(1),
+    idArticulo: 20,
+    descripcion: 'Gaseosa 2L',
+    cantidad: '10',
+    importe: 100,
+    idAlicuotaIva: 3,
+    porcentajeImpuestoInterno: 8,
+    ...sobrescribir,
+  })
+
+  it('precarga el importe con el porcentaje del artículo sobre el neto de la línea y lo sigue mientras no se tipea', async () => {
+    const usuario = userEvent.setup()
+    montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+
+    expect(campo(0, 'Imp. internos')).toHaveValue('80,00')
+
+    await usuario.clear(campo(0, 'Cantidad'))
+    await usuario.type(campo(0, 'Cantidad'), '20')
+
+    expect(campo(0, 'Imp. internos')).toHaveValue('160,00')
+  })
+
+  it('el importe tipeado a mano (con coma o con punto) es el impreso y un cambio de cantidad no lo pisa', async () => {
+    const usuario = userEvent.setup()
+    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+
+    await usuario.clear(campo(0, 'Imp. internos'))
+    await usuario.type(campo(0, 'Imp. internos'), '75.5')
+    expect(captura.lineas[0].impuestoInterno).toBe(75.5)
+
+    await usuario.clear(campo(0, 'Cantidad'))
+    await usuario.type(campo(0, 'Cantidad'), '20')
+
+    expect(captura.lineas[0].impuestoInterno).toBe(75.5)
+    expect(campo(0, 'Imp. internos')).toHaveValue('75,50')
+  })
+
+  it('el campo admite hasta dos decimales', async () => {
+    const usuario = userEvent.setup()
+    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+
+    await usuario.clear(campo(0, 'Imp. internos'))
+    await usuario.type(campo(0, 'Imp. internos'), '12,345')
+
+    expect(captura.lineas[0].impuestoInterno).toBe(12.34)
+  })
+
+  it('vaciar el campo devuelve la línea al cálculo automático', async () => {
+    const usuario = userEvent.setup()
+    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje({ impuestoInterno: 5 })] })
+
+    await usuario.clear(campo(0, 'Imp. internos'))
+
+    expect(captura.lineas[0].impuestoInterno).toBeNull()
+  })
+
+  it('un comprobante que no discrimina IVA no ofrece el campo', () => {
+    montar({ discriminaIva: false, inicial: [conPorcentaje({ impuestoInterno: 5 })] })
+
+    expect(within(filaDeItems(0)).queryByLabelText(/^Imp\. internos, línea \d+$/)).not.toBeInTheDocument()
+  })
+
+  it('una línea por concepto no ofrece el campo', () => {
+    montar({ discriminaIva: true, inicial: [conPorcentaje({ idArticulo: '', porcentajeImpuestoInterno: 0 })] })
+
+    expect(within(filaDeItems(0)).queryByLabelText(/^Imp\. internos, línea \d+$/)).not.toBeInTheDocument()
+  })
+
+  it('con precios con IVA incluido sugiere sobre el neto sin IVA', () => {
+    montar({ discriminaIva: true, preciosFinales: true, inicial: [conPorcentaje({ cantidad: '1', importe: 121 })] })
+
+    expect(campo(0, 'Imp. internos')).toHaveValue('8,00')
+  })
+
+  it('la fila vacía de cierre (todavía sin artículo) no ofrece el campo', () => {
+    montar({ discriminaIva: true })
+
+    expect(within(filaDeItems(0)).queryByLabelText(/^Imp\. internos, línea \d+$/)).not.toBeInTheDocument()
   })
 })
 

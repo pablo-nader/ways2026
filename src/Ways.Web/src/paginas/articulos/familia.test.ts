@@ -45,6 +45,7 @@ function valoresFixture(sobrescribir: Partial<ValoresCompartidosDeLaFamilia> = {
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: 10,
+    porcentajeImpuestoInterno: 8.5,
     costoNominal: 90,
     ...sobrescribir,
   }
@@ -75,7 +76,7 @@ function familiaListado(sobrescribir: Partial<FamiliaListado> = {}): FamiliaList
 }
 
 describe('CAMPOS_COMPARTIDOS', () => {
-  it('son los quince campos compartidos, con las columnas del servidor y en su orden de declaración', () => {
+  it('son los dieciséis campos compartidos, con las columnas del servidor y en su orden de declaración', () => {
     expect(CAMPOS_COMPARTIDOS.map((c) => c.columna)).toEqual([
       'id_area',
       'id_categoria',
@@ -91,6 +92,7 @@ describe('CAMPOS_COMPARTIDOS', () => {
       'costo_lista_por',
       'costo_lista_incluye_iva',
       'descuento_proveedor',
+      'porcentaje_impuesto_interno',
       'costo_nominal',
     ])
   })
@@ -101,13 +103,13 @@ describe('CAMPOS_COMPARTIDOS', () => {
 
   it('cada campo tiene una etiqueta legible, distinta de las demás', () => {
     const etiquetas = CAMPOS_COMPARTIDOS.map((c) => c.etiqueta)
-    expect(new Set(etiquetas).size).toBe(15)
+    expect(new Set(etiquetas).size).toBe(16)
     expect(etiquetas.every((e) => e.trim() !== '')).toBe(true)
   })
 })
 
 describe('valoresDeFamiliaAFormulario', () => {
-  it('copia los quince valores con la forma del formulario: números como están y decimales como texto', () => {
+  it('copia los dieciséis valores con la forma del formulario: números como están y decimales como texto', () => {
     expect(valoresDeFamiliaAFormulario(valoresFixture())).toEqual({
       idArea: 1,
       idCategoria: 2,
@@ -123,6 +125,7 @@ describe('valoresDeFamiliaAFormulario', () => {
       costoListaPor: 'Unidad',
       costoListaIncluyeIva: true,
       descuentoProveedor: '10',
+      porcentajeImpuestoInterno: '8.5',
       costoNominal: '90',
     })
   })
@@ -202,6 +205,7 @@ describe('camposCompartidosModificados', () => {
     ['costoListaPor', { costoListaPor: 'Bulto' }],
     ['costoListaIncluyeIva', { costoListaIncluyeIva: false }],
     ['descuentoProveedor', { descuentoProveedor: '15' }],
+    ['porcentajeImpuestoInterno', { porcentajeImpuestoInterno: '9' }],
     ['costoNominal', { costoNominal: '95' }],
   ]
 
@@ -209,7 +213,7 @@ describe('camposCompartidosModificados', () => {
     expect(camposCompartidosModificados(formulario(), formulario(cambio)).map((c) => c.clave)).toEqual([clave])
   })
 
-  it('los quince casos de arriba cubren los quince campos compartidos', () => {
+  it('los dieciséis casos de arriba cubren los dieciséis campos compartidos', () => {
     expect(cambios.map(([clave]) => clave).sort()).toEqual(CAMPOS_COMPARTIDOS.map((c) => c.clave).sort())
   })
 
@@ -605,7 +609,7 @@ describe('unión de un artículo existente a una familia', () => {
     const texto = advertenciaDeUnion('Sabores')
 
     expect(texto).toContain('familia "Sabores"')
-    expect(texto).toContain('quince campos compartidos')
+    expect(texto).toContain('dieciséis campos compartidos')
     expect(texto).toContain('se reemplazan')
     expect(texto).toContain(CAMPOS_PROPIOS)
   })

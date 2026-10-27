@@ -62,7 +62,7 @@ Forecast ~1,000 authored lines over two tasks.
 
 - [x] T1 — Backend: model + migration + calculation + contracts + Libro IVA + MCP + docs + tests.
   Route: delegated (2+ non-trivial files).
-- [ ] T2 — Web: purchase line, totals, article form, Libro IVA column + tests.
+- [x] T2 — Web: purchase line, totals, article form, Libro IVA column + tests.
   Route: delegated (2+ non-trivial files).
 
 ## Progress
@@ -89,6 +89,22 @@ Forecast ~1,000 authored lines over two tasks.
   (also export column "Impuestos internos" after "Percepción IIBB"). Error codes: `impuesto_interno_invalido`,
   `impuesto_interno_sin_discriminar`, `concepto_con_impuesto_interno`, `porcentaje_impuesto_interno_invalido`.
 
+- 2026-10-27: T2 done (delegated writer, applied on the T1 branch because T1 and T2 ship as ONE PR). Evidence: `npx tsc -b` 0 errors;
+  `oxlint` 0 errors (only pre-existing warnings); full `npx vitest run` 250 files / 7766 tests ok. Test-first for the pure helpers
+  (RED observed: 25/26 failing before implementing). Decisions: the line amount is `null` = automatic (derived each render as
+  `round(neto x pct / 100, 2)`, neto = line total, or total without IVA with IVA-included prices) and any typed value, including 0, is the
+  printed amount; clearing the input returns to automatic; choosing a different article resets to automatic; the amount is 0 (field not
+  offered) for concept lines and when IVA is not discriminated. The web mirror (`calcularTotalesDeCompra`) matches `CalculadorDeCompra`
+  (total adds the excise outside the IVA base; effective cost = (total with IVA + excise) / quantity in net mode, (total + excise) / quantity
+  otherwise). Article cost preview adds the rate to the IVA factor (`100 + IVA + II`). When a line's cost is prefilled from the
+  `costoNominal` fallback the excise is stripped (`nominal x (100 + IVA) / (100 + IVA + II)`, then netted by the row mode) so it is not
+  counted twice. Inputs mirror the server limits: 2 decimals for the line amount, 4 for the rate. Server 400s keep showing their own
+  Spanish message (the web has no code-to-message map for these codes).
+  Known limitation: the server does not store whether a line amount was typed or suggested, so a reopened draft shows the saved amount as
+  typed and a later quantity or cost change does not rescale it (edit the amount, or re-pick the article). The Libro IVA ventas tab
+  shows no excise column (always 0). `docs/10-modelo-de-datos/03-articulos--familias-de-articulos.md` still lists fifteen shared columns
+  (outside T2 surfaces).
+
 ## Next step
 
-T2.
+Open the single T1 + T2 PR (judgment-day first).

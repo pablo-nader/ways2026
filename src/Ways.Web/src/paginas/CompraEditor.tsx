@@ -147,6 +147,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
             <th className="text-end">Costo unitario</th>
             <th className="text-end">Descuento</th>
             <th className="text-end">IVA %</th>
+            <th className="text-end">Imp. internos</th>
             <th className="text-end">Total</th>
             <th>Actualiza costo</th>
             <th className="text-end">Precio sugerido</th>
@@ -165,6 +166,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
               <td className="text-end">{formatearMoneda(item.costoUnitario)}</td>
               <td className="text-end">{formatearMoneda(item.descuento)}</td>
               <td className="text-end">{item.porcentajeIva}%</td>
+              <td className="text-end">{formatearMoneda(item.impuestoInterno)}</td>
               <td className="text-end">{formatearMoneda(item.total)}</td>
               <td>{item.actualizaCosto ? 'Sí' : 'No'}</td>
               <td className="text-end">{formatearMoneda(item.precioSugerido)}</td>
@@ -172,7 +174,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
           ))}
           {compra.items.length === 0 && (
             <tr>
-              <td colSpan={10} className="text-center text-muted py-3">
+              <td colSpan={11} className="text-center text-muted py-3">
                 Esta compra no tiene items.
               </td>
             </tr>
@@ -600,11 +602,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     () => (compra === null ? null : huellaDeFormulario(encabezadoDesdeDetalle(compra), compra.items.map((i) => itemAFormulario(0, i)))),
     [compra],
   )
-  const calculo = useMemo(
-    () => lineasCompletas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota)),
-    [lineasCompletas, porcentajePorAlicuota],
-  )
   const preciosFinales = discriminaIva && encabezado.preciosIncluyenIva
+  const calculo = useMemo(
+    () => lineasCompletas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota, { discriminaIva, preciosIncluyenIva: preciosFinales })),
+    [lineasCompletas, porcentajePorAlicuota, discriminaIva, preciosFinales],
+  )
   // La base de las percepciones automáticas sale de los totales SIN percepciones; recién con las
   // filas ya resueltas se calcula el total del comprobante.
   const basePercepcion = useMemo(
@@ -941,7 +943,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
     let guardada: CompraDetalle
     try {
-      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, porcentajePorAlicuota)
       guardada = esNuevo || idCompra === null ? await clienteDeCompras.crear(solicitud) : await clienteDeCompras.actualizar(idCompra, solicitud)
     } catch (e) {
       liberar()
@@ -1324,6 +1326,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 <div className="small text-muted">IVA</div>
                 <div>{totales.ivaTotal === null ? '—' : formatearMoneda(totales.ivaTotal)}</div>
               </div>
+              {totales.impuestosInternos !== 0 && (
+                <div className="col-md-3">
+                  <div className="small text-muted">Impuestos internos</div>
+                  <div>{formatearMoneda(totales.impuestosInternos)}</div>
+                </div>
+              )}
               {totales.percepcionesTotal !== 0 && (
                 <div className="col-md-3">
                   <div className="small text-muted">Percepciones</div>
@@ -1474,6 +1482,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   <div className="small text-muted">IVA</div>
                   <div>{compra.ivaTotal === null ? '—' : formatearMoneda(compra.ivaTotal)}</div>
                 </div>
+                {compra.impuestosInternos !== 0 && (
+                  <div className="col-md-3">
+                    <div className="small text-muted">Impuestos internos</div>
+                    <div>{formatearMoneda(compra.impuestosInternos)}</div>
+                  </div>
+                )}
                 <div className="col-md-3">
                   <div className="small text-muted">Total</div>
                   <div className="fs-6">{formatearMoneda(compra.total)}</div>

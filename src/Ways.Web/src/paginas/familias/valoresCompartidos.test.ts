@@ -19,6 +19,7 @@ function valores(sobrescribir: Partial<ValoresCompartidosDeLaFamilia> = {}): Val
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: 5,
+    porcentajeImpuestoInterno: 8.5,
     costoNominal: 99,
     ...sobrescribir,
   }
@@ -48,6 +49,7 @@ describe('formatearValorCompartido', () => {
     ['costoListaPor', 'Unidad'],
     ['costoListaIncluyeIva', 'Sí'],
     ['descuentoProveedor', '5%'],
+    ['porcentajeImpuestoInterno', '8.5%'],
     ['costoNominal', '$ 99,00'],
   ] as const)('%s se muestra como "%s"', (clave, esperado) => {
     expect(formatearValorCompartido(clave, valores(), nombres)).toBe(esperado)
@@ -65,7 +67,7 @@ describe('formatearValorCompartido', () => {
     expect(formatearValorCompartido('unidadVenta', valores({ unidadVenta: 'Docena' as unknown as UnidadVenta }), nombres)).toBe('Docena')
   })
 
-  it('los quince campos compartidos tienen formato: la prueba de arriba cubre cada uno', () => {
+  it('los dieciséis campos compartidos tienen formato: la prueba de arriba cubre cada uno', () => {
     expect(CAMPOS_COMPARTIDOS.map((c) => c.clave).sort()).toEqual(
       [
         'idArea',
@@ -82,6 +84,7 @@ describe('formatearValorCompartido', () => {
         'costoListaPor',
         'costoListaIncluyeIva',
         'descuentoProveedor',
+        'porcentajeImpuestoInterno',
         'costoNominal',
       ].sort(),
     )

@@ -172,7 +172,7 @@ describe('lineaFormularioACalculo', () => {
 // ---- calcularTotalesDeCompra: espejo de CalculadorDeCompra (design: "Compra Arithmetic") -----
 
 function lineaDeCalculoFixture(sobrescribir: Partial<LineaDeCalculo> = {}): LineaDeCalculo {
-  return { idAlicuotaIva: 1, unidades: 10, bultos: 0, unidadesPorBulto: 0, costoUnitario: 100, descuento: 50, porcentajeIva: 21, ...sobrescribir }
+  return { idAlicuotaIva: 1, unidades: 10, bultos: 0, unidadesPorBulto: 0, costoUnitario: 100, descuento: 50, porcentajeIva: 21, impuestoInterno: 0, ...sobrescribir }
 }
 
 describe('calcularTotalesDeCompra', () => {
@@ -214,6 +214,7 @@ describe('calcularTotalesDeCompra', () => {
       total: 0,
       alicuotas: [],
       percepcionesTotal: 0,
+      impuestosInternos: 0,
     })
   })
 

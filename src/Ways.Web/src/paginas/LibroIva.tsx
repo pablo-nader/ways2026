@@ -229,7 +229,7 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
   const mostrarAdvertencias = filasConAdvertencias(libro).length > 0
   const columnasFijas = 5
   const cantidadDeColumnas =
-    columnasFijas + porcentajes.length * 2 + 3 + (configuracion.conPercepciones ? 2 : 0) + (mostrarDiferencia ? 1 : 0) +
+    columnasFijas + porcentajes.length * 2 + 3 + (configuracion.conPercepciones ? 2 : 0) + (configuracion.conImpuestosInternos ? 1 : 0) + (mostrarDiferencia ? 1 : 0) +
     (mostrarAdvertencias ? 1 : 0)
 
   return (
@@ -258,6 +258,7 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
               <th className="text-end">Exento</th>
               {configuracion.conPercepciones && <th className="text-end">Perc. IVA</th>}
               {configuracion.conPercepciones && <th className="text-end">Perc. IIBB</th>}
+              {configuracion.conImpuestosInternos && <th className="text-end">Imp. internos</th>}
               <th className="text-end">Total</th>
               {mostrarDiferencia && <th className="text-end">Dif.</th>}
               {mostrarAdvertencias && <th>Observaciones</th>}
@@ -281,6 +282,7 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
                 <td className="text-end">{formatearMoneda(fila.exento)}</td>
                 {configuracion.conPercepciones && <td className="text-end">{formatearMoneda(fila.percepcionIva)}</td>}
                 {configuracion.conPercepciones && <td className="text-end">{formatearMoneda(fila.percepcionIibb)}</td>}
+                {configuracion.conImpuestosInternos && <td className="text-end">{formatearMoneda(fila.impuestosInternos)}</td>}
                 <td className="text-end">{formatearMoneda(fila.total)}</td>
                 {mostrarDiferencia && (
                   <td className={`text-end${fila.diferencia !== 0 ? ' text-danger fw-bold' : ''}`}>
@@ -327,6 +329,9 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
                 )}
                 {configuracion.conPercepciones && (
                   <td className="text-end">{formatearMoneda(libro.totales.percepcionIibb)}</td>
+                )}
+                {configuracion.conImpuestosInternos && (
+                  <td className="text-end">{formatearMoneda(libro.totales.impuestosInternos)}</td>
                 )}
                 <td className="text-end">{formatearMoneda(libro.totales.total)}</td>
                 {mostrarDiferencia && <td className="text-end">{formatearMoneda(libro.totales.diferencia)}</td>}

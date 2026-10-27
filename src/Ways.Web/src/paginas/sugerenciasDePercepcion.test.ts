@@ -133,6 +133,7 @@ function totales(sobrescribir: Partial<TotalesDeCompra> = {}): TotalesDeCompra {
     total: 1000,
     alicuotas: [],
     percepcionesTotal: 0,
+    impuestosInternos: 0,
     ...sobrescribir,
   }
 }
