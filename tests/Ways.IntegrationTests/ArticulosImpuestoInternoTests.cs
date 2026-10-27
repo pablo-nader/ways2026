@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Ways.Application.Articulos;
+using Ways.Application.Precios;
+using Ways.Domain.Articulos;
 using static Ways.IntegrationTests.ApoyoDeFamilias;
 
 namespace Ways.IntegrationTests;
@@ -146,5 +148,54 @@ public class ArticulosImpuestoInternoTests(WaysApiFixture fixture) : IClassFixtu
         await AssertCodigoAsync(
             await e.Admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", edicion), "porcentaje_impuesto_interno_invalido");
         Assert.Equal(0m, (await apoyo.LeerAsync(creado.Id)).PorcentajeImpuestoInterno);
+    }
+
+    [Fact]
+    public async Task EditarLaTasaConAlcanceDeFamiliaLaLlevaALosMiembrosVivosJuntoConElCostoNominalRecalculado()
+    {
+        using var e = await apoyo.PrepararAsync(
+            nameof(EditarLaTasaConAlcanceDeFamiliaLaLlevaALosMiembrosVivosJuntoConElCostoNominalRecalculado));
+        var iva = e.PorcentajeDeLaAlicuota;
+        var inicial = ValoresBase(e) with
+        {
+            CostoLista = 100m, CostoListaIncluyeIva = false, DescuentoProveedor = 0m, PorcentajeImpuestoInterno = 0m,
+            CostoNominal = Math.Round(100m * (1 + iva / 100m), 2, MidpointRounding.AwayFromZero)
+        };
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Con impuesto interno");
+        var a1 = await apoyo.SembrarArticuloAsync(e, "a1", inicial, familia);
+        var a2 = await apoyo.SembrarArticuloAsync(e, "a2", inicial, familia);
+        var suelto = await apoyo.SembrarArticuloAsync(e, "suelto", inicial);
+        var esperado = Math.Round(100m * (1 + (5m + iva) / 100m), 2, MidpointRounding.AwayFromZero);
+
+        var pedido = EdicionIgualA(await apoyo.LeerAsync(a2), AlcanceDeFamilia.Familia) with { PorcentajeImpuestoInterno = 5m };
+        var respuesta = await PutArticuloAsync(e.Admin, a2, pedido);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        foreach (var id in new[] { a1, a2 })
+        {
+            var miembro = await apoyo.LeerAsync(id);
+            Assert.Equal((5m, esperado), (miembro.PorcentajeImpuestoInterno, miembro.CostoNominal));
+        }
+
+        var ajeno = await apoyo.LeerAsync(suelto);
+        Assert.Equal((0m, inicial.CostoNominal), (ajeno.PorcentajeImpuestoInterno, ajeno.CostoNominal));
+    }
+
+    [Fact]
+    public async Task EditarSoloLaTasaDeUnMiembroSinAlcanceEsUn409YNoEscribeNada()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(EditarSoloLaTasaDeUnMiembroSinAlcanceEsUn409YNoEscribeNada));
+        var inicial = ValoresBase(e);
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Sin alcance");
+        var a1 = await apoyo.SembrarArticuloAsync(e, "a1", inicial, familia);
+        var a2 = await apoyo.SembrarArticuloAsync(e, "a2", inicial, familia);
+
+        var pedido = EdicionIgualA(await apoyo.LeerAsync(a2)) with { PorcentajeImpuestoInterno = 5m };
+        var respuesta = await PutArticuloAsync(e.Admin, a2, pedido);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("alcance_requerido", (await ProblemaAsync(respuesta)).Codigo);
+        Assert.Equal(0m, (await apoyo.LeerAsync(a1)).PorcentajeImpuestoInterno);
+        Assert.Equal(0m, (await apoyo.LeerAsync(a2)).PorcentajeImpuestoInterno);
     }
 }

@@ -271,7 +271,7 @@ la devuelve con su link; dos cargas simultáneas del mismo número las frena el 
 segunda recibe un error que lo explica. En una factura el número llega como punto de venta y número
 por separado y la herramienta arma `PPPPP-NNNNNNNN`; un remito trae texto libre. Cada línea es un
 artículo de Ways, cuyo detalle es el nombre del artículo, o un concepto con su texto; el costo va por
-unidad y la bonificación en pesos, y lo que la base guardaría distinto (más decimales que la columna,
+unidad, la bonificación en pesos y los impuestos internos (`impuestoInterno`, el importe de la línea entera, fuera de la base del IVA y solo en una factura que discrimina), y lo que la base guardaría distinto (más decimales que la columna,
 bultos sin unidades por bulto) o no puede guardar (más dígitos enteros que la columna) se rechaza antes
 de escribir, con el número de línea. Los totales los calcula el servidor, que acepta el IVA
 impreso de cada alícuota si difiere del calculado en hasta $1: la respuesta muestra la diferencia con

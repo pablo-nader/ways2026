@@ -25,7 +25,7 @@ public sealed record EdicionFamilia(string? Nombre, bool? Activo);
 public sealed record MiembroDeFamilia(int Id, string CodigoInterno, string Nombre, int? IdMarca, bool Activo);
 
 /// <summary>
-/// Los quince campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) de un artículo, tal como los lee un cliente:
+/// Los dieciséis campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) de un artículo, tal como los lee un cliente:
 /// el detalle de una familia (<c>GET /api/familias/{id}</c>, con los de su artículo de referencia) y lo que cambia al
 /// agrupar (<see cref="CambiosDeUnArticulo"/>). Los cuatro ids de catálogo
 /// (<see cref="IdArea"/>, <see cref="IdCategoria"/>, <see cref="IdGrupo"/>, <see cref="IdProveedorHabitual"/>) viajan
@@ -48,15 +48,16 @@ public sealed record ValoresCompartidosDeLaFamilia(
     CostoListaPor CostoListaPor,
     bool CostoListaIncluyeIva,
     decimal? DescuentoProveedor,
+    decimal PorcentajeImpuestoInterno,
     decimal? CostoNominal)
 {
-    /// <summary>Los quince valores de <paramref name="valores"/> tal cual están guardados, sin anular ningún id de catálogo:
+    /// <summary>Los dieciséis valores de <paramref name="valores"/> tal cual están guardados, sin anular ningún id de catálogo:
     /// quien sabe cuáles son visibles es <c>CatalogosVisibles.Presentar</c>.</summary>
     public static ValoresCompartidosDeLaFamilia De(ValoresCompartidosDeFamilia valores) => new(
         valores.IdArea, valores.IdCategoria, valores.IdGrupo, valores.IdProveedorHabitual, valores.IdAlicuotaIva,
         valores.UnidadVenta, valores.UnidadesPorBulto, valores.EsProducto, valores.ControlaLote, valores.AcumulaEnVenta,
         valores.CostoLista, valores.CostoListaPor, valores.CostoListaIncluyeIva, valores.DescuentoProveedor,
-        valores.CostoNominal);
+        valores.PorcentajeImpuestoInterno, valores.CostoNominal);
 }
 
 /// <summary>El estado de precios del artículo de referencia en UNA lista fija, a "ahora": el precio vigente y, si
@@ -97,7 +98,7 @@ public sealed record CambioDePreciosDeLista(int IdListaPrecio, EstadoDePrecios A
 /// Lo que cambia en UN artículo al alinearlo con la referencia: <see cref="Campos"/> son las columnas compartidas
 /// (con el nombre de la columna de <c>articulos</c>, en el orden de declaración de
 /// <see cref="ValoresCompartidosDeFamilia"/>) que difieren, comparadas por el valor guardado, y <see cref="Actual"/> y
-/// <see cref="Nuevo"/> los quince valores del artículo y de la referencia como los lee el detalle de una familia
+/// <see cref="Nuevo"/> los dieciséis valores del artículo y de la referencia como los lee el detalle de una familia
 /// (<see cref="ValoresCompartidosDeLaFamilia"/>): un id de catálogo que apunta a una fila dada de baja viaja como
 /// <c>null</c>, así que una columna puede figurar en <see cref="Campos"/> con <c>null</c> de los dos lados —el artículo
 /// tiene un id colgante y la referencia ninguno—: la alineación se lo borra. La referencia de un pedido real nunca tiene

@@ -74,7 +74,7 @@ public record ArticuloListado(
 /// <para><see cref="IdFamilia"/> hace que el artículo nazca como miembro de esa familia (doc 10 §3). Entrar es un
 /// cambio de pertenencia: el alta toma el lock de membresía exclusivo y, bajo él, exige que la familia
 /// exista y esté viva (<c>404</c>), esté activa (<c>409 familia_inactiva</c>) y tenga al menos un artículo vivo
-/// (<c>409 familia_sin_articulos</c>), y que los quince campos compartidos del pedido sean idénticos a los del
+/// (<c>409 familia_sin_articulos</c>), y que los dieciséis campos compartidos del pedido sean idénticos a los del
 /// miembro vivo de menor id (<c>409 familia_valores_distintos</c>, que nombra las columnas que difieren). Entre
 /// esos campos está <see cref="AcumulaEnVenta"/>: un pedido que no lo trae lleva su valor por defecto
 /// (<c>true</c>, o <c>false</c> en un artículo por importe) y se compara como cualquier otro. El artículo nace con el mismo estado de precios que ese
@@ -98,7 +98,7 @@ public record ArticuloListado(
 /// <para><see cref="PorcentajeImpuestoInterno"/> es el porcentaje de impuestos internos sobre el costo neto (0 o más, hasta
 /// 999,9999; ausente equivale a 0): con un costo de lista sin IVA se suma al costo nominal que calcula el servidor y precarga
 /// el importe de la línea de compra. Un valor negativo o mayor es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo
-/// propio del artículo: no lo comparte la familia.</para></summary>
+/// compartido de la familia (el costo nominal se deriva de él).</para></summary>
 public record AltaArticulo(
     string? CodigoInterno,
     string Nombre,
@@ -141,12 +141,12 @@ public record AltaArticulo(
 /// conserva el guardado, que puede ser el costo efectivo de una compra.
 ///
 /// <para><see cref="Alcance"/> es la decisión del cliente cuando el artículo pertenece a una familia
-/// (doc 10 §3) y la edición cambia alguno de sus quince campos compartidos
+/// (doc 10 §3) y la edición cambia alguno de sus dieciséis campos compartidos
 /// (<see cref="ValoresCompartidosDeFamilia"/>); cada valor tiene un destino. Sobre un artículo sin familia,
 /// <c>null</c> lo edita solo. Sobre un miembro, <c>null</c> con un cambio compartido se rechaza con
 /// <c>alcance_requerido</c> (409) sin escribir nada, y <c>null</c> sin cambio compartido escribe solo los
 /// campos propios del artículo (no hay nada que replicar).
-/// <see cref="AlcanceDeFamilia.Familia"/> aplica los quince campos compartidos del pedido a todos los miembros
+/// <see cref="AlcanceDeFamilia.Familia"/> aplica los dieciséis campos compartidos del pedido a todos los miembros
 /// vivos y los campos propios solo al artículo editado (sin cambio compartido no hay nada que replicar y se
 /// escriben solo los propios). <see cref="AlcanceDeFamilia.SoloEste"/> saca al artículo de la familia, haya o
 /// no cambio compartido, y escribe todo solo en él. Un <see cref="Alcance"/> explícito sobre un artículo que
@@ -167,9 +167,9 @@ public record AltaArticulo(
 /// importe mientras otro miembro tiene tecla es <c>409 familia_miembro_con_tecla_atajo</c>.</para>
 ///
 /// <para><see cref="PorcentajeImpuestoInterno"/> <c>null</c> conserva el guardado, igual que <see cref="CostoListaPor"/>;
-/// un valor negativo o mayor que 999,9999 es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo propio del
-/// artículo, pero entra en el costo nominal que calcula el servidor (con un costo de lista sin IVA), y ese sí es compartido:
-/// cambiar solo el porcentaje de un miembro de una familia cambia un campo compartido y pide el alcance.</para></summary>
+/// un valor negativo o mayor que 999,9999 es <c>400 porcentaje_impuesto_interno_invalido</c>. Es un campo compartido de la
+/// familia: cambiarlo en un miembro es un cambio compartido y pide el alcance (con <c>Familia</c> se aplica, junto con el
+/// costo nominal recalculado, a todos los miembros vivos).</para></summary>
 public record EdicionArticulo(
     string Nombre,
     string? Descripcion,

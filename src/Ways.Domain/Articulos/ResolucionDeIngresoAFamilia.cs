@@ -8,7 +8,7 @@ namespace Ways.Domain.Articulos;
 /// </summary>
 public enum ResolucionDeIngresoAFamilia
 {
-    /// <summary>La familia está activa, tiene un miembro vivo de referencia y los quince campos compartidos del
+    /// <summary>La familia está activa, tiene un miembro vivo de referencia y los dieciséis campos compartidos del
     /// pedido son idénticos a los suyos: el artículo entra.</summary>
     Permitido,
 

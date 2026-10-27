@@ -60,11 +60,11 @@ namespace Ways.Application.Articulos;
 ///
 /// Familias de artículos (doc 10 §3): <see cref="ActualizarAsync"/> respeta el protocolo de locks de las
 /// familias — lock de membresía como primera sentencia (exclusivo solo con el alcance <c>SoloEste</c>),
-/// después las filas de <c>articulos</c> y, al final, los chequeos de catálogo — y aplica los quince campos
+/// después las filas de <c>articulos</c> y, al final, los chequeos de catálogo — y aplica los dieciséis campos
 /// compartidos a TODOS los miembros vivos solo cuando el pedido cambia alguno y el cliente eligió el alcance
 /// <c>Familia</c>; los campos propios son siempre del artículo editado. <see cref="CrearAsync"/> con
 /// <see cref="AltaArticulo.IdFamilia"/> es un cambio de pertenencia: toma el lock de membresía exclusivo,
-/// exige que los quince campos compartidos del pedido sean idénticos a los del miembro vivo de menor id y copia
+/// exige que los dieciséis campos compartidos del pedido sean idénticos a los del miembro vivo de menor id y copia
 /// su estado de precios con <see cref="ServicioDePrecios"/>, que sigue siendo el único escritor de
 /// <c>precios</c>.
 /// </summary>
@@ -255,7 +255,7 @@ public class ServicioDeArticulos(
     /// <para>Con <see cref="AltaArticulo.IdFamilia"/> el artículo entra a una familia (doc 10 §3), en este orden
     /// dentro de la transacción: lock de membresía EXCLUSIVO como primera sentencia, los 5 chequeos de
     /// catálogo, la familia viva y activa leída y bloqueada <c>FOR SHARE</c>, la referencia —el miembro vivo
-    /// de menor id, una sola lectura bajo esos locks— y la comparación de los quince campos compartidos del
+    /// de menor id, una sola lectura bajo esos locks— y la comparación de los dieciséis campos compartidos del
     /// pedido; recién entonces el INSERT del artículo y la copia de su estado de precios
     /// (<see cref="ServicioDePrecios.CopiarEstadoDePreciosAlNuevoMiembroAsync"/>), todo en la misma
     /// transacción y con el mismo "ahora". Los rechazos de los chequeos de catálogo y de la familia ocurren
@@ -642,12 +642,12 @@ public class ServicioDeArticulos(
             // Hasta acá todo fue validar (los 5 chequeos de catálogo) y desde acá se decide: ninguna entidad se
             // muta antes de la última validación, porque un rechazo no puede dejar una mutación rastreada en
             // el contexto del request — un guardado posterior sobre ese mismo contexto la escribiría por
-            // detrás. Los quince campos compartidos del pedido se comparan con los ACTUALES del artículo,
+            // detrás. Los dieciséis campos compartidos del pedido se comparan con los ACTUALES del artículo,
             // leídos bajo los locks: leídos antes, la comparación sería sobre un estado que otro escritor
             // puede haber cambiado. Lo mismo vale para acumula_en_venta, el único campo compartido cuyo nulo en
             // el pedido significa "conservar el guardado": su valor sale de esa misma lectura, no de otra.
             var pedido = ValoresCompartidosDe(
-                datos, editado.AcumulaEnVenta, costoListaPor, costoListaIncluyeIva, costoNominal);
+                datos, editado.AcumulaEnVenta, costoListaPor, costoListaIncluyeIva, porcentajeImpuestoInterno, costoNominal);
             var resolucion = bloqueados.IdFamilia is null
                 ? ResolucionDeAlcanceDeFamilia.SoloElArticulo
                 : ReglaDeFamilias.ResolverEdicionDeMiembro(
@@ -721,7 +721,6 @@ public class ServicioDeArticulos(
             editado.DisponibleParaTodas = datos.DisponibleParaTodas;
             editado.Activo = datos.Activo;
             editado.TeclaAtajo = datos.TeclaAtajo;
-            editado.PorcentajeImpuestoInterno = porcentajeImpuestoInterno;
 
             if (resolucion == ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia)
             {
@@ -897,19 +896,20 @@ public class ServicioDeArticulos(
         }
     }
 
-    /// <summary>Los quince campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
+    /// <summary>Los dieciséis campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// alta. Un campo compartido nuevo no compila hasta que se lo pasa acá: el record es posicional.</summary>
     private static ValoresCompartidosDeFamilia ValoresCompartidosDe(AltaArticulo datos, decimal? costoNominal) => new(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
         datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote, AcumulaEnVentaDe(datos),
-        datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor, costoNominal);
+        datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor,
+        datos.PorcentajeImpuestoInterno, costoNominal);
 
     /// <summary>El <c>acumula_en_venta</c> con el que nace el artículo: el del pedido, o, si no lo trae, el único válido
     /// para su unidad de venta (un artículo por importe nunca acumula).</summary>
     private static bool AcumulaEnVentaDe(AltaArticulo datos) =>
         datos.AcumulaEnVenta ?? datos.UnidadVenta != UnidadVenta.Importe;
 
-    /// <summary>Los quince campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
+    /// <summary>Los dieciséis campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// edición. <see cref="EdicionArticulo.AcumulaEnVenta"/> puede venir <c>null</c> (conservar el valor
     /// guardado): <paramref name="acumulaEnVentaGuardado"/> es el del artículo editado, leído bajo los locks, y
     /// es el valor que ese campo toma en el pedido; <paramref name="costoListaPor"/> y
@@ -918,11 +918,11 @@ public class ServicioDeArticulos(
     /// acá: el record es posicional.</summary>
     private static ValoresCompartidosDeFamilia ValoresCompartidosDe(
         EdicionArticulo datos, bool acumulaEnVentaGuardado, CostoListaPor costoListaPor, bool costoListaIncluyeIva,
-        decimal? costoNominal) => new(
+        decimal porcentajeImpuestoInterno, decimal? costoNominal) => new(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
         datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote,
         datos.AcumulaEnVenta ?? acumulaEnVentaGuardado, datos.CostoLista, costoListaPor, costoListaIncluyeIva,
-        datos.DescuentoProveedor, costoNominal);
+        datos.DescuentoProveedor, porcentajeImpuestoInterno, costoNominal);
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {

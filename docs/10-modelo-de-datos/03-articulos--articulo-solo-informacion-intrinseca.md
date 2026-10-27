@@ -42,7 +42,7 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     descuento_proveedor numeric(5,2) NULL DEFAULT 0, -- el servidor guarda 0 cuando no se carga; la lectura
                                              -- devuelve null solo a quien no ve costos
     porcentaje_impuesto_interno numeric(7,4) NOT NULL DEFAULT 0, -- % de impuestos internos sobre el costo neto
-                                             -- (0 a 999,9999); campo propio del artículo, no de la familia. Solo
+                                             -- (0 a 999,9999); campo compartido de la familia. Solo
                                              -- cuenta con un costo_lista sin IVA y precarga el importe de la línea
                                              -- de compra (el impreso por el proveedor manda)
     costo_nominal    numeric(14,2) NULL,     -- costo por unidad, con IVA e impuestos internos y neto del descuento:

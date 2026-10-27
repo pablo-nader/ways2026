@@ -76,6 +76,13 @@ Forecast ~1,000 authored lines over two tasks.
   family member changes the shared `costo_nominal` and asks for the scope; no CHECK constraints (service validates, per model summary);
   a concept line with excise is rejected; supplier discount applies over the total with IVA and excise. Doc 11 holds only the OAuth store:
   the tool field docs live in `docs/07-despliegue.md` (not updated, outside T1 surfaces).
+- 2026-10-27: parent decision applied: `porcentaje_impuesto_interno` is now FAMILY-SHARED (16 shared fields; Familias contracts/service,
+  reclassified in `TodaPropiedadDeArticuloEstaClasificada`); this supersedes the "own field" decision above. Editing the rate with
+  familia scope propagates rate + recomputed cost to all live members; without scope on a member it is `alcance_requerido` (409).
+  `docs/07-despliegue.md` documents the MCP line field. Stale for T2/owner: web copy "quince campos compartidos"
+  (`Ways.Web/src/paginas/articulos/familia.ts:189`, `ArticulosFamilias.test.tsx:2824`) and `docs/10-modelo-de-datos/03-articulos--familias-de-articulos.md`
+  (lists the fifteen shared columns), both outside T1 surfaces. Evidence: build 0 errors; Domain.Tests 1886 ok; Application.Tests 1075 ok
+  (incl. family-writer guards); integration filtered Familia|Articulos|Compras|ReportesLibroIva|ConectorMcp 1469/1469.
 - Contract fields for T2 (JSON camelCase): line request `impuestoInterno` (decimal, default 0); line response `impuestoInterno` (null for
   vendedor); invoice response `impuestosInternos`; article create `porcentajeImpuestoInterno` (default 0), edit `porcentajeImpuestoInterno`
   (null keeps), article response `porcentajeImpuestoInterno` (null for vendedor); Libro IVA compras fila and totales `impuestosInternos`
