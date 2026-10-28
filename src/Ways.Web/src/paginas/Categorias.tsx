@@ -8,6 +8,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import type { EstadoDeOrden } from '../componentes/grilla'
+import { normalizarTexto } from '../componentes/grilla/filtros'
 import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { Modal } from '../componentes/Modal'
 import { atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
@@ -20,10 +21,15 @@ const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista.
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 const DESCRIPCION_DE_ORDEN = {
-  original: 'orden original',
+  original: 'original',
   ascendente: 'ascendente',
   descendente: 'descendente',
 } as const
+/** Una categoría recién creada no tiene hijos: si su nombre no contiene el filtro activo, la vista no la muestra. */
+function quedaOculta(nombre: string, filtro: string): boolean {
+  return normalizarTexto(filtro) !== '' && !normalizarTexto(nombre).includes(normalizarTexto(filtro))
+}
+
 const INDICADOR_DE_ORDEN = { ascendente: '▲', descendente: '▼' } as const
 
 type Formulario = {
@@ -162,7 +168,9 @@ export function Categorias() {
       setFormulario(null)
       await refrescarTrasEscribir(
         token,
-        datos.id === null ? `Se creó "${datos.nombre}".` : `Se actualizó "${datos.nombre}".`,
+        datos.id === null
+          ? `Se creó "${datos.nombre}"${quedaOculta(datos.nombre, filtroNombre) ? ' (oculta por el filtro)' : ''}.`
+          : `Se actualizó "${datos.nombre}".`,
         AVISO_REFRESCO_FALLIDO,
       )
     } finally {
@@ -226,7 +234,7 @@ export function Categorias() {
 
   /** El árbol completo alimenta el selector de padre del formulario; la vista aplica filtro y orden aparte. */
   const arbol = useMemo(() => armarArbol(items), [items])
-  const hayFiltro = filtroNombre.trim() !== ''
+  const hayFiltro = filtroNombre !== ''
   const arbolVisible = useMemo(
     () => ordenarArbol(filtrarArbol(arbol, filtroNombre), orden),
     [arbol, filtroNombre, orden],
@@ -325,54 +333,50 @@ export function Categorias() {
           />
         )}
 
+        <div className="d-flex align-items-center gap-2 mb-3">
+          <input
+            type="search"
+            className="form-control form-control-sm"
+            style={{ maxWidth: '20rem' }}
+            aria-label="Filtrar por nombre"
+            placeholder="Filtrar por nombre…"
+            value={filtroNombre}
+            onChange={(e) => setFiltroNombre(e.target.value)}
+            disabled={bloqueado}
+          />
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary text-nowrap"
+            onClick={() => setOrden((actual) => siguienteOrden(actual, 'nombre'))}
+          >
+            Nombre{' '}
+            <span className="visually-hidden">(orden {DESCRIPCION_DE_ORDEN[orden?.direccion ?? 'original']})</span>{' '}
+            <span aria-hidden="true" className={orden ? '' : 'opacity-25'}>
+              {orden ? INDICADOR_DE_ORDEN[orden.direccion] : '↕'}
+            </span>
+          </button>
+          <BotonIcono icono="limpiar" onClick={() => setFiltroNombre('')} disabled={bloqueado || !hayFiltro} />
+        </div>
+
         {cargando ? (
           <Cargando />
         ) : arbol.length === 0 ? (
           <p className="text-muted text-center py-4">No hay categorías cargadas.</p>
+        ) : arbolVisible.length === 0 ? (
+          <p className="text-muted text-center py-4">Ningún registro coincide con los filtros.</p>
         ) : (
-          <>
-            <div className="d-flex align-items-center gap-2 mb-3">
-              <input
-                type="search"
-                className="form-control form-control-sm"
-                style={{ maxWidth: '20rem' }}
-                aria-label="Filtrar por nombre"
-                placeholder="Filtrar por nombre…"
-                value={filtroNombre}
-                onChange={(e) => setFiltroNombre(e.target.value)}
-                disabled={bloqueado}
+          <ul className="list-unstyled mb-0">
+            {arbolVisible.map((nodo) => (
+              <NodoCategoria
+                key={nodo.id}
+                nodo={nodo}
+                bloqueado={bloqueado}
+                onNueva={abrirNueva}
+                onEditar={abrirEdicion}
+                onEliminar={pedirBaja}
               />
-              <button
-                type="button"
-                className="btn btn-sm btn-outline-secondary text-nowrap"
-                aria-label={`Ordenar por nombre: ${DESCRIPCION_DE_ORDEN[orden?.direccion ?? 'original']}`}
-                onClick={() => setOrden((actual) => siguienteOrden(actual, 'nombre'))}
-              >
-                Nombre{' '}
-                <span aria-hidden="true" className={orden ? '' : 'opacity-25'}>
-                  {orden ? INDICADOR_DE_ORDEN[orden.direccion] : '↕'}
-                </span>
-              </button>
-              <BotonIcono icono="limpiar" onClick={() => setFiltroNombre('')} disabled={bloqueado || !hayFiltro} />
-            </div>
-
-            {arbolVisible.length === 0 ? (
-              <p className="text-muted text-center py-4">Ningún registro coincide con los filtros.</p>
-            ) : (
-              <ul className="list-unstyled mb-0">
-                {arbolVisible.map((nodo) => (
-                  <NodoCategoria
-                    key={nodo.id}
-                    nodo={nodo}
-                    bloqueado={bloqueado}
-                    onNueva={abrirNueva}
-                    onEditar={abrirEdicion}
-                    onEliminar={pedirBaja}
-                  />
-                ))}
-              </ul>
-            )}
-          </>
+            ))}
+          </ul>
         )}
       </Box>
     </div>
