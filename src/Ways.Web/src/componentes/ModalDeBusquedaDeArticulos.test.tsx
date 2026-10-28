@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDeBusquedaDeArticulos } from './ModalDeBusquedaDeArticulos'
 import type { ArticuloListado, PaginaDe, ResultadoDeResolucion } from '../api/tipos'
@@ -382,5 +382,20 @@ describe('ModalDeBusquedaDeArticulos — columna de costo (solo back-office)', (
 
     expect(screen.queryByRole('columnheader', { name: 'Costo' })).not.toBeInTheDocument()
     expect(screen.queryByText('$ 1.234,50')).not.toBeInTheDocument()
+  })
+})
+
+describe('ModalDeBusquedaDeArticulos — resultados paginados por el servidor', () => {
+  /** La búsqueda trae una sola página (25 por defecto): reordenar en el cliente ordenaría solo esa página, así que las
+   * columnas no ofrecen orden. */
+  it('los encabezados no son ordenables', () => {
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ mostrarCosto: true })} />)
+
+    const encabezados = screen.getAllByRole('columnheader')
+    expect(encabezados.map((th) => th.textContent)).toEqual(['Código', 'Nombre', 'Costo', 'Precio', 'Acciones'])
+    for (const th of encabezados) {
+      expect(within(th).queryByRole('button')).not.toBeInTheDocument()
+      expect(th).not.toHaveAttribute('aria-sort')
+    }
   })
 })
