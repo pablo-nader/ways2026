@@ -140,6 +140,10 @@ public static class PagosEndpoints
             servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Historial de pagos con sus líneas por medio, paginado.");
 
+        grupo.MapGet("/{id:int}", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerAsync(id, ct))
+        .WithSummary("Detalle de un pago con sus líneas por medio (el Location del alta).");
+
         grupo.MapPut("/{id:int}", async (
             ServicioDePagos servicio, int id, SolicitudDeEdicionDePagoConLineas solicitud, CancellationToken ct) =>
         {

@@ -516,7 +516,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("/api/familias", Politicas.GestionDeCatalogo),
         // Todo lo que cuelga de /api/plataforma es de root, también las lecturas (listar tenants y
         // sus dominios). Por prefijo de grupo, para que un GET nuevo caiga bajo el guard sin edición.
-        ("/api/plataforma", Politicas.SoloPlataforma)
+        ("/api/plataforma", Politicas.SoloPlataforma),
+        // Historial de gestión de pagos: solo Admin también en las lecturas (mueve dinero de la tesorería sin turno).
+        ("/api/pagos/administracion", Politicas.GestionDeCatalogo),
+        ("/api/gastos/administracion", Politicas.GestionDeCatalogo)
     ];
 
     [Fact]

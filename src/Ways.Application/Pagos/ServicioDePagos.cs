@@ -1001,6 +1001,17 @@ public class ServicioDePagos(
         return new PaginaDePagos(await ProyeccionesDePago.ConLineasAsync(db, items, ct), total, pagina, tamanio);
     }
 
+    /// <summary>Detalle de un pago del POS con sus líneas: misma proyección y mismo alcance que <see cref="ListarAsync"/>
+    /// (el tenant de la sesión, sin más filtro), para que el <c>Location</c> de <c>POST /api/pagos</c> resuelva.</summary>
+    public async Task<PagoListado> ObtenerAsync(int id, CancellationToken ct = default)
+    {
+        var fila = await db.Pagos.Where(g => g.Id == id).Select(ProyeccionesDePago.Listado(db)).FirstOrDefaultAsync(ct)
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
+
+        return (await ProyeccionesDePago.ConLineasAsync(db, [fila], ct))[0];
+    }
+
     /// <summary>Historial de gestión (design: API Surface, <c>GET /api/gastos/administracion</c>)
     /// — filtros amplios (empresa, punto de venta, categoría, origen de fondos, proveedor) y
     /// proyección con nombres resueltos. <c>desde</c>/<c>hasta</c> viajan como <see

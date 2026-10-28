@@ -286,9 +286,52 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
             HttpStatusCode.NotFound, (await ctx.Admin.PutAsJsonAsync("/api/pagos/administracion/999999", sinLineas)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync("/api/pagos/administracion/999999")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.GetAsync("/api/pagos/administracion/999999")).StatusCode);
+    }
+
+    /// <summary>La compra existe y está confirmada: el 404 solo puede venir del pago (la compra se bloquea primero).</summary>
+    [Fact]
+    public async Task VincularUnPagoInexistenteDa404PorElPagoYNoPorLaCompra()
+    {
+        var ctx = await PrepararAsync(nameof(VincularUnPagoInexistenteDa404PorElPagoYNoPorLaCompra));
+        var (idCompra, _) = await CrearYConfirmarCompraAsync(ctx);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/999999/vincular-compra", new SolicitudDeVincularCompra(idCompra));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        var cuerpo = JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("no_encontrado", cuerpo.GetProperty("codigo").GetString());
+        Assert.Contains("No existe el gasto 999999", cuerpo.GetProperty("mensaje").GetString());
+    }
+
+    /// <summary>El Location del alta resuelve: mismas líneas que la respuesta del POST, mismo alcance que el listado.</summary>
+    [Fact]
+    public async Task ElLocationDelAltaDelPosResuelveConLasMismasLineasYUnIdAjenoODesconocidoDa404()
+    {
+        var ctx = await PrepararAsync(nameof(ElLocationDelAltaDelPosResuelveConLasMismasLineasYUnIdAjenoODesconocidoDa404));
+        var otro = await PrepararAsync(nameof(ElLocationDelAltaDelPosResuelveConLasMismasLineasYUnIdAjenoODesconocidoDa404) + "Otro");
+        var vendedor = await CrearVendedorAsync(ctx);
+        await AbrirTurnoAsync(ctx, 1000m);
+        await AbrirTurnoAsync(otro, 1000m);
+
+        var alta = await vendedor.PostAsJsonAsync("/api/pagos", AltaPos(
+            ctx, new LineaDePago(ctx.IdEfectivo, 60m, null), new LineaDePago(ctx.IdElectronico, 40m, "cupón")));
+        var location = alta.Headers.Location!.OriginalString;
+        var creado = await LeerAsync<PagoConLineas>(alta, HttpStatusCode.Created);
+
+        var leido = await LeerAsync<PagoListado>(await vendedor.GetAsync(location), HttpStatusCode.OK);
+        Assert.Equal(creado.Id, leido.Id);
         Assert.Equal(
-            HttpStatusCode.NotFound,
-            (await ctx.Admin.PostAsJsonAsync("/api/pagos/999999/vincular-compra", new SolicitudDeVincularCompra(1))).StatusCode);
+            creado.Lineas.Select(l => (l.IdMedioPago, l.Importe, l.Referencia)),
+            leido.Lineas.Select(l => (l.IdMedioPago, l.Importe, l.Referencia)));
+
+        Assert.Equal(HttpStatusCode.NotFound, (await vendedor.GetAsync("/api/pagos/999999")).StatusCode);
+
+        var ajeno = await LeerAsync<PagoConLineas>(
+            await otro.Admin.PostAsJsonAsync("/api/pagos", AltaPos(otro, new LineaDePago(otro.IdEfectivo, 5m, null))),
+            HttpStatusCode.Created);
+        var propios = await vendedor.GetFromJsonAsync<PaginaDePagos>("/api/pagos?tamanio=200", OpcionesJson);
+        Assert.DoesNotContain(propios!.Items, p => p.Id == ajeno.Id);
+        Assert.Equal(HttpStatusCode.NotFound, (await vendedor.GetAsync($"/api/pagos/{ajeno.Id}")).StatusCode);
     }
 
     // ---- administración -----------------------------------------------------------------------

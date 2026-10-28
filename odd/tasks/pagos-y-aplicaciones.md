@@ -80,7 +80,7 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   Treasury, supplier-CC adjustments and exports keep the header (category/total only). The turno listing
   (`/api/gastos`, `LectorDeLineasDelTurno` via `ProyeccionesDePago`) showed the header medio only; S3b added
   `lineas` (additive) to the turno/`/api/gastos` listings and to the administration history.
-- [x] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
+- [ ] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
   movements stay one per pago on the header total. Done together with the edit/replace-set and pagar compra:
   `ReglaDeLineasDePago` (1..20 lines, codes `pago_sin_lineas`, `pago_demasiadas_lineas`,
   `pago_linea_importe_invalido`, `pago_linea_referencia_muy_larga`), `Comando*` records with `Lineas`, and the
@@ -88,7 +88,7 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   soft-deleted, no physical delete); the old PUT routes answer `409 gasto_con_varios_medios` on a multi-item pago.
   Plantel keeps its own wire codes and shares only the amount arithmetic. The POS alta still does not validate
   the medio server-side (unchanged). Integration tests (`PagosConLineasTests`) need CI.
-- [x] E2-S3b — Plantel y baja de `pagos.id_medio_pago`. (1) El pago de personal con N líneas SIGUE siendo un pago por
+- [ ] E2-S3b — Plantel y baja de `pagos.id_medio_pago`. (1) El pago de personal con N líneas SIGUE siendo un pago por
   línea, cada uno con un único ítem (referencia en `pagos.detalle` y en el ítem) y un movimiento de tesorería por pago:
   el POS instalado ignora `lineas` y mostraría la fusión como una sola fila; se difiere a E2-P. El desglose trae una
   línea por ítem (`idGasto` por pago, `idItem` por ítem). (2) Migración `QuitarMedioDeLaCabeceraDelPago`: elimina la columna, `fk_pagos_medio_pago`
@@ -100,7 +100,7 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `ways_app` vive ahora en `QuitarMedioDeLaCabeceraDelPagoMigracionTests` (base aislada migrada hasta `ItemsDePago`, donde
   la columna todavía existe). Integration tests (CI): `PagoDePersonalTests`, `PagosConLineasTests`,
   `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
-- [x] E2-S4 — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
+- [ ] E2-S4 (written; CI pending) — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
 - [ ] E2-W2 — Web: lines in the administration payment form and the history.
 - [ ] E2-W3 — Web: lines in pagar compra and personal payments.
