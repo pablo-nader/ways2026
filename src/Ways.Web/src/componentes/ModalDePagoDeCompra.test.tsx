@@ -80,10 +80,13 @@ function pagoAplicable(sobrescribir: Partial<PagoAplicable> = {}): PagoAplicable
 function mockearMedios(
   medios: MedioPagoListado[] = [efectivo, cuentaCorriente, transferencia],
   aplicables: PagoAplicable[] = [],
+  toleranciaRedondeo?: number,
 ) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/catalogos/medios-pago') return Promise.resolve(medios)
-    if (ruta === '/compras/9/pagos-aplicables') return Promise.resolve({ pagos: aplicables })
+    if (ruta === '/compras/9/pagos-aplicables') {
+      return Promise.resolve(toleranciaRedondeo === undefined ? { pagos: aplicables } : { pagos: aplicables, toleranciaRedondeo })
+    }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -209,6 +212,91 @@ describe('ModalDePagoDeCompra', () => {
         { idMedioPago: 3, importe: 10, referencia: null },
       ],
       concepto: null,
+    })
+  })
+
+  describe('cerrar en cero', () => {
+    async function escribirLinea(usuario: ReturnType<typeof userEvent.setup>, importe: string) {
+      await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+      const campo = screen.getByLabelText('Importe de la línea 1')
+      await usuario.clear(campo)
+      await usuario.type(campo, importe)
+    }
+
+    it('no ofrece el tilde si el servidor no informó la tolerancia', async () => {
+      mockearMedios()
+      montar()
+      await esperarMedios()
+
+      expect(screen.queryByLabelText('Cerrar en cero')).not.toBeInTheDocument()
+    })
+
+    it('el tilde arranca deshabilitado mientras no haya diferencia', async () => {
+      mockearMedios(undefined, [], 500)
+      montar()
+      await esperarMedios()
+
+      const tilde = await screen.findByLabelText('Cerrar en cero')
+      expect(tilde).toBeDisabled()
+      expect(screen.getByText(/Disponible cuando falta o sobra hasta \$\s500,00/)).toBeInTheDocument()
+    })
+
+    it('pagando de menos dentro de la tolerancia se habilita y manda cerrarEnCero', async () => {
+      mockearMedios(undefined, [], 500)
+      apiPostMock.mockResolvedValue(resultado({ redondeo: 3.5 }))
+      const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const { onPagado } = montar()
+      await esperarMedios()
+
+      await escribirLinea(usuario, '316,5')
+      const tilde = await screen.findByLabelText('Cerrar en cero')
+      expect(tilde).toBeEnabled()
+      expect(screen.getByText(/Se perdonan \$\s3,50 y la compra queda paga/)).toBeInTheDocument()
+      await usuario.click(tilde)
+      await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+      await waitFor(() => expect(onPagado).toHaveBeenCalledTimes(1))
+      expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/9', {
+        fecha: '2026-10-03',
+        lineas: [{ idMedioPago: 1, importe: 316.5, referencia: null }],
+        concepto: null,
+        cerrarEnCero: true,
+      })
+    })
+
+    it('pagando de más dentro de la tolerancia dice que se absorbe y no anuncia crédito a favor', async () => {
+      mockearMedios(undefined, [], 500)
+      const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      montar()
+      await esperarMedios()
+
+      await escribirLinea(usuario, '389,75')
+      await usuario.click(await screen.findByLabelText('Cerrar en cero'))
+
+      expect(screen.getByText(/Se absorben \$\s69,75 del pago: no queda nada a favor/)).toBeInTheDocument()
+      expect(screen.queryByText(/a cuenta$/)).not.toBeInTheDocument()
+    })
+
+    it('pasada la tolerancia el tilde se deshabilita aunque estuviera marcado y no viaja', async () => {
+      mockearMedios(undefined, [], 10)
+      apiPostMock.mockResolvedValue(resultado())
+      const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const { onPagado } = montar()
+      await esperarMedios()
+
+      await escribirLinea(usuario, '316,5')
+      await usuario.click(await screen.findByLabelText('Cerrar en cero'))
+      expect(screen.getByLabelText('Cerrar en cero')).toBeChecked()
+
+      const campo = screen.getByLabelText('Importe de la línea 1')
+      await usuario.clear(campo)
+      await usuario.type(campo, '200')
+      expect(screen.getByLabelText('Cerrar en cero')).toBeDisabled()
+      expect(screen.getByLabelText('Cerrar en cero')).not.toBeChecked()
+
+      await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+      await waitFor(() => expect(onPagado).toHaveBeenCalledTimes(1))
+      expect(apiPostMock.mock.calls[0][1]).not.toHaveProperty('cerrarEnCero')
     })
   })
 

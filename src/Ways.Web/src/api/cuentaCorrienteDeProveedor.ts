@@ -103,6 +103,8 @@ export function etiquetaDeTipoDeMovimiento(m: Pick<MovimientoDeCuentaDeProveedor
       return 'Pago'
     case 'Ajuste':
       return etiquetarAjuste(m.etiqueta)
+    case 'Redondeo':
+      return 'Redondeo'
   }
 }
 

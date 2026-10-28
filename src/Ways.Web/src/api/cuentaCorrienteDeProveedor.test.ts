@@ -52,6 +52,10 @@ describe('etiquetaDeTipoDeMovimiento', () => {
     expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Pago', etiqueta: null }))).toBe('Pago')
   })
 
+  it('Redondeo se rotula «Redondeo»', () => {
+    expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Redondeo', etiqueta: null }))).toBe('Redondeo')
+  })
+
   it('Ajuste delega en etiquetarAjuste, en ambas direcciones', () => {
     expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Ajuste', etiqueta: 'Manual' }))).toBe('Ajuste manual')
     expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Ajuste', etiqueta: 'AnulacionContramovimiento' }))).toBe(

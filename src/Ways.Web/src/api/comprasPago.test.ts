@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { fechaDeHoyParaPago, prepararPagoDeCompra, sePuedePagarLaCompra, textoDePagoRegistrado, type PagoDeCompraFormulario } from './compras'
+import {
+  diferenciaDelPago,
+  fechaDeHoyParaPago,
+  prepararPagoDeCompra,
+  sePuedeAjustarElRedondeo,
+  sePuedeCerrarEnCero,
+  sePuedePagarLaCompra,
+  textoDePagoRegistrado,
+  textoDeRedondeo,
+  type PagoDeCompraFormulario,
+} from './compras'
 import type { ResultadoDePagoDeCompra } from './tipos'
 import type { LineaDePagoEditable } from './lineasDePago'
 
@@ -137,8 +147,85 @@ describe('prepararPagoDeCompra', () => {
   })
 })
 
+describe('prepararPagoDeCompra — cerrar en cero', () => {
+  it('manda cerrarEnCero solo cuando se pidió', () => {
+    const base = { fecha: HOY, lineas: [{ idMedioPago: 7, importe: 400, referencia: null }], concepto: null }
+    expect(prepararPagoDeCompra(formulario({ cerrarEnCero: true }), 1000, HOY)).toEqual({
+      solicitud: { ...base, cerrarEnCero: true },
+    })
+    expect(prepararPagoDeCompra(formulario({ cerrarEnCero: false }), 1000, HOY)).toEqual({ solicitud: base })
+    expect(prepararPagoDeCompra(formulario(), 1000, HOY)).toEqual({ solicitud: base })
+  })
+})
+
+describe('diferenciaDelPago', () => {
+  it('es positiva si falta pagar, negativa si se paga de más y cero si cierra justo', () => {
+    expect(diferenciaDelPago(1503.5, 0, 1500)).toBe(3.5)
+    expect(diferenciaDelPago(1430.25, 0, 1500)).toBe(-69.75)
+    expect(diferenciaDelPago(1000, 300, 700)).toBe(0)
+  })
+
+  it('descuenta lo aplicado de pagos a cuenta y no arrastra el error binario de los decimales', () => {
+    expect(diferenciaDelPago(100.1, 0.1, 100)).toBe(0)
+  })
+})
+
+describe('sePuedeCerrarEnCero', () => {
+  it('exige una diferencia distinta de cero que no supere la tolerancia, en cualquier sentido', () => {
+    expect(sePuedeCerrarEnCero(3.5, 500)).toBe(true)
+    expect(sePuedeCerrarEnCero(-69.75, 500)).toBe(true)
+    expect(sePuedeCerrarEnCero(500, 500)).toBe(true)
+    expect(sePuedeCerrarEnCero(-500.01, 500)).toBe(false)
+    expect(sePuedeCerrarEnCero(0, 500)).toBe(false)
+  })
+
+  it('sin tolerancia conocida no se ofrece', () => {
+    expect(sePuedeCerrarEnCero(3.5, null)).toBe(false)
+  })
+
+  it('con tolerancia cero nunca aplica', () => {
+    expect(sePuedeCerrarEnCero(0.01, 0)).toBe(false)
+  })
+})
+
+describe('sePuedeAjustarElRedondeo', () => {
+  it('solo una confirmada con saldo de hasta la tolerancia', () => {
+    expect(sePuedeAjustarElRedondeo({ estado: 'Confirmada', saldoPendiente: 3.5 }, 500)).toBe(true)
+    expect(sePuedeAjustarElRedondeo({ estado: 'Confirmada', saldoPendiente: 500 }, 500)).toBe(true)
+    expect(sePuedeAjustarElRedondeo({ estado: 'Confirmada', saldoPendiente: 500.01 }, 500)).toBe(false)
+    expect(sePuedeAjustarElRedondeo({ estado: 'Confirmada', saldoPendiente: 0 }, 500)).toBe(false)
+    expect(sePuedeAjustarElRedondeo({ estado: 'Confirmada', saldoPendiente: 3.5 }, null)).toBe(false)
+    expect(sePuedeAjustarElRedondeo({ estado: 'Borrador', saldoPendiente: 3.5 }, 500)).toBe(false)
+    expect(sePuedeAjustarElRedondeo({ estado: 'Anulada', saldoPendiente: 3.5 }, 500)).toBe(false)
+  })
+})
+
+describe('textoDeRedondeo', () => {
+  const formatear = (n: number) => `$${n}`
+
+  it('positivo se perdonó, negativo se absorbió y sin redondeo no dice nada', () => {
+    expect(textoDeRedondeo(3.5, formatear)).toBe(' Se perdonaron $3.5 de redondeo.')
+    expect(textoDeRedondeo(-69.75, formatear)).toBe(' Se absorbieron $69.75 de redondeo.')
+    expect(textoDeRedondeo(0, formatear)).toBe('')
+    expect(textoDeRedondeo(null, formatear)).toBe('')
+  })
+})
+
 describe('textoDePagoRegistrado', () => {
   const formatear = (n: number) => `$${n}`
+
+  it('suma la frase del redondeo al aviso, con y sin pago nuevo', () => {
+    const pago = { importe: 1500 } as ResultadoDePagoDeCompra['pago']
+    expect(textoDePagoRegistrado({ pago, disponibleDelPago: 0, redondeo: 3.5 }, formatear)).toBe(
+      'Pago registrado: $1500. Se perdonaron $3.5 de redondeo.',
+    )
+    expect(textoDePagoRegistrado({ pago, disponibleDelPago: 0, redondeo: -69.75 }, formatear)).toBe(
+      'Pago registrado: $1500. Se absorbieron $69.75 de redondeo.',
+    )
+    expect(textoDePagoRegistrado({ pago: null, disponibleDelPago: null, redondeo: 3.5 }, formatear)).toBe(
+      'Pagos a cuenta aplicados a la compra. Se perdonaron $3.5 de redondeo.',
+    )
+  })
 
   it('dice cuánto quedó a favor solo cuando el pago nuevo superó el saldo', () => {
     const pago = { importe: 500 } as ResultadoDePagoDeCompra['pago']

@@ -17,6 +17,7 @@ import {
   normalizarFilas,
   completarConArticulo,
   percepcionesAplicables,
+  sePuedeAjustarElRedondeo,
   sePuedePagarLaCompra,
   textoDePagoRegistrado,
   type EncabezadoDeCompraFormulario,
@@ -731,6 +732,40 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
 
   const [pagoAbierto, setPagoAbierto] = useState(false)
 
+  // Ajuste por redondeo (E4): la tolerancia vigente se lee con la lista de pagos aplicables solo mientras la compra
+  // confirmada tenga saldo (flag de vigencia: una respuesta vieja no pisa a la de otro saldo). La escritura tiene su guard de
+  // reentrancia, deja la pantalla inerte (`ocupado`) hasta responder y no se reintenta sola.
+  const [toleranciaRedondeo, setToleranciaRedondeo] = useState<number | null>(null)
+  const necesitaTolerancia = puedeEscribir && compra?.estado === 'Confirmada' && compra.saldoPendiente > 0
+  const idCompraConSaldo = necesitaTolerancia ? compra.id : null
+  const saldoConTolerancia = necesitaTolerancia ? compra.saldoPendiente : 0
+
+  useEffect(() => {
+    if (idCompraConSaldo === null) {
+      setToleranciaRedondeo(null)
+      return
+    }
+    let vigente = true
+
+    clienteDeCompras
+      .obtenerPagosAplicables(idCompraConSaldo)
+      .then((respuesta) => {
+        if (vigente) setToleranciaRedondeo(respuesta.toleranciaRedondeo ?? null)
+      })
+      .catch(() => {
+        // Sin la tolerancia el botón no se ofrece; pagar la compra no depende de esta lectura.
+        if (vigente) setToleranciaRedondeo(null)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idCompraConSaldo, saldoConTolerancia])
+
+  const [ajustandoRedondeo, setAjustandoRedondeo] = useState(false)
+  const ajustandoRedondeoRef = useRef(false)
+  const [errorRedondeo, setErrorRedondeo] = useState('')
+
   // El pago ya trae el pagado y el saldo pendiente leídos bajo el lock de la compra: se vuelcan al
   // detalle en pantalla sin volver a pedirlo, así no hay una segunda lectura que pueda fallar o
   // llegar vieja después de un pago que sí se registró.
@@ -753,6 +788,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     guardando ||
     anulando ||
     aplicandoPrecios ||
+    ajustandoRedondeo ||
     vinculandoPago ||
     descartarBorradorAbierto ||
     descartarAbierto ||
@@ -1066,6 +1102,29 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
       // Transferencias.tsx para stock_insuficiente_para_transferencia — sibling surfaces, mismo
       // criterio de "nombra el artículo, nunca lo envuelvas").
       setErrorAnular(e instanceof ErrorApi ? e.message : 'No se pudo anular la compra.')
+    }
+  }
+
+  async function ajustarRedondeo() {
+    // regla 9: guard de reentrancia de primera línea.
+    if (ocupado || ajustandoRedondeoRef.current || idCompra === null) return
+
+    ajustandoRedondeoRef.current = true
+    setAjustandoRedondeo(true)
+    setErrorRedondeo('')
+    generacionRef.current += 1
+
+    try {
+      const resultado = await clienteDeCompras.ajustarRedondeo(idCompra)
+      setCompra((prev) =>
+        prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
+      )
+      setAviso(`Redondeo aplicado: se perdonaron ${formatearMoneda(resultado.redondeo)} y la compra quedó paga.`)
+    } catch (e) {
+      setErrorRedondeo(e instanceof ErrorApi ? e.message : 'No se pudo ajustar el redondeo.')
+    } finally {
+      ajustandoRedondeoRef.current = false
+      setAjustandoRedondeo(false)
     }
   }
 
@@ -1532,6 +1591,16 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                         Pagar
                       </button>
                     )}
+                    {sePuedeAjustarElRedondeo(compra, toleranciaRedondeo) && (
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary"
+                        disabled={ocupado}
+                        onClick={() => void ajustarRedondeo()}
+                      >
+                        {ajustandoRedondeo ? 'Ajustando…' : 'Ajustar redondeo'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn-danger"
@@ -1544,6 +1613,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                       Anular compra
                     </button>
                   </div>
+
+                  {errorRedondeo && <div className="alert alert-danger py-2 px-3 small">{errorRedondeo}</div>}
 
                   {pagoAbierto && (
                     <ModalDePagoDeCompra

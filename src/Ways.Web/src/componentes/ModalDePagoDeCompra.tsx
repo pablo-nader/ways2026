@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeCompras, fechaDeHoyParaPago, prepararPagoDeCompra } from '../api/compras'
+import {
+  clienteDeCompras,
+  diferenciaDelPago,
+  fechaDeHoyParaPago,
+  prepararPagoDeCompra,
+  sePuedeCerrarEnCero,
+} from '../api/compras'
 import { lineaDePagoVacia, totalDeLineasDePago, type LineaDePagoEditable } from '../api/lineasDePago'
 import type { MedioPagoAlta, MedioPagoListado, PagoAplicable, ResultadoDePagoDeCompra } from '../api/tipos'
 import { formatearImporte, redondearImporte } from '../formato/importes'
@@ -41,6 +47,10 @@ type Props = {
  * un error, nunca se descarta en silencio. El importe de la línea precargada sigue a lo que resta de pagar mientras
  * quien paga no lo edite; si lo aplicado cubre el saldo queda vacía y no se pueden tildar más pagos. La lista de pagos aplicables es una lectura
  * con flag de vigencia; si falla, el modal sigue sirviendo para pagar solo con líneas.
+ *
+ * «Cerrar en cero»: la tolerancia de redondeo llega con esa misma lectura (sin ella no se ofrece). El tilde solo se puede
+ * usar mientras la diferencia (saldo − pagos a cuenta − dinero nuevo) no sea cero y no supere la tolerancia; si el usuario
+ * cambia los importes y deja de entrar, el tilde queda sin efecto y no se envía. Es del servidor la última palabra.
  */
 export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendiente, onCerrar, onPagado }: Props) {
   const [hoy] = useState(() => fechaDeHoyParaPago())
@@ -49,6 +59,8 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
 
   const [aplicables, setAplicables] = useState<PagoAplicable[] | null>(null)
   const [errorAplicables, setErrorAplicables] = useState('')
+  const [tolerancia, setTolerancia] = useState<number | null>(null)
+  const [cerrarEnCero, setCerrarEnCero] = useState(false)
   // idPago -> importe a aplicar; la presencia de la clave es el tilde.
   const [seleccion, setSeleccion] = useState<Record<number, number | null>>({})
 
@@ -97,7 +109,9 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
     clienteDeCompras
       .obtenerPagosAplicables(idCompra)
       .then((respuesta) => {
-        if (vigente) setAplicables(respuesta.pagos)
+        if (!vigente) return
+        setAplicables(respuesta.pagos)
+        setTolerancia(respuesta.toleranciaRedondeo ?? null)
       })
       .catch((e) => {
         if (!vigente) return
@@ -119,6 +133,16 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
       )
   const hayDineroNuevo = lineasVigentes.some((l) => l.idMedioPago !== '')
   const excedente = hayDineroNuevo ? redondearImporte(totalDeLineasDePago(lineasVigentes) - restante) : 0
+  // Sin pagos a cuenta tildados todas las líneas cuentan (la precargada también, aunque falte elegir el medio); con ellos, las
+  // líneas sin medio se descartan y no son dinero nuevo.
+  const hayPagosATildados = Object.keys(seleccion).length > 0
+  const diferencia = diferenciaDelPago(
+    saldoPendiente,
+    totalAplicado,
+    hayPagosATildados && !hayDineroNuevo ? 0 : totalDeLineasDePago(lineasVigentes),
+  )
+  const puedeCerrarEnCero = sePuedeCerrarEnCero(diferencia, tolerancia)
+  const cierraEnCero = cerrarEnCero && puedeCerrarEnCero
 
   function cambiarLineas(reductor: (prev: LineaDePagoEditable[]) => LineaDePagoEditable[]) {
     const despues = reductor(lineasVigentes)
@@ -149,7 +173,11 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
       return
     }
 
-    const preparado = prepararPagoDeCompra({ lineas: lineasVigentes, fecha, concepto, aplicaciones }, saldoPendiente, hoy)
+    const preparado = prepararPagoDeCompra(
+      { lineas: lineasVigentes, fecha, concepto, aplicaciones, cerrarEnCero: cierraEnCero },
+      saldoPendiente,
+      hoy,
+    )
     if ('error' in preparado) {
       setError(preparado.error)
       return
@@ -275,10 +303,35 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
             onCambio={cambiarLineas}
             objetivo={excedente > 0 ? null : restante}
           />
-          {excedente > 0 && (
+          {excedente > 0 && !cierraEnCero && (
             <div className="small text-info mt-1">Quedan {formatearImporte(excedente, { simbolo: true })} a cuenta</div>
           )}
         </div>
+
+        {tolerancia !== null && (
+          <div className="col-12">
+            <div className="form-check">
+              <input
+                id="pago-compra-cerrar-en-cero"
+                type="checkbox"
+                className="form-check-input"
+                checked={cierraEnCero}
+                disabled={!puedeCerrarEnCero}
+                onChange={(e) => setCerrarEnCero(e.target.checked)}
+              />
+              <label className="form-check-label" htmlFor="pago-compra-cerrar-en-cero">
+                Cerrar en cero
+              </label>
+            </div>
+            <div className="form-text">
+              {puedeCerrarEnCero
+                ? diferencia > 0
+                  ? `Se perdonan ${formatearImporte(diferencia, { simbolo: true })} y la compra queda paga.`
+                  : `Se absorben ${formatearImporte(-diferencia, { simbolo: true })} del pago: no queda nada a favor.`
+                : `Disponible cuando falta o sobra hasta ${formatearImporte(tolerancia, { simbolo: true })}.`}
+            </div>
+          </div>
+        )}
       </fieldset>
     </Modal>
   )
