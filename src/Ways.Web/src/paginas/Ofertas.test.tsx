@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Ofertas } from './Ofertas'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloListado, FamiliaListado, GrupoListado, ListaPrecioListado, OfertaListado, PaginaDe } from '../api/tipos'
@@ -17,7 +17,15 @@ vi.mock('../api/cliente', () => ({
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
-  ErrorApi: class ErrorApiMock extends Error {},
+  ErrorApi: class ErrorApiMock extends Error {
+    estado: number
+    codigo: string
+    constructor(estado: number, codigo: string, mensaje: string) {
+      super(mensaje)
+      this.estado = estado
+      this.codigo = codigo
+    }
+  },
 }))
 
 function grupoFixture(sobrescribir: Partial<GrupoListado> = {}): GrupoListado {
@@ -457,8 +465,6 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
           resolverCreacion = resolve
         }),
     )
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     render(<Ofertas />)
     await screen.findByText('Oferta existente')
 
@@ -479,7 +485,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
     await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
 
     expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringMatching(/^\/ofertas\/\d+$/))
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Nueva oferta')).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Oferta nueva')
     expect(apiPostMock).toHaveBeenCalledTimes(1)
@@ -488,8 +494,95 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
 
     resolverCreacion(ofertaFixture())
     await screen.findByText('Oferta "Oferta nueva" creada.')
+  })
+})
 
-    confirmSpy.mockRestore()
+describe('Ofertas — la baja se confirma en un modal', () => {
+  async function pedirLaBaja() {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })] })
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    const eliminar = screen.getByRole('button', { name: 'Eliminar' })
+    await userEvent.click(eliminar)
+    return { confirmSpy, eliminar, confirmacion: await screen.findByRole('alertdialog') }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('abre una confirmación que nombra la oferta y no escribe hasta confirmar', async () => {
+    const { confirmSpy, confirmacion } = await pedirLaBaja()
+
+    expect(confirmacion).toHaveTextContent('¿Dar de baja la oferta "Oferta existente"?')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('cancelar cierra la confirmación sin dar de baja y devuelve el foco al botón', async () => {
+    const { eliminar, confirmacion } = await pedirLaBaja()
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(eliminar).toHaveFocus()
+  })
+
+  it('un doble clic sincrónico en Confirmar baja emite un solo DELETE y la puerta queda inerte mientras escribe', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    let resolver: () => void = () => {}
+    apiDeleteMock.mockReturnValue(new Promise<void>((r) => (resolver = r)))
+    const confirmar = within(confirmacion).getByRole('button', { name: 'Confirmar baja' })
+
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/ofertas/2')
+    await waitFor(() => expect(within(confirmacion).getByRole('button', { name: 'Dando de baja…' })).toBeDisabled())
+    expect(within(confirmacion).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+
+    await act(async () => resolver())
+    await screen.findByText('Oferta "Oferta existente" dada de baja.')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `invalidarEdicionEnCurso()` de `pedirBaja`. Sin él, la edición que llega tarde monta su modal encima de la confirmación. */
+  it('abrir la baja descarta una apertura de edición todavía en vuelo: su modal no se monta encima de la confirmación', async () => {
+    let resolverDetalle: (o: OfertaListado) => void = () => {}
+    const existente = ofertaFixture({ id: 2, nombre: 'Oferta existente' })
+    mockearApiGet({ ofertas: [existente] })
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/2' ? new Promise<OfertaListado>((r) => (resolverDetalle = r)) : base(ruta),
+    )
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/ofertas/2'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await screen.findByRole('alertdialog')
+    await act(async () => resolverDetalle(existente))
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('una baja rechazada muestra el motivo dentro de la confirmación, que sigue abierta, sin aviso de éxito', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'oferta_en_uso', 'La oferta está en uso.'))
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('La oferta está en uso.')
+    expect(screen.getAllByText('La oferta está en uso.')).toHaveLength(1)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByText('Oferta "Oferta existente" dada de baja.')).not.toBeInTheDocument()
   })
 })
 

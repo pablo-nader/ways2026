@@ -360,9 +360,10 @@ export type AccionesDeFamiliaDelFormulario = {
   /** Deshace la familia nueva anotada en un alta. */
   quitarFamiliaNueva: () => void
   reintentar: () => void
-  /** Saca al artículo editado de su familia. Resuelve `true` cuando la escritura terminó, haya salido bien o
-   * no, y `false` si no llegó a empezar porque había otra en curso. */
-  sacar: () => Promise<boolean>
+  /** Saca al artículo editado de su familia. Resuelve `null` si no llegó a empezar porque había otra escritura en
+   * curso, `''` cuando terminó sin un rechazo para mostrar (salió bien, o la pantalla ya se recargó), y el motivo
+   * del rechazo en otro caso: quien pidió la confirmación lo muestra adentro y la deja abierta. */
+  sacar: () => Promise<string | null>
   /** El editor de precios sacó al artículo de la familia (`SoloEste`). */
   alSalirDeLaFamilia: (nombre: string | null) => void
   /** El editor de precios escribió un precio del artículo: la previsualización de una unión propuesta ya no vale. */
