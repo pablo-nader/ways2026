@@ -50,7 +50,7 @@ function formatearFechaHora(iso: string): string {
  * comportamiento de la app web (quedan `undefined`/el default). `rutaVolver` reemplaza el destino
  * fijo `/caja` — el shell de escritorio no tiene esa ruta, la suya es `/vender`. `alCerrarExitosamente`
  * avisa al llamador el `TurnoConArqueos` recién cerrado — el shell de escritorio lo usa para
- * navegar a la Caja Z (`CajaZ.tsx`, la vista completa con tickets/gastos) en vez de dejar al
+ * navegar a la Caja Z (`CajaZ.tsx`, la vista completa con tickets/pagos) en vez de dejar al
  * cajero en el resumen mínimo de acá; la app web normal no lo pasa y esta pantalla sigue mostrando
  * su propio resumen con los links "Volver a caja"/"Ver Caja Z" de siempre.
  *

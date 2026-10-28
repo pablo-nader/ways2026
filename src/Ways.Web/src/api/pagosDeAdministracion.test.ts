@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
-  aSolicitudDeGastoDeAdministracion,
+  aSolicitudDePagoDeAdministracion,
   categoriaAlElegirProveedorAdministracion,
-  construirQueryDeGastosDeAdministracion,
-  filtrosDeGastosDeAdministracionVacios,
-  formularioDeGastoDeAdministracionCompleto,
-  formularioDeGastoDeAdministracionVacio,
-  type FormularioDeGastoDeAdministracion,
-} from './gastos'
+  construirQueryDePagosDeAdministracion,
+  filtrosDePagosDeAdministracionVacios,
+  formularioDePagoDeAdministracionCompleto,
+  formularioDePagoDeAdministracionVacio,
+  type FormularioDePagoDeAdministracion,
+} from './registroDePagos'
 
-function formularioFixture(sobrescribir: Partial<FormularioDeGastoDeAdministracion> = {}): FormularioDeGastoDeAdministracion {
+function formularioFixture(sobrescribir: Partial<FormularioDePagoDeAdministracion> = {}): FormularioDePagoDeAdministracion {
   return {
     fecha: '2026-09-01',
     idEmpresa: 3,
@@ -44,9 +44,9 @@ describe('categoriaAlElegirProveedorAdministracion', () => {
   })
 })
 
-describe('formularioDeGastoDeAdministracionVacio', () => {
+describe('formularioDePagoDeAdministracionVacio', () => {
   it('arranca con la fecha dada, categoría Otros y el resto de los campos vacíos', () => {
-    const formulario = formularioDeGastoDeAdministracionVacio('2026-09-28')
+    const formulario = formularioDePagoDeAdministracionVacio('2026-09-28')
     expect(formulario.fecha).toBe('2026-09-28')
     expect(formulario.categoria).toBe('Otros')
     expect(formulario.idEmpresa).toBe('')
@@ -54,15 +54,15 @@ describe('formularioDeGastoDeAdministracionVacio', () => {
   })
 
   it('preselecciona la empresa cuando se la pasa (empresa única del tenant)', () => {
-    expect(formularioDeGastoDeAdministracionVacio('2026-09-28', 9).idEmpresa).toBe(9)
+    expect(formularioDePagoDeAdministracionVacio('2026-09-28', 9).idEmpresa).toBe(9)
   })
 })
 
 // Cláusula bajo prueba: dto-contract-honesty — cada campo aceptado tiene un destino: `''` en los
 // selects opcionales se traduce a `null`, nunca se filtra silenciosamente.
-describe('aSolicitudDeGastoDeAdministracion', () => {
+describe('aSolicitudDePagoDeAdministracion', () => {
   it('mapea los campos obligatorios tal cual', () => {
-    const solicitud = aSolicitudDeGastoDeAdministracion(formularioFixture())
+    const solicitud = aSolicitudDePagoDeAdministracion(formularioFixture())
     expect(solicitud.fecha).toBe('2026-09-01')
     expect(solicitud.idEmpresa).toBe(3)
     expect(solicitud.categoria).toBe('Otros')
@@ -73,14 +73,14 @@ describe('aSolicitudDeGastoDeAdministracion', () => {
   })
 
   it('los selects opcionales en blanco viajan null, nunca 0 ni string vacío', () => {
-    const solicitud = aSolicitudDeGastoDeAdministracion(formularioFixture({ idPuntoVenta: '', idProveedor: '', idArea: '' }))
+    const solicitud = aSolicitudDePagoDeAdministracion(formularioFixture({ idPuntoVenta: '', idProveedor: '', idArea: '' }))
     expect(solicitud.idPuntoVenta).toBeNull()
     expect(solicitud.idProveedor).toBeNull()
     expect(solicitud.idArea).toBeNull()
   })
 
   it('un valor elegido en los selects opcionales viaja tal cual', () => {
-    const solicitud = aSolicitudDeGastoDeAdministracion(
+    const solicitud = aSolicitudDePagoDeAdministracion(
       formularioFixture({ idPuntoVenta: 4, idProveedor: 11, idArea: 2, categoria: 'Proveedor' }),
     )
     expect(solicitud.idPuntoVenta).toBe(4)
@@ -89,15 +89,15 @@ describe('aSolicitudDeGastoDeAdministracion', () => {
   })
 
   it('detalle y numeroFactura en blanco viajan null; con texto, recortado', () => {
-    expect(aSolicitudDeGastoDeAdministracion(formularioFixture({ detalle: '', numeroFactura: '' })).detalle).toBeNull()
-    expect(aSolicitudDeGastoDeAdministracion(formularioFixture({ detalle: '  Flete  ' })).detalle).toBe('Flete')
-    expect(aSolicitudDeGastoDeAdministracion(formularioFixture({ numeroFactura: '  A-1  ' })).numeroFactura).toBe('A-1')
+    expect(aSolicitudDePagoDeAdministracion(formularioFixture({ detalle: '', numeroFactura: '' })).detalle).toBeNull()
+    expect(aSolicitudDePagoDeAdministracion(formularioFixture({ detalle: '  Flete  ' })).detalle).toBe('Flete')
+    expect(aSolicitudDePagoDeAdministracion(formularioFixture({ numeroFactura: '  A-1  ' })).numeroFactura).toBe('A-1')
   })
 })
 
-describe('formularioDeGastoDeAdministracionCompleto', () => {
+describe('formularioDePagoDeAdministracionCompleto', () => {
   it('true cuando fecha, empresa, medio de pago, concepto e importe positivo están', () => {
-    expect(formularioDeGastoDeAdministracionCompleto(formularioFixture())).toBe(true)
+    expect(formularioDePagoDeAdministracionCompleto(formularioFixture())).toBe(true)
   })
 
   it.each([
@@ -109,19 +109,19 @@ describe('formularioDeGastoDeAdministracionCompleto', () => {
     ['importe cero', { importe: 0 }],
     ['importe negativo', { importe: -5 }],
   ])('false cuando falta %s', (_nombre, cambios) => {
-    expect(formularioDeGastoDeAdministracionCompleto(formularioFixture(cambios))).toBe(false)
+    expect(formularioDePagoDeAdministracionCompleto(formularioFixture(cambios))).toBe(false)
   })
 })
 
-describe('filtrosDeGastosDeAdministracionVacios / construirQueryDeGastosDeAdministracion', () => {
+describe('filtrosDePagosDeAdministracionVacios / construirQueryDePagosDeAdministracion', () => {
   it('sin ningún filtro solo manda pagina y tamanio', () => {
-    const query = construirQueryDeGastosDeAdministracion(filtrosDeGastosDeAdministracionVacios())
+    const query = construirQueryDePagosDeAdministracion(filtrosDePagosDeAdministracionVacios())
     expect(query).toBe('?pagina=1&tamanio=25')
   })
 
   it('incluye cada filtro presente, sin desde/hasta cuando están vacíos', () => {
-    const query = construirQueryDeGastosDeAdministracion({
-      ...filtrosDeGastosDeAdministracionVacios(),
+    const query = construirQueryDePagosDeAdministracion({
+      ...filtrosDePagosDeAdministracionVacios(),
       idEmpresa: 3,
       idPuntoVenta: 7,
       categoria: 'Proveedor',
@@ -139,8 +139,8 @@ describe('filtrosDeGastosDeAdministracionVacios / construirQueryDeGastosDeAdmini
   })
 
   it('desde/hasta viajan con offset horario explícito (mismo criterio que compras.ts)', () => {
-    const query = construirQueryDeGastosDeAdministracion({
-      ...filtrosDeGastosDeAdministracionVacios(),
+    const query = construirQueryDePagosDeAdministracion({
+      ...filtrosDePagosDeAdministracionVacios(),
       desde: '2026-09-01',
       hasta: '2026-09-28',
     })

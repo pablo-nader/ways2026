@@ -156,8 +156,8 @@ describe('rutasDeExportacion', () => {
     expect(ruta).toBe('/reportes/ventas/resumen/export?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11&granularidad=Dia&formato=xlsx')
   })
 
-  it('gastosResumen reutiliza construirQueryDeReporte y suma formato=xlsx al final', () => {
-    const ruta = rutasDeExportacion.gastosResumen(filtrosFixture({ idPuntoVenta: 7 }))
+  it('pagosResumen reutiliza construirQueryDeReporte y suma formato=xlsx al final', () => {
+    const ruta = rutasDeExportacion.pagosResumen(filtrosFixture({ idPuntoVenta: 7 }))
 
     expect(ruta).toBe(
       '/reportes/gastos/resumen/export?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05&hasta=2026-08-11&granularidad=Dia&formato=xlsx',

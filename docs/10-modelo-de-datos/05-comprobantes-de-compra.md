@@ -2,7 +2,12 @@
 
 ## 5. Comprobantes de compra
 
-Hoy las compras se cargan como gastos sin detalle; esta es la pieza nueva completa.
+Hoy (en el sistema legacy) las compras se cargan como gastos sin detalle; esta es la pieza nueva completa.
+
+> **Vocabulario (etapa E1):** lo que antes se llamaba *gasto* es un **pago** (grupos del dueño: Compras, Ventas,
+> Pagos, Cobros). La tabla es `pagos` (`id_pago`, enums `categoria_pago` y `origen_fondos_pago`). Las rutas HTTP
+> siguen siendo `/api/gastos…` (y los códigos de error `gasto_*`, los DTO y servicios del backend conservan el
+> nombre) hasta el contrato nuevo de la etapa E2.
 
 ```sql
 comprobantes_compra (         -- [operativa]
@@ -268,14 +273,14 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > `409` si dejaría stock negativo. `precio_sugerido` se calcula con el `SugeridorDePrecio`
 > existente —sobre el costo efectivo de la línea y redondeado al `redondeo_sugerencia_precio` de la empresa del
 > punto de venta de la compra, resuelto una vez por compra— y se aplica por una acción explícita separada — nunca dentro del confirm (decisión
-> 3 de la propuesta). Anular una compra **no** revierte los gastos ya ligados: quedan como
-> historial de un pago real (decisión 6, sin motor de reversión de gastos en el proyecto).
+> 3 de la propuesta). Anular una compra **no** revierte los pagos ya ligados: quedan como
+> historial de un pago real (decisión 6, sin motor de reversión de pagos en el proyecto).
 >
 > **Estado (Etapa 16): implementada — etapa completa (PRs #140-#145).** `comprobantes_compra` gana `id_orden_compra integer NULL` —
 > ALTER aditivo, metadata-only en PG 11+, sin rewrite de tabla. FK 9
 > `fk_comprobantes_compra_orden_compra` compuesta `(id_orden_compra, id_tenant)` contra
 > `ordenes_compra`, RESTRICT, MATCH SIMPLE (el default): con `id_orden_compra` NULL la
-> constraint no se chequea, mismo precedente que `gastos.id_comprobante_compra`. Ninguna CHECK
+> constraint no se chequea, mismo precedente que `pagos.id_comprobante_compra`. Ninguna CHECK
 > ata `id_orden_compra` a `estado`: el link se setea mientras `borrador` y se congela después
 > por el guard de servicio (`ExigirOrdenLigableAsync`, slice 3), no por esquema. `NULL` sigue
 > siendo el 100% del tráfico anterior a esta etapa, un estado permanentemente legítimo: no toda
@@ -289,86 +294,86 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > `asistente` marca un borrador cargado desde una factura por el conector; la confirmación sigue siendo
 > humana. Se expone en el detalle y el listado de compras, con filtro `origen` en el listado y su export.
 
-**Relación con gastos:** la compra registra la mercadería; el gasto registra la plata.
-`gastos` gana `id_comprobante_compra NULL`: pagarle al proveedor referencia la factura.
-Una compra puede estar impaga (sin gasto asociado) — eso ya da una cuenta corriente de
+**Relación con pagos:** la compra registra la mercadería; el pago registra la plata.
+`pagos` gana `id_comprobante_compra NULL`: pagarle al proveedor referencia la factura.
+Una compra puede estar impaga (sin pago asociado) — eso ya da una cuenta corriente de
 proveedores embrionaria sin tabla extra.
 
 ```sql
-gastos (                      -- [operativa]
-    id_gasto, fecha, id_empresa, id_punto_venta,
+pagos (                      -- [operativa]
+    id_pago, fecha, id_empresa, id_punto_venta,
     id_turno_caja NULL, id_empleado,
-    categoria  categoria_gasto,              -- enum: proveedor | sueldos | viaticos
+    categoria  categoria_pago,              -- enum: proveedor | sueldos | viaticos
                                              --     | impuestos | servicios | otros
-    origen_fondos  origen_fondos_gasto,      -- enum: caja_turno | tesoreria
+    origen_fondos  origen_fondos_pago,      -- enum: caja_turno | tesoreria
     id_proveedor NULL, id_comprobante_compra NULL,
     id_area NULL, concepto, detalle,
     id_medio_pago integer NOT NULL,          -- con qué se pagó (efectivo de caja, transferencia…)
     numero_factura text NULL, importe,
     id_movimiento_personal integer NULL,     -- pago de personal que lo generó (§8c)
 
-    CONSTRAINT ck_gastos_caja_turno_requiere_turno
+    CONSTRAINT ck_pagos_caja_turno_requiere_turno
         CHECK (origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL),
-    CONSTRAINT ck_gastos_movimiento_personal_es_sueldo
+    CONSTRAINT ck_pagos_movimiento_personal_es_sueldo
         CHECK (id_movimiento_personal IS NULL OR categoria = 'sueldos')
 );
 ```
 
-Los retiros de efectivo **dejan de ser gastos** (`tipo=95` era otro número mágico):
+Los retiros de efectivo **dejan de ser pagos** (`tipo=95` era otro número mágico):
 van a `movimientos_caja` (§7).
 
-> **Estado (Etapa 6, Slice 1):** `gastos` se crea en esta etapa, pero **sin**
+> **Estado (Etapa 6, Slice 1):** `pagos` se crea en esta etapa, pero **sin**
 > `id_comprobante_compra`: `comprobantes_compra` no existe todavía (etapa 8), así que un
 > `int NULL` sin FK sería una referencia sin garantía — mismo criterio que
 > `movimientos_stock.id_comprobante_compra` (§6). `id_turno_caja` se crea **NOT NULL** en esta
-> etapa: todo gasto se registra contra un turno abierto, resuelto server-side, nunca input de
+> etapa: todo pago se registra contra un turno abierto, resuelto server-side, nunca input de
 > cliente.
 >
-> **Estado (Etapa 8, Slice 1 — RESUELTO):** `gastos.id_comprobante_compra` aterriza en esta
+> **Estado (Etapa 8, Slice 1 — RESUELTO):** `pagos.id_comprobante_compra` aterriza en esta
 > slice, junto con su FK compuesta `(id_comprobante_compra, id_tenant)` RESTRICT y su índice
 > de soporte — la deuda declarada arriba queda pagada, sin cambio de forma en ninguna otra
 > columna. Poblado por `ServicioDeGastos` (etapa 8, Slice 4) bajo un `SELECT ... FOR SHARE`
 > sobre el header de la compra (TOCTOU cerrado contra una anulación concurrente); solo válido
 > cuando `categoria = proveedor` y la compra referenciada está `confirmada`. El vínculo es
 > historia, no un bloqueo: anular la compra vinculada sigue permitido (design decisión 6 —
-> ningún camino de reversión de gasto existe todavía).
+> ningún camino de reversión de pago existe todavía).
 >
-> **Estado (admin-panel-expense-upload, PR1 — RESUELTO):** `gastos.id_turno_caja` pasa a ser
+> **Estado (admin-panel-expense-upload, PR1 — RESUELTO):** `pagos.id_turno_caja` pasa a ser
 > **NULLABLE** — deja de ser el único origen de fondos posible. `id_empresa` aterriza NOT NULL
 > (FK compuesta `(id_empresa, id_tenant)` a `empresas`, RESTRICT), resuelto server-side desde
-> `puntos_venta.id_empresa` del punto de venta del gasto — backfill de una sola vez para las
-> filas preexistentes. `origen_fondos` aterriza NOT NULL (enum nativo `origen_fondos_gasto`).
-> `ck_gastos_caja_turno_requiere_turno` es el backstop de esquema: solo el origen `caja_turno`
+> `puntos_venta.id_empresa` del punto de venta del pago — backfill de una sola vez para las
+> filas preexistentes. `origen_fondos` aterriza NOT NULL (enum nativo `origen_fondos_pago`).
+> `ck_pagos_caja_turno_requiere_turno` es el backstop de esquema: solo el origen `caja_turno`
 > exige un turno.
 >
 > **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `ServicioDeGastos.RegistrarAsync`
 > ofrece los dos orígenes de `SolicitudDeGasto.OrigenFondos` (default `caja_turno`, retrocompat).
-> Un gasto `tesoreria` sigue atado al turno abierto (`id_turno_caja` poblado, trazabilidad) pero
+> Un pago `tesoreria` sigue atado al turno abierto (`id_turno_caja` poblado, trazabilidad) pero
 > se paga directo del fondo de tesorería de la empresa: en la MISMA transacción del insert,
 > `EscriturasDeTesoreria.ApendearAsync` agrega una fila `movimientos_tesoreria` con
-> `tipo = 'gasto'`, `id_gasto` = el gasto recién insertado, `ingreso = 0`, `egreso = importe`.
-> Un gasto `caja_turno` sigue descontando el efectivo del cajón como antes. Los totales del turno
+> `tipo = 'pago'`, `id_pago` = el pago recién insertado, `ingreso = 0`, `egreso = importe`.
+> Un pago `caja_turno` sigue descontando el efectivo del cajón como antes. Los totales del turno
 > que alimentan el arqueo/cierre (`LectorDeMovimientosDelTurno`, `LectorDeContenidoDeResumen`)
-> filtran `origen_fondos = 'caja_turno'`: un gasto `tesoreria` nunca resta de ningún medio ni lo
+> filtran `origen_fondos = 'caja_turno'`: un pago `tesoreria` nunca resta de ningún medio ni lo
 > vuelve arqueable — ya se descontó de tesorería en el momento en que se registró. El Z-report/
 > historial (`LectorDeLineasDelTurno.LeerGastosAsync`, `GET /api/gastos`) sigue listando los dos
 > orígenes sin filtrar (informativo, expone `OrigenFondos` para que la UI etiquete "Caja
 > general").
 >
-> **Estado (stage-gasto-a-compra, PR4 — RESUELTO):** `gastos.id_comprobante_compra` deja de
-> poblarse solo al crear el gasto — `POST /api/gastos/{id}/vincular-compra`
-> (`ServicioDeGastos.VincularCompraAsync`) liga un gasto YA EXISTENTE (POS o administración) a una
-> compra confirmada, sin cambio de esquema. Si el gasto ya es `categoria = proveedor` con
+> **Estado (stage-gasto-a-compra, PR4 — RESUELTO):** `pagos.id_comprobante_compra` deja de
+> poblarse solo al crear el pago — `POST /api/gastos/{id}/vincular-compra`
+> (`ServicioDeGastos.VincularCompraAsync`) liga un pago YA EXISTENTE (POS o administración) a una
+> compra confirmada, sin cambio de esquema. Si el pago ya es `categoria = proveedor` con
 > `id_proveedor` coincidente, el vínculo es solo trazabilidad: se imputa la compra en el movimiento
-> `pago` que ese gasto ya escribió al crearse (`EscriturasDeCuentaCorrienteProveedor.
+> `pago` que ese pago ya escribió al crearse (`EscriturasDeCuentaCorrienteProveedor.
 > ImputarMovimientoDePagoAsync`, el único `UPDATE` de esa tabla), el saldo del proveedor no cambia
-> (el pago ya estaba contado). Si el gasto no tenía proveedor (`categoria` distinta o
+> (el pago ya estaba contado). Si el pago no tenía proveedor (`categoria` distinta o
 > `id_proveedor` nulo), el vínculo lo CONVIERTE: pasa a `categoria = proveedor` con el proveedor de
 > la compra y recién ahí se escribe el `pago` (nunca se escribió antes), reduciendo el saldo por
-> primera vez, con el punto de venta del propio gasto o, si no tiene uno, el de la compra
+> primera vez, con el punto de venta del propio pago o, si no tiene uno, el de la compra
 > (`ValidarFormaPorTipo` exige punto de venta en cualquier movimiento que no sea `apertura`). Mismo
 > orden de locks que el alta (compra `FOR SHARE` primero — nunca abre un ciclo contra la anulación,
-> que toma el header EXCLUSIVO como su único lock) seguido del gasto `FOR UPDATE`.
+> que toma el header EXCLUSIVO como su único lock) seguido del pago `FOR UPDATE`.
 
 ### Órdenes de compra (Etapa 16)
 

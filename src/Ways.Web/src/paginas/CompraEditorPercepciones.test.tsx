@@ -524,7 +524,7 @@ describe('CompraEditor — percepciones', () => {
 })
 
 describe('CompraEditor — borradores que arrancan de un origen y referencia que llega tarde', () => {
-  const gasto = {
+  const pago = {
     id: 5,
     fecha: '2026-08-15T12:00:00Z',
     idEmpresa: 10,
@@ -550,13 +550,13 @@ describe('CompraEditor — borradores que arrancan de un origen y referencia que
     await screen.findByRole('option', { name: 'Casa Central' })
   }
 
-  it('un borrador desde un gasto aplica el modo y las percepciones del proveedor al elegir el tipo', async () => {
+  it('un borrador desde un pago aplica el modo y las percepciones del proveedor al elegir el tipo', async () => {
     mockearReferencia([proveedorFixture()], (ruta) =>
-      ruta === '/gastos/administracion/5' ? Promise.resolve(gasto) : undefined,
+      ruta === '/gastos/administracion/5' ? Promise.resolve(pago) : undefined,
     )
     const usuario = userEvent.setup()
 
-    renderEditor('nueva?desdeGasto=5')
+    renderEditor('nueva?desdePago=5')
     await esperarReferencia()
     await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')

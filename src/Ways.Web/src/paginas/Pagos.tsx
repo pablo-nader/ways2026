@@ -1,40 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
-  advertenciasDeGastoDeAdministracion,
-  aSolicitudDeGastoDeAdministracion,
-  clienteDeGastos,
-  clienteDeGastosDeAdministracion,
-  filtrosDeGastosDeAdministracionVacios,
-  formularioDeGastoDeAdministracionCompleto,
-  formularioDeGastoDeAdministracionVacio,
+  advertenciasDePagoDeAdministracion,
+  aSolicitudDePagoDeAdministracion,
+  clienteDePagos,
+  clienteDePagosDeAdministracion,
+  filtrosDePagosDeAdministracionVacios,
+  formularioDePagoDeAdministracionCompleto,
+  formularioDePagoDeAdministracionVacio,
   categoriaAlElegirProveedorAdministracion,
   copiaDeFalloDeEdicion,
-  esGastoDeUnPagoDePersonal,
-  MOTIVO_GASTO_DE_PAGO_DE_PERSONAL,
-  type FiltrosDeGastosDeAdministracion,
-  type FormularioDeGastoDeAdministracion,
-} from '../api/gastos'
+  esPagoOriginadoEnPersonal,
+  MOTIVO_PAGO_ORIGINADO_EN_PERSONAL,
+  type FiltrosDePagosDeAdministracion,
+  type FormularioDePagoDeAdministracion,
+} from '../api/registroDePagos'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { clienteDeCompras, filtrosDeComprasVacios } from '../api/compras'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
 import { ErrorApi } from '../api/cliente'
-import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
+import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
   AreaAlta,
-  CategoriaGasto,
+  CategoriaPago,
   CompraListada,
   EmpresaListado,
-  GastoDeAdministracionListado,
+  PagoDeAdministracionListado,
   MedioPagoAlta,
   MedioPagoListado,
   OpcionDeProveedor,
-  OrigenFondosGasto,
-  PaginaDeGastosDeAdministracion,
+  OrigenFondosPago,
+  PaginaDePagosDeAdministracion,
   PuntoVentaListado,
-  SolicitudDeEdicionDeGasto,
+  SolicitudDeEdicionDePago,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -42,9 +42,9 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { Cargando } from '../componentes/Cargando'
 import { ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
-import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
-import { ModalDeAltaDeGasto } from './gastos/ModalDeAltaDeGasto'
-import { areaPorDefecto } from './utilidadesGastosDelTurno'
+import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
+import { ModalDeAltaDePago } from './pagos/ModalDeAltaDePago'
+import { areaPorDefecto } from './utilidadesPagosDelTurno'
 import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
@@ -67,18 +67,18 @@ function fechaDeHoy(): string {
 }
 
 /** Medio de pago excluye `CuentaCorriente`, mismo criterio y mismo motivo que
- * `utilidadesGastosDelTurno.mediosValidosParaGasto` (POS): la cuenta corriente es el crédito del
+ * `utilidadesPagosDelTurno.mediosValidosParaPago` (POS): la cuenta corriente es el crédito del
  * CLIENTE en una venta, nunca una salida real de dinero de una caja/tesorería. Duplicado acá
  * (sibling helper) porque esa función vive en un módulo nombrado para el POS. */
-function mediosValidosParaGastoDeAdministracion(medios: MedioPagoListado[]): MedioPagoListado[] {
+function mediosValidosParaPagoDeAdministracion(medios: MedioPagoListado[]): MedioPagoListado[] {
   return medios.filter((m) => m.comportamiento !== 'CuentaCorriente')
 }
 
 /**
- * "Gastos" (administración) — stage-gastos-admin-retroactivos, PR3, owner's use case 2: el admin
- * registra en cualquier momento un gasto SIN turno, pagado directo de la tesorería (caja general)
+ * "Pagos" (administración) — stage-gastos-admin-retroactivos, PR3, owner's use case 2: el admin
+ * registra en cualquier momento un pago SIN turno, pagado directo de la tesorería (caja general)
  * de la empresa, incluida una fecha RETROACTIVA. Ruta admin-only (`GestionDeCatalogo` del lado
- * del servidor y `RutaProtegida rolesPermitidos={[ROL.Admin]}` acá) — a diferencia de "Gastos del
+ * del servidor y `RutaProtegida rolesPermitidos={[ROL.Admin]}` acá) — a diferencia de "Pagos del
  * turno" (POS), esta pantalla no depende del punto de venta de sesión: empresa es el filtro/campo
  * ancla, punto de venta es opcional.
  *
@@ -87,12 +87,12 @@ function mediosValidosParaGastoDeAdministracion(medios: MedioPagoListado[]): Med
  * formulario entero queda inerte mientras un alta está en vuelo (regla 5); un doble click en el
  * mismo tick lo bloquea `guardandoRef` antes de que el re-render deshabilite el botón (regla 11).
  *
- * Edición y baja de un gasto (modal / `ConfirmacionDeBaja`): comparten `escribiendoRef` y un
+ * Edición y baja de un pago (modal / `ConfirmacionDeBaja`): comparten `escribiendoRef` y un
  * `bloqueado` que deja inerte la pantalla entera desde el click hasta que el refresco posterior
  * aterrizó (reglas 5, 9 y 13) — se bloquea el supersede en vez de reconciliarlo con tokens. Si el
- * gasto es de caja de un turno cerrado, ambos avisan que el servidor recalcula el arqueo.
+ * pago es de caja de un turno cerrado, ambos avisan que el servidor recalcula el arqueo.
  */
-export function Gastos() {
+export function Pagos() {
   const navigate = useNavigate()
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
@@ -101,14 +101,14 @@ export function Gastos() {
   const [proveedores, setProveedores] = useState<OpcionDeProveedor[] | null>(null)
   const [errorCatalogos, setErrorCatalogos] = useState('')
 
-  const [filtros, setFiltros] = useState<FiltrosDeGastosDeAdministracion>(filtrosDeGastosDeAdministracionVacios())
-  const [pagina, setPagina] = useState<PaginaDeGastosDeAdministracion | null>(null)
+  const [filtros, setFiltros] = useState<FiltrosDePagosDeAdministracion>(filtrosDePagosDeAdministracionVacios())
+  const [pagina, setPagina] = useState<PaginaDePagosDeAdministracion | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
-  const [formulario, setFormulario] = useState<FormularioDeGastoDeAdministracion>(() =>
-    formularioDeGastoDeAdministracionVacio(fechaDeHoy()),
+  const [formulario, setFormulario] = useState<FormularioDePagoDeAdministracion>(() =>
+    formularioDePagoDeAdministracionVacio(fechaDeHoy()),
   )
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
@@ -121,17 +121,17 @@ export function Gastos() {
   /** Destino de foco si el disparador ya no es alcanzable al cerrar un modal. */
   const contenedorRef = useRef<HTMLDivElement>(null)
 
-  const [edicion, setEdicion] = useState<GastoDeAdministracionListado | null>(null)
+  const [edicion, setEdicion] = useState<PagoDeAdministracionListado | null>(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [errorEdicion, setErrorEdicion] = useState('')
-  const [baja, setBaja] = useState<GastoDeAdministracionListado | null>(null)
+  const [baja, setBaja] = useState<PagoDeAdministracionListado | null>(null)
   const [disparadorDeLaBaja, setDisparadorDeLaBaja] = useState<HTMLElement | null>(null)
   const [eliminando, setEliminando] = useState(false)
   const [errorBaja, setErrorBaja] = useState('')
   const escribiendoRef = useRef(false)
 
-  // ---- stage-gasto-a-compra (PR4): picker "Vincular a compra" para un gasto sin compra ligada --
-  const [pickerGastoId, setPickerGastoId] = useState<number | null>(null)
+  // ---- stage-gasto-a-compra (PR4): picker "Vincular a compra" para un pago sin compra ligada --
+  const [pickerPagoId, setPickerPagoId] = useState<number | null>(null)
   const [pickerCompras, setPickerCompras] = useState<CompraListada[] | null>(null)
   const [pickerError, setPickerError] = useState('')
   const [vinculando, setVinculando] = useState(false)
@@ -139,18 +139,18 @@ export function Gastos() {
   const generacionPickerRef = useRef(0)
   // regla 10 (react-async-state): guard AISLADO de la escritura de vínculo — a diferencia del
   // `generacionRef` compartido con el listado (que `vincularACompra` usaba antes), este token es
-  // propio, mismo criterio que `vinculandoGastoRef` de CompraEditor.tsx: un refresco del listado
+  // propio, mismo criterio que `vinculandoPagoRef` de CompraEditor.tsx: un refresco del listado
   // en vuelo nunca puede pisar/invalidar la finalización de este vínculo puntual.
   const generacionVinculoRef = useRef(0)
 
-  function abrirPicker(gasto: PaginaDeGastosDeAdministracion['items'][number]) {
-    setPickerGastoId(gasto.id)
+  function abrirPicker(pago: PaginaDePagosDeAdministracion['items'][number]) {
+    setPickerPagoId(pago.id)
     setPickerCompras(null)
     setPickerError('')
 
     const miGeneracion = (generacionPickerRef.current += 1)
     clienteDeCompras
-      .listar({ ...filtrosDeComprasVacios(), idProveedor: gasto.idProveedor, idEmpresa: gasto.idEmpresa, estado: 'Confirmada', tamanio: 50 })
+      .listar({ ...filtrosDeComprasVacios(), idProveedor: pago.idProveedor, idEmpresa: pago.idEmpresa, estado: 'Confirmada', tamanio: 50 })
       .then((datos) => {
         if (generacionPickerRef.current !== miGeneracion) return
         setPickerCompras(datos.items)
@@ -166,28 +166,28 @@ export function Gastos() {
     // regla 3 (react-async-state): bumpea la generación al cerrar — una respuesta del fetch en
     // vuelo (u otro vínculo en curso) nunca reabre/repuebla el picker después de cerrado.
     generacionPickerRef.current += 1
-    setPickerGastoId(null)
+    setPickerPagoId(null)
     setPickerCompras(null)
     setPickerError('')
   }
 
   async function vincularACompra(idComprobanteCompra: number) {
-    if (vinculandoRef.current || pickerGastoId === null) return
+    if (vinculandoRef.current || pickerPagoId === null) return
     vinculandoRef.current = true
     setVinculando(true)
     setPickerError('')
 
-    const idGasto = pickerGastoId
+    const idGasto = pickerPagoId
     const miGeneracion = (generacionVinculoRef.current += 1)
 
     try {
-      await clienteDeGastos.vincularCompra(idGasto, idComprobanteCompra)
+      await clienteDePagos.vincularCompra(idGasto, idComprobanteCompra)
       if (generacionVinculoRef.current !== miGeneracion) return
       cerrarPicker()
-      setAviso('Gasto vinculado a la compra.')
+      setAviso('Pago vinculado a la compra.')
     } catch (e) {
       if (generacionVinculoRef.current !== miGeneracion) return
-      setPickerError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto a la compra.')
+      setPickerError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el pago a la compra.')
       return
     } finally {
       vinculandoRef.current = false
@@ -243,7 +243,7 @@ export function Gastos() {
     setCargando(true)
     setError('')
 
-    return clienteDeGastosDeAdministracion
+    return clienteDePagosDeAdministracion
       .listar(filtros)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
@@ -252,7 +252,7 @@ export function Gastos() {
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(null)
-        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los gastos.')
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos.')
       })
       .finally(() => {
         if (generacionRef.current !== miGeneracion) return
@@ -264,7 +264,7 @@ export function Gastos() {
     cargar()
   }, [cargar])
 
-  function cambiarFiltro(cambios: Partial<Omit<FiltrosDeGastosDeAdministracion, 'pagina' | 'tamanio'>>) {
+  function cambiarFiltro(cambios: Partial<Omit<FiltrosDePagosDeAdministracion, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
   }
 
@@ -285,18 +285,18 @@ export function Gastos() {
 
   function limpiarFormulario() {
     setFormulario((prev) => ({
-      ...formularioDeGastoDeAdministracionVacio(fechaDeHoy(), prev.idEmpresa),
+      ...formularioDePagoDeAdministracionVacio(fechaDeHoy(), prev.idEmpresa),
       idArea: areaPorDefecto(areas ?? []),
     }))
   }
 
-  async function registrarGasto() {
+  async function registrarPago() {
     // regla 11: guard de reentrancia de primera línea.
     if (guardandoRef.current) return
 
     setAviso('')
 
-    if (!formularioDeGastoDeAdministracionCompleto(formulario)) {
+    if (!formularioDePagoDeAdministracionCompleto(formulario)) {
       setErrorGuardar('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')
       setDisparoDeError((n) => n + 1)
       return
@@ -314,12 +314,12 @@ export function Gastos() {
     // mientras dura y nada puede reabrirlo ni reemplazarlo, así que siempre se aplica y siempre libera
     // `guardando`. Gatearla dejaba el modal trabado si otra lectura acuñaba una generación en el medio.
     try {
-      await clienteDeGastosDeAdministracion.registrar(aSolicitudDeGastoDeAdministracion(formulario))
+      await clienteDePagosDeAdministracion.registrar(aSolicitudDePagoDeAdministracion(formulario))
       limpiarFormulario()
-      setAviso('Gasto registrado.')
+      setAviso('Pago registrado.')
       setMostrarFormulario(false)
     } catch (e) {
-      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el gasto.')
+      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
       setDisparoDeError((n) => n + 1)
       return
     } finally {
@@ -348,11 +348,11 @@ export function Gastos() {
     return escribiendoRef.current || guardandoRef.current || vinculandoRef.current
   }
 
-  function abrirEdicion(gasto: GastoDeAdministracionListado) {
+  function abrirEdicion(pago: PagoDeAdministracionListado) {
     if (ocupadoEscribiendo()) return
     setAviso('')
     setErrorEdicion('')
-    setEdicion(gasto)
+    setEdicion(pago)
   }
 
   function cancelarEdicion() {
@@ -361,7 +361,7 @@ export function Gastos() {
     setErrorEdicion('')
   }
 
-  async function guardarEdicion(solicitud: SolicitudDeEdicionDeGasto) {
+  async function guardarEdicion(solicitud: SolicitudDeEdicionDePago) {
     if (!edicion || ocupadoEscribiendo()) return
 
     const idGasto = edicion.id
@@ -374,14 +374,14 @@ export function Gastos() {
 
     try {
       try {
-        await clienteDeGastosDeAdministracion.actualizar(idGasto, solicitud)
+        await clienteDePagosDeAdministracion.actualizar(idGasto, solicitud)
       } catch (e) {
         setErrorEdicion(copiaDeFalloDeEdicion(e))
         return
       }
 
       setEdicion(null)
-      setAviso('Gasto actualizado.')
+      setAviso('Pago actualizado.')
       // regla 6: el refresco está aislado de la escritura; si falla, `error` lo dice aparte y el
       // aviso de éxito se mantiene.
       await cargar()
@@ -392,10 +392,10 @@ export function Gastos() {
     }
   }
 
-  function pedirBaja(gasto: GastoDeAdministracionListado, disparador: HTMLElement | null) {
+  function pedirBaja(pago: PagoDeAdministracionListado, disparador: HTMLElement | null) {
     if (ocupadoEscribiendo()) return
     setDisparadorDeLaBaja(disparador)
-    setBaja(gasto)
+    setBaja(pago)
     setErrorBaja('')
     setAviso('')
   }
@@ -418,7 +418,7 @@ export function Gastos() {
 
     try {
       try {
-        await clienteDeGastosDeAdministracion.eliminar(idGasto)
+        await clienteDePagosDeAdministracion.eliminar(idGasto)
       } catch (e) {
         setErrorBaja(copiaDeFalloDeEdicion(e, 'eliminar'))
         return
@@ -426,7 +426,7 @@ export function Gastos() {
 
       setBaja(null)
       setDisparadorDeLaBaja(null)
-      setAviso('Gasto eliminado.')
+      setAviso('Pago eliminado.')
       await cargar()
     } finally {
       escribiendoRef.current = false
@@ -442,7 +442,7 @@ export function Gastos() {
     () => (puntosVenta ?? []).filter((pv) => formulario.idEmpresa === '' || pv.idEmpresa === formulario.idEmpresa),
     [puntosVenta, formulario.idEmpresa],
   )
-  const mediosParaGasto = mediosValidosParaGastoDeAdministracion(medios ?? [])
+  const mediosParaPago = mediosValidosParaPagoDeAdministracion(medios ?? [])
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const proveedorPorId = useMemo(() => {
     const indice: Record<number, OpcionDeProveedor> = {}
@@ -455,7 +455,7 @@ export function Gastos() {
   const bloqueado =
     guardando ||
     vinculando ||
-    pickerGastoId !== null ||
+    pickerPagoId !== null ||
     guardandoEdicion ||
     eliminando ||
     edicion !== null ||
@@ -474,22 +474,22 @@ export function Gastos() {
         disabled={bloqueado}
         onClick={abrirAlta}
       >
-        Nuevo gasto
+        Nuevo pago
       </button>
     </nav>
   )
 
   return (
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
-      <Box titulo="Gastos" variante="inverse" herramientas={herramientas}>
+      <Box titulo="Pagos" variante="inverse" herramientas={herramientas}>
         {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
-            titulo={`el gasto "${baja.concepto}"`}
+            titulo={`el pago "${baja.concepto}"`}
             pregunta="Eliminar"
-            nota={advertenciasDeGastoDeAdministracion(baja).join(' ') || null}
+            nota={advertenciasDePagoDeAdministracion(baja).join(' ') || null}
             etiquetaConfirmar="Confirmar eliminación"
             etiquetaEnCurso="Eliminando…"
             ocupado={eliminando}
@@ -501,13 +501,13 @@ export function Gastos() {
         )}
 
         {mostrarFormulario && (
-          <ModalDeAltaDeGasto
+          <ModalDeAltaDePago
             valor={formulario}
             onCambio={setFormulario}
             onProveedorCambio={alCambiarProveedorDelFormulario}
             empresas={empresas ?? []}
             puntosVenta={puntosVentaDeLaEmpresaDelFormulario}
-            medios={mediosParaGasto}
+            medios={mediosParaPago}
             areas={areas ?? []}
             proveedores={proveedoresOrdenados}
             fechaMaxima={fechaDeHoy()}
@@ -515,18 +515,18 @@ export function Gastos() {
             disparoDeError={disparoDeError}
             guardando={guardando}
             focoDeReserva={contenedorRef}
-            onRegistrar={() => void registrarGasto()}
+            onRegistrar={() => void registrarPago()}
             onCancelar={cancelarAlta}
           />
         )}
 
         <fieldset disabled={bloqueado} className="row g-2 align-items-end mb-3 border-0 p-0 m-0">
           <div className="col-md-2">
-            <label className="form-label" htmlFor="gastos-admin-filtro-empresa">
+            <label className="form-label" htmlFor="pagos-admin-filtro-empresa">
               Empresa
             </label>
             <select
-              id="gastos-admin-filtro-empresa"
+              id="pagos-admin-filtro-empresa"
               className="form-select"
               value={filtros.idEmpresa ?? ''}
               onChange={(e) => cambiarFiltro({ idEmpresa: e.target.value === '' ? null : Number(e.target.value) })}
@@ -541,11 +541,11 @@ export function Gastos() {
           </div>
 
           <div className="col-md-2">
-            <label className="form-label" htmlFor="gastos-admin-filtro-pv">
+            <label className="form-label" htmlFor="pagos-admin-filtro-pv">
               Punto de venta
             </label>
             <select
-              id="gastos-admin-filtro-pv"
+              id="pagos-admin-filtro-pv"
               className="form-select"
               value={filtros.idPuntoVenta ?? ''}
               onChange={(e) => cambiarFiltro({ idPuntoVenta: e.target.value === '' ? null : Number(e.target.value) })}
@@ -560,17 +560,17 @@ export function Gastos() {
           </div>
 
           <div className="col-md-2">
-            <label className="form-label" htmlFor="gastos-admin-filtro-categoria">
+            <label className="form-label" htmlFor="pagos-admin-filtro-categoria">
               Categoría
             </label>
             <select
-              id="gastos-admin-filtro-categoria"
+              id="pagos-admin-filtro-categoria"
               className="form-select"
               value={filtros.categoria ?? ''}
-              onChange={(e) => cambiarFiltro({ categoria: e.target.value === '' ? null : (e.target.value as CategoriaGasto) })}
+              onChange={(e) => cambiarFiltro({ categoria: e.target.value === '' ? null : (e.target.value as CategoriaPago) })}
             >
               <option value="">Todas</option>
-              {CATEGORIAS_GASTO.map((c) => (
+              {CATEGORIAS_PAGO.map((c) => (
                 <option key={c.valor} value={c.valor}>
                   {c.etiqueta}
                 </option>
@@ -579,17 +579,17 @@ export function Gastos() {
           </div>
 
           <div className="col-md-2">
-            <label className="form-label" htmlFor="gastos-admin-filtro-origen">
+            <label className="form-label" htmlFor="pagos-admin-filtro-origen">
               Origen
             </label>
             <select
-              id="gastos-admin-filtro-origen"
+              id="pagos-admin-filtro-origen"
               className="form-select"
               value={filtros.origenFondos ?? ''}
-              onChange={(e) => cambiarFiltro({ origenFondos: e.target.value === '' ? null : (e.target.value as OrigenFondosGasto) })}
+              onChange={(e) => cambiarFiltro({ origenFondos: e.target.value === '' ? null : (e.target.value as OrigenFondosPago) })}
             >
               <option value="">Todos</option>
-              {ORIGENES_DE_FONDOS_GASTO.map((o) => (
+              {ORIGENES_DE_FONDOS_PAGO.map((o) => (
                 <option key={o.valor} value={o.valor}>
                   {o.etiqueta}
                 </option>
@@ -598,22 +598,22 @@ export function Gastos() {
           </div>
 
           <div className="col-md-2">
-            <label className="form-label" htmlFor="gastos-admin-filtro-desde">
+            <label className="form-label" htmlFor="pagos-admin-filtro-desde">
               Desde
             </label>
             <CampoFecha
-              id="gastos-admin-filtro-desde"
+              id="pagos-admin-filtro-desde"
               className="form-control"
               value={filtros.desde}
               onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
-            <label className="form-label" htmlFor="gastos-admin-filtro-hasta">
+            <label className="form-label" htmlFor="pagos-admin-filtro-hasta">
               Hasta
             </label>
             <CampoFecha
-              id="gastos-admin-filtro-hasta"
+              id="pagos-admin-filtro-hasta"
               className="form-control"
               value={filtros.hasta}
               onChange={(valor) => cambiarFiltro({ hasta: valor })}
@@ -650,14 +650,14 @@ export function Gastos() {
                       <td>{formatearFecha(g.fecha)}</td>
                       <td>{empresas?.find((e) => e.id === g.idEmpresa)?.razonSocial ?? `Empresa #${g.idEmpresa}`}</td>
                       <td>{g.idPuntoVenta === null ? '—' : (puntosVenta?.find((pv) => pv.id === g.idPuntoVenta)?.nombre ?? `PV #${g.idPuntoVenta}`)}</td>
-                      <td>{CATEGORIAS_GASTO.find((c) => c.valor === g.categoria)?.etiqueta ?? g.categoria}</td>
+                      <td>{CATEGORIAS_PAGO.find((c) => c.valor === g.categoria)?.etiqueta ?? g.categoria}</td>
                       <td>{g.idProveedor === null ? '—' : (g.nombreProveedor ?? proveedorPorId[g.idProveedor]?.razonSocial ?? '(no disponible)')}</td>
                       <td>{g.idArea === null ? '—' : (g.nombreArea ?? '(no disponible)')}</td>
                       <td>{g.concepto}</td>
                       <td>{g.nombreMedioPago ?? '(no disponible)'}</td>
                       <td>
                         <span className={`badge ${g.origenFondos === 'Tesoreria' ? 'text-bg-secondary' : 'bg-body-secondary text-body border'}`}>
-                          {ORIGENES_DE_FONDOS_GASTO.find((o) => o.valor === g.origenFondos)?.etiqueta ?? g.origenFondos}
+                          {ORIGENES_DE_FONDOS_PAGO.find((o) => o.valor === g.origenFondos)?.etiqueta ?? g.origenFondos}
                         </span>
                       </td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
@@ -671,8 +671,8 @@ export function Gastos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-primary"
-                              disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
-                              title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
+                              disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
+                              title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
                               onClick={() => abrirPicker(g)}
                             >
                               Vincular a compra
@@ -680,9 +680,9 @@ export function Gastos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-secondary"
-                              disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
-                              title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
-                              onClick={() => navigate(`/compras/nueva?desdeGasto=${g.id}`)}
+                              disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
+                              title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
+                              onClick={() => navigate(`/compras/nueva?desdePago=${g.id}`)}
                             >
                               Crear compra
                             </button>
@@ -692,17 +692,17 @@ export function Gastos() {
                       <td className="text-end text-nowrap">
                         <BotonIcono
                           icono="editar"
-                          etiqueta={`Editar gasto ${g.concepto}`}
+                          etiqueta={`Editar pago ${g.concepto}`}
                           className="me-1"
-                          disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
-                          title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
+                          disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
+                          title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
                           onClick={() => abrirEdicion(g)}
                         />
                         <BotonIcono
                           icono="eliminar"
-                          etiqueta={`Eliminar gasto ${g.concepto}`}
-                          disabled={filasBloqueadas || esGastoDeUnPagoDePersonal(g)}
-                          title={esGastoDeUnPagoDePersonal(g) ? MOTIVO_GASTO_DE_PAGO_DE_PERSONAL : undefined}
+                          etiqueta={`Eliminar pago ${g.concepto}`}
+                          disabled={filasBloqueadas || esPagoOriginadoEnPersonal(g)}
+                          title={esPagoOriginadoEnPersonal(g) ? MOTIVO_PAGO_ORIGINADO_EN_PERSONAL : undefined}
                           onClick={(evento) => pedirBaja(g, evento.currentTarget)}
                         />
                       </td>
@@ -711,7 +711,7 @@ export function Gastos() {
                   {pagina.items.length === 0 && (
                     <tr>
                       <td colSpan={12} className="text-center text-muted py-4">
-                        No hay gastos que coincidan con los filtros.
+                        No hay pagos que coincidan con los filtros.
                       </td>
                     </tr>
                   )}
@@ -721,7 +721,7 @@ export function Gastos() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} gasto(s)
+                Página {pagina.pagina} de {totalPaginas} — {pagina.total} pago(s)
               </span>
               <div className="d-flex gap-2">
                 <button
@@ -745,7 +745,7 @@ export function Gastos() {
           </>
         )}
 
-        {pickerGastoId !== null && (
+        {pickerPagoId !== null && (
           <div
             className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
             style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
@@ -802,14 +802,14 @@ export function Gastos() {
       </Box>
 
       {edicion && (
-        <ModalDeEdicionDeGasto
+        <ModalDeEdicionDePago
           key={edicion.id}
-          gasto={edicion}
-          medios={mediosParaGasto}
+          pago={edicion}
+          medios={mediosParaPago}
           proveedores={proveedores ?? []}
           areas={areas ?? []}
           ligadoACompra={edicion.idComprobanteCompra !== null}
-          advertencias={advertenciasDeGastoDeAdministracion(edicion)}
+          advertencias={advertenciasDePagoDeAdministracion(edicion)}
           guardando={guardandoEdicion}
           error={errorEdicion}
           onGuardar={(solicitud) => void guardarEdicion(solicitud)}

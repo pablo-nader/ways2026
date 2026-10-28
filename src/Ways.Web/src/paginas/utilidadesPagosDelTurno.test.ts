@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import type { AreaListado, GastoDeTurno, MedioPagoListado, ResumenDeTurno } from '../api/tipos'
+import type { AreaListado, PagoDeTurno, MedioPagoListado, ResumenDeTurno } from '../api/tipos'
 import {
-  aSolicitudDeGasto,
+  aSolicitudDePago,
   areaPorDefecto,
   categoriaAlElegirProveedor,
-  etiquetaDeCategoriaGasto,
+  etiquetaDeCategoriaPago,
   efectivoDisponibleEnCaja,
   etiquetaDeOrigenFondos,
   faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
-  mediosValidosParaGasto,
+  mediosValidosParaPago,
   salidaDeEfectivoDeCaja,
-  totalDeGastos,
-} from './utilidadesGastosDelTurno'
-import type { FormularioDeGasto } from './utilidadesGastosDelTurno'
+  totalDePagos,
+} from './utilidadesPagosDelTurno'
+import type { FormularioDePago } from './utilidadesPagosDelTurno'
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
   return {
@@ -32,7 +32,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
   }
 }
 
-function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
+function pagoFixture(sobrescribir: Partial<PagoDeTurno> = {}): PagoDeTurno {
   return {
     id: 1,
     idPuntoVenta: 7,
@@ -54,7 +54,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
   }
 }
 
-function formularioFixture(sobrescribir: Partial<FormularioDeGasto> = {}): FormularioDeGasto {
+function formularioFixture(sobrescribir: Partial<FormularioDePago> = {}): FormularioDePago {
   return {
     idPuntoVenta: 7,
     importe: 500,
@@ -68,16 +68,16 @@ function formularioFixture(sobrescribir: Partial<FormularioDeGasto> = {}): Formu
   }
 }
 
-describe('etiquetaDeCategoriaGasto', () => {
-  it('traduce cada valor de CategoriaGasto a su etiqueta en español', () => {
-    expect(etiquetaDeCategoriaGasto('Proveedor')).toBe('Proveedores')
-    expect(etiquetaDeCategoriaGasto('Sueldos')).toBe('Sueldos')
-    expect(etiquetaDeCategoriaGasto('Otros')).toBe('Otros')
+describe('etiquetaDeCategoriaPago', () => {
+  it('traduce cada valor de CategoriaPago a su etiqueta en español', () => {
+    expect(etiquetaDeCategoriaPago('Proveedor')).toBe('Proveedores')
+    expect(etiquetaDeCategoriaPago('Sueldos')).toBe('Sueldos')
+    expect(etiquetaDeCategoriaPago('Otros')).toBe('Otros')
   })
 })
 
 describe('etiquetaDeOrigenFondos', () => {
-  it('traduce cada valor de OrigenFondosGasto a su etiqueta en español', () => {
+  it('traduce cada valor de OrigenFondosPago a su etiqueta en español', () => {
     expect(etiquetaDeOrigenFondos('CajaTurno')).toBe('Caja del turno')
     expect(etiquetaDeOrigenFondos('Tesoreria')).toBe('Caja general')
   })
@@ -94,21 +94,21 @@ describe('formatearMoneda / formatearFechaHora', () => {
 })
 
 // Cláusula bajo prueba: el filtro `comportamiento !== 'CuentaCorriente'` de
-// `mediosValidosParaGasto` — CuentaCorriente es el crédito del CLIENTE, nunca una salida real de
+// `mediosValidosParaPago` — CuentaCorriente es el crédito del CLIENTE, nunca una salida real de
 // dinero de la caja (mutation-proof-tests: sacar el filtro deja pasar `medioCuentaCorriente`).
-describe('mediosValidosParaGasto', () => {
+describe('mediosValidosParaPago', () => {
   it('excluye los medios de comportamiento CuentaCorriente, conserva Efectivo y Electronico', () => {
     const efectivo = medioFixture({ id: 1, comportamiento: 'Efectivo' })
     const electronico = medioFixture({ id: 2, comportamiento: 'Electronico' })
     const cuentaCorriente = medioFixture({ id: 3, comportamiento: 'CuentaCorriente' })
 
-    const resultado = mediosValidosParaGasto([efectivo, electronico, cuentaCorriente])
+    const resultado = mediosValidosParaPago([efectivo, electronico, cuentaCorriente])
 
     expect(resultado.map((m) => m.id)).toEqual([1, 2])
   })
 
   it('con la lista vacía devuelve una lista vacía', () => {
-    expect(mediosValidosParaGasto([])).toEqual([])
+    expect(mediosValidosParaPago([])).toEqual([])
   })
 })
 
@@ -130,30 +130,30 @@ describe('categoriaAlElegirProveedor', () => {
   })
 })
 
-// Cláusula bajo prueba: el fallback de `concepto` en `aSolicitudDeGasto` (decisión del pedido 2).
-describe('aSolicitudDeGasto', () => {
+// Cláusula bajo prueba: el fallback de `concepto` en `aSolicitudDePago` (decisión del pedido 2).
+describe('aSolicitudDePago', () => {
   it('con observaciones no vacías, concepto es la observación recortada', () => {
-    const solicitud = aSolicitudDeGasto(formularioFixture({ observaciones: '  Pago de flete  ' }))
+    const solicitud = aSolicitudDePago(formularioFixture({ observaciones: '  Pago de flete  ' }))
     expect(solicitud.concepto).toBe('Pago de flete')
   })
 
-  it('con observaciones vacías, concepto cae al texto fijo "Gasto del turno"', () => {
-    expect(aSolicitudDeGasto(formularioFixture({ observaciones: '' })).concepto).toBe('Gasto del turno')
+  it('con observaciones vacías, concepto cae al texto fijo "Pago del turno"', () => {
+    expect(aSolicitudDePago(formularioFixture({ observaciones: '' })).concepto).toBe('Pago del turno')
   })
 
   it('con observaciones solo de espacios, concepto también cae al texto fijo', () => {
-    expect(aSolicitudDeGasto(formularioFixture({ observaciones: '   ' })).concepto).toBe('Gasto del turno')
+    expect(aSolicitudDePago(formularioFixture({ observaciones: '   ' })).concepto).toBe('Pago del turno')
   })
 
   it('detalle/numeroFactura/idComprobanteCompra siempre viajan null — el formulario no los pide', () => {
-    const solicitud = aSolicitudDeGasto(formularioFixture())
+    const solicitud = aSolicitudDePago(formularioFixture())
     expect(solicitud.detalle).toBeNull()
     expect(solicitud.numeroFactura).toBeNull()
     expect(solicitud.idComprobanteCompra).toBeNull()
   })
 
   it('arma el resto del cuerpo con los valores del formulario, incluido un proveedor elegido', () => {
-    const solicitud = aSolicitudDeGasto(
+    const solicitud = aSolicitudDePago(
       formularioFixture({ idPuntoVenta: 9, importe: 250, idMedioPago: 3, categoria: 'Proveedor', idProveedor: 42 }),
     )
     expect(solicitud.idPuntoVenta).toBe(9)
@@ -164,26 +164,26 @@ describe('aSolicitudDeGasto', () => {
   })
 
   it('manda idArea tal cual lo trae el formulario, o null si no hay área', () => {
-    expect(aSolicitudDeGasto(formularioFixture({ idArea: 4 })).idArea).toBe(4)
-    expect(aSolicitudDeGasto(formularioFixture({ idArea: null })).idArea).toBeNull()
+    expect(aSolicitudDePago(formularioFixture({ idArea: 4 })).idArea).toBe(4)
+    expect(aSolicitudDePago(formularioFixture({ idArea: null })).idArea).toBeNull()
   })
 
   // dto-contract-honesty: origenFondos se manda tal cual lo eligió el cajero, nunca inferido ni
   // forzado a un default silencioso dentro del mapeo.
   it('manda origenFondos tal cual lo trae el formulario, sea cual sea', () => {
-    expect(aSolicitudDeGasto(formularioFixture({ origenFondos: 'CajaTurno' })).origenFondos).toBe('CajaTurno')
-    expect(aSolicitudDeGasto(formularioFixture({ origenFondos: 'Tesoreria' })).origenFondos).toBe('Tesoreria')
+    expect(aSolicitudDePago(formularioFixture({ origenFondos: 'CajaTurno' })).origenFondos).toBe('CajaTurno')
+    expect(aSolicitudDePago(formularioFixture({ origenFondos: 'Tesoreria' })).origenFondos).toBe('Tesoreria')
   })
 })
 
-describe('totalDeGastos', () => {
-  it('suma el importe de todos los gastos, sin excluir ninguno', () => {
-    const total = totalDeGastos([gastoFixture({ importe: 100 }), gastoFixture({ id: 2, importe: 250 })])
+describe('totalDePagos', () => {
+  it('suma el importe de todos los pagos, sin excluir ninguno', () => {
+    const total = totalDePagos([pagoFixture({ importe: 100 }), pagoFixture({ id: 2, importe: 250 })])
     expect(total).toBe(350)
   })
 
   it('con la lista vacía el total es 0', () => {
-    expect(totalDeGastos([])).toBe(0)
+    expect(totalDePagos([])).toBe(0)
   })
 })
 

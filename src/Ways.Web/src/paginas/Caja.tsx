@@ -4,9 +4,9 @@ import { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoVal
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import {
-  CATEGORIAS_GASTO,
+  CATEGORIAS_PAGO,
   TIPOS_MOVIMIENTO_CAJA,
-  type CategoriaGasto,
+  type CategoriaPago,
   type MedioPagoAlta,
   type MedioPagoListado,
   type ResumenDeTurno,
@@ -29,8 +29,8 @@ function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
 }
 
-function etiquetaCategoriaGasto(categoria: CategoriaGasto): string {
-  return CATEGORIAS_GASTO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
+function etiquetaCategoriaPago(categoria: CategoriaPago): string {
+  return CATEGORIAS_PAGO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
 }
 
 type PropsFormularioApertura = {
@@ -465,7 +465,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
                         <>
                           {resumen.egresos.porCategoria.map((e) => (
                             <tr key={e.categoria}>
-                              <td>{etiquetaCategoriaGasto(e.categoria)}</td>
+                              <td>{etiquetaCategoriaPago(e.categoria)}</td>
                               <td className="text-end">{formatearMoneda(e.total)}</td>
                             </tr>
                           ))}

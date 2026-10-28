@@ -66,7 +66,7 @@ function textoAlcance(o: OfertaListado, grupos: GrupoListado[], categorias: Cate
  * `OfertaListado`), así que la tabla nunca muestra el targeting de listas: eso solo se ve/edita
  * en el detalle, después de `obtener`.
  *
- * El alta y la edición viven en un `Modal` (mismo criterio que `Gastos.tsx`): un guardado exitoso
+ * El alta y la edición viven en un `Modal` (mismo criterio que `Pagos.tsx`): un guardado exitoso
  * lo cierra y el aviso queda en la pantalla; los errores que ocurren con el modal abierto se
  * muestran adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo.
  */

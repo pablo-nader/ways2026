@@ -1,9 +1,9 @@
 import type { FormEvent } from 'react'
-import type { FormularioDeGastoDeAdministracion } from '../../api/gastos'
-import { CATEGORIAS_GASTO } from '../../api/tipos'
+import type { FormularioDePagoDeAdministracion } from '../../api/registroDePagos'
+import { CATEGORIAS_PAGO } from '../../api/tipos'
 import type {
   AreaListado,
-  CategoriaGasto,
+  CategoriaPago,
   EmpresaListado,
   MedioPagoListado,
   OpcionDeProveedor,
@@ -15,12 +15,12 @@ import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
 import { etiquetaDeProveedor } from '../articulos/helpers'
 
-const ID_FORMULARIO_GASTO = 'formulario-gasto-admin'
+const ID_FORMULARIO_PAGO = 'formulario-pago-admin'
 
 type Props = {
-  valor: FormularioDeGastoDeAdministracion
+  valor: FormularioDePagoDeAdministracion
   /** Se pasa en lugar de un `setFormulario` crudo para que cada cambio construya desde el estado previo. */
-  onCambio: (cambios: (prev: FormularioDeGastoDeAdministracion) => FormularioDeGastoDeAdministracion) => void
+  onCambio: (cambios: (prev: FormularioDePagoDeAdministracion) => FormularioDePagoDeAdministracion) => void
   onProveedorCambio: (valorCrudo: string) => void
   empresas: EmpresaListado[]
   puntosVenta: PuntoVentaListado[]
@@ -39,8 +39,8 @@ type Props = {
   onCancelar: () => void
 }
 
-/** Alta de un gasto de administración (sin turno, pagado de la tesorería) en un modal. */
-export function ModalDeAltaDeGasto({
+/** Alta de un pago de administración (sin turno, pagado de la tesorería) en un modal. */
+export function ModalDeAltaDePago({
   valor,
   onCambio,
   onProveedorCambio,
@@ -67,7 +67,7 @@ export function ModalDeAltaDeGasto({
       <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={guardando}>
         Cancelar
       </button>
-      <button type="submit" form={ID_FORMULARIO_GASTO} className="btn btn-primary" disabled={guardando}>
+      <button type="submit" form={ID_FORMULARIO_PAGO} className="btn btn-primary" disabled={guardando}>
         {guardando ? 'Guardando…' : 'Registrar'}
       </button>
     </>
@@ -75,7 +75,7 @@ export function ModalDeAltaDeGasto({
 
   return (
     <Modal
-      titulo="Nuevo gasto"
+      titulo="Nuevo pago"
       tamano="lg"
       desplazable
       ocupado={guardando}
@@ -84,14 +84,14 @@ export function ModalDeAltaDeGasto({
       onCerrar={onCancelar}
     >
       <ErrorDeFormulario mensaje={error} disparo={disparoDeError} />
-      <form id={ID_FORMULARIO_GASTO} onSubmit={alEnviar}>
+      <form id={ID_FORMULARIO_PAGO} onSubmit={alEnviar}>
         <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-fecha">
+            <label className="form-label" htmlFor="pago-admin-fecha">
               Fecha
             </label>
             <CampoFecha
-              id="gasto-admin-fecha"
+              id="pago-admin-fecha"
               className="form-control"
               max={fechaMaxima}
               value={valor.fecha}
@@ -100,11 +100,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-empresa">
+            <label className="form-label" htmlFor="pago-admin-empresa">
               Empresa
             </label>
             <select
-              id="gasto-admin-empresa"
+              id="pago-admin-empresa"
               className="form-select"
               value={valor.idEmpresa}
               onChange={(e) =>
@@ -125,11 +125,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-pv">
+            <label className="form-label" htmlFor="pago-admin-pv">
               Punto de venta (opcional)
             </label>
             <select
-              id="gasto-admin-pv"
+              id="pago-admin-pv"
               className="form-select"
               value={valor.idPuntoVenta}
               onChange={(e) =>
@@ -146,16 +146,16 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-categoria">
+            <label className="form-label" htmlFor="pago-admin-categoria">
               Categoría
             </label>
             <select
-              id="gasto-admin-categoria"
+              id="pago-admin-categoria"
               className="form-select"
               value={valor.categoria}
-              onChange={(e) => onCambio((prev) => ({ ...prev, categoria: e.target.value as CategoriaGasto }))}
+              onChange={(e) => onCambio((prev) => ({ ...prev, categoria: e.target.value as CategoriaPago }))}
             >
-              {CATEGORIAS_GASTO.map((c) => (
+              {CATEGORIAS_PAGO.map((c) => (
                 <option key={c.valor} value={c.valor}>
                   {c.etiqueta}
                 </option>
@@ -164,11 +164,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-proveedor">
+            <label className="form-label" htmlFor="pago-admin-proveedor">
               Proveedor (opcional)
             </label>
             <select
-              id="gasto-admin-proveedor"
+              id="pago-admin-proveedor"
               className="form-select"
               value={valor.idProveedor}
               onChange={(e) => onProveedorCambio(e.target.value)}
@@ -183,11 +183,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-area">
+            <label className="form-label" htmlFor="pago-admin-area">
               Área
             </label>
             <select
-              id="gasto-admin-area"
+              id="pago-admin-area"
               className="form-select"
               value={valor.idArea}
               onChange={(e) => onCambio((prev) => ({ ...prev, idArea: Number(e.target.value) }))}
@@ -206,11 +206,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-6">
-            <label className="form-label" htmlFor="gasto-admin-concepto">
+            <label className="form-label" htmlFor="pago-admin-concepto">
               Concepto
             </label>
             <input
-              id="gasto-admin-concepto"
+              id="pago-admin-concepto"
               type="text"
               className="form-control"
               value={valor.concepto}
@@ -219,11 +219,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-6">
-            <label className="form-label" htmlFor="gasto-admin-detalle">
+            <label className="form-label" htmlFor="pago-admin-detalle">
               Detalle (opcional)
             </label>
             <input
-              id="gasto-admin-detalle"
+              id="pago-admin-detalle"
               type="text"
               className="form-control"
               value={valor.detalle}
@@ -232,11 +232,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-medio-pago">
+            <label className="form-label" htmlFor="pago-admin-medio-pago">
               Medio de pago
             </label>
             <select
-              id="gasto-admin-medio-pago"
+              id="pago-admin-medio-pago"
               className="form-select"
               value={valor.idMedioPago}
               onChange={(e) =>
@@ -253,11 +253,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-factura">
+            <label className="form-label" htmlFor="pago-admin-factura">
               N° de factura (opcional)
             </label>
             <input
-              id="gasto-admin-factura"
+              id="pago-admin-factura"
               type="text"
               className="form-control"
               value={valor.numeroFactura}
@@ -266,11 +266,11 @@ export function ModalDeAltaDeGasto({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="gasto-admin-importe">
+            <label className="form-label" htmlFor="pago-admin-importe">
               Importe
             </label>
             <CampoImporte
-              id="gasto-admin-importe"
+              id="pago-admin-importe"
               className="form-control"
               valor={valor.importe}
               onChange={(importe) => onCambio((prev) => ({ ...prev, importe }))}

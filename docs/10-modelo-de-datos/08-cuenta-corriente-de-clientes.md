@@ -35,7 +35,7 @@ que hoy, pero auditable.
 >
 > **Estado (pago de personal): `descuento_personal`.** El valor nuevo del enum `tipo_movimiento_cc` es
 > la parte de un pago al personal que se cancela contra la deuda del cliente vinculado al empleado (§8c).
-> No mueve dinero: no tiene turno, comprobante ni gasto. Siempre lleva `id_movimiento_personal` (FK
+> No mueve dinero: no tiene turno, comprobante ni pago. Siempre lleva `id_movimiento_personal` (FK
 > compuesta `(id_movimiento_personal, id_tenant)` a `movimientos_personal`, RESTRICT), no lleva
 > `id_comprobante_venta` ni `id_pago_comprobante` y su `importe` es negativo; el índice único parcial
 > `ux_movimientos_cuenta_corriente_movimiento_personal` admite a lo sumo uno por pago. Dos CHECK lo
@@ -78,10 +78,10 @@ que hoy, pero auditable.
 > (fecha de negocio, puede ser retroactiva, nunca futura en la zona de la empresa), `importe`,
 > `idMedioPago` (nunca un medio de cuenta corriente) y `concepto` opcional (sin él queda
 > `Pago <tipo> <número>`). Empresa, punto de venta, proveedor y categoría salen de la compra, no del
-> cliente. En UNA transacción crea el gasto (`categoria = proveedor`, `origen_fondos = tesoreria`,
+> cliente. En UNA transacción crea el pago (`categoria = proveedor`, `origen_fondos = tesoreria`,
 > sin turno, `id_comprobante_compra` = la compra, `fecha` = la fecha de negocio), el movimiento
 > `pago` imputado a esa compra (con `now`, como todo el ledger) y el egreso de tesorería: reusa el
-> mismo escritor que el alta administrativa de un gasto ligado a una compra, no duplica ninguna
+> mismo escritor que el alta administrativa de un pago ligado a una compra, no duplica ninguna
 > escritura de ledger. Reglas: la compra tiene que estar `confirmada` (`409 compra_no_confirmada`
 > / `compra_anulada`); `importe > 0` (`400 gasto_importe_invalido`); `importe` ≤ saldo pendiente de
 > ESA compra (`409 pago_excede_saldo_pendiente`, o `409 compra_sin_saldo_pendiente` si ya está
@@ -91,11 +91,11 @@ que hoy, pero auditable.
 > escritores que la tocan la toman `FOR SHARE` o exclusiva, la confirmación después del lock de
 > membresía de familias compartido, que el pago no pide; sin ciclo) y el pagado se lee después del
 > lock, así que dos pagos que juntos superan el saldo no pueden entrar los dos; sin reintento
-> automático (un commit ambiguo sale como `503 resultado_incierto`). Un gasto editado hacia
+> automático (un commit ambiguo sale como `503 resultado_incierto`). Un pago editado hacia
 > arriba o dado de baja después de imputarse no toma el lock de la compra: puede dejarla sobrepagada
 > o con saldo distinto, que queda en cero y nunca negativo. Lecturas: `GET /api/compras/{id}` suma
 > `pagado` y `saldoPendiente` (cero fuera de una compra confirmada), `GET /api/compras` suma
-> `saldoPendiente` (lo usa el selector de vincular un gasto a una compra) y las filas `compra` de
+> `saldoPendiente` (lo usa el selector de vincular un pago a una compra) y las filas `compra` de
 > `GET /api/proveedores/{id}/cuenta-corriente` suman `saldoPendienteDeLaCompra`. Son datos de
 > encabezado, los ve también el vendedor; el costo de las líneas sigue oculto.
 
@@ -112,7 +112,7 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
     tipo                  tipo_movimiento_cc_proveedor NOT NULL,  -- enum: apertura | compra | pago | ajuste
     id_comprobante_compra integer     NULL,       -- 'compra': la que originó la deuda
                                                   -- 'pago'/'ajuste': la compra imputada
-    id_gasto              integer     NULL,       -- el gasto que materializó el pago
+    id_pago              integer     NULL,       -- el pago registrado que materializó el movimiento
     importe               numeric(14,2) NOT NULL, -- + aumenta deuda, − la reduce
     saldo_resultante      numeric(14,2) NOT NULL,
     detalle               text        NULL        -- obligatorio en el ajuste manual (regla de servicio)
@@ -121,33 +121,33 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 
 > **Estado (Etapa 15, stage-15-cc-proveedores-ledger): implementada — etapa completa (PRs #134-#139).**
 > Los 4 caminos de escritura activos (apertura por backfill, `compra` en confirmación, `pago` vía
-> gasto, `ajuste` por contramovimiento de anulación y por el endpoint manual bajo
+> pago, `ajuste` por contramovimiento de anulación y por el endpoint manual bajo
 > `SupervisionDeCuentaDeProveedor`); estado de cuenta paginado y `ServicioDeSaldoDeProveedor`
-> re-sourceado sobre el ledger (fórmula OD7: gastos ligados + ajustes imputados; los `pago` no se
+> re-sourceado sobre el ledger (fórmula OD7: pagos ligados + ajustes imputados; los `pago` no se
 > cuentan).
 > Mismo criterio que `movimientos_cuenta_corriente` (§8): ledger append-only, sin `EntidadBase`
 > (sin `updated_at`, sin soft delete), `id_tenant` escrito explícito (nunca `EstamparTenant()`).
 > **Sin clave alterna ni self-FK** — a diferencia de la tabla de clientes, esta etapa no incluye
 > reliquidación, así que ninguna tabla referencia este ledger. 6 FKs (`tenant`, `proveedor`
 > compuesta, `punto_venta` compuesta MATCH SIMPLE nullable, `empleado` simple, `comprobante_compra`
-> compuesta nullable, `gasto` compuesta nullable — requiere la clave alterna nueva de `gastos`,
+> compuesta nullable, `pago` compuesta nullable — requiere la clave alterna nueva de `pagos`,
 > abajo), todas RESTRICT; CHECK `ck_movimientos_cuenta_corriente_proveedor_apertura` (la
 > nullability de `id_punto_venta`/`id_empleado` es exactamente el asiento de apertura); RLS
 > estándar. `proveedores.saldo` (arriba, §2) es la cache mantenida por
 > `EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync` (raw `UPDATE ... RETURNING`,
-> nunca un `proveedor.Saldo +=` trackeado) — el mismo criterio de `Cliente.Saldo`. `gastos` gana
-> `ak_gastos_id_gasto_id_tenant UNIQUE (id_gasto, id_tenant)`, estructuralmente inviolable
-> (`id_gasto` ya único vía `pk_gastos`), requerida por la FK compuesta `fk_..._gasto`.
+> nunca un `proveedor.Saldo +=` trackeado) — el mismo criterio de `Cliente.Saldo`. `pagos` gana
+> `ak_pagos_id_pago_id_tenant UNIQUE (id_pago, id_tenant)`, estructuralmente inviolable
+> (`id_pago` ya único vía `pk_pagos`), requerida por la FK compuesta `fk_..._pago`.
 >
 > **Backfill idempotente, en la misma migración:** un asiento `apertura` por proveedor cuyo saldo
-> derivado (`Σ compras confirmadas no eliminadas − Σ gastos categoria=proveedor con id_proveedor
+> derivado (`Σ compras confirmadas no eliminadas − Σ pagos categoria=proveedor con id_proveedor
 > no eliminados`) es distinto de cero, reproduciendo EXACTAMENTE la fórmula que esta etapa retira
 > (ver la nota retirada más abajo). Un proveedor con saldo derivado `0` no recibe fila. Reejecutar
 > la migración no escribe filas adicionales ni cambia ningún saldo.
 >
 > **Los cuatro escritores, uno por valor del enum:** `apertura` ← la migración (arriba, una sola
 > vez); `compra` ← `ServicioDeCompras.ConfirmarAsync` (Slice 2); `pago` ← imputado dentro de
-> `ServicioDeGastos.InsertarGastoAsync` cuando el gasto es `categoria = proveedor` con
+> `ServicioDeGastos.InsertarGastoAsync` cuando el pago es `categoria = proveedor` con
 > `id_proveedor` (Slice 3); `ajuste` ← el contramovimiento de `ServicioDeCompras.AnularAsync`
 > (Slice 2) y el ajuste manual bajo `Politicas.SupervisionDeCuentaDeProveedor` (Slice 5). El
 > estado de cuenta paginado (`GET /api/proveedores/{id}/cuenta-corriente`) y el estado de pago
@@ -184,7 +184,7 @@ movimientos_personal (                    -- [operativa — libro append-only]
 >
 > **Sin `id_punto_venta`, a propósito** (desvío respecto de §8b): las cargas de horas, los ajustes y los
 > pagos son de back office y no pasan por un turno; un pago llega a un punto de venta únicamente a
-> través de los gastos y del descuento de cuenta corriente que genere.
+> través de los pagos y del descuento de cuenta corriente que genere.
 >
 > CHECK, uno por tipo: `ck_movimientos_personal_horas` (`horas` en (0, 24], `valor_hora >= 0` e
 > `importe = round(horas × valor_hora, 2)`, que ya implica el importe no negativo), `ck_movimientos_personal_ajuste`
@@ -196,7 +196,7 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > `ak_movimientos_personal_id_movimiento_id_tenant`, destino de las FKs compuestas que siguen.
 >
 > **Pago de personal** (`POST /api/personal/{id}/pagos`, `GestionDeCuentaDePersonal`: Admin y Supervisor).
-> **Pagar de la tesorería es solo de Admin**, como el alta administrativa de gastos (`/api/gastos/administracion`,
+> **Pagar de la tesorería es solo de Admin**, como el alta administrativa de pagos (`/api/gastos/administracion`,
 > `GestionDeCatalogo`): un Supervisor que manda `origenFondos = Tesoreria` recibe 403 `prohibido`, decidido
 > después del 404 del personal y antes de cualquier otro 400 del cuerpo y de cualquier escritura. El Supervisor
 > sí paga del cajón (`CajaTurno`) y descuenta de la cuenta corriente. El asiento `pago` es la cabecera: no hay tabla de cabecera aparte. En UNA transacción sin reintento
@@ -208,36 +208,36 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > `deleted_at IS NULL`: la baja de un cliente (`ServicioDeClientes.EliminarAsync`) es una baja lógica común, sin
 > lock explícito ni chequeo de referencias, así que no está serializada con el pago; si el cliente se da de baja
 > mientras el pago espera su fila, el `UPDATE` reevalúa y no devuelve fila, y el pago responde 409
-> `personal_sin_cliente_vinculado` y se revierte entero. Además del descuento, el pago escribe un gasto de categoría `sueldos`
-> por cada línea de dinero (`{ idMedioPago, importe, referencia? }`, la referencia queda en `gastos.detalle`).
+> `personal_sin_cliente_vinculado` y se revierte entero. Además del descuento, el movimiento `pago` del personal escribe un pago de categoría `sueldos`
+> por cada línea de dinero (`{ idMedioPago, importe, referencia? }`, la referencia queda en `pagos.detalle`).
 > El origen de los fondos se elige en cada pago (`origenFondos`, obligatorio con líneas y rechazado sin
 > ellas): `Tesoreria` no usa turno, admite fecha retroactiva (nunca futura, en la zona de la empresa), pide
-> `idEmpresa` y escribe un egreso encadenado de tesorería por gasto; `CajaTurno` exige `idPuntoVenta` con
-> turno abierto (409 `turno_no_abierto`), el gasto lleva el instante real como fecha y entra al arqueo del
+> `idEmpresa` y escribe un egreso encadenado de tesorería por pago; `CajaTurno` exige `idPuntoVenta` con
+> turno abierto (409 `turno_no_abierto`), el pago lleva el instante real como fecha y entra al arqueo del
 > turno. El descuento exige `idPuntoVenta` porque el asiento de cuenta corriente lo lleva. Las demás reglas y
-> códigos son los de los gastos que reemplaza (medio de cuenta corriente 400, fecha futura 400,
+> códigos son los de los pagos que reemplaza (medio de cuenta corriente 400, fecha futura 400,
 > empresa/punto de venta/medio 404).
 >
-> `gastos` y `movimientos_cuenta_corriente` ganan `id_movimiento_personal integer NULL` con FK compuesta
-> `(id_movimiento_personal, id_tenant)` a `movimientos_personal` (`fk_gastos_movimiento_personal`,
+> `pagos` y `movimientos_cuenta_corriente` ganan `id_movimiento_personal integer NULL` con FK compuesta
+> `(id_movimiento_personal, id_tenant)` a `movimientos_personal` (`fk_pagos_movimiento_personal`,
 > `fk_movimientos_cuenta_corriente_movimiento_personal`, RESTRICT) e índice de soporte
-> (`ix_gastos_movimiento_personal`; en cuenta corriente lo cubre el índice único parcial). El vínculo se
-> escribe solo al insertar. **Un gasto con `id_movimiento_personal` es inmutable:** la edición del POS,
+> (`ix_pagos_movimiento_personal`; en cuenta corriente lo cubre el índice único parcial). El vínculo se
+> escribe solo al insertar. **Un pago con `id_movimiento_personal` es inmutable:** la edición del POS,
 > la edición y la baja administrativas y la vinculación posterior a una compra lo rechazan con 409
 > `gasto_de_pago_de_personal`, después del 404, porque tocarlo desalinearía los cuatro libros del pago.
-> Para que un cliente sepa de antemano qué gastos responderán así, los listados del POS (`GET /api/gastos`, el
+> Para que un cliente sepa de antemano qué pagos responderán así, los listados del POS (`GET /api/gastos`, el
 > detalle del turno) y de administración (`GET /api/gastos/administracion` y su detalle) traen
-> `idMovimientoPersonal` (nulo en un gasto común) y el web deshabilita en esos gastos la edición, la baja y la
+> `idMovimientoPersonal` (nulo en un pago común) y el web deshabilita en esos pagos la edición, la baja y la
 > vinculación a una compra. Anular o revertir un pago todavía no existe. El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
-> en cada movimiento `pago` su `desglose`: el descuento y una línea por gasto (medio, importe, origen,
+> en cada movimiento `pago` su `desglose`: el descuento y una línea por pago (medio, importe, origen,
 > referencia).
 >
 > **Orden de locks del pago**, el mismo orden relativo de los demás escritores (turno, filas de negocio,
 > advisory de tesorería al final): 1) turno `FOR SHARE` (solo `CajaTurno`); 2) fila de `personal`
 > (`UPDATE ... RETURNING saldo, id_cliente`, que lee el cliente vinculado bajo el lock); 3) fila de
 > `clientes` (`UPDATE ... RETURNING saldo`, solo con descuento); 4) inserts sin lock explícito (asiento,
-> movimiento de cuenta corriente, gastos); 5) advisory de tesorería de la empresa, último (solo
+> movimiento de cuenta corriente, pagos); 5) advisory de tesorería de la empresa, último (solo
 > `Tesoreria`). Dos pagos al mismo personal se serializan en el paso 2; ningún escritor toma la fila del
-> cliente y después la del personal, y el alta, la edición y la baja de gastos, el pago de una compra y el
+> cliente y después la del personal, y el alta, la edición y la baja de pagos, el pago de una compra y el
 > cierre de turno toman sus locks en un orden compatible con éste. El detalle del análisis de ciclos está en
 > el comentario de clase de `ServicioDePagoDePersonal`.

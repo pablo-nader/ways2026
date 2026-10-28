@@ -473,7 +473,7 @@ describe('restaurarSesionDeCajeroPersistida', () => {
 
   /** Mismo criterio que el test anterior, pero del lado de `puntoVenta` (el `PuntoVentaListado`
    * completo persistido): truthy pero sin `id` numérico, el único campo que el shell offline
-   * dereferencia (`Pos.tsx`/`VentasDelTurno.tsx`/`GastosDelTurno.tsx`). */
+   * dereferencia (`Pos.tsx`/`VentasDelTurno.tsx`/`PagosDelTurno.tsx`). */
   it('con un puntoVenta truthy pero sin id numérico, instala el token pero descarta el snapshot', async () => {
     instalarPuenteTauri()
     const ahora = new Date('2026-01-01T00:00:00Z')

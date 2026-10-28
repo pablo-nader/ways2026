@@ -226,7 +226,7 @@ function PantallaCuentaCorrienteDeProveedor({
 
   const { usuario } = useAuth()
   const esSupervisorOAdmin = usuario !== null && puedeSupervisarCuentaDeProveedor(usuario.rolId)
-  // Pagar crea un gasto de tesorería: el servidor lo exige con `GestionDeCatalogo` (Admin).
+  // Pagar crea un pago de tesorería: el servidor lo exige con `GestionDeCatalogo` (Admin).
   const puedePagar = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
 
   // regla 2: cada cambio de filtro/página dispara una nueva consulta — una respuesta
@@ -393,7 +393,7 @@ function PantallaCuentaCorrienteDeProveedor({
                   <tr>
                     <th>Fecha</th>
                     <th>Tipo</th>
-                    <th>Comprobante/Gasto</th>
+                    <th>Comprobante/Pago</th>
                     <th>Detalle</th>
                     <th className="text-end">Importe</th>
                     <th className="text-end">Saldo resultante</th>

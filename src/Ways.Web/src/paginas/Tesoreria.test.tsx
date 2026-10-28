@@ -243,7 +243,7 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
   // encadenadas con `final` values 60, 100, 145 (mismo fixture que el test de backend).
   it('renderiza las filas en el orden de cadena que devuelve el backend, con cada columna', async () => {
     // stage-gastos-origen-fondos-pos (PR2): `concepto` se elige DISTINTO de toda etiqueta de
-    // `Tipo` ("Retiro de caja"/"Depósito"/"Gasto"/"Ajuste") — la columna Tipo nueva reusa esas
+    // `Tipo` ("Retiro de caja"/"Depósito"/"Pago"/"Ajuste") — la columna Tipo nueva reusa esas
     // mismas palabras, así que un concepto homónimo sería ambiguo para `getByText`.
     const filaUno = movimientoFixture({ id: 60, inicio: 5, ingreso: 55, egreso: 0, final: 60, concepto: 'Apertura de caja', idEmpleado: 4 })
     const filaDos = movimientoFixture({ id: 61, inicio: 60, ingreso: 40, egreso: 0, final: 100, concepto: 'Carga de fondos', idEmpleado: 5 })
@@ -270,11 +270,11 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
   it('la columna Tipo muestra la etiqueta en español de cada TipoMovimientoTesoreria', async () => {
     const filaRetiro = movimientoFixture({ id: 70, tipo: 'RetiroCaja', concepto: 'Cierre de turno' })
     const filaDeposito = movimientoFixture({ id: 71, tipo: 'Deposito', concepto: 'Ingreso manual' })
-    const filaGasto = movimientoFixture({ id: 72, tipo: 'Gasto', concepto: 'Flete de mercadería' })
+    const filaPago = movimientoFixture({ id: 72, tipo: 'Gasto', concepto: 'Flete de mercadería' })
     const filaAjuste = movimientoFixture({ id: 73, tipo: 'Ajuste', concepto: 'Ajuste manual' })
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/tesoreria?')) {
-        return Promise.resolve(paginaFixture([filaRetiro, filaDeposito, filaGasto, filaAjuste]))
+        return Promise.resolve(paginaFixture([filaRetiro, filaDeposito, filaPago, filaAjuste]))
       }
       return undefined
     })
@@ -284,14 +284,14 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
     expect(within(filaDeRetiro).getByText('Retiro de caja')).toBeInTheDocument()
 
     expect(within(screen.getByRole('row', { name: /Ingreso manual/ })).getByText('Depósito')).toBeInTheDocument()
-    expect(within(screen.getByRole('row', { name: /Flete de mercadería/ })).getByText('Gasto')).toBeInTheDocument()
+    expect(within(screen.getByRole('row', { name: /Flete de mercadería/ })).getByText('Pago')).toBeInTheDocument()
     expect(within(screen.getByRole('row', { name: /Ajuste manual/ })).getByText('Ajuste')).toBeInTheDocument()
   })
 
-  // stage-tesoreria-por-empresa (PR5): una fila `Gasto` muestra la categoría/concepto del gasto de
+  // stage-tesoreria-por-empresa (PR5): una fila `Pago` muestra la categoría/concepto del pago de
   // origen en la columna Concepto, no el `concepto` genérico del movimiento.
-  it('una fila de tipo Gasto muestra la categoría y el concepto del gasto de origen', async () => {
-    const filaGasto = movimientoFixture({
+  it('una fila de tipo Pago muestra la categoría y el concepto del pago de origen', async () => {
+    const filaPago = movimientoFixture({
       id: 80,
       tipo: 'Gasto',
       idPuntoVenta: null,
@@ -299,17 +299,17 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
       idGasto: 500,
       gastoCategoria: 'Otros',
       gastoConcepto: 'Alquiler de depósito',
-      concepto: 'Gasto de administración',
+      concepto: 'Pago de administración',
     })
     mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([filaGasto]))
+      if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([filaPago]))
       return undefined
     })
     renderTesoreria()
 
     const fila = await screen.findByRole('row', { name: /Alquiler de depósito/ })
     expect(within(fila).getByText('—')).toBeInTheDocument() // sin punto de venta
-    expect(within(fila).queryByText('Gasto de administración')).not.toBeInTheDocument()
+    expect(within(fila).queryByText('Pago de administración')).not.toBeInTheDocument()
   })
 
   it('el punto de venta dado de baja lógica (nombrePuntoVenta null) se muestra como "(no disponible)"', async () => {

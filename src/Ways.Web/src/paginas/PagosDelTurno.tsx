@@ -2,20 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeGastos, copiaDeFalloDeEdicion, esGastoDeUnPagoDePersonal } from '../api/gastos'
+import { clienteDePagos, copiaDeFalloDeEdicion, esPagoOriginadoEnPersonal } from '../api/registroDePagos'
 import { clienteDeProveedores } from '../api/proveedores'
-import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
+import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaAlta,
   AreaListado,
-  CategoriaGasto,
+  CategoriaPago,
   DetalleDeTurno,
-  GastoDeTurno,
+  PagoDeTurno,
   MedioPagoAlta,
   MedioPagoListado,
   OpcionDeProveedor,
-  OrigenFondosGasto,
-  SolicitudDeEdicionDeGasto,
+  OrigenFondosPago,
+  SolicitudDeEdicionDePago,
   TurnoResumen,
 } from '../api/tipos'
 import { pulsoDeCajon } from '../impresion/plantillas'
@@ -25,59 +25,59 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
-import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
+import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
 import type { CajaDeEscritorio } from './Pos'
 import {
-  aSolicitudDeGasto,
+  aSolicitudDePago,
   areaPorDefecto,
   categoriaAlElegirProveedor,
   efectivoDisponibleEnCaja,
-  etiquetaDeCategoriaGasto,
+  etiquetaDeCategoriaPago,
   etiquetaDeOrigenFondos,
   faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
-  mediosValidosParaGasto,
+  mediosValidosParaPago,
   salidaDeEfectivoDeCaja,
-  totalDeGastos,
-} from './utilidadesGastosDelTurno'
+  totalDePagos,
+} from './utilidadesPagosDelTurno'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
 /**
- * "Gastos del turno" (stage-gastos-turno-carga-simple, POS de escritorio): captura gastos contra
+ * "Pagos del turno" (stage-gastos-turno-carga-simple, POS de escritorio): captura pagos contra
  * el turno ABIERTO del punto de venta fijo del dispositivo (`POST /api/gastos`, mismo criterio de
  * turno-resuelto-server-side que `Pos.tsx`/`Caja.tsx`) y lista los ya registrados del turno
  * (`GET /api/caja/turnos/{id}/detalle`, mismo endpoint que el Z-report). Sin turno abierto no hay
  * formulario, mismo criterio que `VentasDelTurno`.
  *
- * El medio de pago excluye `CuentaCorriente` (`mediosValidosParaGasto`): es el mecanismo de
+ * El medio de pago excluye `CuentaCorriente` (`mediosValidosParaPago`): es el mecanismo de
  * crédito del CLIENTE en una venta, nunca una salida real de dinero de la caja. El proveedor
  * (opcional) reusa el mismo helper de etiqueta/orden por intercalación española que
  * `Articulos.tsx` (`articulos/helpers.ts`) — elegirlo cambia la categoría a "Proveedor"
  * (`categoriaAlElegirProveedor`, el cajero puede después volver a cambiarla a mano); limpiarlo
  * mientras la categoría sigue en "Proveedor" la vuelve a "Otros".
  *
- * `generacionRef` es COMPARTIDO entre la carga inicial/refresco del detalle y el alta de un gasto
+ * `generacionRef` es COMPARTIDO entre la carga inicial/refresco del detalle y el alta de un pago
  * (mismo criterio que `VentasDelTurno`/`ShellPos`): una respuesta desactualizada de cualquiera de
  * las dos nunca pisa un estado más nuevo. El formulario entero queda inerte mientras un alta está
  * en vuelo (react-async-state regla 5); el refresco posterior corre aislado del try/catch de la
  * escritura (regla 6), así que un alta ya confirmada nunca se reporta como fallida aunque el
  * refresco falle.
  *
- * Edición: cada gasto de un turno que sigue abierto (`turnoAbierto`) se corrige en un modal
+ * Edición: cada pago de un turno que sigue abierto (`turnoAbierto`) se corrige en un modal
  * (`PUT /api/gastos/{id}`) que comparte con el alta la guarda de reentrancia (`guardandoRef`) y la
  * generación del detalle: mientras la edición está abierta o en vuelo, el resto de la pantalla
  * queda inerte (regla 9 — se bloquea el supersede, no se reconcilia). Si el servidor responde
  * `409 gasto_turno_cerrado` el modal queda abierto con el motivo y el detalle se refresca.
  *
- * Efectivo de caja: un gasto en medio Efectivo pagado desde la caja del turno
+ * Efectivo de caja: un pago en medio Efectivo pagado desde la caja del turno
  * (`salidaDeEfectivoDeCaja`) muestra el efectivo disponible del resumen del turno y, si el importe
  * lo supera, avisa cuánto falta sin impedir el registro. Con el seam de escritorio
  * (`cajaDeEscritorio`), un alta confirmada de ese tipo encola el pulso del cajón.
  */
-export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeEscritorio } = {}) {
+export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeEscritorio } = {}) {
   const { puntoVenta } = usePuntoVenta()
 
   const [turno, setTurno] = useState<TurnoResumen | null>(null)
@@ -99,17 +99,17 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
   const [errorAreas, setErrorAreas] = useState('')
 
-  const [edicion, setEdicion] = useState<GastoDeTurno | null>(null)
+  const [edicion, setEdicion] = useState<PagoDeTurno | null>(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [errorEdicion, setErrorEdicion] = useState('')
 
   const [importe, setImporte] = useState<number | null>(null)
   const [idMedioPago, setIdMedioPago] = useState<number | ''>('')
-  const [categoria, setCategoria] = useState<CategoriaGasto>('Otros')
+  const [categoria, setCategoria] = useState<CategoriaPago>('Otros')
   const [idProveedor, setIdProveedor] = useState<number | ''>('')
   const [idAreaElegida, setIdAreaElegida] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
-  const [origenFondos, setOrigenFondos] = useState<OrigenFondosGasto>('CajaTurno')
+  const [origenFondos, setOrigenFondos] = useState<OrigenFondosPago>('CajaTurno')
 
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
@@ -131,7 +131,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
       .catch((e) => {
         if (!vigente) return
         setMedios([])
-        setErrorMedios(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los medios de pago. No se puede registrar el gasto.')
+        setErrorMedios(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los medios de pago. No se puede registrar el pago.')
       })
 
     // JD-A1 (judgment-day): el selector opcional de proveedor NO puede pedir `clienteDeProveedores
@@ -150,7 +150,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
       })
 
     // Hasta que responde (`areas === null`) el alta queda deshabilitada; si falla, queda en `[]` y
-    // el aviso dice que los gastos se registran sin área.
+    // el aviso dice que los pagos se registran sin área.
     clienteAreas
       .listar(false)
       .then((lista) => {
@@ -160,7 +160,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
       .catch(() => {
         if (!vigente) return
         setAreas([])
-        setErrorAreas('No se pudieron cargar las áreas: los gastos se registran sin área.')
+        setErrorAreas('No se pudieron cargar las áreas: los pagos se registran sin área.')
       })
 
     return () => {
@@ -178,7 +178,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
       setDetalle(null)
-      setErrorDetalle(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los gastos del turno.')
+      setErrorDetalle(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos del turno.')
     } finally {
       if (generacionRef.current === miGeneracion) setCargandoDetalle(false)
     }
@@ -233,7 +233,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     setOrigenFondos('CajaTurno')
   }
 
-  async function registrarGasto() {
+  async function registrarPago() {
     // regla 11 (react-async-state): guard de reentrancia de primera línea — un doble click en el
     // mismo tick le gana al re-render que deshabilita el botón.
     if (guardandoRef.current) return
@@ -267,8 +267,8 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     const miGeneracion = (generacionRef.current += 1)
 
     try {
-      await clienteDeGastos.registrar(
-        aSolicitudDeGasto({
+      await clienteDePagos.registrar(
+        aSolicitudDePago({
           idPuntoVenta: puntoVenta.id,
           importe,
           idMedioPago,
@@ -289,10 +289,10 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
       }
       if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
-      setAviso('Gasto registrado.')
+      setAviso('Pago registrado.')
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
-      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el gasto.')
+      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
     } finally {
       guardandoRef.current = false
       if (generacionRef.current === miGeneracion) setGuardando(false)
@@ -304,12 +304,12 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     await cargarDetalle(turno.id, miGeneracion)
   }
 
-  function abrirEdicion(gasto: GastoDeTurno) {
+  function abrirEdicion(pago: PagoDeTurno) {
     if (guardandoRef.current) return
     setAviso('')
     setErrorGuardar('')
     setErrorEdicion('')
-    setEdicion(gasto)
+    setEdicion(pago)
   }
 
   function cancelarEdicion() {
@@ -318,7 +318,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     setErrorEdicion('')
   }
 
-  async function guardarEdicion(solicitud: SolicitudDeEdicionDeGasto) {
+  async function guardarEdicion(solicitud: SolicitudDeEdicionDePago) {
     // regla 11: guarda de reentrancia síncrona, compartida con el alta.
     if (guardandoRef.current) return
     if (!turno || !edicion) return
@@ -331,10 +331,10 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     const miGeneracion = (generacionRef.current += 1)
 
     try {
-      await clienteDeGastos.actualizar(edicion.id, solicitud)
+      await clienteDePagos.actualizar(edicion.id, solicitud)
       if (generacionRef.current !== miGeneracion) return
       setEdicion(null)
-      setAviso('Gasto actualizado.')
+      setAviso('Pago actualizado.')
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
       setErrorEdicion(copiaDeFalloDeEdicion(e))
@@ -352,10 +352,10 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
 
   const bloqueado = guardando || guardandoEdicion || edicion !== null
 
-  const mediosParaGasto = mediosValidosParaGasto(medios ?? [])
+  const mediosParaPago = mediosValidosParaPago(medios ?? [])
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
-  const gastos = detalle?.gastos ?? []
-  const total = totalDeGastos(gastos)
+  const pagos = detalle?.gastos ?? []
+  const total = totalDePagos(pagos)
   const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
   const saleDeLaCaja = salidaDeEfectivoDeCaja(
     medios?.find((m) => m.id === idMedioPago),
@@ -375,7 +375,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
 
   return (
     <div className="container-fluid py-4">
-      <Box titulo="Gastos del turno" variante="inverse" herramientas={herramientas}>
+      <Box titulo="Pagos del turno" variante="inverse" herramientas={herramientas}>
         {!puntoVenta && <div className="alert alert-warning mb-0">No hay un punto de venta asociado a este dispositivo.</div>}
 
         {puntoVenta && errorTurno && <div className="alert alert-danger">{errorTurno}</div>}
@@ -396,24 +396,24 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
 
             <fieldset disabled={bloqueado} className="row g-2 align-items-end border-0 p-0 m-0 mb-3">
               <div className="col-md-2">
-                <label className="form-label" htmlFor="gasto-importe">
+                <label className="form-label" htmlFor="pago-importe">
                   Importe
                 </label>
-                <CampoImporte id="gasto-importe" className="form-control" valor={importe} onChange={setImporte} />
+                <CampoImporte id="pago-importe" className="form-control" valor={importe} onChange={setImporte} />
               </div>
 
               <div className="col-md-2">
-                <label className="form-label" htmlFor="gasto-medio-pago">
+                <label className="form-label" htmlFor="pago-medio-pago">
                   Medio de pago
                 </label>
                 <select
-                  id="gasto-medio-pago"
+                  id="pago-medio-pago"
                   className="form-select"
                   value={idMedioPago}
                   onChange={(e) => setIdMedioPago(e.target.value === '' ? '' : Number(e.target.value))}
                 >
                   <option value="">Elegir…</option>
-                  {mediosParaGasto.map((m) => (
+                  {mediosParaPago.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.nombre}
                     </option>
@@ -422,16 +422,16 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
               </div>
 
               <div className="col-md-2">
-                <label className="form-label" htmlFor="gasto-categoria">
+                <label className="form-label" htmlFor="pago-categoria">
                   Categoría
                 </label>
                 <select
-                  id="gasto-categoria"
+                  id="pago-categoria"
                   className="form-select"
                   value={categoria}
-                  onChange={(e) => setCategoria(e.target.value as CategoriaGasto)}
+                  onChange={(e) => setCategoria(e.target.value as CategoriaPago)}
                 >
-                  {CATEGORIAS_GASTO.map((c) => (
+                  {CATEGORIAS_PAGO.map((c) => (
                     <option key={c.valor} value={c.valor}>
                       {c.etiqueta}
                     </option>
@@ -440,11 +440,11 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
               </div>
 
               <div className="col-md-2">
-                <label className="form-label" htmlFor="gasto-proveedor">
+                <label className="form-label" htmlFor="pago-proveedor">
                   Proveedor (opcional)
                 </label>
                 <select
-                  id="gasto-proveedor"
+                  id="pago-proveedor"
                   className="form-select"
                   value={idProveedor}
                   onChange={(e) => alCambiarProveedor(e.target.value)}
@@ -459,11 +459,11 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
               </div>
 
               <div className="col-md-2">
-                <label className="form-label" htmlFor="gasto-area">
+                <label className="form-label" htmlFor="pago-area">
                   Área
                 </label>
                 <select
-                  id="gasto-area"
+                  id="pago-area"
                   className="form-select"
                   value={idArea}
                   onChange={(e) => setIdAreaElegida(Number(e.target.value))}
@@ -482,16 +482,16 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
               </div>
 
               <div className="col-md-2">
-                <label className="form-label" htmlFor="gasto-origen-fondos">
+                <label className="form-label" htmlFor="pago-origen-fondos">
                   Pagado desde
                 </label>
                 <select
-                  id="gasto-origen-fondos"
+                  id="pago-origen-fondos"
                   className="form-select"
                   value={origenFondos}
-                  onChange={(e) => setOrigenFondos(e.target.value as OrigenFondosGasto)}
+                  onChange={(e) => setOrigenFondos(e.target.value as OrigenFondosPago)}
                 >
-                  {ORIGENES_DE_FONDOS_GASTO.map((o) => (
+                  {ORIGENES_DE_FONDOS_PAGO.map((o) => (
                     <option key={o.valor} value={o.valor}>
                       {o.etiqueta}
                     </option>
@@ -504,18 +504,18 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                   <div className="small text-muted">Disponible en caja: {formatearMoneda(efectivoDisponible)}</div>
                   {faltante > 0 && (
                     <div className="alert alert-warning py-1 px-2 small mt-1 mb-0" role="alert">
-                      Falta {formatearMoneda(faltante)} en la caja para pagar este gasto.
+                      Falta {formatearMoneda(faltante)} en la caja para pagar este pago.
                     </div>
                   )}
                 </div>
               )}
 
               <div className="col-md-10">
-                <label className="form-label" htmlFor="gasto-observaciones">
+                <label className="form-label" htmlFor="pago-observaciones">
                   Observaciones (opcional)
                 </label>
                 <textarea
-                  id="gasto-observaciones"
+                  id="pago-observaciones"
                   className="form-control"
                   rows={1}
                   value={observaciones}
@@ -524,7 +524,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
               </div>
 
               <div className="col-md-2">
-                <button type="button" className="btn btn-primary w-100" disabled={areas === null} onClick={() => void registrarGasto()}>
+                <button type="button" className="btn btn-primary w-100" disabled={areas === null} onClick={() => void registrarPago()}>
                   {guardando ? 'Guardando…' : 'Registrar'}
                 </button>
               </div>
@@ -532,7 +532,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
 
             {errorDetalle && <div className="alert alert-danger">{errorDetalle}</div>}
 
-            {cargandoDetalle && gastos.length === 0 && <Cargando />}
+            {cargandoDetalle && pagos.length === 0 && <Cargando />}
 
             <div className="table-responsive">
               <table className="table table-sm table-striped table-bordered align-middle">
@@ -546,11 +546,11 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                   </tr>
                 </thead>
                 <tbody>
-                  {gastos.map((g) => (
+                  {pagos.map((g) => (
                     <tr key={g.id}>
                       <td>{formatearFechaHora(g.fecha)}</td>
                       <td>
-                        {etiquetaDeCategoriaGasto(g.categoria)}
+                        {etiquetaDeCategoriaPago(g.categoria)}
                         {g.origenFondos === 'Tesoreria' && (
                           <span className="badge bg-secondary ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>
                         )}
@@ -558,10 +558,10 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                       <td>{medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}`}</td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                       <td className="text-end text-nowrap">
-                        {g.turnoAbierto && !esGastoDeUnPagoDePersonal(g) && (
+                        {g.turnoAbierto && !esPagoOriginadoEnPersonal(g) && (
                           <BotonIcono
                             icono="editar"
-                            etiqueta={`Editar gasto ${g.concepto}`}
+                            etiqueta={`Editar pago ${g.concepto}`}
                             disabled={bloqueado}
                             onClick={() => abrirEdicion(g)}
                           />
@@ -569,10 +569,10 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                       </td>
                     </tr>
                   ))}
-                  {gastos.length === 0 && !cargandoDetalle && (
+                  {pagos.length === 0 && !cargandoDetalle && (
                     <tr>
                       <td colSpan={5} className="text-center text-muted py-4">
-                        Este turno todavía no tiene gastos.
+                        Este turno todavía no tiene pagos.
                       </td>
                     </tr>
                   )}
@@ -588,11 +588,11 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
       </Box>
 
       {edicion && (
-        <ModalDeEdicionDeGasto
+        <ModalDeEdicionDePago
           key={edicion.id}
-          gasto={edicion}
+          pago={edicion}
           ligadoACompra={edicion.idComprobanteCompra !== null}
-          medios={mediosParaGasto}
+          medios={mediosParaPago}
           proveedores={proveedores ?? []}
           areas={areas ?? []}
           guardando={guardandoEdicion}

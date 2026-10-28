@@ -349,9 +349,9 @@ function textosDeItems(lista: HTMLElement): string[] {
   return Array.from(lista.querySelectorAll('.dropdown-item')).map((i) => i.textContent ?? '')
 }
 
-function renderShell() {
+function renderShell(ruta = '/vender') {
   return render(
-    <MemoryRouter initialEntries={['/vender']}>
+    <MemoryRouter initialEntries={[ruta]}>
       <ShellPos dispositivo={DISPOSITIVO} usuario={usuarioFixture()} puntoVenta={puntoVentaFixture()} alCerrarSesion={vi.fn()} />
     </MemoryRouter>,
   )
@@ -389,7 +389,7 @@ describe('ShellPos', () => {
     expect(abrirConfiguracionMock).toHaveBeenCalledTimes(1)
   })
 
-  it('"Gastos" navega a la pantalla de gastos del turno', async () => {
+  it('"Pagos" navega a la pantalla de pagos del turno', async () => {
     mockearRutasDePos((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       if (ruta === '/proveedores/opciones') return Promise.resolve([])
@@ -413,10 +413,37 @@ describe('ShellPos', () => {
     })
     renderShell()
 
-    await elegirDeMenu('Caja', 'Gastos')
+    await elegirDeMenu('Caja', 'Pagos')
 
-    expect(await screen.findByText('Gastos del turno')).toBeInTheDocument()
-    expect(await screen.findByText('Este turno todavía no tiene gastos.')).toBeInTheDocument()
+    expect(await screen.findByText('Pagos del turno')).toBeInTheDocument()
+    expect(await screen.findByText('Este turno todavía no tiene pagos.')).toBeInTheDocument()
+  })
+
+  it('la ruta vieja /gastos-del-turno redirige a la pantalla de pagos del turno', async () => {
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      if (ruta === '/proveedores/opciones') return Promise.resolve([])
+      if (ruta === '/caja/turnos/501/detalle') {
+        return Promise.resolve({
+          resumen: {
+            idTurnoCaja: 501,
+            idMedioAncla: 1,
+            medios: [],
+            cantidadTickets: 0,
+            primerTicket: null,
+            ultimoTicket: null,
+            ingresosPorArea: [],
+            egresos: { porCategoria: [], porArea: [], retiros: 0 },
+          },
+          tickets: [],
+          gastos: [],
+        })
+      }
+      return undefined
+    })
+    renderShell('/gastos-del-turno')
+
+    expect(await screen.findByText('Pagos del turno')).toBeInTheDocument()
   })
 
   it('"Cerrar sesión" llama a POST /auth/logout y avisa alCerrarSesion', async () => {
@@ -493,7 +520,7 @@ describe('ShellPos — los controles de caja viven en el header, portaleados des
     expect(within(banner).queryByRole('button', { name: 'Retirar' })).not.toBeInTheDocument()
 
     const lista = await abrirMenu('Caja')
-    expect(textosDeItems(lista)).toEqual(['Ventas del turno', 'Historial de turnos', 'Gastos', 'Retirar efectivo', 'Cerrar turno'])
+    expect(textosDeItems(lista)).toEqual(['Ventas del turno', 'Historial de turnos', 'Pagos', 'Retirar efectivo', 'Cerrar turno'])
     expect(within(lista).getByText('Cerrar turno')).toBeEnabled()
     expect(within(lista).getByText('Retirar efectivo')).toBeEnabled()
     expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/abierto?idPuntoVenta=7')
@@ -508,7 +535,7 @@ describe('ShellPos — los controles de caja viven en el header, portaleados des
     expect(within(banner).queryByRole('button', { name: 'Abrir caja' })).not.toBeInTheDocument()
 
     const lista = await abrirMenu('Caja')
-    expect(textosDeItems(lista)).toEqual(['Ventas del turno', 'Historial de turnos', 'Gastos', 'Retirar efectivo', 'Abrir turno'])
+    expect(textosDeItems(lista)).toEqual(['Ventas del turno', 'Historial de turnos', 'Pagos', 'Retirar efectivo', 'Abrir turno'])
     expect(within(lista).getByText('Abrir turno')).toBeEnabled()
     expect(within(lista).getByText('Retirar efectivo')).toBeDisabled()
     expect(screen.getByText('Caja cerrada: abrí la caja para vender.')).toBeInTheDocument()
@@ -1389,7 +1416,7 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
     await waitFor(() => expect(boton).toBeEnabled())
   })
 
-  function mockearGastosDelTurno() {
+  function mockearPagosDelTurno() {
     mockearRutasDePos((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       if (ruta === '/proveedores/opciones') return Promise.resolve([])
@@ -1413,13 +1440,13 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
     })
   }
 
-  it('un gasto en efectivo desde la caja, registrado en "Gastos", imprime el pulso del cajón por la cola del shell', async () => {
-    mockearGastosDelTurno()
+  it('un pago en efectivo desde la caja, registrado en "Pagos", imprime el pulso del cajón por la cola del shell', async () => {
+    mockearPagosDelTurno()
     apiPostMock.mockImplementation((ruta: string) => Promise.resolve(ruta === '/gastos' ? { id: 1 } : undefined))
     renderShell()
     await esperarAlConsumidorFinal()
-    await elegirDeMenu('Caja', 'Gastos')
-    await screen.findByText('Este turno todavía no tiene gastos.')
+    await elegirDeMenu('Caja', 'Pagos')
+    await screen.findByText('Este turno todavía no tiene pagos.')
 
     await userEvent.type(screen.getByLabelText('Importe'), '100')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -1430,41 +1457,41 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
   })
 
   it('salir de "Vender" con ítems en el carrito mantiene bloqueada la instalación: el borrador sigue vivo', async () => {
-    mockearGastosDelTurno()
+    mockearPagosDelTurno()
     renderShell()
     await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
 
-    await elegirDeMenu('Caja', 'Gastos')
-    await screen.findByText('Gastos del turno')
+    await elegirDeMenu('Caja', 'Pagos')
+    await screen.findByText('Pagos del turno')
 
     expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeDisabled()
   })
 
   it('salir de "Vender" con el modal "Venta finalizada" abierto (estado transitorio) libera la instalación', async () => {
-    mockearGastosDelTurno()
+    mockearPagosDelTurno()
     mockearVentaExitosa()
     renderShell()
     await completarVenta()
     await waitFor(() => expect(imprimirMock).toHaveBeenCalled())
 
-    await elegirDeMenu('Caja', 'Gastos')
-    await screen.findByText('Gastos del turno')
+    await elegirDeMenu('Caja', 'Pagos')
+    await screen.findByText('Pagos del turno')
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeEnabled())
   })
 
   it('con un trabajo de impresión en vuelo la instalación queda bloqueada hasta que termina', async () => {
-    mockearGastosDelTurno()
+    mockearPagosDelTurno()
     mockearVentaExitosa()
     let terminarImpresion: (resultado: { ok: true }) => void = () => {}
     imprimirMock.mockImplementation(() => new Promise((resolver) => (terminarImpresion = resolver)))
     renderShell()
     await completarVenta()
-    await elegirDeMenu('Caja', 'Gastos')
-    await screen.findByText('Gastos del turno')
+    await elegirDeMenu('Caja', 'Pagos')
+    await screen.findByText('Pagos del turno')
 
     expect(screen.getByText(/Esperá a que termine la impresión/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeDisabled()

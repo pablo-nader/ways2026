@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi } from '../api/cliente'
 import { pulsoDeCajon } from '../impresion/plantillas'
-import { GastosDelTurno } from './GastosDelTurno'
+import { PagosDelTurno } from './PagosDelTurno'
 import type { CajaDeEscritorio } from './Pos'
-import type { AreaListado, DetalleDeTurno, GastoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
+import type { AreaListado, DetalleDeTurno, PagoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
@@ -110,7 +110,7 @@ function proveedorFixture(sobrescribir: Partial<OpcionDeProveedor> = {}): Opcion
   }
 }
 
-function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
+function pagoFixture(sobrescribir: Partial<PagoDeTurno> = {}): PagoDeTurno {
   return {
     id: 1,
     idPuntoVenta: 7,
@@ -132,7 +132,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
   }
 }
 
-function detalleFixture(gastos: GastoDeTurno[] = []): DetalleDeTurno {
+function detalleFixture(pagos: PagoDeTurno[] = []): DetalleDeTurno {
   return {
     resumen: {
       idTurnoCaja: 55,
@@ -145,7 +145,7 @@ function detalleFixture(gastos: GastoDeTurno[] = []): DetalleDeTurno {
       egresos: { porCategoria: [], porArea: [], retiros: 0 },
     },
     tickets: [],
-    gastos,
+    gastos: pagos,
     fechaRecalculo: null,
     idEmpleadoRecalculo: null,
   }
@@ -191,10 +191,10 @@ beforeEach(() => {
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 })
 
-describe('GastosDelTurno — sin turno abierto', () => {
+describe('PagosDelTurno — sin turno abierto', () => {
   it('muestra un aviso y no ofrece el formulario cuando el punto de venta no tiene turno abierto', async () => {
     mockearRutas({ turno: null })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByText('No hay un turno abierto en este punto de venta.')
     expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
@@ -202,10 +202,10 @@ describe('GastosDelTurno — sin turno abierto', () => {
   })
 })
 
-describe('GastosDelTurno — actualizar', () => {
+describe('PagosDelTurno — actualizar', () => {
   it('"Actualizar" es un botón de ícono con tooltip y vuelve a pedir el turno abierto', async () => {
     mockearRutas({})
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     const turnosPedidos = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/caja/turnos/abierto')).length
     const boton = await screen.findByRole('button', { name: 'Actualizar' })
     await waitFor(() => expect(boton).toBeEnabled())
@@ -219,10 +219,10 @@ describe('GastosDelTurno — actualizar', () => {
   })
 })
 
-describe('GastosDelTurno — medio de pago', () => {
+describe('PagosDelTurno — medio de pago', () => {
   it('excluye del selector los medios de comportamiento CuentaCorriente', async () => {
     mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente] })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     expect(screen.getByRole('option', { name: 'Efectivo' })).toBeInTheDocument()
@@ -230,10 +230,10 @@ describe('GastosDelTurno — medio de pago', () => {
   })
 })
 
-describe('GastosDelTurno — categoría auto-switch', () => {
+describe('PagosDelTurno — categoría auto-switch', () => {
   it('elegir un proveedor cambia la categoría a Proveedores', async () => {
     mockearRutas({})
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Otros')
@@ -245,7 +245,7 @@ describe('GastosDelTurno — categoría auto-switch', () => {
 
   it('limpiar el proveedor mientras la categoría sigue en Proveedores la vuelve a Otros', async () => {
     mockearRutas({})
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
@@ -258,7 +258,7 @@ describe('GastosDelTurno — categoría auto-switch', () => {
 
   it('cambiar la categoría a mano después de elegir un proveedor y luego limpiarlo no la resetea', async () => {
     mockearRutas({})
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
@@ -270,11 +270,11 @@ describe('GastosDelTurno — categoría auto-switch', () => {
   })
 })
 
-describe('GastosDelTurno — pagado desde (origenFondos)', () => {
+describe('PagosDelTurno — pagado desde (origenFondos)', () => {
   it('por default el selector queda en "Caja del turno" y el POST manda origenFondos CajaTurno', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     expect(screen.getByLabelText('Pagado desde')).toHaveValue('CajaTurno')
@@ -291,7 +291,7 @@ describe('GastosDelTurno — pagado desde (origenFondos)', () => {
   it('elegir "Caja general" manda origenFondos Tesoreria', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
@@ -313,7 +313,7 @@ describe('GastosDelTurno — pagado desde (origenFondos)', () => {
           resolverPost = resolve
         }),
     )
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
@@ -325,7 +325,7 @@ describe('GastosDelTurno — pagado desde (origenFondos)', () => {
   })
 })
 
-describe('GastosDelTurno — alta', () => {
+describe('PagosDelTurno — alta', () => {
   async function completarFormulario() {
     await screen.findByLabelText('Importe')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
@@ -335,7 +335,7 @@ describe('GastosDelTurno — alta', () => {
   it('arma el cuerpo del POST con el concepto de las observaciones recortadas', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await completarFormulario()
     await userEvent.type(screen.getByLabelText('Observaciones (opcional)'), '  Flete de mercadería  ')
@@ -361,32 +361,32 @@ describe('GastosDelTurno — alta', () => {
     )
   })
 
-  it('sin observaciones, el concepto cae al texto fijo "Gasto del turno"', async () => {
+  it('sin observaciones, el concepto cae al texto fijo "Pago del turno"', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await completarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ concepto: 'Gasto del turno' })),
+      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ concepto: 'Pago del turno' })),
     )
   })
 
   it('al confirmar con éxito limpia el formulario, muestra la confirmación y refresca el listado', async () => {
     mockearRutas({ detalle: detalleFixture() })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await completarFormulario()
     await userEvent.type(screen.getByLabelText('Observaciones (opcional)'), 'Pago de flete')
 
-    // El refresco posterior al alta trae el gasto recién creado.
-    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 9, importe: 500 })]) })
+    // El refresco posterior al alta trae el pago recién creado.
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 9, importe: 500 })]) })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Gasto registrado.')
+    await screen.findByText('Pago registrado.')
     expect(screen.getByLabelText('Importe')).toHaveValue('')
     expect(screen.getByLabelText('Observaciones (opcional)')).toHaveValue('')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Otros')
@@ -394,31 +394,31 @@ describe('GastosDelTurno — alta', () => {
   })
 
   // RDD-W1 (judgment-day): cláusula bajo prueba: el `setAviso('')` movido ANTES de las
-  // validaciones client-side en `registrarGasto`. Mutación verificada (mutation-proof-tests):
+  // validaciones client-side en `registrarPago`. Mutación verificada (mutation-proof-tests):
   // devolviendo ese `setAviso('')` a después de los `return` de validación, este test vuelve a
-  // ver "Gasto registrado." conviviendo con el error — restaurado el orden, vuelve a verde.
+  // ver "Pago registrado." conviviendo con el error — restaurado el orden, vuelve a verde.
   it('un segundo submit con el formulario vacío después de un alta exitosa limpia el aviso de éxito', async () => {
     mockearRutas({ detalle: detalleFixture() })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await completarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-    await screen.findByText('Gasto registrado.')
+    await screen.findByText('Pago registrado.')
 
     // `limpiarFormulario` dejó el importe en blanco: este segundo submit falla la validación
     // client-side, sin llegar a pegarle al servidor.
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await screen.findByText('El importe tiene que ser mayor a 0.')
-    expect(screen.queryByText('Gasto registrado.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pago registrado.')).not.toBeInTheDocument()
   })
 
   it('un error del servidor se muestra inline y el formulario no se limpia', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({})
     apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_no_abierto', 'El turno ya no está abierto.'))
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await completarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -429,7 +429,7 @@ describe('GastosDelTurno — alta', () => {
 
   it('un importe en blanco o en cero se rechaza sin llegar a pegarle al servidor', async () => {
     mockearRutas({})
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await screen.findByLabelText('Importe')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
@@ -448,7 +448,7 @@ describe('GastosDelTurno — alta', () => {
           resolverPost = resolve
         }),
     )
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await completarFormulario()
     const boton = screen.getByRole('button', { name: 'Registrar' })
@@ -460,7 +460,7 @@ describe('GastosDelTurno — alta', () => {
   })
 })
 
-describe('GastosDelTurno — efectivo en caja', () => {
+describe('PagosDelTurno — efectivo en caja', () => {
   const medioTransferencia: MedioPagoListado = {
     ...medioEfectivo,
     id: 3,
@@ -484,7 +484,7 @@ describe('GastosDelTurno — efectivo en caja', () => {
 
   async function esperarDetalle() {
     await screen.findByLabelText('Importe')
-    await screen.findByText('Este turno todavía no tiene gastos.')
+    await screen.findByText('Este turno todavía no tiene pagos.')
   }
 
   function mockearEfectivo(disponible: number) {
@@ -494,7 +494,7 @@ describe('GastosDelTurno — efectivo en caja', () => {
   describe('efectivo disponible y faltante', () => {
     it('con Efectivo desde la caja del turno muestra el efectivo disponible del ancla', async () => {
       mockearEfectivo(400)
-      render(<GastosDelTurno />)
+      render(<PagosDelTurno />)
       await esperarDetalle()
 
       await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
@@ -507,7 +507,7 @@ describe('GastosDelTurno — efectivo en caja', () => {
       ['Efectivo pagado desde Caja general', 'Efectivo', 'Caja general'],
     ])('no muestra disponible ni faltante con %s', async (_caso, medio, origen) => {
       mockearEfectivo(400)
-      render(<GastosDelTurno />)
+      render(<PagosDelTurno />)
       await esperarDetalle()
 
       await userEvent.type(screen.getByLabelText('Importe'), '1000')
@@ -520,7 +520,7 @@ describe('GastosDelTurno — efectivo en caja', () => {
 
     it('sin medio elegido no muestra disponible', async () => {
       mockearEfectivo(400)
-      render(<GastosDelTurno />)
+      render(<PagosDelTurno />)
       await esperarDetalle()
 
       expect(screen.queryByText(/Disponible en caja/)).not.toBeInTheDocument()
@@ -529,13 +529,13 @@ describe('GastosDelTurno — efectivo en caja', () => {
     it('si el importe supera el disponible avisa cuánto falta, sin bloquear el registro', async () => {
       mockearEfectivo(400)
       apiPostMock.mockResolvedValueOnce({ id: 1 })
-      render(<GastosDelTurno />)
+      render(<PagosDelTurno />)
       await esperarDetalle()
 
       await userEvent.type(screen.getByLabelText('Importe'), '1000')
       await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
 
-      expect(screen.getByRole('alert')).toHaveTextContent('Falta $ 600,00 en la caja para pagar este gasto.')
+      expect(screen.getByRole('alert')).toHaveTextContent('Falta $ 600,00 en la caja para pagar este pago.')
       expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled()
 
       await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -546,7 +546,7 @@ describe('GastosDelTurno — efectivo en caja', () => {
 
     it('con un importe que no supera el disponible no hay aviso', async () => {
       mockearEfectivo(400)
-      render(<GastosDelTurno />)
+      render(<PagosDelTurno />)
       await esperarDetalle()
 
       await userEvent.type(screen.getByLabelText('Importe'), '400')
@@ -566,15 +566,15 @@ describe('GastosDelTurno — efectivo en caja', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
     }
 
-    it('un gasto en Efectivo desde la caja del turno, ya registrado, encola el pulso del cajón', async () => {
+    it('un pago en Efectivo desde la caja del turno, ya registrado, encola el pulso del cajón', async () => {
       mockearEfectivo(400)
       apiPostMock.mockResolvedValueOnce({ id: 1 })
       const cajaDeEscritorio = cajaDeEscritorioFixture()
-      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+      render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
 
       await registrar('Efectivo')
 
-      await screen.findByText('Gasto registrado.')
+      await screen.findByText('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith('la apertura de cajón', pulsoDeCajon())
     })
@@ -586,13 +586,13 @@ describe('GastosDelTurno — efectivo en caja', () => {
       vi.mocked(cajaDeEscritorio.encolarImpresion).mockImplementation(() => {
         throw new Error('cola caída')
       })
-      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+      render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
 
       await registrar('Efectivo')
 
-      await screen.findByText('Gasto registrado.')
+      await screen.findByText('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
-      expect(screen.queryByText('No se pudo registrar el gasto.')).not.toBeInTheDocument()
+      expect(screen.queryByText('No se pudo registrar el pago.')).not.toBeInTheDocument()
       expect(screen.getByLabelText('Importe')).toHaveValue('')
       expect(apiPostMock).toHaveBeenCalledTimes(1)
     })
@@ -607,7 +607,7 @@ describe('GastosDelTurno — efectivo en caja', () => {
           }),
       )
       const cajaDeEscritorio = cajaDeEscritorioFixture()
-      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+      render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
 
       await registrar('Efectivo')
       await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
@@ -619,13 +619,13 @@ describe('GastosDelTurno — efectivo en caja', () => {
 
     it('si el POST falla no encola el pulso', async () => {
       mockearEfectivo(400)
-      apiPostMock.mockRejectedValueOnce(new ErrorApi(500, 'error', 'No se pudo registrar el gasto.'))
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(500, 'error', 'No se pudo registrar el pago.'))
       const cajaDeEscritorio = cajaDeEscritorioFixture()
-      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+      render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
 
       await registrar('Efectivo')
 
-      await screen.findByText('No se pudo registrar el gasto.')
+      await screen.findByText('No se pudo registrar el pago.')
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 
@@ -636,27 +636,27 @@ describe('GastosDelTurno — efectivo en caja', () => {
       mockearEfectivo(400)
       apiPostMock.mockResolvedValueOnce({ id: 1 })
       const cajaDeEscritorio = cajaDeEscritorioFixture()
-      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+      render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
 
       await registrar(medio, origen)
 
-      await screen.findByText('Gasto registrado.')
+      await screen.findByText('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 
     it('sin el seam de escritorio registra igual y no falla', async () => {
       mockearEfectivo(400)
       apiPostMock.mockResolvedValueOnce({ id: 1 })
-      render(<GastosDelTurno />)
+      render(<PagosDelTurno />)
 
       await registrar('Efectivo')
 
-      expect(await screen.findByText('Gasto registrado.')).toBeInTheDocument()
+      expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
     })
   })
 })
 
-describe('GastosDelTurno — área del alta', () => {
+describe('PagosDelTurno — área del alta', () => {
   const general = { id: 10, nombre: 'General', activo: true, idEmpresa: null, orden: 1 }
   const cocina = { id: 11, nombre: 'Cocina', activo: true, idEmpresa: null, orden: 2 }
 
@@ -673,7 +673,7 @@ describe('GastosDelTurno — área del alta', () => {
   it('el select arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
     mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     await esperarAreas()
 
     const select = screen.getByLabelText('Área')
@@ -689,7 +689,7 @@ describe('GastosDelTurno — área del alta', () => {
   it('el área elegida a mano es la que viaja', async () => {
     mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     await esperarAreas()
 
     await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
@@ -702,14 +702,14 @@ describe('GastosDelTurno — área del alta', () => {
   it('tras un alta exitoso el formulario vuelve a la primera área activa', async () => {
     mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     await esperarAreas()
 
     await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Gasto registrado.')
+    await screen.findByText('Pago registrado.')
     expect(screen.getByLabelText('Área')).toHaveValue('10')
   })
 
@@ -724,7 +724,7 @@ describe('GastosDelTurno — área del alta', () => {
           })
         : baseline(ruta),
     )
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     await screen.findByLabelText('Importe')
     expect(screen.getByLabelText('Área')).toHaveValue('')
 
@@ -745,7 +745,7 @@ describe('GastosDelTurno — área del alta', () => {
         : baseline(ruta),
     )
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     await screen.findByLabelText('Importe')
     expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled()
 
@@ -757,24 +757,24 @@ describe('GastosDelTurno — área del alta', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
   })
 
-  it('si las áreas no cargan avisa que el gasto se registra sin área y deja registrar', async () => {
+  it('si las áreas no cargan avisa que el pago se registra sin área y deja registrar', async () => {
     mockearRutas({})
     const baseline = apiGetMock.getMockImplementation()!
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/catalogos/areas' ? Promise.reject(new ErrorApi(500, 'error', 'boom')) : baseline(ruta),
     )
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
-    expect(await screen.findByText('No se pudieron cargar las áreas: los gastos se registran sin área.')).toBeInTheDocument()
+    expect(await screen.findByText('No se pudieron cargar las áreas: los pagos se registran sin área.')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled())
   })
 
   it('sin áreas el select muestra una única opción vacía deshabilitada y el alta manda idArea null', async () => {
     mockearRutas({ areas: [] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
     await screen.findByLabelText('Importe')
-    await screen.findByText('Este turno todavía no tiene gastos.')
+    await screen.findByText('Este turno todavía no tiene pagos.')
 
     const select = screen.getByLabelText('Área')
     const opciones = within(select).getAllByRole('option')
@@ -788,16 +788,16 @@ describe('GastosDelTurno — área del alta', () => {
   })
 })
 
-describe('GastosDelTurno — listado', () => {
-  it('lista los gastos del turno con hora, categoría, medio y el total', async () => {
+describe('PagosDelTurno — listado', () => {
+  it('lista los pagos del turno con hora, categoría, medio y el total', async () => {
     mockearRutas({
       medios: [medioEfectivo],
       detalle: detalleFixture([
-        gastoFixture({ id: 1, categoria: 'Servicios', idMedioPago: 1, importe: 300 }),
-        gastoFixture({ id: 2, categoria: 'Viaticos', idMedioPago: 1, importe: 150 }),
+        pagoFixture({ id: 1, categoria: 'Servicios', idMedioPago: 1, importe: 300 }),
+        pagoFixture({ id: 2, categoria: 'Viaticos', idMedioPago: 1, importe: 150 }),
       ]),
     })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     const tabla = await screen.findByRole('table')
     expect(within(tabla).getByText('Servicios')).toBeInTheDocument()
@@ -808,23 +808,23 @@ describe('GastosDelTurno — listado', () => {
     expect(screen.getByText('Total: $ 450,00')).toBeInTheDocument()
   })
 
-  it('sin gastos, muestra el mensaje de lista vacía y el total en 0', async () => {
+  it('sin pagos, muestra el mensaje de lista vacía y el total en 0', async () => {
     mockearRutas({ detalle: detalleFixture([]) })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
-    await screen.findByText('Este turno todavía no tiene gastos.')
+    await screen.findByText('Este turno todavía no tiene pagos.')
     expect(screen.getByText('Total: $ 0,00')).toBeInTheDocument()
   })
 
-  it('un gasto de origen Tesoreria se etiqueta "Caja general"; uno CajaTurno no lleva etiqueta', async () => {
+  it('un pago de origen Tesoreria se etiqueta "Caja general"; uno CajaTurno no lleva etiqueta', async () => {
     mockearRutas({
       medios: [medioEfectivo],
       detalle: detalleFixture([
-        gastoFixture({ id: 1, categoria: 'Servicios', importe: 300, origenFondos: 'CajaTurno' }),
-        gastoFixture({ id: 2, categoria: 'Viaticos', importe: 150, origenFondos: 'Tesoreria' }),
+        pagoFixture({ id: 1, categoria: 'Servicios', importe: 300, origenFondos: 'CajaTurno' }),
+        pagoFixture({ id: 2, categoria: 'Viaticos', importe: 150, origenFondos: 'Tesoreria' }),
       ]),
     })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     const tabla = await screen.findByRole('table')
     const filaCajaTurno = within(tabla).getByRole('row', { name: /Servicios/ })
@@ -835,50 +835,50 @@ describe('GastosDelTurno — listado', () => {
   })
 })
 
-describe('GastosDelTurno — edición', () => {
+describe('PagosDelTurno — edición', () => {
   const areaCocina: AreaListado = { id: 3, nombre: 'Cocina', activo: true, idEmpresa: null } as AreaListado
 
   function dialogo() {
-    return screen.getByRole('dialog', { name: 'Editar gasto' })
+    return screen.getByRole('dialog', { name: 'Editar pago' })
   }
 
-  async function abrirEdicion(nombre = 'Editar gasto Flete') {
+  async function abrirEdicion(nombre = 'Editar pago Flete') {
     // web-test-data-gates: la fila llega con el detalle (el dato), no antes.
     await userEvent.click(await screen.findByRole('button', { name: nombre }))
-    await screen.findByRole('dialog', { name: 'Editar gasto' })
+    await screen.findByRole('dialog', { name: 'Editar pago' })
   }
 
-  it('no ofrece editar un gasto cuyo turno ya no está abierto', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture({ turnoAbierto: false })]) })
-    render(<GastosDelTurno />)
+  it('no ofrece editar un pago cuyo turno ya no está abierto', async () => {
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ turnoAbierto: false })]) })
+    render(<PagosDelTurno />)
 
     // Se espera a la fila (el DATO del detalle) antes de afirmar que no hay acción.
     await screen.findByRole('cell', { name: '$ 300,00' })
-    expect(screen.queryByRole('button', { name: /Editar gasto/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Editar pago/ })).not.toBeInTheDocument()
   })
 
-  it('no ofrece editar un gasto de un pago de personal aunque su turno siga abierto, y sí el de un gasto común', async () => {
+  it('no ofrece editar un pago de un pago de personal aunque su turno siga abierto, y sí el de un pago común', async () => {
     mockearRutas({
       detalle: detalleFixture([
-        gastoFixture({ id: 1, concepto: 'Pago de personal: Ana', importe: 300, idMovimientoPersonal: 9 }),
-        gastoFixture({ id: 2, concepto: 'Flete', importe: 450 }),
+        pagoFixture({ id: 1, concepto: 'Pago de personal: Ana', importe: 300, idMovimientoPersonal: 9 }),
+        pagoFixture({ id: 2, concepto: 'Flete', importe: 450 }),
       ]),
     })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     // Se espera a las dos filas (el DATO del detalle) antes de afirmar que falta una acción.
     await screen.findByRole('cell', { name: '$ 300,00' })
     await screen.findByRole('cell', { name: '$ 450,00' })
-    expect(screen.queryByRole('button', { name: 'Editar gasto Pago de personal: Ana' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Editar gasto Flete' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Editar pago Pago de personal: Ana' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Editar pago Flete' })).toBeEnabled()
   })
 
-  it('precarga el formulario con los valores del gasto', async () => {
+  it('precarga el formulario con los valores del pago', async () => {
     mockearRutas({
-      detalle: detalleFixture([gastoFixture({ importe: 300, idArea: 3, detalle: 'Entrega', numeroFactura: '0001-9', idProveedor: 1, categoria: 'Proveedor' })]),
+      detalle: detalleFixture([pagoFixture({ importe: 300, idArea: 3, detalle: 'Entrega', numeroFactura: '0001-9', idProveedor: 1, categoria: 'Proveedor' })]),
       areas: [areaCocina],
     })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const d = within(dialogo())
@@ -892,11 +892,11 @@ describe('GastosDelTurno — edición', () => {
     expect(d.getByLabelText('N° de factura (opcional)')).toHaveValue('0001-9')
   })
 
-  it('un gasto ligado a una compra abre la edición con categoría y proveedor bloqueados', async () => {
+  it('un pago ligado a una compra abre la edición con categoría y proveedor bloqueados', async () => {
     mockearRutas({
-      detalle: detalleFixture([gastoFixture({ categoria: 'Proveedor', idProveedor: 1, idComprobanteCompra: 40 })]),
+      detalle: detalleFixture([pagoFixture({ categoria: 'Proveedor', idProveedor: 1, idComprobanteCompra: 40 })]),
     })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const d = within(dialogo())
@@ -905,9 +905,9 @@ describe('GastosDelTurno — edición', () => {
     expect(d.getByLabelText('Concepto')).toBeEnabled()
   })
 
-  it('un gasto sin compra abre la edición con categoría y proveedor habilitados', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture({ idComprobanteCompra: null })]) })
-    render(<GastosDelTurno />)
+  it('un pago sin compra abre la edición con categoría y proveedor habilitados', async () => {
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ idComprobanteCompra: null })]) })
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const d = within(dialogo())
@@ -915,10 +915,10 @@ describe('GastosDelTurno — edición', () => {
     expect(d.getByLabelText('Proveedor (opcional)')).toBeEnabled()
   })
 
-  it('guarda con PUT /gastos/{id}, cierra el modal, avisa y refresca el detalle', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 12 })]) })
+  it('guarda con PUT /pagos/{id}, cierra el modal, avisa y refresca el detalle', async () => {
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 12 })]) })
     apiPutMock.mockResolvedValueOnce({ id: 12 })
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const d = within(dialogo())
@@ -932,17 +932,17 @@ describe('GastosDelTurno — edición', () => {
         expect.objectContaining({ concepto: 'Flete corregido', idMedioPago: 1, importe: 300, categoria: 'Otros', idProveedor: null, idArea: null }),
       ),
     )
-    await screen.findByText('Gasto actualizado.')
-    expect(screen.queryByRole('dialog', { name: 'Editar gasto' })).not.toBeInTheDocument()
+    await screen.findByText('Pago actualizado.')
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     const llamadasDetalle = apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle'))
     expect(llamadasDetalle.length).toBeGreaterThanOrEqual(2)
   })
 
   it('un 409 gasto_turno_cerrado deja el modal abierto con el motivo y refresca el detalle', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 12 })]) })
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 12 })]) })
     const { ErrorApi } = await import('../api/cliente')
     apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'gasto_turno_cerrado', 'cerrado'))
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const antes = apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle')).length
@@ -952,12 +952,12 @@ describe('GastosDelTurno — edición', () => {
     await waitFor(() =>
       expect(apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle')).length).toBeGreaterThan(antes),
     )
-    expect(screen.queryByText('Gasto actualizado.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pago actualizado.')).not.toBeInTheDocument()
   })
 
   it('un importe en cero se rechaza sin llegar al servidor', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture()]) })
-    render(<GastosDelTurno />)
+    mockearRutas({ detalle: detalleFixture([pagoFixture()]) })
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const d = within(dialogo())
@@ -969,10 +969,10 @@ describe('GastosDelTurno — edición', () => {
   })
 
   it('mientras el guardado está en vuelo el modal queda inerte y un doble click manda una sola solicitud', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 12 })]) })
+    mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 12 })]) })
     let resolver: (v: unknown) => void = () => undefined
     apiPutMock.mockImplementationOnce(() => new Promise((r) => (resolver = r)))
-    render(<GastosDelTurno />)
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     const guardar = within(dialogo()).getByRole('button', { name: 'Guardar cambios' })
@@ -990,13 +990,13 @@ describe('GastosDelTurno — edición', () => {
   })
 
   it('cancelar cierra el modal sin escribir', async () => {
-    mockearRutas({ detalle: detalleFixture([gastoFixture()]) })
-    render(<GastosDelTurno />)
+    mockearRutas({ detalle: detalleFixture([pagoFixture()]) })
+    render(<PagosDelTurno />)
 
     await abrirEdicion()
     await userEvent.click(within(dialogo()).getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('dialog', { name: 'Editar gasto' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 })

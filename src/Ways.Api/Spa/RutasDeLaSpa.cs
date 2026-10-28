@@ -41,6 +41,7 @@ public static class RutasDeLaSpa
         "ofertas",
         "ordenes-compra",
         "organizacion",
+        "pagos",
         "parametros",
         "personal",
         "pos",
