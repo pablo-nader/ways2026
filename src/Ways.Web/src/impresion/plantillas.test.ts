@@ -774,7 +774,7 @@ describe('lineasDeCierreDeTurno', () => {
     expect(lineasDeLaTermica.slice(0, lineasDelNavegador.length)).toEqual(lineasDelNavegador)
     expect(lineasDelNavegador).toContain('CIERRE DE TURNO')
     expect(lineasDelNavegador).toContain('Turno #501')
-    expect(lineasDelNavegador.some((l) => l.startsWith('Pagos en efectivo'))).toBe(true)
+    expect(lineasDelNavegador.some((l) => l.startsWith('Pagos desde la caja'))).toBe(true)
     expect(lineasDelNavegador.some((l) => l.startsWith('Faltante'))).toBe(true)
   })
 })
@@ -931,14 +931,14 @@ describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () =>
     expect(texto).toContain('4.500,00')
   })
 
-  it('"Pagos en efectivo" == 0: la línea NO aparece', () => {
+  it('"Pagos desde la caja" == 0: la línea NO aparece', () => {
     const texto = textoPlano(cierreDeTurno(resumenCierreFixture({ gastosEnEfectivo: 0 }), CONTEXTO))
-    expect(texto).not.toContain('Pagos en efectivo')
+    expect(texto).not.toContain('Pagos desde la caja')
   })
 
-  it('"Pagos en efectivo" != 0: la línea aparece con el importe', () => {
+  it('"Pagos desde la caja" != 0: la línea aparece con el importe', () => {
     const texto = textoPlano(cierreDeTurno(resumenCierreFixture({ gastosEnEfectivo: 750 }), CONTEXTO))
-    expect(texto).toContain('Pagos en efectivo')
+    expect(texto).toContain('Pagos desde la caja')
     expect(texto).toContain('750,00')
   })
 

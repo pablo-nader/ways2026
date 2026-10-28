@@ -5,9 +5,9 @@
 Hoy (en el sistema legacy) las compras se cargan como gastos sin detalle; esta es la pieza nueva completa.
 
 > **Vocabulario (etapa E1):** lo que antes se llamaba *gasto* es un **pago** (grupos del dueño: Compras, Ventas,
-> Pagos, Cobros). La tabla es `pagos` (`id_pago`, enums `categoria_pago` y `origen_fondos_pago`). Las rutas HTTP
-> siguen siendo `/api/gastos…` (y los códigos de error `gasto_*`, los DTO y servicios del backend conservan el
-> nombre) hasta el contrato nuevo de la etapa E2.
+> Pagos, Cobros). La tabla es `pagos` (`id_pago`, enums `categoria_pago` y `origen_fondos_pago`) y el código usa
+> `Pago` (`Ways.Domain.Pagos`, `ServicioDePagos`). Solo el contrato HTTP conserva el nombre viejo hasta la etapa
+> E2: las rutas `/api/gastos…`, los nombres JSON (`idGasto`, `gastos`, …) y los códigos de error `gasto_*`.
 
 ```sql
 comprobantes_compra (         -- [operativa]
@@ -332,7 +332,7 @@ van a `movimientos_caja` (§7).
 > **Estado (Etapa 8, Slice 1 — RESUELTO):** `pagos.id_comprobante_compra` aterriza en esta
 > slice, junto con su FK compuesta `(id_comprobante_compra, id_tenant)` RESTRICT y su índice
 > de soporte — la deuda declarada arriba queda pagada, sin cambio de forma en ninguna otra
-> columna. Poblado por `ServicioDeGastos` (etapa 8, Slice 4) bajo un `SELECT ... FOR SHARE`
+> columna. Poblado por `ServicioDePagos` (etapa 8, Slice 4) bajo un `SELECT ... FOR SHARE`
 > sobre el header de la compra (TOCTOU cerrado contra una anulación concurrente); solo válido
 > cuando `categoria = proveedor` y la compra referenciada está `confirmada`. El vínculo es
 > historia, no un bloqueo: anular la compra vinculada sigue permitido (design decisión 6 —
@@ -346,8 +346,8 @@ van a `movimientos_caja` (§7).
 > `ck_pagos_caja_turno_requiere_turno` es el backstop de esquema: solo el origen `caja_turno`
 > exige un turno.
 >
-> **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `ServicioDeGastos.RegistrarAsync`
-> ofrece los dos orígenes de `SolicitudDeGasto.OrigenFondos` (default `caja_turno`, retrocompat).
+> **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `ServicioDePagos.RegistrarAsync`
+> ofrece los dos orígenes de `SolicitudDePago.OrigenFondos` (default `caja_turno`, retrocompat).
 > Un pago `tesoreria` sigue atado al turno abierto (`id_turno_caja` poblado, trazabilidad) pero
 > se paga directo del fondo de tesorería de la empresa: en la MISMA transacción del insert,
 > `EscriturasDeTesoreria.ApendearAsync` agrega una fila `movimientos_tesoreria` con
@@ -356,13 +356,13 @@ van a `movimientos_caja` (§7).
 > que alimentan el arqueo/cierre (`LectorDeMovimientosDelTurno`, `LectorDeContenidoDeResumen`)
 > filtran `origen_fondos = 'caja_turno'`: un pago `tesoreria` nunca resta de ningún medio ni lo
 > vuelve arqueable — ya se descontó de tesorería en el momento en que se registró. El Z-report/
-> historial (`LectorDeLineasDelTurno.LeerGastosAsync`, `GET /api/gastos`) sigue listando los dos
+> historial (`LectorDeLineasDelTurno.LeerPagosAsync`, `GET /api/gastos`) sigue listando los dos
 > orígenes sin filtrar (informativo, expone `OrigenFondos` para que la UI etiquete "Caja
 > general").
 >
 > **Estado (stage-gasto-a-compra, PR4 — RESUELTO):** `pagos.id_comprobante_compra` deja de
 > poblarse solo al crear el pago — `POST /api/gastos/{id}/vincular-compra`
-> (`ServicioDeGastos.VincularCompraAsync`) liga un pago YA EXISTENTE (POS o administración) a una
+> (`ServicioDePagos.VincularCompraAsync`) liga un pago YA EXISTENTE (POS o administración) a una
 > compra confirmada, sin cambio de esquema. Si el pago ya es `categoria = proveedor` con
 > `id_proveedor` coincidente, el vínculo es solo trazabilidad: se imputa la compra en el movimiento
 > `pago` que ese pago ya escribió al crearse (`EscriturasDeCuentaCorrienteProveedor.

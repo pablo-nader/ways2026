@@ -1900,7 +1900,15 @@ describe('CompraEditor — pre-carga desde un pago (?desdePago=)', () => {
     expect(screen.getByLabelText('Observaciones')).toHaveValue('Pago de mercadería')
   })
 
-  it('sin ?desdePago= no dispara ningún fetch a /pagos/administracion ni muestra el banner', async () => {
+  it('el parámetro anterior ?desdeGasto= de un borrador ya abierto conserva el vínculo pendiente', async () => {
+    mockearReferencia((ruta) => (ruta === '/gastos/administracion/5' ? Promise.resolve(pagoFixture({ idProveedor: 1 })) : undefined))
+
+    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
+
+    expect(await screen.findByText('Se vinculará al pago #5 al confirmar.')).toBeInTheDocument()
+  })
+
+  it('sin ?desdePago= no dispara ningún fetch a /gastos/administracion ni muestra el banner', async () => {
     mockearReferencia()
     renderEditor('nueva')
 

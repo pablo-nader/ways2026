@@ -106,7 +106,7 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > nulo).
 >
 > **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `id_pago` ya tiene escritor: un
-> pago de origen `tesoreria` (`ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync`) agrega, en la
+> pago de origen `tesoreria` (`ServicioDePagos.EscribirMovimientoDeTesoreriaAsync`) agrega, en la
 > MISMA transacción del insert del pago, una fila `tipo = 'pago'` con `id_pago` = ese pago,
 > `ingreso = 0`, `egreso = importe` — mismo protocolo lock+lectura+append que el cierre, extraído a
 > `EscriturasDeTesoreria` (única clase que escribe esta tabla). El cierre cambia de forma: su fila
@@ -117,7 +117,7 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 >
 > **Estado (stage-tesoreria-por-empresa, PR5 — RESUELTO):** confirmado, UNA sola cadena por
 > `(id_tenant, id_empresa)` — hay exactamente tres escritores, los dos de arriba más el pago de
-> administración (`ServicioDeGastos.RegistrarDeAdministracionAsync`, mismo camino de
+> administración (`ServicioDePagos.RegistrarDeAdministracionAsync`, mismo camino de
 > `EscriturasDeTesoreria` que un pago de origen `tesoreria` del POS): cierre de turno
 > (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), pago de origen `tesoreria` desde el POS y pago de
 > administración (ambos `tipo = 'pago'`, `egreso = importe`). La lectura

@@ -1648,8 +1648,9 @@ export function CompraEditor() {
   // stage-gasto-a-compra (PR4): a diferencia de `idOrdenCompra` (solo aplica a un borrador nuevo),
   // `desdePago` se lee SIEMPRE — sobrevive al remontaje nuevo→existente (`guardarBorrador` lo
   // reenvía en el `navigate` de creación) porque el vínculo real recién se dispara al CONFIRMAR,
-  // no al crear el borrador.
-  const idDesdePagoParam = searchParams.get('desdePago')
+  // no al crear el borrador. `desdeGasto` es el nombre anterior del parámetro: un borrador abierto
+  // antes del renombre lo trae en su URL y no debe perder el vínculo.
+  const idDesdePagoParam = searchParams.get('desdePago') ?? searchParams.get('desdeGasto')
   const idDesdePago =
     idDesdePagoParam !== null && Number.isFinite(Number(idDesdePagoParam)) ? Number(idDesdePagoParam) : null
 

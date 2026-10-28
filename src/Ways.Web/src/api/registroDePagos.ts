@@ -139,7 +139,7 @@ export function formularioDePagoDeAdministracionVacio(
   }
 }
 
-/** Espejo de `ServicioDeGastos.categoriaAlElegirProveedor` (mismo criterio que
+/** Espejo de `ServicioDePagos.categoriaAlElegirProveedor` (mismo criterio que
  * `PagosDelTurno.tsx`/`utilidadesPagosDelTurno.ts`): elegir un proveedor cambia la categoría a
  * "Proveedor"; limpiarlo mientras la categoría sigue en "Proveedor" la vuelve a "Otros". */
 export function categoriaAlElegirProveedorAdministracion(

@@ -661,7 +661,7 @@ function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: Context
   ticket.lineaDeGuiones()
   ticket.lineaDeColumnas('Ventas en efectivo', formatearMoneda(resumen.ventasEnEfectivoNetas))
   if (resumen.gastosEnEfectivo !== 0) {
-    ticket.lineaDeColumnas('Pagos en efectivo', formatearMoneda(resumen.gastosEnEfectivo))
+    ticket.lineaDeColumnas('Pagos desde la caja', formatearMoneda(resumen.gastosEnEfectivo))
   }
   if (resumen.refuerzos !== 0) {
     ticket.lineaDeColumnas('Refuerzos', formatearMoneda(resumen.refuerzos))

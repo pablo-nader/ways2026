@@ -71,7 +71,7 @@ export type FormularioDePago = {
  * Cuerpo de `POST /api/gastos` (decisión del pedido 2): `concepto` es la observación recortada
  * cuando no está vacía, o el texto fijo "Pago del turno" en caso contrario — nunca viaja en
  * blanco (el servidor lo rechaza con 400 `gasto_concepto_requerido`,
- * `ServicioDeGastos.ExigirConceptoValido`). `detalle`/`numeroFactura`/
+ * `ServicioDePagos.ExigirConceptoValido`). `detalle`/`numeroFactura`/
  * `idComprobanteCompra` no los pide este formulario: viajan `null`. `origenFondos` aterriza en
  * stage-gastos-origen-fondos-pos (PR2) — se manda tal cual lo eligió el cajero, nunca inferido.
  */

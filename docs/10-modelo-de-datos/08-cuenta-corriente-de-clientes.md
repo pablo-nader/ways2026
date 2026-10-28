@@ -73,7 +73,7 @@ que hoy, pero auditable.
 > de los dos deriva nada de un turno).
 >
 > **Pagar una compra (sin cambio de esquema):** `POST /api/compras/{id}/pagos`
-> (`ServicioDeGastos.PagarCompraAsync`, `GestionDeCatalogo`) es el camino directo desde el detalle
+> (`ServicioDePagos.PagarCompraAsync`, `GestionDeCatalogo`) es el camino directo desde el detalle
 > de la compra y desde la fila `compra` de la cuenta corriente del proveedor. Cuerpo: `fecha`
 > (fecha de negocio, puede ser retroactiva, nunca futura en la zona de la empresa), `importe`,
 > `idMedioPago` (nunca un medio de cuenta corriente) y `concepto` opcional (sin él queda
@@ -147,7 +147,7 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 >
 > **Los cuatro escritores, uno por valor del enum:** `apertura` ← la migración (arriba, una sola
 > vez); `compra` ← `ServicioDeCompras.ConfirmarAsync` (Slice 2); `pago` ← imputado dentro de
-> `ServicioDeGastos.InsertarGastoAsync` cuando el pago es `categoria = proveedor` con
+> `ServicioDePagos.InsertarPagoAsync` cuando el pago es `categoria = proveedor` con
 > `id_proveedor` (Slice 3); `ajuste` ← el contramovimiento de `ServicioDeCompras.AnularAsync`
 > (Slice 2) y el ajuste manual bajo `Politicas.SupervisionDeCuentaDeProveedor` (Slice 5). El
 > estado de cuenta paginado (`GET /api/proveedores/{id}/cuenta-corriente`) y el estado de pago

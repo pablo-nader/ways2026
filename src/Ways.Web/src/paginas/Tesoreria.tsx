@@ -22,7 +22,7 @@ function formatearFechaHora(iso: string): string {
 
 /** Etiqueta en español de `TipoMovimientoTesoreria` — stage-gastos-origen-fondos-pos (PR2):
  * `Pago` empieza a aparecer en este libro (un pago de origen Tesoreria escribe su propia fila,
- * `ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync`) y necesitaba una columna propia; antes de
+ * `ServicioDePagos.EscribirMovimientoDeTesoreriaAsync`) y necesitaba una columna propia; antes de
  * este PR la columna `tipo` se traía pero nunca se mostraba. */
 function etiquetaDeTipoMovimiento(tipo: TipoMovimientoTesoreria): string {
   switch (tipo) {

@@ -1714,8 +1714,8 @@ export type VentaDeTurnoListado = {
   estadoNotaDeCredito?: EstadoDeNotaDeCredito['estado'] | null
 }
 
-/** Un pago del turno dentro de `DetalleDeTurno.pagos` — espejo de
- * `Ways.Application.Gastos.GastoListado`. `idPuntoVenta` es `number | null` porque el DTO de C#
+/** Un pago del turno dentro de `DetalleDeTurno.gastos` (nombre del cable) — espejo de
+ * `Ways.Application.Pagos.PagoListado`. `idPuntoVenta` es `number | null` porque el DTO de C#
  * ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal tipado desde
  * antes de este PR). `origenFondos` es informativo acá (Z-report/historial, nunca un total de
  * arqueo) — la UI lo usa para etiquetar "Caja general". */
@@ -1754,9 +1754,9 @@ export type DetalleDeTurno = {
 }
 
 // --- Pagos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —
-// espejo de `Ways.Application.Gastos.Contratos`.
+// espejo de `Ways.Application.Pagos.Contratos`.
 
-/** Espejo del enum `OrigenFondosPago` (Ways.Domain.Gastos) — viaja como texto, mismas dos
+/** Espejo del enum `OrigenFondosPago` (Ways.Domain.Pagos) — viaja como texto, mismas dos
  * variantes PascalCase que el resto de los enums de este archivo (`CategoriaPago`,
  * `TipoMovimientoTesoreria`): nunca camelCase. `CajaTurno` descuenta el efectivo del cajón del
  * turno; `Tesoreria` (stage-gastos-origen-fondos-pos, PR2) paga directo del fondo de tesorería de
@@ -1768,7 +1768,7 @@ export const ORIGENES_DE_FONDOS_PAGO: { valor: OrigenFondosPago; etiqueta: strin
   { valor: 'Tesoreria', etiqueta: 'Caja general' },
 ]
 
-/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Gastos.SolicitudDeGasto`. Sin
+/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Pagos.SolicitudDePago`. Sin
  * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Pago Requires An Open
  * Turno), nunca viaja en el cuerpo. `origenFondos` aterriza en stage-gastos-origen-fondos-pos
  * (PR2) — el POS siempre lo manda explícito (la UI no tiene default silencioso), aunque el
@@ -1787,7 +1787,7 @@ export type SolicitudDePago = {
   origenFondos: OrigenFondosPago
 }
 
-/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Gastos.GastoRegistrado`.
+/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Pagos.PagoRegistrado`.
  * `idTurnoCaja`/`idPuntoVenta` son `number | null` porque el DTO de C# ya los declara `int?`
  * (stage-gastos-origen-fondos-pos, PR2: el mirror los tenía mal tipados desde antes de este PR). */
 export type PagoRegistrado = {
@@ -1810,7 +1810,7 @@ export type PagoRegistrado = {
 
 // --- Pagos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
 // la tesorería de la empresa, con fecha de negocio potencialmente retroactiva — espejo de los
-// pagos de administración de `Ways.Application.Gastos.Contratos`.
+// pagos de administración de `Ways.Application.Pagos.Contratos`.
 
 /** Cuerpo de `POST /api/gastos/administracion` — espejo de
  * `SolicitudDePagoDeAdministracion`. `fecha` viaja como `YYYY-MM-DD` (mismo shape que
