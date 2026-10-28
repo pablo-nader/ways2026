@@ -2663,13 +2663,46 @@ export type CompraDuplicada = {
   origen: OrigenCompra
 }
 
+/** Parte del disponible de un pago ya existente que se aplica a la compra (espejo de `AplicacionDePagoExistente`). */
+export type AplicacionDePagoSolicitada = { idPago: number; importe: number }
+
 /** Cuerpo de `POST /api/pagos/de-compra/{idCompra}` (espejo de `SolicitudDePagoDeCompraConLineas`). `fecha` viaja
- * como `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. */
-export type SolicitudDePagoDeCompra = { fecha: string; lineas: LineaDePagoSolicitud[]; concepto: string | null }
+ * como `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. `lineas` es el
+ * dinero nuevo (puede ir vacío si `aplicaciones` cubre algo) y puede superar el saldo: el excedente queda a favor. */
+export type SolicitudDePagoDeCompra = {
+  fecha: string
+  lineas: LineaDePagoSolicitud[]
+  concepto: string | null
+  aplicaciones?: AplicacionDePagoSolicitada[]
+}
+
+/** Una aplicación viva de un pago a la compra, tal como la devuelve el pago de una compra (espejo de `AplicacionALaCompraListada`). */
+export type AplicacionALaCompraListada = { idAplicacion: number; idPago: number; importe: number; fecha: string }
 
 /** Respuesta de `POST /api/pagos/de-compra/{idCompra}` (espejo de `ResultadoDePagoDeCompraConLineas`): el pago
- * creado bajo la clave `pago` y el estado de pago de la compra después de este pago. */
-export type ResultadoDePagoDeCompra = { pago: PagoConLineas; pagado: number; saldoPendiente: number }
+ * creado bajo la clave `pago` (`null` si el pedido no trajo líneas), el estado de pago de la compra, todas sus
+ * aplicaciones vivas y lo que del pago nuevo quedó a favor (`null` sin pago nuevo). */
+export type ResultadoDePagoDeCompra = {
+  pago: PagoConLineas | null
+  pagado: number
+  saldoPendiente: number
+  aplicaciones: AplicacionALaCompraListada[]
+  disponibleDelPago: number | null
+}
+
+/** Un pago con disponible que se puede aplicar a una compra (espejo de `PagoAplicable`). `idProveedor` es `null` en un
+ * pago sin proveedor, que adopta el de la compra al aplicarse. */
+export type PagoAplicable = {
+  idPago: number
+  fecha: string
+  concepto: string
+  importe: number
+  disponible: number
+  idProveedor: number | null
+}
+
+/** Respuesta de `GET /api/compras/{id}/pagos-aplicables` (espejo de `PagosAplicables`). */
+export type PagosAplicables = { pagos: PagoAplicable[] }
 
 /** Página de resultados de `GET /api/compras` (espejo de `PaginaDeCompras`). */
 export type PaginaDeCompras = { items: CompraListada[]; total: number; pagina: number; tamanio: number }

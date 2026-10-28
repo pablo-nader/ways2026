@@ -357,10 +357,20 @@ public sealed record SolicitudDeEdicionDePagoConLineas(
 }
 
 /// <summary>Cuerpo de <c>POST /api/pagos/de-compra/{idCompra}</c>. Mismas reglas que <see cref="SolicitudDePagoDeCompra"/>
-/// con <see cref="Lineas"/> en lugar de medio e importe.</summary>
-public sealed record SolicitudDePagoDeCompraConLineas(DateOnly Fecha, IReadOnlyList<LineaDePago> Lineas, string? Concepto)
+/// con <see cref="Lineas"/> en lugar de medio e importe, y a diferencia de aquella admite pagar de más (el excedente queda a
+/// favor en el pago nuevo) y aplicar pagos ya existentes. Todo campo se usa o se rechaza: <c>fecha</c> se valida siempre (no
+/// futura) y es la fecha de negocio del pago nuevo y de las aplicaciones que crea el pedido, <c>concepto</c> es del pago
+/// nuevo (sin <c>lineas</c> es <c>400 concepto_sin_pago_nuevo</c>), <c>lineas</c> (0 a 20) son el pago nuevo y
+/// <c>aplicaciones</c> (0 a 20) son pagos existentes cuyo disponible se aplica a esta compra; al menos una de las dos
+/// listas no puede estar vacía. Con <c>lineas</c>, la compra tiene que seguir con saldo después de aplicar lo existente
+/// (<c>409 compra_sin_saldo_pendiente</c>).</summary>
+public sealed record SolicitudDePagoDeCompraConLineas(
+    DateOnly Fecha,
+    IReadOnlyList<LineaDePago>? Lineas,
+    string? Concepto,
+    IReadOnlyList<AplicacionDePagoExistente>? Aplicaciones = null)
 {
-    public ComandoDePagoDeCompra AComando() => new(Fecha, Lineas, Concepto);
+    public ComandoDePagoDeCompraConAplicaciones AComando() => new(Fecha, Lineas, Concepto, Aplicaciones);
 }
 
 /// <summary>Pago recién persistido del contrato nuevo: sin el medio ni el nombre de la cabecera, el reparto vive en
@@ -388,5 +398,23 @@ public sealed record PagoConLineas(
 }
 
 /// <summary>Respuesta de <c>POST /api/pagos/de-compra/{idCompra}</c>: el pago bajo la clave <c>pago</c> (la ruta de compras
-/// conserva <c>gasto</c>) y el estado de pago de la compra.</summary>
-public sealed record ResultadoDePagoDeCompraConLineas(PagoConLineas Pago, decimal Pagado, decimal SaldoPendiente);
+/// conserva <c>gasto</c>) y el estado de pago de la compra. <c>pago</c> es <c>null</c> cuando el pedido no trajo líneas (solo
+/// aplicó pagos existentes); <c>aplicaciones</c> son todas las aplicaciones vivas a la compra después de la operación;
+/// <c>disponibleDelPago</c> es lo que del pago nuevo quedó a favor (<c>null</c> sin pago nuevo).</summary>
+public sealed record ResultadoDePagoDeCompraConLineas(
+    PagoConLineas? Pago,
+    decimal Pagado,
+    decimal SaldoPendiente,
+    IReadOnlyList<AplicacionALaCompraListada> Aplicaciones,
+    decimal? DisponibleDelPago);
+
+/// <summary>Una aplicación viva de un pago a la compra, tal como la devuelve el pago de una compra.</summary>
+public sealed record AplicacionALaCompraListada(int IdAplicacion, int IdPago, decimal Importe, DateTimeOffset Fecha);
+
+/// <summary>Resultado interno de pagar una compra con aplicaciones: el pago nuevo (si hubo líneas) y el estado de la compra.</summary>
+public sealed record ResultadoDePagoDeCompraConAplicaciones(
+    PagoRegistrado? Pago,
+    decimal Pagado,
+    decimal SaldoPendiente,
+    IReadOnlyList<AplicacionALaCompraListada> Aplicaciones,
+    decimal? DisponibleDelPago);

@@ -123,6 +123,10 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "AplicarAsync" },
         { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "DesaplicarAsync" },
 
+        // Pagar una compra con aplicaciones y con exceso: crea el pago, adopta pagos sin proveedor y escribe cuenta
+        // corriente y tesorería sin clave de idempotencia; un reintento sobre un commit ambiguo pagaría dos veces.
+        { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "PagarCompraConAplicacionesAsync" },
+
         // Familias de artículos: editar el nombre y el estado de una familia lee la fila bajo su FOR UPDATE; un
         // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
         // ServicioDeArticulos.ActualizarAsync.

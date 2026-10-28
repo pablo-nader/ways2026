@@ -129,7 +129,7 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
 - [ ] E3-S3 (written; CI pending) — Endpoints: aplicar, desaplicar, and adoption of a supplierless pago (takes the compra's
   supplier); `vincular-compra` applies `min(disponible, saldo)` and adds `pago_sin_disponible`; two read endpoints of
   aplicable pagos.
-- [ ] E3-S4 — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
+- [x] E3-S4 (written; CI pending) — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
 - [ ] E4-S1 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter.
 - [ ] E3-W1 — Web: apply existing pagos when loading/paying a compra, credit per supplier.
 - [ ] E3-W2 — Web: apply/unapply screen and adoption of cashier pagos.
@@ -248,6 +248,26 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   (`AjustarAplicacionesAlNuevoImporteAsync` replaces `ReajustarAplicacionDelVinculoAsync`). `pagos-aplicables` filters by the
   compra's empresa; both readers push `disponible > 0` into SQL and cap at 200 rows. Doc 10 §5 updated. Tests replaced in
   `AplicacionesDePagoEscritoresTests` / `AplicacionesDePagoEndpointsTests` (CI pending, Docker down).
+
+- 2026-10-28 E3-S4 (branch `pnader/pagos-e3-s4-de-compra`, stacked on E3-S3): `ServicioDePagos.PagarCompraConAplicacionesAsync`
+  (in `ServicioDePagos.Aplicaciones.cs`, registered in the structural map) serves `POST /api/pagos/de-compra/{idCompra}` only; the
+  legacy `PagarCompraAsync` and its routes keep `pago_excede_saldo_pendiente`. Lock order: compra `FOR UPDATE` -> existing pagos
+  `FOR UPDATE` ascending id -> new pago insert -> proveedor row -> treasury advisory. Existing credit is applied first; the new
+  pago is created for the full total of its lines and applied for `min(total, remaining saldo)`; the excess stays as `disponible`
+  and the supplier CC carries the full pago. Response `ResultadoDePagoDeCompraConLineas` gains `aplicaciones`
+  (`AplicacionALaCompraListada`) and `disponibleDelPago`; `pago` is nullable (200 instead of 201 when no lines). A compra without
+  saldo stays `409 compra_sin_saldo_pendiente`. New codes: `aplicacion_demasiados_pagos`, `aplicacion_pago_repetido`,
+  `aplicacion_importe_invalido`. Web: `ModalDePagoDeCompra` drops the client-side total check, shows "Quedan $X a cuenta", lists
+  `GET /api/compras/{id}/pagos-aplicables` ("Usar pagos a cuenta"), lines are ignored when pagos are ticked and no line has a medio;
+  `textoDePagoRegistrado` feeds the notice in `CompraEditor` / `CuentaCorrienteDeProveedor`. Doc 10 §5 updated.
+  `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1082 passed; web `tsc -b` clean, lint 0 errors,
+  vitest on the four touched files green. Integration tests (`PagosApiConLineasTests`: overpay, only aplicaciones,
+  aplicaciones + lineas, 409/400/404 cases, legacy route still 409) NOT run locally (Docker down): CI is the proof, pending.
+  Judgment-day fix round (E3-S4): real lock order is compra -> existing pagos (asc) -> proveedor row inside each adopted pago's
+  step (before the new pago insert) -> new pago insert -> proveedor (already held if adopted) -> treasury advisory. `fecha` is
+  always validated and dates the new applications; `concepto` without lineas is `400 concepto_sin_pago_nuevo`; 404 for compra and
+  each idPago comes before body validation; exact fill + lineas is `409 compra_sin_saldo_pendiente`. The modal never drops typed
+  money (line with importe and no medio is an error) and its prefilled line follows the remaining amount until the user edits it.
 
 ## Next step
 
