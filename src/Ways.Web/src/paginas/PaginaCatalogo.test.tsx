@@ -972,6 +972,21 @@ describe('PaginaCatalogo — orden y filtros por columna', () => {
       .map((fila) => within(fila).getAllByRole('cell')[1]?.textContent)
   }
 
+  it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
+    apiGetMock.mockResolvedValue([listaFixture()])
+    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    await screen.findByRole('searchbox', { name: 'Filtrar por nombre' })
+
+    const [encabezados, filtros] = screen.getAllByRole('row')
+    const celdasDeEncabezado = within(encabezados).getAllByRole('columnheader')
+    const celdasDeFiltros = within(filtros).getAllByRole('columnheader')
+
+    expect(celdasDeFiltros).toHaveLength(celdasDeEncabezado.length)
+    expect(celdasDeEncabezado.at(-1)).toHaveTextContent('Acciones')
+    expect(within(celdasDeFiltros.at(-1)!).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Limpiar filtros' })).toHaveLength(1)
+  })
+
   it('cada columna de datos se puede ordenar y la de acciones no', async () => {
     apiGetMock.mockResolvedValue(marcas)
     render(<PaginaCatalogo definicion={descriptorMarcas} />)

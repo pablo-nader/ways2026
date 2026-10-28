@@ -2,8 +2,9 @@ import { BotonIcono } from '../BotonIcono'
 import type { DefinicionDeFiltro, ValoresDeFiltro } from './filtros'
 
 type Props = {
-  /** Una entrada por columna del `<thead>`, en su orden: la clave de la columna filtrable o `null` para una celda sin
-   * filtro (por ejemplo la de acciones). */
+  /** Exactamente una entrada por columna del `<thead>`, en su orden: la clave de la columna filtrable o `null` para una
+   * celda sin filtro. El botón de limpiar filtros va dentro de la ÚLTIMA celda `null` (la de acciones); sin ninguna celda
+   * `null` no se rinde botón. */
   celdas: readonly (string | null)[]
   columnas: Record<string, DefinicionDeFiltro>
   filtros: ValoresDeFiltro
@@ -11,7 +12,7 @@ type Props = {
   onLimpiar: () => void
   hayFiltros: boolean
   deshabilitado?: boolean
-  /** Agrega al final una celda con el botón de limpiar filtros (por defecto sí: ocupa el lugar de las acciones). */
+  /** Rinde el botón de limpiar filtros en la última celda `null` de `celdas` (por defecto sí). */
   conLimpiar?: boolean
 }
 
@@ -26,11 +27,21 @@ export function FilaDeFiltros({
   deshabilitado = false,
   conLimpiar = true,
 }: Props) {
+  const ultimaNula = celdas.lastIndexOf(null)
+
   return (
     <tr>
       {celdas.map((clave, posicion) => {
         const columna = clave === null ? undefined : columnas[clave]
-        if (clave === null || !columna) return <th key={posicion} scope="col" />
+        if (clave === null || !columna) {
+          const conBoton = conLimpiar && posicion === ultimaNula
+
+          return (
+            <th key={posicion} scope="col" className={conBoton ? 'text-end' : undefined}>
+              {conBoton && <BotonIcono icono="limpiar" onClick={onLimpiar} disabled={deshabilitado || !hayFiltros} />}
+            </th>
+          )
+        }
 
         const nombre = `Filtrar por ${columna.etiqueta.toLowerCase()}`
         const valor = filtros[clave] ?? ''
@@ -65,11 +76,6 @@ export function FilaDeFiltros({
           </th>
         )
       })}
-      {conLimpiar && (
-        <th scope="col" className="text-end">
-          <BotonIcono icono="limpiar" onClick={onLimpiar} disabled={deshabilitado || !hayFiltros} />
-        </th>
-      )}
     </tr>
   )
 }

@@ -1,4 +1,4 @@
-import { act, render, renderHook, screen } from '@testing-library/react'
+import { act, render, renderHook, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -21,7 +21,7 @@ const filas: Fila[] = [
 
 function dibujar(sobrescribir: Partial<ComponentProps<typeof FilaDeFiltros>> = {}) {
   const props = {
-    celdas: ['nombre', null, 'modo'],
+    celdas: ['nombre', 'modo', null],
     columnas,
     filtros: {},
     onCambio: vi.fn(),
@@ -41,13 +41,29 @@ function dibujar(sobrescribir: Partial<ComponentProps<typeof FilaDeFiltros>> = {
 }
 
 describe('FilaDeFiltros', () => {
-  it('rinde un campo de texto, un select con "Todos" y una celda vacía, más la de limpiar', () => {
+  it('rinde un campo de texto y un select con "Todos"', () => {
     dibujar()
 
     expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Filtrar por modo' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Todos' })).toBeInTheDocument()
-    expect(screen.getAllByRole('columnheader')).toHaveLength(4)
+  })
+
+  it('rinde exactamente una celda por entrada de celdas y el botón va en la última celda null', () => {
+    dibujar({ celdas: ['nombre', null, 'modo', null] })
+
+    const celdas = screen.getAllByRole('columnheader')
+    expect(celdas).toHaveLength(4)
+    expect(within(celdas[3]).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+    expect(within(celdas[1]).queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Limpiar filtros' })).toHaveLength(1)
+  })
+
+  it('sin ninguna celda null no rinde el botón', () => {
+    dibujar({ celdas: ['nombre', 'modo'] })
+
+    expect(screen.getAllByRole('columnheader')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()
   })
 
   it('escribir y elegir avisan la columna y el valor', async () => {
@@ -76,7 +92,7 @@ describe('FilaDeFiltros', () => {
     expect(onLimpiar).toHaveBeenCalledTimes(1)
   })
 
-  it('sin conLimpiar no agrega la celda final', () => {
+  it('sin conLimpiar no rinde el botón y conserva la cantidad de celdas', () => {
     dibujar({ conLimpiar: false })
 
     expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()
