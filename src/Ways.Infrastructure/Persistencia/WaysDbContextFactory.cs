@@ -47,6 +47,7 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaPago>("categoria_pago");
                 npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
+                npgsql.MapEnum<OrigenAplicacionPago>("origen_aplicacion_pago");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<OrigenCompra>("origen_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");

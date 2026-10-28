@@ -32,6 +32,7 @@ public static class EtiquetasDeTablas
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["alicuotas_comprobante_compra"] = "compras",
+            ["aplicaciones_pago"] = "aplicaciones de pagos a compras",
             ["areas"] = "áreas",
             ["arqueos_turno"] = "arqueos de caja",
             ["articulos"] = "artículos",

@@ -93,6 +93,7 @@ PuntoVenta | stock_lotes | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
 Tenant | acumulados_de_facturacion | id_tenant | sinmarca
 Tenant | alicuotas_comprobante_compra | id_tenant | marcado
+Tenant | aplicaciones_pago | id_tenant | marcado
 Tenant | areas | id_tenant | marcado
 Tenant | arqueos_turno | id_tenant | sinmarca
 Tenant | articulos | id_tenant | marcado
@@ -155,6 +156,7 @@ Tenant | stock_lotes | id_tenant | sinmarca
 Tenant | turnos_caja | id_tenant | marcado
 Tenant | usuarios | id_tenant | marcado
 Tenant | vitrinas | id_tenant | marcado
+Usuario | aplicaciones_pago | id_empleado | marcado
 Usuario | auditoria | id_actor | excluido
 Usuario | comprobantes_compra | id_empleado | marcado
 Usuario | comprobantes_venta | id_empleado | marcado

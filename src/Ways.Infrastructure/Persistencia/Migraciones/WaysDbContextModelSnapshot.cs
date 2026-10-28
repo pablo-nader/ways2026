@@ -50,6 +50,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_punto_venta", new[] { "escritorio", "web" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_facturacion", new[] { "cupo_alcanzado", "forzada", "medio_exige_factura", "no_requerida" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_stock", new[] { "ajuste", "anulacion", "compra", "decomiso", "inventario", "reclasificacion", "remito", "transferencia", "venta" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_aplicacion_pago", new[] { "aplicacion", "migracion", "pago_de_compra" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_compra", new[] { "asistente", "manual" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_fondos_pago", new[] { "caja_turno", "tesoreria" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "resultado_fiscal", new[] { "aprobado", "aprobado_con_observaciones", "pendiente", "rechazado" });
@@ -3961,6 +3962,81 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Ways.Domain.Pagos.AplicacionPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_aplicacion_pago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<DateTimeOffset>("Fecha")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha");
+
+                    b.Property<int>("IdComprobanteCompra")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_compra");
+
+                    b.Property<int>("IdEmpleado")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empleado");
+
+                    b.Property<int>("IdPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_pago");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("Importe")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("importe");
+
+                    b.Property<OrigenAplicacionPago>("Origen")
+                        .HasColumnType("origen_aplicacion_pago")
+                        .HasColumnName("origen");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_aplicaciones_pago");
+
+                    b.HasIndex("IdEmpleado")
+                        .HasDatabaseName("ix_aplicaciones_pago_empleado");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_aplicaciones_pago_tenant");
+
+                    b.HasIndex("IdComprobanteCompra", "IdTenant")
+                        .HasDatabaseName("ix_aplicaciones_pago_compra");
+
+                    b.HasIndex("IdPago", "IdTenant")
+                        .HasDatabaseName("ix_aplicaciones_pago_pago");
+
+                    b.HasIndex("IdPago", "IdComprobanteCompra", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_aplicaciones_pago_pago_compra")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("aplicaciones_pago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_aplicaciones_pago_importe_positivo", "importe > 0");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Pagos.ItemPago", b =>
                 {
                     b.Property<int>("Id")
@@ -7158,6 +7234,39 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_vitrinas_lista_precio");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Pagos.AplicacionPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpleado")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_pago_empleado");
+
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_pago_tenant");
+
+                    b.HasOne("Ways.Domain.Compras.ComprobanteCompra", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteCompra", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_pago_compra");
+
+                    b.HasOne("Ways.Domain.Pagos.Pago", null)
+                        .WithMany()
+                        .HasForeignKey("IdPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_pago_pago");
                 });
 
             modelBuilder.Entity("Ways.Domain.Pagos.ItemPago", b =>
