@@ -5,6 +5,7 @@ import { clienteDePrecios } from '../../api/precios'
 import type { AlcanceDeFamilia, HistorialDePrecio, ListaPrecioListado, PrecioVigente } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { formatearImporte } from '../../formato/importes'
 import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
 import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type FamiliaDelArticulo } from './familia'
@@ -229,7 +230,14 @@ export function EditorDePrecios({
 
     escribiendoRef.current = true
     setAviso('')
-    actualizarEstado(idLista, { guardando: true, error: '', confirmarPendiente: false, preguntaDeAlcance: null })
+    // El reemplazo confirmado deja abierta su confirmación mientras escribe: si el servidor lo rechaza, el motivo se
+    // muestra adentro. Cierra con el éxito (el estado de la lista se reinicia) o con las ramas que la reemplazan.
+    actualizarEstado(idLista, {
+      guardando: true,
+      error: '',
+      confirmarPendiente: confirmarReemplazo && estado.confirmarPendiente,
+      preguntaDeAlcance: null,
+    })
     alDeEscribir(true)
 
     try {
@@ -258,13 +266,13 @@ export function EditorDePrecios({
         // El artículo es miembro de una familia que el cliente no conocía: la pregunta que no se hizo antes se
         // hace ahora, con el texto del servidor, que nombra la familia y cuántos artículos tiene.
         if (e instanceof ErrorApi && e.codigo === 'alcance_requerido') {
-          actualizarEstado(idLista, { guardando: false, preguntaDeAlcance: { contexto: e.message } })
+          actualizarEstado(idLista, { guardando: false, confirmarPendiente: false, preguntaDeAlcance: { contexto: e.message } })
           return
         }
         // La pertenencia cambió: lo escrito ya no corresponde al estado real del artículo. El padre recarga el
         // artículo (y con él este editor), así que no queda nada que mostrar acá.
         if (e instanceof ErrorApi && e.codigo === 'familia_cambio') {
-          actualizarEstado(idLista, { guardando: false })
+          actualizarEstado(idLista, { guardando: false, confirmarPendiente: false })
           alCambiarLaFamilia()
           return
         }
@@ -461,27 +469,30 @@ function PanelDeLista({
   const enVuelo = estado.guardando || estado.refrescando || bloqueadoPorPadre
   const preguntaAbierta = estado.preguntaDeAlcance !== null
   const bloqueado = enVuelo || preguntaAbierta
-  const disparadorRef = useRef<HTMLButtonElement>(null)
+  // Elemento (y no ref) para pasarlo como dato a la confirmación del reemplazo, que se abre tras la respuesta del servidor.
+  const [botonDeGuardar, setBotonDeGuardar] = useState<HTMLButtonElement | null>(null)
   const cancelarPreguntaRef = useRef<HTMLButtonElement>(null)
   const devolverElFocoRef = useRef(false)
+  const puertaAbierta = preguntaAbierta || estado.confirmarPendiente
 
   // Al abrirse la pregunta el foco va a "Cancelar", la respuesta que no escribe nada.
   useEffect(() => {
     if (preguntaAbierta) cancelarPreguntaRef.current?.focus()
   }, [preguntaAbierta])
 
-  // Al cerrarse la pregunta el foco vuelve al botón que la abrió, recién cuando el panel vuelve a ser operable: tras una
-  // respuesta, cuando terminaron la escritura y su refresco (antes, el botón sigue deshabilitado y no recibe el foco).
+  // Al cerrarse la pregunta (o la confirmación del reemplazo) el foco vuelve al botón que la abrió, recién cuando el
+  // panel vuelve a ser operable: tras una respuesta, cuando terminaron la escritura y su refresco (antes, el botón
+  // sigue deshabilitado y no recibe el foco).
   useEffect(() => {
-    if (preguntaAbierta) {
+    if (puertaAbierta) {
       devolverElFocoRef.current = true
       return
     }
     if (devolverElFocoRef.current && !enVuelo) {
       devolverElFocoRef.current = false
-      disparadorRef.current?.focus()
+      botonDeGuardar?.focus()
     }
-  }, [preguntaAbierta, enVuelo])
+  }, [puertaAbierta, enVuelo, botonDeGuardar])
 
   return (
     <div className="p-2">
@@ -491,33 +502,27 @@ function PanelDeLista({
         </div>
       )}
 
-      {estado.error && <div className="alert alert-danger py-1 px-2 small">{estado.error}</div>}
+      {estado.error && !estado.confirmarPendiente && (
+        <div className="alert alert-danger py-1 px-2 small">{estado.error}</div>
+      )}
 
       {estado.confirmarPendiente && (
-        <div className="alert alert-warning py-2 px-2 small d-flex align-items-center justify-content-between">
-          <span>
-            {estado.alcance === 'Familia'
-              ? 'Ya existe un precio programado para esta lista en algún artículo de la familia. ¿Confirmás el reemplazo?'
-              : 'Ya existe un precio programado para esta lista. ¿Confirmás el reemplazo?'}
-          </span>
-          <div className="d-flex gap-2">
-            <button
-              type="button"
-              className="btn btn-sm btn-warning"
-              disabled={bloqueado}
-              onClick={() => onGuardar(true)}
-            >
-              Reemplazar
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-secondary"
-              onClick={() => onCambio({ confirmarPendiente: false })}
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
+        <ConfirmacionDeBaja
+          titulo={`el precio programado de la lista "${lista.nombre}"`}
+          pregunta="Reemplazar"
+          nota={
+            estado.alcance === 'Familia'
+              ? 'Ya existe un precio programado para esta lista en algún artículo de la familia.'
+              : 'Ya existe un precio programado para esta lista.'
+          }
+          etiquetaConfirmar="Reemplazar"
+          etiquetaEnCurso="Reemplazando…"
+          ocupado={enVuelo}
+          disparador={botonDeGuardar}
+          error={estado.error || null}
+          onConfirmar={() => onGuardar(true)}
+          onCancelar={() => onCambio({ confirmarPendiente: false, error: '' })}
+        />
       )}
 
       {estado.preguntaDeAlcance && (
@@ -594,7 +599,7 @@ function PanelDeLista({
 
         <div className="col-auto">
           <button
-            ref={disparadorRef}
+            ref={setBotonDeGuardar}
             type="button"
             className="btn btn-sm btn-success"
             disabled={bloqueado}

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { FamiliaDetalle, ListaPrecioListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { VistaDePrevisualizacion } from '../familias/VistaDePrevisualizacion'
 import type { NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaFamilia } from './AltaRapidaFamilia'
@@ -433,13 +434,7 @@ function PertenenciaAFamilia({
 }: Pick<Props, 'nombreDelArticulo' | 'ocupado' | 'familia' | 'confirmandoSalida' | 'onPedirSalida' | 'onCancelarSalida' | 'onConfirmarSalida'> & {
   idFamilia: number
 }) {
-  const cancelarRef = useRef<HTMLButtonElement>(null)
   const pertenencia = familiaDelArticulo(idFamilia, familia.detalle)
-
-  // Al abrirse la confirmación el foco va a "Cancelar", la respuesta que no escribe nada.
-  useEffect(() => {
-    if (confirmandoSalida) cancelarRef.current?.focus()
-  }, [confirmandoSalida])
 
   return (
     <div className="mb-3">
@@ -462,25 +457,18 @@ function PertenenciaAFamilia({
       </div>
 
       {confirmandoSalida && (
-        <div className="alert alert-warning mt-2 mb-0" role="group" aria-label="Confirmar salida de la familia">
-          <p className="mb-2">
-            <strong>
-              ¿Sacar {nombreDelArticulo.trim() ? `"${nombreDelArticulo.trim()}"` : 'este artículo'} de{' '}
-              {pertenencia !== null && pertenencia.nombre !== null ? `la familia "${pertenencia.nombre}"` : 'su familia'}?
-            </strong>
-          </p>
-          <p className="mb-3">
-            El artículo queda sin familia y conserva todos sus valores y sus precios; los demás artículos de la familia no cambian.
-          </p>
-          <div className="d-flex gap-2">
-            <button type="button" className="btn btn-warning" disabled={ocupado} onClick={onConfirmarSalida}>
-              {ocupado ? 'Sacando…' : 'Confirmar salida'}
-            </button>
-            <button ref={cancelarRef} type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={onCancelarSalida}>
-              Cancelar
-            </button>
-          </div>
-        </div>
+        <ConfirmacionDeBaja
+          titulo={`${nombreDelArticulo.trim() ? `"${nombreDelArticulo.trim()}"` : 'este artículo'} de ${
+            pertenencia !== null && pertenencia.nombre !== null ? `la familia "${pertenencia.nombre}"` : 'su familia'
+          }`}
+          pregunta="Sacar"
+          nota="El artículo queda sin familia y conserva todos sus valores y sus precios; los demás artículos de la familia no cambian."
+          etiquetaConfirmar="Confirmar salida"
+          etiquetaEnCurso="Sacando…"
+          ocupado={ocupado}
+          onConfirmar={onConfirmarSalida}
+          onCancelar={onCancelarSalida}
+        />
       )}
     </div>
   )

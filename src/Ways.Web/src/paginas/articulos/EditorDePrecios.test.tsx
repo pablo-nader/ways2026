@@ -425,10 +425,10 @@ describe('EditorDePrecios — el reemplazo de un precio programado', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
     await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
 
-    expect(
-      await screen.findByText('Ya existe un precio programado para esta lista en algún artículo de la familia. ¿Confirmás el reemplazo?'),
-    ).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Reemplazar' }))
+    const confirmacion = await screen.findByRole('alertdialog', { name: 'Reemplazar' })
+    expect(confirmacion).toHaveTextContent('¿Reemplazar el precio programado de la lista "General"?')
+    expect(confirmacion).toHaveTextContent('Ya existe un precio programado para esta lista en algún artículo de la familia.')
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Reemplazar' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
     expect(apiPostMock.mock.calls[1]).toEqual([
@@ -436,6 +436,7 @@ describe('EditorDePrecios — el reemplazo de un precio programado', () => {
       { idListaPrecio: 2, precio: 1500, confirmarReemplazo: true, alcance: 'Familia' },
     ])
     expect(screen.queryByRole('group', { name: 'Alcance del precio' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
   })
 
   it('con "Solo este artículo" el aviso del reemplazo es el de siempre: el pendiente es de este artículo', async () => {
@@ -446,8 +447,10 @@ describe('EditorDePrecios — el reemplazo de un precio programado', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
     await userEvent.click(screen.getByRole('button', { name: 'Solo este artículo (sale de la familia)' }))
 
-    expect(await screen.findByText('Ya existe un precio programado para esta lista. ¿Confirmás el reemplazo?')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Reemplazar' }))
+    const confirmacion = await screen.findByRole('alertdialog', { name: 'Reemplazar' })
+    expect(confirmacion).toHaveTextContent('Ya existe un precio programado para esta lista.')
+    expect(confirmacion).not.toHaveTextContent('en algún artículo de la familia')
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Reemplazar' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
     expect(apiPostMock.mock.calls[1][1]).toMatchObject({ confirmarReemplazo: true, alcance: 'SoloEste' })
@@ -460,13 +463,70 @@ describe('EditorDePrecios — el reemplazo de un precio programado', () => {
     await escribirPrecio('1500')
     await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
     await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
-    await screen.findByRole('button', { name: 'Reemplazar' })
+    const confirmacion = await screen.findByRole('alertdialog', { name: 'Reemplazar' })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
     await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
 
     expect(screen.getByRole('group', { name: 'Alcance del precio' })).toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  async function abrirElReemplazoDeLaFamilia() {
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'precio_pendiente_existe', 'Ya hay un precio pendiente.'))
+    montar()
+    await abrirPanelDeLaLista()
+    await escribirPrecio('1500')
+    await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
+    return screen.findByRole('alertdialog', { name: 'Reemplazar' })
+  }
+
+  /** Dos clics sincrónicos en "Reemplazar" emiten una sola escritura. Lo prueba el conjunto: la guarda de
+   * `ConfirmacionDeBaja` y el `escribiendoRef` de `guardarPrecio` lo detienen cada una por su lado, así que
+   * quitar solo una no hace fallar este test. */
+  it('un doble clic en Reemplazar emite una sola escritura y la confirmación queda inerte mientras escribe', async () => {
+    const confirmacion = await abrirElReemplazoDeLaFamilia()
+    const escritura = diferida<unknown>()
+    apiPostMock.mockImplementation(() => escritura.promesa)
+    const reemplazar = within(confirmacion).getByRole('button', { name: 'Reemplazar' })
+
+    await act(async () => {
+      reemplazar.click()
+      reemplazar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(2)
+    expect(within(confirmacion).getByRole('button', { name: 'Reemplazando…' })).toBeDisabled()
+    expect(within(confirmacion).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+  })
+
+  it('un reemplazo rechazado muestra el motivo dentro de la confirmación, que sigue abierta, y cancelarla lo borra', async () => {
+    const confirmacion = await abrirElReemplazoDeLaFamilia()
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(422, 'precio_invalido', 'El precio programado no es válido.'))
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Reemplazar' }))
+
+    expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('El precio programado no es válido.')
+    expect(screen.getAllByText('El precio programado no es válido.')).toHaveLength(1)
+    expect(screen.getByRole('alertdialog', { name: 'Reemplazar' })).toBeInTheDocument()
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('El precio programado no es válido.')).not.toBeInTheDocument()
+  })
+
+  it('al cerrarse el reemplazo con éxito el foco vuelve al botón de guardar', async () => {
+    const confirmacion = await abrirElReemplazoDeLaFamilia()
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Reemplazar' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Establecer ahora' })).toHaveFocus())
   })
 })
 

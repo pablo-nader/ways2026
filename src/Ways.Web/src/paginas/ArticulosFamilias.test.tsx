@@ -722,12 +722,12 @@ describe('Articulos — alta: elegir una familia', () => {
   it('una familia que llega después de cerrar el modal no se aplica al alta que se abre luego', async () => {
     const lectura = diferida<FamiliaDetalle>()
     mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     await abrirAlta()
     await elegirFamiliaEnElSelector('7')
     await screen.findByText('Cargando la familia…')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Descartar cambios' }))
     await waitFor(() => expect(screen.queryByText('Nuevo artículo')).not.toBeInTheDocument())
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Nuevo artículo')
@@ -1628,7 +1628,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
   })
 
   function confirmacionDeSalida() {
-    return screen.getByRole('group', { name: 'Confirmar salida de la familia' })
+    return screen.getByRole('alertdialog', { name: 'Confirmar salida' })
   }
 
   it('"Sacar de la familia" no escribe: pide confirmar, nombrando al artículo y a la familia, y enfoca "Cancelar"', async () => {
@@ -1672,7 +1672,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
     expect(apiDeleteMock).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Nombre')).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
@@ -1692,12 +1692,11 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/^Familia "/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Sacar de la familia' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toBeEnabled()
   })
 
   it('sacar no deja "cambios sin guardar": cerrar el formulario después no pregunta nada', async () => {
-    const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await abrirEdicion()
     await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
@@ -1706,11 +1705,10 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Editando artículo A0031' })).not.toBeInTheDocument())
-    expect(confirmar).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('lo que se había tipeado antes de sacar al artículo sigue ahí, y sigue contando como cambio sin guardar', async () => {
-    const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await abrirEdicion()
     await userEvent.type(screen.getByLabelText('Nombre'), ' 2')
     await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
@@ -1719,8 +1717,9 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(screen.getByLabelText('Nombre')).toHaveValue('Vainilla 2')
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmar).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0031' })).toBeInTheDocument()
   })
 
@@ -1744,12 +1743,15 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     expect(within(confirmacionDeSalida()).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
     expect(screen.getByLabelText('Nombre')).toBeDisabled()
     expect(botonNuevo()).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    // La cruz del modal del artículo y la de la confirmación apilada encima.
+    const cruces = screen.getAllByRole('button', { name: 'Cerrar' })
+    expect(cruces).toHaveLength(2)
+    cruces.forEach((cruz) => expect(cruz).toBeDisabled())
 
     await act(async () => {
       resolverDelete()
     })
-    await waitFor(() => expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument())
     expect(botonNuevo()).toBeEnabled()
   })
 
@@ -1777,7 +1779,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(await screen.findByText(/Se recargó el artículo: revisá los datos y volvé a intentar\./)).toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(botonNuevo()).toBeEnabled()
   })
@@ -1791,7 +1793,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(await screen.findByText(/Se recargó el artículo: revisá los datos y volvé a intentar./)).toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
     expect(botonNuevo()).toBeEnabled()
   })
 
@@ -1832,7 +1834,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
 
     expect(await screen.findByText('Se cayó el servidor.')).toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
     expect(screen.getByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sacar de la familia' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
@@ -1931,7 +1933,6 @@ describe('Articulos — lo que el editor de precios le avisa a la pantalla del a
   it('un precio escrito con "solo este" saca al artículo de su familia en el formulario, lo avisa y no deja cambios sin guardar', async () => {
     escenarioDelMiembro()
     apiPostMock.mockResolvedValue({ idArticulo: 31, idListaPrecio: 2, precio: 1500, fecha: '2026-10-05T00:00:00Z' })
-    const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await abrirEdicion()
 
     await escribirUnPrecioConAlcance('Solo este artículo (sale de la familia)')
@@ -1944,7 +1945,7 @@ describe('Articulos — lo que el editor de precios le avisa a la pantalla del a
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Editando artículo A0031' })).not.toBeInTheDocument())
-    expect(confirmar).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: el cableado `alCambiarLaFamilia` → `recargarArticuloDesactualizado` de `Articulos`: un
@@ -2022,7 +2023,7 @@ describe('Articulos — las familias que se ofrecen en un alta se mantienen al d
     apiDeleteMock.mockResolvedValue(undefined)
     await abrirEdicion()
     await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
-    await userEvent.click(within(screen.getByRole('group', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }))
+    await userEvent.click(within(screen.getByRole('alertdialog', { name: 'Confirmar salida' })).getByRole('button', { name: 'Confirmar salida' }))
     await screen.findByText(/salió de la familia "Sabores"/)
 
     await abrirUnAltaNueva()
@@ -2115,7 +2116,6 @@ describe('Articulos — la URL cambia a un id inválido con la pregunta de alcan
    * no existe); revertido, vuelve a verde. */
   it('cierra la pregunta: ya no hay artículo sobre el que preguntar', async () => {
     escenarioDelMiembro()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderArticulosConHistorial(['/articulos/edit/31', '/articulos/edit/abc'], 0)
     await screen.findByText('Editando artículo A0031')
     await cambiarCostoDeLista('175')
@@ -2123,6 +2123,9 @@ describe('Articulos — la URL cambia a un id inválido con la pregunta de alcan
     await screen.findByRole('dialog', { name: 'Cambio en una familia' })
 
     act(() => navegar(1))
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Descartar cambios' }),
+    )
 
     expect(await screen.findByText('No se especificó un artículo válido.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
@@ -2590,14 +2593,14 @@ describe('Articulos — edición: "+" crea una familia con el artículo como ref
   it('creada la familia el formulario no queda con cambios sin guardar: cerrarlo no pregunta', async () => {
     escenarioSinFamilia()
     mockearPosts({ '/familias': () => Promise.resolve(resultadoDeCrear) })
-    const confirmar = vi.spyOn(window, 'confirm')
     await abrirEdicion(1, 'A0001')
     await anotarFamiliaNueva('Talles')
     await screen.findByText('Familia "Talles" (1 artículo)')
 
     await userEvent.click(within(screen.getByRole('dialog', { name: /^Editando artículo/ })).getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmar).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Editando artículo/ })).not.toBeInTheDocument())
   })
 
   /** Cláusula bajo prueba: el ref de reentrancia de `AltaRapidaFamilia` (react-async-state regla 11).
@@ -3038,7 +3041,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       await screen.findByText('Familia "Talles" (1 artículo)')
       await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
       await userEvent.click(
-        within(screen.getByRole('group', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }),
+        within(screen.getByRole('alertdialog', { name: 'Confirmar salida' })).getByRole('button', { name: 'Confirmar salida' }),
       )
 
       await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledExactlyOnceWith('/familias/50/articulos/1'))
