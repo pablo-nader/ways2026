@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
+using Ways.Application.Pagos;
 using Ways.Domain.Compras;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
@@ -65,6 +66,14 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
                 .ToList(),
             ct);
 
+        var disponiblePorPago = await LectorDeDisponiblePorPago.LeerDisponibleAsync(
+            db,
+            filas.Where(f => f.Tipo == TipoMovimientoCcProveedor.Pago && f.IdPago != null)
+                .Select(f => f.IdPago!.Value)
+                .Distinct()
+                .ToList(),
+            ct);
+
         var items = filas
             .Select(f => new MovimientoDeCuentaDeProveedor(
                 f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteCompra, f.IdPago,
@@ -73,10 +82,14 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
                     : null,
                 f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra is { } idCompra
                     ? saldosPendientes.GetValueOrDefault(idCompra)
+                    : null,
+                f.Tipo == TipoMovimientoCcProveedor.Pago && f.IdPago is { } idPago && disponiblePorPago.TryGetValue(idPago, out var disponible)
+                    ? disponible
                     : null))
             .ToList();
 
-        var header = new EstadoDeCuentaDeProveedorHeader(idProveedor, saldo);
+        var disponibleEnPagos = await LectorDeDisponiblePorPago.LeerDisponibleDelProveedorAsync(db, idProveedor, ct);
+        var header = new EstadoDeCuentaDeProveedorHeader(idProveedor, saldo, Math.Max(0m, -saldo), disponibleEnPagos);
         return new PaginaDeEstadoDeCuentaDeProveedor(
             header, items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);
     }

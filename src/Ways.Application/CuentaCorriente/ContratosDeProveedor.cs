@@ -18,12 +18,14 @@ namespace Ways.Application.CuentaCorriente;
 public sealed record MovimientoDeCuentaDeProveedor(
     int IdMovimiento, DateTimeOffset Fecha, TipoMovimientoCcProveedor Tipo, decimal Importe,
     decimal SaldoResultante, string? Detalle, int? IdComprobanteCompra, [property: JsonPropertyName("idGasto")] int? IdPago,
-    EtiquetaDeAjuste? Etiqueta, decimal? SaldoPendienteDeLaCompra = null);
+    EtiquetaDeAjuste? Etiqueta, decimal? SaldoPendienteDeLaCompra = null, decimal? DisponibleDelPago = null);
 
 /// <summary><see cref="Saldo"/> viene de <c>proveedores.saldo</c> (la caché de
 /// <c>EscriturasDeCuentaCorrienteProveedor</c>) — NUNCA re-derivado de los movimientos de esta
-/// misma página (design decisión 11).</summary>
-public sealed record EstadoDeCuentaDeProveedorHeader(int IdProveedor, decimal Saldo);
+/// misma página (design decisión 11). <see cref="SaldoAFavor"/> es lo que la empresa tiene a favor con el proveedor
+/// (<c>max(0, -saldo)</c>); <see cref="DisponibleEnPagos"/> es la parte de esos pagos que todavía no se aplicó a ninguna compra.</summary>
+public sealed record EstadoDeCuentaDeProveedorHeader(
+    int IdProveedor, decimal Saldo, decimal SaldoAFavor = 0m, decimal DisponibleEnPagos = 0m);
 
 /// <summary>Forma PAGINADA (design decisión 10 / <c>state.yaml</c> OD9 — reconciliación de tasks.md
 /// decisión 5): <c>OFFSET</c>, desempate <c>id_movimiento DESC</c>, <c>Total</c> es el

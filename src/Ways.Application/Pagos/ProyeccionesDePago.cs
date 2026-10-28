@@ -57,8 +57,50 @@ internal static class ProyeccionesDePago
             return pagos;
         }
 
-        var porPago = await LineasPorPagoAsync(db, pagos.Select(p => p.Id).ToList(), ct);
-        return pagos.Select(p => p with { Lineas = porPago[p.Id].ToList() }).ToList();
+        var ids = pagos.Select(p => p.Id).ToList();
+        var porPago = await LineasPorPagoAsync(db, ids, ct);
+        var aplicaciones = await AplicacionesPorPagoAsync(db, ids, ct);
+
+        return pagos
+            .Select(p =>
+            {
+                var delPago = aplicaciones[p.Id].ToList();
+                var aplicado = delPago.Sum(a => a.Importe);
+                return p with
+                {
+                    Lineas = porPago[p.Id].ToList(),
+                    Aplicado = aplicado,
+                    // Solo un pago de proveedor tiene crédito; el resto (caja, personal) no se aplica a compras.
+                    Disponible = p.Categoria == CategoriaPago.Proveedor
+                        ? LectorDeDisponiblePorPago.Disponible(p.Importe, aplicado)
+                        : null,
+                    Aplicaciones = delPago
+                };
+            })
+            .ToList();
+    }
+
+    /// <summary>Aplicaciones vivas de toda la página en UNA lectura; el número de la compra sale de una subquery
+    /// correlacionada, así que una compra no visible deja el número en <c>null</c> sin tirar la fila.</summary>
+    private static async Task<ILookup<int, AplicacionDePagoListada>> AplicacionesPorPagoAsync(
+        IWaysDbContext db, List<int> ids, CancellationToken ct)
+    {
+        var filas = await db.AplicacionesPago
+            .Where(a => ids.Contains(a.IdPago))
+            .OrderBy(a => a.Id)
+            .Select(a => new
+            {
+                a.IdPago,
+                Aplicacion = new AplicacionDePagoListada(
+                    a.Id,
+                    a.IdComprobanteCompra,
+                    db.ComprobantesCompra.Where(c => c.Id == a.IdComprobanteCompra).Select(c => c.NumeroExterno).FirstOrDefault(),
+                    a.Importe,
+                    a.Fecha)
+            })
+            .ToListAsync(ct);
+
+        return filas.ToLookup(x => x.IdPago, x => x.Aplicacion);
     }
 
     private static async Task<ILookup<int, LineaDePagoListada>> LineasPorPagoAsync(

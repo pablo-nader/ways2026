@@ -645,6 +645,7 @@ export function Pagos() {
                     <th>Medio de pago</th>
                     <th>Origen</th>
                     <th className="text-end">Importe</th>
+                    <th className="text-end">Disponible</th>
                     <th>Compra</th>
                     <th className="text-end">Acciones</th>
                   </tr>
@@ -666,6 +667,9 @@ export function Pagos() {
                         </span>
                       </td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
+                      <td className="text-end">
+                        {g.disponible === undefined || g.disponible === null ? '—' : formatearMoneda(g.disponible)}
+                      </td>
                       <td>
                         {g.idComprobanteCompra !== null ? (
                           <Link to={`/compras/${g.idComprobanteCompra}`}>
@@ -715,7 +719,7 @@ export function Pagos() {
                   ))}
                   {pagina.items.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="text-center text-muted py-4">
+                      <td colSpan={13} className="text-center text-muted py-4">
                         No hay pagos que coincidan con los filtros.
                       </td>
                     </tr>

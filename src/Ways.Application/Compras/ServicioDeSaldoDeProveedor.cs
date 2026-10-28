@@ -12,17 +12,10 @@ namespace Ways.Application.Compras;
 /// caché de <c>EscriturasDeCuentaCorrienteProveedor</c>), NUNCA re-derivado de agregados — firma y
 /// los tres records de respuesta se mantienen byte-idénticos a la forma pre-etapa 15 (task 4.10).
 ///
-/// El estado de pago por-compra usa la fórmula VINCULANTE de <c>state.yaml</c> OD7 (tasks.md
-/// decisión 4) — NO la del proposal (<c>SUM(importe) ... &lt;= 0 ⇒ pagada</c>, lee `pagada` una
-/// compra pre-cutover sin movimiento propio) ni la del design (<c>−Σ importe WHERE tipo &lt;&gt;
-/// 'compra'</c>, pierde un pago parcial pre-cutover porque nunca consulta <c>pagos</c>):
-/// <c>pagado(X) = SUM(pagos.importe) WHERE pagos.id_comprobante_compra = X</c> (el mecanismo
-/// retirado, predicado verbatim — sigue siendo verdad para TODO el tiempo porque el pago SIGUE
-/// siendo un pago) <c>+ SUM(-importe) WHERE movimientos_cuenta_corriente_proveedor.
-/// id_comprobante_compra = X AND tipo = 'ajuste'</c> (contramovimientos y ajustes manuales
-/// imputados). Los movimientos <c>'pago'</c> NO se cuentan acá — ya están contados como pago;
-/// sumarlos de nuevo sería double-count (mutation target #24 REDEFINIDO). <c>ResolverEstadoPago</c>
-/// no cambia una línea.
+/// El estado de pago por-compra deriva de lo pagado por compra (<see cref="LectorDePagadoPorCompra"/>): desde
+/// E3-S2 es la suma de las aplicaciones vivas de pagos a esa compra, no <c>pagos.id_comprobante_compra</c> ni los
+/// ajustes imputados. Los movimientos <c>'pago'</c> del ledger no se cuentan acá. <c>ResolverEstadoPago</c> no cambia
+/// una línea.
 /// </summary>
 public class ServicioDeSaldoDeProveedor(IWaysDbContext db)
 {

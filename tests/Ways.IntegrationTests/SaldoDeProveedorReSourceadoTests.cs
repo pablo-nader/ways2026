@@ -199,6 +199,13 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         {
             IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = ctx.IdMedioEfectivo, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora
         });
+        // Desde E3-S2 lo pagado de la compra sale de las aplicaciones: el pago migrado trae la suya, como el backfill.
+        db.AplicacionesPago.Add(new AplicacionPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdComprobanteCompra = idComprobanteCompra, Importe = importe,
+            Origen = OrigenAplicacionPago.Migracion, IdEmpleado = ctx.IdEmpleadoAdmin, Fecha = ahora,
+            CreatedAt = ahora, UpdatedAt = ahora
+        });
         await db.SaveChangesAsync();
     }
 
@@ -245,8 +252,8 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         // Bajo la fórmula del design (−Σ importe WHERE tipo <> 'compra', solo el ledger): NO hay
         // NINGÚN movimiento en el ledger para esta compra (ni compra, ni pago) ⇒ suma 0 ⇒ pagado
         // = 0 ⇒ Impaga (RECHAZADO — el pago pre-cutover queda perdido, exactamente lo que
-        // tasks.md decisión 4 / state.yaml OD7 documentan). OD7 SÍ consulta `pagos`
-        // directamente: pagado = 400 (el pago ligado) + 0 (sin ajustes) = 400 ⇒ Parcial.
+        // tasks.md decisión 4 / state.yaml OD7 documentan). Lo pagado sale de las aplicaciones de
+        // pagos (E3-S2), no del ledger: pagado = 400 (la aplicación del pago ligado) ⇒ Parcial.
         Assert.Equal(400m, linea.Pagado);
         Assert.Equal(EstadoPago.Parcial, linea.EstadoPago);
         Assert.Equal(1000m, linea.Total);

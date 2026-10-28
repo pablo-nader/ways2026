@@ -494,8 +494,8 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > Lo que excede el total de la compra, los pagos ligados a compras anuladas y los pagos que no cumplen las condiciones
 > de arriba quedan sin aplicar (crédito). Es idempotente y los triggers se crean después.
 >
-> **Doble escritura y liberación (E3-S1b).** Los lectores siguen derivando lo pagado de `pagos.id_comprobante_compra`
-> hasta S2, así que cada escritor que fija ese vínculo escribe además la aplicación, y la anulación y la baja la liberan:
+> **Doble escritura y liberación (E3-S1b).** Los lectores derivaban lo pagado de `pagos.id_comprobante_compra` hasta S2
+> (ver «Lectores» abajo), así que cada escritor que fija ese vínculo escribe además la aplicación, y la anulación y la baja la liberan:
 >
 > - Alta del POS, alta administrativa y pagar compra (origen `pago_de_compra`), y vincular (origen `aplicacion`): el
 >   `importe` es `min(pagos.importe, comprobantes_compra.total - suma de las aplicaciones vivas de la compra)`, leído bajo
@@ -517,6 +517,20 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   `proveedor_no_coincide_con_la_compra` / `gasto_de_compra_debe_ser_de_proveedor`; la empresa no es editable.
 > - No hay códigos de auditoría nuevos: el alta, la edición y la baja del pago ya se auditan y la aplicación es un efecto
 >   interno de esas operaciones.
+>
+> **Lectores (E3-S2).** Lo pagado de una compra (`LectorDePagadoPorCompra`) es la suma de sus aplicaciones vivas; ya no
+> suma `pagos.id_comprobante_compra` ni los ajustes imputados (el único ajuste imputado a una compra es el
+> contramovimiento de su anulación, y la anulación libera las aplicaciones). Lo aplicado de un pago es la suma de las
+> suyas y su disponible es `pagos.importe - aplicado` (`LectorDeDisponiblePorPago`; E4 restará acá el redondeo).
+> Se exponen, solo como campos nuevos del JSON: `aplicado`, `disponible` (null si el pago no es de proveedor) y
+> `aplicaciones[]` en `PagoDeAdministracionListado`; `disponibleDelPago` en las filas `pago` del estado de cuenta del
+> proveedor, y `saldoAFavor` (`max(0, -saldo)`) y `disponibleEnPagos` en su encabezado. `GET /api/proveedores/{id}/saldo`
+> y los listados del POS no cambian de forma.
+>
+> Cambios de comportamiento: (1) una compra con pagos sobre-imputados de forma heredada (un pago editado hacia arriba, o
+> dos pagos que superan el total) muestra `pagado` = total y no la suma cruda de los pagos; el saldo pendiente no cambia
+> porque ya se acotaba en 0. (2) El pago cuyo vínculo heredado no tiene aplicación (otra empresa) ya no cuenta en lo
+> pagado de la compra. (3) El detalle de una compra anulada muestra `pagado` 0, porque sus aplicaciones están liberadas.
 
 ### Órdenes de compra (Etapa 16)
 

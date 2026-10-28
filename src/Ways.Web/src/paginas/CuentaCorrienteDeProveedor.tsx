@@ -325,6 +325,11 @@ function PantallaCuentaCorrienteDeProveedor({
               <div className="col-md-4">
                 <div className="small text-muted">Saldo</div>
                 <div className="fs-5">{formatearSaldoConEtiqueta(pagina.header.saldo)}</div>
+                {!!pagina.header.disponibleEnPagos && pagina.header.disponibleEnPagos > 0 && (
+                  <div className="small text-muted">
+                    Disponible en pagos sin aplicar: {formatearMoneda(pagina.header.disponibleEnPagos)}
+                  </div>
+                )}
               </div>
               {esSupervisorOAdmin && (
                 <div className="col-md-8 text-md-end">

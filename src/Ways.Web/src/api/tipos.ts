@@ -1895,6 +1895,20 @@ export type PagoDeAdministracionListado = {
   /** Reparto por medio del pago (uno por ítem, en orden de id). `idMedioPago` de arriba es el de la primera línea.
    * Opcional por compatibilidad con respuestas anteriores a las líneas. */
   lineas?: LineaDePagoListada[]
+  /** Parte del pago aplicada a compras (suma de `aplicaciones`). Opcional por compatibilidad con respuestas anteriores. */
+  aplicado?: number
+  /** Crédito del pago: lo que queda sin aplicar. `null` si no es un pago de proveedor (no se aplica a compras). */
+  disponible?: number | null
+  aplicaciones?: AplicacionDePagoListada[]
+}
+
+/** Una aplicación viva de un pago a una compra. `numeroCompra` es el número externo de la compra, si lo tiene. */
+export type AplicacionDePagoListada = {
+  idAplicacion: number
+  idComprobanteCompra: number
+  numeroCompra: string | null
+  importe: number
+  fecha: string
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
@@ -2719,11 +2733,19 @@ export type MovimientoDeCuentaDeProveedor = {
   etiqueta: EtiquetaDeAjuste | null
   /** Solo en las filas de tipo `Compra`: lo que falta pagar de ESA compra hoy (cero si está anulada). */
   saldoPendienteDeLaCompra: number | null
+  /** Solo en las filas de tipo `Pago`: lo que queda del pago sin aplicar a ninguna compra. */
+  disponibleDelPago?: number | null
 }
 
 /** `saldo` viene de `proveedores.saldo` — NUNCA re-derivado de los movimientos de esta misma
- * página (design decisión 11). */
-export type EstadoDeCuentaDeProveedorHeader = { idProveedor: number; saldo: number }
+ * página (design decisión 11). `saldoAFavor` es `max(0, -saldo)`; `disponibleEnPagos` es la suma de lo que
+ * queda sin aplicar de los pagos del proveedor. Ambos opcionales por compatibilidad. */
+export type EstadoDeCuentaDeProveedorHeader = {
+  idProveedor: number
+  saldo: number
+  saldoAFavor?: number
+  disponibleEnPagos?: number
+}
 
 /** Forma PAGINADA (design decisión 10 / `state.yaml` OD9): `pagina`/`tamanio`/`total` habilitan
  * "Página N de M" en el web — a diferencia de `EstadoDeCuenta` (clientes, stage 7), que no pagina. */
