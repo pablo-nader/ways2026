@@ -149,7 +149,7 @@ public class RedondeoDePagosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
     private static async Task EstablecerToleranciaAsync(Contexto ctx, string valor)
     {
-        var respuesta = await ctx.Admin.PostAsJsonAsync(
+        var respuesta = await ctx.Admin.PutAsJsonAsync(
             $"/api/parametros?idEmpresa={ctx.IdEmpresa}", new ParametroAlta("tolerancia_redondeo_pago_proveedor", valor, null));
         Assert.True(respuesta.IsSuccessStatusCode, await respuesta.Content.ReadAsStringAsync());
     }
@@ -255,7 +255,7 @@ public class RedondeoDePagosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     {
         var ctx = await PrepararAsync(nameof(UnaToleranciaInvalidaSeRechazaAlConfigurarla) + valor.GetHashCode().ToString("x"));
 
-        var respuesta = await ctx.Admin.PostAsJsonAsync(
+        var respuesta = await ctx.Admin.PutAsJsonAsync(
             $"/api/parametros?idEmpresa={ctx.IdEmpresa}", new ParametroAlta("tolerancia_redondeo_pago_proveedor", valor, null));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
