@@ -1,3 +1,4 @@
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../../componentes/grilla'
 import type { CambiosDeUnArticulo, PrevisualizacionDeAgrupacion } from '../../api/tipos'
 import { CAMPOS_COMPARTIDOS, describirEstadoDePrecios } from '../articulos/familia'
 import type { ArticuloElegido } from './SelectorDeArticulos'
@@ -48,6 +49,21 @@ export function VistaDePrevisualizacion({ previsualizacion, articulos, nombres, 
   )
 }
 
+type FilaDeCampo = { columna: string; etiqueta: string; actual: string; nuevo: string }
+type FilaDePrecio = { idListaPrecio: number; nombre: string; actual: string; nuevo: string }
+
+const COLUMNAS_DE_CAMPOS: ColumnasOrdenables<FilaDeCampo> = {
+  campo: { valor: (f) => f.etiqueta },
+  actual: { valor: (f) => f.actual },
+  nuevo: { valor: (f) => f.nuevo },
+}
+
+const COLUMNAS_DE_PRECIOS: ColumnasOrdenables<FilaDePrecio> = {
+  lista: { valor: (f) => f.nombre },
+  actual: { valor: (f) => f.actual },
+  nuevo: { valor: (f) => f.nuevo },
+}
+
 function nombreDelArticulo(id: number, articulos: ReadonlyMap<number, ArticuloElegido>): string {
   const articulo = articulos.get(id)
   return articulo === undefined ? `Artículo ${id}` : `${articulo.codigoInterno} — ${articulo.nombre}`
@@ -68,7 +84,7 @@ function CambiosDelArticulo({
   // de qué a qué. Un valor conocido cuyos dos lados se muestran igual no es un cambio para quien lo mira (dos filas de
   // catálogo dadas de baja se ven "Sin asignar", dos importes que difieren por debajo del centavo se ven iguales): no se
   // lista.
-  const filasDeCampos = cambios.campos.flatMap((columna) => {
+  const filasDeCampos = cambios.campos.flatMap((columna): FilaDeCampo[] => {
     const campo = CAMPOS_COMPARTIDOS.find((c) => c.columna === columna)
     if (campo === undefined) return [{ columna, etiqueta: columna, actual: '—', nuevo: '—' }]
 
@@ -77,12 +93,16 @@ function CambiosDelArticulo({
 
     return actual === nuevo ? [] : [{ columna, etiqueta: campo.etiqueta, actual, nuevo }]
   })
-  const filasDePrecios = cambios.precios.flatMap((precio) => {
+  const filasDePrecios = cambios.precios.flatMap((precio): FilaDePrecio[] => {
     const actual = describirEstadoDePrecios(precio.actual)
     const nuevo = describirEstadoDePrecios(precio.nuevo)
 
-    return actual === nuevo ? [] : [{ idListaPrecio: precio.idListaPrecio, actual, nuevo }]
+    return actual === nuevo
+      ? []
+      : [{ idListaPrecio: precio.idListaPrecio, nombre: listas.get(precio.idListaPrecio) ?? `Lista ${precio.idListaPrecio}`, actual, nuevo }]
   })
+  const ordenCampos = useOrdenamiento(filasDeCampos, COLUMNAS_DE_CAMPOS)
+  const ordenPrecios = useOrdenamiento(filasDePrecios, COLUMNAS_DE_PRECIOS)
   const sinCambios = filasDeCampos.length === 0 && filasDePrecios.length === 0
 
   return (
@@ -96,13 +116,19 @@ function CambiosDelArticulo({
           <table className="table table-sm table-bordered align-middle mb-2">
             <thead>
               <tr>
-                <th>Campo</th>
-                <th>Actual</th>
-                <th>Pasa a</th>
+                <EncabezadoOrdenable columna="campo" orden={ordenCampos.orden} onAlternar={ordenCampos.alternar}>
+                  Campo
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="actual" orden={ordenCampos.orden} onAlternar={ordenCampos.alternar}>
+                  Actual
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="nuevo" orden={ordenCampos.orden} onAlternar={ordenCampos.alternar}>
+                  Pasa a
+                </EncabezadoOrdenable>
               </tr>
             </thead>
             <tbody>
-              {filasDeCampos.map((fila) => (
+              {ordenCampos.filas.map((fila) => (
                 <tr key={fila.columna}>
                   <td>{fila.etiqueta}</td>
                   <td>{fila.actual}</td>
@@ -119,15 +145,21 @@ function CambiosDelArticulo({
           <table className="table table-sm table-bordered align-middle mb-0">
             <thead>
               <tr>
-                <th>Lista de precios</th>
-                <th>Actual</th>
-                <th>Pasa a</th>
+                <EncabezadoOrdenable columna="lista" orden={ordenPrecios.orden} onAlternar={ordenPrecios.alternar}>
+                  Lista de precios
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="actual" orden={ordenPrecios.orden} onAlternar={ordenPrecios.alternar}>
+                  Actual
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="nuevo" orden={ordenPrecios.orden} onAlternar={ordenPrecios.alternar}>
+                  Pasa a
+                </EncabezadoOrdenable>
               </tr>
             </thead>
             <tbody>
-              {filasDePrecios.map((precio) => (
+              {ordenPrecios.filas.map((precio) => (
                 <tr key={precio.idListaPrecio}>
-                  <td>{listas.get(precio.idListaPrecio) ?? `Lista ${precio.idListaPrecio}`}</td>
+                  <td>{precio.nombre}</td>
                   <td>{precio.actual}</td>
                   <td>{precio.nuevo}</td>
                 </tr>

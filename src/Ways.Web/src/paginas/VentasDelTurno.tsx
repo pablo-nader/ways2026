@@ -1,17 +1,24 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeVentas } from '../api/ventas'
 import { ROL } from '../api/tipos'
-import type { ComprobanteEmitido, DatosDeFacturaFiscal, MedioPagoAlta, MedioPagoListado, TurnoResumen, VentaDeTurnoListado } from '../api/tipos'
+import type {
+  ComprobanteEmitido,
+  DatosDeFacturaFiscal,   MedioPagoAlta,
+  MedioPagoListado,
+  TurnoResumen,
+  VentaDeTurnoListado,
+} from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { BotonIcono, Icono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
 import { formatearImporteConSigno } from '../formato/importes'
 import {
@@ -36,6 +43,30 @@ import {
   totalesPorMedioDeVentas,
 } from './utilidadesVentasDelTurno'
 import type { EstadoFiltro, FiltrosDeVentasDelTurno } from './utilidadesVentasDelTurno'
+
+const COLUMNAS_DE_VENTAS: ColumnasOrdenables<VentaDeTurnoListado> = {
+  numero: { valor: (v) => v.numeroVisible },
+  fecha: { valor: (v) => new Date(v.fecha) },
+  cliente: { valor: (v) => v.nombreCliente },
+  total: { valor: (v) => v.total },
+  medios: { valor: (v) => v.mediosDePago.map((m) => m.nombre).join(', ') },
+  estado: { valor: (v) => etiquetaDeEstadoVenta(v.estado) },
+}
+
+type ItemDelComprobante = ComprobanteEmitido['items'][number]
+type PagoDelComprobante = ComprobanteEmitido['pagos'][number]
+
+const ITEMS_SIN_DATOS: ItemDelComprobante[] = []
+const PAGOS_SIN_DATOS: PagoDelComprobante[] = []
+
+const COLUMNAS_DE_ITEMS: ColumnasOrdenables<ItemDelComprobante> = {
+  descripcion: { valor: (i) => i.descripcion },
+  cantidad: { valor: (i) => i.cantidad },
+  precio: { valor: (i) => i.precioUnitario },
+  descuento: { valor: (i) => i.descuento },
+  ajuste: { valor: (i) => i.ajusteManualPorcentaje },
+  total: { valor: (i) => i.total },
+}
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -129,6 +160,18 @@ function ModalDetalleDeVenta({
     }
   }, [disparador])
 
+  const ordenDeItems = useOrdenamiento(comprobante?.items ?? ITEMS_SIN_DATOS, COLUMNAS_DE_ITEMS)
+  const columnasDePagos = useMemo<ColumnasOrdenables<PagoDelComprobante>>(
+    () => ({
+      medio: { valor: (p) => nombreDeMedio(p.idMedioPago, medios) },
+      importe: { valor: (p) => p.importe },
+      referencia: { valor: (p) => p.referencia },
+      vuelto: { valor: (p) => (p.vuelto > 0 ? p.vuelto : null) },
+    }),
+    [medios],
+  )
+  const ordenDePagos = useOrdenamiento(comprobante?.pagos ?? PAGOS_SIN_DATOS, columnasDePagos)
+
   const titulo = comprobante ? `Detalle de la venta ${comprobante.numeroVisible}` : 'Detalle de la venta'
 
   return (
@@ -180,16 +223,28 @@ function ModalDetalleDeVenta({
             <table className="table table-sm table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Descripción</th>
-                  <th className="text-end">Cantidad</th>
-                  <th className="text-end">Precio unit.</th>
-                  <th className="text-end">Descuento</th>
-                  <th>Ajuste manual</th>
-                  <th className="text-end">Total</th>
+                  <EncabezadoOrdenable columna="descripcion" orden={ordenDeItems.orden} onAlternar={ordenDeItems.alternar}>
+                    Descripción
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="cantidad" orden={ordenDeItems.orden} onAlternar={ordenDeItems.alternar} className="text-end">
+                    Cantidad
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="precio" orden={ordenDeItems.orden} onAlternar={ordenDeItems.alternar} className="text-end">
+                    Precio unit.
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="descuento" orden={ordenDeItems.orden} onAlternar={ordenDeItems.alternar} className="text-end">
+                    Descuento
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="ajuste" orden={ordenDeItems.orden} onAlternar={ordenDeItems.alternar}>
+                    Ajuste manual
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="total" orden={ordenDeItems.orden} onAlternar={ordenDeItems.alternar} className="text-end">
+                    Total
+                  </EncabezadoOrdenable>
                 </tr>
               </thead>
               <tbody>
-                {comprobante.items.map((item) => (
+                {ordenDeItems.filas.map((item) => (
                   <tr key={item.orden}>
                     <td>
                       {item.descripcion}
@@ -214,14 +269,22 @@ function ModalDetalleDeVenta({
             <table className="table table-sm table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Medio</th>
-                  <th className="text-end">Importe</th>
-                  <th>Referencia</th>
-                  <th className="text-end">Vuelto</th>
+                  <EncabezadoOrdenable columna="medio" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar}>
+                    Medio
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="importe" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar} className="text-end">
+                    Importe
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="referencia" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar}>
+                    Referencia
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="vuelto" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar} className="text-end">
+                    Vuelto
+                  </EncabezadoOrdenable>
                 </tr>
               </thead>
               <tbody>
-                {comprobante.pagos.map((pago, indice) => (
+                {ordenDePagos.filas.map((pago, indice) => (
                   <tr key={`${pago.idMedioPago}-${indice}`}>
                     <td>{nombreDeMedio(pago.idMedioPago, medios)}</td>
                     <td className="text-end">{formatearMoneda(pago.importe)}</td>
@@ -623,6 +686,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
   }
 
   const ventasFiltradas = filtrarVentas(ventas, filtros)
+  const ordenDeVentas = useOrdenamiento(ventasFiltradas, COLUMNAS_DE_VENTAS)
   const totales = totalesDeVentas(ventasFiltradas)
   const totalesPorMedio = totalesPorMedioDeVentas(ventasFiltradas)
   const opcionesDeMedio = mediosDisponibles(ventas)
@@ -685,12 +749,24 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Número</th>
-                    <th>Fecha</th>
-                    <th>Cliente</th>
-                    <th className="text-end">Total</th>
-                    <th>Medios de pago</th>
-                    <th>Estado</th>
+                    <EncabezadoOrdenable columna="numero" orden={ordenDeVentas.orden} onAlternar={ordenDeVentas.alternar}>
+                      Número
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="fecha" orden={ordenDeVentas.orden} onAlternar={ordenDeVentas.alternar}>
+                      Fecha
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="cliente" orden={ordenDeVentas.orden} onAlternar={ordenDeVentas.alternar}>
+                      Cliente
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="total" orden={ordenDeVentas.orden} onAlternar={ordenDeVentas.alternar} className="text-end">
+                      Total
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="medios" orden={ordenDeVentas.orden} onAlternar={ordenDeVentas.alternar}>
+                      Medios de pago
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="estado" orden={ordenDeVentas.orden} onAlternar={ordenDeVentas.alternar}>
+                      Estado
+                    </EncabezadoOrdenable>
                     <th>Acciones</th>
                   </tr>
                   <tr>
@@ -778,7 +854,7 @@ export function VentasDelTurno({ alReimprimir, alReimprimirFactura, alImprimirNo
                   </tr>
                 </thead>
                 <tbody>
-                  {ventasFiltradas.map((v) => (
+                  {ordenDeVentas.filas.map((v) => (
                     <tr key={v.id}>
                       <td>{v.numeroVisible}</td>
                       <td>{formatearFechaHora(v.fecha)}</td>

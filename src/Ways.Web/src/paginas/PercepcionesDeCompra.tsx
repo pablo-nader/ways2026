@@ -1,11 +1,19 @@
 import type { PercepcionFormulario } from '../api/compras'
 import type { TipoDePercepcion } from '../api/tipos'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { formatearImporte } from '../formato/importes'
 
 const ETIQUETA_DE_PERCEPCION: Record<TipoDePercepcion, string> = {
   iibb: 'Percepción IIBB',
   iva: 'Percepción IVA',
+}
+
+const COLUMNAS: ColumnasOrdenables<PercepcionFormulario> = {
+  percepcion: { valor: (f) => ETIQUETA_DE_PERCEPCION[f.tipo] },
+  base: { valor: (f) => f.baseImponible },
+  alicuota: { valor: (f) => f.alicuota },
+  importe: { valor: (f) => f.importe },
 }
 
 type Props = {
@@ -27,6 +35,7 @@ function moneda(valor: number | null): string {
  * imprimió el proveedor: se puede corregir sin que nada lo vuelva a pisar. Mientras la fila es
  * automática (`automatica`) se deriva del neto gravado y de la alícuota de la empresa. */
 export function PercepcionesDeCompra({ filas, onCambiar, onQuitar, agregables = [], onAgregar, disabled = false }: Props) {
+  const { filas: ordenadas, orden, alternar } = useOrdenamiento(filas, COLUMNAS)
   const editable = onCambiar !== undefined
   if (filas.length === 0 && (!editable || agregables.length === 0)) return null
 
@@ -37,15 +46,23 @@ export function PercepcionesDeCompra({ filas, onCambiar, onQuitar, agregables = 
           <table className="table table-sm table-bordered align-middle w-auto mb-1" aria-label="Percepciones">
             <thead>
               <tr>
-                <th>Percepción</th>
-                <th className="text-end">Base imponible</th>
-                <th className="text-end">Alícuota %</th>
-                <th className="text-end">Importe</th>
+                <EncabezadoOrdenable columna="percepcion" orden={orden} onAlternar={alternar}>
+                  Percepción
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="base" orden={orden} onAlternar={alternar} className="text-end">
+                  Base imponible
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="alicuota" orden={orden} onAlternar={alternar} className="text-end">
+                  Alícuota %
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternar} className="text-end">
+                  Importe
+                </EncabezadoOrdenable>
                 {editable && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {filas.map((fila) => {
+              {ordenadas.map((fila) => {
                 const etiqueta = ETIQUETA_DE_PERCEPCION[fila.tipo]
                 return (
                   <tr key={fila.tipo}>

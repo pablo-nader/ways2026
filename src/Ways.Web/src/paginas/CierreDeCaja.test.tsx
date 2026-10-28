@@ -864,3 +864,40 @@ describe('CierreDeCaja — arqueo recalculado', () => {
     expect(screen.queryByText(/Esperado original/)).not.toBeInTheDocument()
   })
 })
+
+describe('CierreDeCaja — orden del arqueo del comprobante Z', () => {
+  it('el comprobante Z ordena por la diferencia numérica; la grilla de conteo conserva el orden del resumen', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.resolve<TurnoConArqueos>(
+          turnoConArqueosFixture({
+            arqueos: [
+              { idMedioPago: 1, importeEsperado: 640, importeDeclarado: 635, diferencia: 5, importeEsperadoOriginal: null },
+              { idMedioPago: 2, importeEsperado: 1000, importeDeclarado: 0, diferencia: 1000, importeEsperadoOriginal: null },
+              { idMedioPago: 3, importeEsperado: 50, importeDeclarado: 100, diferencia: -50, importeEsperadoOriginal: null },
+            ],
+          }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Efectivo')
+    expect(screen.queryByRole('button', { name: /Diferencia/ })).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '635')
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+    await screen.findByText('Turno #501 cerrado')
+
+    const diferencia = screen.getByRole('columnheader', { name: /Diferencia/ })
+    await userEvent.click(within(diferencia).getByRole('button'))
+
+    expect(diferencia).toHaveAttribute('aria-sort', 'ascending')
+    const medios = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)
+    expect(medios).toEqual(['Medio #3', 'Efectivo', 'Medio #2'])
+  })
+})

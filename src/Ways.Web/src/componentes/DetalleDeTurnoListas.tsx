@@ -1,3 +1,4 @@
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import type { GastoDeTurno, TicketDeTurno } from '../api/tipos'
 import { fechaHoraATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
@@ -11,6 +12,19 @@ function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
 }
 
+const COLUMNAS_DE_TICKETS: ColumnasOrdenables<TicketDeTurno> = {
+  numero: { valor: (t) => t.numeroVisible },
+  fecha: { valor: (t) => new Date(t.fecha) },
+  estado: { valor: (t) => t.estado },
+  total: { valor: (t) => t.total },
+}
+
+const COLUMNAS_DE_GASTOS: ColumnasOrdenables<GastoDeTurno> = {
+  fecha: { valor: (g) => new Date(g.fecha) },
+  categoria: { valor: (g) => g.categoria },
+  importe: { valor: (g) => g.importe },
+}
+
 type Props = {
   tickets: TicketDeTurno[]
   gastos: GastoDeTurno[]
@@ -19,6 +33,9 @@ type Props = {
 /** Las listas de tickets y de gastos del detalle de un turno cerrado: las comparten la pantalla
  * "Caja Z" y el modal de detalle de "Cierres de caja" del POS. */
 export function DetalleDeTurnoListas({ tickets, gastos }: Props) {
+  const ordenTickets = useOrdenamiento(tickets, COLUMNAS_DE_TICKETS)
+  const ordenGastos = useOrdenamiento(gastos, COLUMNAS_DE_GASTOS)
+
   return (
     <>
       <h6>Tickets</h6>
@@ -26,14 +43,22 @@ export function DetalleDeTurnoListas({ tickets, gastos }: Props) {
         <table className="table table-sm table-striped table-bordered align-middle">
           <thead>
             <tr>
-              <th>Número</th>
-              <th>Fecha</th>
-              <th>Estado</th>
-              <th className="text-end">Total</th>
+              <EncabezadoOrdenable columna="numero" orden={ordenTickets.orden} onAlternar={ordenTickets.alternar}>
+                Número
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="fecha" orden={ordenTickets.orden} onAlternar={ordenTickets.alternar}>
+                Fecha
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="estado" orden={ordenTickets.orden} onAlternar={ordenTickets.alternar}>
+                Estado
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="total" orden={ordenTickets.orden} onAlternar={ordenTickets.alternar} className="text-end">
+                Total
+              </EncabezadoOrdenable>
             </tr>
           </thead>
           <tbody>
-            {tickets.map((t) => (
+            {ordenTickets.filas.map((t) => (
               <tr key={t.id}>
                 <td>{t.numeroVisible}</td>
                 <td>{formatearFechaHora(t.fecha)}</td>
@@ -57,13 +82,19 @@ export function DetalleDeTurnoListas({ tickets, gastos }: Props) {
         <table className="table table-sm table-striped table-bordered align-middle">
           <thead>
             <tr>
-              <th>Fecha</th>
-              <th>Categoría</th>
-              <th className="text-end">Importe</th>
+              <EncabezadoOrdenable columna="fecha" orden={ordenGastos.orden} onAlternar={ordenGastos.alternar}>
+                Fecha
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="categoria" orden={ordenGastos.orden} onAlternar={ordenGastos.alternar}>
+                Categoría
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="importe" orden={ordenGastos.orden} onAlternar={ordenGastos.alternar} className="text-end">
+                Importe
+              </EncabezadoOrdenable>
             </tr>
           </thead>
           <tbody>
-            {gastos.map((g) => (
+            {ordenGastos.filas.map((g) => (
               <tr key={g.id}>
                 <td>{formatearFechaHora(g.fecha)}</td>
                 <td>

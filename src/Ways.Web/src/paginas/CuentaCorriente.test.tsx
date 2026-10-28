@@ -1098,3 +1098,79 @@ describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
     expect(screen.getByRole('button', { name: 'Ingresar pago' }).closest('.d-flex')).toHaveClass('d-print-none')
   })
 })
+
+describe('CuentaCorriente — orden del ledger y del detalle por consumo', () => {
+  const MOVIMIENTOS = [
+    movimientoFixture({ id: 1, fecha: '2026-08-01T12:00:00Z', importe: 5000, saldoResultante: 5000 }),
+    movimientoFixture({ id: 2, fecha: '2026-08-03T12:00:00Z', tipo: 'Pago', importe: -20, saldoResultante: 4980 }),
+    movimientoFixture({ id: 3, fecha: '2026-08-02T12:00:00Z', importe: 100, saldoResultante: 5080 }),
+  ]
+
+  const celdas = (columna: number) =>
+    Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[columna]?.textContent)
+
+  it('el ledger conserva el orden del servidor, ordena por importe numérico a pedido y cada fila conserva su saldo guardado', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.includes('/cuenta-corriente') && !ruta.includes('/reliquidacion')
+        ? Promise.resolve<EstadoDeCuenta>(estadoFixture({ movimientos: MOVIMIENTOS }))
+        : undefined,
+    )
+    renderPantalla()
+    await screen.findByRole('table')
+    await screen.findByText('$ 4.980,00')
+
+    expect(celdas(4)).toEqual(['$ 5.000,00', '$ 4.980,00', '$ 5.080,00'])
+
+    const importe = screen.getByRole('columnheader', { name: 'Importe' })
+    await userEvent.click(within(importe).getByRole('button'))
+
+    expect(importe).toHaveAttribute('aria-sort', 'ascending')
+    expect(celdas(3)).toEqual(['-$ 20,00', '$ 100,00', '$ 5.000,00'])
+    expect(celdas(4)).toEqual(['$ 4.980,00', '$ 5.080,00', '$ 5.000,00'])
+  })
+
+  it('la fecha ordena cronológicamente y el tercer clic vuelve al orden del servidor', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.includes('/cuenta-corriente') && !ruta.includes('/reliquidacion')
+        ? Promise.resolve<EstadoDeCuenta>(estadoFixture({ movimientos: MOVIMIENTOS }))
+        : undefined,
+    )
+    renderPantalla()
+    await screen.findByText('$ 4.980,00')
+
+    const fecha = screen.getByRole('columnheader', { name: 'Fecha' })
+    await userEvent.click(within(fecha).getByRole('button'))
+    await userEvent.click(within(fecha).getByRole('button'))
+    expect(fecha).toHaveAttribute('aria-sort', 'descending')
+    expect(celdas(4)).toEqual(['$ 4.980,00', '$ 5.080,00', '$ 5.000,00'])
+
+    await userEvent.click(within(fecha).getByRole('button'))
+    expect(celdas(4)).toEqual(['$ 5.000,00', '$ 4.980,00', '$ 5.080,00'])
+  })
+
+  it('las líneas del detalle por consumo se ordenan por su delta numérico', async () => {
+    const detalle: DetalleDeConsumo[] = [
+      detalleConsumoFixture({
+        idMovimiento: 1,
+        lineas: [
+          detalleLineaFixture({ idArticulo: 801, delta: 40 }),
+          detalleLineaFixture({ idArticulo: 802, delta: -3 }),
+          detalleLineaFixture({ idArticulo: 803, delta: 5 }),
+        ],
+      }),
+    ]
+    mockearRutasBase((ruta) =>
+      ruta.includes('/cuenta-corriente/reliquidacion')
+        ? Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture({ detalle }))
+        : undefined,
+    )
+    await abrirModalReliquidacion()
+    const dialogo = within(screen.getByRole('dialog'))
+    await dialogo.findByTestId('cc-reliq-delta-estimado')
+
+    const tabla = dialogo.getByRole('table')
+    await userEvent.click(within(within(tabla).getByRole('columnheader', { name: 'Delta' })).getByRole('button'))
+
+    expect(Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)).toEqual(['802', '803', '801'])
+  })
+})
