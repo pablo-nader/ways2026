@@ -493,6 +493,26 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > anteriores))`; las filas con cero no se crean, el `origen` es `migracion`, y `fecha` e `id_empleado` son los del pago.
 > Lo que excede el total de la compra, los pagos ligados a compras anuladas y los pagos que no cumplen las condiciones
 > de arriba quedan sin aplicar (crédito). Es idempotente y los triggers se crean después.
+>
+> **Doble escritura y liberación (E3-S1b).** Los lectores siguen derivando lo pagado de `pagos.id_comprobante_compra`
+> hasta S2, así que cada escritor que fija ese vínculo escribe además la aplicación, y la anulación y la baja la liberan:
+>
+> - Alta del POS, alta administrativa y pagar compra (origen `pago_de_compra`), y vincular (origen `aplicacion`): el
+>   `importe` es `min(pagos.importe, comprobantes_compra.total - suma de las aplicaciones vivas de la compra)`, leído bajo
+>   el lock `FOR UPDATE` de la compra (antes `FOR SHARE` en el alta y en vincular). Si el tope es 0 no se escribe nada:
+>   el vínculo queda como siempre y el excedente del pago queda sin aplicar.
+> - Un pago no elegible para el trigger de la compra (otro proveedor, otra empresa o no `proveedor`) conserva el vínculo
+>   heredado sin aplicación; hoy solo ocurre en el alta de un pago de otra empresa ligado a una compra.
+> - Orden de locks de los escritores de pagos: turno → compra `FOR UPDATE` → pago → proveedor → tesorería.
+> - La anulación de la compra da de baja (`deleted_at`) todas sus aplicaciones vivas en la misma transacción, bajo el
+>   header exclusivo; la baja del pago hace lo mismo con las suyas, bajo el lock del pago. Soltar no necesita lock de las
+>   compras: los triggers solo exigen que lo aplicado no supere al total, y soltar nunca lo sube. El pago y sus
+>   movimientos no se tocan: lo liberado queda como crédito.
+> - Editar un pago con un importe menor que la suma de sus aplicaciones vivas es `409 pago_importe_menor_que_aplicado`
+>   (antes dejaba la compra sobreimputada). Cambiar el proveedor o la categoría de un pago ligado sigue siendo
+>   `proveedor_no_coincide_con_la_compra` / `gasto_de_compra_debe_ser_de_proveedor`; la empresa no es editable.
+> - No hay códigos de auditoría nuevos: el alta, la edición y la baja del pago ya se auditan y la aplicación es un efecto
+>   interno de esas operaciones.
 
 ### Órdenes de compra (Etapa 16)
 
