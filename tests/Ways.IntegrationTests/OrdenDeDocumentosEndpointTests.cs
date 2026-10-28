@@ -364,7 +364,7 @@ public class PresupuestosOrdenEndpointTests(WaysApiFixture fixture) : IClassFixt
 ///  1  (A,5)   #210      A   Emitido  05-03   100
 ///  2  -       #202      B   Borrador 05-01   50
 ///  3  (A,7)   (baja)    A   Anulado  05-05   300
-///  4  (A,3)   (baja)    B   Anulado  05-02   200
+///  4  (B,3)   (baja)    B   Anulado  05-02   200
 ///  5  (A,1)   #202      A   Emitido  05-04   400
 /// </code>
 /// Un remito numerado exige fecha de salida (CHECK de la tabla); "facturado" exige un comprobante de venta, por eso
