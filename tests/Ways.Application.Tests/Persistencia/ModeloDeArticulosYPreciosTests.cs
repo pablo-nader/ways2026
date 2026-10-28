@@ -60,6 +60,7 @@ public class ModeloDeArticulosYPreciosTests
             [nameof(Articulo.CostoListaPor)] = a => a.CostoListaPor = CostoListaPor.Bulto,
             [nameof(Articulo.CostoListaIncluyeIva)] = a => a.CostoListaIncluyeIva = false,
             [nameof(Articulo.DescuentoProveedor)] = a => a.DescuentoProveedor = 15m,
+            [nameof(Articulo.PorcentajeImpuestoInterno)] = a => a.PorcentajeImpuestoInterno = 4m,
             [nameof(Articulo.CostoNominal)] = a => a.CostoNominal = 130m
         };
 

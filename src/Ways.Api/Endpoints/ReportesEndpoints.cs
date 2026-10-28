@@ -710,7 +710,7 @@ public static class ReportesEndpoints
             servicio.ObtenerComprasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct))
         .WithSummary(
             "Libro IVA compras: comprobantes confirmados de tipos que registran libro IVA, por fecha del " +
-            "comprobante. Neto e IVA por alícuota, no gravado, exento y percepciones; borrador y anulada excluidas.");
+            "comprobante. Neto e IVA por alícuota, no gravado, exento, percepciones e impuestos internos; borrador y anulada excluidas.");
 
         grupo.MapGet("/libro-iva-compras/export", async (
             ServicioDeLibroIva servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,

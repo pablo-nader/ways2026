@@ -70,6 +70,11 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
             .HasColumnName("precios_incluyen_iva")
             .HasDefaultValue(false)
             .IsRequired();
+        builder.Property(c => c.ImpuestosInternos)
+            .HasColumnName("impuestos_internos")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
         builder.Property(c => c.IvaTotal).HasColumnName("iva_total").HasColumnType("numeric(14,2)");
 
         builder.Property(c => c.Observaciones).HasColumnName("observaciones").HasColumnType("text");

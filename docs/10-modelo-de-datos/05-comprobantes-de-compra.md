@@ -16,6 +16,7 @@ comprobantes_compra (         -- [operativa]
     id_punto_venta,                          -- a qué local ingresa el stock
     id_empleado,
     subtotal, descuento_total, iva_total NULL, total,
+    impuestos_internos numeric(14,2) NOT NULL DEFAULT 0, -- suma de los items; integra total, fuera de la base del IVA
     discrimina_iva boolean NOT NULL,         -- snapshot por comprobante; ver más abajo
     precios_incluyen_iva boolean NOT NULL DEFAULT false,  -- snapshot; solo si discrimina_iva
     observaciones,
@@ -68,6 +69,8 @@ items_comprobante_compra (
     descuento       numeric(14,2) DEFAULT 0,
     id_alicuota_iva integer, porcentaje_iva numeric(5,2),
     total           numeric(14,2),
+    impuesto_interno numeric(14,2) NOT NULL DEFAULT 0, -- importe de la línea entera, como lo imprime el proveedor;
+                                             -- no integra `total` de la línea ni la base del IVA
     actualiza_costo boolean DEFAULT true,    -- al confirmar, pisa articulos.costo_nominal
     precio_sugerido numeric(14,2) NULL,      -- propuesta de nuevo precio de venta (margen)
     codigo_proveedor citext NULL             -- el código impreso por el proveedor para la línea
@@ -167,6 +170,20 @@ alícuotas mayores a 0%; en un comprobante que no discrimina, subtotal menos des
 La migración `ComprasPercepcionesYPrecioFinal` agrega las columnas y la tabla con sus `DEFAULT`
 (todo lo existente queda en precios netos y sin percepciones), así que no hace backfill.
 
+**Impuestos internos.** Migración `ImpuestosInternos` (solo columnas con `DEFAULT 0`, sin backfill;
+sin CHECK: el servicio rechaza lo inválido). El importe es **por línea** y va aparte de la base del IVA:
+`total = subtotal − descuento_total + iva_total + impuestos_internos + percepciones` (con precios
+finales, `subtotal − descuento_total + impuestos_internos + percepciones`). El costo efectivo con IVA
+de una línea es `(importe de la línea con IVA + impuesto_interno) / cantidad`, y lo usan la
+confirmación, la ficha del artículo y la cobertura de la orden de compra. Se rechazan con 400 un
+importe negativo (`impuesto_interno_invalido`), uno distinto de cero en un comprobante que no discrimina
+IVA (`impuesto_interno_sin_discriminar`) y uno en una línea por concepto
+(`concepto_con_impuesto_interno`). El artículo guarda `porcentaje_impuesto_interno` (§3): con un
+`costo_lista` sin IVA el costo nominal es `neto × (1 + %II/100 + %IVA/100)` (el IVA no grava al impuesto
+interno) y el descuento del proveedor se aplica sobre ese total. Las ventas y la facturación ARCA no
+cambian (el comercio revende: el impuesto interno es costo, no crédito fiscal). El Libro IVA de compras
+tiene una columna `impuestos_internos` por fila y en totales, que entra en la `diferencia`.
+
 **Libro IVA (compras y ventas).** Implementado sin tablas ni columnas nuevas: es una lectura de
 `comprobantes_compra` y `comprobantes_venta` bajo `LecturaDeReportes` (supervisor y admin; el
 de compras expone costos, así que el vendedor nunca lo ve). `GET /api/reportes/libro-iva-compras`
@@ -203,7 +220,7 @@ reportes (366 días) y el tope de filas el de las exportaciones.
   falla (409 `alicuota_sin_mapeo_afip`). El libro es de solo lectura y no se cae: muestra el importe en
   su porcentaje, junto a las otras alícuotas, con la advertencia `alicuota_sin_clasificar`.
 - *Consistencia:* cada fila lleva `diferencia = total − (neto gravado + IVA + no gravado + exento +
-  percepciones)`. En un dato bien formado es cero; si no lo es, la fila se informa con su
+  percepciones + impuestos internos)`. En un dato bien formado es cero; si no lo es, la fila se informa con su
   diferencia en vez de ocultarse o corregirse.
 - Los catálogos globales (tipos, alícuotas) se leen sin el filtro de baja lógica, para que dar de
   baja uno no saque del libro un comprobante ya declarado; proveedor o cliente dados de baja dejan

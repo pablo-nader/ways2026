@@ -20,6 +20,7 @@ function entradas(sobrescribir: Partial<EntradasDeCosto> = {}): EntradasDeCosto 
     unidadesPorBulto: null,
     porcentajeIva: 21,
     descuentoProveedor: null,
+    porcentajeImpuestoInterno: 0,
     ...sobrescribir,
   }
 }
@@ -73,6 +74,33 @@ describe('calcularCostoNominal — mismos casos que CalculadorDeCostoNominalTest
   it('un costo sin IVA con la alícuota desconocida no se puede calcular; con IVA incluido no la necesita', () => {
     expect(calcularCostoNominal(entradas({ incluyeIva: false, porcentajeIva: null }))).toBeNull()
     expect(calcularCostoNominal(entradas({ incluyeIva: true, porcentajeIva: null }))).toBe(100)
+  })
+})
+
+describe('impuestos internos en el costo nominal — mismos casos que CalculadorDeCostoNominalTests del servidor', () => {
+  it.each<[string, Partial<EntradasDeCosto>, number]>([
+    ['sin IVA suma al neto el impuesto interno y el IVA, y el IVA no grava al impuesto', { costoLista: 100, incluyeIva: false, porcentajeImpuestoInterno: 8 }, 129],
+    ['con IVA incluido se toma tal cual, sin sumar el impuesto', { costoLista: 121, incluyeIva: true, porcentajeImpuestoInterno: 8 }, 121],
+    ['el descuento se aplica sobre el total con impuesto', { costoLista: 100, incluyeIva: false, porcentajeImpuestoInterno: 8, descuentoProveedor: 10 }, 116.1],
+    ['por bulto divide antes de sumar', { costoLista: 1200, por: 'Bulto', unidadesPorBulto: 12, incluyeIva: false, porcentajeImpuestoInterno: 10 }, 131],
+    ['sin porcentaje es el cálculo de siempre', { costoLista: 100, incluyeIva: false }, 121],
+  ])('%s', (_nombre, sobrescribir, esperado) => {
+    expect(calcularCostoNominal(entradas(sobrescribir))).toBe(esperado)
+  })
+
+  it('cambiar el porcentaje cuenta solo mientras el costo se guarda sin IVA, antes o después', () => {
+    const base = entradas({ incluyeIva: false })
+    expect(cambiaAlgunaEntrada(base, { ...base, porcentajeImpuestoInterno: 8 })).toBe(true)
+    const conIva = entradas({ incluyeIva: true })
+    expect(cambiaAlgunaEntrada(conIva, { ...conIva, porcentajeImpuestoInterno: 8 })).toBe(false)
+  })
+
+  it('entradasDeCosto lee el porcentaje del formulario (vacío = 0) y el costo del formulario lo usa', () => {
+    const f: Formulario = { ...formularioVacio(), idAlicuotaIva: 1, costoLista: '100', costoListaIncluyeIva: false, porcentajeImpuestoInterno: '8,5' }
+
+    expect(entradasDeCosto(f, alicuotas).porcentajeImpuestoInterno).toBe(8.5)
+    expect(entradasDeCosto({ ...f, porcentajeImpuestoInterno: '' }, alicuotas).porcentajeImpuestoInterno).toBe(0)
+    expect(costoNominalDelFormulario(f, alicuotas, false)).toBe(129.5)
   })
 })
 
@@ -151,26 +179,26 @@ describe('porcentajeDeAlicuota y entradasDeCosto', () => {
   it('convierte el texto del formulario: vacío es null y un cero es un valor', () => {
     expect(
       entradasDeCosto(
-        { costoLista: '', costoListaPor: 'Unidad', costoListaIncluyeIva: true, unidadesPorBulto: ' ', descuentoProveedor: '0', idAlicuotaIva: 1 },
+        { costoLista: '', costoListaPor: 'Unidad', costoListaIncluyeIva: true, unidadesPorBulto: ' ', descuentoProveedor: '0', porcentajeImpuestoInterno: '0', idAlicuotaIva: 1 },
         alicuotas,
       ),
-    ).toEqual({ costoLista: null, por: 'Unidad', incluyeIva: true, unidadesPorBulto: null, porcentajeIva: 21, descuentoProveedor: 0 })
+    ).toEqual({ costoLista: null, por: 'Unidad', incluyeIva: true, unidadesPorBulto: null, porcentajeIva: 21, descuentoProveedor: 0, porcentajeImpuestoInterno: 0 })
   })
 
   it.each(['', '  '])('un descuento vacío (%j) equivale a cero, como lo guarda el servidor', (descuentoProveedor) => {
-    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, unidadesPorBulto: '', idAlicuotaIva: 1 }
+    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, unidadesPorBulto: '', porcentajeImpuestoInterno: '', idAlicuotaIva: 1 }
 
     expect(entradasDeCosto({ ...costos, descuentoProveedor }, alicuotas).descuentoProveedor).toBe(0)
   })
 
   it('un descuento tipeado se conserva', () => {
-    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, unidadesPorBulto: '', idAlicuotaIva: 1 }
+    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, unidadesPorBulto: '', porcentajeImpuestoInterno: '', idAlicuotaIva: 1 }
 
     expect(entradasDeCosto({ ...costos, descuentoProveedor: '12.5' }, alicuotas).descuentoProveedor).toBe(12.5)
   })
 
   it('un descuento y unidades por bulto con coma decimal valen igual que con punto', () => {
-    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, idAlicuotaIva: 1 }
+    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, porcentajeImpuestoInterno: '', idAlicuotaIva: 1 }
 
     const entradas = entradasDeCosto({ ...costos, descuentoProveedor: '12,5', unidadesPorBulto: '2,5' }, alicuotas)
 
@@ -187,6 +215,7 @@ describe('costoNominalDelFormulario', () => {
       costoListaIncluyeIva: true,
       unidadesPorBulto: '',
       descuentoProveedor: '',
+      porcentajeImpuestoInterno: '',
       idAlicuotaIva: 1,
     }
     // El nominal guardado (73,5) lo dejó una compra: no sale de la fórmula.

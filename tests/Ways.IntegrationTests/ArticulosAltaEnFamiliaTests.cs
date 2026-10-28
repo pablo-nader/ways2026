@@ -25,7 +25,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// <c>POST /api/articulos</c> con <c>idFamilia</c> (doc 10 §3, "Familias de artículos") contra Postgres real: el
 /// alta de un artículo DENTRO de una familia existente. Entrar es un cambio de pertenencia: el alta toma el lock
-/// de membresía exclusivo, toma como referencia al miembro vivo de menor id, exige que los quince campos
+/// de membresía exclusivo, toma como referencia al miembro vivo de menor id, exige que los dieciséis campos
 /// compartidos del pedido sean idénticos a los suyos y copia, en la misma transacción, su estado de precios en
 /// cada lista fija —el vigente y el pendiente— con una fila de auditoría <c>precio.cambio</c> por cada precio
 /// insertado.
@@ -65,7 +65,7 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         IdAlicuotaIva: v.IdAlicuotaIva, UnidadVenta: v.UnidadVenta, UnidadesPorBulto: v.UnidadesPorBulto,
         EsProducto: v.EsProducto, CostoLista: v.CostoLista, DescuentoProveedor: v.DescuentoProveedor, Activo: activo, ControlaLote: v.ControlaLote,
         AcumulaEnVenta: v.AcumulaEnVenta, IdFamilia: idFamilia, CostoListaPor: v.CostoListaPor,
-        CostoListaIncluyeIva: v.CostoListaIncluyeIva);
+        CostoListaIncluyeIva: v.CostoListaIncluyeIva, PorcentajeImpuestoInterno: v.PorcentajeImpuestoInterno);
 
     private static Task<HttpResponseMessage> PostArticuloAsync(HttpClient admin, AltaArticulo alta) =>
         admin.PostAsJsonAsync("/api/articulos", alta, OpcionesJson);
@@ -775,7 +775,7 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
     /// <summary>La referencia y sus campos compartidos se leen DESPUÉS del lock de membresía. Una escritura de
     /// la familia en curso (sostiene el lock compartido) cambió <c>costo_lista</c> de todos los miembros sin
     /// comitear; el pedido lleva el valor NUEVO. El alta espera, y al comitear la otra escritura lee la
-    /// referencia ya con ese valor: los quince campos coinciden y entra. Si la referencia se leyera antes de
+    /// referencia ya con ese valor: los dieciséis campos coinciden y entra. Si la referencia se leyera antes de
     /// esperar, vería el valor viejo y el pedido daría <c>familia_valores_distintos</c>.</summary>
     [Fact]
     public async Task LaReferenciaSeLeeDespuesDelLockDeMembresiaYNoConLaFotoPrevia()

@@ -70,10 +70,11 @@ const referencia: ValoresCompartidosDeLaFamilia = {
   costoListaPor: 'Unidad',
   costoListaIncluyeIva: true,
   descuentoProveedor: 5,
+  porcentajeImpuestoInterno: 0,
   costoNominal: 120,
 }
 
-/** Los quince valores como los guarda un artículo: el área es obligatoria en él, aunque el detalle de una familia la
+/** Los dieciséis valores como los guarda un artículo: el área es obligatoria en él, aunque el detalle de una familia la
  * presente como `null` cuando está dada de baja. */
 const compartidosDelArticulo = { ...referencia, idArea: 1 }
 
@@ -143,7 +144,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
   }
 }
 
-/** Vainilla, el miembro que se edita: sus quince campos compartidos son los de la referencia. */
+/** Vainilla, el miembro que se edita: sus dieciséis campos compartidos son los de la referencia. */
 function miembro(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return articuloFixture({
     id: 31,
@@ -489,7 +490,7 @@ describe('Articulos — alta: elegir una familia', () => {
     mockearApi({ familias: [familiaListado()], detalles: { 7: detalleSabores() } })
   })
 
-  it('pide el detalle de la familia y prellena los quince campos compartidos con sus valores', async () => {
+  it('pide el detalle de la familia y prellena los dieciséis campos compartidos con sus valores', async () => {
     await abrirAltaEnLaFamilia()
 
     expect(apiGetMock).toHaveBeenCalledWith('/familias/7')
@@ -509,7 +510,7 @@ describe('Articulos — alta: elegir una familia', () => {
     expect(screen.getByLabelText(/^Costo de lista sin IVA/)).toHaveValue('123,97')
   })
 
-  it('los quince campos compartidos quedan bloqueados y su etiqueta lo dice: "(de la familia)"', async () => {
+  it('los dieciséis campos compartidos quedan bloqueados y su etiqueta lo dice: "(de la familia)"', async () => {
     await abrirAltaEnLaFamilia()
 
     for (const etiqueta of CAMPOS_COMPARTIDOS_DEL_FORMULARIO) {
@@ -754,7 +755,7 @@ describe('Articulos — alta: guardar dentro de una familia', () => {
     apiPostMock.mockResolvedValue(creado)
   })
 
-  it('manda idFamilia y los quince valores de la familia, junto con lo propio del artículo', async () => {
+  it('manda idFamilia y los dieciséis valores de la familia, junto con lo propio del artículo', async () => {
     await abrirAltaEnLaFamilia()
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla')
@@ -2732,7 +2733,7 @@ describe('Articulos — edición: "+" crea una familia con el artículo como ref
 // ---- unir un artículo existente a una familia existente ------------------------------------------------------
 
 describe('Articulos — edición: unir un artículo a una familia que ya existe', () => {
-  /** Los quince valores del artículo sin familia de las fixtures (`articuloFixture`). */
+  /** Los dieciséis valores del artículo sin familia de las fixtures (`articuloFixture`). */
   const valoresDelArticulo: ValoresCompartidosDeLaFamilia = {
     idArea: 1,
     idCategoria: null,
@@ -2748,6 +2749,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: null,
+    porcentajeImpuestoInterno: 0,
     costoNominal: null,
   }
 
@@ -2821,7 +2823,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
 
     const grupo = await proponerLaFamilia()
 
-    expect(grupo).toHaveTextContent('Al confirmar, el artículo toma de la familia "Sabores" sus quince campos compartidos')
+    expect(grupo).toHaveTextContent('Al confirmar, el artículo toma de la familia "Sabores" sus dieciséis campos compartidos')
     expect(grupo).toHaveTextContent('sus valores y precios actuales se reemplazan')
   })
 
@@ -3311,7 +3313,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
   })
 
   describe('un alta con una familia existente sigue como antes', () => {
-    it('elegirla en un alta no previsualiza ni escribe: prellena y bloquea los quince campos', async () => {
+    it('elegirla en un alta no previsualiza ni escribe: prellena y bloquea los dieciséis campos', async () => {
       mockearApi({ familias: [familiaListado()], detalles: { 7: detalleSabores() } })
       mockearPosts({})
 

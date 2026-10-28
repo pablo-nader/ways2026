@@ -17,6 +17,7 @@ const valores: ValoresCompartidosDeLaFamilia = {
   costoListaPor: 'Unidad',
   costoListaIncluyeIva: true,
   descuentoProveedor: null,
+  porcentajeImpuestoInterno: 0,
   costoNominal: null,
 }
 

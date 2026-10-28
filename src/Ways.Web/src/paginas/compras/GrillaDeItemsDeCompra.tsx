@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { calcularTotalesDeCompra, lineaFormularioACalculo } from '../../api/compras'
-import { cambiosAlElegirArticulo, lineaTieneDatos, type LineaDeCompraFormulario } from '../../api/lineaDeCompra'
+import {
+  admiteImpuestoInterno,
+  cambiosAlElegirArticulo,
+  impuestoInternoDeLinea,
+  lineaTieneDatos,
+  type LineaDeCompraFormulario,
+} from '../../api/lineaDeCompra'
 import type { AlicuotaIvaListado, ArticuloListado } from '../../api/tipos'
 import { AltaDeArticuloDesdeCompra } from './AltaDeArticuloDesdeCompra'
 import { FilaDeGrilla } from './FilaDeGrilla'
@@ -43,8 +49,8 @@ function sonIguales(fila: LineaDeCompraFormulario, cambios: Partial<LineaDeCompr
 }
 
 /**
- * Grilla de items de un borrador de compra: Código, Detalle, UM, Cantidad, Importe, Descuento, IVA
- * y Total. Siempre cierra con una fila vacía (la mantiene el padre con `normalizarFilas`). Tab y
+ * Grilla de items de un borrador de compra: Código, Detalle, UM, Cantidad, Importe, Descuento, IVA,
+ * Imp. internos y Total. Siempre cierra con una fila vacía (la mantiene el padre con `normalizarFilas`). Tab y
  * Shift+Tab recorren las celdas en orden de lectura y pasan de fila; Enter en una celda (sin lista
  * de artículos abierta) va al Código de la fila siguiente; el botón de quitar queda fuera del
  * orden de tabulación (Alt+Supr quita la fila donde está el foco). Resuelve el código del proveedor al salir de su celda y el alta
@@ -182,6 +188,9 @@ export function GrillaDeItemsDeCompra({
                 Descuento
               </th>
               <th scope="col">IVA</th>
+              <th scope="col" title="Importe impreso para toda la línea, fuera de la base del IVA">
+                Imp. internos
+              </th>
               <th scope="col" className="text-end">
                 Total
               </th>
@@ -201,6 +210,8 @@ export function GrillaDeItemsDeCompra({
                 idProveedor={idProveedor}
                 marcarFaltantes={marcarFaltantes}
                 total={calcularTotalesDeCompra([lineaFormularioACalculo(linea, porcentajePorAlicuota)], discriminaIva).items[0].total}
+                admiteImpuestoInterno={admiteImpuestoInterno(linea, modoDePrecios)}
+                impuestoInterno={impuestoInternoDeLinea(linea, porcentajePorAlicuota, modoDePrecios)}
                 consulta={consultas[linea.clave]}
                 onCambio={cambiar}
                 onCodigoSalida={alSalirDelCodigo}

@@ -81,6 +81,11 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
         builder.Property(i => i.IdAlicuotaIva).HasColumnName("id_alicuota_iva").IsRequired();
         builder.Property(i => i.PorcentajeIva).HasColumnName("porcentaje_iva").HasColumnType("numeric(5,2)").IsRequired();
 
+        builder.Property(i => i.ImpuestoInterno)
+            .HasColumnName("impuesto_interno")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
         builder.Property(i => i.Total).HasColumnName("total").HasColumnType("numeric(14,2)").IsRequired();
 
         builder.Property(i => i.ActualizaCosto)

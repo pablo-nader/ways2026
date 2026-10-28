@@ -48,6 +48,9 @@ public class ComprobanteCompra : EntidadTenant
     public decimal DescuentoTotal { get; set; }
     public decimal Total { get; set; }
 
+    /// <summary>Suma de los impuestos internos de las líneas. Integra <see cref="Total"/> y queda fuera de la base del IVA.</summary>
+    public decimal ImpuestosInternos { get; set; }
+
     /// <summary>Snapshot por comprobante de si el documento discrimina IVA: lo fija el tipo en
     /// las facturas (<see cref="ReglaDeDiscriminacionDeIva"/>) y lo elige quien carga un remito o
     /// comprobante no fiscal. Es la fuente del cálculo y del costo efectivo, nunca el tipo.</summary>

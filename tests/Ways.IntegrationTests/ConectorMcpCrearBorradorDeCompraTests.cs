@@ -120,7 +120,7 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
         Assert.Equal(
             [
                 "bultos", "codigoLote", "codigoProveedor", "concepto", "costoUnitario", "descuento", "fechaVencimiento",
-                "idAlicuotaIva", "idArticulo", "unidades", "unidadesPorBulto"
+                "idAlicuotaIva", "idArticulo", "impuestoInterno", "unidades", "unidadesPorBulto"
             ],
             Propiedades(Elementos(esquema, "lineas")).Order(StringComparer.Ordinal));
         Assert.Equal(["idAlicuotaIva", "iva"], Propiedades(Elementos(esquema, "ivaImpreso")).Order(StringComparer.Ordinal));
@@ -349,6 +349,83 @@ public class ConectorMcpCrearBorradorDeCompraTests(WaysApiFixture fixture) : ICl
             "numeroFactura de 1 a 99999999",
             resultado.Texto,
             StringComparison.Ordinal);
+        Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
+    }
+
+    [Fact]
+    public async Task UnaLineaConImpuestoInternoLoGuardaFueraDeLaBaseDelIvaYLoMuestraEnElResumen()
+    {
+        await using var e = await PrepararAsync("mcp-borrador-impuesto-interno");
+        var gaseosa = (await _compras.SembrarArticuloAsync(e.Usuario.IdTenant, "Gaseosa Cola 2,25 l")).Id;
+
+        var resultado = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, new
+        {
+            idProveedor = e.IdProveedor,
+            idTipoComprobante = e.IdFacturaA,
+            idPuntoVenta = e.IdPuntoVenta,
+            fechaComprobante = "2026-10-15",
+            puntoVentaFactura = 3,
+            numeroFactura = 12345,
+            lineas = new object[]
+            {
+                new { idArticulo = gaseosa, unidades = 10, costoUnitario = 100m, impuestoInterno = 150m, idAlicuotaIva = e.IdIva21 }
+            },
+            totalImpreso = 1360m
+        });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        var compra = Assert.Single(await _borrador.ComprasDelProveedorAsync(e.IdProveedor));
+        Assert.Equal((1000m, 210m, 150m, 1360m), (compra.Subtotal, compra.IvaTotal, compra.ImpuestosInternos, compra.Total));
+        var item = Assert.Single(await _borrador.ItemsAsync(compra.Id));
+        Assert.Equal((1000m, 150m), (item.Total, item.ImpuestoInterno));
+        var alicuota = Assert.Single(await _borrador.AlicuotasAsync(compra.Id));
+        Assert.Equal((1000m, 210m), (alicuota.Neto, alicuota.Iva));
+
+        var lineas = resultado.Texto.Split(Environment.NewLine);
+        Assert.Contains(
+            "Subtotal: 1000.00 | Descuentos: 0.00 | IVA: 210.00 | Impuestos internos: 150.00 | Percepciones: 0.00 | Total: 1360.00",
+            lineas);
+        Assert.Contains("Total impreso: 1360.00 | Diferencia (calculado - impreso): 0.00", lineas);
+    }
+
+    [Fact]
+    public async Task UnImpuestoInternoNegativoOSinDiscriminarIvaEsUnErrorYNoCreaNada()
+    {
+        await using var e = await PrepararAsync("mcp-borrador-impuesto-interno-malo");
+        var gaseosa = (await _compras.SembrarArticuloAsync(e.Usuario.IdTenant, "Gaseosa Cola 2,25 l")).Id;
+
+        var negativo = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, new
+        {
+            idProveedor = e.IdProveedor,
+            idTipoComprobante = e.IdFacturaA,
+            idPuntoVenta = e.IdPuntoVenta,
+            fechaComprobante = "2026-10-15",
+            puntoVentaFactura = 3,
+            numeroFactura = 12345,
+            lineas = new object[]
+            {
+                new { idArticulo = gaseosa, unidades = 1, costoUnitario = 100m, impuestoInterno = -1m, idAlicuotaIva = e.IdIva21 }
+            }
+        });
+        Assert.True(negativo.EsError);
+        Assert.Equal("Línea 1: impuestoInterno no puede ser negativo.", negativo.Texto);
+
+        var sinDiscriminar = await LlamarHerramientaAsync(e.Cliente, e.AccessToken, Herramienta, new
+        {
+            idProveedor = e.IdProveedor,
+            idTipoComprobante = e.IdRemito,
+            idPuntoVenta = e.IdPuntoVenta,
+            fechaComprobante = "2026-10-15",
+            numeroRemito = "R-1",
+            discriminaIva = false,
+            lineas = new object[]
+            {
+                new { idArticulo = gaseosa, unidades = 1, costoUnitario = 100m, impuestoInterno = 10m, idAlicuotaIva = e.IdIva21 }
+            }
+        });
+        Assert.True(sinDiscriminar.EsError);
+        Assert.Contains("impuestos internos", sinDiscriminar.Texto, StringComparison.OrdinalIgnoreCase);
+
         Assert.Equal(0, await _borrador.ContarComprasDelTenantAsync(e.Usuario.IdTenant));
     }
 

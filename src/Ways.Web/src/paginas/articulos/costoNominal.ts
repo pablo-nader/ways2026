@@ -18,6 +18,8 @@ export type EntradasDeCosto = {
   /** `null`: la alícuota no está elegida o no se conoce. */
   porcentajeIva: number | null
   descuentoProveedor: number | null
+  /** Porcentaje de impuestos internos sobre el neto; se suma al del IVA y solo cuenta con un costo de lista sin IVA. */
+  porcentajeImpuestoInterno: number
 }
 
 /** Decimales con los que se suma o resta un porcentaje a 100 antes de multiplicar: más que de sobra para un
@@ -32,7 +34,7 @@ export function bultoSinUnidades(por: CostoListaPor, unidadesPorBulto: number | 
 /**
  * `true` si alguna entrada que cuenta para el cálculo cambió: el costo de lista, su base, su IVA y el descuento
  * siempre; las unidades por bulto solo mientras la base es bulto, antes o después; el porcentaje de la alícuota
- * solo mientras el costo se guarda sin IVA, antes o después. Es la misma regla del servidor: si ninguna cambió,
+ * y el de impuestos internos (cualquiera de los dos) solo mientras el costo se guarda sin IVA, antes o después. Es la misma regla del servidor: si ninguna cambió,
  * el costo nominal guardado se conserva (puede ser el efectivo que dejó una compra).
  */
 export function cambiaAlgunaEntrada(anterior: EntradasDeCosto, nueva: EntradasDeCosto): boolean {
@@ -42,7 +44,8 @@ export function cambiaAlgunaEntrada(anterior: EntradasDeCosto, nueva: EntradasDe
     anterior.incluyeIva !== nueva.incluyeIva ||
     anterior.descuentoProveedor !== nueva.descuentoProveedor ||
     (anterior.unidadesPorBulto !== nueva.unidadesPorBulto && (anterior.por === 'Bulto' || nueva.por === 'Bulto')) ||
-    (anterior.porcentajeIva !== nueva.porcentajeIva && (!anterior.incluyeIva || !nueva.incluyeIva))
+    ((anterior.porcentajeIva !== nueva.porcentajeIva || anterior.porcentajeImpuestoInterno !== nueva.porcentajeImpuestoInterno) &&
+      (!anterior.incluyeIva || !nueva.incluyeIva))
   )
 }
 
@@ -51,12 +54,13 @@ export function cambiaAlgunaEntrada(anterior: EntradasDeCosto, nueva: EntradasDe
  * costo de lista, si es por bulto sin unidades por bulto, o si el costo es sin IVA y la alícuota no se conoce.
  */
 export function calcularCostoNominal(entradas: EntradasDeCosto): number | null {
-  const { costoLista, por, incluyeIva, unidadesPorBulto, porcentajeIva, descuentoProveedor } = entradas
+  const { costoLista, por, incluyeIva, unidadesPorBulto, porcentajeIva, descuentoProveedor, porcentajeImpuestoInterno } = entradas
   if (costoLista === null || bultoSinUnidades(por, unidadesPorBulto)) return null
   if (!incluyeIva && porcentajeIva === null) return null
 
   const porUnidad = por === 'Bulto' ? costoLista / unidadesPorBulto! : costoLista
-  const factorDeIva = incluyeIva ? 100 : redondearImporte(100 + porcentajeIva!, DECIMALES_DE_PORCENTAJE)
+  // El IVA no grava al impuesto interno: ambos porcentajes se suman sobre el neto.
+  const factorDeIva = incluyeIva ? 100 : redondearImporte(100 + porcentajeIva! + porcentajeImpuestoInterno, DECIMALES_DE_PORCENTAJE)
   const factorDeDescuento = redondearImporte(100 - (descuentoProveedor ?? 0), DECIMALES_DE_PORCENTAJE)
   const costo = productoRedondeado([porUnidad, factorDeIva, 0.01, factorDeDescuento, 0.01])
 
@@ -95,7 +99,13 @@ function numeroOVacio(texto: string): number | null {
 /** Lo que el formulario toma de un artículo para decidir si sus entradas de costo cambiaron. */
 export type CostoGuardado = Pick<
   Formulario,
-  'costoLista' | 'costoListaPor' | 'costoListaIncluyeIva' | 'unidadesPorBulto' | 'descuentoProveedor' | 'idAlicuotaIva'
+  | 'costoLista'
+  | 'costoListaPor'
+  | 'costoListaIncluyeIva'
+  | 'unidadesPorBulto'
+  | 'descuentoProveedor'
+  | 'porcentajeImpuestoInterno'
+  | 'idAlicuotaIva'
 >
 
 export function porcentajeDeAlicuota(alicuotas: readonly AlicuotaIvaListado[], idAlicuota: number | ''): number | null {
@@ -110,6 +120,7 @@ export function entradasDeCosto(f: CostoGuardado, alicuotas: readonly AlicuotaIv
     unidadesPorBulto: numeroOVacio(f.unidadesPorBulto),
     porcentajeIva: porcentajeDeAlicuota(alicuotas, f.idAlicuotaIva),
     descuentoProveedor: numeroOVacio(f.descuentoProveedor) ?? 0,
+    porcentajeImpuestoInterno: numeroOVacio(f.porcentajeImpuestoInterno) ?? 0,
   }
 }
 

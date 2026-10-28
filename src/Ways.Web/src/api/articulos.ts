@@ -82,7 +82,7 @@ export const clienteDeArticulos = {
    * `familia_inactiva` o `familia_sin_articulos` si no puede entrar, 404 si la familia no existe. */
   crear: (datos: AltaArticulo) => api.post<ArticuloListado>('/articulos', datos),
   /** `alcance` solo hace falta cuando el artículo es miembro de una familia y la edición cambia alguno de
-   * sus quince campos compartidos: sin él, 409 `alcance_requerido` y no se escribe nada. */
+   * sus dieciséis campos compartidos: sin él, 409 `alcance_requerido` y no se escribe nada. */
   actualizar: (id: number, datos: EdicionArticulo) => api.put<ArticuloListado>(`/articulos/${id}`, datos),
   eliminar: (id: number) => api.delete(`/articulos/${id}`),
   codigosBarra: (id: number) => api.get<CodigoBarraListado[]>(`/articulos/${id}/codigos-barra`),

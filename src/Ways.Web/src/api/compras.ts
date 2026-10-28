@@ -7,7 +7,16 @@
  * `costoUnitario`/`descuento`/`idAlicuotaIva`).
  */
 import { api } from './cliente'
-import { brutoDeLinea, cantidadDeLinea, lineaCompletaParaEnvio, aLineaSolicitada, valoresParaApi, type LineaDeCompraFormulario } from './lineaDeCompra'
+import {
+  brutoDeLinea,
+  cantidadDeLinea,
+  impuestoInternoDeLinea,
+  lineaCompletaParaEnvio,
+  aLineaSolicitada,
+  valoresParaApi,
+  type LineaDeCompraFormulario,
+  type ModoDePreciosDeCompra,
+} from './lineaDeCompra'
 import { redondearImporte } from '../formato/importes'
 import type {
   CompraDetalle,
@@ -240,8 +249,10 @@ export function aSolicitudDeCompra(
   lineas: LineaDeCompraFormulario[],
   discriminaEfectivo = false,
   registraLibroIva = false,
+  porcentajePorAlicuota: Record<number, number> = {},
 ): SolicitudDeCompra {
   const completas = lineas.filter(lineaCompletaParaEnvio)
+  const modo = { discriminaIva: discriminaEfectivo, preciosIncluyenIva: discriminaEfectivo && encabezado.preciosIncluyenIva }
   const idsPresentes = new Set(completas.map((l) => Number(l.idAlicuotaIva)))
   const ivaImpreso = discriminaEfectivo
     ? Object.entries(encabezado.ivaImpreso)
@@ -256,7 +267,7 @@ export function aSolicitudDeCompra(
     numeroExterno: encabezado.numeroExterno.trim() === '' ? null : encabezado.numeroExterno.trim(),
     fechaComprobante: encabezado.fechaComprobante === '' ? null : encabezado.fechaComprobante,
     observaciones: encabezado.observaciones.trim() === '' ? null : encabezado.observaciones.trim(),
-    items: completas.map(aLineaSolicitada),
+    items: completas.map((l) => aLineaSolicitada(l, impuestoInternoDeLinea(l, porcentajePorAlicuota, modo))),
     idOrdenCompra: encabezado.idOrdenCompra,
     discriminaIva: encabezado.discriminaIva,
     ivaImpreso: ivaImpreso.length === 0 ? null : ivaImpreso,
@@ -305,6 +316,8 @@ export type LineaDeCalculo = {
   costoUnitario: number
   descuento: number
   porcentajeIva: number
+  /** Impuestos internos impresos de TODA la línea; fuera de la base del IVA. */
+  impuestoInterno: number
 }
 
 export type ItemCalculado = { cantidad: number; bruto: number; total: number; costoEfectivo: number | null }
@@ -329,6 +342,8 @@ export type TotalesDeCompra = {
   alicuotas: AlicuotaDelDesglose[]
   /** Suma de los importes de percepción, que ya están dentro de `total`. */
   percepcionesTotal: number
+  /** Suma de los impuestos internos de las líneas, ya dentro de `total` y fuera de la base del IVA (0 sin discriminar IVA). */
+  impuestosInternos: number
 }
 
 /** Diferencia máxima, en pesos, entre el IVA calculado y el impreso (espejo de
@@ -340,6 +355,7 @@ export const TOLERANCIA_DE_IVA_IMPRESO = 1
 export function lineaFormularioACalculo(
   l: LineaDeCompraFormulario,
   porcentajePorAlicuota: Record<number, number>,
+  modo?: ModoDePreciosDeCompra,
 ): LineaDeCalculo {
   const v = valoresParaApi(l)
   return {
@@ -350,6 +366,7 @@ export function lineaFormularioACalculo(
     costoUnitario: v.costoUnitario,
     descuento: v.descuento,
     porcentajeIva: l.idAlicuotaIva === '' ? 0 : (porcentajePorAlicuota[l.idAlicuotaIva] ?? 0),
+    impuestoInterno: modo === undefined ? 0 : impuestoInternoDeLinea(l, porcentajePorAlicuota, modo),
   }
 }
 
@@ -363,12 +380,13 @@ function calcularItem(l: LineaDeCalculo, discriminaIva: boolean, preciosIncluyen
   const cantidad = cantidadDeLinea(l.unidades, l.bultos, l.unidadesPorBulto)
   const bruto = brutoDeLinea(l.unidades, l.bultos, l.unidadesPorBulto, l.costoUnitario)
   const total = redondearImporte(bruto - l.descuento, 2)
+  const impuestoInterno = discriminaIva ? l.impuestoInterno : 0
   const costoEfectivo =
     cantidad <= 0
       ? null
       : !costoDeLineaIncluyeIva(discriminaIva, preciosIncluyenIva)
-        ? redondear((total * (1 + l.porcentajeIva / 100)) / cantidad, 2)
-        : redondear(total / cantidad, 2)
+        ? redondear((total * (1 + l.porcentajeIva / 100) + impuestoInterno) / cantidad, 2)
+        : redondear((total + impuestoInterno) / cantidad, 2)
   return { cantidad, bruto, total, costoEfectivo }
 }
 
@@ -411,6 +429,7 @@ export function calcularTotalesDeCompra(
       total: redondear(subtotal - descuentoTotal + percepcionesTotal, 2),
       alicuotas: [],
       percepcionesTotal,
+      impuestosInternos: 0,
     }
   }
 
@@ -421,14 +440,20 @@ export function calcularTotalesDeCompra(
   )
   // Con precios finales el IVA ya está dentro de subtotal − descuento: sumarlo lo contaría dos veces.
   const sinPercepciones = precioFinal ? subtotal - descuentoTotal : subtotal - descuentoTotal + ivaTotal
+  // El impuesto interno va aparte de la base del IVA: se suma entero al total, nunca entra en `alicuotas`.
+  const impuestosInternos = redondear(
+    lineas.reduce((acumulado, l) => acumulado + l.impuestoInterno, 0),
+    2,
+  )
   return {
     items,
     subtotal,
     descuentoTotal,
     ivaTotal,
-    total: redondear(sinPercepciones + percepcionesTotal, 2),
+    total: redondear(sinPercepciones + impuestosInternos + percepcionesTotal, 2),
     alicuotas,
     percepcionesTotal,
+    impuestosInternos,
   }
 }
 

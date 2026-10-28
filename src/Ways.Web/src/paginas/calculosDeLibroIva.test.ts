@@ -24,6 +24,7 @@ function fila(sobrescribir: Partial<FilaDeLibroIva> = {}): FilaDeLibroIva {
     exento: 0,
     percepcionIva: 0,
     percepcionIibb: 0,
+    impuestosInternos: 0,
     total: 0,
     diferencia: 0,
     advertencias: [],
@@ -46,6 +47,7 @@ function libro(filas: FilaDeLibroIva[], porAlicuota: LibroIva['totales']['porAli
       exento: 0,
       percepcionIva: 0,
       percepcionIibb: 0,
+      impuestosInternos: 0,
       total: 0,
       diferencia: 0,
       netoGravado: 0,
@@ -127,12 +129,14 @@ describe('CONFIGURACION_DE_PESTANA', () => {
       contraparte: 'Proveedor',
       documento: 'CUIT',
       conPercepciones: true,
+      conImpuestosInternos: true,
     })
     expect(CONFIGURACION_DE_PESTANA.ventas).toEqual({
       titulo: 'Ventas',
       contraparte: 'Cliente',
       documento: 'Documento',
       conPercepciones: false,
+      conImpuestosInternos: false,
     })
   })
 })

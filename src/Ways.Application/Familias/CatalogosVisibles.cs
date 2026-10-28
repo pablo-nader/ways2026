@@ -57,7 +57,7 @@ internal sealed class CatalogosVisibles
 
     public bool ProveedorEsVisible(int idProveedor) => proveedores.Contains(idProveedor);
 
-    /// <summary>Los quince valores como los ve un cliente: un id de catálogo que no es visible viaja como <c>null</c>. Lo
+    /// <summary>Los dieciséis valores como los ve un cliente: un id de catálogo que no es visible viaja como <c>null</c>. Lo
     /// demás es el valor guardado.</summary>
     public ValoresCompartidosDeLaFamilia Presentar(ValoresCompartidosDeFamilia valores) =>
         ValoresCompartidosDeLaFamilia.De(valores) with

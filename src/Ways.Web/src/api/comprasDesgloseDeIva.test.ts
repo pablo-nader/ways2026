@@ -20,6 +20,7 @@ function linea(sobrescribir: Partial<LineaDeCalculo> = {}): LineaDeCalculo {
     costoUnitario: 100,
     descuento: 0,
     porcentajeIva: 21,
+    impuestoInterno: 0,
     ...sobrescribir,
   }
 }

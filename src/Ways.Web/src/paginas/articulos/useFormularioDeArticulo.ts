@@ -536,7 +536,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     return true
   }
 
-  /** Elegir una familia en un alta: el artículo toma sus quince campos compartidos, que quedan bloqueados. Dejarla
+  /** Elegir una familia en un alta: el artículo toma sus dieciséis campos compartidos, que quedan bloqueados. Dejarla
    * en "Sin familia" los desbloquea y conserva lo que tenían. Elegir una existente descarta la familia nueva anotada.
    * En un artículo existente que no es miembro no escribe: propone la unión (ver `proponerUnion`). */
   function elegirFamilia(idFamilia: number | '') {
@@ -664,7 +664,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
   }
 
   /** "Confirmar y unir a la familia": suma al artículo a la familia elegida, que lo alinea con su referencia (reemplaza sus
-   * quince valores compartidos y sus precios de lista fija). Después se vuelve a leer el artículo. */
+   * dieciséis valores compartidos y sus precios de lista fija). Después se vuelve a leer el artículo. */
   async function confirmarUnion() {
     if (escrituraEnCursoRef.current) return
     if (!formulario || formulario.id === null || unionElegida === '') return

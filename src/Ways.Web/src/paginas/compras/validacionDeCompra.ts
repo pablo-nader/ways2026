@@ -62,6 +62,7 @@ export function huellaDeFormulario(encabezado: EncabezadoDeCompraFormulario, lin
       l.importe,
       l.descuentoPorcentaje,
       l.idAlicuotaIva,
+      l.impuestoInterno,
       l.codigoLote,
       l.fechaVencimiento,
     ]),

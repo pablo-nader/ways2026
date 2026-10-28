@@ -4,6 +4,7 @@ import {
   cambiosAlCambiarUnidadDeMedida,
   cambiosAlEscribirDetalle,
   cantidadDeLinea,
+  DECIMALES_DE_IMPUESTO_INTERNO,
   diferenciaDePrecioPorBulto,
   lineaTieneDatos,
   mensajeDeCantidadDeBultos,
@@ -33,6 +34,10 @@ type Props = {
   marcarFaltantes: boolean
   /** Total de la línea ya calculado por la pantalla (misma cuenta que los totales del pie). */
   total: number
+  /** La línea admite impuestos internos: un artículo en un comprobante que discrimina IVA. Si no, la celda queda vacía y se envía 0. */
+  admiteImpuestoInterno: boolean
+  /** Importe que rige para la línea (el tipeado o, mientras no se tocó, el sugerido por el porcentaje del artículo). */
+  impuestoInterno: number
   consulta?: 'buscando' | 'error'
   onCambio: (clave: number, cambios: Partial<LineaDeCompraFormulario>) => void
   onCodigoSalida: (clave: number) => void
@@ -60,6 +65,8 @@ export function FilaDeGrilla({
   puedeCrearArticulos,
   marcarFaltantes,
   total,
+  admiteImpuestoInterno,
+  impuestoInterno,
   consulta,
   onCambio,
   onCodigoSalida,
@@ -206,6 +213,19 @@ export function FilaDeGrilla({
             ))}
           </select>
         </td>
+        <td style={{ width: 120 }}>
+          {admiteImpuestoInterno ? (
+            <CampoImporte
+              className="form-control form-control-sm"
+              aria-label={nombre('Imp. internos')}
+              data-celda="impuesto-interno"
+              decimales={DECIMALES_DE_IMPUESTO_INTERNO}
+              valor={tieneDatos ? impuestoInterno : null}
+              disabled={disabled}
+              onChange={(v) => onCambio(clave, { impuestoInterno: linea.impuestoInterno === null && v === impuestoInterno ? null : v })}
+            />
+          ) : null}
+        </td>
         <td className="text-end" style={{ width: 120 }} data-celda="total">
           {tieneDatos ? formatearImporte(total, { simbolo: true }) : ''}
         </td>
@@ -228,7 +248,7 @@ export function FilaDeGrilla({
       </tr>
       {mostrarLote && (
         <tr data-lote-de={clave} className={tieneDatos && invalidos.length > 0 ? 'table-warning' : undefined}>
-          <td colSpan={9}>
+          <td colSpan={10}>
             <div className="d-flex flex-wrap align-items-start gap-3 ps-3">
               <span className="small text-muted pt-1">Lote</span>
               <input

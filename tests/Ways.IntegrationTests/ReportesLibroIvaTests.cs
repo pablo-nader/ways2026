@@ -697,9 +697,9 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 "Fecha", "Tipo", "Número", "Proveedor", "CUIT",
                 "Neto 21%", "IVA 21%", "Neto 10,5%", "IVA 10,5%", "Neto 27%", "IVA 27%", "Neto 5%", "IVA 5%",
                 "Neto 2,5%", "IVA 2,5%", "Neto otras alícuotas", "IVA otras alícuotas", "No gravado", "Exento",
-                "Percepción IVA", "Percepción IIBB", "Total", "Diferencia", "Observaciones"
+                "Percepción IVA", "Percepción IIBB", "Impuestos internos", "Total", "Diferencia", "Observaciones"
             ],
-            Enumerable.Range(1, 24).Select(c => hoja.Cell(6, c).GetString()));
+            Enumerable.Range(1, 25).Select(c => hoja.Cell(6, c).GetString()));
 
         for (var i = 0; i < libro.Filas.Count; i++)
         {
@@ -720,9 +720,9 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 [0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m],
                 Enumerable.Range(10, 8).Select(c => hoja.Cell(r, c).GetValue<decimal>()));
             Assert.Equal(
-                [fila.NoGravado, fila.Exento, fila.PercepcionIva, fila.PercepcionIibb, fila.Total, fila.Diferencia],
-                Enumerable.Range(18, 6).Select(c => hoja.Cell(r, c).GetValue<decimal>()));
-            Assert.Equal(string.Empty, hoja.Cell(r, 24).GetString());
+                [fila.NoGravado, fila.Exento, fila.PercepcionIva, fila.PercepcionIibb, fila.ImpuestosInternos, fila.Total, fila.Diferencia],
+                Enumerable.Range(18, 7).Select(c => hoja.Cell(r, c).GetValue<decimal>()));
+            Assert.Equal(string.Empty, hoja.Cell(r, 25).GetString());
         }
 
         var total = 7 + libro.Filas.Count;
@@ -737,9 +737,9 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(
             [
                 libro.Totales.NoGravado, libro.Totales.Exento, libro.Totales.PercepcionIva, libro.Totales.PercepcionIibb,
-                libro.Totales.Total, libro.Totales.Diferencia
+                libro.Totales.ImpuestosInternos, libro.Totales.Total, libro.Totales.Diferencia
             ],
-            Enumerable.Range(18, 6).Select(c => hoja.Cell(total, c).GetValue<decimal>()));
+            Enumerable.Range(18, 7).Select(c => hoja.Cell(total, c).GetValue<decimal>()));
     }
 
     [Fact]

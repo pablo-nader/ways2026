@@ -81,6 +81,7 @@ function filaFixture(sobrescribir: Partial<FilaDeLibroIva> = {}): FilaDeLibroIva
     exento: 50,
     percepcionIva: 15,
     percepcionIibb: 30,
+    impuestosInternos: 11.5,
     total: 1556,
     diferencia: 0,
     advertencias: [],
@@ -102,6 +103,7 @@ function libroDeCompras(sobrescribir: Partial<LibroIvaRespuesta> = {}): LibroIva
     exento: 0,
     percepcionIva: 0,
     percepcionIibb: 20,
+    impuestosInternos: 0,
     total: 520,
     netoGravado: 0,
     ivaTotal: 0,
@@ -122,6 +124,7 @@ function libroDeCompras(sobrescribir: Partial<LibroIvaRespuesta> = {}): LibroIva
       exento: 50,
       percepcionIva: 15,
       percepcionIibb: 50,
+      impuestosInternos: 11.5,
       total: 2076,
       diferencia: 0,
       netoGravado: 1200,
@@ -142,6 +145,7 @@ function libroDeVentas(): LibroIvaRespuesta {
     exento: 0,
     percepcionIva: 0,
     percepcionIibb: 0,
+    impuestosInternos: 0,
     total: 121,
     netoGravado: 100,
     ivaTotal: 21,
@@ -159,6 +163,7 @@ function libroDeVentas(): LibroIvaRespuesta {
       exento: 0,
       percepcionIva: 0,
       percepcionIibb: 0,
+      impuestosInternos: 0,
       total: 121,
       diferencia: 0,
       netoGravado: 100,
@@ -221,25 +226,25 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     const encabezados = screen.getAllByRole('columnheader').map((c) => c.textContent)
     expect(encabezados).toEqual([
       'Fecha', 'Tipo', 'Número', 'Proveedor', 'CUIT', 'Neto 21%', 'IVA 21%', 'Neto 10,5%', 'IVA 10,5%',
-      'No gravado', 'Exento', 'Perc. IVA', 'Perc. IIBB', 'Total',
+      'No gravado', 'Exento', 'Perc. IVA', 'Perc. IIBB', 'Imp. internos', 'Total',
     ])
 
     const primera = screen.getByRole('row', { name: /0001-00000001/ })
     expect(within(primera).getAllByRole('cell').map((c) => c.textContent)).toEqual([
       '10/05/2026', 'C-FA', '0001-00000001', 'Proveedor Uno SA', '30-70000000-1',
-      '$ 1.000,00', '$ 210,00', '$ 200,00', '$ 21,00', '$ 30,00', '$ 50,00', '$ 15,00', '$ 30,00', '$ 1.556,00',
+      '$ 1.000,00', '$ 210,00', '$ 200,00', '$ 21,00', '$ 30,00', '$ 50,00', '$ 15,00', '$ 30,00', '$ 11,50', '$ 1.556,00',
     ])
 
     const segunda = screen.getByRole('row', { name: /0002-00000007/ })
     expect(within(segunda).getAllByRole('cell').map((c) => c.textContent)).toEqual([
       '12/05/2026', 'C-FB', '0002-00000007', 'Proveedor Dos SRL', '—',
-      '$ 0,00', '$ 0,00', '$ 0,00', '$ 0,00', '$ 500,00', '$ 0,00', '$ 0,00', '$ 20,00', '$ 520,00',
+      '$ 0,00', '$ 0,00', '$ 0,00', '$ 0,00', '$ 500,00', '$ 0,00', '$ 0,00', '$ 20,00', '$ 0,00', '$ 520,00',
     ])
 
     const totales = screen.getByRole('row', { name: /Totales/ })
     expect(within(totales).getAllByRole('cell').map((c) => c.textContent)).toEqual([
       'Totales', '$ 1.000,00', '$ 210,00', '$ 200,00', '$ 21,00', '$ 530,00', '$ 50,00', '$ 15,00', '$ 50,00',
-      '$ 2.076,00',
+      '$ 11,50', '$ 2.076,00',
     ])
   })
 
@@ -453,7 +458,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     renderLibroIva()
 
     const vacio = await screen.findByText('No hay comprobantes en el período.')
-    expect(vacio).toHaveAttribute('colspan', '10')
+    expect(vacio).toHaveAttribute('colspan', '11')
     expect(screen.queryByRole('row', { name: /Totales/ })).not.toBeInTheDocument()
   })
 

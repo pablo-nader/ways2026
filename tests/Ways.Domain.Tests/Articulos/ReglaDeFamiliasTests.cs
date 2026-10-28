@@ -178,7 +178,7 @@ public class ReglaDeFamiliasTests
         IdArea: 11, IdCategoria: 12, IdGrupo: 13, IdProveedorHabitual: 14, IdAlicuotaIva: 15,
         UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true, ControlaLote: false,
         AcumulaEnVenta: true, CostoLista: 50m, CostoListaPor: CostoListaPor.Unidad, CostoListaIncluyeIva: true,
-        DescuentoProveedor: 10m, CostoNominal: 40m);
+        DescuentoProveedor: 10m, PorcentajeImpuestoInterno: 5m, CostoNominal: 40m);
 
     private static readonly ValoresCompartidosDeFamilia ValoresQueDifieren = ValoresDeReferencia with { CostoLista = 51m };
 
@@ -192,7 +192,7 @@ public class ReglaDeFamiliasTests
         // Activa y sin ningún miembro vivo: no hay con qué comparar ni qué copiar.
         { true, false, true, ResolucionDeIngresoAFamilia.FamiliaSinArticulos },
 
-        // Activa y con referencia: lo que decide es si los quince valores coinciden.
+        // Activa y con referencia: lo que decide es si los dieciséis valores coinciden.
         { true, true, false, ResolucionDeIngresoAFamilia.ValoresDistintos },
         { true, true, true, ResolucionDeIngresoAFamilia.Permitido }
     };
@@ -224,7 +224,7 @@ public class ReglaDeFamiliasTests
             ReglaDeFamilias.ResolverIngreso(familiaActiva: true, ValoresDeReferencia, ValoresQueDifieren));
     }
 
-    /// <summary>Cada uno de los quince campos compartidos, solo, alcanza para que el ingreso sea
+    /// <summary>Cada uno de los dieciséis campos compartidos, solo, alcanza para que el ingreso sea
     /// <c>ValoresDistintos</c>: la regla no deja pasar una diferencia en ninguno.</summary>
     [Theory]
     [InlineData("id_area")]

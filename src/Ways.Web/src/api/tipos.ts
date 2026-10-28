@@ -758,7 +758,10 @@ export type ArticuloListado = {
   /** `true`: `costoLista` ya trae el IVA; `false`: es el costo sin IVA. `null` sin visibilidad de costos. */
   costoListaIncluyeIva: boolean | null
   descuentoProveedor: number | null
-  /** Costo por unidad con IVA y neto de descuento: lo calcula el servidor al guardar y una compra
+  /** Porcentaje de impuestos internos sobre el costo neto (campo compartido de la familia). `null` sin visibilidad de costos;
+   * ausente en un payload viejo se trata como 0. */
+  porcentajeImpuestoInterno?: number | null
+  /** Costo por unidad con IVA e impuestos internos y neto de descuento: lo calcula el servidor al guardar y una compra
    * confirmada lo pisa con el costo efectivo. */
   costoNominal: number | null
   disponibleParaTodas: boolean
@@ -812,6 +815,8 @@ export type AltaArticulo = {
   /** `true`: `costoLista` ya trae el IVA. El servidor calcula el costo nominal con estos dos campos. */
   costoListaIncluyeIva: boolean
   descuentoProveedor: number | null
+  /** Hasta 4 decimales; el alta lo asume 0 si falta y la edición conserva el guardado con `null`. Campo compartido de la familia. */
+  porcentajeImpuestoInterno?: number | null
   disponibleParaTodas: boolean
   idsEmpresas: number[] | null
   activo: boolean
@@ -822,7 +827,7 @@ export type AltaArticulo = {
   teclaAtajo?: TeclaAtajo | null
   /** Código del proveedor habitual para este artículo; el servidor exige `idProveedorHabitual`. */
   codigoProveedor?: string | null
-  /** El artículo nace como miembro de esa familia: los quince campos compartidos tienen que ser idénticos
+  /** El artículo nace como miembro de esa familia: los dieciséis campos compartidos tienen que ser idénticos
    * a los de la familia (409 `familia_valores_distintos`) y el servidor le copia sus precios. */
   idFamilia?: number | null
   /** El servidor crea una familia con ese nombre en la misma transacción del alta y el artículo es su referencia. No se
@@ -929,7 +934,7 @@ export type PrecioVigente = { idArticulo: number; idListaPrecio: number; precio:
 export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: string; vigenteHasta: string | null }
 
 // --- Familias de artículos (doc 10 §3) ---
-// Una familia agrupa artículos idénticos en sus quince campos compartidos y en el estado de precios de cada
+// Una familia agrupa artículos idénticos en sus dieciséis campos compartidos y en el estado de precios de cada
 // lista fija. No guarda valores: sus miembros son la fuente de verdad, y la referencia es el miembro vivo de
 // menor id.
 
@@ -940,7 +945,7 @@ export type FamiliaListado = { id: number; nombre: string; activo: boolean; cant
  * dada de baja: el servidor nunca expone un id colgante. */
 export type MiembroDeFamilia = { id: number; codigoInterno: string; nombre: string; idMarca: number | null; activo: boolean }
 
-/** Los quince campos compartidos de un artículo, tal como los lee un cliente. Los cuatro ids de catálogo
+/** Los dieciséis campos compartidos de un artículo, tal como los lee un cliente. Los cuatro ids de catálogo
  * (`idArea`, `idCategoria`, `idGrupo`, `idProveedorHabitual`) viajan `null` cuando apuntan a una fila dada
  * de baja: un área dada de baja que conserva artículos se lee como "sin asignar". */
 export type ValoresCompartidosDeLaFamilia = {
@@ -958,6 +963,7 @@ export type ValoresCompartidosDeLaFamilia = {
   costoListaPor: CostoListaPor | null
   costoListaIncluyeIva: boolean | null
   descuentoProveedor: number | null
+  porcentajeImpuestoInterno: number
   costoNominal: number | null
 }
 
@@ -997,7 +1003,7 @@ export type CambioDePreciosDeLista = { idListaPrecio: number; actual: EstadoDePr
 
 /** Lo que cambia en UN artículo al alinearlo con la referencia: `campos` son las columnas compartidas de
  * `articulos` (`id_area`, `costo_lista`, …) que difieren, en el orden de declaración de
- * `ValoresCompartidosDeFamilia`; `actual` y `nuevo`, los quince valores del artículo y de la referencia; `precios`,
+ * `ValoresCompartidosDeFamilia`; `actual` y `nuevo`, los dieciséis valores del artículo y de la referencia; `precios`,
  * las listas fijas en las que el estado de precios cambia. Un artículo ya alineado trae `campos` y `precios` vacíos. */
 export type CambiosDeUnArticulo = {
   idArticulo: number
@@ -2436,6 +2442,8 @@ export type LineaDeCompraSolicitada = {
   costoUnitario: number
   descuento: number
   idAlicuotaIva: number
+  /** Impuestos internos impresos para TODA la línea (hasta 2 decimales), fuera de la base del IVA. Un concepto o un comprobante que no discrimina IVA envía 0. */
+  impuestoInterno: number
   actualizaCosto: boolean
   /** stage-12-lotes-vencimientos (Slice 14): input crudo de recepción para un artículo
    * lote-efectivo — nada se resuelve a esta altura (design: "nothing is resolved at draft
@@ -2519,6 +2527,8 @@ export type ItemDeCompra = {
   idAlicuotaIva: number
   porcentajeIva: number
   total: number | null
+  /** Impuestos internos de la línea; `null` para el rol vendedor. */
+  impuestoInterno: number | null
   actualizaCosto: boolean
   precioSugerido: number | null
   /** `codigoLote`/`fechaVencimiento`: mismo input crudo de `LineaDeCompraSolicitada`, ya
@@ -2546,6 +2556,8 @@ export type CompraDetalle = {
   subtotal: number
   descuentoTotal: number
   ivaTotal: number | null
+  /** Suma de los impuestos internos de las líneas: integra el total, fuera de la base del IVA. */
+  impuestosInternos: number
   total: number
   observaciones: string | null
   estado: EstadoCompra
@@ -3552,6 +3564,8 @@ export type FilaDeLibroIva = {
   exento: number
   percepcionIva: number
   percepcionIibb: number
+  /** Impuestos internos del comprobante (solo compras; en ventas siempre 0). */
+  impuestosInternos: number
   total: number
   diferencia: number
   /** Códigos de aviso de la fila (`anulado_sin_nc`, `alicuota_sin_clasificar`, `sin_numero_fiscal`). */
@@ -3566,6 +3580,7 @@ export type TotalesDeLibroIva = {
   exento: number
   percepcionIva: number
   percepcionIibb: number
+  impuestosInternos: number
   total: number
   diferencia: number
   netoGravado: number

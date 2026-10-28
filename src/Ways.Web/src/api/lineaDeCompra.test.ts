@@ -58,6 +58,7 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     idAlicuotaIva: 3,
     porcentajeIva: 21,
     total: 950,
+    impuestoInterno: 0,
     actualizaCosto: true,
     precioSugerido: 114.95,
     codigoLote: null,
@@ -125,6 +126,8 @@ describe('lineaDeCompraVacia / lineaTieneDatos', () => {
       fechaVencimiento: '',
       unidadesPorBulto: null,
       actualizaCosto: true,
+      impuestoInterno: null,
+      porcentajeImpuestoInterno: 0,
       guardada: null,
     })
     expect(lineaTieneDatos(lineaDeCompraVacia(1))).toBe(false)
@@ -432,6 +435,7 @@ describe('aLineaSolicitada', () => {
       costoUnitario: 100,
       descuento: 50,
       idAlicuotaIva: 3,
+      impuestoInterno: 0,
       actualizaCosto: true,
       codigoLote: null,
       fechaVencimiento: null,
@@ -459,6 +463,7 @@ describe('aLineaSolicitada', () => {
       costoUnitario: 500,
       descuento: 0,
       idAlicuotaIva: 3,
+      impuestoInterno: 0,
       actualizaCosto: false,
       codigoLote: null,
       fechaVencimiento: null,

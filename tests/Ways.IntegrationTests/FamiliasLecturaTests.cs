@@ -10,7 +10,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// <c>GET /api/familias</c> y <c>GET /api/familias/{id}</c> (doc 10 §3, "Familias de artículos") contra Postgres
 /// real: el listado de las familias vivas con la cantidad de miembros vivos, y el detalle con lo que prellena el
-/// alta de un artículo dentro de la familia —los miembros, los quince valores compartidos y el estado de precios
+/// alta de un artículo dentro de la familia —los miembros, los dieciséis valores compartidos y el estado de precios
 /// del artículo de referencia en cada lista fija—.
 ///
 /// <para>La familia del detalle se siembra con la invariante ROTA a propósito en lo que no se lee: el miembro
@@ -210,7 +210,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     /// pueden serlo a la vez, los cubre <see cref="CadaBooleanoCompartidoDeLaReferenciaSeLeeDeSuPropiaColumna"/>): la
     /// familia, los miembros vivos ascendentes por id —solo los de ella: ni el artículo sin familia ni el de la familia
     /// hermana, con ids menores, ni el dado de baja— con su marca —la dada de baja, como <c>null</c>— y su estado, los
-    /// quince valores compartidos de la referencia (<c>m1</c>, el vivo de menor id de SU familia) y su estado de
+    /// dieciséis valores compartidos de la referencia (<c>m1</c>, el vivo de menor id de SU familia) y su estado de
     /// precios en cada lista fija, ascendentes por id de lista: el pendiente con su fecha, un vigente solo, y una
     /// lista sin precios con el estado vacío. La derivada no figura.</summary>
     [Fact]
@@ -246,7 +246,8 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 EsProducto: referencia.EsProducto, ControlaLote: referencia.ControlaLote,
                 AcumulaEnVenta: referencia.AcumulaEnVenta, CostoLista: referencia.CostoLista,
                 CostoListaPor: referencia.CostoListaPor, CostoListaIncluyeIva: referencia.CostoListaIncluyeIva,
-                DescuentoProveedor: referencia.DescuentoProveedor, CostoNominal: referencia.CostoNominal),
+                DescuentoProveedor: referencia.DescuentoProveedor,
+                PorcentajeImpuestoInterno: referencia.PorcentajeImpuestoInterno, CostoNominal: referencia.CostoNominal),
             detalle.Valores);
 
         var fijas = new[] { e.IdListaGeneral, e.IdListaMayorista, s.ListaMinorista }.Order().ToList();
@@ -317,7 +318,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 ControlaLote: referencia.ControlaLote, AcumulaEnVenta: referencia.AcumulaEnVenta,
                 CostoLista: referencia.CostoLista, CostoListaPor: referencia.CostoListaPor,
                 CostoListaIncluyeIva: referencia.CostoListaIncluyeIva, DescuentoProveedor: referencia.DescuentoProveedor,
-                CostoNominal: referencia.CostoNominal),
+                PorcentajeImpuestoInterno: referencia.PorcentajeImpuestoInterno, CostoNominal: referencia.CostoNominal),
             valores);
     }
 

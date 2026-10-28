@@ -51,6 +51,11 @@ public class Articulo : EntidadTenant
     public bool CostoListaIncluyeIva { get; set; } = true;
     public decimal? DescuentoProveedor { get; set; }
 
+    /// <summary>Porcentaje de impuestos internos sobre el costo neto (0 o más; 0 = no tiene). Con un costo de lista sin IVA
+    /// entra en <see cref="CostoNominal"/> (<see cref="CalculadorDeCostoNominal"/>) y precarga el importe de la línea de
+    /// compra; el importe impreso por el proveedor manda. Compartido por la familia, como el costo de lista del que se deriva el costo nominal.</summary>
+    public decimal PorcentajeImpuestoInterno { get; set; }
+
     /// <summary>Costo por unidad, con IVA y neto del descuento. El alta y la edición lo calculan en el servidor
     /// (<see cref="CalculadorDeCostoNominal"/>); el flujo de compras lo pisa con el costo efectivo.</summary>
     public decimal? CostoNominal { get; set; }

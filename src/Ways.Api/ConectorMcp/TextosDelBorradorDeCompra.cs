@@ -127,13 +127,16 @@ public static class TextosDelBorradorDeCompra
             $"fecha {Fecha(compra.FechaComprobante)}",
             $"Líneas: {deArticulo} de artículo y {compra.Items.Count - deArticulo} de concepto",
             $"{subtotal}: {Importe(compra.Subtotal)} | {descuentos}: {Importe(compra.DescuentoTotal)} | {rotuloDelIva}: {iva} | " +
+            (compra.ImpuestosInternos != 0m ? $"Impuestos internos: {Importe(compra.ImpuestosInternos)} | " : string.Empty) +
             $"Percepciones: {Importe(percepciones)} | Total: {Importe(compra.Total)}"
         ];
 
         if (compra.PreciosIncluyenIva)
         {
             lineas.Add(
-                "Los precios incluyen IVA: el total es subtotal - descuentos + percepciones, sin sumar el IVA de nuevo.");
+                compra.ImpuestosInternos != 0m
+                    ? "Los precios incluyen IVA: el total es subtotal - descuentos + impuestos internos + percepciones, sin sumar el IVA de nuevo."
+                    : "Los precios incluyen IVA: el total es subtotal - descuentos + percepciones, sin sumar el IVA de nuevo.");
         }
 
         List<string> advertencias = [];

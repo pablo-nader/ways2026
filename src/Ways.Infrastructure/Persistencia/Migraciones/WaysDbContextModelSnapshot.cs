@@ -216,6 +216,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
 
+                    b.Property<decimal>("PorcentajeImpuestoInterno")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(7,4)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("porcentaje_impuesto_interno");
+
                     b.Property<string>("TeclaAtajo")
                         .HasColumnType("text")
                         .HasColumnName("tecla_atajo");
@@ -2328,6 +2334,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tipo_comprobante");
 
+                    b.Property<decimal>("ImpuestosInternos")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("impuestos_internos");
+
                     b.Property<decimal?>("IvaTotal")
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("iva_total");
@@ -2479,6 +2491,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("ImpuestoInterno")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("impuesto_interno");
 
                     b.Property<int>("Orden")
                         .HasColumnType("integer")

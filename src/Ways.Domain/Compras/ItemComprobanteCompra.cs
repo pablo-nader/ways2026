@@ -57,6 +57,10 @@ public class ItemComprobanteCompra : EntidadTenant
     /// <summary>Derivado: <c>bruto − descuento</c> (design: Compra Arithmetic).</summary>
     public decimal Total { get; set; }
 
+    /// <summary>Importe de impuestos internos de toda la línea, tal como lo imprime el proveedor (0 si no tiene). Se suma
+    /// al total del comprobante fuera de la base del IVA y entra en el costo efectivo; no integra <see cref="Total"/>.</summary>
+    public decimal ImpuestoInterno { get; set; }
+
     /// <summary>Si esta línea pisa <c>articulos.costo_nominal</c> al confirmar (doc-10:396) —
     /// combinado con <c>CostoUnitario &gt; 0</c> (design decisión 4).</summary>
     public bool ActualizaCosto { get; set; } = true;

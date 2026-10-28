@@ -5,7 +5,7 @@ namespace Ways.Domain.Tests.Articulos;
 
 /// <summary>
 /// Regla pura de qué campos de <see cref="Articulo"/> comparten los miembros de una
-/// <see cref="Familia"/>. Cada una de las quince columnas compartidas tiene su propio caso: sacar una
+/// <see cref="Familia"/>. Cada una de las dieciséis columnas compartidas tiene su propio caso: sacar una
 /// del registro, de <see cref="ValoresCompartidosDeFamilia.AplicarA"/> o de
 /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> pone en rojo exactamente el caso de esa
 /// columna (un caso representativo no probaría las otras doce). Los campos propios se prueban
@@ -13,7 +13,7 @@ namespace Ways.Domain.Tests.Articulos;
 /// </summary>
 public class ValoresCompartidosDeFamiliaTests
 {
-    /// <summary>Las quince columnas de <c>articulos</c> compartidas por la familia, en el orden en que
+    /// <summary>Las dieciséis columnas de <c>articulos</c> compartidas por la familia, en el orden en que
     /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> las informa. Escritas a mano a
     /// propósito: pinean los nombres que <c>CamposDistintos</c> devuelve. Que cada uno sea una columna
     /// real de <c>articulos</c> lo comprueba <c>ModeloDeArticulosYPreciosTests</c> contra el modelo de EF.</summary>
@@ -159,7 +159,7 @@ public class ValoresCompartidosDeFamiliaTests
         UpdatedAt = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero)
     };
 
-    /// <summary>Con los quince campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
+    /// <summary>Con los dieciséis campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
     /// informa exactamente los nombres de <see cref="ColumnasCompartidas"/>, en el orden de
     /// declaración, y hay un cambio por cada nombre. Compara contra la lista escrita en esta clase: no
     /// consulta la tabla ni el modelo de EF.</summary>
@@ -265,8 +265,8 @@ public class ValoresCompartidosDeFamiliaTests
         Assert.Empty(distintos);
     }
 
-    /// <summary>Origen y destino difieren en TODO (los quince compartidos y los siete propios, más la
-    /// familia): después de aplicar, el destino tiene los quince del origen y conserva intactos sus
+    /// <summary>Origen y destino difieren en TODO (los dieciséis compartidos y los siete propios, más la
+    /// familia): después de aplicar, el destino tiene los dieciséis del origen y conserva intactos sus
     /// propios, su familia, su identidad y sus sellos de auditoría.</summary>
     [Fact]
     public void AplicarACopiaSoloLosQuinceCamposCompartidosYNoTocaLosPropios()
@@ -328,6 +328,7 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.CostoListaPor),
             nameof(Articulo.CostoListaIncluyeIva),
             nameof(Articulo.DescuentoProveedor),
+            nameof(Articulo.PorcentajeImpuestoInterno),
             nameof(Articulo.CostoNominal)
         ];
 
