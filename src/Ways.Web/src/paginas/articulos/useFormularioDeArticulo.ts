@@ -29,8 +29,6 @@ import { useCatalogosDeArticulo } from './useCatalogosDeArticulo'
 import { rechazoDeTeclaTomada } from './teclaAtajo'
 import { useFamiliasDelFormulario } from './useFamiliasDelFormulario'
 
-export const MENSAJE_CONFIRMAR_DESCARTE = 'Hay cambios sin guardar en el artículo. ¿Descartarlos?'
-
 /** La pregunta de alcance abierta al guardar la edición de un miembro de una familia (doc 10 §3): `contexto` es
  * con lo que se abre (la familia conocida o el texto del servidor) y `campos`, las etiquetas de los campos
  * compartidos que cambian. Se abre antes de escribir lo que pregunta; al elegir un alcance sigue abierta, con sus
@@ -491,16 +489,17 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     setAvisoGuardado(`El artículo salió de la familia${nombre === null ? '' : ` "${nombre}"`}: el precio se guardó solo en él.`)
   }
 
-  /** "Sacar de la familia": una escritura propia (DELETE), con su ventana inerte y su token. Resuelve `false`
-   * si no llegó a empezar. */
-  async function sacarDeLaFamilia(): Promise<boolean> {
-    if (escrituraEnCursoRef.current) return false
-    if (!formulario || formulario.id === null || formulario.idFamilia === '') return false
+  /** "Sacar de la familia": una escritura propia (DELETE), con su ventana inerte y su token. Resuelve `null`
+   * si no llegó a empezar y el motivo del rechazo (`''` si no hay uno para mostrar) cuando terminó. */
+  async function sacarDeLaFamilia(): Promise<string | null> {
+    if (escrituraEnCursoRef.current) return null
+    if (!formulario || formulario.id === null || formulario.idFamilia === '') return null
     const idArticulo = formulario.id
     const idFamilia = formulario.idFamilia
     const nombre = formulario.nombre
     const nombreDeLaFamilia = familiaDelArticulo(idFamilia, familias.detalle).nombre
     escrituraEnCursoRef.current = true
+    let rechazo = ''
 
     const token = invalidarEdicionEnCurso()
     setSaliendoDeFamilia(true)
@@ -523,7 +522,8 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
         if (e instanceof ErrorApi && ((e.estado === 409 && e.codigo === 'familia_cambio') || e.estado === 404)) {
           recargarArticuloDesactualizado(idArticulo)
         } else {
-          setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo sacar el artículo de la familia.')
+          // El motivo lo muestra la confirmación que pidió la salida, no el banner del formulario.
+          rechazo = e instanceof ErrorApi ? e.message : 'No se pudo sacar el artículo de la familia.'
         }
       }
     } finally {
@@ -533,7 +533,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       setSaliendoDeFamilia(false)
     }
 
-    return true
+    return rechazo
   }
 
   /** Elegir una familia en un alta: el artículo toma sus dieciséis campos compartidos, que quedan bloqueados. Dejarla

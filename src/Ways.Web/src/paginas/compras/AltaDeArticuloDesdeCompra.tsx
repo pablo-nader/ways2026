@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ArticuloListado } from '../../api/tipos'
+import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { ModalDeArticulo } from '../articulos/ModalDeArticulo'
-import { MENSAJE_CONFIRMAR_DESCARTE, useFormularioDeArticulo, type PrecargaDeAlta } from '../articulos/useFormularioDeArticulo'
+import { useFormularioDeArticulo, type PrecargaDeAlta } from '../articulos/useFormularioDeArticulo'
 
 // Al cerrar, `Modal` devuelve el foco a quien lo abrió; no hay un destino de reserva que sumar.
 const sinReserva = { current: null }
@@ -46,11 +47,32 @@ export function AltaDeArticuloDesdeCompra({ precarga, idProveedor, onCreado, onC
     },
   })
 
+  const [confirmandoDescarte, setConfirmandoDescarte] = useState(false)
+
   function cerrar() {
     if (alta.ocupado) return
-    if (alta.haySinGuardar() && !confirm(MENSAJE_CONFIRMAR_DESCARTE)) return
+    if (alta.haySinGuardar()) {
+      setConfirmandoDescarte(true)
+      return
+    }
     onCancelar()
   }
 
-  return <ModalDeArticulo {...alta.propsDelModal({ ocupado: alta.ocupado, focoDeReserva: sinReserva, onCerrar: cerrar })} />
+  return (
+    <>
+      <ModalDeArticulo {...alta.propsDelModal({ ocupado: alta.ocupado, focoDeReserva: sinReserva, onCerrar: cerrar })} />
+      {confirmandoDescarte && (
+        <ConfirmacionDeBaja
+          titulo="los cambios sin guardar del artículo"
+          pregunta="Descartar"
+          nota="Cancelar vuelve a la edición."
+          etiquetaConfirmar="Descartar cambios"
+          etiquetaEnCurso="Descartando…"
+          ocupado={false}
+          onConfirmar={onCancelar}
+          onCancelar={() => setConfirmandoDescarte(false)}
+        />
+      )}
+    </>
+  )
 }

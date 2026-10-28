@@ -99,6 +99,13 @@ function llamadasA(mock: ReturnType<typeof vi.fn>, ruta: string) {
 
 const RUTA_UNO = '/plataforma/tenants/1/dominios'
 
+/** Abre el modal de alta con el botón de la grilla y devuelve el diálogo. */
+async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
+  await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+
+  return screen.findByRole('dialog', { name: 'Nuevo dominio' })
+}
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
@@ -112,6 +119,7 @@ describe('Dominios — lista', () => {
     montar()
 
     expect(await screen.findByLabelText('Tenant')).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'Agregar dominio' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Host')).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
@@ -244,15 +252,80 @@ describe('Dominios — alta', () => {
       return Promise.resolve(nuevo)
     })
 
-    await usuario.type(screen.getByLabelText('Host'), '  nuevo.sur.com ')
-    await usuario.click(screen.getByLabelText('Principal'))
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), '  nuevo.sur.com ')
+    await usuario.click(within(dialogo).getByLabelText('Principal'))
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByRole('row', { name: /nuevo\.sur\.com/ })).toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledWith(RUTA_UNO, { host: 'nuevo.sur.com', esPrincipal: true })
     expect(screen.getByText(/Se agregó el dominio "nuevo\.sur\.com"/)).toBeInTheDocument()
-    expect(screen.getByLabelText('Host')).toHaveValue('')
-    expect(screen.getByLabelText('Principal')).not.toBeChecked()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    const reabierto = await abrirAlta(usuario)
+    expect(within(reabierto).getByLabelText('Host')).toHaveValue('')
+    expect(within(reabierto).getByLabelText('Principal')).not.toBeChecked()
+  })
+
+  it('el botón de agregar abre el formulario en un modal y no en la página', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('tienda.sur.com')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    const dialogo = await abrirAlta(usuario)
+
+    expect(within(dialogo).getByLabelText('Host')).toBeInTheDocument()
+  })
+
+  it('cancelar descarta lo escrito sin tocar la API y el próximo alta abre vacío', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('tienda.sur.com')
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+    await usuario.click(within(dialogo).getByLabelText('Principal'))
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    const reabierto = await abrirAlta(usuario)
+    expect(within(reabierto).getByLabelText('Host')).toHaveValue('')
+    expect(within(reabierto).getByLabelText('Principal')).not.toBeChecked()
+  })
+
+  it('tras un alta exitosa el foco vuelve al botón de agregar', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('tienda.sur.com')
+    apiPostMock.mockResolvedValue(dominio({ id: 13, idTenant: 1, host: 'nuevo.sur.com' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await screen.findByText(/Se agregó el dominio "nuevo\.sur\.com"/)
+    expect(screen.getByRole('button', { name: 'Agregar dominio' })).toHaveFocus()
+  })
+
+  it('Escape cierra el modal sin guardar y devuelve el foco al disparador', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('tienda.sur.com')
+    const disparador = screen.getByRole('button', { name: 'Agregar dominio' })
+    await abrirAlta(usuario)
+
+    await usuario.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(disparador).toHaveFocus()
   })
 
   it('un host duplicado se explica junto al campo y el formulario conserva lo escrito', async () => {
@@ -262,16 +335,18 @@ describe('Dominios — alta', () => {
     await screen.findByText('tienda.sur.com')
     apiPostMock.mockRejectedValue(new ErrorApi(409, 'host_duplicado', 'texto crudo'))
 
-    await usuario.type(screen.getByLabelText('Host'), 'www.sur.com')
-    await usuario.click(screen.getByLabelText('Principal'))
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'www.sur.com')
+    await usuario.click(within(dialogo).getByLabelText('Principal'))
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() =>
-      expect(screen.getByLabelText('Host')).toHaveAccessibleDescription('Ese host ya está cargado en otro dominio.'),
+      expect(within(dialogo).getByLabelText('Host')).toHaveAccessibleDescription('Ese host ya está cargado en otro dominio.'),
     )
-    expect(screen.getByLabelText('Host')).toHaveValue('www.sur.com')
-    expect(screen.getByLabelText('Principal')).toBeChecked()
-    expect(screen.getByRole('button', { name: 'Agregar dominio' })).toBeEnabled()
+    expect(within(dialogo).getByLabelText('Host')).toHaveValue('www.sur.com')
+    expect(within(dialogo).getByLabelText('Principal')).toBeChecked()
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+    expect(screen.getByRole('dialog', { name: 'Nuevo dominio' })).toBeInTheDocument()
     expect(llamadasA(apiGetMock, RUTA_UNO)).toHaveLength(1)
   })
 
@@ -282,13 +357,14 @@ describe('Dominios — alta', () => {
     await screen.findByText('tienda.sur.com')
     apiPostMock.mockRejectedValue(new ErrorApi(400, 'host_invalido', 'texto crudo'))
 
-    await usuario.type(screen.getByLabelText('Host'), 'https://x.com/ruta')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'https://x.com/ruta')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() =>
-      expect(screen.getByLabelText('Host')).toHaveAccessibleDescription(/sin https:\/\/ ni rutas/),
+      expect(within(dialogo).getByLabelText('Host')).toHaveAccessibleDescription(/sin https:\/\/ ni rutas/),
     )
-    expect(screen.getByLabelText('Host')).toHaveValue('https://x.com/ruta')
+    expect(within(dialogo).getByLabelText('Host')).toHaveValue('https://x.com/ruta')
   })
 
   it('un fallo incierto del alta relee la lista y deja el mensaje a la vista', async () => {
@@ -303,12 +379,13 @@ describe('Dominios — alta', () => {
       return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar.'))
     })
 
-    await usuario.type(screen.getByLabelText('Host'), 'nuevo.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByRole('row', { name: /nuevo\.sur\.com/ })).toBeInTheDocument()
     expect(llamadasA(apiGetMock, RUTA_UNO)).toHaveLength(2)
-    expect(screen.getByLabelText('Host')).toHaveAccessibleDescription(/No se pudo agregar el dominio\. No se pudo confirmar\./)
+    expect(within(dialogo).getByLabelText('Host')).toHaveAccessibleDescription(/No se pudo agregar el dominio\. No se pudo confirmar\./)
   })
 
   it('si el alta commiteó pero el refresco falla, no se informa como fallida', async () => {
@@ -322,8 +399,9 @@ describe('Dominios — alta', () => {
       ruta === RUTA_UNO ? Promise.reject(new ErrorApi(500, 'error_interno', 'Falló.')) : original(ruta),
     )
 
-    await usuario.type(screen.getByLabelText('Host'), 'nuevo.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByText(/Se agregó el dominio "nuevo\.sur\.com".*no se pudo actualizar la vista/)).toBeInTheDocument()
     expect(screen.queryByText(/No se pudo agregar/)).not.toBeInTheDocument()
@@ -335,8 +413,9 @@ describe('Dominios — alta', () => {
     await elegirTenant(usuario, 1)
     await screen.findByText('tienda.sur.com')
     apiPostMock.mockReturnValue(new Promise(() => {}))
-    await usuario.type(screen.getByLabelText('Host'), 'nuevo.sur.com')
-    const boton = screen.getByRole('button', { name: 'Agregar dominio' })
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+    const boton = within(dialogo).getByRole('button', { name: 'Guardar' })
 
     act(() => {
       boton.click()
@@ -344,6 +423,10 @@ describe('Dominios — alta', () => {
     })
 
     expect(apiPostMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Guardando…' })).toBeDisabled())
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    await usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nuevo dominio' })).toBeInTheDocument()
   })
 })
 
@@ -429,8 +512,6 @@ describe('Dominios — verificación', () => {
     await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
 
     expect(screen.getByLabelText('Tenant')).toBeDisabled()
-    expect(screen.getByLabelText('Host')).toBeDisabled()
-    expect(screen.getByLabelText('Principal')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Agregar dominio' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Eliminar tienda.sur.com' })).toBeDisabled()
@@ -543,22 +624,23 @@ describe('Dominios — baja', () => {
 })
 
 describe('Dominios — cada acción borra lo que dijo la anterior', () => {
-  it('verificar borra el rechazo de un alta anterior', async () => {
+  it('cancelar el modal borra el rechazo del alta: el próximo alta abre sin error', async () => {
     const usuario = userEvent.setup()
     montar()
     await elegirTenant(usuario, 1)
     await screen.findByText('www.sur.com')
     apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'host_duplicado', 'texto crudo'))
-    await usuario.type(screen.getByLabelText('Host'), 'www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'www.sur.com')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
     await waitFor(() =>
-      expect(screen.getByLabelText('Host')).toHaveAccessibleDescription('Ese host ya está cargado en otro dominio.'),
+      expect(within(dialogo).getByLabelText('Host')).toHaveAccessibleDescription('Ese host ya está cargado en otro dominio.'),
     )
 
-    apiPostMock.mockReturnValue(new Promise(() => {}))
-    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+    const reabierto = await abrirAlta(usuario)
 
-    expect(screen.getByLabelText('Host')).not.toHaveAccessibleDescription()
+    expect(within(reabierto).getByLabelText('Host')).not.toHaveAccessibleDescription()
   })
 
   it('agregar borra el aviso de éxito de una acción anterior', async () => {
@@ -570,8 +652,9 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
 
     apiPostMock.mockReturnValue(new Promise(() => {}))
-    await usuario.type(screen.getByLabelText('Host'), 'nuevo.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 
     expect(screen.queryByText('Se marcó como verificado "www.sur.com".')).not.toBeInTheDocument()
   })
@@ -636,5 +719,180 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByText(/No se pudo dar de baja el dominio\./)).not.toBeInTheDocument()
+  })
+})
+
+describe('Dominios — orden y filtros por columna', () => {
+  const zeta = dominio({ id: 31, idTenant: 1, host: 'zeta.com', verificadoEn: '2026-10-11T12:00:00Z' })
+  const alfa = dominio({ id: 32, idTenant: 1, host: 'alfa.com', esPrincipal: true })
+  const medio = dominio({ id: 33, idTenant: 1, host: 'medio.com', verificadoEn: '2026-12-01T12:00:00Z' })
+
+  /** Las dos primeras filas son el encabezado y los filtros; la celda 0 de cada fila de datos es el host. */
+  function hostsEnPantalla() {
+    return screen
+      .getAllByRole('row')
+      .slice(2)
+      .map((f) => within(f).getAllByRole('cell')[0]?.textContent)
+  }
+
+  async function montarConDominios(usuario: ReturnType<typeof userEvent.setup>) {
+    const montado = montar({ 1: [zeta, alfa, medio], 2: [dominioDelOtro] })
+    await elegirTenant(usuario, 1)
+    await screen.findByText('zeta.com')
+
+    return montado
+  }
+
+  it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    const [encabezados, filtros] = screen.getAllByRole('row')
+    const celdasDeEncabezado = within(encabezados).getAllByRole('columnheader')
+    const celdasDeFiltros = within(filtros).getAllByRole('columnheader')
+
+    expect(celdasDeFiltros).toHaveLength(celdasDeEncabezado.length)
+    expect(celdasDeEncabezado.at(-1)).toHaveTextContent('Acciones')
+    expect(within(celdasDeFiltros.at(-1)!).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+  })
+
+  it('cada columna de datos se puede ordenar y Acciones no', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    for (const nombre of ['Host', 'Principal', 'Verificación']) {
+      expect(screen.getByRole('button', { name: nombre })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).not.toHaveAttribute('aria-sort')
+  })
+
+  it('el host se ordena ascendente, descendente y vuelve al orden del servidor', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+    const boton = screen.getByRole('button', { name: 'Host' })
+    const encabezado = screen.getByRole('columnheader', { name: 'Host' })
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com', 'medio.com'])
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['alfa.com', 'medio.com', 'zeta.com'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com', 'alfa.com'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com', 'medio.com'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('la verificación se ordena por fecha (11/10 antes que 1/12) y lo sin verificar va al final en ambas direcciones', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+    const boton = screen.getByRole('button', { name: 'Verificación' })
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com', 'alfa.com'])
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['medio.com', 'zeta.com', 'alfa.com'])
+  })
+
+  it('la columna principal se ordena por el texto mostrado', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Principal' }))
+
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com', 'alfa.com'])
+  })
+
+  it('el filtro de host ignora mayúsculas y el de verificación distingue verificados de sin verificar', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'ALFA')
+    expect(hostsEnPantalla()).toEqual(['alfa.com'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por verificación' }), 'sin verificar')
+    expect(hostsEnPantalla()).toEqual(['alfa.com'])
+
+    await usuario.clear(screen.getByRole('searchbox', { name: 'Filtrar por verificación' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por verificación' }), 'verificado')
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com'])
+  })
+
+  it('el filtro de principal es un select y se combina con el de texto; limpiar los quita', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por principal' }), 'Principal')
+    expect(hostsEnPantalla()).toEqual(['alfa.com'])
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por principal' }), 'No')
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com'])
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'alfa')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com', 'medio.com'])
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toHaveValue('')
+  })
+
+  it('el campo de filtro sigue montado y con su valor mientras la lista se recarga tras verificar', async () => {
+    const usuario = userEvent.setup()
+    const refresco = diferida<DominioListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantUno, tenantDos])
+      if (ruta === RUTA_UNO) return ++lecturas === 1 ? Promise.resolve([zeta, alfa, medio]) : refresco.promesa
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    render(<Dominios />)
+    await elegirTenant(usuario, 1)
+    await screen.findByText('zeta.com')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'a')
+    const campo = screen.getByRole('searchbox', { name: 'Filtrar por host' })
+
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: alfa.com' }))
+
+    expect(await screen.findByText('Se marcó como verificado "alfa.com".')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+
+    await act(async () => {
+      refresco.resolver([zeta, { ...alfa, verificadoEn: '2026-11-05T12:00:00Z' }, medio])
+      await refresco.promesa
+    })
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Marcar verificado: alfa.com' })).not.toBeInTheDocument())
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com'])
+  })
+
+  it('al elegir otro tenant los filtros del anterior no quedan aplicados', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'zeta')
+
+    await elegirTenant(usuario, 2)
+    await screen.findByText('este.example.com')
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toHaveValue('')
+    expect(hostsEnPantalla()).toEqual(['este.example.com'])
+  })
+
+  it('con la puerta de baja abierta los filtros quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar zeta.com' }))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Filtrar por principal' })).toBeDisabled()
   })
 })

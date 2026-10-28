@@ -1488,8 +1488,8 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
     })
 
     describe('cancelar un alta con cambios', () => {
-      it('pide confirmar antes de descartar lo editado en el formulario, y si se rechaza el formulario sigue abierto', async () => {
-        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      it('pide confirmar en un modal antes de descartar lo editado, y si se cancela el formulario sigue abierto', async () => {
+        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(true)
         const usuario = userEvent.setup()
         montar()
         await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
@@ -1497,15 +1497,18 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         await usuario.type(within(dialogo).getByLabelText('Descripción'), 'algo')
 
         await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+        const pregunta = await screen.findByRole('alertdialog', { name: 'Descartar cambios' })
+        expect(pregunta).toHaveTextContent('¿Descartar los cambios sin guardar del artículo?')
+        await usuario.click(within(pregunta).getByRole('button', { name: 'Cancelar' }))
 
-        expect(confirmar).toHaveBeenCalledTimes(1)
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
         expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
         expect(within(dialogo).getByLabelText('Descripción')).toHaveValue('algo')
+        expect(confirmar).not.toHaveBeenCalled()
         confirmar.mockRestore()
       })
 
       it('corregir solo el código del proveedor también cuenta como un cambio sin guardar', async () => {
-        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
         const usuario = userEvent.setup()
         montar()
         await usuario.type(campo(0, 'Código'), 'AB-1')
@@ -1514,10 +1517,9 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         await usuario.type(within(dialogo).getByLabelText('Código del proveedor'), '9')
 
         await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+        await usuario.click(within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Cancelar' }))
 
-        expect(confirmar).toHaveBeenCalledTimes(1)
         expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
-        confirmar.mockRestore()
       })
 
       it('editar solo el código del proveedor registra el aviso de salida de la pestaña, y un formulario intacto no', async () => {
@@ -1539,7 +1541,6 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       })
 
       it('si se acepta, cierra sin crear nada y la fila conserva todo lo tipeado en la compra', async () => {
-        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(true)
         const usuario = userEvent.setup()
         const { captura } = montar()
         await usuario.type(campo(0, 'Código'), 'AB-1')
@@ -1549,14 +1550,17 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         await usuario.type(within(dialogo).getByLabelText('Descripción'), 'algo')
 
         await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+        await usuario.click(
+          within(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).getByRole('button', { name: 'Descartar cambios' }),
+        )
 
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
         expect(apiPostMock).not.toHaveBeenCalled()
         expect(campo(0, 'Código')).toHaveValue('AB-1')
         expect(campo(0, 'Detalle')).toHaveValue('Cosa nueva')
         expect(campo(0, 'Importe')).toHaveValue('7,5000')
         expect(captura.lineas[0].idArticulo).toBe('')
-        confirmar.mockRestore()
       })
     })
 

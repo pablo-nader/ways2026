@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,6 +69,9 @@ function rutasDeClientes() {
 
 const BUSCADOR = 'Buscar por nombre, apellido, razón social o documento…'
 
+/** La baja nunca usa `window.confirm`: el spy devuelve `true` para que un regreso a él se note en el resultado. */
+let confirmSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
@@ -85,11 +88,227 @@ beforeEach(() => {
   })
   apiPostMock.mockResolvedValue(clienteFixture({ id: 8 }))
   apiDeleteMock.mockResolvedValue(undefined)
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('Clientes — alta y edición en un modal', () => {
+  async function llenarAlta(usuario: ReturnType<typeof userEvent.setup>) {
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo cliente' })
+    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Ana')
+    const condicion = within(dialogo).getByLabelText('Condición fiscal')
+    await within(condicion).findByRole('option', { name: 'Consumidor final' })
+    await usuario.selectOptions(condicion, '1')
+    await waitFor(() => expect(within(dialogo).getByLabelText('Lista de precios')).toHaveValue('1'))
+    return dialogo
+  }
+
+  it('el botón de agregar abre el formulario en un modal y no en la página', async () => {
+    const usuario = userEvent.setup()
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo cliente' })
+    expect(within(dialogo).getByLabelText('Nombre')).toBeInTheDocument()
+  })
+
+  it('un alta cierra el modal, avisa y vuelve a pedir el listado', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await llenarAlta(usuario)
+    const antes = rutasDeClientes().length
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Ana', idCondicionFiscal: 1, idListaPrecio: 1 })
+    expect(await screen.findByText('Cliente "Ana" creado.')).toBeInTheDocument()
+    expect(rutasDeClientes()).toHaveLength(antes + 1)
+  })
+
+  it('la edición abre el modal precargado y manda un PUT', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue(clienteFixture())
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando cliente 7' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Luis')
+    await within(dialogo).findByRole('option', { name: 'Consumidor final' })
+    await within(dialogo).findByRole('option', { name: 'Minorista (default)' })
+    await usuario.clear(within(dialogo).getByLabelText('Nombre'))
+    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Luisa')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/clientes/7')
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ nombre: 'Luisa' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('un rechazo del servidor deja el modal abierto con el error adentro y los datos escritos', async () => {
+    const usuario = userEvent.setup()
+    const { ErrorApi } = await import('../api/cliente')
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'duplicado', 'Ya existe un cliente con ese documento.'))
+    const dialogo = await llenarAlta(usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Ya existe un cliente con ese documento.')
+    expect(screen.getByRole('dialog', { name: 'Nuevo cliente' })).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Ana')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('cancelar descarta lo escrito y el próximo alta abre vacío', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await llenarAlta(usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    expect(await screen.findByLabelText('Nombre')).toHaveValue('')
+  })
+
+  it('Escape cierra el modal sin guardar y devuelve el foco al disparador', async () => {
+    const usuario = userEvent.setup()
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    const disparador = screen.getByRole('button', { name: 'Agregar' })
+    await usuario.click(disparador)
+    await screen.findByRole('dialog', { name: 'Nuevo cliente' })
+
+    await usuario.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(disparador).toHaveFocus()
+  })
+
+  it('tras un alta exitosa el foco vuelve al botón de agregar', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await llenarAlta(usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Cliente "Ana" creado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
+  it('tras una edición exitosa el foco cae en el botón de agregar, porque la fila se reemplaza durante el refresco', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue(clienteFixture())
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando cliente 7' })
+    await within(dialogo).findByRole('option', { name: 'Consumidor final' })
+    await within(dialogo).findByRole('option', { name: 'Minorista (default)' })
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Cliente "Luis" actualizado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
+  it('un doble clic sincrónico en Guardar emite una sola escritura y el modal no se cierra mientras guarda', async () => {
+    const usuario = userEvent.setup()
+    let resolver: (valor: ClienteListado) => void = () => {}
+    apiPostMock.mockReturnValue(new Promise<ClienteListado>((r) => (resolver = r)))
+    const dialogo = await llenarAlta(usuario)
+    const guardar = within(dialogo).getByRole('button', { name: 'Guardar' })
+
+    act(() => {
+      guardar.click()
+      guardar.click()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Guardando…' })).toBeDisabled())
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    await usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nuevo cliente' })).toBeInTheDocument()
+
+    await act(async () => resolver(clienteFixture({ id: 8 })))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+})
+
+describe('Clientes — la baja se confirma en un modal', () => {
+  async function pedirLaBaja() {
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    const eliminar = screen.getByRole('button', { name: 'Eliminar' })
+    await userEvent.click(eliminar)
+    return { eliminar, confirmacion: await screen.findByRole('alertdialog') }
+  }
+
+  it('abre una confirmación que nombra al cliente y no escribe hasta confirmar', async () => {
+    const { confirmacion } = await pedirLaBaja()
+
+    expect(confirmacion).toHaveTextContent('¿Dar de baja al cliente "Luis"?')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('cancelar cierra la confirmación sin dar de baja y devuelve el foco al botón', async () => {
+    const { eliminar, confirmacion } = await pedirLaBaja()
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(eliminar).toHaveFocus()
+  })
+
+  it('un doble clic sincrónico en Confirmar baja emite un solo DELETE y la puerta queda inerte mientras escribe', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    let resolver: () => void = () => {}
+    apiDeleteMock.mockReturnValue(new Promise<void>((r) => (resolver = r)))
+    const confirmar = within(confirmacion).getByRole('button', { name: 'Confirmar baja' })
+
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(within(confirmacion).getByRole('button', { name: 'Dando de baja…' })).toBeDisabled())
+    expect(within(confirmacion).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+
+    await act(async () => resolver())
+    await screen.findByText('Cliente "Luis" dado de baja.')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('una baja rechazada muestra el motivo dentro de la confirmación, que sigue abierta, sin aviso de éxito', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    const { ErrorApi } = await import('../api/cliente')
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'cliente_en_uso', 'El cliente tiene saldo.'))
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('El cliente tiene saldo.')
+    expect(screen.getAllByText('El cliente tiene saldo.')).toHaveLength(1)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByText('Cliente "Luis" dado de baja.')).toBeNull()
+    expect(within(confirmacion).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+  })
 })
 
 describe('Clientes — el refresco tras una escritura usa el término aplicado', () => {
@@ -144,6 +363,7 @@ describe('Clientes — el refresco tras una escritura usa el término aplicado',
       const antes = rutasDeClientes().length
 
       await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+      await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
 
       await waitFor(() => expect(rutasDeClientes()).toHaveLength(antes + 1))
       expect(apiDeleteMock).toHaveBeenCalledWith('/clientes/7')

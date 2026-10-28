@@ -315,7 +315,7 @@ export function Vitrina() {
       try {
         await quitarLogo(id)
       } catch (e) {
-        // La puerta queda abierta con el motivo al lado.
+        // La puerta queda abierta y muestra el motivo adentro.
         setErrorDeAccion(copiaDeFalloDeVitrina(e, 'No se pudo quitar el logo.'))
         if (debeReleerTrasFallo(e)) await releerTrasFallo(id)
 
@@ -409,7 +409,7 @@ export function Vitrina() {
             )}
           </div>
         )}
-        {errorDeAccion && (
+        {errorDeAccion && puerta === null && (
           <div className="alert alert-danger" role="alert">
             {errorDeAccion}
           </div>
@@ -429,6 +429,7 @@ export function Vitrina() {
             etiquetaEnCurso="Quitando…"
             ocupado={ocupado}
             disparador={disparadorDeLaPuerta}
+            error={errorDeAccion}
             onConfirmar={() => void confirmarQuitarLogo(idElegido)}
             onCancelar={cerrarPuerta}
           />
@@ -442,6 +443,7 @@ export function Vitrina() {
             etiquetaEnCurso="Eliminando…"
             ocupado={ocupado}
             disparador={disparadorDeLaPuerta}
+            error={errorDeAccion}
             onConfirmar={() => void confirmarEliminarVitrina(idElegido)}
             onCancelar={cerrarPuerta}
           />

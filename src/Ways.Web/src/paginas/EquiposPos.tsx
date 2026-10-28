@@ -6,6 +6,14 @@ import type { DispositivoListado } from '../api/dispositivos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { fechaHoraATexto } from '../formato/fechas'
 
 const AVISO_REFRESCO_FALLIDO = 'Se revocó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -21,6 +29,25 @@ export const NOTA_DE_REVOCACION =
 function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
 }
+
+const textoDeUltimoUso = (equipo: DispositivoListado) => (equipo.ultimoUsoAt ? formatearFechaHora(equipo.ultimoUsoAt) : 'Nunca')
+
+const ORDENABLES: ColumnasOrdenables<DispositivoListado> = {
+  nombre: { valor: (equipo) => equipo.nombre },
+  puntoVenta: { valor: (equipo) => equipo.puntoVenta.nombre },
+  vinculadoEl: { valor: (equipo) => new Date(equipo.createdAt) },
+  ultimoUso: { valor: (equipo) => (equipo.ultimoUsoAt ? new Date(equipo.ultimoUsoAt) : null) },
+}
+
+const FILTRABLES: ColumnasFiltrables<DispositivoListado> = {
+  nombre: { etiqueta: 'Nombre', valor: (equipo) => equipo.nombre },
+  puntoVenta: { etiqueta: 'Punto de venta', valor: (equipo) => equipo.puntoVenta.nombre },
+  vinculadoEl: { etiqueta: 'Vinculado el', valor: (equipo) => formatearFechaHora(equipo.createdAt) },
+  ultimoUso: { etiqueta: 'Último uso', valor: textoDeUltimoUso },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['nombre', 'puntoVenta', 'vinculadoEl', 'ultimoUso', null]
 
 /**
  * Listado y revocación de los equipos del POS de escritorio del tenant. Mismo patrón de puerta,
@@ -114,10 +141,16 @@ export function EquiposPos() {
 
   const bloqueado = ocupado !== null || revocacion !== null
 
+  const { filas: filasFiltradas, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(
+    items,
+    FILTRABLES,
+  )
+  const { filas: filasVisibles, orden, alternar } = useOrdenamiento(filasFiltradas, ORDENABLES)
+
   return (
     <div className="container-fluid py-4">
       <Box titulo="Equipos POS" variante="inverse">
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !revocacion && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {revocacion && (
@@ -129,32 +162,52 @@ export function EquiposPos() {
             etiquetaEnCurso="Revocando…"
             ocupado={ocupado !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarRevocacion}
             onCancelar={cancelarRevocacion}
           />
         )}
 
-        {cargando ? (
-          <Cargando />
-        ) : (
+        {cargando && <Cargando />}
+
+        {cargando && items.length === 0 ? null : (
           <div className="table-responsive">
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Nombre</th>
-                  <th>Punto de venta</th>
-                  <th>Vinculado el</th>
-                  <th>Último uso</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="puntoVenta" orden={orden} onAlternar={alternar}>
+                    Punto de venta
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="vinculadoEl" orden={orden} onAlternar={alternar}>
+                    Vinculado el
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="ultimoUso" orden={orden} onAlternar={alternar}>
+                    Último uso
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={CELDAS_DE_FILTROS}
+                  columnas={FILTRABLES}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {items.map((d) => (
+                {filasVisibles.map((d) => (
                   <tr key={d.id}>
                     <td>{d.nombre}</td>
                     <td>{d.puntoVenta.nombre}</td>
                     <td>{formatearFechaHora(d.createdAt)}</td>
-                    <td>{d.ultimoUsoAt ? formatearFechaHora(d.ultimoUsoAt) : 'Nunca'}</td>
+                    <td>{textoDeUltimoUso(d)}</td>
                     <td className="text-end text-nowrap">
                       <button
                         type="button"
@@ -167,10 +220,10 @@ export function EquiposPos() {
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && (
+                {filasVisibles.length === 0 && (
                   <tr>
                     <td colSpan={5} className="text-center text-muted py-4">
-                      No hay equipos vinculados.
+                      {items.length === 0 ? 'No hay equipos vinculados.' : 'Ningún registro coincide con los filtros.'}
                     </td>
                   </tr>
                 )}

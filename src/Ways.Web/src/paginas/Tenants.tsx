@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { arrastreDeTenant, copiaDeFalloDeBaja } from '../api/bajas'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -8,6 +8,8 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { ModalDeNuevoTenant } from './tenants/ModalDeNuevoTenant'
+import { ModalDeTenant, type FormularioDeTenant } from './tenants/ModalDeTenant'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -16,7 +18,7 @@ const AVISO_REFRESCO_FALLIDO_BAJA =
 type AccionDeEstado = 'suspenderTenant' | 'reactivarTenant'
 
 /** Lo que la puerta de confirmación tiene pendiente. Las tres acciones de esta pantalla que
- * escriben sobre una fila entera pasan por ella; editar el nombre tiene su propio formulario. */
+ * escriben sobre una fila entera pasan por ella; editar el nombre tiene su propio modal. */
 type Confirmacion =
   | { tipo: 'baja'; fila: TenantListado }
   | { tipo: 'estado'; fila: TenantListado; accion: AccionDeEstado }
@@ -39,17 +41,23 @@ const COPIA_DE_ESTADO: Readonly<
 }
 
 /**
- * ABM (parcial) de tenants — plataforma-only. El alta completa (tenant + empresa + punto de
- * venta + plantilla + admin) vive en <c>NuevoTenant.tsx</c> (aprovisionamiento, ADR-16): acá
- * se lista, se edita el nombre, se suspende/reactiva y —desde la etapa 20— se da de baja
- * lógicamente, con su empresa, sus puntos de venta y sus usuarios en la misma cascada.
+ * ABM de tenants — plataforma-only. El alta completa (tenant + empresa + punto de venta +
+ * plantilla + admin) es el modal <c>ModalDeNuevoTenant</c> (aprovisionamiento, ADR-16) y el
+ * renombrado, <c>ModalDeTenant</c>; acá además se lista, se suspende/reactiva y —desde la etapa
+ * 20— se da de baja lógicamente, con su empresa, sus puntos de venta y sus usuarios en la misma
+ * cascada. `/organizacion/nuevo-tenant` redirige acá con `?nuevo=1`, que abre el modal de alta
+ * una sola vez.
  */
 export function Tenants() {
   const [items, setItems] = useState<TenantListado[]>([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
-  const [edicion, setEdicion] = useState<{ id: number; nombre: string } | null>(null)
+  const [parametros, setParametros] = useSearchParams()
+  const [edicion, setEdicion] = useState<FormularioDeTenant | null>(null)
+  /** El rechazo del renombrado vive en el modal; `error` queda para lo que le pasó a la pantalla. */
+  const [errorDeEdicion, setErrorDeEdicion] = useState('')
+  const [creando, setCreando] = useState(() => parametros.get('nuevo') === '1')
   const [ocupado, setOcupado] = useState<number | null>(null)
   /**
    * Acción pendiente de confirmación. La puerta es MODAL: mientras hay una, `bloqueado` deja
@@ -91,6 +99,9 @@ export function Tenants() {
    * escribe antes del primer `await` y se apaga en el mismo `finally` ungated.
    */
   const ocupadoRef = useRef(false)
+  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (la tabla se reemplaza por "Cargando…"
+   * durante el refresco): el botón de alta, que es estable. */
+  const nuevoRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
@@ -111,6 +122,23 @@ export function Tenants() {
   useEffect(() => {
     void cargar(++generacion.current)
   }, [cargar])
+
+  // El parámetro abre el modal al llegar (también con la pantalla ya montada: el menú vuelve a ella con `?nuevo=1`) y se
+  // consume para que recargar o volver no lo reabra.
+  useEffect(() => {
+    if (!parametros.has('nuevo')) return
+
+    setCreando(true)
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete('nuevo')
+
+        return siguientes
+      },
+      { replace: true },
+    )
+  }, [parametros, setParametros])
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de
@@ -134,21 +162,21 @@ export function Tenants() {
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(id)
-    setError('')
-    setAviso('')
+    setErrorDeEdicion('')
     try {
       try {
         await clienteDeOrganizacion.editarTenant(id, { nombre })
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        setErrorDeEdicion(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
 
-      if (generacion.current !== token) return
-
-      setEdicion(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`: así el
+      // disparador (o el botón de alta, si la fila se reemplazó) ya está habilitado cuando el modal restaura el foco.
+      // La respuesta no lleva gate: `bloqueado` deja inerte la pantalla entera mientras la escritura está en vuelo.
       await refrescarTrasEscribir(token, `Se actualizó el tenant "${nombre}".`, AVISO_REFRESCO_FALLIDO)
+      setEdicion(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
@@ -236,7 +264,7 @@ export function Tenants() {
       try {
         await clienteDeOrganizacion.eliminarTenant(fila.id)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde y la puerta queda ABIERTA con el motivo al lado: el operador
+        // Un rechazo SIEMPRE se rinde y la puerta queda ABIERTA con el motivo adentro: el operador
         // ve por qué no se pudo sin perder de vista qué estaba por dar de baja. La copia la elige
         // el `codigo`, nunca el `mensaje` — que igual se rinde, porque es lo único que nombra qué
         // bloquea.
@@ -248,9 +276,6 @@ export function Tenants() {
       // Un 204 SIEMPRE cierra la puerta y refresca. La generación solo gobierna el REFRESCO, que es
       // una lectura: nunca el desenlace de la escritura que acaba de commitear.
       setConfirmacion(null)
-      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
-      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
-      setEdicion((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Se dio de baja el tenant "${fila.nombre}".`,
@@ -266,31 +291,31 @@ export function Tenants() {
    * que nada pueda acuñar una generación nueva mientras el operador decide (regla 9). */
   const bloqueado = ocupado !== null || confirmacion !== null
 
-  // Un `<Link>` no admite `disabled`: la clase `disabled` de Bootstrap le apaga los eventos de
-  // puntero y `tabIndex={-1}` lo saca del recorrido de tabulación. Pero las dos cosas son
-  // presentación: `pointer-events: none` solo bloquea el hit-testing del mouse, y ni el Enter
-  // sobre un `<a>` enfocado por programa ni un click sintético pasan por ahí. El `preventDefault`
-  // es el que efectivamente cancela la navegación mientras la puerta está abierta.
+  function abrirEdicion(tenant: TenantListado) {
+    setEdicion({ id: tenant.id, nombre: tenant.nombre })
+    setError('')
+    setAviso('')
+    setErrorDeEdicion('')
+  }
+
+  function abrirAlta() {
+    setCreando(true)
+    setError('')
+    setAviso('')
+  }
+
   const herramientas = (
     <nav className="p-2">
-      <Link
-        to="/organizacion/nuevo-tenant"
-        className={`btn btn-sm btn-success text-nowrap${bloqueado ? ' disabled' : ''}`}
-        aria-disabled={bloqueado}
-        tabIndex={bloqueado ? -1 : undefined}
-        onClick={(evento) => {
-          if (bloqueado) evento.preventDefault()
-        }}
-      >
+      <button ref={nuevoRef} type="button" className="btn btn-sm btn-success text-nowrap" disabled={bloqueado} onClick={abrirAlta}>
         Nuevo tenant
-      </Link>
+      </button>
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Tenants" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !confirmacion && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {confirmacion && (
@@ -309,50 +334,30 @@ export function Tenants() {
             }
             ocupado={ocupado !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmar}
             onCancelar={cancelarConfirmacion}
           />
         )}
 
         {edicion && (
-          <form
-            className="row g-3 border p-3 mb-4 bg-body"
-            onSubmit={(e) => {
-              e.preventDefault()
-              guardarNombre()
-            }}
-          >
-            <div className="col-12">
-              <strong>Editando tenant {edicion.id}</strong>
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="t-nombre">
-                Nombre
-              </label>
-              <input
-                id="t-nombre"
-                className="form-control"
-                maxLength={150}
-                value={edicion.nombre}
-                onChange={(e) => setEdicion({ ...edicion, nombre: e.target.value })}
-                disabled={bloqueado}
-                required
-              />
-            </div>
-            <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success" disabled={bloqueado}>
-                {ocupado !== null ? 'Guardando…' : 'Guardar'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setEdicion(null)}
-                disabled={bloqueado}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
+          <ModalDeTenant
+            valor={edicion}
+            guardando={ocupado !== null}
+            error={errorDeEdicion}
+            focoDeReserva={nuevoRef}
+            onCambio={setEdicion}
+            onGuardar={guardarNombre}
+            onCancelar={() => setEdicion(null)}
+          />
+        )}
+
+        {creando && (
+          <ModalDeNuevoTenant
+            focoDeReserva={nuevoRef}
+            onCreado={() => void cargar(++generacion.current)}
+            onCancelar={() => setCreando(false)}
+          />
         )}
 
         {cargando ? (
@@ -388,7 +393,7 @@ export function Tenants() {
                       <BotonIcono
                         icono="editar"
                         className="me-1"
-                        onClick={() => setEdicion({ id: t.id, nombre: t.nombre })}
+                        onClick={() => abrirEdicion(t)}
                         disabled={bloqueado}
                       />
                       {t.estado === 'Activo' && (

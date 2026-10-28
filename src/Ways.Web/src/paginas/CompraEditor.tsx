@@ -70,6 +70,7 @@ import { AvisoDeNumeroDuplicado } from './compras/AvisoDeNumeroDuplicado'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
 import { useDuplicadosDeCompra } from './compras/useDuplicadosDeCompra'
 import { GrillaDeItemsDeCompra } from './compras/GrillaDeItemsDeCompra'
+import { ModalDeAnulacionDeCompra } from './compras/ModalDeAnulacionDeCompra'
 import {
   hayCambiosSinGuardar,
   huellaDeFormulario,
@@ -715,7 +716,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [anulando, setAnulando] = useState(false)
   const anulandoRef = useRef(false)
   const [panelAnularAbierto, setPanelAnularAbierto] = useState(false)
-  const [confirmadoParaAnular, setConfirmadoParaAnular] = useState(false)
   const [errorAnular, setErrorAnular] = useState('')
   const [resultadoAnulacion, setResultadoAnulacion] = useState<ResultadoAnulacion | null>(null)
 
@@ -1040,9 +1040,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   async function anular() {
     // regla 9: guard de reentrancia de primera línea.
-    if (ocupado) return
-    if (anulandoRef.current) return
-    if (!confirmadoParaAnular || idCompra === null) return
+    if (ocupado || anulandoRef.current || idCompra === null) return
 
     anulandoRef.current = true
     setAnulando(true)
@@ -1058,7 +1056,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       setCompra(resultado.compra)
       setResultadoAnulacion(resultado)
       setPanelAnularAbierto(false)
-      setConfirmadoParaAnular(false)
     } catch (e) {
       anulandoRef.current = false
       setAnulando(false)
@@ -1387,7 +1384,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 Se están buscando códigos de proveedor: espere a que terminen y vuelva a guardar.
               </div>
             )}
-            {(impedimentoParaGuardar ?? error) && (
+            {(impedimentoParaGuardar ?? (descartarBorradorAbierto ? '' : error)) && (
               <div className="alert alert-danger py-1 px-2 small" role="alert">
                 {impedimentoParaGuardar ?? error}
               </div>
@@ -1446,6 +1443,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 etiquetaEnCurso="Descartando…"
                 ocupado={descartandoBorrador}
                 disparador={disparadorDeDescartarBorrador}
+                error={error}
                 onConfirmar={() => void descartarBorrador()}
                 onCancelar={() => setDescartarBorradorAbierto(false)}
               />
@@ -1537,7 +1535,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                       type="button"
                       className="btn btn-danger"
                       disabled={ocupado}
-                      onClick={() => setPanelAnularAbierto(true)}
+                      onClick={() => {
+                        setErrorAnular('')
+                        setPanelAnularAbierto(true)
+                      }}
                     >
                       Anular compra
                     </button>
@@ -1554,46 +1555,17 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   )}
 
                   {panelAnularAbierto && (
-                    <div className="border p-3 mb-3">
-                      <strong>Anular compra</strong>
-                      {errorAnular && <div className="alert alert-danger py-1 px-2 small mt-2">{errorAnular}</div>}
-                      <div className="form-check my-2">
-                        <input
-                          id="compra-confirmacion-anular"
-                          type="checkbox"
-                          className="form-check-input"
-                          checked={confirmadoParaAnular}
-                          disabled={anulando}
-                          onChange={(e) => setConfirmadoParaAnular(e.target.checked)}
-                        />
-                        <label className="form-check-label" htmlFor="compra-confirmacion-anular">
-                          {tieneArticulos
-                            ? 'Confirmo que quiero anular esta compra. Es irreversible: se revierte el stock que entró, el costo del artículo NO se corrige solo (se edita aparte).'
-                            : 'Confirmo que quiero anular esta compra. Es irreversible.'}
-                        </label>
-                      </div>
-                      <div className="d-flex gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary"
-                          disabled={anulando}
-                          onClick={() => {
-                            setPanelAnularAbierto(false)
-                            setConfirmadoParaAnular(false)
-                          }}
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger"
-                          disabled={!confirmadoParaAnular || ocupado}
-                          onClick={anular}
-                        >
-                          {anulando ? 'Anulando…' : 'Anular'}
-                        </button>
-                      </div>
-                    </div>
+                    <ModalDeAnulacionDeCompra
+                      tieneArticulos={tieneArticulos}
+                      anulando={anulando}
+                      bloqueado={ocupado}
+                      error={errorAnular}
+                      onConfirmar={anular}
+                      onCancelar={() => {
+                        setPanelAnularAbierto(false)
+                        setErrorAnular('')
+                      }}
+                    />
                   )}
 
                   {tienePreciosSugeridos && listasPrecio && listasPrecio.length > 0 && (

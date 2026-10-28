@@ -78,7 +78,8 @@ describe('EquiposPos — listado', () => {
     await waitFor(() => expect(screen.getByText('Caja 1')).toBeInTheDocument())
 
     expect(apiGetMock).toHaveBeenCalledWith('/dispositivos')
-    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
+    const encabezados = within(screen.getAllByRole('row')[0]).getAllByRole('columnheader')
+    expect(encabezados.map((c) => c.textContent?.replace('↕', ''))).toEqual([
       'Nombre',
       'Punto de venta',
       'Vinculado el',
@@ -277,5 +278,188 @@ describe('EquiposPos — revocación', () => {
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByText(copia)).not.toBeInTheDocument()
+  })
+})
+
+describe('EquiposPos — orden y filtros por columna', () => {
+  const zeta: DispositivoListado = {
+    id: 21,
+    nombre: 'Zeta',
+    puntoVenta: { numero: 1, nombre: 'PV Norte' },
+    createdAt: '2026-10-11T12:00:00Z',
+    ultimoUsoAt: '2026-12-01T12:00:00Z',
+  }
+  const alfa: DispositivoListado = {
+    id: 22,
+    nombre: 'Alfa',
+    puntoVenta: { numero: 2, nombre: 'PV Sur' },
+    createdAt: '2026-12-01T12:00:00Z',
+    ultimoUsoAt: null,
+  }
+  const medio: DispositivoListado = {
+    id: 23,
+    nombre: 'Medio',
+    puntoVenta: { numero: 3, nombre: 'PV Centro' },
+    createdAt: '2026-05-02T12:00:00Z',
+    ultimoUsoAt: '2026-10-11T12:00:00Z',
+  }
+
+  /** Las dos primeras filas son el encabezado y los filtros; la celda 0 de cada fila de datos es el nombre. */
+  function nombresEnPantalla() {
+    return screen
+      .getAllByRole('row')
+      .slice(2)
+      .map((f) => within(f).getAllByRole('cell')[0]?.textContent)
+  }
+
+  async function montarConEquipos() {
+    montar([zeta, alfa, medio])
+    await waitFor(() => expect(screen.getByText('Zeta')).toBeInTheDocument())
+  }
+
+  it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
+    await montarConEquipos()
+
+    const [encabezados, filtros] = screen.getAllByRole('row')
+    const celdasDeEncabezado = within(encabezados).getAllByRole('columnheader')
+    const celdasDeFiltros = within(filtros).getAllByRole('columnheader')
+
+    expect(celdasDeFiltros).toHaveLength(celdasDeEncabezado.length)
+    expect(celdasDeEncabezado.at(-1)).toHaveTextContent('Acciones')
+    expect(within(celdasDeFiltros.at(-1)!).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+  })
+
+  it('cada columna de datos se puede ordenar y Acciones no', async () => {
+    await montarConEquipos()
+
+    for (const nombre of ['Nombre', 'Punto de venta', 'Vinculado el', 'Último uso']) {
+      expect(screen.getByRole('button', { name: nombre })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).not.toHaveAttribute('aria-sort')
+  })
+
+  it('el nombre se ordena ascendente, descendente y vuelve al orden del servidor', async () => {
+    const usuario = userEvent.setup()
+    await montarConEquipos()
+    const boton = screen.getByRole('button', { name: 'Nombre' })
+    const encabezado = screen.getByRole('columnheader', { name: 'Nombre' })
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Alfa', 'Medio'])
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Alfa', 'Medio', 'Zeta'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Medio', 'Alfa'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Alfa', 'Medio'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('el punto de venta se ordena por su nombre', async () => {
+    const usuario = userEvent.setup()
+    await montarConEquipos()
+
+    await usuario.click(screen.getByRole('button', { name: 'Punto de venta' }))
+
+    expect(nombresEnPantalla()).toEqual(['Medio', 'Zeta', 'Alfa'])
+  })
+
+  it('la fecha de vinculación se ordena cronológicamente (2/5 antes que 11/10 y que 1/12)', async () => {
+    const usuario = userEvent.setup()
+    await montarConEquipos()
+    const boton = screen.getByRole('button', { name: 'Vinculado el' })
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Medio', 'Zeta', 'Alfa'])
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Alfa', 'Zeta', 'Medio'])
+  })
+
+  it('el último uso se ordena por fecha y los que nunca se usaron van al final en ambas direcciones', async () => {
+    const usuario = userEvent.setup()
+    await montarConEquipos()
+    const boton = screen.getByRole('button', { name: 'Último uso' })
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Medio', 'Zeta', 'Alfa'])
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Medio', 'Alfa'])
+  })
+
+  it('cada filtro acota las filas y se combinan', async () => {
+    const usuario = userEvent.setup()
+    await montarConEquipos()
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALF')
+    expect(nombresEnPantalla()).toEqual(['Alfa'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por punto de venta' }), 'centro')
+    expect(nombresEnPantalla()).toEqual(['Medio'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por último uso' }), 'nunca')
+    expect(nombresEnPantalla()).toEqual(['Alfa'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por vinculado el' }), fecha(alfa.createdAt).split(',')[0])
+    expect(nombresEnPantalla()).toEqual(['Alfa'])
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'zeta')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Alfa', 'Medio'])
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toHaveValue('')
+  })
+
+  it('el campo de filtro sigue montado y con su valor mientras el listado se recarga tras revocar', async () => {
+    const usuario = userEvent.setup()
+    let resolverRefresco!: (items: DispositivoListado[]) => void
+    let cargas = 0
+    apiGetMock.mockImplementation(() =>
+      ++cargas === 1
+        ? Promise.resolve([zeta, alfa, medio])
+        : new Promise<DispositivoListado[]>((resolver) => {
+            resolverRefresco = resolver
+          }),
+    )
+    render(<EquiposPos />)
+    await waitFor(() => expect(screen.getByText('Zeta')).toBeInTheDocument())
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'a')
+    const campo = screen.getByRole('searchbox', { name: 'Filtrar por nombre' })
+
+    await usuario.click(botonRevocarDe('Alfa'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar revocación' }))
+
+    expect(await screen.findByText('Se revocó el equipo "Alfa".')).toBeInTheDocument()
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+
+    await act(async () => {
+      resolverRefresco([zeta, medio])
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+    expect(nombresEnPantalla()).toEqual(['Zeta'])
+  })
+
+  it('con la puerta de revocación abierta los filtros quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    await montarConEquipos()
+
+    await usuario.click(botonRevocarDe('Zeta'))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeDisabled()
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por último uso' })).toBeDisabled()
   })
 })

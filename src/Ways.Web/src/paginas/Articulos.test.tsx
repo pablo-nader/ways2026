@@ -350,13 +350,35 @@ async function abrirFormularioNuevo() {
   await screen.findByText('Nuevo artículo')
 }
 
+/** Ninguna confirmación de esta pantalla usa `window.confirm`: devuelve `true` para que un regreso a él se note. */
+let confirmSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPutMock.mockReset()
   apiDeleteMock.mockReset()
   mockearApiGet()
+  confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
+
+afterEach(() => {
+  expect(confirmSpy).not.toHaveBeenCalled()
+  confirmSpy.mockRestore()
+})
+
+/** La pregunta de descarte abierta: un `alertdialog` apilado sobre el modal del artículo. */
+async function preguntaDeDescarte() {
+  return screen.findByRole('alertdialog', { name: 'Descartar cambios' })
+}
+
+async function descartarLosCambios() {
+  await userEvent.click(within(await preguntaDeDescarte()).getByRole('button', { name: 'Descartar cambios' }))
+}
+
+async function seguirEditando() {
+  await userEvent.click(within(await preguntaDeDescarte()).getByRole('button', { name: 'Cancelar' }))
+}
 
 describe('Articulos — reseteo de estado por artículo (key de FormularioArticulo)', () => {
   it('la sugerencia de precio calculada para un artículo no persiste al pasar a editar otro', async () => {
@@ -652,10 +674,6 @@ describe('Articulos — defaults de Área/Alícuota de IVA cuando los catálogos
 })
 
 describe('Articulos — los defaults tardíos de Área/Alícuota solo tocan esos campos de la base limpia (N2)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
   /** Abre /articulos/create con áreas y alícuotas pendientes; devuelve cómo resolverlas juntas. */
   async function abrirAltaConCatalogosPendientes() {
     let resolverAreas: (valor: { id: number; nombre: string; activo: boolean }[]) => void = () => {}
@@ -687,18 +705,17 @@ describe('Articulos — los defaults tardíos de Área/Alícuota solo tocan esos
   /**
    * Cláusula bajo prueba: la base limpia (`formularioOriginalRef`) recibe SOLO los campos que el
    * efecto de defaults completó, no el formulario entero. Mutation-proof-tests: volver a copiar el
-   * formulario completo a la base hace fallar el `expect` del `confirm` — el Nombre tipeado antes de
+   * formulario completo a la base hace fallar la pregunta de descarte — el Nombre tipeado antes de
    * que llegaran los catálogos pasaría a contar como "guardado" y se descartaría sin preguntar.
    */
   it('lo tipeado antes de que lleguen los catálogos sigue contando como cambio sin guardar', async () => {
     const { dialogo, resolverCatalogos } = await abrirAltaConCatalogosPendientes()
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Borrador temprano')
     await resolverCatalogos()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+    await seguirEditando()
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Borrador temprano')
   })
@@ -706,16 +723,15 @@ describe('Articulos — los defaults tardíos de Área/Alícuota solo tocan esos
   /**
    * Cláusula bajo prueba: el parche de `idArea` e `idAlicuotaIva` sobre la base limpia en el mismo
    * efecto. Mutation-proof-tests: sacar ese parche (o uno solo de sus dos campos) hace fallar el
-   * `expect` del `confirm` — el auto-completado dejaría un falso "hay cambios sin guardar".
+   * `expect` de la pregunta de descarte — el auto-completado dejaría un falso "hay cambios sin guardar".
    */
   it('sin tocar nada, el auto-completado de los defaults no deja cambios sin guardar', async () => {
     const { dialogo, resolverCatalogos } = await abrirAltaConCatalogosPendientes()
     await resolverCatalogos()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
@@ -1338,45 +1354,83 @@ describe('Articulos — cierre del modal', () => {
 
 describe('Articulos — confirmación al cerrar con cambios sin guardar', () => {
   it('sin cambios, cerrar no pregunta nada', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await abrirFormularioNuevo()
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmSpy).not.toHaveBeenCalled()
-    confirmSpy.mockRestore()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('con cambios sin guardar, cancelar la confirmación mantiene el modal abierto con lo tipeado', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  it('con cambios sin guardar, cerrar abre una confirmación en un modal apilado sin cerrar todavía el del artículo', async () => {
     await abrirFormularioNuevo()
     await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador sin guardar')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    const pregunta = await preguntaDeDescarte()
+    expect(pregunta).toHaveTextContent('¿Descartar los cambios sin guardar del artículo?')
+    expect(screen.getByRole('dialog', { name: 'Nuevo artículo', hidden: true })).toBeInTheDocument()
+  })
+
+  it('con cambios sin guardar, cancelar la confirmación mantiene el modal abierto con lo tipeado', async () => {
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador sin guardar')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await seguirEditando()
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Borrador sin guardar')
-    confirmSpy.mockRestore()
   })
 
   it('con cambios sin guardar, aceptar la confirmación cierra el modal', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await abrirFormularioNuevo()
     await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador descartado')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await descartarLosCambios()
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    confirmSpy.mockRestore()
+  })
+
+  it('un doble clic sincrónico en Descartar cambios cierra el modal y la confirmación y deja la grilla', async () => {
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador descartado')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    const descartar = within(await preguntaDeDescarte()).getByRole('button', { name: 'Descartar cambios' })
+
+    await act(async () => {
+      descartar.click()
+      descartar.click()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+  })
+
+  it('Escape sobre la confirmación la cierra y deja el modal del artículo abierto con lo tipeado', async () => {
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador sin guardar')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await preguntaDeDescarte()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Borrador sin guardar')
   })
 
   /**
    * Cláusula bajo prueba: la normalización (orden) de `idsEmpresas` en `normalizarParaComparar`
    * (Articulos.tsx). Mutation-proof-tests: comparar con `JSON.stringify` sin normalizar hace
    * fallar este test — destildar y volver a tildar reordena el array (filter + append al final)
-   * aunque el conjunto final sea idéntico al original, y `confirm` pasaría a llamarse.
+   * aunque el conjunto final sea idéntico al original, y la pregunta de descarte se abriría.
    */
   it('destildar y volver a tildar la misma empresa no deja "cambios sin guardar" (reordena idsEmpresas, no lo cambia)', async () => {
     mockearApiGet({
@@ -1400,7 +1454,6 @@ describe('Articulos — confirmación al cerrar con cambios sin guardar', () => 
       if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderArticulos()
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
@@ -1415,8 +1468,8 @@ describe('Articulos — confirmación al cerrar con cambios sin guardar', () => 
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmSpy).not.toHaveBeenCalled()
-    confirmSpy.mockRestore()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
 
@@ -1451,42 +1504,38 @@ describe('Articulos — Atrás del navegador con cambios sin guardar (M2)', () =
   }
 
   it('POP (Atrás) con el formulario sucio pregunta antes de salir; cancelar mantiene lo tipeado y la URL en la edición', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     renderConHistorial()
     await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
     await userEvent.type(screen.getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await seguirEditando()
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
-    confirmSpy.mockRestore()
   })
 
   it('POP (Atrás) con el formulario sucio, aceptando la confirmación, cierra el modal', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderConHistorial()
     await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
     await userEvent.type(screen.getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await descartarLosCambios()
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    confirmSpy.mockRestore()
   })
 
   it('POP (Atrás) con el formulario limpio no pregunta nada', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderConHistorial()
     await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
 
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    confirmSpy.mockRestore()
   })
 })
 
@@ -1512,16 +1561,15 @@ describe('Articulos — beforeunload (recarga/cierre de pestaña) mientras hay c
   })
 
   it('deja de prevenir la salida una vez que el formulario vuelve a estar limpio (modal cerrado)', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await abrirFormularioNuevo()
     await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador')
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await descartarLosCambios()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     const evento = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(evento)
     expect(evento.defaultPrevented).toBe(false)
-    confirmSpy.mockRestore()
   })
 })
 
@@ -1551,14 +1599,13 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
 
 describe('Articulos — Baja de un artículo desde la grilla', () => {
   /**
-   * Cláusula bajo prueba: el `setAviso` de `eliminar()` en `Articulos.tsx` y el bump de
+   * Cláusula bajo prueba: el `setAviso` de `confirmarBaja()` en `Articulos.tsx` y el bump de
    * `pedidoDeRefresco` que le pide a `GrillaDeArticulos` refetchear. Mutation-proof-tests: borrar
    * cualquiera de los dos deja este test sin ver el aviso o sin ver la fila actualizada tras el
    * refresco (la fixture de la grilla cambia DESPUÉS de la Baja, así que solo el refresco real la
    * revela).
    */
   it('una Baja exitosa muestra el aviso "dado de baja" y refresca la grilla con los datos nuevos', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     apiDeleteMock.mockResolvedValue(undefined)
     renderArticulos()
 
@@ -1570,21 +1617,89 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     mockearApiGet({ grilla: paginaGrillaFixture([filaGrillaDos]) })
 
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
 
     expect(await screen.findByText('Artículo "Articulo Uno" dado de baja.')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument())
     expect(screen.getByText('Articulo Dos')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
 
-    confirmSpy.mockRestore()
+  it('Eliminar abre una confirmación que nombra el artículo y no escribe hasta confirmar', async () => {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('¿Dar de baja el artículo "Articulo Uno"?')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  it('cancelar la confirmación no da de baja y devuelve el foco al botón Eliminar', async () => {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    const eliminar = within(filaUno).getByRole('button', { name: 'Eliminar' })
+
+    await userEvent.click(eliminar)
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(eliminar).toHaveFocus()
   })
 
   /**
-   * Cláusula bajo prueba: el `catch` de `eliminar()` en `Articulos.tsx` (`setError` con el mensaje
-   * de `ErrorApi`). Mutation-proof-tests: que ese `catch` no seteara `error` (o mostrara un mensaje
-   * genérico) haría fallar el `findByText` de abajo.
+   * Cláusula bajo prueba: el disparador que `GrillaDeArticulos` captura en el `onClick` y `pedirBaja` guarda. Con
+   * `fireEvent.click` el botón no recibe foco: leer `document.activeElement` daría `<body>` y el foco no volvería.
    */
-  it('una Baja rechazada por el servidor muestra el error, sin aviso de éxito', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('el foco vuelve al botón pulsado al cancelar la confirmación aunque ese botón no hubiera recibido el foco', async () => {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    const eliminar = within(filaUno).getByRole('button', { name: 'Eliminar' })
+
+    fireEvent.click(eliminar)
+    expect(eliminar).not.toHaveFocus()
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(eliminar).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: `eliminandoRef` de `confirmarBaja()`. La guarda de `ConfirmacionDeBaja` frena el segundo
+   * clic en el mismo tick por su cuenta; este test prueba el conjunto, no el ref solo.
+   */
+  it('un doble clic sincrónico en Confirmar baja emite un solo DELETE y la confirmación queda inerte mientras escribe', async () => {
+    let resolver: () => void = () => {}
+    apiDeleteMock.mockReturnValue(new Promise<void>((r) => (resolver = r)))
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
+    const confirmacion = await screen.findByRole('alertdialog')
+    const confirmar = within(confirmacion).getByRole('button', { name: 'Confirmar baja' })
+
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(within(confirmacion).getByRole('button', { name: 'Dando de baja…' })).toBeDisabled())
+    expect(within(confirmacion).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+
+    await act(async () => resolver())
+    await screen.findByText('Artículo "Articulo Uno" dado de baja.')
+  })
+
+  /**
+   * Cláusula bajo prueba: el `catch` de `confirmarBaja()` en `Articulos.tsx` (`setErrorDeBaja` con el mensaje de
+   * `ErrorApi`, mostrado dentro de la confirmación, que sigue abierta). Mutation-proof-tests: que ese `catch` no
+   * seteara el error (o cerrara la confirmación) haría fallar los `expect` de abajo.
+   */
+  it('una Baja rechazada por el servidor muestra el error dentro de la confirmación, que sigue abierta, sin aviso de éxito', async () => {
     apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'articulo_en_uso', 'El artículo está en uso y no se puede dar de baja.'))
     renderArticulos()
 
@@ -1592,12 +1707,14 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
 
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
+    const confirmacion = await screen.findByRole('alertdialog')
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(await screen.findByText('El artículo está en uso y no se puede dar de baja.')).toBeInTheDocument()
-    expect(screen.queryByText(/dado de baja/)).not.toBeInTheDocument()
+    expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('El artículo está en uso y no se puede dar de baja.')
+    expect(screen.getAllByText('El artículo está en uso y no se puede dar de baja.')).toHaveLength(1)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByText(/dado de baja\./)).not.toBeInTheDocument()
     expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
-
-    confirmSpy.mockRestore()
   })
 })
 
@@ -1641,12 +1758,12 @@ describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada'
       resolverBaja = resolve
     })
     apiDeleteMock.mockReturnValue(bajaEnVuelo)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderArticulos()
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
     await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
 
     await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -1655,7 +1772,6 @@ describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada'
       resolverBaja()
       await bajaEnVuelo
     })
-    vi.restoreAllMocks()
   })
 })
 
@@ -1847,12 +1963,6 @@ describe('Articulos — el alta rápida completa el formulario por actualizació
 // ---- la decisión de salir se toma ANTES de desmontar el modal (N1) -----------------------------
 
 describe('Articulos — rechazar la salida no remonta el modal ni pierde estado de los hijos (N1)', () => {
-  // Restaurar en `afterEach` (no al final de cada test): un `expect` que falla antes del restore
-  // dejaría el spy de `confirm` vivo y sus llamadas se sumarían en los tests siguientes.
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
   // Cada pathname commiteado, en orden: la URL final restaurada no alcanza para probar que un
   // cierre rechazado nunca navegó (ida y vuelta por /articulos deja la misma URL al final).
   let recorrido: string[] = []
@@ -1909,20 +2019,22 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
   }
 
   /**
-   * Cláusula bajo prueba: el `confirm` de `cerrarModal` ANTES del `navigate` (Articulos.tsx).
+   * Cláusula bajo prueba: la pregunta de descarte de `cerrarModal` ANTES del `navigate` (Articulos.tsx).
    * Mutation-proof-tests: devolverle la decisión al efecto de apertura (navegar primero) hace
    * fallar `recorrido` — la URL pasa por /articulos antes de volver. Con el render todavía atado al
    * pathname en vivo, además, el modal se remonta: el código tipeado se pierde y los códigos de
    * barra se piden dos veces.
    */
   it('Cancelar con cambios sin guardar pregunta antes de navegar: rechazar conserva lo tipeado en el formulario y en los hijos', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     renderConHistorial()
     await ensuciarEdicionUno()
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await preguntaDeDescarte()
+    expect(recorrido).toEqual(['/articulos/edit/1'])
+    await seguirEditando()
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(recorrido).toEqual(['/articulos/edit/1'])
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
@@ -1937,13 +2049,14 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
    * de barra se piden dos veces aunque la URL termine restaurada.
    */
   it('POP (Atrás) con cambios sin guardar: rechazar restaura la URL sin desmontar el modal', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     renderConHistorial()
     await ensuciarEdicionUno()
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await seguirEditando()
+    await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
     expect(screen.getByPlaceholderText('Código de barras')).toHaveValue('7790001')
@@ -1957,25 +2070,24 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
    * sucio y pregunte por segunda vez.
    */
   it('Cancelar con cambios sin guardar, aceptando, cierra con una sola pregunta y deja la URL en /articulos', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderConHistorial()
     await ensuciarEdicionUno()
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await descartarLosCambios()
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
   })
 
   /**
-   * Cláusula bajo prueba: la confirmación de una salida por URL vive en el efecto de apertura (una
-   * corrida por cambio de `[modo, idParam]`), nunca en el render. Mutation-proof-tests: evaluar el
-   * `confirm` durante el render hace que StrictMode lo duplique (pregunta dos veces); el test sin
-   * StrictMode de arriba sigue verde con ese mutante, este no.
+   * Cláusula bajo prueba: la pregunta de una salida por URL vive en el efecto de apertura (una
+   * corrida por cambio de `[modo, idParam]`), nunca en el render. Mutation-proof-tests: abrirla
+   * durante el render haría que StrictMode la duplique (dos diálogos de descarte, y `findByRole`
+   * falla por ambigüedad); el test sin StrictMode de arriba sigue verde con ese mutante, este no.
    */
-  it('bajo StrictMode, una salida por POP pregunta exactamente una vez y rechazarla no vuelve a pedir los hijos', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  it('bajo StrictMode, una salida por POP abre una sola pregunta y rechazarla no vuelve a pedir los hijos', async () => {
     renderConHistorial({ estricto: true })
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
@@ -1983,15 +2095,50 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
     const llamadasAntes = llamadasA('/articulos/1/codigos-barra')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    expect(await screen.findAllByRole('alertdialog')).toHaveLength(1)
+    await seguirEditando()
+    await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Código de barras')).toHaveValue('7790001')
     expect(llamadasA('/articulos/1/codigos-barra')).toBe(llamadasAntes)
   })
 
+  /**
+   * Cláusula bajo prueba: `if (articulo.ocupado) { deshacerSalida(...) }` del efecto de apertura. Mutation-proof-tests:
+   * sacarla abre la pregunta de descarte con el alta guardándose; la respuesta reemplaza la URL a /edit/{id} y la
+   * pregunta queda colgada (el `expect` de `alertdialog` de abajo falla).
+   */
+  it('Atrás con el alta guardándose no abre ninguna pregunta: deshace la salida y la respuesta deja el modal en /articulos/edit/{id}', async () => {
+    let resolver: () => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/articulos') return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+      return new Promise((resolve) => {
+        resolver = () => resolve(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo Art' }))
+      })
+    })
+    renderConHistorial({ entradas: ['/articulos', '/articulos/create'] })
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Nuevo Art')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Ubicación: /articulos/create')).toBeInTheDocument()
+
+    await act(async () => resolver())
+
+    expect(await screen.findByText('Ubicación: /articulos/edit/5')).toBeInTheDocument()
+    await act(async () => {})
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0005' })).toBe(dialogo)
+  })
+
   it('alta → guardar pasa a /articulos/edit/{id} sin preguntar ni remontar el modal, y luego Atrás tampoco pregunta', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/articulos') return Promise.resolve(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo Art' }))
       return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
@@ -2012,20 +2159,20 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
 
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
   })
 
   it('de /articulos/edit/1 con cambios a /articulos/edit/2, aceptando, carga la edición 2', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderConHistorial()
     await ensuciarEdicionUno()
 
     await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+    await descartarLosCambios()
 
     expect(await screen.findByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Dos')
     expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
   })
@@ -2034,10 +2181,6 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
 // ---- rechazar un Atrás/Adelante se deshace moviéndose en el historial, sin pisar entradas (H1) --
 
 describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entrada del modal sin pisar la de llegada (H1)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
   let recorrido: string[] = []
   beforeEach(() => {
     recorrido = []
@@ -2105,12 +2248,12 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
    * /articulos con el modal montado.
    */
   it('Atrás rechazado vuelve a la edición con el mismo diálogo y lo tipeado; el siguiente Atrás aceptado llega a la grilla', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
     const dialogo = await abrirEdicionUnoDesdeLaGrilla()
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
     await userEvent.type(within(dialogo).getByPlaceholderText('Código de barras'), '7790001')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await seguirEditando()
     await act(async () => {})
 
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
@@ -2119,6 +2262,7 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
     expect(within(dialogo).getByPlaceholderText('Código de barras')).toHaveValue('7790001')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await descartarLosCambios()
     await act(async () => {})
 
     expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
@@ -2126,79 +2270,101 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
     expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
   })
 
+  /**
+   * Cláusula bajo prueba: el `setDescarte` de la rama `destino === destinoModalRef.current` del efecto de apertura
+   * (Articulos.tsx). Mutation-proof-tests: sacarlo deja abierta la pregunta de una salida que la URL ya deshizo, y
+   * confirmarla aplicaría un destino viejo.
+   */
+  it('Adelante mientras se pregunta por un Atrás cierra la pregunta: la URL volvió al modal y no queda nada que decidir', async () => {
+    const dialogo = await abrirEdicionUnoDesdeLaGrilla()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await preguntaDeDescarte()
+
+    await userEvent.click(screen.getByText('Adelante'))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBe(dialogo)
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+  })
+
   it('tras rechazar un Atrás, otro Atrás aceptado pregunta una sola vez más y termina en /articulos', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
     const dialogo = await abrirEdicionUnoDesdeLaGrilla()
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await seguirEditando()
     await act(async () => {})
 
     // Volver a la entrada del modal no es otra salida: no vuelve a preguntar.
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await descartarLosCambios()
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(recorrido).toEqual(['/articulos', '/articulos/edit/1', '/articulos', '/articulos/edit/1', '/articulos'])
     expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
   })
 
   it('Adelante rechazado vuelve a la edición 1; el siguiente Adelante aceptado carga la edición 2, que sigue en el historial', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
     renderDesde('/articulos/edit/1')
     await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
     await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
     await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Adelante' }))
+    await seguirEditando()
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBe(dialogo)
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Adelante' }))
+    await descartarLosCambios()
 
     expect(await screen.findByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
-    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Dos')
     expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
   })
 
   it('con tres entradas, Atrás rechazado desde la edición 2 no pisa la edición 1: Atrás aceptado la carga y otro Atrás llega a la grilla', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
     await abrirEdicionUnoDesdeLaGrilla()
     await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await seguirEditando()
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBe(dialogo)
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Dos (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await descartarLosCambios()
 
     expect(await screen.findByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
-    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno')
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
     expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
@@ -2207,24 +2373,25 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
   // Un POP que salta dos entradas (menú de historial del navegador) se deshace con el desplazamiento
   // completo, no con su signo: con ±1 aterrizaría en la edición 1 en vez de volver a la 2.
   it('un Atrás que salta dos entradas, rechazado, vuelve a la edición 2 sin pisar la 1 ni la grilla', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
     await abrirEdicionUnoDesdeLaGrilla()
     await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás dos' }))
+    await seguirEditando()
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBe(dialogo)
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Dos (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await descartarLosCambios()
 
     expect(await screen.findByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
-    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
     await act(async () => {})
@@ -2240,20 +2407,20 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
    * (`navigate(-1)`) la deja alcanzable y Adelante vuelve a preguntar por ella.
    */
   it('rechazar un link a otra edición no deja esa edición alcanzable con Adelante', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const dialogo = await abrirEdicionUnoDesdeLaGrilla()
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
 
     await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+    await seguirEditando()
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Adelante' }))
     await act(async () => {})
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBe(dialogo)
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
@@ -3035,12 +3202,7 @@ describe('Articulos — sección Costos', () => {
 })
 
 describe('Articulos — disponibilidad del artículo', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
   it('al editar como admin muestra la sección, y cambiar la disponibilidad usa su propio PUT sin tocar el formulario', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     apiPutMock.mockResolvedValue({ idArticulo: 1, disponibleVenta: true, disponibleOnline: false })
     renderArticulos('/articulos/edit/1', ROL.Admin)
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
@@ -3054,7 +3216,7 @@ describe('Articulos — disponibilidad del artículo', () => {
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
 
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
@@ -3104,8 +3266,8 @@ describe('Articulos — disponibilidad del artículo', () => {
 
   /**
    * Cláusula bajo prueba: la sección avisa a `alDeEscribir` mientras la puerta de "Quitar imagen" está abierta. Sin
-   * eso el resto del formulario seguía operable y se podía apilar una alta rápida encima de la puerta, cuyo Escape en
-   * captura le impedía cerrarse. Mutación: quitar `alDeEscribir(true)` de la apertura deja "Nueva marca" habilitado.
+   * eso el resto del formulario seguía operable y se podía apilar una alta rápida encima de la puerta, cuyo Escape
+   * le impedía cerrarse. Mutación: quitar `alDeEscribir(true)` de la apertura deja "Nueva marca" habilitado.
    */
   it('con la puerta de "Quitar imagen" abierta el resto del formulario queda inerte y Escape solo cierra la puerta', async () => {
     mockearApiGet({ articulos: [articuloFixture({ id: 1, tieneImagen: true }), articuloDos] })
@@ -3116,13 +3278,13 @@ describe('Articulos — disponibilidad del artículo', () => {
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Quitar imagen' }))
 
-    expect(within(dialogo).getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     expect(nuevaMarca).toBeDisabled()
     expect(within(dialogo).getByRole('button', { name: 'Nueva categoría' })).toBeDisabled()
 
     await userEvent.keyboard('{Escape}')
 
-    expect(within(dialogo).queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
     await waitFor(() => expect(nuevaMarca).toBeEnabled())
   })
@@ -3137,7 +3299,7 @@ describe('Articulos — disponibilidad del artículo', () => {
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Quitar imagen' }))
     expect(nuevaMarca).toBeDisabled()
 
-    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar quitar imagen' }))
+    await userEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Confirmar quitar imagen' }))
 
     expect(await within(dialogo).findByText('Se quitó la imagen.')).toBeInTheDocument()
     await waitFor(() => expect(nuevaMarca).toBeEnabled())

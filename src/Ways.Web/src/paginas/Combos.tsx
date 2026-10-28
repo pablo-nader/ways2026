@@ -28,10 +28,59 @@ import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { ModalDeCombo } from './combos/ModalDeCombo'
 
-const AVISO_REFRESCO_FALLIDO = 'No se pudo actualizar el listado. Volvé a entrar para ver el cambio.'
+const AVISO_REFRESCO_FALLIDO ='No se pudo actualizar el listado. Volvé a entrar para ver el cambio.'
 const AVISO_ALTA_CONFIRMADA_POR_LECTURA = 'El combo se creó. No se pudo confirmar la respuesta del servidor.'
+const AVISO_COMPONENTES_NO_DISPONIBLES = 'Tiene componentes no disponibles: el combo no se puede completar hasta corregirlo.'
+const SIN_COMBOS: readonly ComboListado[] = []
+
+const OPCIONES_DE_ESTADO = [
+  { valor: 'Activo', etiqueta: 'Activo' },
+  { valor: 'Inactivo', etiqueta: 'Inactivo' },
+]
+const OPCIONES_DE_ONLINE = [
+  { valor: 'Sí', etiqueta: 'Sí' },
+  { valor: 'No', etiqueta: 'No' },
+]
+
+const textoDePrecio = (combo: ComboListado) => formatearImporte(combo.precio, { simbolo: true })
+const textoDeEstado = (combo: ComboListado) => (combo.activo ? 'Activo' : 'Inactivo')
+const textoDeOnline = (combo: ComboListado) => (combo.disponibleOnline && combo.activo ? 'Sí' : 'No')
+/** Lo que la celda muestra: el resumen y, debajo, el aviso de componentes no disponibles. */
+const textoDeComponentes = (combo: ComboListado) =>
+  tieneComponentesNoDisponibles(combo)
+    ? `${resumenDeComponentes(combo.componentes)} ${AVISO_COMPONENTES_NO_DISPONIBLES}`
+    : resumenDeComponentes(combo.componentes)
+
+const ORDENABLES: ColumnasOrdenables<ComboListado> = {
+  codigo: { valor: (combo) => combo.codigo },
+  nombre: { valor: (combo) => combo.nombre },
+  precio: { valor: (combo) => combo.precio },
+  componentes: { valor: textoDeComponentes },
+  estado: { valor: textoDeEstado },
+  online: { valor: textoDeOnline },
+}
+
+const FILTRABLES: ColumnasFiltrables<ComboListado> = {
+  codigo: { etiqueta: 'Código', valor: (combo) => etiquetaDeCodigoDeCombo(combo.codigo) },
+  nombre: { etiqueta: 'Nombre', valor: (combo) => combo.nombre },
+  precio: { etiqueta: 'Precio', valor: textoDePrecio },
+  componentes: { etiqueta: 'Componentes', valor: textoDeComponentes },
+  estado: { etiqueta: 'Estado', valor: textoDeEstado, opciones: OPCIONES_DE_ESTADO },
+  online: { etiqueta: 'Online', valor: textoDeOnline, opciones: OPCIONES_DE_ONLINE },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['codigo', 'nombre', 'precio', 'componentes', 'estado', 'online', null]
 
 /**
  * ABM de combos (solo Admin): un combo son dos o más componentes, cada uno un artículo o una familia con su
@@ -69,6 +118,12 @@ export function Combos() {
   /** Destino de foco cuando el modal se cierra con la pantalla inerte (refresco en vuelo): ningún botón es alcanzable. */
   const contenedorRef = useRef<HTMLDivElement>(null)
   const bloqueado = guardando || eliminando || bajaPendiente !== null
+
+  const { filas: combosFiltrados, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(
+    combos ?? SIN_COMBOS,
+    FILTRABLES,
+  )
+  const { filas: combosVisibles, orden, alternar } = useOrdenamiento(combosFiltrados, ORDENABLES)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
@@ -287,7 +342,7 @@ export function Combos() {
         </p>
 
         {errorDeCarga && <div className="alert alert-danger">{errorDeCarga}</div>}
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !bajaPendiente && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {avisosCatalogos.length > 0 && <div className="alert alert-warning">{avisosCatalogos.join(' ')}</div>}
 
@@ -296,6 +351,7 @@ export function Combos() {
             titulo={`el combo "${bajaPendiente.nombre}"`}
             ocupado={eliminando}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />
@@ -308,27 +364,48 @@ export function Combos() {
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Código</th>
-                  <th>Nombre</th>
-                  <th className="text-end">Precio</th>
-                  <th>Componentes</th>
-                  <th>Estado</th>
-                  <th>Online</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="codigo" orden={orden} onAlternar={alternar}>
+                    Código
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="precio" orden={orden} onAlternar={alternar} className="text-end">
+                    Precio
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="componentes" orden={orden} onAlternar={alternar}>
+                    Componentes
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="online" orden={orden} onAlternar={alternar}>
+                    Online
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={CELDAS_DE_FILTROS}
+                  columnas={FILTRABLES}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {combos?.map((combo) => (
+                {combosVisibles.map((combo) => (
                   <tr key={combo.id}>
                     <td className="text-nowrap">{etiquetaDeCodigoDeCombo(combo.codigo)}</td>
                     <td>{combo.nombre}</td>
-                    <td className="text-end text-nowrap">{formatearImporte(combo.precio, { simbolo: true })}</td>
+                    <td className="text-end text-nowrap">{textoDePrecio(combo)}</td>
                     <td>
                       {resumenDeComponentes(combo.componentes)}
                       {tieneComponentesNoDisponibles(combo) && (
-                        <div className="text-danger small">
-                          Tiene componentes no disponibles: el combo no se puede completar hasta corregirlo.
-                        </div>
+                        <div className="text-danger small">{AVISO_COMPONENTES_NO_DISPONIBLES}</div>
                       )}
                     </td>
                     <td>
@@ -354,10 +431,10 @@ export function Combos() {
                     </td>
                   </tr>
                 ))}
-                {combos !== null && combos.length === 0 && errorDeCarga === '' && (
+                {combos !== null && combosVisibles.length === 0 && (combos.length > 0 || errorDeCarga === '') && (
                   <tr>
                     <td colSpan={7} className="text-center text-muted py-4">
-                      No hay combos cargados.
+                      {combos.length === 0 ? 'No hay combos cargados.' : 'Ningún registro coincide con los filtros.'}
                     </td>
                   </tr>
                 )}
