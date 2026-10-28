@@ -69,6 +69,9 @@ function rutasDeClientes() {
 
 const BUSCADOR = 'Buscar por nombre, apellido, razón social o documento…'
 
+/** La baja nunca usa `window.confirm`: el spy devuelve `true` para que un regreso a él se note en el resultado. */
+let confirmSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
@@ -85,7 +88,7 @@ beforeEach(() => {
   })
   apiPostMock.mockResolvedValue(clienteFixture({ id: 8 }))
   apiDeleteMock.mockResolvedValue(undefined)
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
 afterEach(() => {
@@ -246,6 +249,68 @@ describe('Clientes — alta y edición en un modal', () => {
   })
 })
 
+describe('Clientes — la baja se confirma en un modal', () => {
+  async function pedirLaBaja() {
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    const eliminar = screen.getByRole('button', { name: 'Eliminar' })
+    await userEvent.click(eliminar)
+    return { eliminar, confirmacion: await screen.findByRole('alertdialog') }
+  }
+
+  it('abre una confirmación que nombra al cliente y no escribe hasta confirmar', async () => {
+    const { confirmacion } = await pedirLaBaja()
+
+    expect(confirmacion).toHaveTextContent('¿Dar de baja al cliente "Luis"?')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('cancelar cierra la confirmación sin dar de baja y devuelve el foco al botón', async () => {
+    const { eliminar, confirmacion } = await pedirLaBaja()
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(eliminar).toHaveFocus()
+  })
+
+  it('un doble clic sincrónico en Confirmar baja emite un solo DELETE y la puerta queda inerte mientras escribe', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    let resolver: () => void = () => {}
+    apiDeleteMock.mockReturnValue(new Promise<void>((r) => (resolver = r)))
+    const confirmar = within(confirmacion).getByRole('button', { name: 'Confirmar baja' })
+
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(within(confirmacion).getByRole('button', { name: 'Dando de baja…' })).toBeDisabled())
+    expect(within(confirmacion).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+
+    await act(async () => resolver())
+    await screen.findByText('Cliente "Luis" dado de baja.')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('una baja rechazada muestra el motivo dentro de la confirmación, que sigue abierta, sin aviso de éxito', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    const { ErrorApi } = await import('../api/cliente')
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'cliente_en_uso', 'El cliente tiene saldo.'))
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('El cliente tiene saldo.')
+    expect(screen.getAllByText('El cliente tiene saldo.')).toHaveLength(1)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByText('Cliente "Luis" dado de baja.')).toBeNull()
+    expect(within(confirmacion).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+  })
+})
+
 describe('Clientes — el refresco tras una escritura usa el término aplicado', () => {
   /** Deja la pantalla con `enviado` aplicado (o sin búsqueda) y `tipeado` escrito en la caja sin enviar. */
   async function prepararBusqueda(usuario: ReturnType<typeof userEvent.setup>, enviado: string, tipeado: string) {
@@ -298,6 +363,7 @@ describe('Clientes — el refresco tras una escritura usa el término aplicado',
       const antes = rutasDeClientes().length
 
       await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+      await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
 
       await waitFor(() => expect(rutasDeClientes()).toHaveLength(antes + 1))
       expect(apiDeleteMock).toHaveBeenCalledWith('/clientes/7')
