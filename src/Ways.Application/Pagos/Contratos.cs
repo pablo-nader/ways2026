@@ -63,7 +63,8 @@ public sealed record PagoRegistrado(
 /// el detalle del turno sin una segunda lectura. <see cref="IdComprobanteCompra"/> le dice al POS
 /// que el pago está ligado a una compra (categoría y proveedor quedan bloqueados en la edición).
 /// <see cref="IdMovimientoPersonal"/> no nulo le dice que el pago nació de un pago de personal: no se edita,
-/// no se da de baja ni se liga a una compra por separado (409 <c>gasto_de_pago_de_personal</c>).</summary>
+/// no se da de baja ni se liga a una compra por separado (409 <c>gasto_de_pago_de_personal</c>).
+/// <see cref="Lineas"/> trae el reparto por medio; <see cref="IdMedioPago"/> es el de la primera línea.</summary>
 public sealed record PagoListado(
     int Id,
     int? IdPuntoVenta,
@@ -80,7 +81,13 @@ public sealed record PagoListado(
     string? Detalle,
     string? NumeroFactura,
     int? IdComprobanteCompra,
-    int? IdMovimientoPersonal);
+    int? IdMovimientoPersonal,
+    IReadOnlyList<LineaDePagoListada> Lineas);
+
+/// <summary>Línea por medio de un pago en un listado. <see cref="PagoListado.IdMedioPago"/> sigue exponiendo solo el medio
+/// de la primera línea (el del ítem vivo de menor id) para los clientes que aún no leen las líneas.
+/// <see cref="NombreMedioPago"/> sale en <c>null</c> si el medio se dio de baja.</summary>
+public sealed record LineaDePagoListada(int IdItem, int IdMedioPago, string? NombreMedioPago, decimal Importe, string? Referencia);
 
 /// <summary>Página de resultados de <c>GET /api/gastos</c> — mismo shape que
 /// <c>Ways.Application.Caja.PaginaDeTurnos</c>.</summary>
@@ -130,7 +137,8 @@ public sealed record SolicitudDePagoDeAdministracion(
 /// trazabilidad. <see cref="TurnoAbierto"/>: <c>true</c> solo si el pago tiene turno y ese turno
 /// sigue abierto (la edición de un pago de caja de un turno cerrado recalcula su arqueo).
 /// <see cref="IdMovimientoPersonal"/> no nulo: el pago nació de un pago de personal y su edición, su baja y su
-/// vinculación a una compra responden 409 <c>gasto_de_pago_de_personal</c>.</summary>
+/// vinculación a una compra responden 409 <c>gasto_de_pago_de_personal</c>.
+/// <see cref="Lineas"/> trae el reparto por medio; <see cref="IdMedioPago"/> es el de la primera línea.</summary>
 public sealed record PagoDeAdministracionListado(
     int Id,
     DateTimeOffset Fecha,
@@ -151,7 +159,8 @@ public sealed record PagoDeAdministracionListado(
     OrigenFondosPago OrigenFondos,
     int? IdComprobanteCompra,
     bool TurnoAbierto,
-    int? IdMovimientoPersonal);
+    int? IdMovimientoPersonal,
+    IReadOnlyList<LineaDePagoListada> Lineas);
 
 /// <summary>Página de resultados de <c>GET /api/gastos/administracion</c> — mismo shape que
 /// <see cref="PaginaDePagos"/>.</summary>
@@ -198,8 +207,8 @@ public sealed record SolicitudDePagoDeCompra(DateOnly Fecha, decimal Importe, in
 /// la compra después de este pago, leído bajo el mismo lock que lo validó.</summary>
 public sealed record ResultadoDePagoDeCompra([property: JsonPropertyName("gasto")] PagoRegistrado Pago, decimal Pagado, decimal SaldoPendiente);
 
-/// <summary>Un pago de sueldo recién persistido junto con su único ítem (E2-S1): el desglose del libro de personal
-/// lista una línea por ítem.</summary>
+/// <summary>Un pago de sueldo recién persistido junto con su único ítem: el desglose del libro de personal lista una
+/// línea por ítem.</summary>
 public sealed record PagoDeSueldoPersistido(Pago Pago, ItemPago Item);
 
 /// <summary>Redondeo del importe de las rutas actuales (un solo medio): el mismo que aplicaba Postgres al persistir en

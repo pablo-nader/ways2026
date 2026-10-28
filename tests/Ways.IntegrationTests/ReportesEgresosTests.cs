@@ -186,13 +186,18 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             Categoria = categoria,
             OrigenFondos = OrigenFondosPago.CajaTurno,
             Concepto = "Gasto de reporte",
-            IdMedioPago = ctx.IdMedioEfectivo,
             Importe = importe,
             CreatedAt = ahora,
             UpdatedAt = ahora,
             DeletedAt = eliminado ? ahora : null
         };
         db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = ctx.IdMedioEfectivo, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora,
+            DeletedAt = eliminado ? ahora : null
+        });
         await db.SaveChangesAsync();
     }
 

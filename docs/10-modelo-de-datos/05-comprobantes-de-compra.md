@@ -308,8 +308,7 @@ pagos (                      -- [operativa]
     origen_fondos  origen_fondos_pago,      -- enum: caja_turno | tesoreria
     id_proveedor NULL, id_comprobante_compra NULL,
     id_area NULL, concepto, detalle,
-    id_medio_pago integer NOT NULL,          -- con qué se pagó (efectivo de caja, transferencia…)
-    numero_factura text NULL, importe,
+    numero_factura text NULL, importe,        -- el medio vive en items_pago (abajo), no en la cabecera
     id_movimiento_personal integer NULL,     -- pago de personal que lo generó (§8c)
 
     CONSTRAINT ck_pagos_caja_turno_requiere_turno
@@ -378,8 +377,8 @@ van a `movimientos_caja` (§7).
 ### Líneas por medio de pago: `items_pago` (E2-S1)
 
 Un pago se puede cancelar con más de un medio (efectivo + transferencia). La hija `items_pago` lleva una
-fila por medio; hoy cada pago tiene exactamente una que repite el medio y el importe de la cabecera
-(`pagos.id_medio_pago` e `importe` siguen siendo la fuente de lo que lee el resto del sistema).
+fila por medio. `pagos` ya no guarda el medio (E2-S3b eliminó `pagos.id_medio_pago`): el medio de cada
+entrega vive solo acá, e `importe` de la cabecera es la suma de los ítems vivos.
 
 ```sql
 items_pago (                 -- [operativa, hija de pagos: scope id_tenant únicamente]
@@ -407,18 +406,17 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > marca el mismo `deleted_at` en la cabecera y en sus ítems vivos, en un solo guardado); el backfill copia
 > el `deleted_at` del pago al ítem.
 >
-> **Escritura doble.** `ServicioDePagos` escribe los ítems del pago (uno por línea; el pago de
-> personal por línea escribe uno solo) en la misma transacción que la cabecera de cada pago nuevo
-> (alta del POS, alta administrativa, pagar una compra y pago de personal), y la edición lleva los
-> ítems consigo en el mismo guardado. La migración `ItemsDePago` hizo el backfill de un ítem por pago existente, también
+> **Escritura.** `ServicioDePagos` escribe los ítems del pago (uno por línea; el pago de personal
+> también: UN pago con un ítem por línea de dinero, cuya `referencia` vive en el ítem) en la misma
+> transacción que la cabecera de cada pago nuevo (alta del POS, alta administrativa, pagar una compra
+> y pago de personal), y la edición lleva los ítems consigo en el mismo guardado. La migración `ItemsDePago` hizo el backfill de un ítem por pago existente, también
 > los dados de baja (copian su `deleted_at`). Los dos `CHECK` y las FK son backstop: el servicio
 > nunca los dispara.
 >
 > **Líneas (E2-S3a).** Desde esta rebanada el servicio recibe de 1 a 20 líneas `(medio, importe,
 > referencia)` por pago (`ReglaDeLineasDePago`; un medio puede repetirse) y escribe un ítem por línea, en
-> orden. La cabecera sigue completa hasta que se elimine `pagos.id_medio_pago`: `importe` es la suma de
-> las líneas e `id_medio_pago` es el medio de la PRIMERA línea. La tesorería sigue teniendo un único
-> movimiento por pago, por el total. Editar reemplaza el conjunto de líneas: los ítems vivos se reutilizan
+> orden. `importe` es la suma de las líneas. La tesorería tiene un único movimiento por pago, por el total
+> (también el pago de personal con varias líneas). Editar reemplaza el conjunto de líneas: los ítems vivos se reutilizan
 > por posición (orden de id), los sobrantes se dan de baja lógica y las líneas nuevas se agregan, todo en
 > el mismo guardado que la cabecera y bajo el lock `FOR UPDATE` del pago.
 >
@@ -431,6 +429,21 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > que redondea a 0 o menos responde `400 gasto_importe_invalido`, y uno mayor que `999999999999.99`
 > responde `400 valor_fuera_de_rango` (la traducción de `22003`), como antes. Un id inexistente
 > responde `404` antes de validar el cuerpo.
+>
+> **Medio de compatibilidad (E2-S3b).** Los listados y respuestas que todavía muestran UN medio por pago
+> (`idMedioPago` del historial, del detalle del turno y de las respuestas de alta, el nombre en el historial de
+> administración, la clave `id_medio_pago` del payload de auditoría) lo derivan del **ítem vivo de menor id**
+> del pago (el de la primera línea). Los listados `PagoListado` agregan además `lineas`
+> (`[{idItem, idMedioPago, nombreMedioPago, importe, referencia}]`, en orden de id). La migración
+> `QuitarMedioDeLaCabeceraDelPago` eliminó `pagos.id_medio_pago`, `fk_pagos_medio_pago` e `ix_pagos_medio_pago`; su
+> `Down` los recrea y rellena la columna con ese mismo medio (o el del ítem de menor id si no quedan ítems vivos).
+> Dar de baja un medio usado por un pago sigue bloqueado, ahora solo por la FK `fk_items_pago_medio_pago`
+> (rótulo "gastos"). El pago de personal con varias líneas sigue siendo **un pago por línea de dinero**, cada uno con
+> su único ítem (la referencia se repite en `pagos.detalle` y en el ítem) y su propio movimiento de tesorería: el POS
+> instalado no lee `lineas`, y fusionarlas en un solo pago lo mostraría como una sola fila bajo el primer medio. La
+> fusión (un pago con un ítem por línea y un egreso por el total) queda para después del release del POS (E2-P).
+> El desglose lista una línea por ítem, con `idGasto` por pago e `idItem` por ítem. El historial de administración
+> (`/api/gastos/administracion` y `/{id}`) agrega `lineas` con la misma forma que `PagoListado`.
 
 ### Órdenes de compra (Etapa 16)
 

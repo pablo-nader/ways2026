@@ -6,8 +6,8 @@ namespace Ways.Domain.Pagos;
 /// Línea por medio de pago de un <see cref="Pago"/> (doc 10 §5, tabla <c>items_pago</c>). Hija operativa:
 /// scope <c>id_tenant</c> únicamente, igual que <see cref="Ways.Domain.Ventas.PagoComprobante"/>.
 ///
-/// Escritura doble (rebanadas E2-S1 y E2-S3a): el servicio escribe un ítem por línea del pago en la misma
-/// transacción que la cabecera, que repite el medio de la primera línea y el total. La invariante «la suma de
+/// Rebanadas E2-S1, E2-S3a y E2-S3b: el servicio escribe un ítem por línea del pago en la misma transacción que
+/// la cabecera, que ya no guarda el medio (vive solo acá) y lleva el total. La invariante «la suma de
 /// los ítems vivos es el importe del pago» la sostiene un constraint trigger diferido de la base.
 /// </summary>
 public class ItemPago : EntidadTenant

@@ -1740,6 +1740,19 @@ export type PagoDeTurno = {
   /** Movimiento de personal del que nació el pago; no `null` lo vuelve inmutable (el servidor responde 409
    * `gasto_de_pago_de_personal` a su edición). */
   idMovimientoPersonal: number | null
+  /** Reparto por medio del pago (uno por ítem, en orden de id). `idMedioPago` de arriba es el de la primera línea.
+   * Opcional por compatibilidad con respuestas anteriores a las líneas. */
+  lineas?: LineaDePagoListada[]
+}
+
+/** Espejo de `LineaDePagoListada`: una entrega de dinero de un pago en un listado. `nombreMedioPago` llega en `null`
+ * si el medio se dio de baja. */
+export interface LineaDePagoListada {
+  idItem: number
+  idMedioPago: number
+  nombreMedioPago: string | null
+  importe: number
+  referencia: string | null
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1858,6 +1871,9 @@ export type PagoDeAdministracionListado = {
   /** Movimiento de personal del que nació el pago; no `null` lo vuelve inmutable (el servidor responde 409
    * `gasto_de_pago_de_personal` a su edición, su baja y su vinculación a una compra). */
   idMovimientoPersonal: number | null
+  /** Reparto por medio del pago (uno por ítem, en orden de id). `idMedioPago` de arriba es el de la primera línea.
+   * Opcional por compatibilidad con respuestas anteriores a las líneas. */
+  lineas?: LineaDePagoListada[]
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de

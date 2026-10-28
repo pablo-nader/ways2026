@@ -97,6 +97,6 @@ public class ReglaDeLineasDePagoTests
     {
         var plan = ReglaDeLineasDePago.Planificar([Linea(medio: 7), Linea(medio: 2)]);
 
-        Assert.Equal(7, plan.IdMedioPagoDeLaCabecera);
+        Assert.Equal(7, plan.IdMedioPagoDeCompatibilidad);
     }
 }

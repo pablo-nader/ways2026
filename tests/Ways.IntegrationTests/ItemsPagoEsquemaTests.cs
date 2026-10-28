@@ -3,17 +3,18 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
-using Ways.Infrastructure.Persistencia.Migraciones;
 
 namespace Ways.IntegrationTests;
 
 /// <summary>
 /// E2-S1 (líneas por medio de pago), <c>db-error-backstops</c> y <c>rls-migration-backfills</c>: el esquema de
 /// <c>items_pago</c> probado con SQL crudo, sin pasar por <c>ServicioDePagos</c>. Cubre las dos CHECKs, las FKs
-/// compuestas, el constraint trigger diferido de la suma contra la cabecera y el backfill de la migración
-/// <c>ItemsDePago</c> bajo <c>ways_app</c> (NOSUPERUSER NOBYPASSRLS), nunca bajo el dueño.
+/// compuestas y el constraint trigger diferido de la suma contra la cabecera. El backfill de la migración
+/// <c>ItemsDePago</c> leía <c>pagos.id_medio_pago</c>, columna que <c>QuitarMedioDeLaCabeceraDelPago</c> eliminó: ya no puede
+/// correr contra el esquema actual, así que su prueba bajo <c>ways_app</c> vive en
+/// <see cref="QuitarMedioDeLaCabeceraDelPagoMigracionTests"/>, sobre una base aislada migrada hasta <c>ItemsDePago</c>.
 ///
-/// Honesto sobre alcanzabilidad: el servicio escribe siempre un único ítem igual a la cabecera, así que ninguna
+/// Honesto sobre alcanzabilidad: el servicio escribe siempre ítems cuya suma es el importe de la cabecera, así que ninguna
 /// de estas ramas es alcanzable por un cliente HTTP; prueban el backstop de esquema.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -103,10 +104,10 @@ public class ItemsPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         EscalarAsync<int>(
             conexion,
             "INSERT INTO pagos (id_tenant, fecha, id_empresa, id_punto_venta, id_turno_caja, id_empleado, " +
-            "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at, deleted_at) " +
-            "VALUES ($1, now(), $2, NULL, NULL, $3, 'otros', 'tesoreria', 'pago de prueba', $4, $5, now(), now(), $6) " +
+            "categoria, origen_fondos, concepto, importe, created_at, updated_at, deleted_at) " +
+            "VALUES ($1, now(), $2, NULL, NULL, $3, 'otros', 'tesoreria', 'pago de prueba', $4, now(), now(), $5) " +
             "RETURNING id_pago",
-            p.IdTenant, p.IdEmpresa, p.IdEmpleado, p.IdMedioPago, importe, baja);
+            p.IdTenant, p.IdEmpresa, p.IdEmpleado, importe, baja);
 
     private static Task<int> InsertarItemAsync(
         NpgsqlConnection conexion, NpgsqlTransaction? tx, Prerequisitos p, int idPago, decimal importe,
@@ -348,75 +349,5 @@ public class ItemsPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             cruda, tx => EjecutarAsync(cruda, tx, "UPDATE pagos SET importe = 5 WHERE id_pago = $1", dadoDeBaja));
 
         Assert.Equal(Trigger, excepcion.ConstraintName);
-    }
-
-    // ---- backfill ------------------------------------------------------------------------------
-
-    /// <summary>LA CLÁUSULA del backfill: el <c>SET LOCAL app.acceso = 'plataforma'</c> DENTRO del mismo bloque.
-    /// <c>pagos</c> e <c>items_pago</c> corren bajo FORCE ROW LEVEL SECURITY y <c>ways_app</c> no tiene BYPASSRLS:
-    /// sin el GUC el <c>INSERT ... SELECT</c> no ve ninguna fila y reporta éxito. Se ejecuta la constante REAL de la
-    /// migración (<see cref="ItemsDePago.SqlDelBackfill"/>), no una copia, primero sin la línea del GUC (cero filas)
-    /// y después tal cual (un ítem por pago sin ítems, también el dado de baja, copiando su <c>deleted_at</c>).</summary>
-    [Fact]
-    public async Task ElBackfillCreaUnItemPorPagoIncluidosLosDeBajaSoloBajoElSetLocalDePlataforma()
-    {
-        var p = await SembrarPrerequisitosAsync(nameof(ElBackfillCreaUnItemPorPagoIncluidosLosDeBajaSoloBajoElSetLocalDePlataforma));
-        var baja = DateTimeOffset.UtcNow.AddDays(-1);
-
-        int vivo, dadoDeBaja, conItem;
-        await using (var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant))
-        {
-            vivo = await InsertarPagoAsync(cruda, p, 250m);
-            dadoDeBaja = await InsertarPagoAsync(cruda, p, 80m, baja);
-            conItem = await InsertarPagoAsync(cruda, p, 100m);
-            await LaTransaccionComiteaAsync(cruda, tx => InsertarItemAsync(cruda, tx, p, conItem, 100m, referencia: "previo"));
-        }
-
-        var sql = ItemsDePago.SqlDelBackfill;
-        Assert.Contains("SET LOCAL app.acceso = 'plataforma'", sql, StringComparison.Ordinal);
-        var sinElSetLocal = string.Join(
-            '\n', sql.Split('\n').Where(l => !l.TrimStart().StartsWith("SET LOCAL", StringComparison.Ordinal)));
-
-        // (a) ways_app sin GUC: RLS no le deja ver ningún pago, cero filas y ningún error.
-        await using (var app = new NpgsqlConnection(fixture.AppConnectionString))
-        {
-            await app.OpenAsync();
-            Assert.Equal(0, await EjecutarAsync(app, null, sinElSetLocal));
-        }
-
-        // (b) el bloque tal cual lo trae la migración.
-        await using (var app = new NpgsqlConnection(fixture.AppConnectionString))
-        {
-            await app.OpenAsync();
-            Assert.True(await EjecutarAsync(app, null, sql) >= 2, "El backfill tenía que crear al menos los dos ítems faltantes.");
-        }
-
-        await using (var propietario = new NpgsqlConnection(fixture.OwnerConnectionString))
-        {
-            await propietario.OpenAsync();
-
-            Assert.Equal(1L, await EscalarAsync<long>(
-                propietario,
-                "SELECT count(*) FROM items_pago i JOIN pagos g ON g.id_pago = i.id_pago AND g.id_tenant = i.id_tenant " +
-                "WHERE i.id_pago = $1 AND i.id_medio_pago = g.id_medio_pago AND i.importe = g.importe " +
-                "AND i.referencia IS NULL AND i.deleted_at IS NULL AND i.created_at = g.created_at AND i.updated_at = g.updated_at",
-                vivo));
-            Assert.Equal(1L, await EscalarAsync<long>(
-                propietario,
-                "SELECT count(*) FROM items_pago i JOIN pagos g ON g.id_pago = i.id_pago AND g.id_tenant = i.id_tenant " +
-                "WHERE i.id_pago = $1 AND i.importe = 80 AND i.deleted_at = g.deleted_at AND i.deleted_at IS NOT NULL",
-                dadoDeBaja));
-
-            // El pago que ya tenía ítem no se duplica ni se pisa.
-            Assert.Equal("previo", await EscalarAsync<string>(propietario, "SELECT referencia FROM items_pago WHERE id_pago = $1", conItem));
-            Assert.Equal(1L, await EscalarAsync<long>(propietario, "SELECT count(*) FROM items_pago WHERE id_pago = $1", conItem));
-        }
-
-        // (c) idempotente: una segunda corrida no encuentra pagos sin ítems.
-        await using (var app = new NpgsqlConnection(fixture.AppConnectionString))
-        {
-            await app.OpenAsync();
-            Assert.Equal(0, await EjecutarAsync(app, null, sql));
-        }
     }
 }

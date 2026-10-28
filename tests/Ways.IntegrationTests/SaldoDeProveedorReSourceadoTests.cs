@@ -176,7 +176,7 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         var ahora = DateTimeOffset.UtcNow;
         var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
-        db.Pagos.Add(new Pago
+        var pago = new Pago
         {
             IdTenant = ctx.IdTenant,
             Fecha = ahora,
@@ -188,11 +188,16 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
             OrigenFondos = OrigenFondosPago.CajaTurno,
             IdProveedor = ctx.IdProveedor,
             Concepto = "Pago pre-cutover (mecanismo retirado)",
-            IdMedioPago = ctx.IdMedioEfectivo,
             Importe = importe,
             IdComprobanteCompra = idComprobanteCompra,
             CreatedAt = ahora,
             UpdatedAt = ahora
+        };
+        db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = ctx.IdMedioEfectivo, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora
         });
         await db.SaveChangesAsync();
     }

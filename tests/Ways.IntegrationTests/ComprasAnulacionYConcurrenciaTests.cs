@@ -162,13 +162,19 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         db.TurnosCaja.Add(turno);
         await db.SaveChangesAsync();
 
-        db.Pagos.Add(new Pago
+        var pago = new Pago
         {
             IdTenant = ctx.IdTenant, Fecha = ahora, IdEmpresa = idEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
             IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaPago.Proveedor,
             OrigenFondos = OrigenFondosPago.CajaTurno, IdProveedor = ctx.IdProveedor,
-            Concepto = "Pago de prueba", IdMedioPago = idMedioPago, Importe = 100m,
+            Concepto = "Pago de prueba", Importe = 100m,
             IdComprobanteCompra = idComprobanteCompra, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = idMedioPago, Importe = 100m, CreatedAt = ahora, UpdatedAt = ahora
         });
         await db.SaveChangesAsync();
     }

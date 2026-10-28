@@ -39,10 +39,14 @@ public class LectorDeLineasDelTurno(IWaysDbContext db)
             .ToList();
     }
 
-    public async Task<IReadOnlyList<PagoListado>> LeerPagosAsync(int idTurnoCaja, CancellationToken ct = default) =>
-        await db.Pagos
+    public async Task<IReadOnlyList<PagoListado>> LeerPagosAsync(int idTurnoCaja, CancellationToken ct = default)
+    {
+        var pagos = await db.Pagos
             .Where(g => g.IdTurnoCaja == idTurnoCaja)
             .OrderBy(g => g.Fecha).ThenBy(g => g.Id)
             .Select(ProyeccionesDePago.Listado(db))
             .ToListAsync(ct);
+
+        return await ProyeccionesDePago.ConLineasAsync(db, pagos, ct);
+    }
 }

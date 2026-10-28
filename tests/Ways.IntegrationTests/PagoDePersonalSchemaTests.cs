@@ -127,10 +127,10 @@ public class PagoDePersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<W
         EjecutarAsync(
             idTenant ?? s.IdTenant,
             "INSERT INTO pagos " +
-            "(id_tenant, fecha, id_empresa, id_empleado, categoria, origen_fondos, concepto, id_medio_pago, importe, " +
+            "(id_tenant, fecha, id_empresa, id_empleado, categoria, origen_fondos, concepto, importe, " +
             " id_movimiento_personal, created_at, updated_at) " +
-            $"VALUES ($1, now(), $2, $3, '{categoria}', 'tesoreria', 'Pago de prueba', $4, 10, {idMovimientoPersonal}, now(), now())",
-            idTenant ?? s.IdTenant, s.IdEmpresa, s.IdUsuario, s.IdMedioPago);
+            $"VALUES ($1, now(), $2, $3, '{categoria}', 'tesoreria', 'Pago de prueba', 10, {idMovimientoPersonal}, now(), now())",
+            idTenant ?? s.IdTenant, s.IdEmpresa, s.IdUsuario);
 
     private static async Task<PostgresException> ViolacionAsync(Task<int> escritura) =>
         await Assert.ThrowsAsync<PostgresException>(() => escritura);

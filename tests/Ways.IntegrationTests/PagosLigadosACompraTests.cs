@@ -75,7 +75,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         // MedioPago es tenant-scoped (CatalogoSimple : EntidadTenant) — bajo TenantActualFijo
         // .Plataforma el filtro de EF no acota por tenant y .FirstAsync() puede devolver la fila
         // de OTRO tenant creado en paralelo por otra prueba de esta misma colección, violando
-        // fk_pagos_medio_pago más adelante. Contexto tenant-scoped propio, mismo criterio que
+        // fk_items_pago_medio_pago más adelante. Contexto tenant-scoped propio, mismo criterio que
         // PagosEndpointsTests.PrepararAsync.
         await using var dbTenant = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var idMedioEfectivo = await dbTenant.MediosPago

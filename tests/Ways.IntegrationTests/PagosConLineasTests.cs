@@ -341,7 +341,7 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(3, todos.Count);
         Assert.Equal(2, todos.Count(i => i.DeletedAt != null));
         var cabecera = await db.Pagos.SingleAsync(p => p.Id == pago.Id);
-        Assert.Equal((ctx.IdTercero, 80m), (cabecera.IdMedioPago, cabecera.Importe));
+        Assert.Equal(80m, cabecera.Importe);
         filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).ToListAsync();
         Assert.Equal(1000m, filas.Single(a => a.IdMedioPago == ctx.IdEfectivo).ImporteEsperado);
         Assert.Equal(0m, filas.Single(a => a.IdMedioPago == ctx.IdElectronico).ImporteEsperado);
@@ -381,10 +381,113 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         await using var lectura = Db(ctx);
         var cabecera = await lectura.Pagos.SingleAsync(p => p.Id == pago.Id);
-        Assert.Equal(("Gasto con líneas", ctx.IdEfectivo, 100m), (cabecera.Concepto, cabecera.IdMedioPago, cabecera.Importe));
+        Assert.Equal(("Gasto con líneas", 100m), (cabecera.Concepto, cabecera.Importe));
         Assert.Equal(
             [(ctx.IdEfectivo, 60m), (ctx.IdElectronico, 40m)],
             (await ItemsVivosAsync(lectura, pago.Id)).Select(i => (i.IdMedioPago, i.Importe)));
         Assert.Empty(await lectura.Auditoria.Where(a => a.Accion == "pago.edicion" && a.IdEntidad == pago.Id).ToListAsync());
+    }
+
+    // ---- E2-S3b: el medio vive solo en los ítems ---------------------------------------------
+
+    /// <summary>El detalle del turno y el historial siguen exponiendo un solo medio por pago (el de la primera línea, el ítem
+    /// vivo de menor id) y agregan <c>lineas</c> con el reparto completo, en el orden de los ítems.</summary>
+    [Fact]
+    public async Task ElListadoDeUnPagoDeDosLineasMuestraElMedioDeLaPrimeraYTodasLasLineas()
+    {
+        var ctx = await PrepararAsync(nameof(ElListadoDeUnPagoDeDosLineasMuestraElMedioDeLaPrimeraYTodasLasLineas));
+        var idTurno = await AbrirTurnoAsync(ctx, 1000m);
+
+        int idPago;
+        await using (var db = Db(ctx))
+        {
+            var pago = await ConServicioAsync(ctx, db, s => s.RegistrarAsync(ComandoPos(
+                ctx,
+                new LineaDePago(ctx.IdElectronico, 40m, "cupón 9"),
+                new LineaDePago(ctx.IdEfectivo, 60m, null))));
+            idPago = pago.Id;
+            Assert.Equal(ctx.IdElectronico, pago.IdMedioPago);
+        }
+
+        var detalle = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/caja/turnos/{idTurno}/detalle");
+        var enElDetalle = detalle.GetProperty("gastos").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
+
+        var historial = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}");
+        var enElHistorial = historial.GetProperty("items").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
+
+        await using var lectura = Db(ctx);
+        var idsDeItems = (await ItemsVivosAsync(lectura, idPago)).Select(i => i.Id).ToList();
+
+        foreach (var fila in new[] { enElDetalle, enElHistorial })
+        {
+            Assert.Equal(ctx.IdElectronico, fila.GetProperty("idMedioPago").GetInt32());
+            Assert.Equal(100m, fila.GetProperty("importe").GetDecimal());
+
+            var lineas = fila.GetProperty("lineas").EnumerateArray().ToList();
+            Assert.Equal(idsDeItems, lineas.Select(l => l.GetProperty("idItem").GetInt32()));
+            Assert.Equal([ctx.IdElectronico, ctx.IdEfectivo], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
+            Assert.Equal([40m, 60m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
+            Assert.Equal("cupón 9", lineas[0].GetProperty("referencia").GetString());
+            Assert.Equal(JsonValueKind.Null, lineas[1].GetProperty("referencia").ValueKind);
+            Assert.All(lineas, l => Assert.False(string.IsNullOrEmpty(l.GetProperty("nombreMedioPago").GetString())));
+        }
+    }
+
+    /// <summary>El historial de administración (lista y detalle por id) también agrega <c>lineas</c> con el reparto completo y
+    /// sigue exponiendo el medio de la primera línea.</summary>
+    [Fact]
+    public async Task ElHistorialDeAdministracionDeUnPagoDeDosLineasTraeLasDosLineas()
+    {
+        var ctx = await PrepararAsync(nameof(ElHistorialDeAdministracionDeUnPagoDeDosLineasTraeLasDosLineas));
+
+        int idPago;
+        await using (var db = Db(ctx))
+        {
+            var pago = await ConServicioAsync(ctx, db, s => s.RegistrarDeAdministracionAsync(ComandoAdmin(
+                ctx, CategoriaPago.Otros, null,
+                new LineaDePago(ctx.IdElectronico, 40m, "cupón 9"), new LineaDePago(ctx.IdEfectivo, 60m, null))));
+            idPago = pago.Id;
+        }
+
+        var listado = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}");
+        var enLaLista = listado.GetProperty("items").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
+        var porId = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos/administracion/{idPago}");
+
+        await using var lectura = Db(ctx);
+        var idsDeItems = (await ItemsVivosAsync(lectura, idPago)).Select(i => i.Id).ToList();
+
+        foreach (var fila in new[] { enLaLista, porId })
+        {
+            Assert.Equal(ctx.IdElectronico, fila.GetProperty("idMedioPago").GetInt32());
+            Assert.Equal(100m, fila.GetProperty("importe").GetDecimal());
+
+            var lineas = fila.GetProperty("lineas").EnumerateArray().ToList();
+            Assert.Equal(idsDeItems, lineas.Select(l => l.GetProperty("idItem").GetInt32()));
+            Assert.Equal([ctx.IdElectronico, ctx.IdEfectivo], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
+            Assert.Equal([40m, 60m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
+            Assert.Equal("cupón 9", lineas[0].GetProperty("referencia").GetString());
+            Assert.Equal(JsonValueKind.Null, lineas[1].GetProperty("referencia").ValueKind);
+        }
+    }
+
+    /// <summary>Un medio usado solo por una línea de pago (la cabecera ya no guarda el medio) sigue bloqueando su baja con
+    /// el rótulo "gastos" de <c>items_pago</c>.</summary>
+    [Fact]
+    public async Task UnMedioUsadoSoloPorUnaLineaDeUnPagoNoSePuedeDarDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(UnMedioUsadoSoloPorUnaLineaDeUnPagoNoSePuedeDarDeBaja));
+        await AbrirTurnoAsync(ctx, 1000m);
+
+        await using (var db = Db(ctx))
+        {
+            await ConServicioAsync(ctx, db, s => s.RegistrarAsync(ComandoPos(
+                ctx, new LineaDePago(ctx.IdEfectivo, 60m, null), new LineaDePago(ctx.IdTercero, 40m, null))));
+        }
+
+        var respuesta = await ctx.Admin.DeleteAsync($"/api/catalogos/medios-pago/{ctx.IdTercero}");
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var cuerpo = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("medio_pago_en_uso", cuerpo.GetProperty("codigo").GetString());
+        Assert.Contains("gastos", cuerpo.GetProperty("title").GetString(), StringComparison.Ordinal);
     }
 }

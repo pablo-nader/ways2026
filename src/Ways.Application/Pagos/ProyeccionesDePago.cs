@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
 using Ways.Domain.Pagos;
@@ -17,7 +18,8 @@ internal static class ProyeccionesDePago
             g.IdPuntoVenta,
             g.Fecha,
             g.Categoria,
-            g.IdMedioPago,
+            db.ItemsPago.Where(i => i.IdPago == g.Id && i.DeletedAt == null).OrderBy(i => i.Id)
+                .Select(i => i.IdMedioPago).FirstOrDefault(),
             g.Importe,
             g.OrigenFondos,
             g.IdTurnoCaja,
@@ -28,5 +30,55 @@ internal static class ProyeccionesDePago
             g.Detalle,
             g.NumeroFactura,
             g.IdComprobanteCompra,
-            g.IdMovimientoPersonal);
+            g.IdMovimientoPersonal,
+            null!);
+
+    /// <summary>Completa las líneas por medio de una página ya materializada con UNA lectura de los ítems vivos de todos sus
+    /// pagos (el nombre del medio sale de una subquery correlacionada: un medio dado de baja deja el nombre en <c>null</c>).</summary>
+    public static async Task<IReadOnlyList<PagoListado>> ConLineasAsync(
+        IWaysDbContext db, IReadOnlyList<PagoListado> pagos, CancellationToken ct)
+    {
+        if (pagos.Count == 0)
+        {
+            return pagos;
+        }
+
+        var porPago = await LineasPorPagoAsync(db, pagos.Select(p => p.Id).ToList(), ct);
+        return pagos.Select(p => p with { Lineas = porPago[p.Id].ToList() }).ToList();
+    }
+
+    /// <summary>Lo mismo que <see cref="ConLineasAsync(IWaysDbContext, IReadOnlyList{PagoListado}, CancellationToken)"/>
+    /// para el historial de administración: una sola lectura de los ítems vivos de toda la página.</summary>
+    public static async Task<IReadOnlyList<PagoDeAdministracionListado>> ConLineasAsync(
+        IWaysDbContext db, IReadOnlyList<PagoDeAdministracionListado> pagos, CancellationToken ct)
+    {
+        if (pagos.Count == 0)
+        {
+            return pagos;
+        }
+
+        var porPago = await LineasPorPagoAsync(db, pagos.Select(p => p.Id).ToList(), ct);
+        return pagos.Select(p => p with { Lineas = porPago[p.Id].ToList() }).ToList();
+    }
+
+    private static async Task<ILookup<int, LineaDePagoListada>> LineasPorPagoAsync(
+        IWaysDbContext db, List<int> ids, CancellationToken ct)
+    {
+        var lineas = await db.ItemsPago
+            .Where(i => ids.Contains(i.IdPago) && i.DeletedAt == null)
+            .OrderBy(i => i.Id)
+            .Select(i => new
+            {
+                i.IdPago,
+                Linea = new LineaDePagoListada(
+                    i.Id,
+                    i.IdMedioPago,
+                    db.MediosPago.Where(m => m.Id == i.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
+                    i.Importe,
+                    i.Referencia)
+            })
+            .ToListAsync(ct);
+
+        return lineas.ToLookup(x => x.IdPago, x => x.Linea);
+    }
 }

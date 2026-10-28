@@ -209,7 +209,6 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var pago = await db.Pagos.SingleAsync(g => g.Id == pagoCreado.Id);
         Assert.Equal(1210m, pago.Importe);
         Assert.Equal(ctx.IdEmpresa, pago.IdEmpresa);
-        Assert.Equal(ctx.IdMedioEfectivo, pago.IdMedioPago);
 
         // E2-S1: escritura doble, exactamente un ítem con el medio y el importe de la cabecera.
         var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);

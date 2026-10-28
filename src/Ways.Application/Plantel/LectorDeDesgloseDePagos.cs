@@ -33,7 +33,7 @@ public static class LectorDeDesgloseDePagos
                     db.MediosPago.Where(m => m.Id == x.Item.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
                     x.Item.Importe,
                     x.Pago.OrigenFondos,
-                    x.Pago.Detalle)
+                    x.Item.Referencia ?? x.Pago.Detalle)
             })
             .ToListAsync(ct);
 

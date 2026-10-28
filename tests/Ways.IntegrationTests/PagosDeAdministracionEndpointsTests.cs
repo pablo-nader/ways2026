@@ -160,7 +160,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
 
         // E2-S1: escritura doble, exactamente un ítem con el medio y el importe de la cabecera.
         var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
-        Assert.Equal((fila.IdMedioPago, 500m), (item.IdMedioPago, item.Importe));
+        Assert.Equal((ctx.IdMedioEfectivo, 500m), (item.IdMedioPago, item.Importe));
     }
 
     // ---- el movimiento de tesorería que escribe el pago lleva `momento`, no la fecha retroactiva --

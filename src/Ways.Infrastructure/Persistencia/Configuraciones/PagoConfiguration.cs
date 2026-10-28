@@ -79,7 +79,6 @@ public class PagoConfiguration : IEntityTypeConfiguration<Pago>
         builder.Property(g => g.Concepto).HasColumnName("concepto").HasColumnType("text").IsRequired();
         builder.Property(g => g.Detalle).HasColumnName("detalle").HasColumnType("text");
 
-        builder.Property(g => g.IdMedioPago).HasColumnName("id_medio_pago").IsRequired();
         builder.Property(g => g.NumeroFactura).HasColumnName("numero_factura").HasColumnType("text");
 
         builder.Property(g => g.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
@@ -108,7 +107,6 @@ public class PagoConfiguration : IEntityTypeConfiguration<Pago>
         // que documenta ComprobanteVentaConfiguration).
         builder.HasIndex(g => g.IdEmpleado).HasDatabaseName("ix_pagos_empleado");
         builder.HasIndex(g => new { g.IdArea, g.IdTenant }).HasDatabaseName("ix_pagos_area");
-        builder.HasIndex(g => new { g.IdMedioPago, g.IdTenant }).HasDatabaseName("ix_pagos_medio_pago");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -170,13 +168,6 @@ public class PagoConfiguration : IEntityTypeConfiguration<Pago>
             .HasForeignKey(g => new { g.IdArea, g.IdTenant })
             .HasPrincipalKey(a => new { a.Id, a.IdTenant })
             .HasConstraintName("fk_pagos_area")
-            .OnDelete(DeleteBehavior.Restrict);
-
-        builder.HasOne<MedioPago>()
-            .WithMany()
-            .HasForeignKey(g => new { g.IdMedioPago, g.IdTenant })
-            .HasPrincipalKey(m => new { m.Id, m.IdTenant })
-            .HasConstraintName("fk_pagos_medio_pago")
             .OnDelete(DeleteBehavior.Restrict);
 
         // stage-15-cc-proveedores-ledger, Slice 1 (gate §D): habilita la FK compuesta

@@ -232,14 +232,13 @@ public class TurnosCajaYPagosBackstopTests(WaysApiFixture fixture) : IClassFixtu
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
-            "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'pago de prueba', $6, 0, now(), now())";
+            "categoria, origen_fondos, concepto, importe, created_at, updated_at) " +
+            "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'pago de prueba', 0, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = idTurno });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
-        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
@@ -343,13 +342,12 @@ public class TurnosCajaYPagosBackstopTests(WaysApiFixture fixture) : IClassFixtu
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
-            "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, $3, NULL, $4, 'otros', 'caja_turno', 'pago de prueba', $5, 100, now(), now())";
+            "categoria, origen_fondos, concepto, importe, created_at, updated_at) " +
+            "VALUES ($1, now(), $2, $3, NULL, $4, 'otros', 'caja_turno', 'pago de prueba', 100, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
-        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
@@ -374,15 +372,14 @@ public class TurnosCajaYPagosBackstopTests(WaysApiFixture fixture) : IClassFixtu
         {
             comandoPago.CommandText =
                 "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
-                "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-                "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'pago de prueba', $6, 100, now(), now()) " +
+                "categoria, origen_fondos, concepto, importe, created_at, updated_at) " +
+                "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'pago de prueba', 100, now(), now()) " +
                 "RETURNING id_pago";
             comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
             comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
             comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
             comandoPago.Parameters.Add(new NpgsqlParameter { Value = idTurno });
             comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
-            comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
             idPago = (int)(await comandoPago.ExecuteScalarAsync())!;
         }
 
@@ -455,13 +452,12 @@ public class TurnosCajaYPagosBackstopTests(WaysApiFixture fixture) : IClassFixtu
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO pagos (id_tenant, fecha, id_empresa, id_punto_venta, id_turno_caja, id_empleado, " +
-            "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
+            "categoria, origen_fondos, concepto, importe, created_at, updated_at) " +
             "VALUES ($1, now(), $2, NULL, NULL, $3, 'otros', 'tesoreria', 'pago de tesorería directo', " +
-            "$4, 100, now(), now()) RETURNING id_pago";
+            "100, now(), now()) RETURNING id_pago";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
-        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
 
         var idPago = (int)(await comando.ExecuteScalarAsync())!;
         Assert.True(idPago > 0);

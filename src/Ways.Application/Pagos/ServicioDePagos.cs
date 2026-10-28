@@ -47,8 +47,8 @@ public class ServicioDePagos(
     public Task<PagoRegistrado> RegistrarAsync(SolicitudDePago solicitud, CancellationToken ct = default) =>
         ConImporteDeUnSoloMedioAsync(solicitud.Importe, () => RegistrarAsync(ComandoDePago.Desde(solicitud), ct));
 
-    /// <summary>Alta del POS con líneas por medio: el importe del pago es la suma de las líneas y la cabecera repite el
-    /// medio de la primera. El POS no valida el medio contra el servidor (lo filtra el cliente): una referencia
+    /// <summary>Alta del POS con líneas por medio: el importe del pago es la suma de las líneas y el medio
+    /// de compatibilidad es el de la primera. El POS no valida el medio contra el servidor (lo filtra el cliente): una referencia
     /// inexistente la rechaza la FK.</summary>
     public async Task<PagoRegistrado> RegistrarAsync(ComandoDePago solicitud, CancellationToken ct = default)
     {
@@ -82,7 +82,7 @@ public class ServicioDePagos(
             await InsertarPagoAsync(
                 idTenant, puntoVenta.IdEmpresa, turno.Id, solicitud, plan, idEmpleado, momento, ct));
 
-        return Proyectar(pago);
+        return Proyectar(pago, plan.IdMedioPagoDeCompatibilidad);
     }
 
     /// <summary>stage-gastos-admin-retroactivos (PR3), owner's use case 2: alta administrativa de
@@ -136,7 +136,7 @@ public class ServicioDePagos(
             await InsertarPagoDeAdministracionAsync(
                 idTenant, empresa.Id, fechaDeNegocio, solicitud, plan, idEmpleado, momento, ct));
 
-        return Proyectar(pago);
+        return Proyectar(pago, plan.IdMedioPagoDeCompatibilidad);
     }
 
     /// <summary>Paga una compra confirmada en UNA transacción: crea el pago administrativo (categoría
@@ -211,7 +211,7 @@ public class ServicioDePagos(
         await transaccion.CommitAsync(ct);
 
         return new ResultadoDePagoDeCompra(
-            Proyectar(pago), pagado + plan.Total, saldoPendiente - plan.Total);
+            Proyectar(pago, plan.IdMedioPagoDeCompatibilidad), pagado + plan.Total, saldoPendiente - plan.Total);
     }
 
     private async Task<string> ConceptoPorDefectoDelPagoAsync(int idComprobanteCompra, CancellationToken ct)
@@ -271,7 +271,7 @@ public class ServicioDePagos(
         var pago = await estrategia.ExecuteAsync(async () =>
             await EjecutarVincularCompraAsync(idTenant, idPago, solicitud.IdComprobanteCompra, idEmpleado, momento, ct));
 
-        return Proyectar(pago);
+        return Proyectar(pago, await MedioDeCompatibilidadAsync(pago.Id, ct));
     }
 
     /// <summary>Ver el doc-comment de <see cref="VincularCompraAsync"/> para el orden de locks y el
@@ -473,7 +473,7 @@ public class ServicioDePagos(
             await EjecutarEscrituraAsync(
                 idTenant, idPago, inmutables, solicitud, plan, ModoDeEscritura.Pos, idEmpleado, momento, ct));
 
-        return Proyectar(pago);
+        return Proyectar(pago, plan.IdMedioPagoDeCompatibilidad);
     }
 
     /// <summary>Edición administrativa de cualquier pago: con turno abierto, cerrado (recalcula el
@@ -554,7 +554,7 @@ public class ServicioDePagos(
         Pago pago, ComandoDeEdicionDePago solicitud, PlanDeLineasDePago plan, IReadOnlyList<ItemPago> itemsVivos,
         CancellationToken ct)
     {
-        var mediosQueYaTenia = itemsVivos.Select(i => i.IdMedioPago).Append(pago.IdMedioPago).ToHashSet();
+        var mediosQueYaTenia = itemsVivos.Select(i => i.IdMedioPago).ToHashSet();
         await ExigirMediosDeLasLineasValidosAsync(
             plan.Lineas.Select(l => l.IdMedioPago).Where(id => !mediosQueYaTenia.Contains(id)), ct);
 
@@ -648,7 +648,8 @@ public class ServicioDePagos(
         }
 
         var anterior = await EstadoContableAsync(pago, ct);
-        var valorAnterior = PayloadDeEdicion(pago, anterior.ImportePorMedio);
+        var medioAnterior = itemsVivos.FirstOrDefault()?.IdMedioPago;
+        var valorAnterior = PayloadDeEdicion(pago, medioAnterior, anterior.ImportePorMedio);
 
         if (solicitud is not null && plan is not null)
         {
@@ -665,7 +666,6 @@ public class ServicioDePagos(
             pago.IdArea = solicitud.IdArea;
             pago.Concepto = solicitud.Concepto;
             pago.Detalle = solicitud.Detalle;
-            pago.IdMedioPago = plan.IdMedioPagoDeLaCabecera;
             pago.NumeroFactura = solicitud.NumeroFactura;
             pago.Importe = plan.Total;
             ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, conservarReferencias: solicitud.DeUnSoloMedio, momento);
@@ -709,7 +709,8 @@ public class ServicioDePagos(
                 idEmpleado, ct);
         }
 
-        var valorNuevo = PayloadDeEdicion(pago, nuevo?.ImportePorMedio ?? anterior.ImportePorMedio);
+        var valorNuevo = PayloadDeEdicion(
+            pago, plan?.IdMedioPagoDeCompatibilidad ?? medioAnterior, nuevo?.ImportePorMedio ?? anterior.ImportePorMedio);
         if (solicitud is null)
         {
             valorNuevo["deleted_at"] = pago.DeletedAt;
@@ -866,28 +867,7 @@ public class ServicioDePagos(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>Escritura doble de E2-S1: cada pago nace con exactamente un ítem que repite el medio y el importe de su
-    /// cabecera. Va en la transacción del llamador, después de que el pago tiene su id; el constraint trigger de la base
-    /// es diferido, así que el orden dentro de la transacción no importa.</summary>
-    private async Task<IReadOnlyList<ItemPago>> EscribirItemsDeLosPagosAsync(
-        IEnumerable<Pago> pagos, DateTimeOffset momento, CancellationToken ct)
-    {
-        var items = pagos.Select(pago => new ItemPago
-        {
-            IdTenant = pago.IdTenant,
-            IdPago = pago.Id,
-            IdMedioPago = pago.IdMedioPago,
-            Importe = pago.Importe,
-            CreatedAt = momento,
-            UpdatedAt = momento
-        }).ToList();
-
-        db.ItemsPago.AddRange(items);
-        await db.SaveChangesAsync(ct);
-        return items;
-    }
-
-    /// <summary>Un ítem por línea, en el orden de las líneas (el primero es el de la cabecera).</summary>
+    /// <summary>Un ítem por línea, en el orden de las líneas (el primero es el de menor id).</summary>
     private async Task EscribirItemsDelPagoAsync(
         Pago pago, IReadOnlyList<LineaDePago> lineas, DateTimeOffset momento, CancellationToken ct)
     {
@@ -954,14 +934,17 @@ public class ServicioDePagos(
         return new EstadoContableDePago(pago.Categoria, pago.IdProveedor, porMedio, pago.Importe);
     }
 
-    private static Dictionary<string, object?> PayloadDeEdicion(Pago pago, IReadOnlyDictionary<int, decimal> importePorMedio) => new()
+    /// <summary>La clave <c>id_medio_pago</c> conserva la forma del payload: lleva el medio de compatibilidad (el del ítem
+    /// vivo de menor id) y el reparto completo va en <c>lineas</c>.</summary>
+    private static Dictionary<string, object?> PayloadDeEdicion(
+        Pago pago, int? idMedioPagoDeCompatibilidad, IReadOnlyDictionary<int, decimal> importePorMedio) => new()
     {
         ["categoria"] = pago.Categoria,
         ["id_proveedor"] = pago.IdProveedor,
         ["id_area"] = pago.IdArea,
         ["concepto"] = pago.Concepto,
         ["detalle"] = pago.Detalle,
-        ["id_medio_pago"] = pago.IdMedioPago,
+        ["id_medio_pago"] = idMedioPagoDeCompatibilidad,
         ["lineas"] = importePorMedio
             .OrderBy(par => par.Key)
             .Select(par => new Dictionary<string, object?> { ["id_medio_pago"] = par.Key, ["importe"] = par.Value })
@@ -1009,7 +992,7 @@ public class ServicioDePagos(
             .Select(ProyeccionesDePago.Listado(db))
             .ToListAsync(ct);
 
-        return new PaginaDePagos(items, total, pagina, tamanio);
+        return new PaginaDePagos(await ProyeccionesDePago.ConLineasAsync(db, items, ct), total, pagina, tamanio);
     }
 
     /// <summary>Historial de gestión (design: API Surface, <c>GET /api/gastos/administracion</c>)
@@ -1064,7 +1047,7 @@ public class ServicioDePagos(
             .Select(ProyeccionDeAdministracion())
             .ToListAsync(ct);
 
-        return new PaginaDePagosDeAdministracion(items, total, pagina, tamanio);
+        return new PaginaDePagosDeAdministracion(await ProyeccionesDePago.ConLineasAsync(db, items, ct), total, pagina, tamanio);
     }
 
     /// <summary>stage-gasto-a-compra (PR4), judgment follow-up: <c>GET
@@ -1074,10 +1057,14 @@ public class ServicioDePagos(
     /// resuelve (antes apuntaba a <c>/api/gastos/{id}</c>, que exige <c>OperacionDePos</c> pero
     /// devuelve el shape reducido de <see cref="PagoListado"/> — un mismatch de contrato para un
     /// cliente que siguiera el header).</summary>
-    public async Task<PagoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default) =>
-        await db.Pagos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
+    public async Task<PagoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default)
+    {
+        var fila = await db.Pagos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
             ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
+
+        return (await ProyeccionesDePago.ConLineasAsync(db, [fila], ct))[0];
+    }
 
     private Expression<Func<Pago, PagoDeAdministracionListado>> ProyeccionDeAdministracion() => g =>
         new PagoDeAdministracionListado(
@@ -1093,14 +1080,18 @@ public class ServicioDePagos(
             g.IdArea == null ? null : db.Areas.Where(a => a.Id == g.IdArea).Select(a => a.Nombre).FirstOrDefault(),
             g.Concepto,
             g.Detalle,
-            g.IdMedioPago,
-            db.MediosPago.Where(m => m.Id == g.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
+            db.ItemsPago.Where(i => i.IdPago == g.Id && i.DeletedAt == null).OrderBy(i => i.Id)
+                .Select(i => i.IdMedioPago).FirstOrDefault(),
+            db.ItemsPago.Where(i => i.IdPago == g.Id && i.DeletedAt == null).OrderBy(i => i.Id)
+                .Select(i => db.MediosPago.Where(m => m.Id == i.IdMedioPago).Select(m => m.Nombre).FirstOrDefault())
+                .FirstOrDefault(),
             g.NumeroFactura,
             g.Importe,
             g.OrigenFondos,
             g.IdComprobanteCompra,
             g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto),
-            g.IdMovimientoPersonal);
+            g.IdMovimientoPersonal,
+            null!);
 
     // ---- validación de dominio -------------------------------------------------------------
 
@@ -1326,7 +1317,6 @@ public class ServicioDePagos(
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
             Detalle = solicitud.Detalle,
-            IdMedioPago = plan.IdMedioPagoDeLaCabecera,
             NumeroFactura = solicitud.NumeroFactura,
             Importe = plan.Total,
             IdComprobanteCompra = solicitud.IdComprobanteCompra,
@@ -1425,7 +1415,6 @@ public class ServicioDePagos(
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
             Detalle = solicitud.Detalle,
-            IdMedioPago = plan.IdMedioPagoDeLaCabecera,
             NumeroFactura = solicitud.NumeroFactura,
             Importe = plan.Total,
             IdComprobanteCompra = solicitud.IdComprobanteCompra,
@@ -1624,13 +1613,15 @@ public class ServicioDePagos(
             idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona), nombresDeMedios);
     }
 
-    /// <summary>Un pago de categoría sueldos por línea de dinero, dentro de la transacción del llamador, que ya
-    /// tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que el alta del
-    /// POS y el alta administrativa: el pago del cajón entra al arqueo del turno por su origen
+    /// <summary>Un pago de categoría sueldos por línea de dinero, cada uno con su único ítem, dentro de la transacción
+    /// del llamador, que ya tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que
+    /// el alta del POS y el alta administrativa: el pago del cajón entra al arqueo del turno por su origen
     /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe su egreso encadenado con
     /// <see cref="EscribirMovimientoDeTesoreriaAsync"/>, cuyo advisory de la empresa es el ÚLTIMO lock de la
-    /// transacción. El pago de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería,
-    /// la fecha de negocio elegida. Cada pago apunta al movimiento <c>pago</c> del libro de personal.</summary>
+    /// transacción. El pago de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería, la
+    /// fecha de negocio elegida. Cada pago apunta al movimiento <c>pago</c> del libro de personal y repite la
+    /// referencia de su línea en el detalle y en el ítem. Un solo pago con varios ítems queda para después del release
+    /// del POS instalado, que no lee las líneas.</summary>
     public async Task<IReadOnlyList<PagoDeSueldoPersistido>> PersistirPagosDeSueldoAsync(
         int idTenant, EntornoDePagoDeSueldo entorno, OrigenFondosPago origenFondos, string nombreDelPersonal,
         int idMovimientoPersonal, IReadOnlyList<LineaDePagoDePersonal> lineas, int idEmpleado, DateTimeOffset momento,
@@ -1648,7 +1639,6 @@ public class ServicioDePagos(
             OrigenFondos = origenFondos,
             Concepto = $"Pago de personal: {nombreDelPersonal}",
             Detalle = linea.Referencia,
-            IdMedioPago = linea.IdMedioPago,
             Importe = linea.Importe,
             IdMovimientoPersonal = idMovimientoPersonal,
             CreatedAt = momento,
@@ -1657,7 +1647,20 @@ public class ServicioDePagos(
 
         db.Pagos.AddRange(pagos);
         await db.SaveChangesAsync(ct);
-        var items = await EscribirItemsDeLosPagosAsync(pagos, momento, ct);
+
+        var items = pagos.Select((pago, i) => new ItemPago
+        {
+            IdTenant = idTenant,
+            IdPago = pago.Id,
+            IdMedioPago = lineas[i].IdMedioPago,
+            Importe = lineas[i].Importe,
+            Referencia = lineas[i].Referencia,
+            CreatedAt = momento,
+            UpdatedAt = momento
+        }).ToList();
+
+        db.ItemsPago.AddRange(items);
+        await db.SaveChangesAsync(ct);
 
         if (origenFondos == OrigenFondosPago.Tesoreria)
         {
@@ -1697,7 +1700,15 @@ public class ServicioDePagos(
 
     // ---- proyecciones -----------------------------------------------------------------------
 
-    private static PagoRegistrado Proyectar(Pago pago) => new(
+    private async Task<int> MedioDeCompatibilidadAsync(int idPago, CancellationToken ct) =>
+        await db.ItemsPago
+            .Where(i => i.IdPago == idPago && i.DeletedAt == null)
+            .OrderBy(i => i.Id)
+            .Select(i => i.IdMedioPago)
+            .FirstOrDefaultAsync(ct);
+
+    /// <summary>El medio de compatibilidad del pago es el de su ítem vivo de menor id: el de la primera línea.</summary>
+    private static PagoRegistrado Proyectar(Pago pago, int idMedioPagoDeCompatibilidad) => new(
         pago.Id,
         pago.IdTurnoCaja,
         pago.IdPuntoVenta,
@@ -1707,7 +1718,7 @@ public class ServicioDePagos(
         pago.IdArea,
         pago.Concepto,
         pago.Detalle,
-        pago.IdMedioPago,
+        idMedioPagoDeCompatibilidad,
         pago.NumeroFactura,
         pago.Importe,
         pago.IdEmpleado,
