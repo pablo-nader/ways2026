@@ -328,7 +328,7 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.CostoListaPor),
             nameof(Articulo.CostoListaIncluyeIva),
             nameof(Articulo.DescuentoProveedor),
-            nameof(Articulo.PorcentajeImpuestoInterno),
+            nameof(Articulo.ImpuestoInterno),
             nameof(Articulo.CostoNominal)
         ];
 

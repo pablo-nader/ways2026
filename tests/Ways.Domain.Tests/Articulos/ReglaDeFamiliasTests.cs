@@ -178,7 +178,7 @@ public class ReglaDeFamiliasTests
         IdArea: 11, IdCategoria: 12, IdGrupo: 13, IdProveedorHabitual: 14, IdAlicuotaIva: 15,
         UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true, ControlaLote: false,
         AcumulaEnVenta: true, CostoLista: 50m, CostoListaPor: CostoListaPor.Unidad, CostoListaIncluyeIva: true,
-        DescuentoProveedor: 10m, PorcentajeImpuestoInterno: 5m, CostoNominal: 40m);
+        DescuentoProveedor: 10m, ImpuestoInterno: 5m, CostoNominal: 40m);
 
     private static readonly ValoresCompartidosDeFamilia ValoresQueDifieren = ValoresDeReferencia with { CostoLista = 51m };
 

@@ -56,7 +56,7 @@ public class ValoresCompartidosDeLaFamiliaParidadTests
             IdArea: 11, IdCategoria: 12, IdGrupo: 13, IdProveedorHabitual: 14, IdAlicuotaIva: 15,
             UnidadVenta: UnidadVenta.Peso, UnidadesPorBulto: 6.5m, EsProducto: esProducto, ControlaLote: controlaLote,
             AcumulaEnVenta: acumulaEnVenta, CostoLista: 50.25m, CostoListaPor: CostoListaPor.Bulto,
-            CostoListaIncluyeIva: false, DescuentoProveedor: 10.5m, PorcentajeImpuestoInterno: 7.25m, CostoNominal: 40.75m);
+            CostoListaIncluyeIva: false, DescuentoProveedor: 10.5m, ImpuestoInterno: 7.25m, CostoNominal: 40.75m);
 
         var dto = ValoresCompartidosDeLaFamilia.De(dominio);
 
@@ -65,7 +65,7 @@ public class ValoresCompartidosDeLaFamiliaParidadTests
                 (decimal?)50.25m, CostoListaPor.Bulto, false, (decimal?)10.5m, 7.25m, (decimal?)40.75m),
             (dto.IdArea, dto.IdCategoria, dto.IdGrupo, dto.IdProveedorHabitual, dto.IdAlicuotaIva, dto.UnidadVenta,
                 dto.UnidadesPorBulto, dto.EsProducto, dto.ControlaLote, dto.AcumulaEnVenta, dto.CostoLista, dto.CostoListaPor,
-                dto.CostoListaIncluyeIva, dto.DescuentoProveedor, dto.PorcentajeImpuestoInterno, dto.CostoNominal));
+                dto.CostoListaIncluyeIva, dto.DescuentoProveedor, dto.ImpuestoInterno, dto.CostoNominal));
     }
 
     /// <summary>La única nulabilidad que difiere es la de <c>IdArea</c>: obligatoria en el artículo, el detalle la lee
