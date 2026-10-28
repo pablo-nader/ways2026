@@ -713,3 +713,168 @@ describe('CuentasTesoreria — respuestas tardías del listado', () => {
     expect(screen.getByText('Mercado Pago')).toBeInTheDocument()
   })
 })
+
+describe('CuentasTesoreria — orden y filtros por columna', () => {
+  let u: Usuario
+
+  beforeEach(() => {
+    u = userEvent.setup()
+  })
+
+  const mercadoPago = cuenta({ id: 1, nombre: 'Mercado Pago', nombreEmpresa: 'Comercio SA', saldoActual: 1500, saldoInicial: 100 })
+  const banco = cuenta({ id: 2, nombre: 'Banco', nombreEmpresa: 'Alfa SRL', saldoActual: 900, saldoInicial: 20000, activo: false })
+  const cajaChica = cuenta({ id: 3, nombre: 'Caja chica', nombreEmpresa: null, saldoActual: 12000, saldoInicial: 5 })
+
+  /** Las dos primeras filas son el encabezado y los filtros; la celda 0 de cada fila de datos es el nombre. */
+  function nombresEnPantalla() {
+    return screen
+      .getAllByRole('row')
+      .slice(2)
+      .map((f) => within(f).getAllByRole('cell')[0]?.textContent)
+  }
+
+  async function montarConCuentas() {
+    filas = [mercadoPago, banco, cajaChica]
+    renderPagina()
+    await screen.findByText('Mercado Pago')
+  }
+
+  it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
+    await montarConCuentas()
+
+    const [encabezados, filtros] = screen.getAllByRole('row')
+    const celdasDeEncabezado = within(encabezados).getAllByRole('columnheader')
+    const celdasDeFiltros = within(filtros).getAllByRole('columnheader')
+
+    expect(celdasDeFiltros).toHaveLength(celdasDeEncabezado.length)
+    expect(celdasDeEncabezado.at(-1)).toHaveTextContent('Acciones')
+    expect(within(celdasDeFiltros.at(-1)!).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+  })
+
+  it('cada columna de datos se puede ordenar y Acciones no', async () => {
+    await montarConCuentas()
+
+    for (const nombre of ['Nombre', 'Empresa', 'Saldo actual', 'Saldo inicial', 'Estado']) {
+      expect(screen.getByRole('button', { name: nombre })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).not.toHaveAttribute('aria-sort')
+  })
+
+  it('el saldo actual se ordena como número (900 antes que 1.500) y el tercer clic vuelve al orden del servidor', async () => {
+    await montarConCuentas()
+    const boton = screen.getByRole('button', { name: 'Saldo actual' })
+    const encabezado = screen.getByRole('columnheader', { name: 'Saldo actual' })
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago', 'Banco', 'Caja chica'])
+
+    await u.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Banco', 'Mercado Pago', 'Caja chica'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+
+    await u.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Caja chica', 'Mercado Pago', 'Banco'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+
+    await u.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago', 'Banco', 'Caja chica'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('el saldo inicial se ordena como número', async () => {
+    await montarConCuentas()
+
+    await u.click(screen.getByRole('button', { name: 'Saldo inicial' }))
+
+    expect(nombresEnPantalla()).toEqual(['Caja chica', 'Mercado Pago', 'Banco'])
+  })
+
+  it('una cuenta cuya empresa fue dada de baja va al final en cualquier dirección', async () => {
+    await montarConCuentas()
+    const boton = screen.getByRole('button', { name: 'Empresa' })
+
+    await u.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Banco', 'Mercado Pago', 'Caja chica'])
+
+    await u.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago', 'Banco', 'Caja chica'])
+  })
+
+  it('ordenar por nombre y por estado actúa sobre el texto mostrado', async () => {
+    await montarConCuentas()
+
+    await u.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(nombresEnPantalla()).toEqual(['Banco', 'Caja chica', 'Mercado Pago'])
+
+    await u.click(screen.getByRole('button', { name: 'Estado' }))
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago', 'Caja chica', 'Banco'])
+  })
+
+  it('cada filtro de texto acota las filas', async () => {
+    await montarConCuentas()
+
+    await u.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'CAJA')
+    expect(nombresEnPantalla()).toEqual(['Caja chica'])
+
+    await u.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await u.type(screen.getByRole('searchbox', { name: 'Filtrar por empresa' }), 'alfa')
+    expect(nombresEnPantalla()).toEqual(['Banco'])
+
+    await u.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await u.type(screen.getByRole('searchbox', { name: 'Filtrar por saldo actual' }), '1.500')
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago'])
+
+    await u.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await u.type(screen.getByRole('searchbox', { name: 'Filtrar por saldo inicial' }), '20.000')
+    expect(nombresEnPantalla()).toEqual(['Banco'])
+  })
+
+  it('el filtro de estado es un select y se combina con el de texto; limpiar los quita', async () => {
+    await montarConCuentas()
+
+    await u.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por estado' }), 'Inactiva')
+    expect(nombresEnPantalla()).toEqual(['Banco'])
+
+    await u.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'mercado')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await u.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago', 'Banco', 'Caja chica'])
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toHaveValue('')
+  })
+
+  it('el campo de filtro sigue montado y con su valor mientras el listado se recarga tras una baja', async () => {
+    const refresco = diferido<CuentaTesoreriaListado[]>()
+    let cargas = 0
+    mockearRutas(() => (++cargas === 1 ? Promise.resolve(filas) : refresco.promesa))
+    await montarConCuentas()
+    apiDeleteMock.mockResolvedValue(undefined)
+    await u.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'a')
+    const campo = screen.getByRole('searchbox', { name: 'Filtrar por nombre' })
+
+    await u.click(screen.getByRole('button', { name: 'Eliminar Caja chica' }))
+    await u.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(await screen.findByText('Cuenta "Caja chica" dada de baja.')).toBeInTheDocument()
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+
+    await act(async () => {
+      refresco.resolver([mercadoPago, banco])
+      await refresco.promesa
+    })
+
+    await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+    expect(nombresEnPantalla()).toEqual(['Mercado Pago', 'Banco'])
+  })
+
+  it('con la puerta de baja abierta los filtros quedan inertes', async () => {
+    await montarConCuentas()
+
+    await u.click(screen.getByRole('button', { name: 'Eliminar Banco' }))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Filtrar por estado' })).toBeDisabled()
+  })
+})

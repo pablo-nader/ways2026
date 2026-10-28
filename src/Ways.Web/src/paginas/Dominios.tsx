@@ -14,9 +14,40 @@ import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { ModalDeDominio } from './dominios/ModalDeDominio'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const SIN_DOMINIOS: readonly DominioListado[] = []
+
+const OPCIONES_DE_PRINCIPAL = [
+  { valor: 'Principal', etiqueta: 'Principal' },
+  { valor: 'No', etiqueta: 'No' },
+]
+
+const textoDePrincipal = (dominio: DominioListado) => (dominio.esPrincipal ? 'Principal' : 'No')
+
+const ORDENABLES: ColumnasOrdenables<DominioListado> = {
+  host: { valor: (dominio) => dominio.host },
+  principal: { valor: textoDePrincipal },
+  verificacion: { valor: (dominio) => (dominio.verificadoEn === null ? null : new Date(dominio.verificadoEn)) },
+}
+
+const FILTRABLES: ColumnasFiltrables<DominioListado> = {
+  host: { etiqueta: 'Host', valor: (dominio) => dominio.host },
+  principal: { etiqueta: 'Principal', valor: textoDePrincipal, opciones: OPCIONES_DE_PRINCIPAL },
+  verificacion: { etiqueta: 'Verificación', valor: (dominio) => textoDeVerificacion(dominio.verificadoEn) },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['host', 'principal', 'verificacion', null]
 
 /**
  * Dominios propios de un tenant — solo plataforma (`Politicas.SoloPlataforma`). El dominio decide a
@@ -40,6 +71,14 @@ export function Dominios() {
   const [idTenant, setIdTenant] = useState('')
   const [dominios, setDominios] = useState<DominioListado[] | null>(null)
   const [cargandoDominios, setCargandoDominios] = useState(false)
+  const {
+    filas: dominiosFiltrados,
+    filtros,
+    cambiar: cambiarFiltro,
+    limpiar: limpiarFiltros,
+    hayFiltros,
+  } = useFiltrosDeColumna(dominios ?? SIN_DOMINIOS, FILTRABLES)
+  const { filas: dominiosVisibles, orden, alternar } = useOrdenamiento(dominiosFiltrados, ORDENABLES)
 
   const [host, setHost] = useState('')
   const [esPrincipal, setEsPrincipal] = useState(false)
@@ -114,6 +153,7 @@ export function Dominios() {
     setHost('')
     setEsPrincipal(false)
     setDominios(null)
+    limpiarFiltros()
 
     if (valor !== '') void cargarDominios(Number(valor), token)
   }
@@ -345,17 +385,36 @@ export function Dominios() {
                     <table className="table table-striped table-hover table-bordered align-middle">
                       <thead>
                         <tr>
-                          <th>Host</th>
-                          <th>Principal</th>
-                          <th>Verificación</th>
-                          <th className="text-end">Acciones</th>
+                          <EncabezadoOrdenable columna="host" orden={orden} onAlternar={alternar}>
+                            Host
+                          </EncabezadoOrdenable>
+                          <EncabezadoOrdenable columna="principal" orden={orden} onAlternar={alternar}>
+                            Principal
+                          </EncabezadoOrdenable>
+                          <EncabezadoOrdenable columna="verificacion" orden={orden} onAlternar={alternar}>
+                            Verificación
+                          </EncabezadoOrdenable>
+                          <th scope="col" className="text-end">
+                            Acciones
+                          </th>
                         </tr>
+                        <FilaDeFiltros
+                          celdas={CELDAS_DE_FILTROS}
+                          columnas={FILTRABLES}
+                          filtros={filtros}
+                          onCambio={cambiarFiltro}
+                          onLimpiar={limpiarFiltros}
+                          hayFiltros={hayFiltros}
+                          deshabilitado={bloqueado}
+                        />
                       </thead>
                       <tbody>
-                        {dominios.map((d) => (
+                        {dominiosVisibles.map((d) => (
                           <tr key={d.id}>
                             <td>{d.host}</td>
-                            <td>{d.esPrincipal && <span className="badge text-bg-primary">Principal</span>}</td>
+                            <td>
+                              {d.esPrincipal ? <span className="badge text-bg-primary">Principal</span> : textoDePrincipal(d)}
+                            </td>
                             <td>{textoDeVerificacion(d.verificadoEn)}</td>
                             <td className="text-end text-nowrap">
                               {d.verificadoEn === null && (
@@ -382,6 +441,13 @@ export function Dominios() {
                           <tr>
                             <td colSpan={4} className="text-center text-muted py-4">
                               Este tenant todavía no tiene dominios.
+                            </td>
+                          </tr>
+                        )}
+                        {dominios.length > 0 && dominiosVisibles.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="text-center text-muted py-4">
+                              Ningún registro coincide con los filtros.
                             </td>
                           </tr>
                         )}
