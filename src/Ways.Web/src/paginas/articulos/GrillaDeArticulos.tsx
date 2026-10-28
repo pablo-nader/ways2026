@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clienteDeArticulos, filtrosDeGrillaDeArticulosVacios } from '../../api/articulos'
+import {
+  clienteDeArticulos,
+  esColumnaOrdenableDeArticulos,
+  filtrosDeGrillaDeArticulosVacios,
+  type OrdenDeGrillaDeArticulos,
+} from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import type { FilaDeGrillaDeArticulos, FiltrosDeGrillaDeArticulos, PaginaDeGrillaDeArticulos, ProveedorListado } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
+import { EncabezadoOrdenable } from '../../componentes/grilla'
+import { siguienteOrden } from '../../componentes/grilla/ordenamiento'
 import { formatearImporte } from '../../formato/importes'
 import { etiquetaDeProveedor } from './helpers'
 import { BotonIcono, EnlaceIcono } from '../../componentes/BotonIcono'
@@ -45,6 +52,10 @@ type Props = {
  */
 export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEliminar }: Props) {
   const [filtros, setFiltros] = useState<FiltrosDeGrillaDeArticulos>(filtrosDeGrillaDeArticulosVacios())
+  // El orden es del servidor (esta grilla pagina en el servidor: ordenar solo la página cargada
+  // mentiría); `null` = orden de siempre. Es una preferencia de vista como el tamaño de página:
+  // "Limpiar" no la toca.
+  const [orden, setOrden] = useState<OrdenDeGrillaDeArticulos>(null)
   const [borrador, setBorrador] = useState<BorradorDeTexto>(borradorVacio())
   const [pagina, setPagina] = useState<PaginaDeGrillaDeArticulos | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -70,7 +81,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
     setCargando(true)
     setError('')
     clienteDeArticulos
-      .grilla(filtros)
+      .grilla(filtros, orden)
       .then((p) => {
         if (generacionRef.current !== generacion) return
         // Una Baja puede vaciar la última página en curso — incluso hasta `total === 0`, si era el
@@ -97,7 +108,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
         if (!seProgramoClamp) setCargando(false)
         cargaInicialHechaRef.current = true
       })
-  }, [filtros])
+  }, [filtros, orden])
 
   useEffect(() => {
     cargar()
@@ -127,6 +138,17 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
 
   function cambiarFiltroInmediato(cambios: Partial<Omit<FiltrosDeGrillaDeArticulos, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
+  }
+
+  // Ascendente → descendente → sin orden. Cambiar el orden vuelve a la página 1 (los dos setState
+  // se agrupan en un solo render, es decir en una sola consulta) y conserva los filtros en curso.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeArticulos(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
   }
 
   function cambiarPagina(delta: number) {
@@ -179,13 +201,27 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th scope="col">Código</th>
-                  <th scope="col">Nombre</th>
-                  <th scope="col">Costo</th>
-                  <th scope="col">{tituloColumnaPrecio}</th>
-                  <th scope="col">Proveedor</th>
-                  <th scope="col">Disponibilidad</th>
-                  <th scope="col">Estado</th>
+                  <EncabezadoOrdenable columna="codigo" orden={orden} onAlternar={alternarOrden}>
+                    Código
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternarOrden}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="costo" orden={orden} onAlternar={alternarOrden}>
+                    Costo
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="precio" orden={orden} onAlternar={alternarOrden}>
+                    {tituloColumnaPrecio}
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="proveedor" orden={orden} onAlternar={alternarOrden}>
+                    Proveedor
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="disponibilidad" orden={orden} onAlternar={alternarOrden}>
+                    Disponibilidad
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternarOrden}>
+                    Estado
+                  </EncabezadoOrdenable>
                   <th scope="col" className="text-end">
                     Acciones
                   </th>
