@@ -22,8 +22,10 @@ public partial class ServicioDePagos
     /// Aplica el disponible de un pago a una o más compras de un mismo proveedor. Un pago de proveedor se aplica sin
     /// más; un pago sin proveedor (categoría distinta de proveedor, o proveedor sin asignar) lo adopta: pasa a categoría
     /// proveedor con el de las compras, escribe el movimiento <c>pago</c> de la cuenta corriente por su importe completo
-    /// con la fecha de ahora (recién ahí entra a esa cuenta) y toma la primera compra como «compra de origen» si no
-    /// tenía. Una sola aplicación viva por par pago-compra: aplicar de nuevo la agranda.
+    /// con la fecha de ahora (recién ahí entra a esa cuenta) y toma la primera compra pedida como «compra de origen»:
+    /// el pago no tenía proveedor, así que cualquier vínculo anterior era a una compra que no le corresponde. Toda
+    /// compra tiene que ser de la empresa del pago (<c>400 compra_de_otra_empresa</c>). Una sola aplicación viva por
+    /// par pago-compra: aplicar de nuevo la agranda.
     ///
     /// update-404-first: pago y compras inexistentes responden 404 antes de validar el cuerpo. Forma (b) de
     /// ef-retry-safe-writes: <see cref="FabricaDeEstrategiaSinReintento"/>, porque la adopción escribe el movimiento y el
@@ -78,6 +80,11 @@ public partial class ServicioDePagos
         if (pago.Categoria == CategoriaPago.Sueldos)
         {
             throw new ErrorDominio("pago_no_aplicable", "Un pago de sueldos no se aplica a compras.", 409);
+        }
+
+        foreach (var compra in compras.Values)
+        {
+            await ExigirCompraDeLaEmpresaAsync(compra, pago.IdEmpresa, ct);
         }
 
         var adopta = pago.Categoria != CategoriaPago.Proveedor || pago.IdProveedor is null;
@@ -141,7 +148,7 @@ public partial class ServicioDePagos
         {
             pago.Categoria = CategoriaPago.Proveedor;
             pago.IdProveedor = idProveedorDeLasCompras;
-            pago.IdComprobanteCompra ??= pedidas[0].IdComprobanteCompra;
+            pago.IdComprobanteCompra = pedidas[0].IdComprobanteCompra;
         }
 
         pago.UpdatedAt = momento;
@@ -167,10 +174,10 @@ public partial class ServicioDePagos
     }
 
     /// <summary>
-    /// Libera una aplicación (baja lógica) y reaplica el lugar que dejó a los demás pagos vinculados a esa compra. El
-    /// proveedor adoptado se queda. Si la aplicación era la del vínculo <c>pagos.id_comprobante_compra</c> y el pago tiene
-    /// punto de venta propio, el vínculo se limpia para que la reaplicación de los vínculos no la vuelva a crear; sin
-    /// punto de venta propio se conserva, porque los ajustes de cuenta corriente de ese pago lo toman de la compra.
+    /// Libera una aplicación (baja lógica). El lugar que deja vuelve al saldo de la compra y el resto del pago queda
+    /// disponible: no se reaplica nada solo, el administrador lo aplica de forma explícita con
+    /// <see cref="AplicarAsync"/>. El proveedor adoptado se queda y <c>pagos.id_comprobante_compra</c> no se toca: es la
+    /// «compra de origen» del pago y la imputación de su movimiento de cuenta corriente.
     ///
     /// update-404-first: el pago y la aplicación (que tiene que ser de ese pago y estar viva) responden 404 antes de
     /// cualquier otra cosa. Orden de locks: compra <c>FOR UPDATE</c> → pago <c>FOR UPDATE</c>.
@@ -179,7 +186,6 @@ public partial class ServicioDePagos
         int idPago, int idAplicacion, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
-        var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
         await ExigirPagoExistenteAsync(idPago, ct);
@@ -191,19 +197,18 @@ public partial class ServicioDePagos
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
-            await EjecutarDesaplicarAsync(idTenant, idPago, idAplicacion, idCompra, idEmpleado, momento, ct));
+            await EjecutarDesaplicarAsync(idTenant, idPago, idAplicacion, idCompra, momento, ct));
 
         return await ObtenerDeAdministracionAsync(idPago, ct);
     }
 
     private async Task<int> EjecutarDesaplicarAsync(
-        int idTenant, int idPago, int idAplicacion, int idCompra, int idEmpleado, DateTimeOffset momento,
-        CancellationToken ct)
+        int idTenant, int idPago, int idAplicacion, int idCompra, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         // Una compra anulada ya liberó sus aplicaciones (la lectura de abajo daría 404): el lock no exige confirmada.
-        var compra = await BloquearCompraAsync(idCompra, idTenant, ct, exigirConfirmada: false);
+        await BloquearCompraAsync(idCompra, idTenant, ct, exigirConfirmada: false);
         await TomarLockDePagoAsync(idPago, idTenant, ct);
         var pago = await db.Pagos.FirstAsync(p => p.Id == idPago, ct);
 
@@ -217,18 +222,7 @@ public partial class ServicioDePagos
         aplicacion.DeletedAt = momento;
         aplicacion.UpdatedAt = momento;
 
-        if (pago.IdComprobanteCompra == idCompra && pago.IdPuntoVenta is not null)
-        {
-            pago.IdComprobanteCompra = null;
-        }
-
         pago.UpdatedAt = momento;
-        await db.SaveChangesAsync(ct);
-
-        if (compra.Confirmada)
-        {
-            await ReaplicarVinculosDeLaCompraAsync(idTenant, idCompra, compra, idEmpleado, momento, ct);
-        }
 
         auditoria.Registrar(new RegistroDeAuditoria(
             idTenant, pago.IdPuntoVenta, AccionAuditada.PagoDesaplicacion, pago.Id, valorAnterior,
@@ -319,9 +313,9 @@ public partial class ServicioDePagos
     // ---- lecturas de pagos aplicables --------------------------------------------------------------------------
 
     /// <summary>
-    /// Pagos con importe disponible que se pueden aplicar a una compra: los de su proveedor y los pagos sin proveedor
-    /// de la misma empresa que la compra (que adoptarían al proveedor al aplicarse). Quedan fuera los de sueldos y los
-    /// que nacieron de un pago de personal.
+    /// Pagos con importe disponible que se pueden aplicar a una compra: los de su proveedor y los pagos sin proveedor,
+    /// siempre de la misma empresa que la compra (aplicar exige esa empresa; los pagos sin proveedor adoptarían al
+    /// proveedor al aplicarse). Quedan fuera los de sueldos y los que nacieron de un pago de personal.
     /// </summary>
     public async Task<PagosAplicables> ListarPagosAplicablesDeLaCompraAsync(int idCompra, CancellationToken ct = default)
     {
@@ -338,12 +332,16 @@ public partial class ServicioDePagos
         return await PagosConDisponibleAsync(
             db.Pagos.Where(p =>
                 p.IdMovimientoPersonal == null
+                && p.IdEmpresa == compra.IdEmpresa
                 && ((p.Categoria == CategoriaPago.Proveedor && p.IdProveedor == compra.IdProveedor)
-                    || (p.IdProveedor == null && p.Categoria != CategoriaPago.Sueldos && p.IdEmpresa == compra.IdEmpresa))),
+                    || (p.IdProveedor == null && p.Categoria != CategoriaPago.Sueldos))),
             ct);
     }
 
-    /// <summary>Pagos de un proveedor con importe disponible, el crédito a favor que se puede aplicar a sus compras.</summary>
+    /// <summary>
+    /// Pagos de un proveedor con importe disponible, el crédito a favor que se puede aplicar a sus compras. Lista los de
+    /// todas las empresas del proveedor: al aplicar, la compra tiene que ser de la empresa del pago.
+    /// </summary>
     public async Task<PagosAplicables> ListarPagosDisponiblesDelProveedorAsync(int idProveedor, CancellationToken ct = default)
     {
         if (!await db.Proveedores.AnyAsync(p => p.Id == idProveedor, ct))
@@ -355,10 +353,18 @@ public partial class ServicioDePagos
             db.Pagos.Where(p => p.Categoria == CategoriaPago.Proveedor && p.IdProveedor == idProveedor), ct);
     }
 
+    /// <summary>Tope de filas de las listas de pagos aplicables: los más antiguos primero, para que una cola larga de
+    /// pagos con disponible no cargue toda la tabla; el resto se alcanza aplicando y volviendo a consultar.</summary>
+    private const int MaximoDePagosAplicables = 200;
+
     private async Task<PagosAplicables> PagosConDisponibleAsync(IQueryable<Pago> candidatos, CancellationToken ct)
     {
+        // El disponible > 0 se resuelve en SQL (importe menos las aplicaciones vivas, que el filtro de baja lógica ya
+        // limita) y el tope se aplica después de filtrar.
         var filas = await candidatos
+            .Where(p => p.Importe - (db.AplicacionesPago.Where(a => a.IdPago == p.Id).Sum(a => (decimal?)a.Importe) ?? 0m) > 0m)
             .OrderBy(p => p.Fecha).ThenBy(p => p.Id)
+            .Take(MaximoDePagosAplicables)
             .Select(p => new { p.Id, p.Fecha, p.Concepto, p.Importe, p.IdProveedor })
             .ToListAsync(ct);
 

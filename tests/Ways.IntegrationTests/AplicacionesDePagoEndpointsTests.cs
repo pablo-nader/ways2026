@@ -408,9 +408,9 @@ public class AplicacionesDePagoEndpointsTests(WaysApiFixture fixture) : IClassFi
     }
 
     [Fact]
-    public async Task DesaplicarReaplicaElLugarLiberadoAOtroPagoVinculadoALaCompra()
+    public async Task DesaplicarNoReaplicaElLugarLiberadoYElOtroPagoSeAplicaConLaRutaExplicita()
     {
-        var ctx = await PrepararAsync(nameof(DesaplicarReaplicaElLugarLiberadoAOtroPagoVinculadoALaCompra));
+        var ctx = await PrepararAsync(nameof(DesaplicarNoReaplicaElLugarLiberadoYElOtroPagoSeAplicaConLaRutaExplicita));
         var compra = await CrearCompraAsync(ctx);
         var primero = await AltaAdminAsync(ctx, compra.Total, compra.Id);
         var segundo = await AltaAdminAsync(ctx, 500m, compra.Id);
@@ -422,11 +422,51 @@ public class AplicacionesDePagoEndpointsTests(WaysApiFixture fixture) : IClassFi
         var respuesta = await ctx.Admin.DeleteAsync($"/api/pagos/{primero.Id}/aplicaciones/{idAplicacion}");
 
         Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
-        Assert.Equal(compra.Total, (await LeerPagoAsync(ctx, primero.Id)).Disponible);
+        var primeroDespues = await LeerPagoAsync(ctx, primero.Id);
+        Assert.Equal(compra.Total, primeroDespues.Disponible);
+        Assert.Equal(compra.Id, primeroDespues.IdComprobanteCompra);
         var segundoDespues = await LeerPagoAsync(ctx, segundo.Id);
-        Assert.Equal(0m, segundoDespues.Disponible);
-        Assert.Equal(500m, Assert.Single(segundoDespues.Aplicaciones!).Importe);
+        Assert.Equal(500m, segundoDespues.Disponible);
+        Assert.Empty(segundoDespues.Aplicaciones!);
+        Assert.Equal(0m, (await LeerCompraAsync(ctx, compra.Id)).Pagado);
+
+        var aplicado = await AplicarOkAsync(ctx, segundo.Id, (compra.Id, 500m));
+        Assert.Equal(0m, aplicado.Disponible);
         Assert.Equal(500m, (await LeerCompraAsync(ctx, compra.Id)).Pagado);
+    }
+
+    [Fact]
+    public async Task DesaplicarUnPagoAdoptadoSinPuntoDeVentaLiberaDeVerdadYLaAuditoriaCoincideConLaBase()
+    {
+        var ctx = await PrepararAsync(nameof(DesaplicarUnPagoAdoptadoSinPuntoDeVentaLiberaDeVerdadYLaAuditoriaCoincideConLaBase));
+        var compra = await CrearCompraAsync(ctx);
+        var solicitud = new SolicitudDePagoDeAdministracion(
+            FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
+            "Pago sin punto de venta", null, ctx.IdMedioEfectivo, null, 500m, null);
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var cuerpoAlta = await alta.Content.ReadAsStringAsync();
+        Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpoAlta, OpcionesJson)!;
+
+        var aplicado = await AplicarOkAsync(ctx, pago.Id, (compra.Id, 300m));
+        var idAplicacion = Assert.Single(aplicado.Aplicaciones!).IdAplicacion;
+
+        var respuesta = await ctx.Admin.DeleteAsync($"/api/pagos/{pago.Id}/aplicaciones/{idAplicacion}");
+
+        Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
+        var despues = await LeerPagoAsync(ctx, pago.Id);
+        Assert.Equal(500m, despues.Disponible);
+        Assert.Empty(despues.Aplicaciones!);
+        Assert.Equal(compra.Id, despues.IdComprobanteCompra);
+        Assert.Equal(0m, (await LeerCompraAsync(ctx, compra.Id)).Pagado);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Empty(await db.AplicacionesPago.Where(a => a.IdPago == pago.Id).ToListAsync());
+        var auditoria = await db.Auditoria.SingleAsync(a => a.Accion == "pago.desaplicacion" && a.IdEntidad == pago.Id);
+        using var valorNuevo = JsonDocument.Parse(auditoria.ValorNuevo);
+        Assert.Equal(500m, valorNuevo.RootElement.GetProperty("disponible").GetDecimal());
+        Assert.Equal(0, valorNuevo.RootElement.GetProperty("aplicaciones").GetArrayLength());
+        Assert.Equal(compra.Id, valorNuevo.RootElement.GetProperty("id_comprobante_compra").GetInt32());
     }
 
     [Fact]

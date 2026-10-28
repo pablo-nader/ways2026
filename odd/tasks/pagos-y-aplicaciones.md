@@ -237,6 +237,18 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1080 passed. Integration tests
   (`AplicacionesDePagoEndpointsTests`, 21 tests) NOT run locally (Docker down): CI is the proof, pending. Route: delegated writer.
 
+- 2026-10-28 E3-S3 judgment-day fix, round 1 (same branch): automatic reapplication REMOVED
+  (`ReaplicarVinculosDeLaCompraAsync` and its three call sites): it undid `desaplicar` of a PV-less linked pago and read other
+  pagos' disponible without their lock. Released room just returns to the compra saldo; the admin applies the other pagos
+  explicitly with `POST /api/pagos/{id}/aplicaciones`. `desaplicar` no longer clears `pagos.id_comprobante_compra`.
+  `AplicarAsync` requires each compra to be of the pago's empresa (`400 compra_de_otra_empresa`); adoption always sets the link
+  to the first requested compra. Edit/baja lock turno -> ALL the pago's compras (applications + link, ascending) -> pago
+  (pre-read/re-read, `409 pago_cambio_concurrente`); edit with any live application cannot change proveedor/categoria; lowering
+  the importe trims applications newest first; raising grows the link application by at most the increase
+  (`AjustarAplicacionesAlNuevoImporteAsync` replaces `ReajustarAplicacionDelVinculoAsync`). `pagos-aplicables` filters by the
+  compra's empresa; both readers push `disponible > 0` into SQL and cap at 200 rows. Doc 10 §5 updated. Tests replaced in
+  `AplicacionesDePagoEscritoresTests` / `AplicacionesDePagoEndpointsTests` (CI pending, Docker down).
+
 ## Next step
 
 S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); E2-S4 is written (branch `pnader/pagos-e2-s4-api`); E2-W1 + E2-W3 are written (branch `pnader/pagos-e2-w1-w3-web`); next is E2-W2 (POS payment form with lines).

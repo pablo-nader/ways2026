@@ -61,7 +61,7 @@ public partial class ServicioDePagos(
         ExigirConceptoValido(solicitud.Concepto);
         // spec: pagos / A Comprobante Compra Link Requires Categoria Proveedor — "rejected
         // before reaching the database": chequeo de dominio puro, ANTES de cualquier consulta.
-        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
+        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra is not null);
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(solicitud.IdPuntoVenta, ct);
@@ -115,7 +115,7 @@ public partial class ServicioDePagos(
 
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
-        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
+        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra is not null);
         ExigirPuntoVentaParaElPagoAProveedor(solicitud.Categoria, solicitud.IdPuntoVenta);
 
         // judgment-day PR3 follow-up: mismo guard 404 que RegistrarAsync arriba — ver ese
@@ -606,8 +606,10 @@ public partial class ServicioDePagos(
     ///    criterio que <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/> en el alta, con
     ///    su propio <c>409 gasto_turno_cerrado</c>); administración <c>FOR UPDATE</c>, que además
     ///    serializa entre sí los recálculos del arqueo de un turno cerrado →
-    /// 2) compra del vínculo <c>FOR UPDATE</c> (en la edición y en la baja de un pago vinculado; el vínculo se pre-lee
-    ///    sin lock y se verifica de nuevo bajo el lock del pago: si cambió, <c>409 pago_cambio_concurrente</c>) →
+    /// 2) TODAS las compras a las que el pago está aplicado, más la del vínculo, <c>FOR UPDATE</c> en id ascendente
+    ///    (la edición recorta o agranda aplicaciones y la baja las libera; el conjunto se pre-lee sin lock y se
+    ///    verifica de nuevo bajo el lock del pago: si cambió, <c>409 pago_cambio_concurrente</c>). Nunca se lockea el
+    ///    pago de otro: lo liberado vuelve al saldo de la compra y nada se reaplica solo →
     /// 2b) pago <c>FOR UPDATE</c> (lock-only, <see cref="TomarLockDePagoAsync"/>) y la ÚNICA lectura
     ///    EF de la fila, después del lock →
     /// 3) filas de proveedor de los ajustes de cuenta corriente, en orden ascendente de id →
@@ -650,19 +652,29 @@ public partial class ServicioDePagos(
             }
         }
 
-        // E3-S1b: la edición y la baja de un pago vinculado reajustan o liberan su aplicación y reaplican el lugar liberado
-        // a los demás pagos de la compra, así que toman el lock de la compra ANTES que el del pago (turno → compra → pago,
-        // el mismo orden que el alta y la vinculación). El vínculo se pre-lee sin lock solo para saber qué compra bloquear
-        // y se vuelve a leer bajo el lock del pago.
+        // La edición y la baja recortan, agrandan o liberan las aplicaciones del pago, así que toman el lock de TODAS sus
+        // compras (las aplicadas y la del vínculo) en id ascendente ANTES que el del pago (turno → compras → pago, el
+        // mismo orden que el alta, la vinculación y aplicar). Los conjuntos se pre-leen sin lock solo para saber qué
+        // compras bloquear y se vuelven a leer bajo el lock del pago.
         var idCompraPreLeida = await db.Pagos
             .Where(g => g.Id == idPago)
             .Select(g => g.IdComprobanteCompra)
             .FirstOrDefaultAsync(ct);
 
-        CompraBloqueada? compraBloqueada = null;
-        if (idCompraPreLeida is { } idCompraAbloquear)
+        var idsDeComprasAbloquear = await db.AplicacionesPago
+            .Where(a => a.IdPago == idPago)
+            .Select(a => a.IdComprobanteCompra)
+            .ToListAsync(ct);
+        if (idCompraPreLeida is { } idCompraDelVinculoPreLeida)
         {
-            compraBloqueada = await BloquearCompraAsync(idCompraAbloquear, idTenant, ct, exigirConfirmada: false);
+            idsDeComprasAbloquear.Add(idCompraDelVinculoPreLeida);
+        }
+
+        var comprasBloqueadas = new Dictionary<int, CompraBloqueada>();
+        foreach (var idCompraAbloquear in idsDeComprasAbloquear.Distinct().OrderBy(i => i))
+        {
+            comprasBloqueadas[idCompraAbloquear] =
+                await BloquearCompraAsync(idCompraAbloquear, idTenant, ct, exigirConfirmada: false);
         }
 
         await TomarLockDePagoAsync(idPago, idTenant, ct);
@@ -671,8 +683,7 @@ public partial class ServicioDePagos(
 
         if (pago.IdComprobanteCompra != idCompraPreLeida)
         {
-            throw new ErrorDominio(
-                "pago_cambio_concurrente", "El pago cambió mientras se editaba; reintentá.", 409);
+            throw PagoCambioConcurrente();
         }
 
         // Los ítems vivos se leen UNA vez, después del lock del pago (single-read-under-lock): la edición los reutiliza
@@ -682,12 +693,15 @@ public partial class ServicioDePagos(
             .OrderBy(i => i.Id)
             .ToListAsync(ct);
 
-        // E3-S1b: las aplicaciones vivas se leen UNA vez, bajo el lock del pago: la edición reajusta la del vínculo y la
-        // baja las libera. La compra del vínculo ya está bloqueada arriba; las aplicaciones a otras compras (que S1b no
-        // escribe) se liberan sin lock porque soltar nunca aumenta lo aplicado.
+        // Las aplicaciones vivas se leen UNA vez, bajo el lock del pago: la edición las recorta o agranda y la baja las
+        // libera. Si aparece una a una compra que no se bloqueó arriba, el conjunto cambió entre la pre-lectura y el lock.
         var aplicaciones = await db.AplicacionesPago
             .Where(a => a.IdPago == pago.Id)
             .ToListAsync(ct);
+        if (aplicaciones.Any(a => !comprasBloqueadas.ContainsKey(a.IdComprobanteCompra)))
+        {
+            throw PagoCambioConcurrente();
+        }
 
         if (solicitud is { DeUnSoloMedio: true } && itemsVivos.Count > 1)
         {
@@ -702,7 +716,7 @@ public partial class ServicioDePagos(
         if (solicitud is not null && plan is not null)
         {
             await ExigirReferenciasNuevasDeLaEdicionAsync(pago, solicitud, plan, itemsVivos, ct);
-            ExigirEdicionCoherenteConLaCompra(pago, solicitud);
+            ExigirEdicionCoherenteConLaCompra(pago, solicitud, tieneAplicaciones: aplicaciones.Count > 0);
 
             if (pago.IdComprobanteCompra is null)
             {
@@ -718,11 +732,8 @@ public partial class ServicioDePagos(
             pago.Importe = plan.Total;
             ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, conservarReferencias: solicitud.DeUnSoloMedio, momento);
 
-            if (compraBloqueada is { Confirmada: true } && pago.IdComprobanteCompra is { } idCompraVinculada)
-            {
-                await ReajustarAplicacionDelVinculoAsync(
-                    idTenant, pago, idCompraVinculada, compraBloqueada, aplicaciones, idEmpleado, momento, ct);
-            }
+            await AjustarAplicacionesAlNuevoImporteAsync(
+                idTenant, pago, anterior.Importe, aplicaciones, comprasBloqueadas, idEmpleado, momento, ct);
         }
         else
         {
@@ -743,13 +754,6 @@ public partial class ServicioDePagos(
 
         pago.UpdatedAt = momento;
         await db.SaveChangesAsync(ct);
-
-        // Lo que la baja o la edición a la baja liberó en la compra se reaplica a los demás pagos vinculados. Una compra
-        // anulada ya liberó todas sus aplicaciones y no admite nuevas.
-        if (compraBloqueada is { Confirmada: true } && pago.IdComprobanteCompra is { } idCompraDelVinculo)
-        {
-            await ReaplicarVinculosDeLaCompraAsync(idTenant, idCompraDelVinculo, compraBloqueada, idEmpleado, momento, ct);
-        }
 
         var nuevo = solicitud is null ? null : await EstadoContableAsync(pago, ct);
         var detalle = solicitud is null ? $"Baja del gasto #{pago.Id}" : $"Edición del gasto #{pago.Id}";
@@ -793,6 +797,9 @@ public partial class ServicioDePagos(
         return pago;
     }
 
+    private static ErrorDominio PagoCambioConcurrente() =>
+        new("pago_cambio_concurrente", "El pago cambió mientras se editaba; reintentá.", 409);
+
     private sealed record TurnoBloqueado(int Id, bool Abierto, int? IdMedioPagoEfectivo);
 
     /// <summary>POS: <c>FOR SHARE</c>, excluye al cierre sin serializar entre sí las ediciones del
@@ -824,13 +831,15 @@ public partial class ServicioDePagos(
             idTurnoCaja, lector.GetString(0) == "abierto", lector.IsDBNull(1) ? null : lector.GetInt32(1));
     }
 
-    /// <summary>Mismos códigos que el alta para un pago ligado a una compra: sigue siendo de
-    /// categoría proveedor y con el proveedor de la compra.</summary>
-    private static void ExigirEdicionCoherenteConLaCompra(Pago pago, ComandoDeEdicionDePago solicitud)
+    /// <summary>Mismos códigos que el alta para un pago ligado a una compra o aplicado a alguna: sigue siendo de
+    /// categoría proveedor y con el mismo proveedor, porque sus aplicaciones y su movimiento de cuenta corriente
+    /// son de ese proveedor.</summary>
+    private static void ExigirEdicionCoherenteConLaCompra(Pago pago, ComandoDeEdicionDePago solicitud, bool tieneAplicaciones)
     {
-        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, pago.IdComprobanteCompra);
+        var atado = pago.IdComprobanteCompra is not null || tieneAplicaciones;
+        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, atado);
 
-        if (pago.IdComprobanteCompra is not null && solicitud.IdProveedor != pago.IdProveedor)
+        if (atado && solicitud.IdProveedor != pago.IdProveedor)
         {
             throw new ErrorDominio(
                 "proveedor_no_coincide_con_la_compra",
@@ -1240,9 +1249,9 @@ public partial class ServicioDePagos(
     /// <summary>spec: pagos / A Comprobante Compra Link Requires Categoria Proveedor — chequeo de
     /// dominio puro, sin DB: un pago ligado a una compra SIEMPRE tiene que ser de categoría
     /// proveedor (la compra la paga un proveedor, nunca sueldos/viáticos/etc.).</summary>
-    private static void ExigirCategoriaCoherenteConLaCompra(CategoriaPago categoria, int? idComprobanteCompra)
+    private static void ExigirCategoriaCoherenteConLaCompra(CategoriaPago categoria, bool ligadoAUnaCompra)
     {
-        if (idComprobanteCompra is not null && categoria != CategoriaPago.Proveedor)
+        if (ligadoAUnaCompra && categoria != CategoriaPago.Proveedor)
         {
             throw new ErrorDominio(
                 "gasto_de_compra_debe_ser_de_proveedor",
@@ -1378,9 +1387,9 @@ public partial class ServicioDePagos(
     ///
     /// E3-S1b, orden total de locks de los escritores de pagos: turno → compra <c>FOR UPDATE</c> → pago (insert, o
     /// <c>FOR UPDATE</c> de uno existente en vincular/edición/baja) → proveedor → tesorería. Cada escritor toma una sola
-    /// compra, así que el "ascendente" entre compras no se ejercita acá. La edición y la baja de un pago vinculado también
-    /// toman la compra (antes que el pago): liberan o reajustan su aplicación y reaplican el lugar liberado a los demás
-    /// pagos vinculados.
+    /// compra, así que el "ascendente" entre compras no se ejercita acá. La edición y la baja de un pago también
+    /// toman todas sus compras (aplicadas y vinculada, en id ascendente, antes que el pago): recortan, agrandan o liberan
+    /// sus aplicaciones y nada se reaplica a otros pagos.
     ///
     /// stage-gastos-origen-fondos-pos (PR2): cuando <see cref="SolicitudDePago.OrigenFondos"/> es
     /// <see cref="OrigenFondosPago.Tesoreria"/>, <see cref="EscribirMovimientoDeTesoreriaAsync"/>
@@ -1660,8 +1669,8 @@ public partial class ServicioDePagos(
     /// <summary>E3-S1b, doble escritura: junto con cada vínculo <c>pagos.id_comprobante_compra</c> se escribe la
     /// aplicación del pago a la compra, con tope en el saldo de la compra según sus aplicaciones VIVAS (único cálculo
     /// del saldo: la lectura nace acá, después del lock exclusivo de la compra que tomó el llamador). Un tope en 0 no
-    /// escribe nada: el vínculo queda y el excedente del pago queda sin aplicar; una liberación posterior de la compra
-    /// lo reaplica (<see cref="ReaplicarVinculosDeLaCompraAsync"/>). Un pago que no es de categoría proveedor o es de
+    /// escribe nada: el vínculo queda y el excedente del pago queda disponible; si la compra libera lugar después, el
+    /// administrador lo aplica de forma explícita (nada se reaplica solo). Un pago que no es de categoría proveedor o es de
     /// otro proveedor no escribe aplicación: el vínculo heredado se conserva, sin aplicación. La empresa no es una
     /// condición: los vínculos heredados entre empresas se aplican igual.</summary>
     private async Task AplicarPagoALaCompraAsync(
@@ -1713,147 +1722,86 @@ public partial class ServicioDePagos(
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>E3-S1b, edición de un pago vinculado: la aplicación viva al vínculo pasa a ser
-    /// <c>min(importe nuevo, total de la compra − lo aplicado por los otros pagos)</c>, con el lock exclusivo de la
-    /// compra ya tomado por el llamador. En 0 se libera; sin aplicación previa y con saldo se crea (mismas reglas de
-    /// elegibilidad que <see cref="AplicarPagoALaCompraAsync"/>). Un pago solo tiene aplicación a la compra de su
-    /// vínculo (S1b no escribe otras), así que las aplicaciones a otras compras no se tocan: si existieran, el
-    /// constraint trigger de lo aplicado contra el pago es el respaldo. Lo que este reajuste libere lo reaplica a los
-    /// demás pagos vinculados el llamador, con <see cref="ReaplicarVinculosDeLaCompraAsync"/>.</summary>
-    private async Task ReajustarAplicacionDelVinculoAsync(
-        int idTenant, Pago pago, int idComprobanteCompra, CompraBloqueada compra,
-        IReadOnlyList<AplicacionPago> aplicaciones, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    /// <summary>Edición de un pago con el importe nuevo ya asignado y todas sus compras bloqueadas por el llamador.
+    /// Si las aplicaciones vivas superan el importe nuevo se recortan, la más nueva primero (fecha y id descendentes):
+    /// se dan de baja las que entran enteras y se achica la última. Si no hay exceso y el importe subió, la aplicación
+    /// del vínculo <c>pagos.id_comprobante_compra</c> crece hasta el aumento, el disponible y el lugar de la compra
+    /// (mismas reglas de elegibilidad que <see cref="AplicarPagoALaCompraAsync"/>); crece solo por el aumento para no
+    /// rehacer sin querer una desaplicación hecha a propósito. Lo que se libera vuelve al saldo de la compra y no se
+    /// reaplica a otros pagos.</summary>
+    private async Task AjustarAplicacionesAlNuevoImporteAsync(
+        int idTenant, Pago pago, decimal importeAnterior, IReadOnlyList<AplicacionPago> aplicaciones,
+        IReadOnlyDictionary<int, CompraBloqueada> comprasBloqueadas, int idEmpleado, DateTimeOffset momento,
+        CancellationToken ct)
     {
-        var existente = aplicaciones.FirstOrDefault(a => a.IdComprobanteCompra == idComprobanteCompra);
-
-        var elegible = pago.Categoria == CategoriaPago.Proveedor && pago.IdProveedor == compra.IdProveedor;
-
-        var objetivo = 0m;
-        if (elegible)
+        var aplicado = aplicaciones.Sum(a => a.Importe);
+        var exceso = aplicado - pago.Importe;
+        if (exceso > 0m)
         {
-            var aplicadoPorOtros = await db.AplicacionesPago
-                .Where(a => a.IdComprobanteCompra == idComprobanteCompra && a.IdPago != pago.Id)
-                .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
+            foreach (var aplicacion in aplicaciones.OrderByDescending(a => a.Fecha).ThenByDescending(a => a.Id))
+            {
+                if (exceso <= 0m)
+                {
+                    break;
+                }
 
-            var aplicadoEnOtrasCompras = aplicaciones
-                .Where(a => a.IdComprobanteCompra != idComprobanteCompra)
-                .Sum(a => a.Importe);
+                aplicacion.UpdatedAt = momento;
+                if (aplicacion.Importe <= exceso)
+                {
+                    exceso -= aplicacion.Importe;
+                    aplicacion.DeletedAt = momento;
+                    continue;
+                }
 
-            objetivo = Math.Max(0m, Math.Min(pago.Importe - aplicadoEnOtrasCompras, compra.Total - aplicadoPorOtros));
+                aplicacion.Importe -= exceso;
+                exceso = 0m;
+            }
+
+            return;
+        }
+
+        var aumento = pago.Importe - importeAnterior;
+        if (aumento <= 0m
+            || pago.IdComprobanteCompra is not { } idCompraDelVinculo
+            || !comprasBloqueadas.TryGetValue(idCompraDelVinculo, out var compra)
+            || !compra.Confirmada
+            || pago.Categoria != CategoriaPago.Proveedor
+            || pago.IdProveedor != compra.IdProveedor)
+        {
+            return;
+        }
+
+        var aplicadoPorOtros = await db.AplicacionesPago
+            .Where(a => a.IdComprobanteCompra == idCompraDelVinculo && a.IdPago != pago.Id)
+            .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
+
+        var existente = aplicaciones.FirstOrDefault(a => a.IdComprobanteCompra == idCompraDelVinculo);
+        var lugar = compra.Total - aplicadoPorOtros - (existente?.Importe ?? 0m);
+        var agregado = Math.Min(Math.Min(aumento, pago.Importe - aplicado), lugar);
+        if (agregado <= 0m)
+        {
+            return;
         }
 
         if (existente is not null)
         {
-            if (objetivo <= 0m)
-            {
-                existente.DeletedAt = momento;
-                existente.UpdatedAt = momento;
-            }
-            else if (existente.Importe != objetivo)
-            {
-                existente.Importe = objetivo;
-                existente.UpdatedAt = momento;
-            }
-
+            existente.Importe += agregado;
+            existente.UpdatedAt = momento;
             return;
         }
 
-        if (objetivo > 0m)
+        db.AplicacionesPago.Add(new AplicacionPago
         {
-            db.AplicacionesPago.Add(new AplicacionPago
-            {
-                IdTenant = idTenant,
-                IdPago = pago.Id,
-                IdComprobanteCompra = idComprobanteCompra,
-                Importe = objetivo,
-                Origen = OrigenAplicacionPago.PagoDeCompra,
-                IdEmpleado = idEmpleado,
-                Fecha = momento,
-                CreatedAt = momento,
-                UpdatedAt = momento
-            });
-        }
-    }
-
-    /// <summary>Cuando se libera o se encoge una aplicación de la compra (baja o edición a la baja de un pago), los demás
-    /// pagos VINCULADOS a esa compra que todavía tienen importe sin aplicar pasan a aplicarse, en orden (fecha, id_pago) y
-    /// hasta el lugar liberado: así una compra pagada por sus vínculos sigue pagada. Cada pago aplica como máximo su
-    /// disponible (importe menos lo aplicado a cualquier compra) y el lugar que le queda a la compra. Corre bajo el lock
-    /// exclusivo de la compra que tomó el llamador, después de persistir el cambio del pago; no corre para una compra
-    /// anulada (el llamador exige <see cref="CompraBloqueada.Confirmada"/>). Todos los escritores que cambian el vínculo,
-    /// el importe o la baja de un pago de esta compra toman antes su lock, así que los candidatos no cambian mientras se
-    /// leen.</summary>
-    private async Task ReaplicarVinculosDeLaCompraAsync(
-        int idTenant, int idComprobanteCompra, CompraBloqueada compra, int idEmpleado, DateTimeOffset momento,
-        CancellationToken ct)
-    {
-        var aplicadoALaCompra = await db.AplicacionesPago
-            .Where(a => a.IdComprobanteCompra == idComprobanteCompra)
-            .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
-
-        var lugar = compra.Total - aplicadoALaCompra;
-        if (lugar <= 0m)
-        {
-            return;
-        }
-
-        var vinculados = await db.Pagos
-            .Where(p => p.IdComprobanteCompra == idComprobanteCompra
-                && p.Categoria == CategoriaPago.Proveedor
-                && p.IdProveedor == compra.IdProveedor)
-            .OrderBy(p => p.Fecha).ThenBy(p => p.Id)
-            .Select(p => new { p.Id, p.Importe })
-            .ToListAsync(ct);
-        if (vinculados.Count == 0)
-        {
-            return;
-        }
-
-        var idsDeLosPagos = vinculados.Select(p => p.Id).ToList();
-        var aplicaciones = await db.AplicacionesPago
-            .Where(a => idsDeLosPagos.Contains(a.IdPago))
-            .ToListAsync(ct);
-
-        foreach (var vinculado in vinculados)
-        {
-            var delPago = aplicaciones.Where(a => a.IdPago == vinculado.Id).ToList();
-            var disponible = vinculado.Importe - delPago.Sum(a => a.Importe);
-            if (disponible <= 0m)
-            {
-                continue;
-            }
-
-            var agregado = Math.Min(disponible, lugar);
-            var enLaCompra = delPago.FirstOrDefault(a => a.IdComprobanteCompra == idComprobanteCompra);
-            if (enLaCompra is not null)
-            {
-                enLaCompra.Importe += agregado;
-                enLaCompra.UpdatedAt = momento;
-            }
-            else
-            {
-                db.AplicacionesPago.Add(new AplicacionPago
-                {
-                    IdTenant = idTenant,
-                    IdPago = vinculado.Id,
-                    IdComprobanteCompra = idComprobanteCompra,
-                    Importe = agregado,
-                    Origen = OrigenAplicacionPago.PagoDeCompra,
-                    IdEmpleado = idEmpleado,
-                    Fecha = momento,
-                    CreatedAt = momento,
-                    UpdatedAt = momento
-                });
-            }
-
-            lugar -= agregado;
-            if (lugar <= 0m)
-            {
-                break;
-            }
-        }
-
-        await db.SaveChangesAsync(ct);
+            IdTenant = idTenant,
+            IdPago = pago.Id,
+            IdComprobanteCompra = idCompraDelVinculo,
+            Importe = agregado,
+            Origen = OrigenAplicacionPago.PagoDeCompra,
+            IdEmpleado = idEmpleado,
+            Fecha = momento,
+            CreatedAt = momento,
+            UpdatedAt = momento
+        });
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)

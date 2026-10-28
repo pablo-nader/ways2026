@@ -1262,9 +1262,9 @@ public class ManejadorDeErrores(
                     "La suma de las líneas del pago no coincide con su importe.",
                     "pago_suma_de_items_invalida"),
 
-            // E3-S1a (aplicaciones de pagos a compras): el servicio calcula el tope de cada aplicación bajo el lock
-            // exclusivo de la compra, así que ninguna rama es alcanzable por operación normal; son el backstop de una
-            // escritura que se salte ese lock. Los dos constraint triggers son diferidos: fallan al comitear, no al insertar.
+            // E3-S1a (aplicaciones de pagos a compras): los escritores (alta, vincular, aplicar, editar y baja de un
+            // pago) calculan el tope de cada aplicación con los locks de todas las compras involucradas y del pago, así
+            // que ninguna rama es alcanzable por operación normal; son el backstop de una escritura que se salte esos locks. Los dos constraint triggers son diferidos: fallan al comitear, no al insertar.
             // Las FKs fk_aplicaciones_pago_* salen como referencia_invalida por el backstop genérico de las fk_*.
             "ck_aplicaciones_pago_importe_positivo" =>
                 (StatusCodes.Status400BadRequest,
