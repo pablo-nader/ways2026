@@ -39,7 +39,7 @@ public class ArticulosAltaConFamiliaNuevaTests(WaysApiFixture fixture) : IClassF
             IdMarca: null, IdGrupo: v.IdGrupo, IdProveedorHabitual: v.IdProveedorHabitual, IdAlicuotaIva: v.IdAlicuotaIva,
             UnidadVenta: v.UnidadVenta, UnidadesPorBulto: v.UnidadesPorBulto, EsProducto: v.EsProducto,
             CostoLista: v.CostoLista, CostoListaPor: v.CostoListaPor, CostoListaIncluyeIva: v.CostoListaIncluyeIva,
-            DescuentoProveedor: v.DescuentoProveedor, PorcentajeImpuestoInterno: v.PorcentajeImpuestoInterno,
+            DescuentoProveedor: v.DescuentoProveedor, ImpuestoInterno: v.ImpuestoInterno,
             ControlaLote: v.ControlaLote, CodigoProveedor: codigoProveedor, AcumulaEnVenta: v.AcumulaEnVenta,
             IdFamilia: idFamilia, NombreFamiliaNueva: nombreFamiliaNueva);
     }

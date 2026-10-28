@@ -211,7 +211,7 @@ export function GrillaDeItemsDeCompra({
                 marcarFaltantes={marcarFaltantes}
                 total={calcularTotalesDeCompra([lineaFormularioACalculo(linea, porcentajePorAlicuota)], discriminaIva).items[0].total}
                 admiteImpuestoInterno={admiteImpuestoInterno(linea, modoDePrecios)}
-                impuestoInterno={impuestoInternoDeLinea(linea, porcentajePorAlicuota, modoDePrecios)}
+                impuestoInterno={impuestoInternoDeLinea(linea, modoDePrecios)}
                 consulta={consultas[linea.clave]}
                 onCambio={cambiar}
                 onCodigoSalida={alSalirDelCodigo}

@@ -250,7 +250,6 @@ export function aSolicitudDeCompra(
   lineas: LineaDeCompraFormulario[],
   discriminaEfectivo = false,
   registraLibroIva = false,
-  porcentajePorAlicuota: Record<number, number> = {},
 ): SolicitudDeCompra {
   const completas = lineas.filter(lineaCompletaParaEnvio)
   const modo = { discriminaIva: discriminaEfectivo, preciosIncluyenIva: discriminaEfectivo && encabezado.preciosIncluyenIva }
@@ -268,7 +267,7 @@ export function aSolicitudDeCompra(
     numeroExterno: encabezado.numeroExterno.trim() === '' ? null : encabezado.numeroExterno.trim(),
     fechaComprobante: encabezado.fechaComprobante === '' ? null : encabezado.fechaComprobante,
     observaciones: encabezado.observaciones.trim() === '' ? null : encabezado.observaciones.trim(),
-    items: completas.map((l) => aLineaSolicitada(l, impuestoInternoDeLinea(l, porcentajePorAlicuota, modo))),
+    items: completas.map((l) => aLineaSolicitada(l, impuestoInternoDeLinea(l, modo))),
     idOrdenCompra: encabezado.idOrdenCompra,
     discriminaIva: encabezado.discriminaIva,
     ivaImpreso: ivaImpreso.length === 0 ? null : ivaImpreso,
@@ -367,7 +366,7 @@ export function lineaFormularioACalculo(
     costoUnitario: v.costoUnitario,
     descuento: v.descuento,
     porcentajeIva: l.idAlicuotaIva === '' ? 0 : (porcentajePorAlicuota[l.idAlicuotaIva] ?? 0),
-    impuestoInterno: modo === undefined ? 0 : impuestoInternoDeLinea(l, porcentajePorAlicuota, modo),
+    impuestoInterno: modo === undefined ? 0 : impuestoInternoDeLinea(l, modo),
   }
 }
 

@@ -48,7 +48,7 @@ public sealed record ValoresCompartidosDeLaFamilia(
     CostoListaPor CostoListaPor,
     bool CostoListaIncluyeIva,
     decimal? DescuentoProveedor,
-    decimal PorcentajeImpuestoInterno,
+    decimal ImpuestoInterno,
     decimal? CostoNominal)
 {
     /// <summary>Los dieciséis valores de <paramref name="valores"/> tal cual están guardados, sin anular ningún id de catálogo:
@@ -57,7 +57,7 @@ public sealed record ValoresCompartidosDeLaFamilia(
         valores.IdArea, valores.IdCategoria, valores.IdGrupo, valores.IdProveedorHabitual, valores.IdAlicuotaIva,
         valores.UnidadVenta, valores.UnidadesPorBulto, valores.EsProducto, valores.ControlaLote, valores.AcumulaEnVenta,
         valores.CostoLista, valores.CostoListaPor, valores.CostoListaIncluyeIva, valores.DescuentoProveedor,
-        valores.PorcentajeImpuestoInterno, valores.CostoNominal);
+        valores.ImpuestoInterno, valores.CostoNominal);
 }
 
 /// <summary>El estado de precios del artículo de referencia en UNA lista fija, a "ahora": el precio vigente y, si

@@ -49,7 +49,7 @@ export const CAMPOS_COMPARTIDOS: readonly CampoCompartido[] = [
   { clave: 'costoListaPor', columna: 'costo_lista_por', etiqueta: 'Costo de lista por', tipo: 'otro' },
   { clave: 'costoListaIncluyeIva', columna: 'costo_lista_incluye_iva', etiqueta: 'Costo de lista incluye IVA', tipo: 'otro' },
   { clave: 'descuentoProveedor', columna: 'descuento_proveedor', etiqueta: 'Descuento', tipo: 'decimal' },
-  { clave: 'porcentajeImpuestoInterno', columna: 'porcentaje_impuesto_interno', etiqueta: 'Impuestos internos', tipo: 'decimal' },
+  { clave: 'impuestoInterno', columna: 'impuesto_interno', etiqueta: 'Impuestos internos', tipo: 'decimal' },
   { clave: 'costoNominal', columna: 'costo_nominal', etiqueta: 'Costo nominal', tipo: 'decimal' },
 ]
 
@@ -81,7 +81,7 @@ export function valoresDeFamiliaAFormulario(valores: ValoresCompartidosDeLaFamil
     costoListaPor: valores.costoListaPor ?? 'Unidad',
     costoListaIncluyeIva: valores.costoListaIncluyeIva ?? true,
     descuentoProveedor: textoDeDecimal(valores.descuentoProveedor),
-    porcentajeImpuestoInterno: textoDeDecimal(valores.porcentajeImpuestoInterno),
+    impuestoInterno: textoDeDecimal(valores.impuestoInterno),
     costoNominal: textoDeDecimal(valores.costoNominal),
   }
 }

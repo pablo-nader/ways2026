@@ -27,7 +27,7 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 
 | | Campos |
 |---|---|
-| **Compartidos** (dieciséis columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `acumula_en_venta`, `costo_lista`, `costo_lista_por`, `costo_lista_incluye_iva`, `descuento_proveedor`, `porcentaje_impuesto_interno`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
+| **Compartidos** (dieciséis columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `acumula_en_venta`, `costo_lista`, `costo_lista_por`, `costo_lista_incluye_iva`, `descuento_proveedor`, `impuesto_interno`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
 | **Propios** de cada artículo | `nombre`, `descripcion`, `codigo_interno`, códigos de barra, `id_marca`, `activo`, `disponible_para_todas` (con `articulos_empresas`) |
 
 - **"Solo este"** significa que el artículo **sale de la familia** (`id_familia = NULL`) con el

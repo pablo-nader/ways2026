@@ -92,8 +92,9 @@ export type LineaDeCompraFormulario = {
    * cantidad y al costo; cualquier valor tipeado (también 0) es el impreso y gana sobre el sugerido. Se ignora en un
    * concepto y en un comprobante que no discrimina IVA. */
   impuestoInterno: number | null
-  /** Porcentaje de impuestos internos del artículo elegido, con el que se sugiere el importe; 0 en un concepto. */
-  porcentajeImpuestoInterno: number
+  /** Impuestos internos por UNIDAD del artículo elegido (su importe dividido entre las unidades por bulto cuando el costo de
+   * lista es por bulto), con el que se sugiere el importe de la línea; 0 en un concepto. */
+  impuestoInternoPorUnidad: number
   guardada: LineaGuardada | null
 }
 
@@ -116,7 +117,7 @@ export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
     unidadesPorBulto: null,
     actualizaCosto: true,
     impuestoInterno: null,
-    porcentajeImpuestoInterno: 0,
+    impuestoInternoPorUnidad: 0,
     guardada: null,
   }
 }
@@ -292,38 +293,37 @@ export function valoresParaApi(l: LineaDeCompraFormulario): ValoresDeApi {
 
 // ---- Impuestos internos de la línea ------------------------------------------------------------
 
-/** Decimales del importe de impuestos internos de una línea y de la tasa del artículo (límites del servidor). */
+/** Decimales del importe de impuestos internos de una línea y del importe del artículo (límites del servidor). */
 export const DECIMALES_DE_IMPUESTO_INTERNO = 2
-export const DECIMALES_DE_TASA_DE_IMPUESTO_INTERNO = 4
 
 /** Si la línea admite impuestos internos: solo un artículo en un comprobante que discrimina IVA (lo demás es 400). */
 export function admiteImpuestoInterno(l: LineaDeCompraFormulario, modo: ModoDePreciosDeCompra): boolean {
   return modo.discriminaIva && tipoDeLinea(l) === 'articulo'
 }
 
-/** Importe sugerido: `neto × porcentaje / 100` a 2 decimales (mitad lejos de cero). El neto es el total de la línea
- * (bruto − descuento) y, con precios con IVA incluido, ese total sin el IVA de su alícuota. */
-export function impuestoInternoSugerido(
-  l: LineaDeCompraFormulario,
-  porcentajePorAlicuota: Record<number, number>,
-  modo: ModoDePreciosDeCompra,
+/** Impuestos internos del artículo por unidad: su importe, dividido entre las unidades por bulto si el costo de lista es
+ * por bulto. Sin unidades por bulto válidas en un costo por bulto no hay base para dividir y queda en 0. */
+export function impuestoInternoPorUnidadDelArticulo(
+  articulo: Partial<Pick<ArticuloListado, 'impuestoInterno' | 'costoListaPor' | 'unidadesPorBulto'>>,
 ): number {
-  if (!(l.porcentajeImpuestoInterno > 0)) return 0
+  const importe = articulo.impuestoInterno ?? 0
+  if (!(importe > 0)) return 0
+  if (articulo.costoListaPor !== 'Bulto') return importe
+  const unidades = articulo.unidadesPorBulto ?? 0
+  return unidades > 0 ? importe / unidades : 0
+}
+
+/** Importe sugerido: impuestos internos por unidad del artículo × unidades de la línea, a 2 decimales (mitad lejos de cero). */
+export function impuestoInternoSugerido(l: LineaDeCompraFormulario): number {
+  if (!(l.impuestoInternoPorUnidad > 0)) return 0
   const v = valoresParaApi(l)
-  const total = redondearImporte(brutoDeLinea(v.unidades, v.bultos, v.unidadesPorBulto, v.costoUnitario) - v.descuento, 2)
-  const porcentajeIva = l.idAlicuotaIva === '' ? 0 : (porcentajePorAlicuota[l.idAlicuotaIva] ?? 0)
-  const neto = modo.preciosIncluyenIva ? redondearImporte(productoRedondeado([total, 100], 6) / (100 + porcentajeIva), 2) : total
-  return productoRedondeado([neto, l.porcentajeImpuestoInterno, 0.01], DECIMALES_DE_IMPUESTO_INTERNO)
+  return productoRedondeado([l.impuestoInternoPorUnidad, cantidadDeLinea(v.unidades, v.bultos, v.unidadesPorBulto)], DECIMALES_DE_IMPUESTO_INTERNO)
 }
 
 /** El importe de impuestos internos que rige para la línea: 0 si no lo admite, el tipeado si lo hay y, si no, el sugerido. */
-export function impuestoInternoDeLinea(
-  l: LineaDeCompraFormulario,
-  porcentajePorAlicuota: Record<number, number>,
-  modo: ModoDePreciosDeCompra,
-): number {
+export function impuestoInternoDeLinea(l: LineaDeCompraFormulario, modo: ModoDePreciosDeCompra): number {
   if (!admiteImpuestoInterno(l, modo)) return 0
-  return l.impuestoInterno ?? impuestoInternoSugerido(l, porcentajePorAlicuota, modo)
+  return l.impuestoInterno ?? impuestoInternoSugerido(l)
 }
 
 export type DiferenciaDePrecioPorBulto = {
@@ -501,7 +501,7 @@ export function importeSegunModoDePrecios(
 }
 
 type ArticuloConCosto = Pick<ArticuloListado, 'costoLista' | 'descuentoProveedor' | 'costoNominal'> &
-  Partial<Pick<ArticuloListado, 'costoListaPor' | 'costoListaIncluyeIva' | 'unidadesPorBulto' | 'porcentajeImpuestoInterno'>>
+  Partial<Pick<ArticuloListado, 'costoListaPor' | 'costoListaIncluyeIva' | 'unidadesPorBulto' | 'impuestoInterno'>>
 
 /** Alícuotas con las que se normaliza el costo: la del artículo (la que usa el servidor para llevar un
  * costo sin IVA a su nominal) y la que le queda a la fila (la que decide el neteo del comprobante). */
@@ -540,17 +540,18 @@ export function costoDeArticuloParaCompra(
     const descuentoPorcentaje = articulo.descuentoProveedor
     const netea = modo !== undefined && modo.discriminaIva && !modo.preciosIncluyenIva && deLaFila !== null
 
-    const porcentajeInterno = articulo.porcentajeImpuestoInterno ?? 0
+    const internoPorUnidad = impuestoInternoPorUnidadDelArticulo(articulo)
     // Un comprobante que no discrimina IVA fuerza el impuesto interno de la línea a 0: el costo conserva el que trae.
     const quitaImpuestoInterno = modo?.discriminaIva !== false
-    const interno = quitaImpuestoInterno || !(porcentajeInterno > 0) ? 0 : porcentajeInterno
 
     if (incluyeIva) {
-      const sinInterno = quitaImpuestoInterno ? costoConIvaSinImpuestoInterno(porUnidad, delArticulo, porcentajeInterno) : porUnidad
+      const sinInterno = quitaImpuestoInterno ? costoSinImpuestoInterno(porUnidad, internoPorUnidad) : porUnidad
       return { importe: redondearImporte(importeSegunModoDePrecios(sinInterno, deLaFila, modo), 4), descuentoPorcentaje }
     }
     if (!netea || deLaFila === delArticulo) {
-      const importe = netea ? porUnidad : productoRedondeado([porUnidad, 100 + (delArticulo as number) + interno, 0.01], 6)
+      const importe = netea
+        ? porUnidad
+        : productoRedondeado([porUnidad, 100 + (delArticulo as number), 0.01], 6) + (quitaImpuestoInterno ? 0 : internoPorUnidad)
       return { importe: redondearImporte(importe, 4), descuentoPorcentaje }
     }
     const importe = redondearImporte(productoRedondeado([porUnidad, 100 + (delArticulo as number)], 6) / (100 + deLaFila), 4)
@@ -559,7 +560,7 @@ export function costoDeArticuloParaCompra(
 
   if (articulo.costoNominal !== null) {
     const nominal = modo?.discriminaIva !== false
-      ? costoConIvaSinImpuestoInterno(articulo.costoNominal, delArticulo, articulo.porcentajeImpuestoInterno ?? 0)
+      ? costoSinImpuestoInterno(articulo.costoNominal, impuestoInternoPorUnidadDelArticulo(articulo))
       : articulo.costoNominal
     return { importe: redondearImporte(importeSegunModoDePrecios(nominal, deLaFila, modo), 4), descuentoPorcentaje: null }
   }
@@ -567,14 +568,12 @@ export function costoDeArticuloParaCompra(
 }
 
 /**
- * El costo nominal trae el impuesto interno (`neto × (1 + II + IVA)`), pero en la línea de compra ese impuesto va en su
- * propia columna y fuera de la base del IVA: precargarlo adentro del importe lo contaría dos veces. Devuelve el costo por
- * unidad CON IVA y SIN el impuesto interno, `nominal × (100 + IVA) / (100 + IVA + II)` con la alícuota del artículo (la
- * que usó el servidor); sin ella o sin porcentaje no hay nada que quitar.
+ * El costo con IVA (el de lista con IVA o el nominal) trae el impuesto interno, pero en la línea de compra ese impuesto va en
+ * su propia columna y fuera de la base del IVA: precargarlo adentro del importe lo contaría dos veces. Como el IVA no lo grava,
+ * el costo con IVA sin el impuesto es el costo menos el impuesto por unidad.
  */
-function costoConIvaSinImpuestoInterno(costoNominal: number, porcentajeIvaDelArticulo: number | null, porcentajeImpuestoInterno: number): number {
-  if (!(porcentajeImpuestoInterno > 0) || porcentajeIvaDelArticulo === null) return costoNominal
-  return productoRedondeado([costoNominal, 100 + porcentajeIvaDelArticulo], 8) / (100 + porcentajeIvaDelArticulo + porcentajeImpuestoInterno)
+function costoSinImpuestoInterno(costoConIva: number, impuestoPorUnidad: number): number {
+  return Math.max(0, redondearImporte(costoConIva - impuestoPorUnidad, 8))
 }
 
 /**
@@ -615,7 +614,7 @@ export function cambiosAlElegirArticulo(
     descuentoPorcentaje,
     idAlicuotaIva,
     actualizaCosto: l.idArticulo === articulo.id ? l.actualizaCosto : true,
-    porcentajeImpuestoInterno: articulo.porcentajeImpuestoInterno ?? 0,
+    impuestoInternoPorUnidad: impuestoInternoPorUnidadDelArticulo(articulo),
     // Otro artículo vuelve al cálculo automático; el mismo conserva lo que el operador tipeó.
     ...(l.idArticulo !== articulo.id ? { impuestoInterno: null } : {}),
     guardada: null,
@@ -685,7 +684,7 @@ export function cambiosAlEscribirDetalle(l: LineaDeCompraFormulario, texto: stri
     unidadesPorBulto: null,
     unidadDeMedida: 'Unidad',
     impuestoInterno: null,
-    porcentajeImpuestoInterno: 0,
+    impuestoInternoPorUnidad: 0,
     guardada: null,
   }
 }
@@ -707,7 +706,7 @@ export function cambiosAlDesresolver(): Partial<LineaDeCompraFormulario> {
     unidadDeMedida: 'Unidad',
     actualizaCosto: true,
     impuestoInterno: null,
-    porcentajeImpuestoInterno: 0,
+    impuestoInternoPorUnidad: 0,
     guardada: null,
   }
 }
@@ -735,11 +734,11 @@ export function cambiosAlEscribirCodigo(l: LineaDeCompraFormulario, codigo: stri
  * cargada, guardada o tipeada, nunca se pisa, y un lote ya inferido no se baja. */
 export function completarConArticulo(
   l: LineaDeCompraFormulario,
-  articulo: Pick<ArticuloListado, 'unidadesPorBulto' | 'controlaLote' | 'idAlicuotaIva'> & Partial<Pick<ArticuloListado, 'porcentajeImpuestoInterno'>>,
+  articulo: Pick<ArticuloListado, 'unidadesPorBulto' | 'controlaLote' | 'idAlicuotaIva'> & Partial<Pick<ArticuloListado, 'impuestoInterno' | 'costoListaPor'>>,
 ): Partial<LineaDeCompraFormulario> {
   const delArticulo = articulo.unidadesPorBulto !== null && articulo.unidadesPorBulto > 0 ? articulo.unidadesPorBulto : null
   return {
-    porcentajeImpuestoInterno: l.porcentajeImpuestoInterno > 0 ? l.porcentajeImpuestoInterno : (articulo.porcentajeImpuestoInterno ?? 0),
+    impuestoInternoPorUnidad: l.impuestoInternoPorUnidad > 0 ? l.impuestoInternoPorUnidad : impuestoInternoPorUnidadDelArticulo(articulo),
     unidadesPorBulto: l.unidadesPorBulto ?? delArticulo,
     controlaLote: l.controlaLote || articulo.controlaLote,
     idAlicuotaIva: l.idAlicuotaIva === '' ? articulo.idAlicuotaIva : l.idAlicuotaIva,

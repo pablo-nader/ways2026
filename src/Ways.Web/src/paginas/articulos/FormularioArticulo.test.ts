@@ -38,30 +38,30 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
 
 describe('FormularioArticulo — impuestos internos (%)', () => {
   it('un alta nueva arranca en 0 y lo manda como número', () => {
-    expect(formularioVacio().porcentajeImpuestoInterno).toBe('0')
-    expect(aAlta({ ...formularioVacio(), porcentajeImpuestoInterno: '8,5' }).porcentajeImpuestoInterno).toBe(8.5)
-    expect(aAlta({ ...formularioVacio(), porcentajeImpuestoInterno: '' }).porcentajeImpuestoInterno).toBe(0)
+    expect(formularioVacio().impuestoInterno).toBe('0')
+    expect(aAlta({ ...formularioVacio(), impuestoInterno: '8,5' }).impuestoInterno).toBe(8.5)
+    expect(aAlta({ ...formularioVacio(), impuestoInterno: '' }).impuestoInterno).toBe(0)
   })
 
   it('aFormulario lo lee tal como está guardado y aEdicion lo devuelve', () => {
-    const formulario = aFormulario(articuloFixture({ porcentajeImpuestoInterno: 12.3456 }))
+    const formulario = aFormulario(articuloFixture({ impuestoInterno: 12.34 }))
 
-    expect(formulario.porcentajeImpuestoInterno).toBe('12.3456')
-    expect(formulario.costoGuardado?.porcentajeImpuestoInterno).toBe('12.3456')
-    expect(aEdicion(formulario).porcentajeImpuestoInterno).toBe(12.3456)
+    expect(formulario.impuestoInterno).toBe('12.34')
+    expect(formulario.costoGuardado?.impuestoInterno).toBe('12.34')
+    expect(aEdicion(formulario).impuestoInterno).toBe(12.34)
   })
 
   it('un artículo que llega sin el campo (payload viejo) se carga con 0', () => {
-    expect(aFormulario(articuloFixture()).porcentajeImpuestoInterno).toBe('0')
+    expect(aFormulario(articuloFixture()).impuestoInterno).toBe('0')
   })
 
   it('quien no ve los costos (el campo llega null y el costo de lista por también) no lo manda: el servidor conserva el guardado', () => {
-    const formulario = aFormulario(articuloFixture({ costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, porcentajeImpuestoInterno: null }))
+    const formulario = aFormulario(articuloFixture({ costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, impuestoInterno: null }))
 
     expect(formulario.costosOcultos).toBe(true)
-    expect(formulario.porcentajeImpuestoInterno).toBe('')
-    expect(aEdicion(formulario).porcentajeImpuestoInterno).toBeNull()
-    expect(aAlta(formulario).porcentajeImpuestoInterno).toBeNull()
+    expect(formulario.impuestoInterno).toBe('')
+    expect(aEdicion(formulario).impuestoInterno).toBeNull()
+    expect(aAlta(formulario).impuestoInterno).toBeNull()
   })
 })
 
@@ -191,7 +191,7 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
       costoListaPor: 'Bulto',
       costoListaIncluyeIva: false,
       descuentoProveedor: 7,
-      porcentajeImpuestoInterno: 8.5,
+      impuestoInterno: 8.5,
       costoNominal: 200,
     } satisfies Partial<ArticuloListado>
     const { costoNominal, ...enviados } = compartidos
