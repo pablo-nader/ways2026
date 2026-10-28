@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -24,6 +24,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { formatearImporte } from '../formato/importes'
 
@@ -37,6 +38,16 @@ function formatearCantidad(cantidad: number): string {
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
+}
+
+const COLUMNAS: ColumnasOrdenables<ArticuloVendido> = {
+  codigo: { valor: (f) => f.codigo },
+  descripcion: { valor: (f) => f.descripcion },
+  area: { valor: (f) => f.area },
+  grupo: { valor: (f) => f.grupo },
+  categoria: { valor: (f) => f.categoria },
+  cantidad: { valor: (f) => f.cantidad },
+  total: { valor: (f) => f.total },
 }
 
 function CeldaOpcional({ valor }: { valor: string | null }) {
@@ -171,7 +182,8 @@ export function ReporteDeVentasPorArticulo() {
   )
 
   const puntosVentaDeLaEmpresa = puntosVenta.filter((pv) => pv.idEmpresa === idEmpresa)
-  const filas: ArticuloVendido[] = datos?.articulos ?? []
+  const articulosDelReporte = useMemo(() => datos?.articulos ?? [], [datos])
+  const { filas, orden, alternar } = useOrdenamiento(articulosDelReporte, COLUMNAS)
 
   return (
     <div className="container-fluid py-4">
@@ -358,13 +370,27 @@ export function ReporteDeVentasPorArticulo() {
                 <table className="table table-sm table-striped table-bordered align-middle">
                   <thead>
                     <tr>
-                      <th>Código</th>
-                      <th>Descripción</th>
-                      <th>Área</th>
-                      <th>Grupo</th>
-                      <th>Categoría</th>
-                      <th className="text-end">Cantidad</th>
-                      <th className="text-end">Total</th>
+                      <EncabezadoOrdenable columna="codigo" orden={orden} onAlternar={alternar}>
+                        Código
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="descripcion" orden={orden} onAlternar={alternar}>
+                        Descripción
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="area" orden={orden} onAlternar={alternar}>
+                        Área
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="grupo" orden={orden} onAlternar={alternar}>
+                        Grupo
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="categoria" orden={orden} onAlternar={alternar}>
+                        Categoría
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="cantidad" orden={orden} onAlternar={alternar} className="text-end">
+                        Cantidad
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="total" orden={orden} onAlternar={alternar} className="text-end">
+                        Total
+                      </EncabezadoOrdenable>
                     </tr>
                   </thead>
                   <tbody>

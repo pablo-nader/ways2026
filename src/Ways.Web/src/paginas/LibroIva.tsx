@@ -1,11 +1,12 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rangoDelMesActual, rutasDeExportacion, type FiltrosDeLibroIva } from '../api/reportes'
-import type { EmpresaListado, LibroIva as LibroIvaRespuesta } from '../api/tipos'
+import type { EmpresaListado, FilaDeLibroIva, LibroIva as LibroIvaRespuesta } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { formatearImporte } from '../formato/importes'
 import {
   alicuotaDeFila,
@@ -223,7 +224,32 @@ type PropsTablaDeLibro = { libro: LibroIvaRespuesta; pestana: PestanaDeLibroIva 
 
 function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
   const configuracion = CONFIGURACION_DE_PESTANA[pestana]
-  const porcentajes = porcentajesDelLibro(libro)
+  const porcentajes = useMemo(() => porcentajesDelLibro(libro), [libro])
+  const columnas = useMemo<ColumnasOrdenables<FilaDeLibroIva>>(() => {
+    const porAlicuota: ColumnasOrdenables<FilaDeLibroIva> = {}
+    for (const p of porcentajes) {
+      porAlicuota[`neto-${p}`] = { valor: (f) => alicuotaDeFila(f, p)?.neto ?? 0 }
+      porAlicuota[`iva-${p}`] = { valor: (f) => alicuotaDeFila(f, p)?.iva ?? 0 }
+    }
+
+    return {
+      fecha: { valor: (f) => new Date(f.fecha) },
+      tipo: { valor: (f) => f.tipoComprobante },
+      numero: { valor: (f) => f.numero },
+      contraparte: { valor: (f) => f.contraparte },
+      documento: { valor: (f) => f.documento },
+      ...porAlicuota,
+      noGravado: { valor: (f) => f.noGravado },
+      exento: { valor: (f) => f.exento },
+      percepcionIva: { valor: (f) => f.percepcionIva },
+      percepcionIibb: { valor: (f) => f.percepcionIibb },
+      impuestosInternos: { valor: (f) => f.impuestosInternos },
+      total: { valor: (f) => f.total },
+      diferencia: { valor: (f) => f.diferencia },
+      observaciones: { valor: (f) => f.advertencias.map(etiquetaDeAdvertencia).join(', ') },
+    }
+  }, [porcentajes])
+  const { filas, orden, alternar } = useOrdenamiento(libro.filas, columnas)
   const conDiferencia = filasConDiferencia(libro)
   const mostrarDiferencia = conDiferencia.length > 0
   const mostrarAdvertencias = filasConAdvertencias(libro).length > 0
@@ -243,29 +269,69 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
         <table className="table table-sm table-striped table-bordered align-middle">
           <thead>
             <tr>
-              <th>Fecha</th>
-              <th>Tipo</th>
-              <th>Número</th>
-              <th>{configuracion.contraparte}</th>
-              <th>{configuracion.documento}</th>
+              <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternar}>
+                Fecha
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="tipo" orden={orden} onAlternar={alternar}>
+                Tipo
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="numero" orden={orden} onAlternar={alternar}>
+                Número
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="contraparte" orden={orden} onAlternar={alternar}>
+                {configuracion.contraparte}
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="documento" orden={orden} onAlternar={alternar}>
+                {configuracion.documento}
+              </EncabezadoOrdenable>
               {porcentajes.map((p) => (
                 <Fragment key={p}>
-                  <th className="text-end">Neto {etiquetaDePorcentaje(p)}</th>
-                  <th className="text-end">IVA {etiquetaDePorcentaje(p)}</th>
+                  <EncabezadoOrdenable columna={`neto-${p}`} orden={orden} onAlternar={alternar} className="text-end">
+                    Neto {etiquetaDePorcentaje(p)}
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna={`iva-${p}`} orden={orden} onAlternar={alternar} className="text-end">
+                    IVA {etiquetaDePorcentaje(p)}
+                  </EncabezadoOrdenable>
                 </Fragment>
               ))}
-              <th className="text-end">No gravado</th>
-              <th className="text-end">Exento</th>
-              {configuracion.conPercepciones && <th className="text-end">Perc. IVA</th>}
-              {configuracion.conPercepciones && <th className="text-end">Perc. IIBB</th>}
-              {configuracion.conImpuestosInternos && <th className="text-end">Imp. internos</th>}
-              <th className="text-end">Total</th>
-              {mostrarDiferencia && <th className="text-end">Dif.</th>}
-              {mostrarAdvertencias && <th>Observaciones</th>}
+              <EncabezadoOrdenable columna="noGravado" orden={orden} onAlternar={alternar} className="text-end">
+                No gravado
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="exento" orden={orden} onAlternar={alternar} className="text-end">
+                Exento
+              </EncabezadoOrdenable>
+              {configuracion.conPercepciones && (
+                <EncabezadoOrdenable columna="percepcionIva" orden={orden} onAlternar={alternar} className="text-end">
+                  Perc. IVA
+                </EncabezadoOrdenable>
+              )}
+              {configuracion.conPercepciones && (
+                <EncabezadoOrdenable columna="percepcionIibb" orden={orden} onAlternar={alternar} className="text-end">
+                  Perc. IIBB
+                </EncabezadoOrdenable>
+              )}
+              {configuracion.conImpuestosInternos && (
+                <EncabezadoOrdenable columna="impuestosInternos" orden={orden} onAlternar={alternar} className="text-end">
+                  Imp. internos
+                </EncabezadoOrdenable>
+              )}
+              <EncabezadoOrdenable columna="total" orden={orden} onAlternar={alternar} className="text-end">
+                Total
+              </EncabezadoOrdenable>
+              {mostrarDiferencia && (
+                <EncabezadoOrdenable columna="diferencia" orden={orden} onAlternar={alternar} className="text-end">
+                  Dif.
+                </EncabezadoOrdenable>
+              )}
+              {mostrarAdvertencias && (
+                <EncabezadoOrdenable columna="observaciones" orden={orden} onAlternar={alternar}>
+                  Observaciones
+                </EncabezadoOrdenable>
+              )}
             </tr>
           </thead>
           <tbody>
-            {libro.filas.map((fila, indice) => (
+            {filas.map((fila, indice) => (
               <tr key={`${indice}-${fila.tipoComprobante}-${fila.numero}`}>
                 <td>{formatearFechaDeLibro(fila.fecha)}</td>
                 <td>{fila.tipoComprobante}</td>
