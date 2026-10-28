@@ -68,8 +68,8 @@ export type FiltrosDeCompras = {
   desde: string
   hasta: string
   /** stage-tesoreria-por-empresa (PR5): filtro opcional por la empresa del punto de venta de la
-   * compra — usado por el picker "Vincular a compra" de Gastos para no ofrecer compras de otra
-   * empresa que la del gasto. */
+   * compra — usado por el picker "Vincular a compra" de Pagos para no ofrecer compras de otra
+   * empresa que la del pago. */
   idEmpresa: number | null
   pagina: number
   tamanio: number
@@ -127,7 +127,7 @@ export const clienteDeCompras = {
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>
     api.post<ResultadoAplicarPrecio[]>(`/compras/${id}/precios`, solicitud),
-  /** `POST /api/compras/{id}/pagos` — `GestionDeCatalogo` del lado del servidor: crea el gasto de
+  /** `POST /api/compras/{id}/pagos` — `GestionDeCatalogo` del lado del servidor: crea el pago de
    * tesorería y el pago de cuenta corriente imputado a la compra en una transacción. */
   pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
     api.post<ResultadoDePagoDeCompra>(`/compras/${id}/pagos`, solicitud),
@@ -495,7 +495,7 @@ function desglosarIva(
 // ---- Pago de una compra confirmada -----------------------------------------------------------
 
 /** Hoy como `YYYY-MM-DD` en la zona del navegador, la misma con la que el resto de la web decide la
- * fecha de negocio por defecto (`Gastos.tsx`). */
+ * fecha de negocio por defecto (`Pagos.tsx`). */
 export function fechaDeHoyParaPago(ahora: Date = new Date()): string {
   const mes = String(ahora.getMonth() + 1).padStart(2, '0')
   const dia = String(ahora.getDate()).padStart(2, '0')

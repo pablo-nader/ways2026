@@ -12,7 +12,7 @@ import type {
   ArticuloListado,
   CompraDetalle,
   CompraDuplicada,
-  GastoDeAdministracionListado,
+  PagoDeAdministracionListado,
   ItemDeCompra,
   ListaPrecioListado,
   ProveedorListado,
@@ -559,7 +559,7 @@ describe('CompraEditor — compra confirmada', () => {
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
   })
 
-  it('anular: reporta honestamente los gastos ligados colgados, y un doble click manda un solo POST', async () => {
+  it('anular: reporta honestamente los pagos ligados colgados, y un doble click manda un solo POST', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
     let resolverAnular: (valor: ResultadoAnulacion) => void = () => {}
     apiPostMock.mockImplementation((ruta: string) => {
@@ -582,7 +582,7 @@ describe('CompraEditor — compra confirmada', () => {
     expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
 
     resolverAnular({ compra: compraFixture({ estado: 'Anulada' }), gastosLigados: 2 })
-    expect(await screen.findByText(/Quedan 2 gasto\(s\) ligado\(s\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/Quedan 2 pago\(s\) ligado\(s\)/)).toBeInTheDocument()
 
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/anular')
     expect(llamadas).toHaveLength(1)
@@ -679,7 +679,7 @@ describe('CompraEditor — compra confirmada', () => {
       await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
       await userEvent.click(within(dialogo).getByRole('button', { name: 'Anular' }))
 
-      expect(await screen.findByText(/No había ningún gasto ligado/)).toBeInTheDocument()
+      expect(await screen.findByText(/No había ningún pago ligado/)).toBeInTheDocument()
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
   })
@@ -962,9 +962,9 @@ describe('CompraEditor — compra nueva', () => {
     expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras/99/confirmar')).toHaveLength(2)
   })
 
-  it('con una compra nueva que viene de un gasto, Guardar la confirma y la vincula al gasto de origen', async () => {
+  it('con una compra nueva que viene de un pago, Guardar la confirma y la vincula al pago de origen', async () => {
     mockearReferencia((ruta) => {
-      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture({ idProveedor: 1 }))
+      if (ruta === '/gastos/administracion/5') return Promise.resolve(pagoFixture({ idProveedor: 1 }))
       if (ruta === '/compras/99') return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [] }))
       return undefined
     })
@@ -976,15 +976,15 @@ describe('CompraEditor — compra nueva', () => {
     })
     const usuario = userEvent.setup()
 
-    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
-    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    renderEditorEnRuta('/compras/nueva?desdePago=5')
+    await screen.findByText('Se vinculará al pago #5 al confirmar.')
     await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
     await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
     await cargarConcepto(usuario, '1500', 'Mercadería')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
+    expect(await screen.findByText('Vinculada al pago #5.')).toBeInTheDocument()
     expect(apiPostMock).toHaveBeenCalledWith('/gastos/5/vincular-compra', { idComprobanteCompra: 99 })
   })
 })
@@ -1927,10 +1927,10 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
   })
 })
 
-// stage-gasto-a-compra (PR4): pre-carga desde `?desdeGasto=` — "Crear compra" de Gastos.tsx navega
-// acá con el gasto en la URL; a diferencia de `?idOrdenCompra=`, el vínculo real se dispara recién
+// stage-gasto-a-compra (PR4): pre-carga desde `?desdePago=` — "Crear compra" de Pagos.tsx navega
+// acá con el pago en la URL; a diferencia de `?idOrdenCompra=`, el vínculo real se dispara recién
 // al CONFIRMAR (nunca al crear el borrador), así que el id sobrevive el remontaje nuevo→existente.
-function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}): GastoDeAdministracionListado {
+function pagoFixture(sobrescribir: Partial<PagoDeAdministracionListado> = {}): PagoDeAdministracionListado {
   return {
     id: 5,
     // Mediodía UTC, no medianoche: evita que el offset local (este runner corre en
@@ -1958,13 +1958,13 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
   }
 }
 
-describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
-  it('precarga proveedor/PV/fecha/número/observaciones desde el gasto y muestra el banner de vínculo pendiente', async () => {
-    mockearReferencia((ruta) => (ruta === '/gastos/administracion/5' ? Promise.resolve(gastoFixture({ idProveedor: 1 })) : undefined))
+describe('CompraEditor — pre-carga desde un pago (?desdePago=)', () => {
+  it('precarga proveedor/PV/fecha/número/observaciones desde el pago y muestra el banner de vínculo pendiente', async () => {
+    mockearReferencia((ruta) => (ruta === '/gastos/administracion/5' ? Promise.resolve(pagoFixture({ idProveedor: 1 })) : undefined))
 
-    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
+    renderEditorEnRuta('/compras/nueva?desdePago=5')
 
-    expect(await screen.findByText('Se vinculará al gasto #5 al confirmar.')).toBeInTheDocument()
+    expect(await screen.findByText('Se vinculará al pago #5 al confirmar.')).toBeInTheDocument()
     await waitFor(() => {
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
@@ -1975,18 +1975,26 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
     expect(screen.getByLabelText('Observaciones')).toHaveValue('Pago de mercadería')
   })
 
-  it('sin ?desdeGasto= no dispara ningún fetch a /gastos/administracion ni muestra el banner', async () => {
+  it('el parámetro anterior ?desdeGasto= de un borrador ya abierto conserva el vínculo pendiente', async () => {
+    mockearReferencia((ruta) => (ruta === '/gastos/administracion/5' ? Promise.resolve(pagoFixture({ idProveedor: 1 })) : undefined))
+
+    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
+
+    expect(await screen.findByText('Se vinculará al pago #5 al confirmar.')).toBeInTheDocument()
+  })
+
+  it('sin ?desdePago= no dispara ningún fetch a /gastos/administracion ni muestra el banner', async () => {
     mockearReferencia()
     renderEditor('nueva')
 
     await screen.findByLabelText('Proveedor')
-    expect(screen.queryByText(/Se vinculará al gasto/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Se vinculará al pago/)).not.toBeInTheDocument()
     expect(apiGetMock.mock.calls.some((c: unknown[]) => (c[0] as string).startsWith('/gastos/administracion'))).toBe(false)
   })
 
-  it('al confirmar, vincula automáticamente al gasto de origen', async () => {
+  it('al confirmar, vincula automáticamente al pago de origen', async () => {
     mockearReferencia((ruta) => {
-      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture())
+      if (ruta === '/gastos/administracion/5') return Promise.resolve(pagoFixture())
       if (ruta === '/compras/1') return Promise.resolve(compraFixture({ idProveedor: 1 }))
       return undefined
     })
@@ -1998,18 +2006,18 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
     apiPutMock.mockResolvedValue(compraFixture({ idProveedor: 1 }))
     const usuario = userEvent.setup()
 
-    renderEditorEnRuta('/compras/1?desdeGasto=5')
-    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    renderEditorEnRuta('/compras/1?desdePago=5')
+    await screen.findByText('Se vinculará al pago #5 al confirmar.')
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/5/vincular-compra', { idComprobanteCompra: 1 }))
-    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
+    expect(await screen.findByText('Vinculada al pago #5.')).toBeInTheDocument()
   })
 
   it('si el vínculo automático falla, la compra queda confirmada y se puede reintentar', async () => {
     mockearReferencia((ruta) => {
-      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture())
+      if (ruta === '/gastos/administracion/5') return Promise.resolve(pagoFixture())
       if (ruta === '/compras/1') return Promise.resolve(compraFixture({ idProveedor: 1 }))
       return undefined
     })
@@ -2019,7 +2027,7 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
       if (ruta === '/gastos/5/vincular-compra') {
         intentos += 1
         return intentos === 1
-          ? Promise.reject(new ErrorApi(409, 'gasto_ya_vinculado', 'El gasto ya está vinculado a una compra.'))
+          ? Promise.reject(new ErrorApi(409, 'gasto_ya_vinculado', 'El pago ya está vinculado a una compra.'))
           : Promise.resolve(compraFixture())
       }
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -2027,19 +2035,19 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
     apiPutMock.mockResolvedValue(compraFixture({ idProveedor: 1 }))
     const usuario = userEvent.setup()
 
-    renderEditorEnRuta('/compras/1?desdeGasto=5')
-    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    renderEditorEnRuta('/compras/1?desdePago=5')
+    await screen.findByText('Se vinculará al pago #5 al confirmar.')
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     // La compra queda confirmada IGUAL — el fallo del vínculo nunca la revierte.
     expect(await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')).toBeInTheDocument()
-    expect(await screen.findByText('El gasto ya está vinculado a una compra.')).toBeInTheDocument()
+    expect(await screen.findByText('El pago ya está vinculado a una compra.')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Reintentar vínculo' }))
 
     await waitFor(() => expect(intentos).toBe(2))
-    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
+    expect(await screen.findByText('Vinculada al pago #5.')).toBeInTheDocument()
   })
 })
 

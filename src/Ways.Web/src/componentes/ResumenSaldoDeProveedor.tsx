@@ -23,7 +23,7 @@ export function esSaldoAFavor(saldo: number): boolean {
  * stage-15-cc-proveedores-ledger (Slice 6, design: Web Composition): re-apuntada al ledger — el
  * saldo ahora es la caché mantenida de `movimientos_cuenta_corriente_proveedor`
  * (`EscriturasDeCuentaCorrienteProveedor`, single-write-authority), no una aproximación derivada;
- * la caption ("compras confirmadas menos gastos ligados") y el callout ("aproximación, no
+ * la caption ("compras confirmadas menos pagos ligados") y el callout ("aproximación, no
  * invariante") describían la fórmula RETIRADA por esta etapa — ambos se retiran acá. Sigue
  * puramente presentacional: sin fetch propio, `saldo`/`idProveedor`/`proveedor` son los únicos
  * inputs.

@@ -1492,9 +1492,9 @@ export type TicketLimite = { numero: number; fecha: string; codigo: string }
  * `IngresoPorArea`. */
 export type IngresoPorArea = { idArea: number; nombreArea: string; total: number }
 
-export type CategoriaGasto = 'Proveedor' | 'Sueldos' | 'Viaticos' | 'Impuestos' | 'Servicios' | 'Otros'
+export type CategoriaPago = 'Proveedor' | 'Sueldos' | 'Viaticos' | 'Impuestos' | 'Servicios' | 'Otros'
 
-export const CATEGORIAS_GASTO: { valor: CategoriaGasto; etiqueta: string }[] = [
+export const CATEGORIAS_PAGO: { valor: CategoriaPago; etiqueta: string }[] = [
   { valor: 'Proveedor', etiqueta: 'Proveedores' },
   { valor: 'Sueldos', etiqueta: 'Sueldos' },
   { valor: 'Viaticos', etiqueta: 'Viáticos' },
@@ -1503,15 +1503,15 @@ export const CATEGORIAS_GASTO: { valor: CategoriaGasto; etiqueta: string }[] = [
   { valor: 'Otros', etiqueta: 'Otros' },
 ]
 
-/** Egresos de una categoría de gasto dentro del turno (legacy D6, segundo bloque: "por tipo") —
+/** Egresos de una categoría de pago dentro del turno (legacy D6, segundo bloque: "por tipo") —
  * espejo de `EgresoPorCategoria`. */
-export type EgresoPorCategoria = { categoria: CategoriaGasto; total: number }
+export type EgresoPorCategoria = { categoria: CategoriaPago; total: number }
 
 /** Egresos de un área dentro del turno (legacy D6, segundo bloque: "por área") — `idArea` es
- * `null` para el bucket "Sin área" (gastos sin área declarada) — espejo de `EgresoPorArea`. */
+ * `null` para el bucket "Sin área" (pagos sin área declarada) — espejo de `EgresoPorArea`. */
 export type EgresoPorArea = { idArea: number | null; nombreArea: string; total: number }
 
-/** Egresos del turno — gastos por categoría y por área más el total de retiros físicos; nunca
+/** Egresos del turno — pagos por categoría y por área más el total de retiros físicos; nunca
  * incluye refuerzos ni la apertura de cajón, que no son egresos — espejo de `EgresosDeTurno`. */
 export type EgresosDeTurno = { porCategoria: EgresoPorCategoria[]; porArea: EgresoPorArea[]; retiros: number }
 
@@ -1569,7 +1569,7 @@ export type LineaDeArqueoResumen = {
  * payload del comprobante Z) — mismos campos planos que `TurnoResumen` más `arqueos`. */
 export type TurnoConArqueos = TurnoResumen & {
   arqueos: LineaDeArqueoResumen[]
-  /** Último recálculo administrativo del arqueo (edición/baja de un gasto de un turno cerrado);
+  /** Último recálculo administrativo del arqueo (edición/baja de un pago de un turno cerrado);
    * `null` si nunca hubo uno. */
   fechaRecalculo: string | null
   idEmpleadoRecalculo: number | null
@@ -1597,7 +1597,7 @@ export type SolicitudDeCierrePorRetiro = {
 export type PuntoVentaDeCierre = { id: number; numero: number; nombre: string }
 
 /** Una fila de `ResumenDeCierrePorRetiro.ventasPorMedio` — ventas netas de vuelto por medio
- * (nunca de gastos), nombre ya resuelto. `comportamiento` es la clasificación con que la fila entra
+ * (nunca de pagos), nombre ya resuelto. `comportamiento` es la clasificación con que la fila entra
  * en los subtotales del resumen (el medio ancla del turno cuenta como efectivo aunque el catálogo
  * lo haya cambiado después). */
 export type VentaPorMedio = {
@@ -1651,7 +1651,7 @@ export type ResumenDeCierrePorRetiro = {
 // --- Histórico de cajas (G2) y detalle de turno (stage-11-exportacion-reportes, Slice 5a/5b,
 // Slices 6a/6b web): espejo de `Ways.Application.Caja.Contratos` — turnos cerrados con totales
 // ya sumados de sus `arqueos_turno` persistidos (nunca re-derivados) y el detalle del turno
-// (mismo `ResumenDeTurno` que `/resumen` más los tickets y gastos leídos por
+// (mismo `ResumenDeTurno` que `/resumen` más los tickets y pagos leídos por
 // `LectorDeLineasDelTurno`).
 
 /** Fila de `GET /api/reportes/cajas` — espejo de `FilaDeHistoricoDeCajas`. */
@@ -1714,30 +1714,30 @@ export type VentaDeTurnoListado = {
   estadoNotaDeCredito?: EstadoDeNotaDeCredito['estado'] | null
 }
 
-/** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
- * `Ways.Application.Gastos.GastoListado`. `idPuntoVenta` es `number | null` porque el DTO de C#
+/** Un pago del turno dentro de `DetalleDeTurno.gastos` (nombre del cable) — espejo de
+ * `Ways.Application.Pagos.PagoListado`. `idPuntoVenta` es `number | null` porque el DTO de C#
  * ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal tipado desde
  * antes de este PR). `origenFondos` es informativo acá (Z-report/historial, nunca un total de
  * arqueo) — la UI lo usa para etiquetar "Caja general". */
-export type GastoDeTurno = {
+export type PagoDeTurno = {
   id: number
   idPuntoVenta: number | null
   fecha: string
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idMedioPago: number
   importe: number
-  origenFondos: OrigenFondosGasto
+  origenFondos: OrigenFondosPago
   idTurnoCaja: number | null
-  /** `true` solo si el gasto tiene turno y ese turno sigue abierto: habilita la edición del POS. */
+  /** `true` solo si el pago tiene turno y ese turno sigue abierto: habilita la edición del POS. */
   turnoAbierto: boolean
   idProveedor: number | null
   idArea: number | null
   concepto: string
   detalle: string | null
   numeroFactura: string | null
-  /** Compra a la que está ligado el gasto; no `null` bloquea categoría y proveedor en la edición. */
+  /** Compra a la que está ligado el pago; no `null` bloquea categoría y proveedor en la edición. */
   idComprobanteCompra: number | null
-  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+  /** Movimiento de personal del que nació el pago; no `null` lo vuelve inmutable (el servidor responde 409
    * `gasto_de_pago_de_personal` a su edición). */
   idMovimientoPersonal: number | null
 }
@@ -1747,35 +1747,35 @@ export type GastoDeTurno = {
 export type DetalleDeTurno = {
   resumen: ResumenDeTurno
   tickets: TicketDeTurno[]
-  gastos: GastoDeTurno[]
+  gastos: PagoDeTurno[]
   /** Último recálculo administrativo del arqueo; `null` si nunca hubo uno. */
   fechaRecalculo: string | null
   idEmpleadoRecalculo: number | null
 }
 
-// --- Gastos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —
-// espejo de `Ways.Application.Gastos.Contratos`.
+// --- Pagos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —
+// espejo de `Ways.Application.Pagos.Contratos`.
 
-/** Espejo del enum `OrigenFondosGasto` (Ways.Domain.Gastos) — viaja como texto, mismas dos
- * variantes PascalCase que el resto de los enums de este archivo (`CategoriaGasto`,
+/** Espejo del enum `OrigenFondosPago` (Ways.Domain.Pagos) — viaja como texto, mismas dos
+ * variantes PascalCase que el resto de los enums de este archivo (`CategoriaPago`,
  * `TipoMovimientoTesoreria`): nunca camelCase. `CajaTurno` descuenta el efectivo del cajón del
  * turno; `Tesoreria` (stage-gastos-origen-fondos-pos, PR2) paga directo del fondo de tesorería de
  * la empresa, sin afectar el arqueo. */
-export type OrigenFondosGasto = 'CajaTurno' | 'Tesoreria'
+export type OrigenFondosPago = 'CajaTurno' | 'Tesoreria'
 
-export const ORIGENES_DE_FONDOS_GASTO: { valor: OrigenFondosGasto; etiqueta: string }[] = [
+export const ORIGENES_DE_FONDOS_PAGO: { valor: OrigenFondosPago; etiqueta: string }[] = [
   { valor: 'CajaTurno', etiqueta: 'Caja del turno' },
   { valor: 'Tesoreria', etiqueta: 'Caja general' },
 ]
 
-/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Gastos.SolicitudDeGasto`. Sin
- * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Gasto Requires An Open
+/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Pagos.SolicitudDePago`. Sin
+ * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Pago Requires An Open
  * Turno), nunca viaja en el cuerpo. `origenFondos` aterriza en stage-gastos-origen-fondos-pos
  * (PR2) — el POS siempre lo manda explícito (la UI no tiene default silencioso), aunque el
  * contrato de C# lo acepta opcional para retrocompatibilidad de otros clientes. */
-export type SolicitudDeGasto = {
+export type SolicitudDePago = {
   idPuntoVenta: number
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
@@ -1784,18 +1784,18 @@ export type SolicitudDeGasto = {
   numeroFactura: string | null
   importe: number
   idComprobanteCompra: number | null
-  origenFondos: OrigenFondosGasto
+  origenFondos: OrigenFondosPago
 }
 
-/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Gastos.GastoRegistrado`.
+/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Pagos.PagoRegistrado`.
  * `idTurnoCaja`/`idPuntoVenta` son `number | null` porque el DTO de C# ya los declara `int?`
  * (stage-gastos-origen-fondos-pos, PR2: el mirror los tenía mal tipados desde antes de este PR). */
-export type GastoRegistrado = {
+export type PagoRegistrado = {
   id: number
   idTurnoCaja: number | null
   idPuntoVenta: number | null
   fecha: string
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
@@ -1805,21 +1805,21 @@ export type GastoRegistrado = {
   importe: number
   idEmpleado: number
   idComprobanteCompra: number | null
-  origenFondos: OrigenFondosGasto
+  origenFondos: OrigenFondosPago
 }
 
-// --- Gastos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
+// --- Pagos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
 // la tesorería de la empresa, con fecha de negocio potencialmente retroactiva — espejo de los
-// gastos de administración de `Ways.Application.Gastos.Contratos`.
+// pagos de administración de `Ways.Application.Pagos.Contratos`.
 
 /** Cuerpo de `POST /api/gastos/administracion` — espejo de
- * `SolicitudDeGastoDeAdministracion`. `fecha` viaja como `YYYY-MM-DD` (mismo shape que
+ * `SolicitudDePagoDeAdministracion`. `fecha` viaja como `YYYY-MM-DD` (mismo shape que
  * `SolicitudDeCompra.fechaComprobante`) — nunca un ISO con hora: la hora la pone el servidor. */
-export type SolicitudDeGastoDeAdministracion = {
+export type SolicitudDePagoDeAdministracion = {
   fecha: string
   idEmpresa: number
   idPuntoVenta: number | null
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
@@ -1833,13 +1833,13 @@ export type SolicitudDeGastoDeAdministracion = {
 /** Fila de `GET /api/gastos/administracion` — espejo de `GastoDeAdministracionListado`, con
  * nombres ya resueltos (proveedor/área/medio) — un catálogo dado de baja lógica los deja en
  * `null`, la fila nunca desaparece. */
-export type GastoDeAdministracionListado = {
+export type PagoDeAdministracionListado = {
   id: number
   fecha: string
   idEmpresa: number
   idPuntoVenta: number | null
   idTurnoCaja: number | null
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idProveedor: number | null
   nombreProveedor: string | null
   idArea: number | null
@@ -1850,21 +1850,21 @@ export type GastoDeAdministracionListado = {
   nombreMedioPago: string | null
   numeroFactura: string | null
   importe: number
-  origenFondos: OrigenFondosGasto
+  origenFondos: OrigenFondosPago
   idComprobanteCompra: number | null
-  /** `true` solo si el gasto tiene turno y ese turno sigue abierto (editar uno de un turno
+  /** `true` solo si el pago tiene turno y ese turno sigue abierto (editar uno de un turno
    * cerrado recalcula su arqueo). */
   turnoAbierto: boolean
-  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+  /** Movimiento de personal del que nació el pago; no `null` lo vuelve inmutable (el servidor responde 409
    * `gasto_de_pago_de_personal` a su edición, su baja y su vinculación a una compra). */
   idMovimientoPersonal: number | null
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
- * `SolicitudDeEdicionDeGasto`: solo los campos editables (origen de fondos, punto de venta,
+ * `SolicitudDeEdicionDePago`: solo los campos editables (origen de fondos, punto de venta,
  * empresa, turno, fecha y compra ligada no se cambian por esta vía). */
-export type SolicitudDeEdicionDeGasto = {
-  categoria: CategoriaGasto
+export type SolicitudDeEdicionDePago = {
+  categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
@@ -1875,9 +1875,9 @@ export type SolicitudDeEdicionDeGasto = {
 }
 
 /** Página de resultados de `GET /api/gastos/administracion` — espejo de
- * `PaginaDeGastosDeAdministracion`. */
-export type PaginaDeGastosDeAdministracion = {
-  items: GastoDeAdministracionListado[]
+ * `PaginaDePagosDeAdministracion`. */
+export type PaginaDePagosDeAdministracion = {
+  items: PagoDeAdministracionListado[]
   total: number
   pagina: number
   tamanio: number
@@ -1893,13 +1893,13 @@ export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Aju
 /** Fila de `GET /api/reportes/tesoreria` — espejo de `MovimientoTesoreriaListado`, SIN
  * `idTenant` (nunca expuesto en una respuesta, doc 09). `idPuntoVenta` es `number | null` porque
  * el DTO de C# ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal
- * tipado desde antes de este PR — un gasto de origen Tesoreria puede originar una fila con
+ * tipado desde antes de este PR — un pago de origen Tesoreria puede originar una fila con
  * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo).
  *
  * stage-tesoreria-por-empresa (PR5): agrega `idEmpresa` (la cadena es por empresa),
  * `nombrePuntoVenta` (dangling-fk-read-models: `null` sin punto de venta o con uno dado de baja
- * lógica, mismo criterio que `nombreProveedor`/`nombreArea` de `GastoDeAdministracionListado`) y,
- * para una fila `tipo: 'Gasto'`, `gastoCategoria`/`gastoConcepto` resueltos del gasto de origen. */
+ * lógica, mismo criterio que `nombreProveedor`/`nombreArea` de `PagoDeAdministracionListado`) y,
+ * para una fila `tipo: 'Gasto'`, `gastoCategoria`/`gastoConcepto` resueltos del pago de origen. */
 export type MovimientoTesoreriaListado = {
   id: number
   idEmpresa: number
@@ -1909,7 +1909,7 @@ export type MovimientoTesoreriaListado = {
   tipo: TipoMovimientoTesoreria
   idTurnoCaja: number | null
   idGasto: number | null
-  gastoCategoria: CategoriaGasto | null
+  gastoCategoria: CategoriaPago | null
   gastoConcepto: string | null
   concepto: string
   inicio: number
@@ -2604,15 +2604,15 @@ export type CompraDuplicada = {
  * `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. */
 export type SolicitudDePagoDeCompra = { fecha: string; importe: number; idMedioPago: number; concepto: string | null }
 
-/** Respuesta de `POST /api/compras/{id}/pagos` (espejo de `ResultadoDePagoDeCompra`): el gasto creado
+/** Respuesta de `POST /api/compras/{id}/pagos` (espejo de `ResultadoDePagoDeCompra`): el pago creado
  * y el estado de pago de la compra después de este pago. */
-export type ResultadoDePagoDeCompra = { gasto: GastoRegistrado; pagado: number; saldoPendiente: number }
+export type ResultadoDePagoDeCompra = { gasto: PagoRegistrado; pagado: number; saldoPendiente: number }
 
 /** Página de resultados de `GET /api/compras` (espejo de `PaginaDeCompras`). */
 export type PaginaDeCompras = { items: CompraListada[]; total: number; pagina: number; tamanio: number }
 
 /** Respuesta de `POST /api/compras/{id}/anular` — `gastosLigados` es la regla invertida
- * (design decisión 6): la anulación NUNCA bloquea por gastos ligados, solo REPORTA cuántos pagos
+ * (design decisión 6): la anulación NUNCA bloquea por pagos ligados, solo REPORTA cuántos pagos
  * quedaron colgados de la compra anulada (espejo de `ResultadoAnulacion`). */
 export type ResultadoAnulacion = { compra: CompraDetalle; gastosLigados: number }
 
@@ -2913,7 +2913,7 @@ export type Rotacion = {
 }
 
 // --- Reportes (stage-10-agregacion-dashboard, Slice 7): G1 parity — ventas/resumen y
-// gastos/resumen. Espejo de `Ways.Application.Reportes.Contratos` — mismos nombres de campo que
+// pagos/resumen. Espejo de `Ways.Application.Reportes.Contratos` — mismos nombres de campo que
 // el backend serializa en camelCase, ningún dato de negocio recalculado en el cliente.
 
 /** Espejo del enum `Granularidad` (Ways.Domain.Reportes) — viaja como texto (`JsonStringEnumConverter`
@@ -2945,23 +2945,23 @@ export type ResumenDeVentas = {
   netoNcx: number
 }
 
-/** Un bucket de la serie de gastos ya rellenada — espejo de `BucketDeGastos`, mismo criterio de
+/** Un bucket de la serie de pagos ya rellenada — espejo de `BucketDeGastos`, mismo criterio de
  * gap-fill que `BucketDeVentas`. */
-export type BucketDeGastos = { etiqueta: string; inicio: string; importe: number }
+export type BucketDePagos = { etiqueta: string; inicio: string; importe: number }
 
 /** Desglose por categoría de `GET /api/reportes/gastos/resumen` — espejo de `GastoPorCategoria`. */
-export type GastoPorCategoria = { categoria: CategoriaGasto; importe: number; cantidadGastos: number }
+export type PagoPorCategoria = { categoria: CategoriaPago; importe: number; cantidadGastos: number }
 
 /** Respuesta de `GET /api/reportes/gastos/resumen` — espejo de `ResumenDeGastos`; sin NCX ni
- * ticket promedio, `gastos` no tiene esa semántica. */
-export type ResumenDeGastos = {
+ * ticket promedio, `pagos` no tiene esa semántica. */
+export type ResumenDePagos = {
   desde: string
   hasta: string
   granularidad: Granularidad
   zonaHoraria: string
-  serie: BucketDeGastos[]
+  serie: BucketDePagos[]
   importeTotal: number
-  porCategoria: GastoPorCategoria[]
+  porCategoria: PagoPorCategoria[]
 }
 
 // --- Reportes por dimensión (stage-10-agregacion-dashboard, Slice 8): sin granularidad ni
@@ -3626,7 +3626,7 @@ export type LineaDeDesgloseDePago = {
   idMedioPago: number
   nombreMedioPago: string | null
   importe: number
-  origenFondos: OrigenFondosGasto
+  origenFondos: OrigenFondosPago
   referencia: string | null
 }
 
@@ -3693,7 +3693,7 @@ export type SolicitudDePagoDePersonal = {
   fecha: string
   idEmpresa?: number
   idPuntoVenta?: number
-  origenFondos?: OrigenFondosGasto
+  origenFondos?: OrigenFondosPago
   descuentoDeCuentaCorriente?: number
   lineas?: LineaDeSolicitudDePagoDePersonal[]
   detalle?: string

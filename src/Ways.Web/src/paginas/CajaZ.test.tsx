@@ -84,8 +84,8 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       { id: 2, numero: 2, numeroVisible: '0003-00000002', estado: 'Anulado', fecha: '2026-08-05T19:30:00Z', idPuntoVenta: 10, idCliente: 2, total: 250 },
     ],
     gastos: [
-      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
-      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
+      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Pago', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
+      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Pago', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
     ],
     fechaRecalculo: null,
     idEmpleadoRecalculo: null,
@@ -136,7 +136,7 @@ beforeEach(() => {
 })
 
 describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)', () => {
-  it('renderiza el resumen (tickets/primer/último/retiros) y cada fila de medios/tickets/gastos', async () => {
+  it('renderiza el resumen (tickets/primer/último/retiros) y cada fila de medios/tickets/pagos', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos/412/detalle') return Promise.resolve(detalleFixture())
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -162,15 +162,15 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(within(filaTicketDos).getByText('Anulado')).toBeInTheDocument()
     expect(within(filaTicketDos).getByText('$ 250,00')).toBeInTheDocument()
 
-    const filaGastoUno = screen.getByRole('row', { name: /Sueldos/ })
-    expect(within(filaGastoUno).getByText('$ 300,00')).toBeInTheDocument()
+    const filaPagoUno = screen.getByRole('row', { name: /Sueldos/ })
+    expect(within(filaPagoUno).getByText('$ 300,00')).toBeInTheDocument()
     // origenFondos CajaTurno: sin badge "Caja general".
-    expect(within(filaGastoUno).queryByText('Caja general')).not.toBeInTheDocument()
+    expect(within(filaPagoUno).queryByText('Caja general')).not.toBeInTheDocument()
 
-    const filaGastoDos = screen.getByRole('row', { name: /Viaticos/ })
-    expect(within(filaGastoDos).getByText('$ 120,00')).toBeInTheDocument()
+    const filaPagoDos = screen.getByRole('row', { name: /Viaticos/ })
+    expect(within(filaPagoDos).getByText('$ 120,00')).toBeInTheDocument()
     // origenFondos Tesoreria: la fila lleva el badge "Caja general".
-    expect(within(filaGastoDos).getByText('Caja general')).toBeInTheDocument()
+    expect(within(filaPagoDos).getByText('Caja general')).toBeInTheDocument()
   })
 
   it('muestra la marca "Recalculado" solo cuando el turno tiene un recálculo administrativo', async () => {
@@ -197,7 +197,7 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(screen.queryByText('Recalculado')).not.toBeInTheDocument()
   })
 
-  it('sin medios/tickets/gastos muestra los estados vacíos de cada sección', async () => {
+  it('sin medios/tickets/pagos muestra los estados vacíos de cada sección', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos/412/detalle') {
         return Promise.resolve(detalleFixture({ resumen: resumenFixture({ medios: [] }), tickets: [], gastos: [] }))
@@ -208,7 +208,7 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
 
     expect(await screen.findByText('Este turno no tuvo actividad: no hay ningún medio arqueado.')).toBeInTheDocument()
     expect(screen.getByText('Sin tickets.')).toBeInTheDocument()
-    expect(screen.getByText('Sin gastos.')).toBeInTheDocument()
+    expect(screen.getByText('Sin pagos.')).toBeInTheDocument()
   })
 
   it('el botón de descarga apunta a /caja/turnos/{id}/detalle/export y limpia el error al reintentar', async () => {
@@ -650,13 +650,13 @@ describe('CajaZ — orden de las tablas', () => {
   const primerasCeldas = (tabla: HTMLElement) =>
     Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent ?? '')
 
-  it('los medios ordenan por el esperado numérico y los tickets y gastos llevan cada uno su propio orden', async () => {
+  it('los medios ordenan por el esperado numérico y los tickets y pagos llevan cada uno su propio orden', async () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/caja/turnos/412/detalle' ? Promise.resolve(detalleFixture()) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
     )
     renderCajaZ()
     await screen.findByText('Caja Z — turno #412')
-    const [medios, tickets, gastos] = screen.getAllByRole('table')
+    const [medios, tickets, pagos] = screen.getAllByRole('table')
 
     const esperado = within(medios).getByRole('columnheader', { name: /Esperado/ })
     await userEvent.click(within(esperado).getByRole('button'))
@@ -669,10 +669,10 @@ describe('CajaZ — orden de las tablas', () => {
     expect(total).toHaveAttribute('aria-sort', 'descending')
     expect(primerasCeldas(tickets)).toEqual(['0003-00000001', '0003-00000002'])
 
-    const importe = within(gastos).getByRole('columnheader', { name: /Importe/ })
+    const importe = within(pagos).getByRole('columnheader', { name: /Importe/ })
     await userEvent.click(within(importe).getByRole('button'))
     expect(importe).toHaveAttribute('aria-sort', 'ascending')
-    expect(within(gastos).getAllByRole('row')[1]).toHaveTextContent('Viaticos')
-    expect(within(gastos).getAllByRole('row')[2]).toHaveTextContent('Sueldos')
+    expect(within(pagos).getAllByRole('row')[1]).toHaveTextContent('Viaticos')
+    expect(within(pagos).getAllByRole('row')[2]).toHaveTextContent('Sueldos')
   })
 })

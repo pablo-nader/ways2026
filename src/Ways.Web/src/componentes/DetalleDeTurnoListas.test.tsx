@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DetalleDeTurnoListas } from './DetalleDeTurnoListas'
-import type { GastoDeTurno, TicketDeTurno } from '../api/tipos'
+import type { PagoDeTurno, TicketDeTurno } from '../api/tipos'
 
 afterEach(cleanup)
 
@@ -19,7 +19,7 @@ function ticket(id: number, sobrescribir: Partial<TicketDeTurno> = {}): TicketDe
   }
 }
 
-function gasto(id: number, sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
+function pago(id: number, sobrescribir: Partial<PagoDeTurno> = {}): PagoDeTurno {
   return {
     id,
     idPuntoVenta: 1,
@@ -32,7 +32,7 @@ function gasto(id: number, sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTur
     turnoAbierto: false,
     idProveedor: null,
     idArea: null,
-    concepto: `Gasto ${id}`,
+    concepto: `Pago ${id}`,
     detalle: null,
     numeroFactura: null,
     idComprobanteCompra: null,
@@ -57,7 +57,7 @@ describe('DetalleDeTurnoListas — orden por columna', () => {
           ticket(2, { total: 300, fecha: '2026-09-16T09:00:00Z' }),
           ticket(3, { total: 10000, fecha: '2026-09-16T12:00:00Z' }),
         ]}
-        gastos={[]}
+        pagos={[]}
       />,
     )
     const [tickets] = screen.getAllByRole('table')
@@ -69,21 +69,21 @@ describe('DetalleDeTurnoListas — orden por columna', () => {
     expect(primeraColumna(tickets)).toEqual(['T-2', 'T-3', 'T-1'])
   })
 
-  it('los gastos se ordenan por importe sin mover los tickets, y cada tabla lleva su propio orden', () => {
+  it('los pagos se ordenan por importe sin mover los tickets, y cada tabla lleva su propio orden', () => {
     render(
       <DetalleDeTurnoListas
         tickets={[ticket(1), ticket(2)]}
-        gastos={[gasto(1, { categoria: 'Servicios', importe: 2000 }), gasto(2, { categoria: 'Otros', importe: 150 })]}
+        pagos={[pago(1, { categoria: 'Servicios', importe: 2000 }), pago(2, { categoria: 'Otros', importe: 150 })]}
       />,
     )
-    const [tickets, gastos] = screen.getAllByRole('table')
+    const [tickets, pagos] = screen.getAllByRole('table')
 
-    const importe = within(gastos).getByRole('columnheader', { name: /Importe/ })
+    const importe = within(pagos).getByRole('columnheader', { name: /Importe/ })
     fireEvent.click(within(importe).getByRole('button'))
 
     expect(importe).toHaveAttribute('aria-sort', 'ascending')
     expect(
-      within(gastos)
+      within(pagos)
         .getAllByRole('row')
         .slice(1)
         .map((fila) => within(fila).getAllByRole('cell')[1].textContent),

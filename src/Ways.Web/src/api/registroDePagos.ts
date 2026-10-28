@@ -1,35 +1,35 @@
 /**
- * Cliente de gastos del turno (POS, stage-gastos-turno-carga-simple): alta contra el turno
+ * Cliente de pagos del turno (POS, stage-gastos-turno-carga-simple): alta contra el turno
  * abierto del punto de venta — el servidor resuelve el turno desde `idPuntoVenta`, nunca viaja
  * en el cuerpo (mismo criterio que `clienteDeCaja.abrir`).
  */
 import { api, ErrorApi } from './cliente'
 import type {
-  CategoriaGasto,
-  GastoDeAdministracionListado,
-  GastoRegistrado,
-  OrigenFondosGasto,
-  PaginaDeGastosDeAdministracion,
-  SolicitudDeEdicionDeGasto,
-  SolicitudDeGasto,
-  SolicitudDeGastoDeAdministracion,
+  CategoriaPago,
+  PagoDeAdministracionListado,
+  PagoRegistrado,
+  OrigenFondosPago,
+  PaginaDePagosDeAdministracion,
+  SolicitudDeEdicionDePago,
+  SolicitudDePago,
+  SolicitudDePagoDeAdministracion,
 } from './tipos'
 
-export const clienteDeGastos = {
-  /** `POST /api/gastos` — 201 + gasto registrado, o `409 turno_no_abierto` si el punto de venta
+export const clienteDePagos = {
+  /** `POST /api/gastos` — 201 + pago registrado, o `409 turno_no_abierto` si el punto de venta
    * no tiene un turno abierto. */
-  registrar: (solicitud: SolicitudDeGasto) => api.post<GastoRegistrado>('/gastos', solicitud),
+  registrar: (solicitud: SolicitudDePago) => api.post<PagoRegistrado>('/gastos', solicitud),
   /** stage-gasto-a-compra (PR4): `POST /api/gastos/{id}/vincular-compra` — liga (o convierte a
-   * proveedor) un gasto YA existente a una compra confirmada. `GestionDeCatalogo` del lado del
+   * proveedor) un pago YA existente a una compra confirmada. `GestionDeCatalogo` del lado del
    * servidor (mismo gate que toda escritura de `/api/compras`). */
   vincularCompra: (id: number, idComprobanteCompra: number) =>
-    api.post<GastoRegistrado>(`/gastos/${id}/vincular-compra`, { idComprobanteCompra }),
-  /** `PUT /api/gastos/{id}` — edición desde el POS, solo con el turno del gasto abierto: si está
-   * cerrado (o el gasto no tiene turno) el servidor responde `409 gasto_turno_cerrado`. */
-  actualizar: (id: number, solicitud: SolicitudDeEdicionDeGasto) => api.put<GastoRegistrado>(`/gastos/${id}`, solicitud),
+    api.post<PagoRegistrado>(`/gastos/${id}/vincular-compra`, { idComprobanteCompra }),
+  /** `PUT /api/gastos/{id}` — edición desde el POS, solo con el turno del pago abierto: si está
+   * cerrado (o el pago no tiene turno) el servidor responde `409 gasto_turno_cerrado`. */
+  actualizar: (id: number, solicitud: SolicitudDeEdicionDePago) => api.put<PagoRegistrado>(`/gastos/${id}`, solicitud),
 }
 
-// --- Gastos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
+// --- Pagos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
 // la tesorería de la empresa — pantalla admin-only (`GestionDeCatalogo` del lado del servidor).
 
 // Offset local para desde/hasta (mismo criterio EXACTO que `compras.ts`/`cuentaCorriente.ts`: el
@@ -49,11 +49,11 @@ function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
   return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
 }
 
-export type FiltrosDeGastosDeAdministracion = {
+export type FiltrosDePagosDeAdministracion = {
   idEmpresa: number | null
   idPuntoVenta: number | null
-  categoria: CategoriaGasto | null
-  origenFondos: OrigenFondosGasto | null
+  categoria: CategoriaPago | null
+  origenFondos: OrigenFondosPago | null
   idProveedor: number | null
   desde: string
   hasta: string
@@ -61,7 +61,7 @@ export type FiltrosDeGastosDeAdministracion = {
   tamanio: number
 }
 
-export function filtrosDeGastosDeAdministracionVacios(): FiltrosDeGastosDeAdministracion {
+export function filtrosDePagosDeAdministracionVacios(): FiltrosDePagosDeAdministracion {
   return {
     idEmpresa: null,
     idPuntoVenta: null,
@@ -75,7 +75,7 @@ export function filtrosDeGastosDeAdministracionVacios(): FiltrosDeGastosDeAdmini
   }
 }
 
-export function construirQueryDeGastosDeAdministracion(filtros: FiltrosDeGastosDeAdministracion): string {
+export function construirQueryDePagosDeAdministracion(filtros: FiltrosDePagosDeAdministracion): string {
   const parametros = new URLSearchParams()
   if (filtros.idEmpresa !== null) parametros.set('idEmpresa', String(filtros.idEmpresa))
   if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
@@ -89,28 +89,28 @@ export function construirQueryDeGastosDeAdministracion(filtros: FiltrosDeGastosD
   return `?${parametros.toString()}`
 }
 
-export const clienteDeGastosDeAdministracion = {
-  listar: (filtros: FiltrosDeGastosDeAdministracion) =>
-    api.get<PaginaDeGastosDeAdministracion>(`/gastos/administracion${construirQueryDeGastosDeAdministracion(filtros)}`),
-  registrar: (solicitud: SolicitudDeGastoDeAdministracion) =>
-    api.post<GastoRegistrado>('/gastos/administracion', solicitud),
+export const clienteDePagosDeAdministracion = {
+  listar: (filtros: FiltrosDePagosDeAdministracion) =>
+    api.get<PaginaDePagosDeAdministracion>(`/gastos/administracion${construirQueryDePagosDeAdministracion(filtros)}`),
+  registrar: (solicitud: SolicitudDePagoDeAdministracion) =>
+    api.post<PagoRegistrado>('/gastos/administracion', solicitud),
   /** stage-gasto-a-compra (PR4), judgment follow-up: `GET /api/gastos/administracion/{id}` — un
-   * solo gasto, mismo shape que el listado. Usado por `CompraEditor.tsx` para prefillear desde
-   * `?desdeGasto=`. */
-  obtener: (id: number) => api.get<GastoDeAdministracionListado>(`/gastos/administracion/${id}`),
-  /** `PUT /api/gastos/administracion/{id}` — edita cualquier gasto; si es de caja de un turno
+   * solo pago, mismo shape que el listado. Usado por `CompraEditor.tsx` para prefillear desde
+   * `?desdePago=`. */
+  obtener: (id: number) => api.get<PagoDeAdministracionListado>(`/gastos/administracion/${id}`),
+  /** `PUT /api/gastos/administracion/{id}` — edita cualquier pago; si es de caja de un turno
    * cerrado el servidor recalcula su arqueo. */
-  actualizar: (id: number, solicitud: SolicitudDeEdicionDeGasto) =>
-    api.put<GastoDeAdministracionListado>(`/gastos/administracion/${id}`, solicitud),
+  actualizar: (id: number, solicitud: SolicitudDeEdicionDePago) =>
+    api.put<PagoDeAdministracionListado>(`/gastos/administracion/${id}`, solicitud),
   /** `DELETE /api/gastos/administracion/{id}` — 204 sin cuerpo. */
   eliminar: (id: number) => api.delete<void>(`/gastos/administracion/${id}`),
 }
 
-export type FormularioDeGastoDeAdministracion = {
+export type FormularioDePagoDeAdministracion = {
   fecha: string
   idEmpresa: number | ''
   idPuntoVenta: number | ''
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idProveedor: number | ''
   idArea: number | ''
   concepto: string
@@ -120,10 +120,10 @@ export type FormularioDeGastoDeAdministracion = {
   importe: number | null
 }
 
-export function formularioDeGastoDeAdministracionVacio(
+export function formularioDePagoDeAdministracionVacio(
   fechaDeHoy: string,
   idEmpresa: number | '' = '',
-): FormularioDeGastoDeAdministracion {
+): FormularioDePagoDeAdministracion {
   return {
     fecha: fechaDeHoy,
     idEmpresa,
@@ -139,13 +139,13 @@ export function formularioDeGastoDeAdministracionVacio(
   }
 }
 
-/** Espejo de `ServicioDeGastos.categoriaAlElegirProveedor` (mismo criterio que
- * `GastosDelTurno.tsx`/`utilidadesGastosDelTurno.ts`): elegir un proveedor cambia la categoría a
+/** Espejo de `ServicioDePagos.categoriaAlElegirProveedor` (mismo criterio que
+ * `PagosDelTurno.tsx`/`utilidadesPagosDelTurno.ts`): elegir un proveedor cambia la categoría a
  * "Proveedor"; limpiarlo mientras la categoría sigue en "Proveedor" la vuelve a "Otros". */
 export function categoriaAlElegirProveedorAdministracion(
   nuevoIdProveedor: number | null,
-  categoriaPrevia: CategoriaGasto,
-): CategoriaGasto {
+  categoriaPrevia: CategoriaPago,
+): CategoriaPago {
   if (nuevoIdProveedor !== null) return 'Proveedor'
   return categoriaPrevia === 'Proveedor' ? 'Otros' : categoriaPrevia
 }
@@ -154,7 +154,7 @@ export function categoriaAlElegirProveedorAdministracion(
  * lado del servidor) — sin ningún offset horario, a diferencia de `desde`/`hasta` del listado
  * (que sí filtran contra un `timestamptz`). Mismo criterio que
  * `compras.ts.aSolicitudDeCompra` con `fechaComprobante`. */
-export function aSolicitudDeGastoDeAdministracion(f: FormularioDeGastoDeAdministracion): SolicitudDeGastoDeAdministracion {
+export function aSolicitudDePagoDeAdministracion(f: FormularioDePagoDeAdministracion): SolicitudDePagoDeAdministracion {
   return {
     fecha: f.fecha,
     idEmpresa: f.idEmpresa === '' ? 0 : f.idEmpresa,
@@ -173,7 +173,7 @@ export function aSolicitudDeGastoDeAdministracion(f: FormularioDeGastoDeAdminist
 
 /** Feedback instantáneo client-side (el servidor vuelve a validar todo, `dto-contract-honesty`):
  * fecha elegida, empresa, medio de pago, concepto no vacío e importe positivo. */
-export function formularioDeGastoDeAdministracionCompleto(f: FormularioDeGastoDeAdministracion): boolean {
+export function formularioDePagoDeAdministracionCompleto(f: FormularioDePagoDeAdministracion): boolean {
   return (
     f.fecha.trim() !== '' &&
     f.idEmpresa !== '' &&
@@ -184,12 +184,12 @@ export function formularioDeGastoDeAdministracionCompleto(f: FormularioDeGastoDe
   )
 }
 
-// --- Edición de gastos (POS y administración comparten formulario y mapeo) ---------------------
+// --- Edición de pagos (POS y administración comparten formulario y mapeo) ---------------------
 
-/** Lo mínimo que `GastoDeTurno` y `GastoDeAdministracionListado` tienen en común para precargar
+/** Lo mínimo que `PagoDeTurno` y `PagoDeAdministracionListado` tienen en común para precargar
  * la edición. */
-export type GastoEditable = {
-  categoria: CategoriaGasto
+export type PagoEditable = {
+  categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
@@ -199,10 +199,10 @@ export type GastoEditable = {
   importe: number
 }
 
-export type FormularioDeEdicionDeGasto = {
+export type FormularioDeEdicionDePago = {
   importe: number | null
   idMedioPago: number | ''
-  categoria: CategoriaGasto
+  categoria: CategoriaPago
   idProveedor: number | ''
   idArea: number | ''
   concepto: string
@@ -210,22 +210,22 @@ export type FormularioDeEdicionDeGasto = {
   numeroFactura: string
 }
 
-export function aFormularioDeEdicion(gasto: GastoEditable): FormularioDeEdicionDeGasto {
+export function aFormularioDeEdicion(pago: PagoEditable): FormularioDeEdicionDePago {
   return {
-    importe: gasto.importe,
-    idMedioPago: gasto.idMedioPago,
-    categoria: gasto.categoria,
-    idProveedor: gasto.idProveedor ?? '',
-    idArea: gasto.idArea ?? '',
-    concepto: gasto.concepto,
-    detalle: gasto.detalle ?? '',
-    numeroFactura: gasto.numeroFactura ?? '',
+    importe: pago.importe,
+    idMedioPago: pago.idMedioPago,
+    categoria: pago.categoria,
+    idProveedor: pago.idProveedor ?? '',
+    idArea: pago.idArea ?? '',
+    concepto: pago.concepto,
+    detalle: pago.detalle ?? '',
+    numeroFactura: pago.numeroFactura ?? '',
   }
 }
 
 /** Cuerpo del `PUT`: el servidor valida de nuevo todo, esto solo normaliza (recorta y manda
  * `null` en los textos opcionales vacíos). El llamador garantiza `formularioDeEdicionCompleto`. */
-export function aSolicitudDeEdicionDeGasto(f: FormularioDeEdicionDeGasto): SolicitudDeEdicionDeGasto {
+export function aSolicitudDeEdicionDePago(f: FormularioDeEdicionDePago): SolicitudDeEdicionDePago {
   return {
     categoria: f.categoria,
     idProveedor: f.idProveedor === '' ? null : f.idProveedor,
@@ -238,50 +238,50 @@ export function aSolicitudDeEdicionDeGasto(f: FormularioDeEdicionDeGasto): Solic
   }
 }
 
-export function formularioDeEdicionCompleto(f: FormularioDeEdicionDeGasto): boolean {
+export function formularioDeEdicionCompleto(f: FormularioDeEdicionDePago): boolean {
   return f.idMedioPago !== '' && f.concepto.trim() !== '' && f.importe !== null && f.importe > 0
 }
 
-export const COPIA_GASTO_TURNO_CERRADO =
-  'El turno de este gasto ya está cerrado: no se puede editar desde la caja. Pedile a un administrador que lo corrija.'
+export const COPIA_PAGO_TURNO_CERRADO =
+  'El turno de este pago ya está cerrado: no se puede editar desde la caja. Pedile a un administrador que lo corrija.'
 
-/** Copia del fallo de un `PUT`/`DELETE` de gasto: el `409 gasto_turno_cerrado` tiene texto propio
+/** Copia del fallo de un `PUT`/`DELETE` de pago: el `409 gasto_turno_cerrado` tiene texto propio
  * (es una precondición vigente, no un error genérico); el resto muestra el mensaje del servidor. */
 export function copiaDeFalloDeEdicion(error: unknown, accion = 'guardar'): string {
   if (error instanceof ErrorApi) {
-    if (error.estado === 409 && error.codigo === 'gasto_turno_cerrado') return COPIA_GASTO_TURNO_CERRADO
-    return error.message.trim() || `No se pudo ${accion} el gasto.`
+    if (error.estado === 409 && error.codigo === 'gasto_turno_cerrado') return COPIA_PAGO_TURNO_CERRADO
+    return error.message.trim() || `No se pudo ${accion} el pago.`
   }
-  return `No se pudo ${accion} el gasto.`
+  return `No se pudo ${accion} el pago.`
 }
 
 export const ADVERTENCIA_TURNO_CERRADO =
-  'Este gasto pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado.'
+  'Este pago pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado.'
 
-/** Un gasto que nació de un pago de personal no se edita, no se da de baja ni se liga a una compra por
+/** Un pago que nació de un movimiento de personal no se edita, no se da de baja ni se liga a una compra por
  * separado: el servidor lo rechaza con 409 `gasto_de_pago_de_personal`, así que las pantallas ofrecen esas
  * acciones deshabilitadas. */
-export function esGastoDeUnPagoDePersonal(gasto: Pick<GastoDeAdministracionListado, 'idMovimientoPersonal'>): boolean {
-  return typeof gasto.idMovimientoPersonal === 'number'
+export function esPagoOriginadoEnPersonal(pago: Pick<PagoDeAdministracionListado, 'idMovimientoPersonal'>): boolean {
+  return typeof pago.idMovimientoPersonal === 'number'
 }
 
-export const MOTIVO_GASTO_DE_PAGO_DE_PERSONAL = 'Pertenece a un pago de personal y no se modifica por separado.'
+export const MOTIVO_PAGO_ORIGINADO_EN_PERSONAL = 'Nació de un movimiento de personal y no se modifica por separado.'
 
-type GastoConEfectos = Pick<GastoDeAdministracionListado, 'turnoAbierto' | 'idTurnoCaja' | 'origenFondos' | 'categoria' | 'idProveedor'>
+type PagoConEfectos = Pick<PagoDeAdministracionListado, 'turnoAbierto' | 'idTurnoCaja' | 'origenFondos' | 'categoria' | 'idProveedor'>
 
-/** Avisos que el admin tiene que ver antes de editar o eliminar un gasto: reflejan los efectos
- * reales del servidor (arqueo recalculado en gasto de caja de un turno cerrado; ajuste
+/** Avisos que el admin tiene que ver antes de editar o eliminar un pago: reflejan los efectos
+ * reales del servidor (arqueo recalculado en pago de caja de un turno cerrado; ajuste
  * compensatorio en el saldo del proveedor y/o en la caja general). */
-export function advertenciasDeGastoDeAdministracion(gasto: GastoConEfectos): string[] {
+export function advertenciasDePagoDeAdministracion(pago: PagoConEfectos): string[] {
   const avisos: string[] = []
 
-  if (gasto.idTurnoCaja !== null && !gasto.turnoAbierto && gasto.origenFondos === 'CajaTurno') {
+  if (pago.idTurnoCaja !== null && !pago.turnoAbierto && pago.origenFondos === 'CajaTurno') {
     avisos.push(ADVERTENCIA_TURNO_CERRADO)
   }
 
   const afectados: string[] = []
-  if (gasto.categoria === 'Proveedor' && gasto.idProveedor !== null) afectados.push('el saldo del proveedor')
-  if (gasto.origenFondos === 'Tesoreria') afectados.push('la caja general')
+  if (pago.categoria === 'Proveedor' && pago.idProveedor !== null) afectados.push('el saldo del proveedor')
+  if (pago.origenFondos === 'Tesoreria') afectados.push('la caja general')
   if (afectados.length > 0) {
     avisos.push(`Se registrará un ajuste compensatorio sobre ${afectados.join(' y ')}.`)
   }

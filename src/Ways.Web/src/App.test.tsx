@@ -122,3 +122,24 @@ describe('App — ruta /combos', () => {
     expect(screen.queryByText('No hay combos cargados.')).not.toBeInTheDocument()
   })
 })
+
+describe('App — ruta vieja /gastos', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/auth/me') {
+        return Promise.resolve({ id: 1, usuario: 'u', mail: 'u@ejemplo.com', rolId: ROL.Admin, rol: 'Rol', ultimaConexion: null, idTenant: 1 })
+      }
+      if (ruta === '/puntos-venta') return Promise.resolve([PUNTO_DE_VENTA])
+      return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe.'))
+    })
+  })
+
+  it('redirige a /pagos para que los marcadores viejos sigan funcionando', async () => {
+    window.history.pushState({}, '', '/admin/gastos')
+
+    render(<App />)
+
+    await waitFor(() => expect(window.location.pathname).toBe('/admin/pagos'))
+  })
+})

@@ -1,19 +1,19 @@
 import { useState } from 'react'
 import {
   aFormularioDeEdicion,
-  aSolicitudDeEdicionDeGasto,
+  aSolicitudDeEdicionDePago,
   categoriaAlElegirProveedorAdministracion,
   formularioDeEdicionCompleto,
-} from '../api/gastos'
-import type { FormularioDeEdicionDeGasto, GastoEditable } from '../api/gastos'
-import { CATEGORIAS_GASTO } from '../api/tipos'
-import type { AreaListado, MedioPagoListado, OpcionDeProveedor, SolicitudDeEdicionDeGasto } from '../api/tipos'
+} from '../api/registroDePagos'
+import type { FormularioDeEdicionDePago, PagoEditable } from '../api/registroDePagos'
+import { CATEGORIAS_PAGO } from '../api/tipos'
+import type { AreaListado, MedioPagoListado, OpcionDeProveedor, SolicitudDeEdicionDePago } from '../api/tipos'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Modal } from '../componentes/Modal'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 
 type Props = {
-  gasto: GastoEditable
+  pago: PagoEditable
   medios: MedioPagoListado[]
   proveedores: OpcionDeProveedor[]
   areas: AreaListado[]
@@ -25,18 +25,18 @@ type Props = {
   guardando: boolean
   /** Error de la escritura, dueño: la pantalla. */
   error: string
-  onGuardar: (solicitud: SolicitudDeEdicionDeGasto) => void
+  onGuardar: (solicitud: SolicitudDeEdicionDePago) => void
   onCancelar: () => void
 }
 
 /**
- * Edición de un gasto ya registrado, compartida por el POS (`GastosDelTurno`) y la administración
- * (`Gastos`). El formulario es de ESTE componente (se precarga una sola vez del gasto; la pantalla
- * lo monta con `key={gasto.id}` para que cambiar de gasto lo reinicie) y la escritura de la
+ * Edición de un pago ya registrado, compartida por el POS (`PagosDelTurno`) y la administración
+ * (`Pagos`). El formulario es de ESTE componente (se precarga una sola vez del pago; la pantalla
+ * lo monta con `key={pago.id}` para que cambiar de pago lo reinicie) y la escritura de la
  * pantalla: acá solo se valida lo mínimo y se entrega la solicitud ya armada.
  */
-export function ModalDeEdicionDeGasto({
-  gasto,
+export function ModalDeEdicionDePago({
+  pago,
   medios,
   proveedores,
   areas,
@@ -47,11 +47,11 @@ export function ModalDeEdicionDeGasto({
   onGuardar,
   onCancelar,
 }: Props) {
-  const [formulario, setFormulario] = useState<FormularioDeEdicionDeGasto>(() => aFormularioDeEdicion(gasto))
+  const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
   const [errorLocal, setErrorLocal] = useState('')
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
-  // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del gasto en silencio: la
+  // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del pago en silencio: la
   // opción actual se conserva rotulada como no disponible.
   const medioFaltante = formulario.idMedioPago !== '' && !medios.some((m) => m.id === formulario.idMedioPago)
   const proveedorFaltante = formulario.idProveedor !== '' && !proveedores.some((p) => p.id === formulario.idProveedor)
@@ -73,7 +73,7 @@ export function ModalDeEdicionDeGasto({
       return
     }
     setErrorLocal('')
-    onGuardar(aSolicitudDeEdicionDeGasto(formulario))
+    onGuardar(aSolicitudDeEdicionDePago(formulario))
   }
 
   const pie = (
@@ -88,7 +88,7 @@ export function ModalDeEdicionDeGasto({
   )
 
   return (
-    <Modal titulo="Editar gasto" tamano="lg" desplazable ocupado={guardando} pie={pie} onCerrar={onCancelar}>
+    <Modal titulo="Editar pago" tamano="lg" desplazable ocupado={guardando} pie={pie} onCerrar={onCancelar}>
       {advertencias.map((aviso) => (
         <div key={aviso} className="alert alert-warning py-2 px-3 small">
           {aviso}
@@ -96,18 +96,18 @@ export function ModalDeEdicionDeGasto({
       ))}
       {ligadoACompra && (
         <div className="alert alert-info py-2 px-3 small">
-          Este gasto está ligado a una compra: la categoría y el proveedor no se pueden cambiar.
+          Este pago está ligado a una compra: la categoría y el proveedor no se pueden cambiar.
         </div>
       )}
       {(error || errorLocal) && <div className="alert alert-danger py-2 px-3 small">{error || errorLocal}</div>}
 
       <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
         <div className="col-md-4">
-          <label className="form-label" htmlFor="gasto-edicion-importe">
+          <label className="form-label" htmlFor="pago-edicion-importe">
             Importe
           </label>
           <CampoImporte
-            id="gasto-edicion-importe"
+            id="pago-edicion-importe"
             className="form-control"
             valor={formulario.importe}
             onChange={(v) => setFormulario((prev) => ({ ...prev, importe: v }))}
@@ -115,11 +115,11 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-md-4">
-          <label className="form-label" htmlFor="gasto-edicion-medio-pago">
+          <label className="form-label" htmlFor="pago-edicion-medio-pago">
             Medio de pago
           </label>
           <select
-            id="gasto-edicion-medio-pago"
+            id="pago-edicion-medio-pago"
             className="form-select"
             value={formulario.idMedioPago}
             onChange={(e) => setFormulario((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -135,17 +135,17 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-md-4">
-          <label className="form-label" htmlFor="gasto-edicion-categoria">
+          <label className="form-label" htmlFor="pago-edicion-categoria">
             Categoría
           </label>
           <select
-            id="gasto-edicion-categoria"
+            id="pago-edicion-categoria"
             className="form-select"
             value={formulario.categoria}
             disabled={ligadoACompra}
-            onChange={(e) => setFormulario((prev) => ({ ...prev, categoria: e.target.value as FormularioDeEdicionDeGasto['categoria'] }))}
+            onChange={(e) => setFormulario((prev) => ({ ...prev, categoria: e.target.value as FormularioDeEdicionDePago['categoria'] }))}
           >
-            {CATEGORIAS_GASTO.map((c) => (
+            {CATEGORIAS_PAGO.map((c) => (
               <option key={c.valor} value={c.valor}>
                 {c.etiqueta}
               </option>
@@ -154,11 +154,11 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-md-6">
-          <label className="form-label" htmlFor="gasto-edicion-proveedor">
+          <label className="form-label" htmlFor="pago-edicion-proveedor">
             Proveedor (opcional)
           </label>
           <select
-            id="gasto-edicion-proveedor"
+            id="pago-edicion-proveedor"
             className="form-select"
             value={formulario.idProveedor}
             disabled={ligadoACompra}
@@ -175,11 +175,11 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-md-6">
-          <label className="form-label" htmlFor="gasto-edicion-area">
+          <label className="form-label" htmlFor="pago-edicion-area">
             Área (opcional)
           </label>
           <select
-            id="gasto-edicion-area"
+            id="pago-edicion-area"
             className="form-select"
             value={formulario.idArea}
             onChange={(e) => setFormulario((prev) => ({ ...prev, idArea: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -195,11 +195,11 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-md-6">
-          <label className="form-label" htmlFor="gasto-edicion-concepto">
+          <label className="form-label" htmlFor="pago-edicion-concepto">
             Concepto
           </label>
           <input
-            id="gasto-edicion-concepto"
+            id="pago-edicion-concepto"
             type="text"
             className="form-control"
             value={formulario.concepto}
@@ -208,11 +208,11 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-md-6">
-          <label className="form-label" htmlFor="gasto-edicion-factura">
+          <label className="form-label" htmlFor="pago-edicion-factura">
             N° de factura (opcional)
           </label>
           <input
-            id="gasto-edicion-factura"
+            id="pago-edicion-factura"
             type="text"
             className="form-control"
             value={formulario.numeroFactura}
@@ -221,11 +221,11 @@ export function ModalDeEdicionDeGasto({
         </div>
 
         <div className="col-12">
-          <label className="form-label" htmlFor="gasto-edicion-detalle">
+          <label className="form-label" htmlFor="pago-edicion-detalle">
             Detalle (opcional)
           </label>
           <textarea
-            id="gasto-edicion-detalle"
+            id="pago-edicion-detalle"
             className="form-control"
             rows={2}
             value={formulario.detalle}

@@ -17,7 +17,7 @@ import type {
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
 import { CierresDeCaja } from '../paginas/CierresDeCaja'
-import { GastosDelTurno } from '../paginas/GastosDelTurno'
+import { PagosDelTurno } from '../paginas/PagosDelTurno'
 import { Pos } from '../paginas/Pos'
 import type { CajaDeEscritorio, SaldoParaTicket } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
@@ -81,7 +81,7 @@ function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSes
   const itemsDeCaja: ItemDeMenuDeAcciones[] = [
     { clave: 'ventas', etiqueta: 'Ventas del turno', a: '/ventas-del-turno' },
     { clave: 'historial', etiqueta: 'Historial de turnos', a: '/cierres-de-caja' },
-    { clave: 'gastos', etiqueta: 'Gastos', a: '/gastos-del-turno' },
+    { clave: 'pagos', etiqueta: 'Pagos', a: '/pagos-del-turno' },
   ]
   if (estado === null || estado.retiroOfrecido) {
     itemsDeCaja.push({
@@ -400,7 +400,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             `Pos.tsx` monta sus chips de estado. */}
         <RanuraHeaderPosContext.Provider value={nodoRanuraHeader}>
           {/* stage-pos-adjustments: por encima de `<Routes>`, para que el borrador de un ticket en
-              curso sobreviva a navegar entre "Vender"/"Ventas del turno"/"Gastos" — el `Provider` es
+              curso sobreviva a navegar entre "Vender"/"Ventas del turno"/"Pagos" — el `Provider` es
               una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
           <ProveedorDeBorradoresDeTicket>
             <ProveedorDeAccionesDePos>
@@ -458,7 +458,8 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                   <Routes>
                     <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
                     <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} alReimprimirFactura={alReimprimirFacturaDeVenta} alImprimirNotaDeCredito={alImprimirNotaDeCredito} />} />
-                    <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
+                    <Route path="/pagos-del-turno" element={<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
+                    <Route path="/gastos-del-turno" element={<Navigate to="/pagos-del-turno" replace />} />
                     <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
                     <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
                     <Route path="*" element={<Navigate to="/vender" replace />} />

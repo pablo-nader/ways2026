@@ -2,23 +2,23 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Gastos } from './Gastos'
+import { Pagos } from './Pagos'
 import type {
   AreaListado,
   EmpresaListado,
-  GastoDeAdministracionListado,
+  PagoDeAdministracionListado,
   MedioPagoListado,
   OpcionDeProveedor,
-  PaginaDeGastosDeAdministracion,
+  PaginaDePagosDeAdministracion,
   PuntoVentaListado,
 } from '../api/tipos'
 
-// stage-gasto-a-compra (PR4): Gastos.tsx ahora usa useNavigate (acciones "Vincular a compra" /
+// stage-gasto-a-compra (PR4): Pagos.tsx ahora usa useNavigate (acciones "Vincular a compra" /
 // "Crear compra") — necesita un Router alrededor, mismo criterio que CompraEditor.test.tsx.
-function renderGastos() {
+function renderPagos() {
   return render(
-    <MemoryRouter initialEntries={['/gastos']}>
-      <Gastos />
+    <MemoryRouter initialEntries={['/pagos']}>
+      <Pagos />
     </MemoryRouter>,
   )
 }
@@ -112,7 +112,7 @@ function proveedorFixture(sobrescribir: Partial<OpcionDeProveedor> = {}): Opcion
   return { id: 1, razonSocial: 'Distribuidora Sur SRL', nombreFantasia: null, ...sobrescribir }
 }
 
-function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}): GastoDeAdministracionListado {
+function pagoFixture(sobrescribir: Partial<PagoDeAdministracionListado> = {}): PagoDeAdministracionListado {
   return {
     id: 1,
     fecha: '2026-09-01T00:00:00Z',
@@ -138,7 +138,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
   }
 }
 
-function paginaFixture(items: GastoDeAdministracionListado[] = []): PaginaDeGastosDeAdministracion {
+function paginaFixture(items: PagoDeAdministracionListado[] = []): PaginaDePagosDeAdministracion {
   return { items, total: items.length, pagina: 1, tamanio: 25 }
 }
 
@@ -148,7 +148,7 @@ function mockearRutas(opciones: {
   medios?: MedioPagoListado[]
   areas?: AreaListado[]
   proveedores?: OpcionDeProveedor[]
-  pagina?: PaginaDeGastosDeAdministracion
+  pagina?: PaginaDePagosDeAdministracion
 }) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve(opciones.empresas ?? [empresaFixture()])
@@ -168,28 +168,28 @@ beforeEach(() => {
   apiDeleteMock.mockReset()
 })
 
-describe('Gastos (administración) — carga inicial', () => {
+describe('Pagos (administración) — carga inicial', () => {
   it('con una única empresa, la preselecciona en el filtro y en el formulario de alta', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
     // web-test-data-gates: esperar a que la opción de la empresa (el DATO) llegue, no a que el
     // <select> exista de entrada vacío.
     await screen.findByRole('option', { name: 'Empresa Demo SA' })
     expect(screen.getByLabelText('Empresa')).toHaveValue('1')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Nuevo gasto' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo pago' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
     expect(within(dialogo).getByLabelText('Empresa')).toHaveValue('1')
   })
 })
 
-describe('Gastos (administración) — medio de pago', () => {
+describe('Pagos (administración) — medio de pago', () => {
   it('excluye del selector del formulario los medios de comportamiento CuentaCorriente', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
 
     expect(screen.getByRole('option', { name: 'Efectivo' })).toBeInTheDocument()
@@ -197,17 +197,17 @@ describe('Gastos (administración) — medio de pago', () => {
   })
 })
 
-describe('Gastos (administración) — proveedor cambia la categoría', () => {
+describe('Pagos (administración) — proveedor cambia la categoría', () => {
   // El modal de alta y el filtro de la pantalla comparten la etiqueta "Categoría": se acota al diálogo.
   function categoriaDelFormulario() {
-    return within(screen.getByRole('dialog', { name: 'Nuevo gasto' })).getByLabelText('Categoría')
+    return within(screen.getByRole('dialog', { name: 'Nuevo pago' })).getByLabelText('Categoría')
   }
 
   it('elegir un proveedor cambia la categoría a Proveedor', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
     expect(categoriaDelFormulario()).toHaveValue('Otros')
 
@@ -218,9 +218,9 @@ describe('Gastos (administración) — proveedor cambia la categoría', () => {
 
   it('limpiar el proveedor mientras la categoría sigue en Proveedor la vuelve a Otros', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
 
@@ -238,23 +238,23 @@ function fechaLocal(fecha: Date): string {
   ].join('-')
 }
 
-describe('Gastos (administración) — fecha', () => {
+describe('Pagos (administración) — fecha', () => {
   it('el selector de fecha no admite un valor posterior a hoy (atributo max)', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     const campoFecha = await screen.findByLabelText('Fecha')
 
     const selector = campoFecha.closest('.position-relative')!.querySelector('input[type="date"]')
     expect(selector).toHaveAttribute('max', fechaLocal(new Date()))
   })
 
-  it('una fecha futura tipeada en el campo visible deja el gasto sin guardar y el campo inválido', async () => {
+  it('una fecha futura tipeada en el campo visible deja el pago sin guardar y el campo inválido', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
 
     const maniana = new Date()
@@ -263,7 +263,7 @@ describe('Gastos (administración) — fecha', () => {
     const campoFecha = screen.getByLabelText('Fecha')
     await userEvent.clear(campoFecha)
     await userEvent.type(campoFecha, `${dia}/${mes}/${anio}`)
-    await userEvent.type(screen.getByLabelText('Concepto'), 'Gasto futuro')
+    await userEvent.type(screen.getByLabelText('Concepto'), 'Pago futuro')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -274,9 +274,9 @@ describe('Gastos (administración) — fecha', () => {
   })
 })
 
-describe('Gastos (administración) — alta', () => {
+describe('Pagos (administración) — alta', () => {
   async function abrirYCompletarFormulario() {
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
     await userEvent.type(screen.getByLabelText('Concepto'), 'Alquiler de septiembre')
     await userEvent.type(screen.getByLabelText('Importe'), '1500')
@@ -286,7 +286,7 @@ describe('Gastos (administración) — alta', () => {
   it('arma el cuerpo del POST con fecha, empresa y medio de pago elegidos, sin turno', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    renderGastos()
+    renderPagos()
 
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -310,7 +310,7 @@ describe('Gastos (administración) — alta', () => {
   it('una fecha retroactiva elegida por el admin viaja tal cual en el POST', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    renderGastos()
+    renderPagos()
 
     await abrirYCompletarFormulario()
     fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '15/01/2026' } })
@@ -322,13 +322,13 @@ describe('Gastos (administración) — alta', () => {
   it('al confirmar con éxito, limpia y cierra el formulario, y refresca el listado', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    renderGastos()
+    renderPagos()
 
     await abrirYCompletarFormulario()
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 9, importe: 1500, concepto: 'Alquiler de septiembre' })]) })
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 9, importe: 1500, concepto: 'Alquiler de septiembre' })]) })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Gasto registrado.')
+    await screen.findByText('Pago registrado.')
     expect(screen.queryByLabelText('Concepto')).not.toBeInTheDocument()
     await screen.findByText('Alquiler de septiembre')
   })
@@ -342,7 +342,7 @@ describe('Gastos (administración) — alta', () => {
           resolverPost = resolve
         }),
     )
-    renderGastos()
+    renderPagos()
 
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -360,7 +360,7 @@ describe('Gastos (administración) — alta', () => {
           resolverPost = resolve
         }),
     )
-    renderGastos()
+    renderPagos()
 
     await abrirYCompletarFormulario()
     const boton = screen.getByRole('button', { name: 'Registrar' })
@@ -373,9 +373,9 @@ describe('Gastos (administración) — alta', () => {
 
   it('un concepto en blanco se rechaza sin llegar a pegarle al servidor', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
     await userEvent.type(screen.getByLabelText('Importe'), '1500')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
@@ -388,35 +388,35 @@ describe('Gastos (administración) — alta', () => {
   it('un error del servidor se muestra inline y el formulario no se cierra', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({})
-    apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_fecha_futura', 'La fecha del gasto no puede ser futura.'))
-    renderGastos()
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_fecha_futura', 'La fecha del pago no puede ser futura.'))
+    renderPagos()
 
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('La fecha del gasto no puede ser futura.')
+    await screen.findByText('La fecha del pago no puede ser futura.')
     expect(screen.getByLabelText('Concepto')).toBeInTheDocument()
   })
 
-  it('el botón "Nuevo gasto" abre el formulario en un modal y no en la página', async () => {
+  it('el botón "Nuevo pago" abre el formulario en un modal y no en la página', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
     await screen.findByRole('option', { name: 'Empresa Demo SA' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo pago' }))
 
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
     expect(within(dialogo).getByLabelText('Concepto')).toBeInTheDocument()
   })
 
   it('el error del servidor y la validación local se rinden dentro del modal', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({})
-    apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_fecha_futura', 'La fecha del gasto no puede ser futura.'))
-    renderGastos()
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_fecha_futura', 'La fecha del pago no puede ser futura.'))
+    renderPagos()
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
     expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Completá fecha, empresa, medio de pago, concepto e importe')
 
@@ -425,32 +425,32 @@ describe('Gastos (administración) — alta', () => {
     await userEvent.selectOptions(within(dialogo).getByLabelText('Medio de pago'), 'Efectivo')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
 
-    expect(await within(dialogo).findByText('La fecha del gasto no puede ser futura.')).toBeInTheDocument()
+    expect(await within(dialogo).findByText('La fecha del pago no puede ser futura.')).toBeInTheDocument()
     expect(within(dialogo).getByLabelText('Concepto')).toHaveValue('Alquiler')
     expect(within(dialogo).getByRole('button', { name: 'Registrar' })).toBeEnabled()
   })
 
   it('cancelar descarta lo escrito sin tocar la API y el próximo alta abre vacío', async () => {
     mockearRutas({})
-    renderGastos()
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    renderPagos()
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
     await userEvent.type(within(dialogo).getByLabelText('Concepto'), 'Alquiler')
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo pago' }))
     expect(await screen.findByLabelText('Concepto')).toHaveValue('')
   })
 
   it('Escape cierra el modal sin guardar y devuelve el foco al disparador', async () => {
     mockearRutas({})
-    renderGastos()
-    const disparador = await screen.findByRole('button', { name: 'Nuevo gasto' })
+    renderPagos()
+    const disparador = await screen.findByRole('button', { name: 'Nuevo pago' })
     await userEvent.click(disparador)
-    await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    await screen.findByRole('dialog', { name: 'Nuevo pago' })
 
     await userEvent.keyboard('{Escape}')
 
@@ -468,10 +468,10 @@ describe('Gastos (administración) — alta', () => {
           resolverPost = resolve
         }),
     )
-    renderGastos()
+    renderPagos()
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
     await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled())
 
     // El filtro de la pantalla recarga el listado y acuña una generación nueva en pleno alta.
@@ -480,8 +480,8 @@ describe('Gastos (administración) — alta', () => {
     await act(async () => resolverPost({ id: 1 }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByText('Gasto registrado.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Nuevo gasto' })).toBeEnabled()
+    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nuevo pago' })).toBeEnabled()
   })
 
   it('un segundo rechazo local con el mismo mensaje vuelve a traer el error a la vista', async () => {
@@ -489,9 +489,9 @@ describe('Gastos (administración) — alta', () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
     try {
       mockearRutas({})
-      renderGastos()
-      await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
-      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+      renderPagos()
+      await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
 
       await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
       await within(dialogo).findByRole('alert')
@@ -514,26 +514,26 @@ describe('Gastos (administración) — alta', () => {
           resolverPost = resolve
         }),
     )
-    renderGastos()
+    renderPagos()
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
 
     await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled())
     await userEvent.keyboard('{Escape}')
-    expect(screen.getByRole('dialog', { name: 'Nuevo gasto' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Nuevo pago' })).toBeInTheDocument()
 
     await act(async () => resolverPost({ id: 1 }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
 
-describe('Gastos (administración) — área del alta', () => {
+describe('Pagos (administración) — área del alta', () => {
   const general = areaFixture({ id: 10, nombre: 'General', orden: 1 })
   const cocina = areaFixture({ id: 11, nombre: 'Cocina', orden: 2 })
 
   async function abrirFormulario() {
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
   }
 
@@ -547,7 +547,7 @@ describe('Gastos (administración) — área del alta', () => {
   it('el select del alta arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
     mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    renderGastos()
+    renderPagos()
     await abrirFormulario()
     await screen.findByRole('option', { name: 'General' })
 
@@ -563,7 +563,7 @@ describe('Gastos (administración) — área del alta', () => {
   it('el área elegida a mano es la que viaja, y al reabrir el formulario vuelve a la primera activa', async () => {
     mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValue({ id: 1 })
-    renderGastos()
+    renderPagos()
     await abrirFormulario()
     await screen.findByRole('option', { name: 'Cocina' })
 
@@ -571,7 +571,7 @@ describe('Gastos (administración) — área del alta', () => {
     await completarYRegistrar()
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 11 })))
 
-    await screen.findByText('Gasto registrado.')
+    await screen.findByText('Pago registrado.')
     await abrirFormulario()
     expect(screen.getByLabelText('Área')).toHaveValue('10')
 
@@ -592,7 +592,7 @@ describe('Gastos (administración) — área del alta', () => {
           })
         : baseline(ruta),
     )
-    renderGastos()
+    renderPagos()
     await abrirFormulario()
     expect(screen.getByLabelText('Área')).toHaveValue('')
 
@@ -604,7 +604,7 @@ describe('Gastos (administración) — área del alta', () => {
   it('sin áreas el select muestra una única opción vacía deshabilitada y el alta manda idArea null', async () => {
     mockearRutas({ areas: [] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    renderGastos()
+    renderPagos()
     await abrirFormulario()
     await screen.findAllByRole('option', { name: 'Empresa Demo SA' })
 
@@ -619,15 +619,15 @@ describe('Gastos (administración) — área del alta', () => {
   })
 })
 
-describe('Gastos (administración) — listado y filtros', () => {
-  it('lista los gastos con empresa, categoría, proveedor/área resueltos y origen', async () => {
+describe('Pagos (administración) — listado y filtros', () => {
+  it('lista los pagos con empresa, categoría, proveedor/área resueltos y origen', async () => {
     mockearRutas({
       pagina: paginaFixture([
-        gastoFixture({ id: 1, categoria: 'Proveedor', idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' }),
-        gastoFixture({ id: 2, idPuntoVenta: 7, origenFondos: 'Tesoreria' }),
+        pagoFixture({ id: 1, categoria: 'Proveedor', idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' }),
+        pagoFixture({ id: 2, idPuntoVenta: 7, origenFondos: 'Tesoreria' }),
       ]),
     })
-    renderGastos()
+    renderPagos()
 
     const tabla = await screen.findByRole('table')
     expect(within(tabla).getByText('Distribuidora Sur SRL')).toBeInTheDocument()
@@ -636,9 +636,9 @@ describe('Gastos (administración) — listado y filtros', () => {
 
   it('un proveedor dado de baja lógica (nombreProveedor null) se muestra como "(no disponible)" sin perder la fila', async () => {
     mockearRutas({
-      pagina: paginaFixture([gastoFixture({ id: 1, categoria: 'Proveedor', idProveedor: 5, nombreProveedor: null })]),
+      pagina: paginaFixture([pagoFixture({ id: 1, categoria: 'Proveedor', idProveedor: 5, nombreProveedor: null })]),
     })
-    renderGastos()
+    renderPagos()
 
     const tabla = await screen.findByRole('table')
     expect(within(tabla).getByText('(no disponible)')).toBeInTheDocument()
@@ -646,7 +646,7 @@ describe('Gastos (administración) — listado y filtros', () => {
 
   it('cambiar el filtro de categoría dispara una nueva consulta con ese filtro', async () => {
     mockearRutas({})
-    renderGastos()
+    renderPagos()
 
     await screen.findByRole('table')
     apiGetMock.mockClear()
@@ -662,20 +662,20 @@ describe('Gastos (administración) — listado y filtros', () => {
 
   it('sin resultados, muestra el mensaje de listado vacío', async () => {
     mockearRutas({ pagina: paginaFixture([]) })
-    renderGastos()
+    renderPagos()
 
-    await screen.findByText('No hay gastos que coincidan con los filtros.')
+    await screen.findByText('No hay pagos que coincidan con los filtros.')
   })
 })
 
-// stage-gasto-a-compra (PR4): acciones por fila para un gasto sin compra ligada — "Vincular a
-// compra" abre un picker filtrado por el proveedor del gasto (si tiene), "Crear compra" navega.
-describe('Gastos (administración) — vincular a una compra existente', () => {
+// stage-gasto-a-compra (PR4): acciones por fila para un pago sin compra ligada — "Vincular a
+// compra" abre un picker filtrado por el proveedor del pago (si tiene), "Crear compra" navega.
+describe('Pagos (administración) — vincular a una compra existente', () => {
   function compraListadaFixture(sobrescribir: Partial<{ id: number; idProveedor: number; numeroExterno: string | null; estado: string; fechaRecepcion: string | null; total: number; saldoPendiente: number }> = {}) {
     return { id: 9, idProveedor: 2, idTipoComprobante: 5, numeroExterno: '0003-00000009', estado: 'Confirmada', fechaRecepcion: '2026-08-20T12:00:00Z', total: 500, saldoPendiente: 320, ...sobrescribir }
   }
 
-  function mockearConCompras(opciones: { pagina?: PaginaDeGastosDeAdministracion; compras?: ReturnType<typeof compraListadaFixture>[] } = {}) {
+  function mockearConCompras(opciones: { pagina?: PaginaDePagosDeAdministracion; compras?: ReturnType<typeof compraListadaFixture>[] } = {}) {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/empresas') return Promise.resolve([empresaFixture()])
       if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
@@ -691,9 +691,9 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
     })
   }
 
-  it('un gasto con proveedor abre el picker filtrado por ESE proveedor', async () => {
-    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3, idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' })]) })
-    renderGastos()
+  it('un pago con proveedor abre el picker filtrado por ESE proveedor', async () => {
+    mockearConCompras({ pagina: paginaFixture([pagoFixture({ id: 3, idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' })]) })
+    renderPagos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
 
@@ -704,11 +704,11 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
     expect(await screen.findByText('0003-00000009')).toBeInTheDocument()
   })
 
-  // stage-tesoreria-por-empresa (PR5): el picker filtra por la EMPRESA del gasto (join PV→empresa
+  // stage-tesoreria-por-empresa (PR5): el picker filtra por la EMPRESA del pago (join PV→empresa
   // del lado del servidor) para no ofrecer nunca una compra de otra empresa.
-  it('el picker filtra las compras por la empresa del gasto', async () => {
-    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3, idEmpresa: 1, idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' })]) })
-    renderGastos()
+  it('el picker filtra las compras por la empresa del pago', async () => {
+    mockearConCompras({ pagina: paginaFixture([pagoFixture({ id: 3, idEmpresa: 1, idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' })]) })
+    renderPagos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
 
@@ -717,13 +717,13 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
 
   it('el picker muestra el saldo pendiente de cada compra junto a su total', async () => {
     mockearConCompras({
-      pagina: paginaFixture([gastoFixture({ id: 3 })]),
+      pagina: paginaFixture([pagoFixture({ id: 3 })]),
       compras: [
         compraListadaFixture({ id: 9, numeroExterno: '0003-00000009', total: 500, saldoPendiente: 320 }),
         compraListadaFixture({ id: 10, numeroExterno: '0003-00000010', total: 700, saldoPendiente: 0 }),
       ],
     })
-    renderGastos()
+    renderPagos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
 
@@ -736,23 +736,23 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
     expect(within(fila10).getByText('$ 0,00')).toBeInTheDocument()
   })
 
-  it('elegir una compra del picker vincula el gasto y refresca el listado', async () => {
-    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3 })]) })
+  it('elegir una compra del picker vincula el pago y refresca el listado', async () => {
+    mockearConCompras({ pagina: paginaFixture([pagoFixture({ id: 3 })]) })
     apiPostMock.mockResolvedValue({ id: 3, idComprobanteCompra: 9 })
-    renderGastos()
+    renderPagos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/3/vincular-compra', { idComprobanteCompra: 9 }))
-    expect(await screen.findByText('Gasto vinculado a la compra.')).toBeInTheDocument()
+    expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
     // El picker se cierra tras el éxito.
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
 
-  it('un gasto ya vinculado muestra el link a la compra en vez de las acciones', async () => {
-    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3, idComprobanteCompra: 9 })]) })
-    renderGastos()
+  it('un pago ya vinculado muestra el link a la compra en vez de las acciones', async () => {
+    mockearConCompras({ pagina: paginaFixture([pagoFixture({ id: 3, idComprobanteCompra: 9 })]) })
+    renderPagos()
 
     expect(await screen.findByRole('link', { name: 'Compra #9' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Vincular a compra' })).not.toBeInTheDocument()
@@ -765,7 +765,7 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
   // tenido éxito. Con el guard AISLADO (`generacionVinculoRef`), un refresco del listado en el
   // medio nunca puede pisar la finalización de este vínculo puntual.
   it('un refresco del listado en vuelo durante el vínculo no le impide cerrar el picker ni avisar', async () => {
-    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3 })]) })
+    mockearConCompras({ pagina: paginaFixture([pagoFixture({ id: 3 })]) })
     let resolverPost: (valor: unknown) => void = () => undefined
     apiPostMock.mockImplementationOnce(
       () =>
@@ -773,7 +773,7 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
           resolverPost = resolve
         }),
     )
-    renderGastos()
+    renderPagos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
@@ -785,56 +785,56 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
 
     resolverPost({ id: 3, idComprobanteCompra: 9 })
 
-    expect(await screen.findByText('Gasto vinculado a la compra.')).toBeInTheDocument()
+    expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
 })
 
-describe('Gastos (administración) — gasto de un pago de personal', () => {
-  it('deshabilita editar, eliminar, vincular y crear compra en un gasto de un pago y deja habilitados los de un gasto común', async () => {
+describe('Pagos (administración) — pago de un pago de personal', () => {
+  it('deshabilita editar, eliminar, vincular y crear compra en un pago de un pago y deja habilitados los de un pago común', async () => {
     mockearRutas({
       pagina: paginaFixture([
-        gastoFixture({ id: 40, concepto: 'Pago de personal: Ana', idMovimientoPersonal: 9 }),
-        gastoFixture({ id: 41, concepto: 'Alquiler' }),
+        pagoFixture({ id: 40, concepto: 'Pago de personal: Ana', idMovimientoPersonal: 9 }),
+        pagoFixture({ id: 41, concepto: 'Alquiler' }),
       ]),
     })
-    renderGastos()
+    renderPagos()
 
     // web-test-data-gates: se espera a la fila (el dato), no a la tabla.
-    const delPago = await screen.findByRole('button', { name: 'Editar gasto Pago de personal: Ana' })
+    const delPago = await screen.findByRole('button', { name: 'Editar pago Pago de personal: Ana' })
     expect(delPago).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Eliminar gasto Pago de personal: Ana' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Eliminar pago Pago de personal: Ana' })).toBeDisabled()
     const filaDelPago = delPago.closest('tr') as HTMLElement
     expect(within(filaDelPago).getByRole('button', { name: 'Vincular a compra' })).toBeDisabled()
     expect(within(filaDelPago).getByRole('button', { name: 'Crear compra' })).toBeDisabled()
 
-    expect(screen.getByRole('button', { name: 'Editar gasto Alquiler' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Eliminar gasto Alquiler' })).toBeEnabled()
-    const filaComun = screen.getByRole('button', { name: 'Editar gasto Alquiler' }).closest('tr') as HTMLElement
+    expect(screen.getByRole('button', { name: 'Editar pago Alquiler' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Eliminar pago Alquiler' })).toBeEnabled()
+    const filaComun = screen.getByRole('button', { name: 'Editar pago Alquiler' }).closest('tr') as HTMLElement
     expect(within(filaComun).getByRole('button', { name: 'Vincular a compra' })).toBeEnabled()
     expect(within(filaComun).getByRole('button', { name: 'Crear compra' })).toBeEnabled()
   })
 })
 
-describe('Gastos (administración) — edición y baja', () => {
-  const gastoDeCajaCerrado = () =>
-    gastoFixture({ id: 31, concepto: 'Flete', origenFondos: 'CajaTurno', idTurnoCaja: 9, turnoAbierto: false })
+describe('Pagos (administración) — edición y baja', () => {
+  const pagoDeCajaCerrado = () =>
+    pagoFixture({ id: 31, concepto: 'Flete', origenFondos: 'CajaTurno', idTurnoCaja: 9, turnoAbierto: false })
 
   function dialogo() {
-    return screen.getByRole('dialog', { name: 'Editar gasto' })
+    return screen.getByRole('dialog', { name: 'Editar pago' })
   }
 
   function llamadasAlListado() {
     return apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/gastos/administracion')).length
   }
 
-  it('editar abre el modal precargado y guarda con PUT /gastos/administracion/{id}, refrescando el listado', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler', importe: 1000 })]) })
+  it('editar abre el modal precargado y guarda con PUT /pagos/administracion/{id}, refrescando el listado', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler', importe: 1000 })]) })
     apiPutMock.mockResolvedValueOnce({ id: 31 })
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Alquiler' }))
-    const d = within(await screen.findByRole('dialog', { name: 'Editar gasto' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
     expect(d.getByLabelText('Concepto')).toHaveValue('Alquiler')
     expect(d.getByLabelText('Importe')).toHaveValue('1.000,00')
 
@@ -849,38 +849,38 @@ describe('Gastos (administración) — edición y baja', () => {
         expect.objectContaining({ importe: 1200, concepto: 'Alquiler', idMedioPago: 1, categoria: 'Otros' }),
       ),
     )
-    await screen.findByText('Gasto actualizado.')
-    expect(screen.queryByRole('dialog', { name: 'Editar gasto' })).not.toBeInTheDocument()
+    await screen.findByText('Pago actualizado.')
+    expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
   })
 
-  it('editar un gasto de caja de un turno cerrado muestra el aviso de recálculo del arqueo', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoDeCajaCerrado()]) })
-    renderGastos()
+  it('editar un pago de caja de un turno cerrado muestra el aviso de recálculo del arqueo', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Flete' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
 
     expect(
       await within(dialogo()).findByText(
-        'Este gasto pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado.',
+        'Este pago pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado.',
       ),
     ).toBeInTheDocument()
   })
 
-  it('un gasto de caja general avisa del ajuste compensatorio y no del arqueo', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler', origenFondos: 'Tesoreria' })]) })
-    renderGastos()
+  it('un pago de caja general avisa del ajuste compensatorio y no del arqueo', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler', origenFondos: 'Tesoreria' })]) })
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Alquiler' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
 
     expect(await within(dialogo()).findByText(/ajuste compensatorio sobre la caja general/)).toBeInTheDocument()
     expect(within(dialogo()).queryByText(/turno cerrado/)).not.toBeInTheDocument()
   })
 
-  it('un gasto ligado a una compra no deja cambiar categoría ni proveedor', async () => {
+  it('un pago ligado a una compra no deja cambiar categoría ni proveedor', async () => {
     mockearRutas({
       pagina: paginaFixture([
-        gastoFixture({
+        pagoFixture({
           id: 31,
           concepto: 'Mercadería',
           categoria: 'Proveedor',
@@ -890,9 +890,9 @@ describe('Gastos (administración) — edición y baja', () => {
         }),
       ]),
     })
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Mercadería' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Mercadería' }))
 
     const d = within(dialogo())
     expect(d.getByLabelText('Categoría')).toBeDisabled()
@@ -901,23 +901,23 @@ describe('Gastos (administración) — edición y baja', () => {
   })
 
   it('un error del servidor al editar se muestra en el modal y no lo cierra', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
     const { ErrorApi } = await import('../api/cliente')
     apiPutMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_proveedor_ligado', 'El proveedor no se puede cambiar.'))
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Alquiler' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
     await userEvent.click(within(dialogo()).getByRole('button', { name: 'Guardar cambios' }))
 
     expect(await within(dialogo()).findByText('El proveedor no se puede cambiar.')).toBeInTheDocument()
   })
 
   it('eliminar pide confirmación y solo al confirmar manda el DELETE y refresca', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
     apiDeleteMock.mockResolvedValueOnce(undefined)
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Alquiler' }))
     const confirmacion = await screen.findByRole('alertdialog', { name: 'Confirmar eliminación' })
     expect(apiDeleteMock).not.toHaveBeenCalled()
 
@@ -925,55 +925,55 @@ describe('Gastos (administración) — edición y baja', () => {
     await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/gastos/administracion/31'))
-    await screen.findByText('Gasto eliminado.')
+    await screen.findByText('Pago eliminado.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
   })
 
   it('cancelar la confirmación no elimina nada', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
-    renderGastos()
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Alquiler' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(apiDeleteMock).not.toHaveBeenCalled()
   })
 
-  it('la confirmación de baja de un gasto de un turno cerrado advierte del recálculo del arqueo', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoDeCajaCerrado()]) })
-    renderGastos()
+  it('la confirmación de baja de un pago de un turno cerrado advierte del recálculo del arqueo', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Flete' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Flete' }))
 
     expect(
       await within(await screen.findByRole('alertdialog')).findByText(
-        /Este gasto pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado\./,
+        /Este pago pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado\./,
       ),
     ).toBeInTheDocument()
   })
 
   it('un fallo del DELETE se muestra y la confirmación sigue abierta', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
     const { ErrorApi } = await import('../api/cliente')
-    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(404, 'no_encontrado', 'No existe el gasto 31.'))
-    renderGastos()
+    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(404, 'no_encontrado', 'No existe el pago 31.'))
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Alquiler' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar eliminación' }))
 
-    expect(await screen.findByText('No existe el gasto 31.')).toBeInTheDocument()
+    expect(await screen.findByText('No existe el pago 31.')).toBeInTheDocument()
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
   })
 
   it('un doble click sobre "Confirmar eliminación" en el mismo tick manda un solo DELETE', async () => {
-    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
     let resolver: (v: unknown) => void = () => undefined
     apiDeleteMock.mockImplementationOnce(() => new Promise((r) => (resolver = r)))
-    renderGastos()
+    renderPagos()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Alquiler' }))
     const confirmar = within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar eliminación' })
     act(() => {
       confirmar.click()
