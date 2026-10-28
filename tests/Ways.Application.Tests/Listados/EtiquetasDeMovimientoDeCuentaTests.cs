@@ -5,7 +5,7 @@ using Ways.Domain.Plantel;
 namespace Ways.Application.Tests.Listados;
 
 /// <summary>Guarda contra el desfase entre las etiquetas de la columna Tipo de los libros que el servidor usa para
-/// ordenar y las que muestra la web. Fija la lista literal; su espejo es <c>etiquetasDeMovimientoDeCuenta.test.ts</c>
+/// ordenar y las que muestra la web. Fija la lista literal; su espejo es <c>ordenDeCajaYCuentas.test.ts</c> (bloque de etiquetas de la columna Tipo)
 /// en <c>Ways.Web/src/api</c>, que fija la MISMA lista.</summary>
 public class EtiquetasDeMovimientoDeCuentaTests
 {

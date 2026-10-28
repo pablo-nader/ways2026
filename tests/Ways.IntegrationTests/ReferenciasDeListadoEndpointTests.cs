@@ -1,6 +1,9 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using Ways.Application.Usuarios;
 using Ways.Domain.Compras;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 
@@ -26,8 +29,22 @@ public class ReferenciasDeListadoEndpointTests(WaysApiFixture fixture) : IClassF
     private static int? Entero(JsonElement fila, string propiedad) =>
         fila.TryGetProperty(propiedad, out var valor) && valor.ValueKind == JsonValueKind.Number ? valor.GetInt32() : null;
 
+    private const string PasswordOtroRol = "una-contraseña-larga";
+
+    private async Task<HttpClient> LoguearAsync(HttpClient admin, string sufijo, RolConocido rol)
+    {
+        var corto = Guid.NewGuid().ToString("N")[..8];
+        var mail = $"{sufijo}-{corto}@ways.test";
+        var alta = await admin.PostAsJsonAsync("/api/usuarios", new CrearUsuario($"{sufijo}-{corto}", mail, (int)rol, PasswordOtroRol));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, PasswordOtroRol));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        return cliente;
+    }
+
     [Fact]
-    public async Task ComprasYOrdenesDeCompraTraenLaRazonSocialDelProveedorYVacioSiEstaDadoDeBaja()
+    public async Task ComprasYOrdenesDeCompraTraenLaRazonSocialDelProveedorSoloAAdminYVacioSiEstaDadoDeBaja()
     {
         var e = await SembradoDeDocumentos.AprovisionarAsync(fixture, "rfp");
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
@@ -59,6 +76,10 @@ public class ReferenciasDeListadoEndpointTests(WaysApiFixture fixture) : IClassF
             idsOrden.Add(orden.Id);
         }
 
+        // El catálogo de proveedores es solo de Admin: Supervisor y Vendedor leen estos listados pero sin el nombre.
+        var supervisor = await LoguearAsync(e.Admin, "sup", RolConocido.Supervisor);
+        var vendedor = await LoguearAsync(e.Admin, "ven", RolConocido.Vendedor);
+
         foreach (var (ruta, ids) in new[] { ("/api/compras", idsCompra), ("/api/ordenes-compra", idsOrden) })
         {
             var filas = await FilasAsync(e.Admin, ruta);
@@ -66,6 +87,14 @@ public class ReferenciasDeListadoEndpointTests(WaysApiFixture fixture) : IClassF
             Assert.Equal(2, filas.Length);
             Assert.Equal("Distribuidora Norte", Texto(filas.Single(f => f.GetProperty("id").GetInt32() == ids[0]), "nombreProveedor"));
             Assert.Null(Texto(filas.Single(f => f.GetProperty("id").GetInt32() == ids[1]), "nombreProveedor"));
+
+            foreach (var sinCatalogo in new[] { supervisor, vendedor })
+            {
+                var filasSinNombre = await FilasAsync(sinCatalogo, ruta);
+
+                Assert.Equal(2, filasSinNombre.Length);
+                Assert.All(filasSinNombre, f => Assert.Null(Texto(f, "nombreProveedor")));
+            }
         }
     }
 
@@ -105,8 +134,13 @@ public class ReferenciasDeListadoEndpointTests(WaysApiFixture fixture) : IClassF
             idsRemito.Add(remito.Id);
         }
 
+        var vendedor = await LoguearAsync(e.Admin, "ven", RolConocido.Vendedor);
+
         foreach (var (ruta, ids) in new[] { ("/api/presupuestos", idsPresupuesto), ("/api/remitos", idsRemito) })
         {
+            // Misma puerta que GET /api/clientes (OperacionDePos): el Vendedor ya podía ver estos nombres.
+            Assert.Equal("Ferretería Sur", Texto((await FilasAsync(vendedor, ruta)).Single(f => f.GetProperty("id").GetInt32() == ids[0]), "nombreCliente"));
+
             var filas = await FilasAsync(e.Admin, ruta);
             JsonElement Fila(int i) => filas.Single(f => f.GetProperty("id").GetInt32() == ids[i]);
 

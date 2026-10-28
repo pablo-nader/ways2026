@@ -105,7 +105,8 @@ public class ServicioDeCompras(
             .ToListAsync(ct);
 
         var conSaldo = await ConSaldoPendienteAsync(items, ct);
-        var proveedores = await ReferenciasDeListado.ProveedoresAsync(db, conSaldo.Select(c => c.IdProveedor).ToList(), ct);
+        var proveedores = await ReferenciasDeListado.ProveedoresVisiblesAsync(
+            db, contexto, conSaldo.Select(c => c.IdProveedor).ToList(), ct);
         var conProveedor = conSaldo
             .Select(c => c with { NombreProveedor = proveedores.GetValueOrDefault(c.IdProveedor) })
             .ToList();

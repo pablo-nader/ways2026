@@ -11,29 +11,6 @@ using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.IntegrationTests;
 
-/// <summary>Utilidades de los tests de orden en el servidor de caja y libros: recorren las páginas de a dos y leen el id
-/// de cada fila de la propiedad que el contrato de cada endpoint usa. <paramref name="query"/> NO lleva
-/// <c>pagina</c> ni <c>tamanio</c>: un entero duplicado se bindea como 400.</summary>
-internal static class RecorridoDeOrden
-{
-    public static async Task<List<int>> RecorrerAsync(
-        HttpClient cliente, string ruta, string query, string propiedadDelId, int tamanio = 2)
-    {
-        var ids = new List<int>();
-        for (var pagina = 1; pagina <= 10; pagina++)
-        {
-            var url = $"{ruta}?{(query.Length == 0 ? "" : query + "&")}pagina={pagina}&tamanio={tamanio}";
-            var respuesta = await cliente.GetAsync(url);
-            Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-            using var json = JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync());
-            ids.AddRange(json.RootElement.GetProperty("items").EnumerateArray().Select(i => i.GetProperty(propiedadDelId).GetInt32()));
-            if (pagina * tamanio >= json.RootElement.GetProperty("total").GetInt32()) break;
-        }
-
-        return ids;
-    }
-}
-
 /// <summary><c>GET /api/reportes/cajas?orden=&amp;direccion=</c> contra Postgres. Posiciones (1 a 5, en orden de alta):
 /// <code>
 /// pos pv        apertura cierre esperado declarado diferencia
@@ -122,7 +99,7 @@ public class HistoricoDeCajasOrdenEndpointTests(WaysApiFixture fixture) : IClass
     {
         var (e, ids) = await SembrarAsync();
 
-        var obtenido = await RecorridoDeOrden.RecorrerAsync(e.Admin, Ruta, $"orden={orden}&direccion={direccion}", "idTurnoCaja");
+        var obtenido = await SembradoDeDocumentos.RecorrerAsync(e.Admin, Ruta, $"orden={orden}&direccion={direccion}", propiedadDelId: "idTurnoCaja");
 
         Assert.Equal(SembradoDeDocumentos.PorPosicion(ids, esperado), obtenido);
     }
@@ -134,11 +111,11 @@ public class HistoricoDeCajasOrdenEndpointTests(WaysApiFixture fixture) : IClass
 
         Assert.Equal(
             SembradoDeDocumentos.PorPosicion(ids, "2,4,3,1,5"),
-            await RecorridoDeOrden.RecorrerAsync(e.Admin, Ruta, "", "idTurnoCaja"));
+            await SembradoDeDocumentos.RecorrerAsync(e.Admin, Ruta, "", propiedadDelId: "idTurnoCaja"));
         Assert.Equal(
             SembradoDeDocumentos.PorPosicion(ids, "1,5"),
-            await RecorridoDeOrden.RecorrerAsync(
-                e.Admin, Ruta, $"idPuntoVenta={e.PvA}&orden=turno&direccion=ascendente", "idTurnoCaja"));
+            await SembradoDeDocumentos.RecorrerAsync(
+                e.Admin, Ruta, $"idPuntoVenta={e.PvA}&orden=turno&direccion=ascendente", propiedadDelId: "idTurnoCaja"));
     }
 
     [Theory]
@@ -212,7 +189,7 @@ public class TurnosOrdenEndpointTests(WaysApiFixture fixture) : IClassFixture<Wa
     {
         var (e, ids) = await SembrarAsync();
 
-        var obtenido = await RecorridoDeOrden.RecorrerAsync(e.Admin, Ruta, $"orden={orden}&direccion={direccion}", "id");
+        var obtenido = await SembradoDeDocumentos.RecorrerAsync(e.Admin, Ruta, $"orden={orden}&direccion={direccion}", propiedadDelId: "id");
 
         Assert.Equal(SembradoDeDocumentos.PorPosicion(ids, esperado), obtenido);
     }
@@ -224,10 +201,10 @@ public class TurnosOrdenEndpointTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         Assert.Equal(
             SembradoDeDocumentos.PorPosicion(ids, "3,5,1,4,2"),
-            await RecorridoDeOrden.RecorrerAsync(e.Admin, Ruta, "", "id"));
+            await SembradoDeDocumentos.RecorrerAsync(e.Admin, Ruta, "", propiedadDelId: "id"));
         Assert.Equal(
             SembradoDeDocumentos.PorPosicion(ids, "5,1,3"),
-            await RecorridoDeOrden.RecorrerAsync(e.Admin, Ruta, "estado=Cerrado&orden=cierre&direccion=ascendente", "id"));
+            await SembradoDeDocumentos.RecorrerAsync(e.Admin, Ruta, "estado=Cerrado&orden=cierre&direccion=ascendente", propiedadDelId: "id"));
     }
 
     [Theory]
@@ -328,9 +305,8 @@ public class CuentaCorrienteDeProveedorOrdenEndpointTests(WaysApiFixture fixture
     {
         var (e, idProveedor, ids) = await SembrarAsync();
 
-        var obtenido = await RecorridoDeOrden.RecorrerAsync(
-            e.Admin, $"/api/proveedores/{idProveedor}/cuenta-corriente", $"historico=true&orden={orden}&direccion={direccion}",
-            "idMovimiento");
+        var obtenido = await SembradoDeDocumentos.RecorrerAsync(
+            e.Admin, $"/api/proveedores/{idProveedor}/cuenta-corriente", $"historico=true&orden={orden}&direccion={direccion}", propiedadDelId: "idMovimiento");
 
         Assert.Equal(SembradoDeDocumentos.PorPosicion(ids, esperado), obtenido);
     }
@@ -343,7 +319,7 @@ public class CuentaCorrienteDeProveedorOrdenEndpointTests(WaysApiFixture fixture
 
         Assert.Equal(
             SembradoDeDocumentos.PorPosicion(ids, "6,3,5,1,4,2"),
-            await RecorridoDeOrden.RecorrerAsync(e.Admin, ruta, "historico=true", "idMovimiento"));
+            await SembradoDeDocumentos.RecorrerAsync(e.Admin, ruta, "historico=true", propiedadDelId: "idMovimiento"));
 
         var respuesta = await e.Admin.GetAsync($"{ruta}?historico=true&orden=importe&direccion=ascendente&pagina=1&tamanio=10");
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
@@ -440,8 +416,8 @@ public class CuentaDePersonalOrdenEndpointTests(WaysApiFixture fixture) : IClass
     {
         var (e, idPersonal, ids) = await SembrarAsync();
 
-        var obtenido = await RecorridoDeOrden.RecorrerAsync(
-            e.Admin, $"/api/personal/{idPersonal}/cuenta", $"historico=true&orden={orden}&direccion={direccion}", "idMovimiento");
+        var obtenido = await SembradoDeDocumentos.RecorrerAsync(
+            e.Admin, $"/api/personal/{idPersonal}/cuenta", $"historico=true&orden={orden}&direccion={direccion}", propiedadDelId: "idMovimiento");
 
         Assert.Equal(SembradoDeDocumentos.PorPosicion(ids, esperado), obtenido);
     }
@@ -453,7 +429,7 @@ public class CuentaDePersonalOrdenEndpointTests(WaysApiFixture fixture) : IClass
 
         Assert.Equal(
             SembradoDeDocumentos.PorPosicion(ids, "6,3,5,1,4,2"),
-            await RecorridoDeOrden.RecorrerAsync(e.Admin, $"/api/personal/{idPersonal}/cuenta", "historico=true", "idMovimiento"));
+            await SembradoDeDocumentos.RecorrerAsync(e.Admin, $"/api/personal/{idPersonal}/cuenta", "historico=true", propiedadDelId: "idMovimiento"));
     }
 
     [Theory]

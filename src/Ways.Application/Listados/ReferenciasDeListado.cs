@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Usuarios;
 
 namespace Ways.Application.Listados;
 
@@ -35,7 +36,16 @@ public static class ReferenciasDeListado
             c => c.Id, c => new ClienteDeListado(c.Numero, NombreDeCliente(c.RazonSocial, c.Nombre, c.Apellido)));
     }
 
-    public static async Task<IReadOnlyDictionary<int, string>> ProveedoresAsync(
+    /// <summary>El catálogo de proveedores es de la gestión de catálogo (<c>GET /api/proveedores</c>, solo Admin): los
+    /// listados de compras, que leen todos los roles de operación, devuelven la razón social únicamente a quien ya podía
+    /// verla ahí; para el resto el resultado es vacío y la pantalla rotula la fila por su id, como antes.</summary>
+    public static Task<IReadOnlyDictionary<int, string>> ProveedoresVisiblesAsync(
+        IWaysDbContext db, IContextoDeUsuario contexto, IReadOnlyCollection<int> ids, CancellationToken ct) =>
+        contexto.Rol == RolConocido.Admin
+            ? ProveedoresAsync(db, ids, ct)
+            : Task.FromResult<IReadOnlyDictionary<int, string>>(new Dictionary<int, string>());
+
+    private static async Task<IReadOnlyDictionary<int, string>> ProveedoresAsync(
         IWaysDbContext db, IReadOnlyCollection<int> ids, CancellationToken ct)
     {
         if (ids.Count == 0)

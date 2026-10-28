@@ -143,8 +143,9 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
     /// <summary>Sin orden pedido: fecha e <c>Id</c> descendentes (el orden de siempre del libro). Con orden: la
     /// columna pedida y SIEMPRE <c>Id</c> ascendente como desempate; ordenar nunca recalcula nada, cada fila
     /// conserva el saldo resultante guardado. "Tipo" ordena por la etiqueta de la celda y "Comprobante/Gasto" por
-    /// lo que la celda muestra: primero las compras, después los gastos, cada grupo por su número, y los
-    /// movimientos sin referencia (la celda dice un guion) al final en las dos direcciones. Un detalle ausente
+    /// lo que la celda muestra: ascendente va primero las compras y después los gastos, descendente primero los
+    /// gastos y después las compras; dentro de cada grupo el número ordena como número (10 después de 9), no como
+    /// texto. Los movimientos sin referencia (la celda dice un guion) van al final en las dos direcciones. Un detalle ausente
     /// también va al final.</summary>
     private static IOrderedQueryable<MovimientoCuentaCorrienteProveedor> Ordenar(
         IQueryable<MovimientoCuentaCorrienteProveedor> query, OrdenDeListado<ColumnaDeOrdenDeCuentaDeProveedor>? orden)

@@ -20,9 +20,9 @@ import {
 } from './reportes'
 import { etiquetaDeTipo } from '../paginas/cuentaDePersonalFormularios'
 
-// El servidor ordena por estas mismas etiquetas (lo que se ve es lo que se ordena). Cada lista literal es idéntica a la de su
-// test espejo del backend, `EtiquetasDeMovimientoDeCuentaTests` (tests/Ways.Application.Tests/Listados). Si una cambia, las dos
-// tienen que cambiar.
+// El servidor ordena por estas mismas etiquetas (lo que se ve es lo que se ordena). Este bloque es el espejo web de
+// `EtiquetasDeMovimientoDeCuentaTests` (tests/Ways.Application.Tests/Listados): cada lista literal es idéntica a la suya. Si una
+// cambia, las dos tienen que cambiar.
 describe('etiquetas de la columna Tipo que el servidor replica para ordenar', () => {
   it('proveedor es la lista que fija LasEtiquetasDeProveedorSonExactamenteLaListaFijada', () => {
     expect([

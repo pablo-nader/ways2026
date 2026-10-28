@@ -7,7 +7,7 @@ namespace Ways.Application.Listados;
 /// <summary>Etiquetas en español de la columna Tipo de los libros de cuenta, con las que los listados ordenan (se
 /// ordena por lo que la pantalla muestra). Espejo de <c>etiquetaDeTipoDeMovimiento</c> (proveedores) y
 /// <c>etiquetaDeTipo</c> (personal) en <c>Ways.Web</c>; <c>EtiquetasDeMovimientoDeCuentaTests</c> (backend) y
-/// <c>etiquetasDeMovimientoDeCuenta.test.ts</c> (web) fijan la misma lista literal.</summary>
+/// <c>ordenDeCajaYCuentas.test.ts</c> (web, bloque de etiquetas de la columna Tipo) fijan la misma lista literal.</summary>
 public static class EtiquetasDeMovimientoDeCuenta
 {
     public const string AjusteManual = "Ajuste manual";

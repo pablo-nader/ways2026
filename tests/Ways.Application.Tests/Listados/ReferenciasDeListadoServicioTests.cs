@@ -6,7 +6,9 @@ using Ways.Application.Ventas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
+using Ways.Application.Abstracciones;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 
@@ -34,10 +36,23 @@ public class ReferenciasDeListadoServicioTests : OrdenDeDocumentosBase
         Assert.Equal(esperado, ReferenciasDeListado.NombreDeCliente(razonSocial, nombre, apellido));
     }
 
-    [Fact]
-    public async Task ElListadoDeComprasTraeLaRazonSocialDelProveedorYVacioSiEstaDadoDeBajaOColgante()
+    private sealed class ContextoDeRol(RolConocido rol) : IContextoDeUsuario
     {
-        const string baseDeDatos = "referencias-compras";
+        public bool EstaAutenticado => true;
+        public int UsuarioId => 1;
+        public string NombreUsuario => "actor-de-prueba";
+        public RolConocido Rol => rol;
+        public int? IdTenant => OrdenDeDocumentosBase.IdTenant;
+    }
+
+    // El catálogo de proveedores es solo de Admin: un Vendedor o un Supervisor ven la fila, pero rotulada por su id.
+    [Theory]
+    [InlineData(RolConocido.Admin, "Distribuidora Norte")]
+    [InlineData(RolConocido.Supervisor, null)]
+    [InlineData(RolConocido.Vendedor, null)]
+    public async Task ElListadoDeComprasTraeLaRazonSocialDelProveedorSoloAAdminYVacioSiEstaDadoDeBajaOColgante(RolConocido rol, string? nombreVisible)
+    {
+        var baseDeDatos = $"referencias-compras-{rol}";
         int[] ids;
         await using (var siembra = CrearContexto(baseDeDatos, TenantActualFijo.Plataforma))
         {
@@ -66,19 +81,22 @@ public class ReferenciasDeListadoServicioTests : OrdenDeDocumentosBase
             }
         }
 
-        var servicio = new ServicioDeCompras(ContextoDelTenant(baseDeDatos), Reloj, Contexto, null!, null!);
+        var servicio = new ServicioDeCompras(ContextoDelTenant(baseDeDatos), Reloj, new ContextoDeRol(rol), null!, null!);
 
         var pagina = await servicio.ListarAsync(tamanio: 10);
 
         Assert.Equal(
-            [(ids[2], (string?)null), (ids[1], null), (ids[0], "Distribuidora Norte")],
+            [(ids[2], (string?)null), (ids[1], null), (ids[0], nombreVisible)],
             pagina.Items.Select(i => (i.Id, i.NombreProveedor)).ToList());
     }
 
-    [Fact]
-    public async Task ElListadoDeOrdenesDeCompraTraeLaRazonSocialDelProveedorYVacioSiEstaDadoDeBajaOColgante()
+    [Theory]
+    [InlineData(RolConocido.Admin, "Distribuidora Norte")]
+    [InlineData(RolConocido.Supervisor, null)]
+    [InlineData(RolConocido.Vendedor, null)]
+    public async Task ElListadoDeOrdenesDeCompraTraeLaRazonSocialDelProveedorSoloAAdminYVacioSiEstaDadoDeBajaOColgante(RolConocido rol, string? nombreVisible)
     {
-        const string baseDeDatos = "referencias-oc";
+        var baseDeDatos = $"referencias-oc-{rol}";
         int[] ids;
         await using (var siembra = CrearContexto(baseDeDatos, TenantActualFijo.Plataforma))
         {
@@ -103,12 +121,12 @@ public class ReferenciasDeListadoServicioTests : OrdenDeDocumentosBase
             }
         }
 
-        var servicio = new ServicioDeOrdenesDeCompra(ContextoDelTenant(baseDeDatos), Reloj, Contexto);
+        var servicio = new ServicioDeOrdenesDeCompra(ContextoDelTenant(baseDeDatos), Reloj, new ContextoDeRol(rol));
 
         var pagina = await servicio.ListarAsync(tamanio: 10);
 
         Assert.Equal(
-            [(ids[2], (string?)null), (ids[1], null), (ids[0], "Distribuidora Norte")],
+            [(ids[2], (string?)null), (ids[1], null), (ids[0], nombreVisible)],
             pagina.Items.Select(i => (i.Id, i.NombreProveedor)).ToList());
     }
 
