@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PaginaCatalogo } from './PaginaCatalogo'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
-import { descriptorMarcas, descriptorListasPrecio, descriptorMediosPago } from '../api/catalogos'
+import { descriptorAreas, descriptorMarcas, descriptorListasPrecio, descriptorMediosPago } from '../api/catalogos'
 import type { DescriptorDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import type { CatalogoListado, ListaPrecioListado, MarcaListado, MedioPagoAdministrado } from '../api/tipos'
@@ -955,5 +955,155 @@ describe('PaginaCatalogo — empresa de la fila al guardar', () => {
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Puma', idEmpresa: null })
+  })
+})
+
+describe('PaginaCatalogo — orden y filtros por columna', () => {
+  const marcas = [
+    marcaFixture({ id: 1, nombre: 'Zara' }),
+    marcaFixture({ id: 2, nombre: 'Álamo' }),
+    marcaFixture({ id: 3, nombre: 'Nike', activo: false }),
+  ]
+
+  function nombresEnPantalla() {
+    return screen
+      .getAllByRole('row')
+      .slice(2)
+      .map((fila) => within(fila).getAllByRole('cell')[1]?.textContent)
+  }
+
+  it('cada columna de datos se puede ordenar y la de acciones no', async () => {
+    apiGetMock.mockResolvedValue(marcas)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+
+    for (const nombre of ['ID', 'Nombre', 'Estado']) {
+      expect(screen.getByRole('button', { name: nombre })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).not.toHaveAttribute('aria-sort')
+  })
+
+  it('un clic ordena ascendente, otro descendente y el tercero vuelve al orden de la API', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(marcas)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+    const boton = screen.getByRole('button', { name: 'Nombre' })
+    const encabezado = screen.getByRole('columnheader', { name: 'Nombre' })
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Álamo', 'Nike', 'Zara'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Zara', 'Nike', 'Álamo'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Zara', 'Álamo', 'Nike'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('el filtro de texto ignora acentos y mayúsculas', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(marcas)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALAMO')
+
+    expect(nombresEnPantalla()).toEqual(['Álamo'])
+  })
+
+  it('el filtro de estado y el de texto se combinan, y limpiar los quita', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(marcas)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por estado' }), 'Inactivo')
+    expect(nombresEnPantalla()).toEqual(['Nike'])
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'zar')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(nombresEnPantalla()).toEqual(['Zara', 'Álamo', 'Nike'])
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toHaveValue('')
+  })
+
+  it('ordenar y filtrar actúan sobre las filas ya cargadas: no vuelven a pedir el listado', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(marcas)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'a')
+
+    expect(apiGetMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('el orden y los filtros sobreviven a recargar el listado al incluir inactivos', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(marcas)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'a')
+
+    await usuario.click(screen.getByLabelText('Incluir inactivos'))
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(2))
+    await screen.findByRole('searchbox', { name: 'Filtrar por nombre' })
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toHaveValue('a')
+    expect(screen.getByRole('columnheader', { name: 'Nombre' })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('una columna numérica del descriptor se ordena como número', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([
+      { id: 1, nombre: 'A', activo: true, idEmpresa: null, orden: 10 },
+      { id: 2, nombre: 'B', activo: true, idEmpresa: null, orden: 9 },
+    ])
+    render(<PaginaCatalogo definicion={descriptorAreas} />)
+    await screen.findByText('A')
+
+    await usuario.click(screen.getByRole('button', { name: 'Orden' }))
+
+    expect(nombresEnPantalla()).toEqual(['B', 'A'])
+  })
+
+  it('las listas de precio filtran por la columna booleana y por la de modo', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([
+      listaFixture({ id: 1, nombre: 'Base', esDefault: true }),
+      listaFixture({ id: 2, nombre: 'Mayor', modo: 'Derivada', idListaBase: 1, porcentaje: 10 }),
+    ])
+    render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
+    await screen.findByText('Base')
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por lista default' }), 'Sí')
+    expect(nombresEnPantalla()).toEqual(['Base'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.selectOptions(
+      screen.getByRole('combobox', { name: 'Filtrar por modo' }),
+      'Derivada (calculada sobre otra lista)',
+    )
+    expect(nombresEnPantalla()).toEqual(['Mayor'])
+  })
+
+  it('con la puerta de baja abierta los filtros quedan inertes igual que el resto de la pantalla', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(marcas)
+    apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Zara')
+
+    await usuario.click(within(screen.getByRole('row', { name: /Zara/ })).getByRole('button', { name: 'Eliminar' }))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Filtrar por estado' })).toBeDisabled()
   })
 })
