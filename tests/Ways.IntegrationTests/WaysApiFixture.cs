@@ -48,6 +48,11 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
     private const string RolApp = "ways_app";
     private const string PasswordApp = "ways_app_password";
 
+    // Cada host de prueba (incluidos los de WithWebHostBuilder, que no se liberan) vigilaba los
+    // appsettings con una instancia de inotify; en el runner de Linux el tope es 128 por usuario.
+    static WaysApiFixture() =>
+        Environment.SetEnvironmentVariable("DOTNET_hostBuilder__reloadConfigOnChange", "false");
+
     private readonly PostgreSqlContainer _contenedor = new PostgreSqlBuilder()
         .WithImage("postgres:17-alpine")
         .WithDatabase("ways_test")
