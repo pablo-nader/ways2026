@@ -337,3 +337,31 @@ describe('ModalDetalleDeTurno', () => {
     expect(dialogo.querySelector('.modal-dialog')).toHaveClass('modal-dialog-scrollable')
   })
 })
+
+describe('ModalDetalleDeTurno — orden del arqueo', () => {
+  it('la diferencia ordena por su valor numérico y el total del pie no se mueve', async () => {
+    const turno = turnoFixture({
+      arqueos: [
+        { idMedioPago: 1, importeEsperado: 1000, importeDeclarado: 900, diferencia: 100, importeEsperadoOriginal: null },
+        { idMedioPago: 2, importeEsperado: 500, importeDeclarado: 550, diferencia: -50, importeEsperadoOriginal: null },
+        { idMedioPago: 3, importeEsperado: 9000, importeDeclarado: 0, diferencia: 9000, importeEsperadoOriginal: null },
+      ],
+    })
+    mockearRutas(rutasDe(501, { turno }), [medio(1, 'Efectivo'), medio(2, 'Tarjeta'), medio(3, 'Cheque')])
+    render(<ModalDetalleDeTurno idTurno={501} onCerrar={vi.fn()} />)
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Detalle del cierre #501' })
+    await within(dialogo).findByText('jperez')
+    const tabla = within(dialogo).getAllByRole('table')[0]
+    const diferencia = within(tabla).getByRole('columnheader', { name: /Diferencia/ })
+
+    await userEvent.click(within(diferencia).getByRole('button'))
+
+    expect(diferencia).toHaveAttribute('aria-sort', 'ascending')
+    const medios = () =>
+      Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => within(fila as HTMLElement).getAllByRole('cell')[0].textContent)
+    expect(medios()).toEqual(['Tarjeta', 'Efectivo', 'Cheque'])
+    const totales = tabla.querySelector('tfoot tr') as HTMLElement
+    expect(within(totales).getAllByRole('cell')[0]).toHaveTextContent('Total')
+  })
+})

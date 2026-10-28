@@ -4,11 +4,12 @@ import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
 import { ROL } from '../api/tipos'
-import type { PuntoVentaListado, Reposicion as ReposicionRespuesta } from '../api/tipos'
+import type { FilaDeReposicion, PuntoVentaListado, Reposicion as ReposicionRespuesta } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { agruparPorProveedor, type GrupoDeReposicion } from './agruparPorProveedor'
 import { itemsDeOrdenDesdeFilasDeReposicion } from './filasDeReposicionAOrdenDeCompra'
 
@@ -23,12 +24,23 @@ function formatearCantidadNullable(valor: number | null): string {
   return valor === null ? '—' : formatearCantidad(valor)
 }
 
+const SIN_FILAS: readonly FilaDeReposicion[] = []
+
+const COLUMNAS:ColumnasOrdenables<FilaDeReposicion> = {
+  articulo: { valor: (f) => f.articulo },
+  cantidad: { valor: (f) => f.cantidad },
+  minimo: { valor: (f) => f.minimo },
+  reposicion: { valor: (f) => f.reposicion },
+  sugerido: { valor: (f) => f.sugerido },
+}
+
 /**
  * Reposición (stage-13-stock-inteligente, Slice 6 — web; design: "Reposicion.tsx — grouped by
  * proveedor (slice 6)"): artículos bajo su mínimo de un punto de venta, agrupados por proveedor
  * habitual — mismo shape que `Existencias.tsx` (selector de punto de venta + botón de descarga +
  * tabla, sin paginado). El agrupamiento es un FOLD puro sobre la lista ya ordenada que devuelve
- * el servidor (`agruparPorProveedor`, design decisión 4) — nunca un sort del lado del cliente.
+ * el servidor (`agruparPorProveedor`, design decisión 4): el orden de los grupos es el del servidor.
+ * El usuario puede ordenar las filas por columna, siempre dentro de cada grupo.
  * Misma política que `/tablero`/`/reportes/existencias` (`Politicas.LecturaDeReportes`:
  * Supervisor + Admin).
  *
@@ -105,6 +117,8 @@ export function Reposicion() {
   }, [cargar])
 
   const grupos = reposicion ? agruparPorProveedor(reposicion.filas) : []
+  // El orden se aplica dentro de cada grupo: los grupos conservan su posición y "Generar OC" sigue usando el orden original.
+  const { orden, alternar, ordenar } = useOrdenamiento<FilaDeReposicion>(SIN_FILAS, COLUMNAS)
 
   // El "Sin proveedor" (idProveedor null) nunca llega acá: no hay a quién enviarle la OC
   // (ordenes-de-compra/spec.md: "The Sin proveedor bucket cannot produce an OC") — el botón ni se
@@ -175,11 +189,21 @@ export function Reposicion() {
                 <table className="table table-sm table-striped table-bordered align-middle">
                   <thead>
                     <tr>
-                      <th>Artículo</th>
-                      <th className="text-end">Cantidad</th>
-                      <th className="text-end">Mínimo</th>
-                      <th className="text-end">Reposición</th>
-                      <th className="text-end">Sugerido</th>
+                      <EncabezadoOrdenable columna="articulo" orden={orden} onAlternar={alternar}>
+                        Artículo
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="cantidad" orden={orden} onAlternar={alternar} className="text-end">
+                        Cantidad
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="minimo" orden={orden} onAlternar={alternar} className="text-end">
+                        Mínimo
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="reposicion" orden={orden} onAlternar={alternar} className="text-end">
+                        Reposición
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="sugerido" orden={orden} onAlternar={alternar} className="text-end">
+                        Sugerido
+                      </EncabezadoOrdenable>
                     </tr>
                   </thead>
                   <tbody>
@@ -203,7 +227,7 @@ export function Reposicion() {
                             </div>
                           </td>
                         </tr>
-                        {grupo.filas.map((fila) => (
+                        {ordenar(grupo.filas).map((fila) => (
                           <tr key={fila.idArticulo}>
                             <td>{fila.articulo}</td>
                             <td className="text-end">{formatearCantidad(fila.cantidad)}</td>

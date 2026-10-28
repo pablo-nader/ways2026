@@ -1000,3 +1000,44 @@ describe('PagosDelTurno — edición', () => {
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 })
+
+describe('PagosDelTurno — orden del listado', () => {
+  const GASTOS = [
+    pagoFixture({ id: 1, categoria: 'Servicios', importe: 300, fecha: '2026-09-19T15:00:00Z' }),
+    pagoFixture({ id: 2, categoria: 'Viaticos', importe: 1500, fecha: '2026-09-19T09:00:00Z' }),
+    pagoFixture({ id: 3, categoria: 'Otros', importe: 20, fecha: '2026-09-19T12:00:00Z' }),
+  ]
+
+  const categorias = (tabla: HTMLElement) =>
+    Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[1]?.textContent)
+
+  it('el importe ordena por su valor numérico y el total no depende del orden', async () => {
+    mockearRutas({ medios: [medioEfectivo], detalle: detalleFixture(GASTOS) })
+    render(<PagosDelTurno />)
+    const tabla = await screen.findByRole('table')
+    await within(tabla).findByText('$ 1.500,00')
+
+    const importe = within(tabla).getByRole('columnheader', { name: /Importe/ })
+    await userEvent.click(within(importe).getByRole('button'))
+
+    expect(importe).toHaveAttribute('aria-sort', 'ascending')
+    expect(categorias(tabla).map((c) => c?.trim())).toEqual(['Otros', 'Servicios', 'Viáticos'])
+    expect(screen.getByText('Total: $ 1.820,00')).toBeInTheDocument()
+  })
+
+  it('la hora ordena cronológicamente y el tercer clic vuelve al orden del servidor', async () => {
+    mockearRutas({ medios: [medioEfectivo], detalle: detalleFixture(GASTOS) })
+    render(<PagosDelTurno />)
+    const tabla = await screen.findByRole('table')
+    await within(tabla).findByText('$ 1.500,00')
+
+    const hora = within(tabla).getByRole('columnheader', { name: /Hora/ })
+    await userEvent.click(within(hora).getByRole('button'))
+    expect(categorias(tabla).map((c) => c?.trim())).toEqual(['Viáticos', 'Otros', 'Servicios'])
+
+    await userEvent.click(within(hora).getByRole('button'))
+    await userEvent.click(within(hora).getByRole('button'))
+    expect(hora).toHaveAttribute('aria-sort', 'none')
+    expect(categorias(tabla).map((c) => c?.trim())).toEqual(['Servicios', 'Viáticos', 'Otros'])
+  })
+})

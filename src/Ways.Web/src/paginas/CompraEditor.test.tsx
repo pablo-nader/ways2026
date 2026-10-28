@@ -609,6 +609,81 @@ describe('CompraEditor — compra confirmada', () => {
     expect(await screen.findByText('El artículo 10 quedaría con stock negativo al anular esta compra.')).toBeInTheDocument()
   })
 
+  describe('anular: confirmación en un modal', () => {
+    const RUTA_ANULAR = '/compras/1/anular'
+
+    async function abrirConfirmacion() {
+      mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
+      renderEditor()
+      await userEvent.click(await screen.findByRole('button', { name: 'Anular compra' }))
+      return screen.findByRole('alertdialog', { name: 'Anular compra' })
+    }
+
+    it('abre un diálogo con la casilla de confirmación y no llama a la API', async () => {
+      const dialogo = await abrirConfirmacion()
+
+      expect(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/)).not.toBeChecked()
+      expect(within(dialogo).getByRole('button', { name: 'Anular' })).toBeDisabled()
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    it('Cancelar cierra el diálogo y no llama a la API, aunque la casilla esté tildada', async () => {
+      const dialogo = await abrirConfirmacion()
+      await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    it('al reabrirlo la casilla vuelve destildada: la confirmación nunca se hereda', async () => {
+      const dialogo = await abrirConfirmacion()
+      await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Anular compra' }))
+
+      const reabierto = await screen.findByRole('alertdialog', { name: 'Anular compra' })
+      expect(within(reabierto).getByLabelText(/Confirmo que quiero anular esta compra/)).not.toBeChecked()
+    })
+
+    it('dos clics sincrónicos en Anular mandan un solo POST', async () => {
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === RUTA_ANULAR ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+      )
+      const dialogo = await abrirConfirmacion()
+      await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
+      const confirmar = within(dialogo).getByRole('button', { name: 'Anular' })
+
+      act(() => {
+        confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+        confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === RUTA_ANULAR)).toHaveLength(1)
+      expect(within(dialogo).getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    })
+
+    it('un rechazo muestra el motivo dentro del diálogo, que sigue abierto', async () => {
+      apiPostMock.mockRejectedValue(new ErrorApi(409, 'compra_anulacion_stock_negativo', 'El artículo 10 quedaría con stock negativo al anular esta compra.'))
+      const dialogo = await abrirConfirmacion()
+      await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Anular' }))
+
+      expect(await within(dialogo).findByText('El artículo 10 quedaría con stock negativo al anular esta compra.')).toBeInTheDocument()
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    })
+
+    it('al salir bien cierra el diálogo', async () => {
+      apiPostMock.mockResolvedValue({ compra: compraFixture({ estado: 'Anulada' }), gastosLigados: 0 })
+      const dialogo = await abrirConfirmacion()
+      await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Anular' }))
+
+      expect(await screen.findByText(/No había ningún pago ligado/)).toBeInTheDocument()
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+  })
+
   it('aplicar precio sugerido: éxito parcial por línea, un 2xx nunca se reporta como fallo', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
     const resultados: ResultadoAplicarPrecio[] = [{ orden: 1, idArticulo: 10, aplicado: true, precio: 114.95, error: null }]

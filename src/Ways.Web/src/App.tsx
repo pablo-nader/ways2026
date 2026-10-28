@@ -28,8 +28,6 @@ import { Familias } from './paginas/Familias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
-import { NuevaFamilia } from './paginas/NuevaFamilia'
-import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
 import { Combos } from './paginas/Combos'
 import { OrdenDeCompra } from './paginas/OrdenDeCompra'
@@ -378,9 +376,10 @@ export function App() {
 
             {/* Familias de artículos (doc 10 §3): admin-only end a end, la misma puerta que /articulos
                 (Politicas.GestionDeCatalogo del lado del servidor, también para las lecturas: el detalle
-                trae los costos de la referencia). `/familias/nueva` va ANTES de `/familias/:id`: un
-                literal más específico gana sobre el parámetro en react-router, pero declararlo primero
-                es el mismo criterio defensivo que `/remitos/facturacion`. */}
+                trae los costos de la referencia). `/familias/nueva` (el alta ya es un modal del listado)
+                va ANTES de `/familias/:id` y redirige al listado con el modal abierto, para no romper
+                marcadores: un literal más específico gana sobre el parámetro en react-router, pero
+                declararlo primero es el mismo criterio defensivo que `/remitos/facturacion`. */}
             <Route
               path="/familias"
               element={
@@ -393,7 +392,7 @@ export function App() {
               path="/familias/nueva"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
-                  <NuevaFamilia />
+                  <Navigate to="/familias?nuevo=1" replace />
                 </RutaProtegida>
               }
             />
@@ -635,7 +634,7 @@ export function App() {
               path="/organizacion/nuevo-tenant"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root]}>
-                  <NuevoTenant />
+                  <Navigate to="/organizacion/tenants?nuevo=1" replace />
                 </RutaProtegida>
               }
             />

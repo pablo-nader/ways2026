@@ -607,3 +607,201 @@ describe('Categorias — empresa de la fila al guardar', () => {
     expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Limpieza', idEmpresa: null })
   })
 })
+
+describe('Categorias — filtro por nombre y orden de hermanas', () => {
+  const ARBOL = [
+    categoriaFixture({ id: 1, nombre: 'Bebidas', orden: 1 }),
+    categoriaFixture({ id: 2, nombre: 'Gaseosas', orden: 1, idCategoriaPadre: 1 }),
+    categoriaFixture({ id: 3, nombre: 'Cola', orden: 1, idCategoriaPadre: 2 }),
+    categoriaFixture({ id: 4, nombre: 'Jugos', orden: 2, idCategoriaPadre: 1 }),
+    categoriaFixture({ id: 5, nombre: 'Almacén', orden: 2 }),
+  ]
+
+  function nombresEnPantalla() {
+    return screen
+      .getAllByRole('listitem')
+      .map((li) => li.querySelector(':scope > div > span:nth-of-type(2)')?.textContent)
+  }
+
+  it('filtrar por nombre conserva la coincidencia y sus ancestros, y oculta el resto', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'cola')
+
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola'])
+    expect(screen.queryByText('Jugos')).not.toBeInTheDocument()
+    expect(screen.queryByText('Almacén')).not.toBeInTheDocument()
+  })
+
+  it('el filtro ignora acentos y mayúsculas', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALMACEN')
+
+    expect(nombresEnPantalla()).toEqual(['Almacén'])
+  })
+
+  it('sin coincidencias muestra el mensaje de filtros, y limpiar los filtros devuelve el árbol', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'zzz')
+
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(screen.queryByText('Ningún registro coincide con los filtros.')).not.toBeInTheDocument()
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola', 'Jugos', 'Almacén'])
+  })
+
+  it('el botón de orden recorre ascendente, descendente y orden original dentro de cada nivel', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    expect(screen.getByRole('button', { name: 'Nombre (orden original)' })).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre (orden original)' }))
+    expect(nombresEnPantalla()).toEqual(['Almacén', 'Bebidas', 'Gaseosas', 'Cola', 'Jugos'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre (orden ascendente)' }))
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Jugos', 'Gaseosas', 'Cola', 'Almacén'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre (orden descendente)' }))
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola', 'Jugos', 'Almacén'])
+  })
+
+  it('el filtro y el orden descendente se aplican juntos', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'o')
+    await usuario.click(screen.getByRole('button', { name: 'Nombre (orden original)' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nombre (orden ascendente)' }))
+
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Jugos', 'Gaseosas', 'Cola'])
+  })
+
+  it('con el árbol filtrado, el selector de padre del formulario sigue ofreciendo todas las categorías', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'almacen')
+    await usuario.click(within(screen.getByText('Almacén').closest('li') as HTMLElement).getByRole('button', { name: 'Editar' }))
+
+    const padre = within(screen.getByRole('dialog', { name: 'Editar categoría' })).getByLabelText('Categoría padre')
+    expect(within(padre).getAllByRole('option').map((o) => o.textContent?.replace(/^[—\s]+/, ''))).toEqual([
+      'Ninguna (raíz) —',
+      'Bebidas',
+      'Gaseosas',
+      'Jugos',
+    ])
+  })
+
+  it('el filtro queda inerte con la puerta de baja abierta', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.setup().click(bajaDe('Almacén'))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeDisabled()
+  })
+
+  it('Limpiar filtros se habilita con cualquier texto, aunque sea solo espacios', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), ' ')
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeEnabled()
+  })
+
+  /** Cláusula bajo prueba: la barra de filtro y orden vive fuera de la rama de carga. */
+  it('el filtro conserva el nodo, el valor y el foco mientras el árbol se recarga', async () => {
+    const usuario = userEvent.setup()
+    let liberarRecarga: (filas: CategoriaListado[]) => void = () => {}
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return cargas === 1
+        ? Promise.resolve(ARBOL)
+        : new Promise<CategoriaListado[]>((resolver) => {
+            liberarRecarga = resolver
+          })
+    })
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    const filtro = screen.getByRole('searchbox', { name: 'Filtrar por nombre' })
+    await usuario.type(filtro, 'beb')
+    await usuario.click(screen.getByLabelText('Incluir inactivas'))
+    await waitFor(() => expect(screen.getByText('Cargando…')).toBeInTheDocument())
+    filtro.focus()
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(filtro)
+    expect(filtro).toHaveFocus()
+
+    await act(async () => liberarRecarga(ARBOL))
+
+    await screen.findByText('Bebidas')
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(filtro)
+    expect(filtro).toHaveValue('beb')
+    expect(filtro).toHaveFocus()
+  })
+
+  it('un alta cuyo nombre no cumple el filtro activo avisa que queda oculta', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return Promise.resolve(cargas === 1 ? ARBOL : [...ARBOL, categoriaFixture({ id: 9, nombre: 'Limpieza', orden: 3 })])
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'beb')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Limpieza" (oculta por el filtro).')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Limpieza')).not.toBeInTheDocument()
+  })
+
+  it('un alta cuyo nombre cumple el filtro activo no avisa nada de ocultamiento', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return Promise.resolve(cargas === 1 ? ARBOL : [...ARBOL, categoriaFixture({ id: 9, nombre: 'Bebidas Light', orden: 3 })])
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'beb')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Bebidas Light')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Bebidas Light".')
+    expect(await screen.findByText('Bebidas Light', { selector: 'span' })).toBeInTheDocument()
+  })
+})

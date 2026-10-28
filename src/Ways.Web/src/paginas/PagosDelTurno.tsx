@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
@@ -24,6 +24,7 @@ import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
 import type { CajaDeEscritorio } from './Pos'
@@ -356,6 +357,16 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const pagos = detalle?.gastos ?? []
   const total = totalDePagos(pagos)
+  const columnasDePagos = useMemo<ColumnasOrdenables<PagoDeTurno>>(
+    () => ({
+      hora: { valor: (g) => new Date(g.fecha) },
+      categoria: { valor: (g) => etiquetaDeCategoriaPago(g.categoria) },
+      medio: { valor: (g) => medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}` },
+      importe: { valor: (g) => g.importe },
+    }),
+    [medios],
+  )
+  const ordenDePagos = useOrdenamiento(pagos, columnasDePagos)
   const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
   const saleDeLaCaja = salidaDeEfectivoDeCaja(
     medios?.find((m) => m.id === idMedioPago),
@@ -538,15 +549,23 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Hora</th>
-                    <th>Categoría</th>
-                    <th>Medio de pago</th>
-                    <th className="text-end">Importe</th>
+                    <EncabezadoOrdenable columna="hora" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar}>
+                      Hora
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="categoria" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar}>
+                      Categoría
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="medio" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar}>
+                      Medio de pago
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="importe" orden={ordenDePagos.orden} onAlternar={ordenDePagos.alternar} className="text-end">
+                      Importe
+                    </EncabezadoOrdenable>
                     <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pagos.map((g) => (
+                  {ordenDePagos.filas.map((g) => (
                     <tr key={g.id}>
                       <td>{formatearFechaHora(g.fecha)}</td>
                       <td>

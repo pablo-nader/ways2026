@@ -9,6 +9,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { DetalleDeTurnoListas } from '../componentes/DetalleDeTurnoListas'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { VistaDeTicket } from '../componentes/VistaDeTicket'
 import type { LineaDeTicket } from '../impresion/escpos'
@@ -45,6 +46,49 @@ function formatearMoneda(valor: number): string {
  * turno cerrado.
  */
 type PropsCajaZ = { contextoDeImpresion?: ContextoDeImpresion }
+
+type MedioDelResumen = DetalleDeTurno['resumen']['medios'][number]
+
+const COLUMNAS_DE_MEDIOS: ColumnasOrdenables<MedioDelResumen> = {
+  medio: { valor: (m) => `Medio #${m.idMedioPago}` },
+  esperado: { valor: (m) => m.importeEsperado },
+}
+
+function TablaDeMediosEsperados({ medios }: { medios: MedioDelResumen[] }) {
+  const { filas, orden, alternar } = useOrdenamiento(medios, COLUMNAS_DE_MEDIOS)
+
+  return (
+    <div className="table-responsive mb-3">
+      <table className="table table-sm table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <EncabezadoOrdenable columna="medio" orden={orden} onAlternar={alternar}>
+              Medio
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="esperado" orden={orden} onAlternar={alternar} className="text-end">
+              Esperado
+            </EncabezadoOrdenable>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((m) => (
+            <tr key={m.idMedioPago}>
+              <td>Medio #{m.idMedioPago}</td>
+              <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
+            </tr>
+          ))}
+          {medios.length === 0 && (
+            <tr>
+              <td colSpan={2} className="text-center text-muted">
+                Este turno no tuvo actividad: no hay ningún medio arqueado.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
   const { id } = useParams<{ id: string }>()
@@ -261,31 +305,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
             </div>
 
             <h6>Medios de pago (esperado)</h6>
-            <div className="table-responsive mb-3">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Medio</th>
-                    <th className="text-end">Esperado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detalle.resumen.medios.map((m) => (
-                    <tr key={m.idMedioPago}>
-                      <td>Medio #{m.idMedioPago}</td>
-                      <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
-                    </tr>
-                  ))}
-                  {detalle.resumen.medios.length === 0 && (
-                    <tr>
-                      <td colSpan={2} className="text-center text-muted">
-                        Este turno no tuvo actividad: no hay ningún medio arqueado.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <TablaDeMediosEsperados medios={detalle.resumen.medios} />
 
             <DetalleDeTurnoListas tickets={detalle.tickets} pagos={detalle.gastos} />
           </>

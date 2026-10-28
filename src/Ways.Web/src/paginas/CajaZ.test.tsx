@@ -645,3 +645,34 @@ describe('CajaZ — reimpresión del ticket de cierre', () => {
     expect(imprimirMock).not.toHaveBeenCalled()
   })
 })
+
+describe('CajaZ — orden de las tablas', () => {
+  const primerasCeldas = (tabla: HTMLElement) =>
+    Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent ?? '')
+
+  it('los medios ordenan por el esperado numérico y los tickets y pagos llevan cada uno su propio orden', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/412/detalle' ? Promise.resolve(detalleFixture()) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    renderCajaZ()
+    await screen.findByText('Caja Z — turno #412')
+    const [medios, tickets, pagos] = screen.getAllByRole('table')
+
+    const esperado = within(medios).getByRole('columnheader', { name: /Esperado/ })
+    await userEvent.click(within(esperado).getByRole('button'))
+    expect(esperado).toHaveAttribute('aria-sort', 'ascending')
+    expect(primerasCeldas(medios)).toEqual(['Medio #2', 'Medio #1'])
+
+    const total = within(tickets).getByRole('columnheader', { name: /Total/ })
+    await userEvent.click(within(total).getByRole('button'))
+    await userEvent.click(within(total).getByRole('button'))
+    expect(total).toHaveAttribute('aria-sort', 'descending')
+    expect(primerasCeldas(tickets)).toEqual(['0003-00000001', '0003-00000002'])
+
+    const importe = within(pagos).getByRole('columnheader', { name: /Importe/ })
+    await userEvent.click(within(importe).getByRole('button'))
+    expect(importe).toHaveAttribute('aria-sort', 'ascending')
+    expect(within(pagos).getAllByRole('row')[1]).toHaveTextContent('Viaticos')
+    expect(within(pagos).getAllByRole('row')[2]).toHaveTextContent('Sueldos')
+  })
+})

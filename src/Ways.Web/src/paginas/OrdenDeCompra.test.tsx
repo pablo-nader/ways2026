@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OrdenDeCompra } from './OrdenDeCompra'
+import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type { OrdenDeCompraBorrador, OrdenDeCompraDetalle, ProveedorListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 
@@ -276,6 +277,7 @@ describe('OrdenDeCompra — generación (react-async-state regla 2, mutation-pro
     // El detalle sigue stale (Borrador) hasta que el refetch #2 aterrice — "Anular" sigue visible.
     // Dispara el refetch #3, que resuelve YA (más nuevo que el #2 todavía pendiente).
     await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmar anulación' }))
     await screen.findByText('Orden anulada.')
     await screen.findByText('Anulada')
 
@@ -399,33 +401,6 @@ describe('OrdenDeCompra — doble click (react-async-state regla 9)', () => {
     })
   })
 
-  it('un doble click en "Anular" dispara exactamente un POST', async () => {
-    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Enviada' })) : undefined))
-
-    let resolverAnular: (v: OrdenDeCompraBorrador) => void = () => {}
-    const anularPendiente = new Promise<OrdenDeCompraBorrador>((resolve) => {
-      resolverAnular = resolve
-    })
-    apiPostMock.mockImplementation((ruta: string) => (ruta === '/ordenes-compra/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
-
-    renderPantalla()
-    const boton = await screen.findByRole('button', { name: 'Anular' })
-
-    // Mismo patrón same-tick — replica la red de reentrancia de `anulandoRef`.
-    act(() => {
-      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    })
-
-    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ordenes-compra/30/anular')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
-
-    await act(async () => {
-      resolverAnular(borradorFixture({ estado: 'Anulada' }))
-      await anularPendiente
-    })
-  })
-
   it('un doble click en "Guardar borrador" dispara exactamente un PUT', async () => {
     mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Borrador' })) : undefined))
 
@@ -458,6 +433,96 @@ describe('OrdenDeCompra — doble click (react-async-state regla 9)', () => {
       resolverGuardar(borradorFixture({ estado: 'Borrador' }))
       await guardarPendiente
     })
+  })
+})
+
+describe('OrdenDeCompra — Anular pide confirmación en un modal', () => {
+  const RUTA_ANULAR = '/ordenes-compra/30/anular'
+
+  function mockearDetalle() {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Enviada' })) : undefined))
+  }
+
+  async function abrirConfirmacion() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Anular' }))
+    return screen.findByRole('alertdialog', { name: 'Confirmar anulación' })
+  }
+
+  it('abre un diálogo que nombra la orden y no llama a la API hasta confirmar', async () => {
+    mockearDetalle()
+    renderPantalla()
+
+    const dialogo = await abrirConfirmacion()
+
+    expect(within(dialogo).getByText(/¿Anular la orden de compra 55\?/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('Cancelar cierra el diálogo y no llama a la API', async () => {
+    mockearDetalle()
+    renderPantalla()
+
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('doble click en confirmar dispara exactamente un POST', async () => {
+    mockearDetalle()
+    let resolverAnular: (v: OrdenDeCompraBorrador) => void = () => {}
+    const anularPendiente = new Promise<OrdenDeCompraBorrador>((resolve) => {
+      resolverAnular = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => (ruta === RUTA_ANULAR ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+
+    renderPantalla()
+    const dialogo = await abrirConfirmacion()
+    const confirmar = within(dialogo).getByRole('button', { name: 'Confirmar anulación' })
+
+    // Mismo patrón same-tick — replica la red de reentrancia de `anulandoRef`.
+    act(() => {
+      confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_ANULAR)).toHaveLength(1)
+    expect(within(dialogo).getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverAnular(borradorFixture({ estado: 'Anulada' }))
+      await anularPendiente
+    })
+  })
+
+  it('un rechazo muestra el motivo dentro del diálogo, que sigue abierto', async () => {
+    mockearDetalle()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'orden_con_recepciones', 'La orden ya tiene recepciones.'))
+
+    renderPantalla()
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
+
+    expect(await within(dialogo).findByText('La orden ya tiene recepciones.')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('al salir bien cierra el diálogo, avisa y relee el detalle', async () => {
+    let anulada = false
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: anulada ? 'Anulada' : 'Enviada' })) : undefined))
+    apiPostMock.mockImplementation(async () => {
+      anulada = true
+      return borradorFixture({ estado: 'Anulada' })
+    })
+
+    renderPantalla()
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
+
+    expect(await screen.findByText('Orden anulada.')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument())
   })
 })
 
