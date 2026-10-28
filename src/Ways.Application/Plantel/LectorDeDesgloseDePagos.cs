@@ -4,8 +4,8 @@ using Ways.Application.Abstracciones;
 namespace Ways.Application.Plantel;
 
 /// <summary>
-/// Lee de qué se compuso cada pago del libro de personal: los pagos y el descuento de cuenta corriente que
-/// apuntan a su movimiento. El nombre del medio de pago se resuelve con una subquery correlacionada (nunca un
+/// Lee de qué se compuso cada pago del libro de personal: una línea por ítem de cada pago que apunta a su movimiento
+/// y el descuento de cuenta corriente que también lo hace. El nombre del medio de pago se resuelve con una subquery correlacionada (nunca un
 /// join), así que un medio dado de baja deja el nombre en <c>null</c> y no hace desaparecer la línea.
 /// </summary>
 public static class LectorDeDesgloseDePagos
@@ -20,17 +20,20 @@ public static class LectorDeDesgloseDePagos
 
         var lineas = await db.Pagos
             .Where(g => g.IdMovimientoPersonal != null && idsDeMovimientos.Contains(g.IdMovimientoPersonal.Value))
-            .OrderBy(g => g.Id)
-            .Select(g => new
+            .Join(db.ItemsPago, g => g.Id, i => i.IdPago, (g, i) => new { Pago = g, Item = i })
+            .OrderBy(x => x.Pago.Id)
+            .ThenBy(x => x.Item.Id)
+            .Select(x => new
             {
-                IdMovimiento = g.IdMovimientoPersonal!.Value,
+                IdMovimiento = x.Pago.IdMovimientoPersonal!.Value,
                 Linea = new LineaDeDesglose(
-                    g.Id,
-                    g.IdMedioPago,
-                    db.MediosPago.Where(m => m.Id == g.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
-                    g.Importe,
-                    g.OrigenFondos,
-                    g.Detalle)
+                    x.Pago.Id,
+                    x.Item.Id,
+                    x.Item.IdMedioPago,
+                    db.MediosPago.Where(m => m.Id == x.Item.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
+                    x.Item.Importe,
+                    x.Pago.OrigenFondos,
+                    x.Pago.Detalle)
             })
             .ToListAsync(ct);
 

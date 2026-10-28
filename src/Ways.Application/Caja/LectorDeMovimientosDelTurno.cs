@@ -47,14 +47,21 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
             .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Vuelto) })
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);
 
-        // 3. pagos por medio — el pago resta según SU PROPIO id_medio_pago, nunca todo al ancla.
+        // 3. pagos por medio — el pago resta según el medio de CADA ÍTEM (E2-S2: un pago puede repartirse en
+        // varios medios), nunca todo al ancla ni según la cabecera.
         // stage-gastos-origen-fondos-pos (PR2): filtra a OrigenFondos.CajaTurno — un pago de
         // origen Tesoreria ya salió del fondo de tesorería en el momento en que se registró
         // (ServicioDePagos.EscribirMovimientoDeTesoreriaAsync), nunca del efectivo del cajón, así
         // que no puede restar del arqueo de NINGÚN medio ni volverlo arqueable por sí solo.
-        var pagosDeCajaPorMedio = await db.Pagos
-            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosPago.CajaTurno)
-            .GroupBy(g => g.IdMedioPago)
+        // Ni el pago ni el ítem dado de baja suman: lo resuelve el filtro global de baja lógica de ambas tablas.
+        var pagosDeCajaPorMedio = await db.ItemsPago
+            .Join(
+                db.Pagos,
+                i => i.IdPago,
+                g => g.Id,
+                (i, g) => new { i.IdMedioPago, i.Importe, g.IdTurnoCaja, g.OrigenFondos })
+            .Where(x => x.IdTurnoCaja == idTurnoCaja && x.OrigenFondos == OrigenFondosPago.CajaTurno)
+            .GroupBy(x => x.IdMedioPago)
             .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Importe) })
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);
 

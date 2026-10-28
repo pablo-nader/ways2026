@@ -5,10 +5,13 @@ namespace Ways.Domain.Tests.Pagos;
 public class CalculadorDeAjustesDePagoTests
 {
     private static EstadoContableDePago Proveedor(int idProveedor, decimal importe, int idMedio = 1) =>
-        new(CategoriaPago.Proveedor, idProveedor, idMedio, importe);
+        new(CategoriaPago.Proveedor, idProveedor, new Dictionary<int, decimal> { [idMedio] = importe }, importe);
 
     private static EstadoContableDePago Otros(decimal importe, int idMedio = 1, int? idProveedor = null) =>
-        new(CategoriaPago.Otros, idProveedor, idMedio, importe);
+        new(CategoriaPago.Otros, idProveedor, new Dictionary<int, decimal> { [idMedio] = importe }, importe);
+
+    private static EstadoContableDePago ConMedios(params (int IdMedio, decimal Importe)[] medios) =>
+        new(CategoriaPago.Otros, null, medios.ToDictionary(m => m.IdMedio, m => m.Importe), medios.Sum(m => m.Importe));
 
     [Fact]
     public void ElMismoProveedorNeteaUnUnicoAjustePorLaDiferencia()
@@ -68,7 +71,8 @@ public class CalculadorDeAjustesDePagoTests
     [Fact]
     public void UnProveedorSinIdNuncaEscribioPagoNiLoEscribe()
     {
-        var sinProveedor = new EstadoContableDePago(CategoriaPago.Proveedor, null, 1, 50m);
+        var sinProveedor = new EstadoContableDePago(
+            CategoriaPago.Proveedor, null, new Dictionary<int, decimal> { [1] = 50m }, 50m);
 
         Assert.Empty(CalculadorDeAjustesDePago.AjustesDeProveedor(sinProveedor, Otros(70m)));
         Assert.Empty(CalculadorDeAjustesDePago.AjustesDeProveedor(Otros(70m), sinProveedor));
@@ -113,5 +117,52 @@ public class CalculadorDeAjustesDePagoTests
         Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), Proveedor(5, 100m)));
         Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(OrigenFondosPago.Tesoreria, Otros(100m), Otros(90m)));
         Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(OrigenFondosPago.Tesoreria, Otros(100m), nuevo: null));
+    }
+
+    [Fact]
+    public void ElMismoReparto_PorMedio_NoAfectaElArqueo()
+    {
+        var caja = OrigenFondosPago.CajaTurno;
+
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), Otros(100m)));
+        Assert.False(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((2, 40m), (1, 60m))));
+    }
+
+    [Fact]
+    public void UnMapaDeDosMediosContraUnoDeUnMedio_AfectaElArqueoAunqueElTotalCoincida()
+    {
+        var caja = OrigenFondosPago.CajaTurno;
+
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, Otros(100m), ConMedios((1, 60m), (2, 40m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), Otros(100m)));
+    }
+
+    [Fact]
+    public void UnCambioDeImporteDeUnSoloMedioDelMapa_AfectaElArqueo()
+    {
+        var caja = OrigenFondosPago.CajaTurno;
+
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m), (2, 30m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m), (3, 40m))));
+    }
+
+    [Fact]
+    public void UnMapaQueEsSubconjuntoEstrictoDelOtro_AfectaElArqueoEnAmbosSentidos()
+    {
+        var caja = OrigenFondosPago.CajaTurno;
+
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m)), ConMedios((1, 60m), (2, 40m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m))));
+    }
+
+    [Fact]
+    public void LosAjustesDeProveedorUsanElTotalDeLaCabecera_AunConVariosMedios()
+    {
+        var anterior = new EstadoContableDePago(
+            CategoriaPago.Proveedor, 5, new Dictionary<int, decimal> { [1] = 60m, [2] = 40m }, 100m);
+
+        var ajuste = Assert.Single(CalculadorDeAjustesDePago.AjustesDeProveedor(anterior, nuevo: null));
+
+        Assert.Equal(new AjusteDeSaldoDeProveedor(5, 100m), ajuste);
     }
 }

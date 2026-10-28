@@ -197,3 +197,7 @@ public sealed record SolicitudDePagoDeCompra(DateOnly Fecha, decimal Importe, in
 /// <summary>Respuesta de <c>POST /api/compras/{id}/pagos</c>: el pago creado y el estado de pago de
 /// la compra después de este pago, leído bajo el mismo lock que lo validó.</summary>
 public sealed record ResultadoDePagoDeCompra([property: JsonPropertyName("gasto")] PagoRegistrado Pago, decimal Pagado, decimal SaldoPendiente);
+
+/// <summary>Un pago de sueldo recién persistido junto con su único ítem (E2-S1): el desglose del libro de personal
+/// lista una línea por ítem.</summary>
+public sealed record PagoDeSueldoPersistido(Pago Pago, ItemPago Item);
