@@ -615,10 +615,149 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
         var servicio = new ServicioDeConsultaDeAuditoria(sesionOwnerDeB);
 
         var pagina = await servicio.ConsultarAsync(
-            new FiltrosDeAuditoria(null, null, null, null, null, null, null), pagina: 1, tamanio: 50, CancellationToken.None);
+            new FiltrosDeAuditoria(null, null, null, null, null, null, null), pagina: 1, tamanio: 50, ct: CancellationToken.None);
 
         var idsVisibles = pagina.Items.Select(f => f.IdAuditoria).ToHashSet();
         Assert.DoesNotContain(idFilaA, idsVisibles);
         Assert.Contains(idFilaB, idsVisibles);
+    }
+
+    // ---- orden en el servidor: GET /api/auditoria?orden=&direccion= -----------------------------------
+
+    private static async Task<List<long>> RecorrerOrdenadoAsync(HttpClient cliente, string query, int tamanio = 3)
+    {
+        var ids = new List<long>();
+        for (var pagina = 1; pagina <= 10; pagina++)
+        {
+            var p = await ConsultarAsync(cliente, $"?{query}&pagina={pagina}&tamanio={tamanio}");
+            ids.AddRange(p.Items.Select(f => f.IdAuditoria));
+            if (pagina * tamanio >= p.Total) break;
+        }
+
+        return ids;
+    }
+
+    private static List<long> Posiciones(Dictionary<string, long> ids, string posiciones) =>
+        [.. posiciones.Split(',').Select(r => ids[r])];
+
+    /// <summary>Cláusula bajo prueba: el <c>ORDER BY</c> aplicado ANTES de <c>Skip/Take</c> en
+    /// <c>ServicioDeConsultaDeAuditoria.ConsultarAsync</c>. Cada caso recorre las 8 filas del escenario de a tres
+    /// y compara la secuencia completa: un orden aplicado después de paginar (o ausente) la rompe. El nombre del
+    /// tenant empieza con "z" para que el orden de los nombres de actor y de punto de venta no dependa de la
+    /// colación de la base ("admin" y "Local 1" van antes que "zaud...").</summary>
+    [Theory]
+    [InlineData("fecha", "ascendente", "R1,R2,R3,R4,R5,R6,R7,R8")]
+    [InlineData("fecha", "descendente", "R8,R7,R6,R5,R4,R3,R2,R1")]
+    [InlineData("accion", "ascendente", "R3,R1,R4,R6,R7,R5,R8,R2")]
+    [InlineData("accion", "descendente", "R2,R8,R5,R7,R4,R6,R1,R3")]
+    [InlineData("entidad", "ascendente", "R1,R4,R5,R6,R7,R3,R2,R8")]
+    [InlineData("entidad", "descendente", "R8,R2,R3,R1,R4,R5,R6,R7")]
+    [InlineData("idEntidad", "ascendente", "R1,R2,R4,R5,R6,R7,R3,R8")]
+    [InlineData("idEntidad", "descendente", "R8,R3,R6,R7,R1,R2,R4,R5")]
+    [InlineData("actor", "ascendente", "R1,R6,R8,R2,R4,R7,R3,R5")]
+    [InlineData("actor", "descendente", "R3,R5,R2,R4,R7,R1,R6,R8")]
+    [InlineData("puntoVenta", "ascendente", "R2,R4,R6,R3,R5,R7,R1,R8")]
+    [InlineData("puntoVenta", "descendente", "R3,R5,R7,R2,R4,R6,R1,R8")]
+    public async Task CadaColumnaOrdenaTodoElConjuntoAtravesDeLasPaginas(string orden, string direccion, string esperado)
+    {
+        var ctx = await PrepararAsync($"zaud{orden}{direccion}".ToLowerInvariant());
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, $"orden={orden}&direccion={direccion}");
+
+        Assert.Equal(Posiciones(ids, esperado), obtenido);
+    }
+
+    [Fact]
+    public async Task SinOrdenSigueLoMasRecientePrimero()
+    {
+        var ctx = await PrepararAsync(nameof(SinOrdenSigueLoMasRecientePrimero));
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, "tamanio=3");
+
+        Assert.Equal(Posiciones(ids, "R8,R7,R6,R5,R4,R3,R2,R1"), obtenido);
+    }
+
+    [Fact]
+    public async Task ElOrdenConviveConLosFiltrosYElTotalNoCambia()
+    {
+        var ctx = await PrepararAsync(nameof(ElOrdenConviveConLosFiltrosYElTotalNoCambia));
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var pagina = await ConsultarAsync(ctx.Admin, "?entidad=articulo&orden=idEntidad&direccion=descendente&tamanio=2");
+
+        Assert.Equal(5, pagina.Total);
+        Assert.Equal(Posiciones(ids, "R6,R7"), pagina.Items.Select(f => f.IdAuditoria).ToList());
+    }
+
+    /// <summary>Un actor sin usuario visible (el root de plataforma, que el filtro de tenant deja afuera del
+    /// LEFT JOIN) ordena como vacío: al final en las dos direcciones, no al principio de la descendente.</summary>
+    [Theory]
+    [InlineData("ascendente", "R1,R6,R8,R2,R4,R7,R3,R5,RR")]
+    [InlineData("descendente", "R3,R5,R2,R4,R7,R1,R6,R8,RR")]
+    public async Task UnActorSinUsuarioVisibleVaAlFinalEnLasDosDirecciones(string direccion, string esperado)
+    {
+        var ctx = await PrepararAsync($"zaudactorroot{direccion}");
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+        var idActorRoot = await ObtenerIdDeUsuarioRootAsync();
+        ids["RR"] = await SembrarFilaAsync(
+            ctx.IdTenant, null, idActorRoot, "usuario.actualizacion", "usuario", 778,
+            new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero), null, "{\"estado\":\"bloqueado\"}");
+
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, $"orden=actor&direccion={direccion}");
+
+        Assert.Equal(Posiciones(ids, esperado), obtenido);
+    }
+
+    /// <summary>dangling-fk-read-models: un punto de venta dado de baja ordena igual que "sin punto de venta"
+    /// (vacío, al final), no por el id que quedó colgante.</summary>
+    [Theory]
+    [InlineData("ascendente")]
+    [InlineData("descendente")]
+    public async Task UnPuntoDeVentaDadoDeBajaOrdenaComoVacio(string direccion)
+    {
+        var ctx = await PrepararAsync($"zaudpvbaja{direccion}");
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var puntoVenta = await db.PuntosVenta.SingleAsync(p => p.Id == ctx.IdPuntoVenta2);
+            puntoVenta.DeletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, $"orden=puntoVenta&direccion={direccion}");
+
+        Assert.Equal(Posiciones(ids, "R2,R4,R6,R1,R3,R5,R7,R8"), obtenido);
+    }
+
+    [Theory]
+    [InlineData("orden=acciones", "orden_invalido")]
+    [InlineData("orden=Fecha", "orden_invalido")]
+    [InlineData("orden=fecha&direccion=asc", "direccion_invalida")]
+    [InlineData("direccion=descendente", "direccion_sin_orden")]
+    public async Task UnOrdenODireccionFueraDeLaListaSeRechazaConCuatrocientos(string query, string codigoEsperado)
+    {
+        var ctx = await PrepararAsync($"zaudrechazo{codigoEsperado}{query.Length}");
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/auditoria?{query}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(codigoEsperado, problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task ElOrdenNoMezclaFilasDeOtroTenant()
+    {
+        var propio = await PrepararAsync($"zaud{nameof(ElOrdenNoMezclaFilasDeOtroTenant)}A".ToLowerInvariant());
+        var ajeno = await PrepararAsync($"zaud{nameof(ElOrdenNoMezclaFilasDeOtroTenant)}B".ToLowerInvariant());
+        var idsPropios = await SembrarEscenarioDeFiltrosAsync(propio);
+        var idsAjenos = await SembrarEscenarioDeFiltrosAsync(ajeno);
+
+        var obtenido = await RecorrerOrdenadoAsync(propio.Admin, "orden=idEntidad&direccion=descendente");
+
+        Assert.Equal(Posiciones(idsPropios, "R8,R3,R6,R7,R1,R2,R4,R5"), obtenido);
+        Assert.Empty(obtenido.Intersect(idsAjenos.Values));
     }
 }

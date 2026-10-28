@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
+using Ways.Application.Listados;
 using Ways.Domain.Caja;
 using Ways.Domain.Common;
 using Ways.Domain.Gastos;
@@ -44,8 +45,12 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         DateTimeOffset? hasta = null,
         int pagina = 1,
         int tamanio = 25,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         await ExigirEmpresaAsync(idEmpresa, ct);
 
         if (idPuntoVenta is { } pvValidar)
@@ -60,12 +65,11 @@ public class ServicioDeTesoreria(IWaysDbContext db)
 
         var total = await query.CountAsync(ct);
 
-        var paginaQuery = query
-            .OrderBy(m => m.Id)
+        var paginaQuery = Ordenar(Unir(query), ordenPedido)
             .Skip((int)Math.Min((long)(pagina - 1) * tamanio, int.MaxValue))
             .Take(tamanio);
 
-        var items = await Proyectar(paginaQuery).ToListAsync(ct);
+        var items = await AListado(paginaQuery).ToListAsync(ct);
 
         return new PaginaDeMovimientosTesoreria(items, total, pagina, tamanio);
     }
@@ -97,11 +101,10 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
 
-        var tope = query
-            .OrderBy(m => m.Id)
+        var tope = Ordenar(Unir(query), null)
             .Take(topeDeFilas + 1);
 
-        var items = await Proyectar(tope).ToListAsync(ct);
+        var items = await AListado(tope).ToListAsync(ct);
 
         GuardaDeTope.Exigir(items.Count, topeDeFilas);
 
@@ -177,28 +180,127 @@ public class ServicioDeTesoreria(IWaysDbContext db)
     /// campo) — un <c>let</c> las colapsa en UNA sola consulta (EF Core la traduce a un
     /// <c>OUTER APPLY</c>/<c>LEFT JOIN LATERAL</c> único), reusando su resultado para ambos
     /// campos.</summary>
-    private IQueryable<MovimientoTesoreriaListado> Proyectar(IQueryable<MovimientoTesoreria> query) =>
+    private IQueryable<Unido> Unir(IQueryable<MovimientoTesoreria> query) =>
         from m in query
         let gasto = m.IdGasto == null
             ? null
             : db.Gastos.Where(g => g.Id == m.IdGasto).Select(g => new { g.Categoria, g.Concepto }).FirstOrDefault()
-        select new MovimientoTesoreriaListado(
-            m.Id,
-            m.IdEmpresa,
-            m.IdPuntoVenta,
-            m.IdPuntoVenta == null
+        select new Unido
+        {
+            M = m,
+            NombrePuntoVenta = m.IdPuntoVenta == null
                 ? null
                 : db.PuntosVenta.Where(pv => pv.Id == m.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
-            m.Fecha,
-            m.Tipo,
-            m.IdTurnoCaja,
-            m.IdGasto,
-            gasto == null ? null : (CategoriaGasto?)gasto.Categoria,
-            gasto == null ? null : gasto.Concepto,
-            m.Concepto,
-            m.Inicio,
-            m.Ingreso,
-            m.Egreso,
-            m.Final,
-            m.IdEmpleado);
+            GastoCategoria = gasto == null ? null : (CategoriaGasto?)gasto.Categoria,
+            GastoConcepto = gasto == null ? null : gasto.Concepto,
+        };
+
+    private static IQueryable<MovimientoTesoreriaListado> AListado(IQueryable<Unido> query) =>
+        query.Select(x => new MovimientoTesoreriaListado(
+            x.M.Id,
+            x.M.IdEmpresa,
+            x.M.IdPuntoVenta,
+            x.NombrePuntoVenta,
+            x.M.Fecha,
+            x.M.Tipo,
+            x.M.IdTurnoCaja,
+            x.M.IdGasto,
+            x.GastoCategoria,
+            x.GastoConcepto,
+            x.M.Concepto,
+            x.M.Inicio,
+            x.M.Ingreso,
+            x.M.Egreso,
+            x.M.Final,
+            x.M.IdEmpleado));
+
+    /// <summary>Sin orden pedido: <c>Id</c> ascendente, el orden del libro (también el del export). Con
+    /// orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. Es opt-in: cada fila
+    /// conserva su <c>Inicio</c>/<c>Final</c> persistidos, así que bajo otro orden la cadena deja de
+    /// leerse de fila a fila. El tipo ordena por el orden de declaración del enum de Postgres (ajuste,
+    /// deposito, gasto, retiro_caja), que coincide con el alfabético de los rótulos de la pantalla
+    /// (Ajuste, Depósito, Gasto, Retiro de caja). El concepto ordena por el concepto
+    /// del gasto de origen cuando lo hay (como la celda, sin el prefijo de categoría) o por el propio. Un
+    /// movimiento sin punto de venta, o con uno que ya no resuelve, va al final en las dos
+    /// direcciones.</summary>
+    private static IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeListado<ColumnaDeOrdenDeTesoreria>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderBy(x => x.M.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<Unido> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeTesoreria.Tipo => desc
+                ? query.OrderByDescending(x => x.M.Tipo)
+                : query.OrderBy(x => x.M.Tipo),
+            ColumnaDeOrdenDeTesoreria.Inicio => desc
+                ? query.OrderByDescending(x => x.M.Inicio)
+                : query.OrderBy(x => x.M.Inicio),
+            ColumnaDeOrdenDeTesoreria.Ingreso => desc
+                ? query.OrderByDescending(x => x.M.Ingreso)
+                : query.OrderBy(x => x.M.Ingreso),
+            ColumnaDeOrdenDeTesoreria.Egreso => desc
+                ? query.OrderByDescending(x => x.M.Egreso)
+                : query.OrderBy(x => x.M.Egreso),
+            ColumnaDeOrdenDeTesoreria.Final => desc
+                ? query.OrderByDescending(x => x.M.Final)
+                : query.OrderBy(x => x.M.Final),
+            ColumnaDeOrdenDeTesoreria.Concepto => desc
+                ? query.OrderByDescending(x => x.GastoConcepto ?? x.M.Concepto)
+                : query.OrderBy(x => x.GastoConcepto ?? x.M.Concepto),
+            ColumnaDeOrdenDeTesoreria.PuntoVenta => desc
+                ? query.OrderBy(x => x.NombrePuntoVenta == null).ThenByDescending(x => x.NombrePuntoVenta)
+                : query.OrderBy(x => x.NombrePuntoVenta == null).ThenBy(x => x.NombrePuntoVenta),
+            ColumnaDeOrdenDeTesoreria.Empleado => desc
+                ? query.OrderByDescending(x => x.M.IdEmpleado)
+                : query.OrderBy(x => x.M.IdEmpleado),
+            ColumnaDeOrdenDeTesoreria.Fecha => desc
+                ? query.OrderByDescending(x => x.M.Fecha)
+                : query.OrderBy(x => x.M.Fecha),
+            _ => query.OrderBy(x => x.M.Id),
+        };
+
+        return ordenado.ThenBy(x => x.M.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeTesoreria> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeTesoreria>(StringComparer.Ordinal)
+        {
+            ["tipo"] = ColumnaDeOrdenDeTesoreria.Tipo,
+            ["inicio"] = ColumnaDeOrdenDeTesoreria.Inicio,
+            ["ingreso"] = ColumnaDeOrdenDeTesoreria.Ingreso,
+            ["egreso"] = ColumnaDeOrdenDeTesoreria.Egreso,
+            ["final"] = ColumnaDeOrdenDeTesoreria.Final,
+            ["concepto"] = ColumnaDeOrdenDeTesoreria.Concepto,
+            ["puntoVenta"] = ColumnaDeOrdenDeTesoreria.PuntoVenta,
+            ["empleado"] = ColumnaDeOrdenDeTesoreria.Empleado,
+            ["fecha"] = ColumnaDeOrdenDeTesoreria.Fecha,
+        };
+
+    private sealed class Unido
+    {
+        public MovimientoTesoreria M { get; init; } = null!;
+
+        public string? NombrePuntoVenta { get; init; }
+
+        public CategoriaGasto? GastoCategoria { get; init; }
+
+        public string? GastoConcepto { get; init; }
+    }
+}
+
+public enum ColumnaDeOrdenDeTesoreria
+{
+    Tipo,
+    Inicio,
+    Ingreso,
+    Egreso,
+    Final,
+    Concepto,
+    PuntoVenta,
+    Empleado,
+    Fecha,
 }

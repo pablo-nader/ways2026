@@ -202,15 +202,18 @@ public static class ReportesEndpoints
         grupo.MapGet("/articulos", (
             ServicioDeReportesDeArticulos servicio, int? idArea, bool? sinArea, int? idCategoria, bool? sinCategoria,
             int? idMarca, bool? sinMarca, int? idGrupo, bool? sinGrupo, int? idProveedor, bool? sinProveedor,
-            bool? soloIncompletos, bool? activo, int? pagina, int? tamanio, CancellationToken ct) =>
+            bool? soloIncompletos, bool? activo, int? pagina, int? tamanio, string? orden, string? direccion,
+            CancellationToken ct) =>
             servicio.ListarArticulosAsync(
                 idArea, sinArea ?? false, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo,
                 sinGrupo ?? false, idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo,
-                pagina ?? 1, tamanio ?? 25, ct))
+                pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
         .WithSummary(
             "Catálogo de artículos con los nombres de área/categoría/marca/grupo/proveedor " +
             "habitual ya resueltos — soloIncompletos filtra a los que falta al menos una de las " +
-            "cinco clasificaciones (OR).");
+            "cinco clasificaciones (OR). orden (codigo, nombre, area, categoria, marca, grupo, " +
+            "proveedor, estado) y direccion (ascendente, descendente) ordenan todo el conjunto " +
+            "filtrado antes de paginar; 400 si no son válidos.");
 
         // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes por
         // co-locación. LISTADO (mismo shape que /cajas/export): el tope de filas lo exige el
@@ -611,10 +614,15 @@ public static class ReportesEndpoints
         // propia (design decisión 11 sigue vigente: nunca se mezclan dos empresas).
         grupo.MapGet("/tesoreria", (
             ServicioDeTesoreria servicio, int idEmpresa, int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
-            int? pagina, int? tamanio, CancellationToken ct) =>
-            servicio.ListarAsync(idEmpresa, idPuntoVenta, desde, hasta, pagina: pagina ?? 1, tamanio: tamanio ?? 25, ct: ct))
+            int? pagina, int? tamanio, string? orden, string? direccion, CancellationToken ct) =>
+            servicio.ListarAsync(
+                idEmpresa, idPuntoVenta, desde, hasta, pagina: pagina ?? 1, tamanio: tamanio ?? 25,
+                orden: orden, direccion: direccion, ct: ct))
         .WithSummary(
-            "Libro de tesorería encadenado de una empresa, ordenado por id (nunca por fecha): cero " +
+            "Libro de tesorería encadenado de una empresa, ordenado por id (nunca por fecha) salvo que se " +
+            "pida otro orden: orden (tipo, inicio, ingreso, egreso, final, concepto, puntoVenta, empleado, " +
+            "fecha) y direccion (ascendente, descendente) ordenan todo el conjunto filtrado antes de " +
+            "paginar, 400 si no son válidos; cada fila conserva su inicio/final persistidos. Cero " +
             "derivación, cada fila ya trae su inicio/final persistidos al cierre. idPuntoVenta es " +
             "un filtro opcional sobre el mismo libro: el subconjunto resultante no se encadena " +
             "entre sí (la cadena completa es por empresa).");

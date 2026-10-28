@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
+using Ways.Application.Listados;
 using Ways.Domain.Common;
 
 namespace Ways.Application.Auditoria;
@@ -34,12 +35,15 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
         string ValorNuevo);
 
     public async Task<PaginaDeAuditoria> ConsultarAsync(
-        FiltrosDeAuditoria filtros, int pagina = 1, int tamanio = 25, CancellationToken ct = default)
+        FiltrosDeAuditoria filtros, int pagina = 1, int tamanio = 25, string? orden = null, string? direccion = null,
+        CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(filtros);
+        var query = ConstruirQuery(filtros, ordenPedido);
 
         var total = await query.CountAsync(ct);
 
@@ -64,7 +68,7 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
     public async Task<IReadOnlyList<FilaDeAuditoria>> ConsultarParaExportacionAsync(
         FiltrosDeAuditoria filtros, int tope, CancellationToken ct = default)
     {
-        var query = ConstruirQuery(filtros);
+        var query = ConstruirQuery(filtros, null);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, tope);
@@ -103,14 +107,18 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
     ///   cada <c>if (filtro is { } x)</c>           → un filtro ignorado devuelve de más, en
     ///                                                silencio.
     /// </summary>
-    private IQueryable<FilaCrudaDeAuditoria> ConstruirQuery(FiltrosDeAuditoria f)
+    private IQueryable<FilaCrudaDeAuditoria> ConstruirQuery(FiltrosDeAuditoria f, OrdenDeListado<ColumnaDeOrdenDeAuditoria>? orden)
     {
         if (f.IdEntidad is not null && f.Entidad is null)
         {
             throw new ErrorDominio("entidad_requerida", "idEntidad requiere entidad.", 400);
         }
 
-        var query =
+        // El orden va ANTES de proyectar a FilaCrudaDeAuditoria (un record posicional no traduce en un
+        // key selector): se ordena sobre `Unido`, una clase con inicializador de miembros, y recién
+        // después se proyecta. El LEFT JOIN a puntos de venta pasa por el DbSet filtrado: un punto de
+        // venta dado de baja o colgante llega como null, igual que un evento de todo el tenant.
+        var unido =
             from a in db.Auditoria
             where (f.Desde == null || a.CreadoEl >= f.Desde)
                && (f.Hasta == null || a.CreadoEl <= f.Hasta)
@@ -121,11 +129,81 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
                && (f.IdPuntoVenta == null || a.IdPuntoVenta == f.IdPuntoVenta)
             join u in db.Usuarios.IgnoreQueryFilters(["BajaLogica"]) on a.IdActor equals u.Id into actores
             from u in actores.DefaultIfEmpty()
-            orderby a.CreadoEl descending, a.Id descending
-            select new FilaCrudaDeAuditoria(
-                a.Id, a.CreadoEl, a.Accion, a.Entidad, a.IdEntidad, a.IdActor,
-                u == null ? null : u.NombreUsuario, a.IdPuntoVenta, a.ValorAnterior, a.ValorNuevo);
+            join pv in db.PuntosVenta on a.IdPuntoVenta equals pv.Id into puntosVenta
+            from pv in puntosVenta.DefaultIfEmpty()
+            select new Unido { A = a, Actor = u == null ? null : u.NombreUsuario, PuntoVenta = pv == null ? null : pv.Nombre };
 
-        return query;
+        return Ordenar(unido, orden).Select(x => new FilaCrudaDeAuditoria(
+            x.A.Id, x.A.CreadoEl, x.A.Accion, x.A.Entidad, x.A.IdEntidad, x.A.IdActor,
+            x.Actor, x.A.IdPuntoVenta, x.A.ValorAnterior, x.A.ValorNuevo));
     }
+
+    /// <summary>Sin orden pedido: <c>creado_el desc, id desc</c> (el orden de siempre, también el del
+    /// export). Con orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate, para que dos
+    /// páginas consecutivas nunca repitan ni salteen una fila. Los vacíos (actor sin usuario visible,
+    /// evento de todo el tenant o con punto de venta que ya no resuelve) van al final en las dos
+    /// direcciones. La acción ordena por su código, no por la etiqueta del catálogo de la pantalla.</summary>
+    private static IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeListado<ColumnaDeOrdenDeAuditoria>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(x => x.A.CreadoEl).ThenByDescending(x => x.A.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<Unido> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeAuditoria.Fecha => desc
+                ? query.OrderByDescending(x => x.A.CreadoEl)
+                : query.OrderBy(x => x.A.CreadoEl),
+            ColumnaDeOrdenDeAuditoria.Accion => desc
+                ? query.OrderByDescending(x => x.A.Accion)
+                : query.OrderBy(x => x.A.Accion),
+            ColumnaDeOrdenDeAuditoria.Entidad => desc
+                ? query.OrderByDescending(x => x.A.Entidad)
+                : query.OrderBy(x => x.A.Entidad),
+            ColumnaDeOrdenDeAuditoria.IdEntidad => desc
+                ? query.OrderByDescending(x => x.A.IdEntidad)
+                : query.OrderBy(x => x.A.IdEntidad),
+            ColumnaDeOrdenDeAuditoria.Actor => desc
+                ? query.OrderBy(x => x.Actor == null).ThenByDescending(x => x.Actor)
+                : query.OrderBy(x => x.Actor == null).ThenBy(x => x.Actor),
+            ColumnaDeOrdenDeAuditoria.PuntoVenta => desc
+                ? query.OrderBy(x => x.PuntoVenta == null).ThenByDescending(x => x.PuntoVenta)
+                : query.OrderBy(x => x.PuntoVenta == null).ThenBy(x => x.PuntoVenta),
+            _ => query.OrderByDescending(x => x.A.CreadoEl),
+        };
+
+        return ordenado.ThenBy(x => x.A.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeAuditoria> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeAuditoria>(StringComparer.Ordinal)
+        {
+            ["fecha"] = ColumnaDeOrdenDeAuditoria.Fecha,
+            ["accion"] = ColumnaDeOrdenDeAuditoria.Accion,
+            ["entidad"] = ColumnaDeOrdenDeAuditoria.Entidad,
+            ["idEntidad"] = ColumnaDeOrdenDeAuditoria.IdEntidad,
+            ["actor"] = ColumnaDeOrdenDeAuditoria.Actor,
+            ["puntoVenta"] = ColumnaDeOrdenDeAuditoria.PuntoVenta,
+        };
+
+    private sealed class Unido
+    {
+        public Domain.Auditoria.Auditoria A { get; init; } = null!;
+
+        public string? Actor { get; init; }
+
+        public string? PuntoVenta { get; init; }
+    }
+}
+
+public enum ColumnaDeOrdenDeAuditoria
+{
+    Fecha,
+    Accion,
+    Entidad,
+    IdEntidad,
+    Actor,
+    PuntoVenta,
 }
