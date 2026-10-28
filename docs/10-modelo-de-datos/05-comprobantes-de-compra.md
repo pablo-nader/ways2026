@@ -532,7 +532,7 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   revalida bajo el lock del pago: si cambió, `409 pago_cambio_concurrente`, sin reintento). Si la compra está anulada la
 >   edición sigue siendo válida y no toca aplicaciones. Cambiar el proveedor o la categoría de un pago ligado sigue siendo
 >   `proveedor_no_coincide_con_la_compra` / `gasto_de_compra_debe_ser_de_proveedor`; la empresa no es editable.
-> - No hay códigos de auditoría nuevos: el alta, la edición y la baja del pago ya se auditan y la aplicación es un efecto
+> - Los escritores de S1b no agregan códigos de auditoría: el alta, la edición y la baja del pago ya se auditan y la aplicación es un efecto
 >   interno de esas operaciones.
 >
 > **Lectores (E3-S2).** Lo pagado de una compra (`LectorDePagadoPorCompra`) es la suma de sus aplicaciones vivas; ya no
@@ -548,6 +548,42 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > dos pagos que superan el total) muestra `pagado` = total y no la suma cruda de los pagos; el saldo pendiente no cambia
 > porque ya se acotaba en 0. (2) El detalle de una compra anulada muestra `pagado` 0, porque sus aplicaciones están
 > liberadas. Los vínculos heredados entre empresas siguen contando como pagados (migración `AplicacionesEntreEmpresas`).
+>
+> **Aplicar, desaplicar y adopción (E3-S3).** Sin cambios de esquema.
+>
+> - `POST /api/pagos/{id}/aplicaciones` aplica el disponible de un pago a 1..20 compras confirmadas de UN mismo proveedor
+>   (origen `aplicacion`, usuario y fecha de ahora); aplicar de nuevo al mismo par agranda la única aplicación viva.
+>   `DELETE /api/pagos/{id}/aplicaciones/{idAplicacion}` da de baja la aplicación y reaplica el lugar liberado a los
+>   demás pagos vinculados a esa compra. Ambos apilan `GestionDeCatalogo` y auditan `pago.aplicacion` /
+>   `pago.desaplicacion` (entidad `pago`; el payload lleva categoría, proveedor, vínculo, aplicado, disponible y las
+>   aplicaciones vivas, antes y después).
+> - Orden de locks: compras `FOR UPDATE` en id ascendente → pago `FOR UPDATE` → fila del proveedor (solo en la
+>   adopción). No toca la tesorería: la plata del pago ya salió. Las lecturas del total, del estado, del disponible y de lo
+>   pagado nacen después de los locks; el escritor no reintenta (`FabricaDeEstrategiaSinReintento`).
+> - Códigos: `404` pago, aplicación (que debe ser de ese pago y estar viva) o compra inexistentes, antes de validar el
+>   cuerpo; `400 aplicacion_sin_compras`, `aplicacion_demasiadas_compras`, `aplicacion_compra_repetida`,
+>   `aplicacion_importe_invalido` (positivo, hasta 2 decimales), `compras_de_distintos_proveedores`; `409
+>   compra_no_confirmada` / `compra_anulada`, `compra_de_otro_proveedor`, `pago_no_aplicable` (sueldos),
+>   `gasto_de_pago_de_personal`, `aplicacion_excede_disponible` (la suma supera el disponible del pago) y
+>   `aplicacion_excede_saldo` (el importe supera el saldo pendiente de su compra). La empresa no es una regla: un pago puede
+>   aplicarse a una compra de otra empresa del tenant.
+> - **Adopción.** Un pago sin proveedor (categoría distinta de `proveedor`, o `proveedor` sin proveedor asignado) pasa,
+>   en su primera aplicación, a categoría `proveedor` con el proveedor de las compras, y escribe el movimiento `pago` de la
+>   cuenta corriente del proveedor por su importe COMPLETO con la fecha de ahora (aunque se aplique solo una parte; el
+>   resto queda como crédito a favor). Si no tenía, `pagos.id_comprobante_compra` toma la primera compra del pedido
+>   («compra de origen»). Un pago con otro proveedor es `409 compra_de_otro_proveedor`. El proveedor adoptado se conserva
+>   al desaplicar.
+> - Desaplicar limpia `pagos.id_comprobante_compra` si era el vínculo de esa aplicación y el pago tiene punto de venta
+>   propio (para que la reaplicación de vínculos no la vuelva a crear); sin punto de venta propio se conserva, porque los
+>   ajustes de cuenta corriente de ese pago toman el punto de venta de la compra del vínculo.
+> - `vincular-compra` (`/api/gastos/{id}` y `/api/pagos/{id}`) es una aplicación de `min(disponible, saldo)` a esa compra:
+>   conserva `gasto_ya_vinculado` y `compra_de_otra_empresa` (los vínculos NUEVOS siguen exigiendo la misma empresa) y suma
+>   `409 pago_sin_disponible` cuando el pago no tiene nada sin aplicar. Su conversión de un pago sin proveedor es la misma
+>   adopción.
+> - `GET /api/compras/{id}/pagos-aplicables` y `GET /api/proveedores/{id}/pagos-disponibles` devuelven
+>   `{pagos: [{idPago, fecha, concepto, importe, disponible, idProveedor}]}` ordenados por fecha: los del proveedor con
+>   disponible mayor a 0 y, solo en la de la compra, los pagos sin proveedor de la misma empresa (sin sueldos ni pagos de
+>   personal), que `idProveedor: null` marca como adoptables.
 
 ### Órdenes de compra (Etapa 16)
 

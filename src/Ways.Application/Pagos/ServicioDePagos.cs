@@ -35,7 +35,7 @@ namespace Ways.Application.Pagos;
 /// concurrente de la misma compra (el mismo statement crudo/sibling raw SQL que
 /// <c>ServicioDeCompras</c>, ver su doc-comment de clase).
 /// </summary>
-public class ServicioDePagos(
+public partial class ServicioDePagos(
     IWaysDbContext db, ServicioDeTurnos servicioDeTurnos, ServicioDeParametros servicioDeParametros,
     IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lectorDeMovimientos,
     ServicioDeAuditoria auditoria)
@@ -309,6 +309,15 @@ public class ServicioDePagos(
 
         await ExigirCompraDeLaEmpresaAsync(compra, pago.IdEmpresa, ct);
 
+        // E3-S3: vincular es aplicar min(disponible, saldo) a esa compra; sin disponible no hay nada que aplicar.
+        var aplicadoDelPago = (await LectorDeDisponiblePorPago.LeerAplicadoAsync(db, [pago.Id], ct))
+            .GetValueOrDefault(pago.Id, 0m);
+        var disponibleDelPago = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicadoDelPago);
+        if (disponibleDelPago <= 0m)
+        {
+            throw new ErrorDominio("pago_sin_disponible", "El pago no tiene importe disponible para aplicar.", 409);
+        }
+
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
@@ -353,7 +362,8 @@ public class ServicioDePagos(
         }
 
         await AplicarPagoALaCompraAsync(
-            idTenant, pago, idComprobanteCompra, compra, OrigenAplicacionPago.Aplicacion, idEmpleado, momento, ct);
+            idTenant, pago, idComprobanteCompra, compra, OrigenAplicacionPago.Aplicacion, idEmpleado, momento, ct,
+            disponibleDelPago);
 
         await transaccion.CommitAsync(ct);
 
@@ -1656,7 +1666,7 @@ public class ServicioDePagos(
     /// condición: los vínculos heredados entre empresas se aplican igual.</summary>
     private async Task AplicarPagoALaCompraAsync(
         int idTenant, Pago pago, int idComprobanteCompra, CompraBloqueada compra, OrigenAplicacionPago origen,
-        int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+        int idEmpleado, DateTimeOffset momento, CancellationToken ct, decimal? disponibleDelPago = null)
     {
         if (pago.Categoria != CategoriaPago.Proveedor || pago.IdProveedor != compra.IdProveedor)
         {
@@ -1667,10 +1677,25 @@ public class ServicioDePagos(
             .Where(a => a.IdComprobanteCompra == idComprobanteCompra)
             .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
 
-        var importe = Math.Min(pago.Importe, compra.Total - aplicado);
+        var importe = Math.Min(disponibleDelPago ?? pago.Importe, compra.Total - aplicado);
         if (importe <= 0m)
         {
             return;
+        }
+
+        // Solo la vinculación de un pago existente (que ya pudo aplicarse a esta misma compra) pasa el disponible: hay una
+        // sola aplicación viva por par, así que se la agranda en vez de insertar otra.
+        if (disponibleDelPago is not null)
+        {
+            var existente = await db.AplicacionesPago
+                .FirstOrDefaultAsync(a => a.IdPago == pago.Id && a.IdComprobanteCompra == idComprobanteCompra, ct);
+            if (existente is not null)
+            {
+                existente.Importe += importe;
+                existente.UpdatedAt = momento;
+                await db.SaveChangesAsync(ct);
+                return;
+            }
         }
 
         db.AplicacionesPago.Add(new AplicacionPago
@@ -1710,7 +1735,11 @@ public class ServicioDePagos(
                 .Where(a => a.IdComprobanteCompra == idComprobanteCompra && a.IdPago != pago.Id)
                 .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
 
-            objetivo = Math.Max(0m, Math.Min(pago.Importe, compra.Total - aplicadoPorOtros));
+            var aplicadoEnOtrasCompras = aplicaciones
+                .Where(a => a.IdComprobanteCompra != idComprobanteCompra)
+                .Sum(a => a.Importe);
+
+            objetivo = Math.Max(0m, Math.Min(pago.Importe - aplicadoEnOtrasCompras, compra.Total - aplicadoPorOtros));
         }
 
         if (existente is not null)
