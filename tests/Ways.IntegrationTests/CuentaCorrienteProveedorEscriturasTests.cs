@@ -298,10 +298,15 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
             IdTenant = ctx.IdTenant, Fecha = ahora, IdEmpresa = idEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
             IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaPago.Proveedor,
             OrigenFondos = OrigenFondosPago.CajaTurno, IdProveedor = ctx.IdProveedor,
-            Concepto = "Pago simulado (slice 2)", IdMedioPago = idMedioPago, Importe = importe,
+            Concepto = "Pago simulado (slice 2)", Importe = importe,
             IdComprobanteCompra = idComprobanteCompra, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = idMedioPago, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora
+        });
         await db.SaveChangesAsync();
 
         return pago.Id;

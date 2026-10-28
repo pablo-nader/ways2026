@@ -57,8 +57,6 @@ public class Pago : EntidadTenant
     public required string Concepto { get; set; }
     public string? Detalle { get; set; }
 
-    public int IdMedioPago { get; set; }
-
     public string? NumeroFactura { get; set; }
 
     /// <summary>Siempre <c>&gt; 0</c> (spec: Importe Must Be Positive, <c>ck_pagos_importe_positivo</c>).</summary>

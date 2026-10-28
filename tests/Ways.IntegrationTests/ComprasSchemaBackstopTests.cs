@@ -724,14 +724,13 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO pagos (id_tenant, fecha, id_empresa, id_punto_venta, id_turno_caja, id_empleado, " +
-            "categoria, origen_fondos, concepto, id_medio_pago, importe, id_comprobante_compra, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, $3, $4, $5, 'proveedor', 'caja_turno', 'pago de prueba', $6, 10, $7, now(), now())";
+            "categoria, origen_fondos, concepto, importe, id_comprobante_compra, created_at, updated_at) " +
+            "VALUES ($1, now(), $2, $3, $4, $5, 'proveedor', 'caja_turno', 'pago de prueba', 10, $6, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = turno.Id });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
-        comando.Parameters.Add(new NpgsqlParameter { Value = medioPago.Id });
         comando.Parameters.Add(new NpgsqlParameter { Value = IdInexistente });
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());

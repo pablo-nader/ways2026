@@ -229,7 +229,6 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(ctx.IdArea, fila.IdArea);
         Assert.Equal("Flete corregido", fila.Concepto);
         Assert.Equal("Detalle nuevo", fila.Detalle);
-        Assert.Equal(ctx.IdMedioElectronico, fila.IdMedioPago);
         Assert.Equal("0001-00000077", fila.NumeroFactura);
         Assert.Equal(120m, fila.Importe);
         Assert.Equal(OrigenFondosPago.CajaTurno, fila.OrigenFondos);
@@ -422,7 +421,6 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         await using var db = Db(ctx);
         var fila = await db.Pagos.SingleAsync(g => g.Id == pago.Id);
         Assert.Equal(70m, fila.Importe);
-        Assert.Equal(idMedioBaja, fila.IdMedioPago);
 
         var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
         Assert.Equal((idMedioBaja, 70m), (item.IdMedioPago, item.Importe));

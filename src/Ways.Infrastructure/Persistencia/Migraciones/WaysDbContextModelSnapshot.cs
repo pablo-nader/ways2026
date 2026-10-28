@@ -4072,10 +4072,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
 
-                    b.Property<int>("IdMedioPago")
-                        .HasColumnType("integer")
-                        .HasColumnName("id_medio_pago");
-
                     b.Property<int?>("IdMovimientoPersonal")
                         .HasColumnType("integer")
                         .HasColumnName("id_movimiento_personal");
@@ -4132,9 +4128,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_pagos_empresa");
-
-                    b.HasIndex("IdMedioPago", "IdTenant")
-                        .HasDatabaseName("ix_pagos_medio_pago");
 
                     b.HasIndex("IdMovimientoPersonal", "IdTenant")
                         .HasDatabaseName("ix_pagos_movimiento_personal");
@@ -7230,14 +7223,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_pagos_empresa");
-
-                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
-                        .WithMany()
-                        .HasForeignKey("IdMedioPago", "IdTenant")
-                        .HasPrincipalKey("Id", "IdTenant")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_pagos_medio_pago");
 
                     b.HasOne("Ways.Domain.Plantel.MovimientoPersonal", null)
                         .WithMany()

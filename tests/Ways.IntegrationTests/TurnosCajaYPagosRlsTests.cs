@@ -170,12 +170,16 @@ public class TurnosCajaYPagosRlsTests(WaysApiFixture fixture) : IClassFixture<Wa
             Categoria = CategoriaPago.Otros,
             OrigenFondos = OrigenFondosPago.CajaTurno,
             Concepto = "pago de prueba de RLS",
-            IdMedioPago = medioPago.Id,
             Importe = 50m,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
         db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = tenant.Id, IdPago = pago.Id, IdMedioPago = medioPago.Id, Importe = 50m, CreatedAt = ahora, UpdatedAt = ahora
+        });
         await db.SaveChangesAsync();
 
         return new Escenario(
@@ -377,8 +381,8 @@ public class TurnosCajaYPagosRlsTests(WaysApiFixture fixture) : IClassFixture<Wa
                 }),
             "pagos" => (
                 "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_turno_caja, id_empleado, " +
-                "categoria, concepto, id_medio_pago, importe, created_at, updated_at) " +
-                "VALUES ($1, $2, $3, $4, $5, 'otros', 'pago intruso', $6, 10, $2, $2)",
+                "categoria, concepto, importe, created_at, updated_at) " +
+                "VALUES ($1, $2, $3, $4, $5, 'otros', 'pago intruso', 10, $2, $2)",
                 c =>
                 {
                     c.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });
@@ -386,7 +390,6 @@ public class TurnosCajaYPagosRlsTests(WaysApiFixture fixture) : IClassFixture<Wa
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdPuntoVenta });
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdTurnoCaja });
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdEmpleado });
-                    c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdMedioPago });
                 }),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
         };

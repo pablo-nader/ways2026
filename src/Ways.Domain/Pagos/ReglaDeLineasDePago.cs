@@ -9,8 +9,8 @@ public sealed record LineaDePago(int IdMedioPago, decimal Importe, string? Refer
 /// <summary>Líneas ya validadas y normalizadas, con su total.</summary>
 public sealed record PlanDeLineasDePago(IReadOnlyList<LineaDePago> Lineas, decimal Total)
 {
-    /// <summary>Medio de la primera línea: la cabecera del pago lo repite hasta que se elimine su columna.</summary>
-    public int IdMedioPagoDeLaCabecera => Lineas[0].IdMedioPago;
+    /// <summary>Medio de la primera línea: el que exponen los listados que todavía muestran un solo medio por pago.</summary>
+    public int IdMedioPagoDeCompatibilidad => Lineas[0].IdMedioPago;
 }
 
 /// <summary>

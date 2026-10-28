@@ -249,40 +249,33 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(2500m, await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).SingleAsync());
 
         var pagos = await db.Pagos.Where(g => g.IdMovimientoPersonal == idMovimiento).OrderBy(g => g.Id).ToListAsync();
-        Assert.Equal(2, pagos.Count);
-        Assert.All(pagos, g =>
-        {
-            Assert.Equal(CategoriaPago.Sueldos, g.Categoria);
-            Assert.Equal(OrigenFondosPago.Tesoreria, g.OrigenFondos);
-            Assert.Null(g.IdTurnoCaja);
-            Assert.Equal(ctx.IdEmpresa, g.IdEmpresa);
-            Assert.Equal(ctx.IdPuntoVenta, g.IdPuntoVenta);
-            Assert.Equal("Pago de personal: Ana", g.Concepto);
-            // La fecha de negocio retroactiva elegida es la que persiste en el pago.
-            Assert.Equal(FechaDelNegocio.Hoy().AddDays(-10), DateOnly.FromDateTime(g.Fecha.UtcDateTime));
-        });
-        Assert.Equal((ctx.IdMedioEfectivo, 2000m, (string?)null), (pagos[0].IdMedioPago, pagos[0].Importe, pagos[0].Detalle));
-        Assert.Equal((ctx.IdMedioTarjeta, 500m, "cup-77"), (pagos[1].IdMedioPago, pagos[1].Importe, pagos[1].Detalle));
+        var pagoDeSueldo = Assert.Single(pagos);
+        Assert.Equal(CategoriaPago.Sueldos, pagoDeSueldo.Categoria);
+        Assert.Equal(OrigenFondosPago.Tesoreria, pagoDeSueldo.OrigenFondos);
+        Assert.Null(pagoDeSueldo.IdTurnoCaja);
+        Assert.Equal(ctx.IdEmpresa, pagoDeSueldo.IdEmpresa);
+        Assert.Equal(ctx.IdPuntoVenta, pagoDeSueldo.IdPuntoVenta);
+        Assert.Equal("Pago de personal: Ana", pagoDeSueldo.Concepto);
+        Assert.Null(pagoDeSueldo.Detalle);
+        Assert.Equal(2500m, pagoDeSueldo.Importe);
+        // La fecha de negocio retroactiva elegida es la que persiste en el pago.
+        Assert.Equal(FechaDelNegocio.Hoy().AddDays(-10), DateOnly.FromDateTime(pagoDeSueldo.Fecha.UtcDateTime));
 
-        // E2-S1: cada línea de dinero es un pago con exactamente un ítem igual a su cabecera.
-        var idsDePagos = pagos.Select(g => g.Id).ToList();
-        var itemsDeSueldo = await db.ItemsPago.Where(i => idsDePagos.Contains(i.IdPago)).OrderBy(i => i.IdPago).ToListAsync();
+        // Un solo pago con un ítem por línea de dinero; la referencia vive en el ítem.
+        var itemsDeSueldo = await db.ItemsPago.Where(i => i.IdPago == pagoDeSueldo.Id).OrderBy(i => i.Id).ToListAsync();
         Assert.Equal(
-            pagos.Select(g => (g.Id, g.IdMedioPago, g.Importe)),
-            itemsDeSueldo.Select(i => (i.IdPago, i.IdMedioPago, i.Importe)));
+            [(ctx.IdMedioEfectivo, 2000m, (string?)null), (ctx.IdMedioTarjeta, 500m, "cup-77")],
+            itemsDeSueldo.Select(i => (i.IdMedioPago, i.Importe, i.Referencia)));
 
-        var egresos = await db.MovimientosTesoreria.Where(m => m.IdEmpresa == ctx.IdEmpresa).OrderBy(m => m.Id).ToListAsync();
-        Assert.Equal(2, egresos.Count);
-        Assert.Equal([pagos[0].Id, pagos[1].Id], egresos.Select(e => e.IdPago));
-        Assert.Equal([0m, -2000m], egresos.Select(e => e.Inicio));
-        Assert.Equal([-2000m, -2500m], egresos.Select(e => e.Final));
-        Assert.Equal([2000m, 500m], egresos.Select(e => e.Egreso));
-        Assert.All(egresos, e =>
-        {
-            Assert.Equal(TipoMovimientoTesoreria.Pago, e.Tipo);
-            Assert.Equal(ctx.IdPuntoVenta, e.IdPuntoVenta);
-            Assert.Null(e.IdTurnoCaja);
-        });
+        // Un solo egreso de tesorería por el total del pago.
+        var egreso = Assert.Single(await db.MovimientosTesoreria.Where(m => m.IdEmpresa == ctx.IdEmpresa).OrderBy(m => m.Id).ToListAsync());
+        Assert.Equal(pagoDeSueldo.Id, egreso.IdPago);
+        Assert.Equal(0m, egreso.Inicio);
+        Assert.Equal(-2500m, egreso.Final);
+        Assert.Equal(2500m, egreso.Egreso);
+        Assert.Equal(TipoMovimientoTesoreria.Pago, egreso.Tipo);
+        Assert.Equal(ctx.IdPuntoVenta, egreso.IdPuntoVenta);
+        Assert.Null(egreso.IdTurnoCaja);
 
         // El estado de cuenta explica el pago: el descuento y cada línea con su medio, importe y origen.
         var cuenta = await CuentaAsync(ctx.Admin, idPersonal);
@@ -291,7 +284,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(1500m, desglose.GetProperty("descuentoDeCuentaCorriente").GetDecimal());
         var lineas = desglose.GetProperty("lineas").EnumerateArray().ToList();
         Assert.Equal(2, lineas.Count);
-        Assert.Equal([pagos[0].Id, pagos[1].Id], lineas.Select(l => l.GetProperty("idGasto").GetInt32()));
+        Assert.Equal([pagoDeSueldo.Id, pagoDeSueldo.Id], lineas.Select(l => l.GetProperty("idGasto").GetInt32()));
         Assert.Equal(itemsDeSueldo.Select(i => i.Id), lineas.Select(l => l.GetProperty("idItem").GetInt32()));
         Assert.Equal([ctx.IdMedioEfectivo, ctx.IdMedioTarjeta], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
         Assert.Equal([2000m, 500m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
