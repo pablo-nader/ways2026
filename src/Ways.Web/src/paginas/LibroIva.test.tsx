@@ -191,6 +191,11 @@ function llamadasAlLibro(prefijo: string): string[] {
   return apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((r) => r.startsWith(prefijo))
 }
 
+/** Texto del encabezado sin el indicador de orden. */
+function textoDeEncabezado(celda: HTMLElement): string {
+  return (celda.textContent ?? '').replace(/[↕▲▼]$/, '')
+}
+
 function diferido<T>() {
   let resolver!: (valor: T) => void
   const promesa = new Promise<T>((resolve) => {
@@ -223,7 +228,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     expect(screen.getByLabelText('Hasta')).toHaveValue('31/05/2026')
     expect(screen.getByRole('tab', { name: 'Compras' })).toHaveAttribute('aria-selected', 'true')
 
-    const encabezados = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    const encabezados = screen.getAllByRole('columnheader').map(textoDeEncabezado)
     expect(encabezados).toEqual([
       'Fecha', 'Tipo', 'Número', 'Proveedor', 'CUIT', 'Neto 21%', 'IVA 21%', 'Neto 10,5%', 'IVA 10,5%',
       'No gravado', 'Exento', 'Perc. IVA', 'Perc. IIBB', 'Imp. internos', 'Total',
@@ -282,7 +287,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     expect(screen.getByRole('tab', { name: 'Ventas' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.queryByText('Proveedor Uno SA')).not.toBeInTheDocument()
 
-    const encabezados = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    const encabezados = screen.getAllByRole('columnheader').map(textoDeEncabezado)
     expect(encabezados).toEqual([
       'Fecha', 'Tipo', 'Número', 'Cliente', 'Documento', 'Neto 21%', 'IVA 21%', 'No gravado', 'Exento', 'Total',
     ])
@@ -399,7 +404,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     renderLibroIva()
 
     expect(await screen.findByText('1 comprobante(s) no cierran contra sus importes: revisá la columna Dif.')).toBeInTheDocument()
-    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).toContain('Dif.')
+    expect(screen.getAllByRole('columnheader').map(textoDeEncabezado)).toContain('Dif.')
     const filaMala = screen.getByRole('row', { name: /0003-00000003/ })
     expect(within(filaMala).getAllByRole('cell').at(-1)).toHaveTextContent('$ 153,00')
     const filaBuena = screen.getByRole('row', { name: /0004-00000004/ })
@@ -426,7 +431,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     await usuario.click(screen.getByRole('tab', { name: 'Ventas' }))
 
     const filaAnulada = await screen.findByRole('row', { name: /PV-00000042/ })
-    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).toContain('Observaciones')
+    expect(screen.getAllByRole('columnheader').map(textoDeEncabezado)).toContain('Observaciones')
     expect(within(filaAnulada).getByText('Anulado sin NC')).toBeInTheDocument()
     expect(within(filaAnulada).getByText('Sin número fiscal de PV')).toBeInTheDocument()
     expect(within(filaAnulada).getByText('otro_codigo_nuevo')).toBeInTheDocument()
@@ -434,13 +439,46 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     expect(within(filaNormal).queryByText('Anulado sin NC')).not.toBeInTheDocument()
   })
 
+  it('ordena por el total como número y por fecha, y deja la fila de totales al final', async () => {
+    mockearRutas((ruta) =>
+      ruta.startsWith('/reportes/libro-iva-compras?')
+        ? Promise.resolve(
+            libroDeCompras({
+              filas: [
+                filaFixture({ numero: '0001-00000001', fecha: '2026-05-20', total: 1500 }),
+                filaFixture({ numero: '0002-00000002', fecha: '2026-05-10', total: 900 }),
+              ],
+            }),
+          )
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderLibroIva()
+
+    await screen.findByRole('row', { name: /0001-00000001/ })
+    const orden = () =>
+      screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((f) => /0001-00000001|0002-00000002|Totales/.exec(f.textContent ?? '')?.[0])
+
+    await usuario.click(screen.getByRole('button', { name: /Total$/ }))
+    expect(screen.getByRole('columnheader', { name: /^Total/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(orden()).toEqual(['0002-00000002', '0001-00000001', 'Totales'])
+
+    await usuario.click(screen.getByRole('button', { name: /Fecha/ }))
+    expect(orden()).toEqual(['0002-00000002', '0001-00000001', 'Totales'])
+    await usuario.click(screen.getByRole('button', { name: /Fecha/ }))
+    expect(orden()).toEqual(['0001-00000001', '0002-00000002', 'Totales'])
+  })
+
   it('un libro bien formado no muestra la columna Dif. ni el aviso', async () => {
     mockearRutas()
     renderLibroIva()
 
     await screen.findByText('Proveedor Uno SA')
-    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).not.toContain('Dif.')
-    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).not.toContain('Observaciones')
+    expect(screen.getAllByRole('columnheader').map(textoDeEncabezado)).not.toContain('Dif.')
+    expect(screen.getAllByRole('columnheader').map(textoDeEncabezado)).not.toContain('Observaciones')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 

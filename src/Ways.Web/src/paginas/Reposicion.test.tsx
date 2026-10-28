@@ -213,6 +213,35 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     expect(screen.getByText('Sin proveedor (1)')).toBeInTheDocument()
   })
 
+  it('ordena dentro de cada grupo por una columna numérica y los grupos conservan su posición', async () => {
+    const filas = [
+      filaFixture({ idArticulo: 1, articulo: 'Alfa', cantidad: 1500, idProveedor: 1, proveedor: 'Proveedor Uno' }),
+      filaFixture({ idArticulo: 2, articulo: 'Zeta', cantidad: 900, idProveedor: 1, proveedor: 'Proveedor Uno' }),
+      filaFixture({ idArticulo: 3, articulo: 'Beta', cantidad: 1500, idProveedor: 2, proveedor: 'Proveedor Dos' }),
+      filaFixture({ idArticulo: 4, articulo: 'Gama', cantidad: 900, idProveedor: 2, proveedor: 'Proveedor Dos' }),
+    ]
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture(filas))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReposicion()
+
+    await screen.findByText('Proveedor Uno (2)')
+    const orden = () => screen.getAllByRole('row').slice(1).map((f) => f.textContent?.replace(/Generar OC/, '').replace(/[\d.,]+$/, '').trim())
+    expect(orden()).toEqual(['Proveedor Uno (2)', 'Alfa', 'Zeta', 'Proveedor Dos (2)', 'Beta', 'Gama'])
+
+    await usuario.click(screen.getByRole('button', { name: /Cantidad/ }))
+    expect(screen.getByRole('columnheader', { name: /Cantidad/ })).toHaveAttribute('aria-sort', 'ascending')
+    const ascendente = screen.getAllByRole('row').slice(1).map((f) => f.textContent ?? '')
+    expect(ascendente[0]).toContain('Proveedor Uno')
+    expect(ascendente[1]).toContain('Zeta')
+    expect(ascendente[2]).toContain('Alfa')
+    expect(ascendente[3]).toContain('Proveedor Dos')
+    expect(ascendente[4]).toContain('Gama')
+    expect(ascendente[5]).toContain('Beta')
+  })
+
   it('el botón de descarga apunta a /reportes/stock/reposicion/export con el idPuntoVenta elegido', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))

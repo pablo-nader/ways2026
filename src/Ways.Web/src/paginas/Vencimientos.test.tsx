@@ -195,6 +195,30 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
     expect(within(filas[3]).getByText('—')).toBeInTheDocument() // fecha de vencimiento null
   })
 
+  it('ordena por cantidad como número y por vencimiento cronológico, con el lote sin fecha siempre al final', async () => {
+    const grande = filaFixture({ idLote: 1, articulo: 'Art A', cantidad: 1500, fechaVencimiento: '2026-09-30' })
+    const chica = filaFixture({ idLote: 2, articulo: 'Art B', cantidad: 900, fechaVencimiento: '2026-08-20' })
+    const sinFecha = filaFixture({ idLote: 3, articulo: 'Art C', cantidad: 10, fechaVencimiento: null, estado: 'SinFecha' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/vencimientos?')) return Promise.resolve(vencimientosFixture([grande, chica, sinFecha]))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderVencimientos()
+
+    await screen.findByText('Art A')
+    const articulos = () => screen.getAllByRole('row').slice(1).map((f) => within(f).getAllByRole('cell')[0].textContent)
+
+    await usuario.click(screen.getByRole('button', { name: /Cantidad/ }))
+    expect(screen.getByRole('columnheader', { name: /Cantidad/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(articulos()).toEqual(['Art C', 'Art B', 'Art A'])
+
+    await usuario.click(screen.getByRole('button', { name: /Vencimiento/ }))
+    expect(articulos()).toEqual(['Art B', 'Art A', 'Art C'])
+    await usuario.click(screen.getByRole('button', { name: /Vencimiento/ }))
+    expect(articulos()).toEqual(['Art A', 'Art B', 'Art C'])
+  })
+
   it('sin lotes con saldo positivo muestra un estado vacío, no un re-query', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/stock/vencimientos?')) return Promise.resolve(vencimientosFixture([]))

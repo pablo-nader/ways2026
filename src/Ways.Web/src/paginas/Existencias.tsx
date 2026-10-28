@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -11,6 +11,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 
 const CANTIDAD_DE_COLUMNAS = 8
 
@@ -138,6 +139,20 @@ export function Existencias() {
   // pantalla — el reporte de existencias sigue siendo la fuente de verdad de esta grilla
   // (`react-async-state` regla 6: un fallo de un feed secundario nunca reporta el load como fallido).
   const [mapaSugeridos, setMapaSugeridos] = useState<Map<number, number>>(new Map())
+  const columnas = useMemo<ColumnasOrdenables<FilaExistencia>>(
+    () => ({
+      articulo: { valor: (f) => f.idArticulo },
+      nombre: { valor: (f) => f.nombre },
+      cantidad: { valor: (f) => f.cantidad },
+      minimo: { valor: (f) => f.minimo },
+      reposicion: { valor: (f) => f.reposicion },
+      estado: { valor: (f) => ETIQUETA_ESTADO[f.estado] },
+      sugerido: { valor: (f) => mapaSugeridos.get(f.idArticulo) },
+    }),
+    [mapaSugeridos],
+  )
+  const filasDeExistencias = useMemo(() => existencias?.filas ?? [], [existencias])
+  const { filas: filasOrdenadas, orden, alternar } = useOrdenamiento(filasDeExistencias, columnas)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
@@ -397,18 +412,32 @@ export function Existencias() {
                 <table className="table table-sm table-striped table-bordered align-middle">
                   <thead>
                     <tr>
-                      <th>Artículo</th>
-                      <th>Nombre</th>
-                      <th className="text-end">Cantidad</th>
-                      <th className="text-end">Mínimo</th>
-                      <th className="text-end">Reposición</th>
-                      <th>Estado</th>
-                      <th className="text-end">Sugerido</th>
+                      <EncabezadoOrdenable columna="articulo" orden={orden} onAlternar={alternar}>
+                        Artículo
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                        Nombre
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="cantidad" orden={orden} onAlternar={alternar} className="text-end">
+                        Cantidad
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="minimo" orden={orden} onAlternar={alternar} className="text-end">
+                        Mínimo
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="reposicion" orden={orden} onAlternar={alternar} className="text-end">
+                        Reposición
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                        Estado
+                      </EncabezadoOrdenable>
+                      <EncabezadoOrdenable columna="sugerido" orden={orden} onAlternar={alternar} className="text-end">
+                        Sugerido
+                      </EncabezadoOrdenable>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {existencias.filas.map((fila) => {
+                    {filasOrdenadas.map((fila) => {
                       const enEdicion = filaEnEdicion === fila.idArticulo
                       const guardandoEstaFila = guardando === fila.idArticulo
                       const minimoInvalido = enEdicion && !umbralTextoValido(minimoTexto)
