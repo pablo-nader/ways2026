@@ -66,6 +66,22 @@ one PR per stage slice, judgment-day before each PR, auto-merge + Auto-fix.
 - [ ] E7 — Cobros: rename sale method lines to cobros, apply cobros to CC sales.
 - [ ] POS release (`pos-v*`) once the POS bundle uses the new wire contract.
 
+### E2 slices
+
+Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
+
+- [ ] E2-S1 — `items_pago` (one payment-method line per pago), migration `ItemsDePago` with backfill and the
+  deferred header-sum constraint trigger, dual write in every `ServicioDePagos` writer, error-translation
+  backstops, doc 10. No behavior change: each pago has exactly one item equal to its header.
+- [ ] E2-S2 — Read paths (arqueo, cierre, treasury, exports) derive the per-medio amounts from the items.
+- [ ] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract.
+- [ ] E2-S3b — Edición de pagos con N líneas, compensating entries per line.
+- [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
+- [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
+- [ ] E2-W2 — Web: lines in the administration payment form and the history.
+- [ ] E2-W3 — Web: lines in pagar compra and personal payments.
+- [ ] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items.
+
 ## Progress
 
 - 2026-10-28: planning closed with the owner; worktree `pnader/pagos-e1-renombre`.
