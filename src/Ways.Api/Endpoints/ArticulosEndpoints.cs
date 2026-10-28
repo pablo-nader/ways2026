@@ -75,13 +75,17 @@ public static class ArticulosEndpoints
             bool? activo,
             int? pagina,
             int? tamanio,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
             servicio.ListarAsync(
                 codigo, nombre, precioDesde, precioHasta, idProveedor, sinProveedor ?? false, activo,
-                pagina ?? 1, tamanio ?? 25, ct))
+                pagina ?? 1, tamanio ?? 25, ct, orden, direccion))
         .WithSummary(
             "Lista artículos para la grilla del back-office: precio de la lista default del tenant, "
-                + "proveedor habitual y estado, con filtros por columna.");
+                + "proveedor habitual y estado, con filtros por columna. orden (codigo, nombre, costo, precio, "
+                + "proveedor, disponibilidad, estado) y direccion (ascendente, descendente) ordenan todo el "
+                + "conjunto filtrado antes de paginar; 400 si no son válidos o si el rol no ve la columna (costo).");
 
         grupo.MapGet("/{id:int}", (ServicioDeArticulos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
