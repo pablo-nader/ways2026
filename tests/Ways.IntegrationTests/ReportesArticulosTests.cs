@@ -1409,7 +1409,8 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
     /// <c>ServicioDeReportesDeArticulos.ListarArticulosAsync</c>, sobre las etiquetas del LEFT JOIN. Cada caso recorre
     /// las páginas de a dos filas y compara la secuencia completa: un orden aplicado después de paginar (o ausente)
     /// la rompe. Un vacío (clasificación sin asignar, de baja o con FK colgante) va al final en las dos direcciones y
-    /// las filas empatadas salen por id ascendente.</summary>
+    /// las filas empatadas salen por id ascendente. Estado ordena por el texto de la celda: ascendente es "Activo"
+    /// antes que "Inactivo".</summary>
     [Theory]
     [InlineData("nombre", "ascendente", "2,4,1,5,3")]
     [InlineData("nombre", "descendente", "3,5,1,4,2")]
@@ -1425,8 +1426,8 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
     [InlineData("grupo", "descendente", "1,3,2,4,5")]
     [InlineData("proveedor", "ascendente", "1,3,2,4,5")]
     [InlineData("proveedor", "descendente", "3,1,2,4,5")]
-    [InlineData("estado", "ascendente", "2,5,1,3,4")]
-    [InlineData("estado", "descendente", "1,3,4,2,5")]
+    [InlineData("estado", "ascendente", "1,3,4,2,5")]
+    [InlineData("estado", "descendente", "2,5,1,3,4")]
     public async Task CadaColumnaOrdenaTodoElConjuntoAtravesDeLasPaginas(string orden, string direccion, string esperadoPorPosicion)
     {
         var ctx = await PrepararAsync($"RepArtOrden{orden}{direccion}");

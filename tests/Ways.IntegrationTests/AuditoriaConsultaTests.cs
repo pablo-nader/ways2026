@@ -648,8 +648,8 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
     [Theory]
     [InlineData("fecha", "ascendente", "R1,R2,R3,R4,R5,R6,R7,R8")]
     [InlineData("fecha", "descendente", "R8,R7,R6,R5,R4,R3,R2,R1")]
-    [InlineData("accion", "ascendente", "R3,R1,R4,R6,R7,R5,R8,R2")]
-    [InlineData("accion", "descendente", "R2,R8,R5,R7,R4,R6,R1,R3")]
+    [InlineData("accion", "ascendente", "R8,R4,R6,R3,R2,R1,R7,R5")]
+    [InlineData("accion", "descendente", "R5,R7,R1,R2,R3,R4,R6,R8")]
     [InlineData("entidad", "ascendente", "R1,R4,R5,R6,R7,R3,R2,R8")]
     [InlineData("entidad", "descendente", "R8,R2,R3,R1,R4,R5,R6,R7")]
     [InlineData("idEntidad", "ascendente", "R1,R2,R4,R5,R6,R7,R3,R8")]
@@ -664,6 +664,26 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
         var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
 
         var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, $"orden={orden}&direccion={direccion}");
+
+        Assert.Equal(Posiciones(ids, esperado), obtenido);
+    }
+
+    /// <summary>La acción ordena por la etiqueta que muestra la celda (el orden alfabético de las etiquetas difiere
+    /// del de los códigos: "Actualización de usuario" va primero aunque su código empieza con "u"). Un código sin
+    /// etiqueta se muestra crudo y ordena por ese texto. Mutación: ordenar por <c>A.Accion</c> a secas rompe el caso.
+    /// Lista espejo: <c>EtiquetasDeAccionTests</c> (backend) y <c>tipos.test.ts</c> (web).</summary>
+    [Theory]
+    [InlineData("ascendente", "R8,R4,R6,R3,R2,R1,R7,R5,RZ")]
+    [InlineData("descendente", "RZ,R5,R7,R1,R2,R3,R4,R6,R8")]
+    public async Task LaAccionSinEtiquetaOrdenaPorSuCodigoCrudoEntreLasEtiquetadas(string direccion, string esperado)
+    {
+        var ctx = await PrepararAsync($"zaudaccionsinetiqueta{direccion}");
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+        ids["RZ"] = await SembrarFilaAsync(
+            ctx.IdTenant, null, ctx.IdActorAdmin, "zz.sin.etiqueta", "usuario", 1,
+            new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero), null, "{\"a\":1}");
+
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, $"orden=accion&direccion={direccion}");
 
         Assert.Equal(Posiciones(ids, esperado), obtenido);
     }

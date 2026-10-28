@@ -346,7 +346,17 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         var total = await query.CountAsync(ct);
 
-        var paginaDeArticulos = Ordenar(UnirConCatalogos(query), ordenPedido).Skip((pagina - 1) * tamanio).Take(tamanio);
+        // Una columna propia del artículo (o ningún orden) ordena y pagina sobre `articulos` y recién después
+        // une los catálogos de esa página; solo una columna de catálogo necesita la unión antes de paginar.
+        var ordenaPorColumnaPropia = ordenPedido is null
+            or { Columna: ColumnaDeOrdenDeArticulosDeReporte.Codigo or ColumnaDeOrdenDeArticulosDeReporte.Nombre
+                or ColumnaDeOrdenDeArticulosDeReporte.Estado };
+
+        IQueryable<ArticuloConCatalogos> paginaDeArticulos = ordenaPorColumnaPropia
+            ? Ordenar(
+                UnirConCatalogos(OrdenarArticulos(query, ordenPedido).Skip((pagina - 1) * tamanio).Take(tamanio)),
+                ordenPedido)
+            : Ordenar(UnirConCatalogos(query), ordenPedido).Skip((pagina - 1) * tamanio).Take(tamanio);
         var items = await AArticuloDeReporte(paginaDeArticulos).ToListAsync(ct);
 
         return new PaginaDe<ArticuloDeReporte>(items, total, pagina, tamanio);
@@ -636,12 +646,41 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
                 ? query.OrderBy(x => x.Proveedor == null).ThenByDescending(x => x.Proveedor)
                 : query.OrderBy(x => x.Proveedor == null).ThenBy(x => x.Proveedor),
             ColumnaDeOrdenDeArticulosDeReporte.Estado => desc
-                ? query.OrderByDescending(x => x.A.Activo)
-                : query.OrderBy(x => x.A.Activo),
+                ? query.OrderBy(x => x.A.Activo)
+                : query.OrderByDescending(x => x.A.Activo),
             _ => query.OrderBy(x => x.A.Nombre),
         };
 
         return ordenado.ThenBy(x => x.A.Id);
+    }
+
+    /// <summary>Mismo orden que <see cref="Ordenar"/> para las columnas propias del artículo, sobre
+    /// <c>articulos</c> a secas (sin unir catálogos). Estado ordena por el texto de la celda: "Activo" antes
+    /// que "Inactivo" en ascendente.</summary>
+    private static IOrderedQueryable<Articulo> OrdenarArticulos(
+        IQueryable<Articulo> query, OrdenDeListado<ColumnaDeOrdenDeArticulosDeReporte>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderBy(a => a.Nombre).ThenBy(a => a.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<Articulo> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeArticulosDeReporte.Codigo => desc
+                ? query.OrderByDescending(a => a.CodigoInterno)
+                : query.OrderBy(a => a.CodigoInterno),
+            ColumnaDeOrdenDeArticulosDeReporte.Estado => desc
+                ? query.OrderBy(a => a.Activo)
+                : query.OrderByDescending(a => a.Activo),
+            ColumnaDeOrdenDeArticulosDeReporte.Nombre => desc
+                ? query.OrderByDescending(a => a.Nombre)
+                : query.OrderBy(a => a.Nombre),
+            _ => query.OrderBy(a => a.Nombre),
+        };
+
+        return ordenado.ThenBy(a => a.Id);
     }
 
     public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeArticulosDeReporte> ClavesDeOrdenDeArticulos =

@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
@@ -219,8 +220,8 @@ public class ServicioDeTesoreria(IWaysDbContext db)
     /// conserva su <c>Inicio</c>/<c>Final</c> persistidos, así que bajo otro orden la cadena deja de
     /// leerse de fila a fila. El tipo ordena por el orden de declaración del enum de Postgres (ajuste,
     /// deposito, gasto, retiro_caja), que coincide con el alfabético de los rótulos de la pantalla
-    /// (Ajuste, Depósito, Gasto, Retiro de caja). El concepto ordena por el concepto
-    /// del gasto de origen cuando lo hay (como la celda, sin el prefijo de categoría) o por el propio. Un
+    /// (Ajuste, Depósito, Gasto, Retiro de caja). El concepto ordena por el
+    /// texto de la celda (<see cref="ConceptoVisible"/>: categoría y concepto del gasto, o el propio). Un
     /// movimiento sin punto de venta, o con uno que ya no resuelve, va al final en las dos
     /// direcciones.</summary>
     private static IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeListado<ColumnaDeOrdenDeTesoreria>? orden)
@@ -249,8 +250,8 @@ public class ServicioDeTesoreria(IWaysDbContext db)
                 ? query.OrderByDescending(x => x.M.Final)
                 : query.OrderBy(x => x.M.Final),
             ColumnaDeOrdenDeTesoreria.Concepto => desc
-                ? query.OrderByDescending(x => x.GastoConcepto ?? x.M.Concepto)
-                : query.OrderBy(x => x.GastoConcepto ?? x.M.Concepto),
+                ? query.OrderByDescending(ConceptoVisible)
+                : query.OrderBy(ConceptoVisible),
             ColumnaDeOrdenDeTesoreria.PuntoVenta => desc
                 ? query.OrderBy(x => x.NombrePuntoVenta == null).ThenByDescending(x => x.NombrePuntoVenta)
                 : query.OrderBy(x => x.NombrePuntoVenta == null).ThenBy(x => x.NombrePuntoVenta),
@@ -264,6 +265,28 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         };
 
         return ordenado.ThenBy(x => x.M.Id);
+    }
+
+    /// <summary>El texto de la celda Concepto: "Etiqueta de categoría — concepto" cuando la fila tiene gasto de
+    /// origen, el concepto del movimiento en cualquier otro caso (mismo criterio que <c>conceptoEfectivo</c>
+    /// de <c>Tesoreria.tsx</c> y <c>ExportacionDeCaja.ConceptoEfectivo</c>). La etiqueta sale de
+    /// <see cref="EtiquetasDeCategoriaDeGasto"/>, armada como <c>CASE</c> sobre el enum.</summary>
+    private static readonly Expression<Func<Unido, string>> ConceptoVisible = ConstruirConceptoVisible();
+
+    private static Expression<Func<Unido, string>> ConstruirConceptoVisible()
+    {
+        var x = Expression.Parameter(typeof(Unido), "x");
+        var categoria = Expression.Property(x, nameof(Unido.GastoCategoria));
+        var concepto = Expression.Property(x, nameof(Unido.GastoConcepto));
+        var propio = Expression.Property(Expression.Property(x, nameof(Unido.M)), nameof(MovimientoTesoreria.Concepto));
+
+        var etiqueta = EtiquetaPorCaso.De(categoria, EtiquetasDeCategoriaDeGasto.Todas, Expression.Constant(string.Empty));
+        var concatenar = typeof(string).GetMethod(nameof(string.Concat), [typeof(string), typeof(string), typeof(string)])!;
+        var conGasto = Expression.Call(concatenar, etiqueta, Expression.Constant(" — "), concepto);
+
+        return Expression.Lambda<Func<Unido, string>>(
+            Expression.Condition(Expression.NotEqual(concepto, Expression.Constant(null, typeof(string))), conGasto, propio),
+            x);
     }
 
     public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeTesoreria> ClavesDeOrden =

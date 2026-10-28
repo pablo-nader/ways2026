@@ -660,13 +660,15 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Equal(50m, primera.Final);
     }
 
-    /// <summary>El concepto ordena por el concepto del gasto de origen (el que muestra la celda) y no por el
-    /// concepto genérico que el movimiento grabó al escribirse: si el gasto se edita después, el orden sigue a lo
-    /// que se ve. Mutación: ordenar por <c>M.Concepto</c> a secas manda la fila del gasto al final.</summary>
+    /// <summary>El concepto ordena por el texto de la celda: "Etiqueta de categoría — concepto" en las filas de gasto
+    /// (con el concepto del gasto, que puede editarse después del movimiento) y el concepto propio en el resto. El
+    /// orden por etiqueta difiere del orden por concepto a secas: "Impuestos — zz…" va antes que "Sueldos — aa…".
+    /// Mutación: ordenar por <c>GastoConcepto ?? M.Concepto</c> deja el gasto de Sueldos antes que el de Impuestos.
+    /// Lista espejo de etiquetas: <c>EtiquetasDeCategoriaDeGastoTests</c> (backend) y <c>tipos.test.ts</c> (web).</summary>
     [Theory]
-    [InlineData("ascendente", "G,M,P")]
-    [InlineData("descendente", "P,M,G")]
-    public async Task ElConceptoOrdenaPorElConceptoDelGastoDeOrigen(string direccion, string esperado)
+    [InlineData("ascendente", "I,M,S")]
+    [InlineData("descendente", "S,M,I")]
+    public async Task ElConceptoOrdenaPorElTextoDeLaCeldaConLaEtiquetaDeCategoria(string direccion, string esperado)
     {
         var ctx = await PrepararAsync($"TesConcepto{direccion}");
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
@@ -674,29 +676,32 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
             var idMedioEfectivo = await db.MediosPago
                 .Where(m => m.Comportamiento == Ways.Domain.Catalogos.ComportamientoMedioPago.Efectivo)
                 .Select(m => m.Id).FirstAsync();
-            var alta = await ctx.Admin.PostAsJsonAsync(
-                "/api/gastos/administracion",
-                new SolicitudDeGastoDeAdministracion(
-                    new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, CategoriaGasto.Otros, null, null,
-                    "zz concepto original", null, idMedioEfectivo, null, 15000m));
-            Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+            foreach (var (categoria, concepto) in new[] { (CategoriaGasto.Sueldos, "zz original"), (CategoriaGasto.Impuestos, "zz impuesto") })
+            {
+                var alta = await ctx.Admin.PostAsJsonAsync(
+                    "/api/gastos/administracion",
+                    new SolicitudDeGastoDeAdministracion(
+                        new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, categoria, null, null,
+                        concepto, null, idMedioEfectivo, null, 15000m));
+                Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+            }
 
-            var gasto = await db.Gastos.SingleAsync();
-            gasto.Concepto = "aa concepto editado";
+            var gastoDeSueldos = await db.Gastos.SingleAsync(g => g.Categoria == CategoriaGasto.Sueldos);
+            gastoDeSueldos.Concepto = "aa editado";
             await db.SaveChangesAsync();
         }
 
         var (admin, _, _) = await EmpleadosPorIdAsync(ctx);
-        var idM = await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.RetiroCaja, "mm uno", null, admin, 2, 0m, 5m, 0m);
-        var idP = await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.RetiroCaja, "pp dos", null, admin, 3, 5m, 5m, 0m);
+        var idM = await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.RetiroCaja, "Mm uno", null, admin, 2, 0m, 5m, 0m);
 
         var respuesta = await ctx.Admin.GetAsync(
             $"/api/reportes/tesoreria?{ConstruirQuery(ctx.IdEmpresa, null, null, null)}&orden=concepto&direccion={direccion}&tamanio=10");
         var libro = JsonSerializer.Deserialize<PaginaDeMovimientosTesoreria>(await respuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
 
-        var filaDelGasto = Assert.Single(libro.Items, m => m.Tipo == TipoMovimientoTesoreria.Gasto);
-        Assert.Equal("aa concepto editado", filaDelGasto.GastoConcepto);
-        var porClave = new Dictionary<string, int> { ["G"] = filaDelGasto.Id, ["M"] = idM, ["P"] = idP };
+        var filaDeSueldos = Assert.Single(libro.Items, m => m.GastoCategoria == CategoriaGasto.Sueldos);
+        var filaDeImpuestos = Assert.Single(libro.Items, m => m.GastoCategoria == CategoriaGasto.Impuestos);
+        Assert.Equal("aa editado", filaDeSueldos.GastoConcepto);
+        var porClave = new Dictionary<string, int> { ["S"] = filaDeSueldos.Id, ["I"] = filaDeImpuestos.Id, ["M"] = idM };
         Assert.Equal(esperado.Split(',').Select(k => porClave[k]).ToList(), libro.Items.Select(m => m.Id).ToList());
     }
 

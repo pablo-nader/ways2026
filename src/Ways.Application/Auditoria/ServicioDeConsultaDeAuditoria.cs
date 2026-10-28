@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
@@ -116,9 +117,8 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
 
         // El orden va ANTES de proyectar a FilaCrudaDeAuditoria (un record posicional no traduce en un
         // key selector): se ordena sobre `Unido`, una clase con inicializador de miembros, y recién
-        // después se proyecta. El LEFT JOIN a puntos de venta pasa por el DbSet filtrado: un punto de
-        // venta dado de baja o colgante llega como null, igual que un evento de todo el tenant.
-        var unido =
+        // después se proyecta.
+        var baseUnida =
             from a in db.Auditoria
             where (f.Desde == null || a.CreadoEl >= f.Desde)
                && (f.Hasta == null || a.CreadoEl <= f.Hasta)
@@ -129,9 +129,17 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
                && (f.IdPuntoVenta == null || a.IdPuntoVenta == f.IdPuntoVenta)
             join u in db.Usuarios.IgnoreQueryFilters(["BajaLogica"]) on a.IdActor equals u.Id into actores
             from u in actores.DefaultIfEmpty()
-            join pv in db.PuntosVenta on a.IdPuntoVenta equals pv.Id into puntosVenta
-            from pv in puntosVenta.DefaultIfEmpty()
-            select new Unido { A = a, Actor = u == null ? null : u.NombreUsuario, PuntoVenta = pv == null ? null : pv.Nombre };
+            select new Unido { A = a, Actor = u == null ? null : u.NombreUsuario };
+
+        // El LEFT JOIN a puntos de venta existe SOLO cuando se ordena por esa columna: el listado de
+        // siempre, el conteo y el export no lo pagan. Pasa por el DbSet filtrado: un punto de venta dado de
+        // baja o colgante llega como null, igual que un evento de todo el tenant.
+        var unido = orden is { Columna: ColumnaDeOrdenDeAuditoria.PuntoVenta }
+            ? from x in baseUnida
+              join pv in db.PuntosVenta on x.A.IdPuntoVenta equals pv.Id into puntosVenta
+              from pv in puntosVenta.DefaultIfEmpty()
+              select new Unido { A = x.A, Actor = x.Actor, PuntoVenta = pv == null ? null : pv.Nombre }
+            : baseUnida;
 
         return Ordenar(unido, orden).Select(x => new FilaCrudaDeAuditoria(
             x.A.Id, x.A.CreadoEl, x.A.Accion, x.A.Entidad, x.A.IdEntidad, x.A.IdActor,
@@ -142,7 +150,8 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
     /// export). Con orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate, para que dos
     /// páginas consecutivas nunca repitan ni salteen una fila. Los vacíos (actor sin usuario visible,
     /// evento de todo el tenant o con punto de venta que ya no resuelve) van al final en las dos
-    /// direcciones. La acción ordena por su código, no por la etiqueta del catálogo de la pantalla.</summary>
+    /// direcciones. La acción ordena por la etiqueta que muestra la celda
+    /// (<see cref="EtiquetasDeAccion"/>; sin etiqueta, el código crudo, como la pantalla).</summary>
     private static IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeListado<ColumnaDeOrdenDeAuditoria>? orden)
     {
         if (orden is not { } pedido)
@@ -157,8 +166,8 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
                 ? query.OrderByDescending(x => x.A.CreadoEl)
                 : query.OrderBy(x => x.A.CreadoEl),
             ColumnaDeOrdenDeAuditoria.Accion => desc
-                ? query.OrderByDescending(x => x.A.Accion)
-                : query.OrderBy(x => x.A.Accion),
+                ? query.OrderByDescending(AccionVisible)
+                : query.OrderBy(AccionVisible),
             ColumnaDeOrdenDeAuditoria.Entidad => desc
                 ? query.OrderByDescending(x => x.A.Entidad)
                 : query.OrderBy(x => x.A.Entidad),
@@ -175,6 +184,40 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
         };
 
         return ordenado.ThenBy(x => x.A.Id);
+    }
+
+    /// <summary>Etiquetas en español de las acciones que muestra la pantalla de auditoría. Espejo de
+    /// <c>CATALOGO_DE_ACCIONES_AUDITADAS</c> en <c>Ways.Web/src/api/tipos.ts</c> (la base solo guarda el
+    /// código): que no se desfasen lo cuidan <c>EtiquetasDeAccionTests</c> (backend) y el test de
+    /// <c>CATALOGO_DE_ACCIONES_AUDITADAS</c> en <c>tipos.test.ts</c> (web), que fijan la misma lista literal.
+    /// Una acción sin etiqueta se muestra, y por lo tanto se ordena, por su código.</summary>
+    public static readonly IReadOnlyDictionary<string, string> EtiquetasDeAccion =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["precio.cambio"] = "Cambio de precio",
+            ["venta.anulacion"] = "Anulación de venta",
+            ["compra.anulacion"] = "Anulación de compra",
+            ["stock.ajuste"] = "Ajuste de stock",
+            ["stock.decomiso"] = "Decomiso de stock",
+            ["stock.conteo"] = "Conteo de inventario",
+            ["cc.reliquidacion"] = "Reliquidación de cuenta corriente",
+            ["usuario.alta"] = "Alta de usuario",
+            ["usuario.actualizacion"] = "Actualización de usuario",
+            ["usuario.baja"] = "Baja de usuario",
+            ["usuario.desbloqueo"] = "Desbloqueo de usuario",
+            ["usuario.password"] = "Cambio de contraseña",
+            ["tenant.baja"] = "Baja de tenant",
+            ["empresa.baja"] = "Baja de empresa",
+            ["pv.baja"] = "Baja de punto de venta",
+        };
+
+    private static readonly Expression<Func<Unido, string>> AccionVisible = ConstruirAccionVisible();
+
+    private static Expression<Func<Unido, string>> ConstruirAccionVisible()
+    {
+        var x = Expression.Parameter(typeof(Unido), "x");
+        var codigo = Expression.Property(Expression.Property(x, nameof(Unido.A)), nameof(Domain.Auditoria.Auditoria.Accion));
+        return Expression.Lambda<Func<Unido, string>>(EtiquetaPorCaso.De(codigo, EtiquetasDeAccion, codigo), x);
     }
 
     public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeAuditoria> ClavesDeOrden =
