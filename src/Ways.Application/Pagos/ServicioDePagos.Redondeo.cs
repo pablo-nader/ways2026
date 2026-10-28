@@ -213,18 +213,19 @@ public partial class ServicioDePagos
     }
 
     /// <summary>
-    /// Compensaciones del redondeo en la edición y la baja de un pago, con el pago y todas sus compras bloqueados: (1) si la
-    /// baja o un cambio del importe, el redondeo del lado del pago se revierte (el disponible vuelve a ser importe −
-    /// aplicado); (2) cada compra confirmada a la que el pago aplica menos que antes revierte su redondeo del lado de la
+    /// Compensaciones del redondeo en la edición y la baja de un pago, con el pago y todas sus compras bloqueados: (1) con
+    /// la baja, un cambio del importe o un cambio de proveedor o de categoría (el pago deja la cuenta en la que se
+    /// absorbió la diferencia), el redondeo del lado del pago se revierte y el disponible vuelve a ser importe −
+    /// aplicado; (2) cada compra confirmada a la que el pago aplica menos que antes revierte su redondeo del lado de la
     /// compra, porque perdonaba una diferencia que dependía de esa aplicación. Una compra a la que se aplica igual o más
     /// no se toca. Corre después de las escrituras de aplicaciones y antes de la tesorería, que va última.
     /// </summary>
     private async Task CompensarElRedondeoAsync(
         int idTenant, Pago pago, decimal importeAnterior, IReadOnlyDictionary<int, decimal> aplicadoAntesPorCompra,
-        IReadOnlyDictionary<int, CompraBloqueada> comprasBloqueadas, bool esBaja, string motivo, int idEmpleado,
-        DateTimeOffset momento, CancellationToken ct)
+        IReadOnlyDictionary<int, CompraBloqueada> comprasBloqueadas, bool esBaja, bool cambiaLaCuenta, string motivo,
+        int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
-        if (esBaja || pago.Importe != importeAnterior)
+        if (esBaja || cambiaLaCuenta || pago.Importe != importeAnterior)
         {
             await RevertirRedondeoDelPagoAsync(idTenant, pago, idEmpleado, momento, motivo, ct);
         }

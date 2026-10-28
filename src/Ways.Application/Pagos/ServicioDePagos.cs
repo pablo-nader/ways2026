@@ -771,6 +771,7 @@ public partial class ServicioDePagos(
 
         await CompensarElRedondeoAsync(
             idTenant, pago, anterior.Importe, aplicadoAntesPorCompra, comprasBloqueadas, esBaja: solicitud is null,
+            cambiaLaCuenta: anterior.IdProveedor != pago.IdProveedor || anterior.Categoria != pago.Categoria,
             detalle, idEmpleado, momento, ct);
 
         if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(pago.OrigenFondos, anterior, nuevo))

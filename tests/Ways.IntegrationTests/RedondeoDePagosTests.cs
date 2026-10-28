@@ -446,6 +446,32 @@ public class RedondeoDePagosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     [Fact]
+    public async Task SacarDeLaCuentaDelProveedorUnPagoConRedondeoLoRevierte()
+    {
+        var ctx = await PrepararAsync(nameof(SacarDeLaCuentaDelProveedorUnPagoConRedondeoLoRevierte));
+        var suelto = await LeerAsync<PagoConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/pagos/administracion",
+                new SolicitudDePagoDeAdministracionConLineas(
+                    Ayer(), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
+                    "A cuenta", null, null, [new LineaDePago(ctx.IdEfectivo, 50m, null)])),
+            HttpStatusCode.Created);
+        await LeerAsync<ResultadoDeRedondeoDePago>(
+            await ctx.Admin.PostAsync($"/api/pagos/{suelto.Id}/ajuste-de-redondeo", null), HttpStatusCode.OK);
+        Assert.Equal(0m, await SaldoDelProveedorAsync(ctx));
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/pagos/administracion/{suelto.Id}",
+            new SolicitudDeEdicionDePagoConLineas(
+                CategoriaPago.Otros, null, null, "Ya no es del proveedor", null, null,
+                [new LineaDePago(ctx.IdEfectivo, 50m, null)]));
+        Assert.True(edicion.IsSuccessStatusCode, await edicion.Content.ReadAsStringAsync());
+
+        Assert.Equal(0m, (await RedondeosAsync(ctx)).Sum(m => m.Importe));
+        Assert.Equal(0m, await SaldoDelProveedorAsync(ctx));
+    }
+
+    [Fact]
     public async Task EditarElConceptoDeUnPagoConRedondeoNoLoRevierte()
     {
         var ctx = await PrepararAsync(nameof(EditarElConceptoDeUnPagoConRedondeoNoLoRevierte));
