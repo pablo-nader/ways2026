@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Ventas;
 using Ways.Domain.Ventas;
 
@@ -8,12 +8,12 @@ namespace Ways.Application.Caja;
 
 /// <summary>
 /// Líneas del detalle de turno (stage-11-exportacion-reportes, spec historico-de-cajas: G2 Detail
-/// Reuses ResumenDeTurno Plus Ticket And Gasto Listings) — dos lecturas indexadas llanas por
+/// Reuses ResumenDeTurno Plus Ticket And Pago Listings) — dos lecturas indexadas llanas por
 /// <c>id_turno_caja</c>, ninguna derivación nueva: los tickets del turno (anulados excluidos,
 /// MISMO filtro que <see cref="ServicioDeResumenDeTurno"/>/<see cref="LectorDeContenidoDeResumen"/>
-/// — spec: Anulados Are Excluded From The Derivation) y sus gastos, sin filtrar por categoría.
+/// — spec: Anulados Are Excluded From The Derivation) y sus pagos, sin filtrar por categoría.
 /// Reusa los DTOs de listado ya existentes (<see cref="ComprobanteListado"/>/
-/// <see cref="GastoListado"/>) — mismo shape que <c>GET /api/ventas</c>/<c>GET /api/gastos</c>,
+/// <see cref="PagoListado"/>) — mismo shape que <c>GET /api/ventas</c>/<c>GET /api/gastos</c>,
 /// nunca un tercer contrato para la misma fila.
 /// </summary>
 public class LectorDeLineasDelTurno(IWaysDbContext db)
@@ -39,10 +39,10 @@ public class LectorDeLineasDelTurno(IWaysDbContext db)
             .ToList();
     }
 
-    public async Task<IReadOnlyList<GastoListado>> LeerGastosAsync(int idTurnoCaja, CancellationToken ct = default) =>
-        await db.Gastos
+    public async Task<IReadOnlyList<PagoListado>> LeerPagosAsync(int idTurnoCaja, CancellationToken ct = default) =>
+        await db.Pagos
             .Where(g => g.IdTurnoCaja == idTurnoCaja)
             .OrderBy(g => g.Fecha).ThenBy(g => g.Id)
-            .Select(ProyeccionesDeGasto.Listado(db))
+            .Select(ProyeccionesDePago.Listado(db))
             .ToListAsync(ct);
 }

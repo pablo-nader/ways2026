@@ -15,7 +15,7 @@ using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Reportes;
@@ -28,7 +28,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// stage-11-exportacion-reportes, Slice 2 (tasks 2.4-2.8): los ocho export siblings restantes de
 /// stage-10 (por-punto-venta, por-vendedor, por-medio-pago, articulos/top, compras/por-proveedor,
-/// gastos/resumen, rentabilidad, comisiones) — mismo patrón que
+/// pagos/resumen, rentabilidad, comisiones) — mismo patrón que
 /// <see cref="ReportesVentasResumenExportTests"/> (equality + 403), más el bloque de cobertura de
 /// rentabilidad y la etiqueta PROVISIONAL de comisiones (spec rentabilidad-y-comisiones:
 /// Rentabilidad And Comisiones Exports Stack LecturaDeRentabilidad And Carry Coverage). Sembrado
@@ -275,13 +275,13 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    private async Task SembrarGastoAsync(Contexto ctx, int idTurno, decimal importe)
+    private async Task SembrarPagoDeTurnoAsync(Contexto ctx, int idTurno, decimal importe)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
         var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
-        db.Gastos.Add(new Gasto
+        db.Pagos.Add(new Pago
         {
             IdTenant = ctx.IdTenant,
             Fecha = MediodiaUtc,
@@ -289,8 +289,8 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdTurnoCaja = idTurno,
             IdEmpleado = 1,
-            Categoria = CategoriaGasto.Otros,
-            OrigenFondos = OrigenFondosGasto.CajaTurno,
+            Categoria = CategoriaPago.Otros,
+            OrigenFondos = OrigenFondosPago.CajaTurno,
             Concepto = "Gasto export slice 2",
             IdMedioPago = ctx.IdMedioPagoEfectivo,
             Importe = importe,
@@ -464,15 +464,15 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     }
 
     [Fact]
-    public async Task ElExportDeGastosResumenEsIgualAlEndpointJson()
+    public async Task ElExportDePagosResumenEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeGastosResumenEsIgualAlEndpointJson), fixture);
+        var ctx = await PrepararAsync(nameof(ElExportDePagosResumenEsIgualAlEndpointJson), fixture);
         var idTurno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
-        await SembrarGastoAsync(ctx, idTurno, 700m);
+        await SembrarPagoDeTurnoAsync(ctx, idTurno, 700m);
 
         var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/gastos/resumen?{Rango(ctx.IdEmpresa)}&granularidad=Dia");
         Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
-        var reporte = JsonSerializer.Deserialize<ResumenDeGastos>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        var reporte = JsonSerializer.Deserialize<ResumenDePagos>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
         Assert.Single(reporte.Serie);
 
         using var libro = await DescargarLibroAsync(
@@ -683,7 +683,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     /// de 400. Un solo <c>[Theory]</c> con un caso por ruta (en vez de ocho <c>[Fact]</c>s) porque
     /// las ocho comparten los mismos parámetros obligatorios (idEmpresa,
     /// desde, hasta, formato); <c>granularidad=Dia</c> viaja siempre en la query aunque solo
-    /// <c>gastos/resumen/export</c> la exija — minimal API ignora los query params no declarados
+    /// <c>pagos/resumen/export</c> la exija — minimal API ignora los query params no declarados
     /// por una ruta, así que no rompe a las otras siete. Sin datos sembrados: <c>Parsear</c> corta
     /// ANTES de tocar el servicio de reportes, mismo criterio que el resto del barrido.</summary>
     [Theory]
@@ -713,7 +713,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     //   - por-punto-venta / por-vendedor / por-medio-pago / articulos-top / comisiones: sin fila de
     //     totales (ExportacionDeReportes.De no le agrega una) — 1 comprobante/línea sembrada ⇒
     //     tabla.Filas.Count == 1 ⇒ tope éxito = 1, tope rechazo = 0.
-    //   - compras-por-proveedor / gastos-resumen / rentabilidad: SÍ agregan una fila de totales
+    //   - compras-por-proveedor / pagos-resumen / rentabilidad: SÍ agregan una fila de totales
     //     (ExportacionDeReportes.De) — 1 fila de negocio sembrada ⇒ tabla.Filas.Count == 2 (dato +
     //     totales) ⇒ tope éxito = 2, tope rechazo = 1.
 
@@ -952,21 +952,21 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Contains("tiene 2 filas", problema.GetProperty("title").GetString());
     }
 
-    /// <summary>Ruta <c>gastos/resumen/export</c>: 1 gasto (mismo criterio de
-    /// <c>ElExportDeGastosResumenEsIgualAlEndpointJson</c>) ⇒ <c>Serie.Count == 1</c> MÁS la fila de
-    /// totales que <c>ExportacionDeReportes.De(ResumenDeGastos, …)</c> siempre agrega (línea 197:
+    /// <summary>Ruta <c>pagos/resumen/export</c>: 1 pago (mismo criterio de
+    /// <c>ElExportDePagosResumenEsIgualAlEndpointJson</c>) ⇒ <c>Serie.Count == 1</c> MÁS la fila de
+    /// totales que <c>ExportacionDeReportes.De(ResumenDePagos, …)</c> siempre agrega (línea 197:
     /// <c>filas.Add([… ImporteTotal])</c>) ⇒ <c>tabla.Filas.Count == 2</c> ⇒ tope éxito 2 / rechazo
     /// 1.</summary>
     [Fact]
-    public async Task UnaExportacionDeGastosResumenExactamenteEnElTopeSeAceptaCompleta()
+    public async Task UnaExportacionDePagosResumenExactamenteEnElTopeSeAceptaCompleta()
     {
         using var factoryBajo = fixture.WithWebHostBuilder(builder =>
             builder.ConfigureServices(services =>
                 services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 2)));
 
-        var ctx = await PrepararAsync(nameof(UnaExportacionDeGastosResumenExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePagosResumenExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
         var idTurno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
-        await SembrarGastoAsync(ctx, idTurno, 700m);
+        await SembrarPagoDeTurnoAsync(ctx, idTurno, 700m);
 
         using var libro = await DescargarLibroAsync(
             ctx.Admin, $"/api/reportes/gastos/resumen/export?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=xlsx");
@@ -977,19 +977,19 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         Assert.True(hoja.Row(9).IsEmpty());
     }
 
-    /// <summary>Contraparte de rechazo de <c>gastos/resumen/export</c>: con <c>TopeDeFilas = 1</c>
+    /// <summary>Contraparte de rechazo de <c>pagos/resumen/export</c>: con <c>TopeDeFilas = 1</c>
     /// las 2 filas reales (bucket + totales) superan el tope — sin este par, la ruta no tenía ningún
     /// test de tope.</summary>
     [Fact]
-    public async Task UnaExportacionDeGastosResumenQueSuperaElTopeSeRechazaConLaCantidadReal()
+    public async Task UnaExportacionDePagosResumenQueSuperaElTopeSeRechazaConLaCantidadReal()
     {
         using var factoryBajo = fixture.WithWebHostBuilder(builder =>
             builder.ConfigureServices(services =>
                 services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
 
-        var ctx = await PrepararAsync(nameof(UnaExportacionDeGastosResumenQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePagosResumenQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
         var idTurno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
-        await SembrarGastoAsync(ctx, idTurno, 700m);
+        await SembrarPagoDeTurnoAsync(ctx, idTurno, 700m);
 
         var respuesta = await LlamarExportSinValidarAsync(
             ctx.Admin, $"/api/reportes/gastos/resumen/export?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=xlsx");

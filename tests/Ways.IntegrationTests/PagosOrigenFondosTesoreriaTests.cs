@@ -5,12 +5,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -19,14 +19,14 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// stage-gastos-origen-fondos-pos (PR2): <c>SolicitudDeGasto.OrigenFondos</c> punta a punta —
-/// <see cref="OrigenFondosGasto.Tesoreria"/> escribe su propio <see cref="MovimientoTesoreria"/>
+/// stage-gastos-origen-fondos-pos (PR2): <c>SolicitudDePago.OrigenFondos</c> punta a punta —
+/// <see cref="OrigenFondosPago.Tesoreria"/> escribe su propio <see cref="MovimientoTesoreria"/>
 /// encadenado (mismo protocolo que el cierre, vía <see cref="EscriturasDeTesoreria"/>), queda
-/// EXCLUIDO de todo cálculo de arqueo, y el cierre deja de restar gastos de la tesorería (spec:
-/// gastos / origen tesorería no afecta el arqueo del turno).
+/// EXCLUIDO de todo cálculo de arqueo, y el cierre deja de restar pagos de la tesorería (spec:
+/// pagos / origen tesorería no afecta el arqueo del turno).
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class PagosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private static readonly JsonSerializerOptions OpcionesJson = new()
     {
@@ -78,17 +78,17 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!;
     }
 
-    private static async Task<GastoRegistrado> RegistrarGastoAsync(
-        Contexto ctx, int idMedioPago, decimal importe, OrigenFondosGasto origenFondos, string concepto = "Gasto de prueba")
+    private static async Task<PagoRegistrado> RegistrarPagoAsync(
+        Contexto ctx, int idMedioPago, decimal importe, OrigenFondosPago origenFondos, string concepto = "Gasto de prueba")
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, concepto, null, idMedioPago, null, importe,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, concepto, null, idMedioPago, null, importe,
                 IdComprobanteCompra: null, OrigenFondos: origenFondos));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
-        return JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
+        return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
     }
 
     // ---- dto-contract-honesty: OrigenFondos viaja de punta a punta -----------------------------
@@ -101,44 +101,44 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Sin origen explícito", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Sin origen explícito", null,
                 ctx.IdMedioEfectivo, null, 100m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
-        Assert.Equal(OrigenFondosGasto.CajaTurno, gasto.OrigenFondos);
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
+        Assert.Equal(OrigenFondosPago.CajaTurno, pago.OrigenFondos);
     }
 
     [Fact]
-    public async Task UnGastoDeOrigenTesoreriaPersisteElOrigenYNaceAtadoAlTurnoAbierto()
+    public async Task UnPagoDeOrigenTesoreriaPersisteElOrigenYNaceAtadoAlTurnoAbierto()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeOrigenTesoreriaPersisteElOrigenYNaceAtadoAlTurnoAbierto));
+        var ctx = await PrepararAsync(nameof(UnPagoDeOrigenTesoreriaPersisteElOrigenYNaceAtadoAlTurnoAbierto));
         var turno = await AbrirTurnoAsync(ctx);
 
-        var gasto = await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 300m, OrigenFondosGasto.Tesoreria);
+        var pago = await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 300m, OrigenFondosPago.Tesoreria);
 
-        Assert.Equal(OrigenFondosGasto.Tesoreria, gasto.OrigenFondos);
+        Assert.Equal(OrigenFondosPago.Tesoreria, pago.OrigenFondos);
         // Traceability: sigue atado al turno abierto aunque no afecte su arqueo.
-        Assert.Equal(turno.Id, gasto.IdTurnoCaja);
+        Assert.Equal(turno.Id, pago.IdTurnoCaja);
     }
 
-    // ---- el movimiento de tesorería que escribe el gasto ----------------------------------------
+    // ---- el movimiento de tesorería que escribe el pago ----------------------------------------
 
     [Fact]
-    public async Task UnGastoDeOrigenTesoreriaEscribeUnMovimientoDeTesoreriaEncadenadoConIdGasto()
+    public async Task UnPagoDeOrigenTesoreriaEscribeUnMovimientoDeTesoreriaEncadenadoConIdPago()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeOrigenTesoreriaEscribeUnMovimientoDeTesoreriaEncadenadoConIdGasto));
+        var ctx = await PrepararAsync(nameof(UnPagoDeOrigenTesoreriaEscribeUnMovimientoDeTesoreriaEncadenadoConIdPago));
         var turno = await AbrirTurnoAsync(ctx);
 
-        var gasto = await RegistrarGastoAsync(
-            ctx, ctx.IdMedioEfectivo, 250m, OrigenFondosGasto.Tesoreria, concepto: "Flete de mercadería");
+        var pago = await RegistrarPagoAsync(
+            ctx, ctx.IdMedioEfectivo, 250m, OrigenFondosPago.Tesoreria, concepto: "Flete de mercadería");
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var movimiento = await db.MovimientosTesoreria.Where(m => m.IdGasto == gasto.Id).SingleAsync();
+        var movimiento = await db.MovimientosTesoreria.Where(m => m.IdPago == pago.Id).SingleAsync();
 
-        Assert.Equal(TipoMovimientoTesoreria.Gasto, movimiento.Tipo);
+        Assert.Equal(TipoMovimientoTesoreria.Pago, movimiento.Tipo);
         Assert.Equal(turno.Id, movimiento.IdTurnoCaja);
         Assert.Equal(ctx.IdPuntoVenta, movimiento.IdPuntoVenta);
         Assert.Equal("Flete de mercadería", movimiento.Concepto);
@@ -152,49 +152,49 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
     }
 
     [Fact]
-    public async Task DosGastosDeTesoreriaSeguidosEncadenanElInicioDesdeElFinalDelAnterior()
+    public async Task DosPagosDeTesoreriaSeguidosEncadenanElInicioDesdeElFinalDelAnterior()
     {
-        var ctx = await PrepararAsync(nameof(DosGastosDeTesoreriaSeguidosEncadenanElInicioDesdeElFinalDelAnterior));
+        var ctx = await PrepararAsync(nameof(DosPagosDeTesoreriaSeguidosEncadenanElInicioDesdeElFinalDelAnterior));
         await AbrirTurnoAsync(ctx);
 
-        var primero = await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 100m, OrigenFondosGasto.Tesoreria);
-        var segundo = await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 40m, OrigenFondosGasto.Tesoreria);
+        var primero = await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 100m, OrigenFondosPago.Tesoreria);
+        var segundo = await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 40m, OrigenFondosPago.Tesoreria);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var filaPrimero = await db.MovimientosTesoreria.Where(m => m.IdGasto == primero.Id).SingleAsync();
-        var filaSegundo = await db.MovimientosTesoreria.Where(m => m.IdGasto == segundo.Id).SingleAsync();
+        var filaPrimero = await db.MovimientosTesoreria.Where(m => m.IdPago == primero.Id).SingleAsync();
+        var filaSegundo = await db.MovimientosTesoreria.Where(m => m.IdPago == segundo.Id).SingleAsync();
 
         Assert.Equal(0m, filaPrimero.Inicio);
         Assert.Equal(-100m, filaPrimero.Final);
-        // La aserción discriminante: el segundo gasto encadena desde el FINAL del primero.
+        // La aserción discriminante: el segundo pago encadena desde el FINAL del primero.
         Assert.Equal(-100m, filaSegundo.Inicio);
         Assert.Equal(-140m, filaSegundo.Final);
     }
 
     // ---- exclusión del arqueo (mutation-proof-tests: filtro OrigenFondos en LectorDeMovimientosDelTurno) --
 
-    /// <summary>Cláusula bajo prueba: el filtro <c>g.OrigenFondos == OrigenFondosGasto.CajaTurno</c>
-    /// en <c>LectorDeMovimientosDelTurno.LeerAsync</c> (gastosPorMedio). Mutación verificada
+    /// <summary>Cláusula bajo prueba: el filtro <c>g.OrigenFondos == OrigenFondosPago.CajaTurno</c>
+    /// en <c>LectorDeMovimientosDelTurno.LeerAsync</c> (pagosPorMedio). Mutación verificada
     /// (mutation-proof-tests): quitando ese filtro, este test falla — el esperado de efectivo pasa
-    /// de 1000m a 700m (resta el gasto de tesorería) y el medio tarjeta se vuelve arqueable; con el
+    /// de 1000m a 700m (resta el pago de tesorería) y el medio tarjeta se vuelve arqueable; con el
     /// filtro restaurado, vuelve a verde.</summary>
     [Fact]
-    public async Task UnGastoDeOrigenTesoreriaNoAfectaElEsperadoDeNingunMedioNiLoVuelveArqueable()
+    public async Task UnPagoDeOrigenTesoreriaNoAfectaElEsperadoDeNingunMedioNiLoVuelveArqueable()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeOrigenTesoreriaNoAfectaElEsperadoDeNingunMedioNiLoVuelveArqueable));
+        var ctx = await PrepararAsync(nameof(UnPagoDeOrigenTesoreriaNoAfectaElEsperadoDeNingunMedioNiLoVuelveArqueable));
         var turno = await AbrirTurnoAsync(ctx, fondoInicial: 500m);
 
         await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 1000m);
-        // Gasto de tesorería sobre TARJETA — si el filtro faltara, tarjeta se volvería arqueable
+        // Pago de tesorería sobre TARJETA — si el filtro faltara, tarjeta se volvería arqueable
         // (TuvoFilas) y su esperado pasaría de "sin fila" a -300.
-        await RegistrarGastoAsync(ctx, ctx.IdMedioTarjeta, 300m, OrigenFondosGasto.Tesoreria);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioTarjeta, 300m, OrigenFondosPago.Tesoreria);
 
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>(
             $"/api/caja/turnos/{turno.Id}/resumen", OpcionesJson);
         Assert.NotNull(resumen);
 
         var efectivo = resumen!.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo);
-        // 1000 pagos - 0 gastos(caja_turno) + (500 fondo - 0 retiros) = 1500, no 1000 - 300 = 700.
+        // 1000 pagos - 0 pagos(caja_turno) + (500 fondo - 0 retiros) = 1500, no 1000 - 300 = 700.
         Assert.Equal(1500m, efectivo.ImporteEsperado);
 
         Assert.DoesNotContain(resumen.Medios, m => m.IdMedioPago == ctx.IdMedioTarjeta);
@@ -240,12 +240,12 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
         await db.SaveChangesAsync();
     }
 
-    // ---- el cierre deja de descontar gastos de la tesorería -------------------------------------
+    // ---- el cierre deja de descontar pagos de la tesorería -------------------------------------
 
     [Fact]
-    public async Task ElCierreEscribeEgresoCeroEIngresoIgualARetirosAunConGastosDeLosDosOrigenes()
+    public async Task ElCierreEscribeEgresoCeroEIngresoIgualARetirosAunConPagosDeLosDosOrigenes()
     {
-        var ctx = await PrepararAsync(nameof(ElCierreEscribeEgresoCeroEIngresoIgualARetirosAunConGastosDeLosDosOrigenes));
+        var ctx = await PrepararAsync(nameof(ElCierreEscribeEgresoCeroEIngresoIgualARetirosAunConPagosDeLosDosOrigenes));
         var turno = await AbrirTurnoAsync(ctx);
 
         var movimiento = await ctx.Admin.PostAsJsonAsync(
@@ -253,8 +253,8 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
             new SolicitudDeMovimiento(TipoMovimientoCaja.Retiro, 100m, "retiro de prueba"));
         Assert.Equal(HttpStatusCode.Created, movimiento.StatusCode);
 
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 40m, OrigenFondosGasto.CajaTurno);
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 25m, OrigenFondosGasto.Tesoreria);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 40m, OrigenFondosPago.CajaTurno);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 25m, OrigenFondosPago.Tesoreria);
 
         var cierre = await ctx.Admin.PostAsJsonAsync(
             $"/api/caja/turnos/{turno.Id}/cierre",
@@ -270,44 +270,44 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(100m, filaDeCierre.Ingreso);
         Assert.Equal(0m, filaDeCierre.Egreso);
 
-        // El gasto de tesorería sigue teniendo SU PROPIA fila (Tipo = Gasto) — el cierre no la toca.
+        // El pago de tesorería sigue teniendo SU PROPIA fila (Tipo = Pago) — el cierre no la toca.
         Assert.Equal(2, await db.MovimientosTesoreria.CountAsync(m => m.IdTurnoCaja == turno.Id));
     }
 
     // ---- el Z-report/historial listan los dos orígenes, sin filtrar -----------------------------
 
     [Fact]
-    public async Task ElHistorialDeGastosExponeElOrigenDeFondosDeCadaFila()
+    public async Task ElHistorialDePagosExponeElOrigenDeFondosDeCadaFila()
     {
-        var ctx = await PrepararAsync(nameof(ElHistorialDeGastosExponeElOrigenDeFondosDeCadaFila));
+        var ctx = await PrepararAsync(nameof(ElHistorialDePagosExponeElOrigenDeFondosDeCadaFila));
         await AbrirTurnoAsync(ctx);
 
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 50m, OrigenFondosGasto.CajaTurno);
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 70m, OrigenFondosGasto.Tesoreria);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 50m, OrigenFondosPago.CajaTurno);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 70m, OrigenFondosPago.Tesoreria);
 
-        var pagina = await ctx.Admin.GetFromJsonAsync<PaginaDeGastos>(
+        var pagina = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>(
             $"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
         Assert.NotNull(pagina);
         Assert.Equal(2, pagina!.Total);
-        Assert.Contains(pagina.Items, i => i.Importe == 50m && i.OrigenFondos == OrigenFondosGasto.CajaTurno);
-        Assert.Contains(pagina.Items, i => i.Importe == 70m && i.OrigenFondos == OrigenFondosGasto.Tesoreria);
+        Assert.Contains(pagina.Items, i => i.Importe == 50m && i.OrigenFondos == OrigenFondosPago.CajaTurno);
+        Assert.Contains(pagina.Items, i => i.Importe == 70m && i.OrigenFondos == OrigenFondosPago.Tesoreria);
     }
 
-    // ---- concurrencia: un gasto de tesorería (PV1) y un cierre (PV2), MISMA empresa -------------
+    // ---- concurrencia: un pago de tesorería (PV1) y un cierre (PV2), MISMA empresa -------------
 
-    /// <summary>single-read-under-lock: un gasto de origen Tesoreria en PV1 y un cierre en PV2 de
+    /// <summary>single-read-under-lock: un pago de origen Tesoreria en PV1 y un cierre en PV2 de
     /// la MISMA empresa comparten la cadena — el lock advisory de <see cref="EscriturasDeTesoreria"/>
     /// tiene que serializarlos. Rendezvous determinístico (mismo patrón que
     /// <c>OrganizacionTests.ElFlipDeModoQuePierdeLaCarreraAuditaYEscribeSobreElEstadoQueVioBajoElLock</c>):
-    /// el gasto se pausa justo después de abrir su transacción (antes de CUALQUIER lock, incluido
+    /// el pago se pausa justo después de abrir su transacción (antes de CUALQUIER lock, incluido
     /// el del turno), el cierre corre entero sobre un cliente limpio y comitea, y solo entonces el
-    /// gasto continúa. Si el gasto leyera el <c>Final</c> de la cadena ANTES del lock (el defecto
+    /// pago continúa. Si el pago leyera el <c>Final</c> de la cadena ANTES del lock (el defecto
     /// que esta skill previene), esta prueba lo mataría: encadenaría desde 0 en vez de desde el
     /// <c>Final</c> del cierre.</summary>
     [Fact]
-    public async Task UnGastoDeTesoreriaYUnCierreDeOtroPuntoDeVentaDeLaMismaEmpresaEncadenanSinPerderActualizaciones()
+    public async Task UnPagoDeTesoreriaYUnCierreDeOtroPuntoDeVentaDeLaMismaEmpresaEncadenanSinPerderActualizaciones()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeTesoreriaYUnCierreDeOtroPuntoDeVentaDeLaMismaEmpresaEncadenanSinPerderActualizaciones));
+        var ctx = await PrepararAsync(nameof(UnPagoDeTesoreriaYUnCierreDeOtroPuntoDeVentaDeLaMismaEmpresaEncadenanSinPerderActualizaciones));
 
         int idPuntoVenta2;
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
@@ -351,15 +351,15 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
             "/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
         Assert.Equal(HttpStatusCode.OK, loginPausado.StatusCode);
 
-        var tareaGasto = clientePausado.PostAsJsonAsync(
+        var tareaPago = clientePausado.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto de tesorería concurrente", null,
-                ctx.IdMedioEfectivo, null, 60m, IdComprobanteCompra: null, OrigenFondos: OrigenFondosGasto.Tesoreria));
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de tesorería concurrente", null,
+                ctx.IdMedioEfectivo, null, 60m, IdComprobanteCompra: null, OrigenFondos: OrigenFondosPago.Tesoreria));
 
         await transaccionIniciada.Task;
 
-        // Con el gasto pausado ANTES de cualquier lock, el cierre de PV2 corre entero y comitea.
+        // Con el pago pausado ANTES de cualquier lock, el cierre de PV2 corre entero y comitea.
         var cierrePv2 = await ctx.Admin.PostAsJsonAsync(
             $"/api/caja/turnos/{turnoPv2.Id}/cierre",
             new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 0m)], null));
@@ -368,26 +368,26 @@ public class GastosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFi
 
         puedeContinuar.TrySetResult();
 
-        var respuestaGasto = await tareaGasto;
-        var cuerpoGasto = await respuestaGasto.Content.ReadAsStringAsync();
-        Assert.True(respuestaGasto.StatusCode == HttpStatusCode.Created, cuerpoGasto);
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpoGasto, OpcionesJson)!;
+        var respuestaPago = await tareaPago;
+        var cuerpoPago = await respuestaPago.Content.ReadAsStringAsync();
+        Assert.True(respuestaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpoPago, OpcionesJson)!;
 
         await using var verificacion = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var filaCierre = await verificacion.MovimientosTesoreria
             .Where(m => m.IdTurnoCaja == turnoPv2.Id && m.Tipo == TipoMovimientoTesoreria.RetiroCaja)
             .SingleAsync();
-        var filaGasto = await verificacion.MovimientosTesoreria.Where(m => m.IdGasto == gasto.Id).SingleAsync();
+        var filaPago = await verificacion.MovimientosTesoreria.Where(m => m.IdPago == pago.Id).SingleAsync();
 
         Assert.Equal(0m, filaCierre.Inicio);
         Assert.Equal(200m, filaCierre.Final);
 
-        // La aserción discriminante (single-read-under-lock): el gasto, que se resolvió DESPUÉS,
+        // La aserción discriminante (single-read-under-lock): el pago, que se resolvió DESPUÉS,
         // encadena desde el Final del cierre (200) — nunca desde 0. Si la lectura del `Final`
         // hubiera nacido antes del lock, este valor sería 0 y el CHECK de cadena seguiría
         // cumpliéndose igual (0 - 60 = -60), así que solo esta aserción de valor lo mata.
-        Assert.Equal(200m, filaGasto.Inicio);
-        Assert.Equal(140m, filaGasto.Final);
+        Assert.Equal(200m, filaPago.Inicio);
+        Assert.Equal(140m, filaPago.Final);
 
         Assert.Equal(2, await verificacion.MovimientosTesoreria.CountAsync(m => m.IdEmpresa == filaCierre.IdEmpresa));
     }

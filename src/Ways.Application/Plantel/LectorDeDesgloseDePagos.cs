@@ -4,7 +4,7 @@ using Ways.Application.Abstracciones;
 namespace Ways.Application.Plantel;
 
 /// <summary>
-/// Lee de qué se compuso cada pago del libro de personal: los gastos y el descuento de cuenta corriente que
+/// Lee de qué se compuso cada pago del libro de personal: los pagos y el descuento de cuenta corriente que
 /// apuntan a su movimiento. El nombre del medio de pago se resuelve con una subquery correlacionada (nunca un
 /// join), así que un medio dado de baja deja el nombre en <c>null</c> y no hace desaparecer la línea.
 /// </summary>
@@ -18,7 +18,7 @@ public static class LectorDeDesgloseDePagos
             return new Dictionary<int, DesgloseDePago>();
         }
 
-        var lineas = await db.Gastos
+        var lineas = await db.Pagos
             .Where(g => g.IdMovimientoPersonal != null && idsDeMovimientos.Contains(g.IdMovimientoPersonal.Value))
             .OrderBy(g => g.Id)
             .Select(g => new

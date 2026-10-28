@@ -90,19 +90,19 @@ public class ServicioDeComprasLockOrderTests
             fuente, "private async Task<ResultadoAnulacion> EjecutarAnulacionAsync(",
             "// ---- aplicar precio sugerido");
 
-        var indiceGastosLigados = metodo.IndexOf("db.Gastos.CountAsync(g => g.IdComprobanteCompra == id, ct);", StringComparison.Ordinal);
+        var indicePagosLigados = metodo.IndexOf("db.Pagos.CountAsync(g => g.IdComprobanteCompra == id, ct);", StringComparison.Ordinal);
         var indiceLockProveedor = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(", StringComparison.Ordinal);
         var indiceLedgerInsert = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(", StringComparison.Ordinal);
         var indiceCommit = metodo.IndexOf("transaccion.CommitAsync(ct);", StringComparison.Ordinal);
 
-        Assert.True(indiceGastosLigados >= 0, "No se encontró el conteo informativo de gastosLigados.");
+        Assert.True(indicePagosLigados >= 0, "No se encontró el conteo informativo de pagosLigados.");
         Assert.True(indiceLockProveedor >= 0, "No se encontró la llamada a ActualizarSaldoProveedorAsync.");
         Assert.True(indiceLedgerInsert >= 0, "No se encontró la llamada a InsertarMovimientoCcProveedorAsync.");
         Assert.True(indiceCommit >= 0, "No se encontró el commit de EjecutarAnulacionAsync.");
 
         Assert.True(
-            indiceLockProveedor > indiceGastosLigados,
-            "El lock de proveedores debe aparecer DESPUÉS del conteo informativo de gastosLigados (mutation target #19).");
+            indiceLockProveedor > indicePagosLigados,
+            "El lock de proveedores debe aparecer DESPUÉS del conteo informativo de pagosLigados (mutation target #19).");
         Assert.True(
             indiceLedgerInsert > indiceLockProveedor,
             "El INSERT del ledger de proveedor debe seguir inmediatamente al lock de saldo.");

@@ -2,7 +2,7 @@
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Ways.Domain.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Infrastructure.Multitenancy;
 
 #nullable disable
@@ -140,7 +140,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     id_punto_venta = table.Column<int>(type: "integer", nullable: false),
                     id_turno_caja = table.Column<int>(type: "integer", nullable: false),
                     id_empleado = table.Column<int>(type: "integer", nullable: false),
-                    categoria = table.Column<CategoriaGasto>(type: "categoria_gasto", nullable: false),
+                    categoria = table.Column<CategoriaPago>(type: "categoria_gasto", nullable: false),
                     id_proveedor = table.Column<int>(type: "integer", nullable: true),
                     id_area = table.Column<int>(type: "integer", nullable: true),
                     concepto = table.Column<string>(type: "text", nullable: false),

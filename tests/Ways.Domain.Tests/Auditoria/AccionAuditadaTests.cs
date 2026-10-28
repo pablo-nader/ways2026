@@ -14,7 +14,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// <c>caja.forzado</c> la agregó la guarda de rendición de cola de dispositivos: un cierre de
 /// turno forzado por encima de ella. <c>venta.sobrelimite</c> la agregó la venta local a clientes
 /// identificados: una venta con cuenta corriente que superó el límite sin poder validarlo.
-/// <c>gasto.edicion</c>/<c>gasto.baja</c> las agregó la edición y baja de gastos.
+/// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos.
 /// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
@@ -86,8 +86,8 @@ public partial class AccionAuditadaTests
             ("venta.discrepancia", "comprobante_venta"),
             ("caja.forzado", "turno_caja"),
             ("venta.sobrelimite", "comprobante_venta"),
-            ("gasto.edicion", "gasto"),
-            ("gasto.baja", "gasto"),
+            ("pago.edicion", "pago"),
+            ("pago.baja", "pago"),
             ("pv.alta", "punto_venta")
         ];
 

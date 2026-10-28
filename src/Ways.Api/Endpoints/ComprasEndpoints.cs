@@ -4,7 +4,7 @@ using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.Exportacion;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Domain.Compras;
 
 namespace Ways.Api.Endpoints;
@@ -37,7 +37,7 @@ public static class ComprasEndpoints
         .WithSummary(
             "Lista comprobantes de compra con filtros y paginado. idEmpresa (stage-tesoreria-por-" +
             "empresa, PR5) filtra por la empresa del punto de venta de la compra — usado por el " +
-            "picker 'Vincular a compra' de Gastos para no ofrecer compras de otra empresa. origen " +
+            "picker 'Vincular a compra' de Pagos para no ofrecer compras de otra empresa. origen " +
             "filtra por quién cargó la compra (Manual o Asistente); la API no permite fijarlo.");
 
         // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
@@ -133,10 +133,10 @@ public static class ComprasEndpoints
         .WithSummary("Anula una compra confirmada: contramovimientos de stock, nunca revierte costo_nominal.");
 
         grupo.MapPost("/{id:int}/pagos", async (
-            ServicioDeGastos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
+            ServicioDePagos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
         {
             var resultado = await servicio.PagarCompraAsync(id, solicitud, ct);
-            return Results.Created($"/api/gastos/administracion/{resultado.Gasto.Id}", resultado);
+            return Results.Created($"/api/gastos/administracion/{resultado.Pago.Id}", resultado);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(

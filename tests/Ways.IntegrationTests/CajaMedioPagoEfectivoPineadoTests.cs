@@ -211,7 +211,7 @@ public class CajaMedioPagoEfectivoPineadoTests(WaysApiFixture fixture) : IClassF
 
         Assert.Equal(antesDelCambio!.Diferencia, despuesDelCambio!.Diferencia);
         Assert.Equal(antesDelCambio.VentasEnEfectivoNetas, despuesDelCambio.VentasEnEfectivoNetas);
-        Assert.Equal(antesDelCambio.GastosEnEfectivo, despuesDelCambio.GastosEnEfectivo);
+        Assert.Equal(antesDelCambio.PagosEnEfectivo, despuesDelCambio.PagosEnEfectivo);
         Assert.Equal(antesDelCambio.TotalVentas, despuesDelCambio.TotalVentas);
         Assert.Equal(antesDelCambio.VentasPorMedio.Count, despuesDelCambio.VentasPorMedio.Count);
         foreach (var (esperado, obtenido) in antesDelCambio.VentasPorMedio.Zip(despuesDelCambio.VentasPorMedio))

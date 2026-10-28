@@ -10,7 +10,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
@@ -23,10 +23,10 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// GastosOrigenFondosYTesoreriaPorEmpresa (rls-migration-backfills): TRES de los cuatro bloques
-/// <c>Sql()</c> de la migración — <c>gastos.id_empresa</c>, <c>movimientos_tesoreria.id_empresa</c>
+/// <c>Sql()</c> de la migración — <c>pagos.id_empresa</c>, <c>movimientos_tesoreria.id_empresa</c>
 /// y el re-encadenado de <c>inicio</c>/<c>final</c> por <c>(id_tenant, id_empresa)</c> — sobre
 /// <c>ways_app</c> (NOSUPERUSER NOBYPASSRLS), mutation-proven (sin <c>SET LOCAL app.acceso =
-/// 'plataforma'</c>, cero filas afectadas). El cuarto bloque (<c>gastos.origen_fondos = 'caja_turno'</c>)
+/// 'plataforma'</c>, cero filas afectadas). El cuarto bloque (<c>pagos.origen_fondos = 'caja_turno'</c>)
 /// no tiene test propio: es un UPDATE incondicional de una sola columna con el mismo SET LOCAL,
 /// sin ninguna lógica de merge/partición que mutar. Mismo criterio que
 /// <c>ModoPuntoVentaBackfillTests</c>: SQL DUPLICADO a propósito respecto de la migración (una
@@ -45,14 +45,14 @@ namespace Ways.IntegrationTests;
 /// (sin <c>id_empresa</c>), esta fila se mezclaría en la cadena de la empresa X y el total cambiaría.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class PagosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string MigracionAnterior = "20260927000933_RendicionSaldadaEnReservaNumeracion";
 
     /// <summary>El mismo statement que el backfill 2/4 de <c>GastosOrigenFondosYTesoreriaPorEmpresa.Up</c>.</summary>
-    private const string SqlBackfillIdEmpresaGastos =
+    private const string SqlBackfillIdEmpresaPagos =
         """
-        UPDATE gastos g
+        UPDATE pagos g
            SET id_empresa = pv.id_empresa
           FROM puntos_venta pv
          WHERE pv.id_punto_venta = g.id_punto_venta
@@ -109,9 +109,9 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
         try
         {
             // Migra la base nueva SOLO hasta la migración inmediatamente anterior a la mía: sin
-            // id_empresa/id_gasto en movimientos_tesoreria, sin id_empresa/origen_fondos en gastos,
-            // id_turno_caja de gastos todavía NOT NULL. OrigenFondosGasto no se mapea a propósito:
-            // el tipo origen_fondos_gasto todavía no existe en este punto de la historia.
+            // id_empresa/id_pago en movimientos_tesoreria, sin id_empresa/origen_fondos en pagos,
+            // id_turno_caja de pagos todavía NOT NULL. OrigenFondosPago no se mapea a propósito:
+            // el tipo origen_fondos_pago todavía no existe en este punto de la historia.
             var opciones = new DbContextOptionsBuilder<WaysDbContext>()
                 .UseNpgsql(cadenaOwner, npgsql =>
                 {
@@ -128,7 +128,7 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -142,7 +142,7 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
                     npgsql.MapEnum<Ways.Domain.Fiscal.MotivoDeFacturacion>("motivo_facturacion");
                     npgsql.MapEnum<Ways.Domain.Fiscal.EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
-                    // OrigenFondosGasto NO se mapea: origen_fondos_gasto todavía no existe.
+                    // OrigenFondosPago NO se mapea: origen_fondos_pago todavía no existe.
                 })
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
                 .Options;
@@ -167,7 +167,7 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
 
             int idTenant;
             int idPuntoVenta1, idPuntoVenta2, idPuntoVenta3;
-            int idGasto;
+            int idPago;
             int idMovPv1Antes, idMovPv2Medio, idMovPv1Despues, idMovEmpresaY;
             var t1 = new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
             var t2 = new DateTimeOffset(2026, 9, 1, 11, 0, 0, TimeSpan.Zero);
@@ -256,9 +256,9 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
                     "VALUES ($1, $2, $3, $4, 0, 'abierto'::estado_turno, now(), now()) RETURNING id_turno_caja",
                     idTenant, idPuntoVenta1, idUsuario, t1);
 
-                // gastos: una sola fila sobre PV1 — prueba el backfill 2/4 (id_empresa desde
+                // pagos: una sola fila sobre PV1 — prueba el backfill 2/4 (id_empresa desde
                 // puntos_venta), id_turno_caja pre-migración todavía NOT NULL.
-                idGasto = await EscalarAsync(
+                idPago = await EscalarAsync(
                     "INSERT INTO gastos (id_tenant, fecha, id_punto_venta, id_turno_caja, id_empleado, categoria, " +
                     "concepto, id_medio_pago, importe, created_at, updated_at) " +
                     "VALUES ($1, $2, $3, $4, $5, 'otros'::categoria_gasto, 'Gasto de prueba', $6, 100, now(), now()) " +
@@ -317,9 +317,9 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
             {
                 await cruda.OpenAsync();
 
-                await using var comandoGastos = cruda.CreateCommand();
-                comandoGastos.CommandText = SqlBackfillIdEmpresaGastos;
-                Assert.Equal(0, await comandoGastos.ExecuteNonQueryAsync());
+                await using var comandoPagos = cruda.CreateCommand();
+                comandoPagos.CommandText = SqlBackfillIdEmpresaPagos;
+                Assert.Equal(0, await comandoPagos.ExecuteNonQueryAsync());
 
                 await using var comandoMovimientos = cruda.CreateCommand();
                 comandoMovimientos.CommandText = SqlBackfillIdEmpresaMovimientos;
@@ -335,9 +335,9 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
             {
                 await cruda.OpenAsync();
 
-                await using var comandoGastos = cruda.CreateCommand();
-                comandoGastos.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillIdEmpresaGastos;
-                Assert.Equal(1, await comandoGastos.ExecuteNonQueryAsync());
+                await using var comandoPagos = cruda.CreateCommand();
+                comandoPagos.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillIdEmpresaPagos;
+                Assert.Equal(1, await comandoPagos.ExecuteNonQueryAsync());
 
                 await using var comandoMovimientos = cruda.CreateCommand();
                 comandoMovimientos.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillIdEmpresaMovimientos;
@@ -363,18 +363,18 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
                     return (lector.GetInt32(0), lector.GetDecimal(1), lector.GetDecimal(2));
                 }
 
-                await using (var comandoGasto = verificacion.CreateCommand())
+                await using (var comandoPago = verificacion.CreateCommand())
                 {
-                    comandoGasto.CommandText = "SELECT id_empresa FROM gastos WHERE id_gasto = $1";
-                    comandoGasto.Parameters.Add(new NpgsqlParameter { Value = idGasto });
-                    var idEmpresaDelGasto = (int)(await comandoGasto.ExecuteScalarAsync())!;
+                    comandoPago.CommandText = "SELECT id_empresa FROM gastos WHERE id_gasto = $1";
+                    comandoPago.Parameters.Add(new NpgsqlParameter { Value = idPago });
+                    var idEmpresaDelPago = (int)(await comandoPago.ExecuteScalarAsync())!;
 
                     await using var comandoPv = verificacion.CreateCommand();
                     comandoPv.CommandText = "SELECT id_empresa FROM puntos_venta WHERE id_punto_venta = $1";
                     comandoPv.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta1 });
                     var idEmpresaEsperada = (int)(await comandoPv.ExecuteScalarAsync())!;
 
-                    Assert.Equal(idEmpresaEsperada, idEmpresaDelGasto);
+                    Assert.Equal(idEmpresaEsperada, idEmpresaDelPago);
                 }
 
                 // Cadena merged de la empresa X, ordenada por fecha (t1 < t2 < t3), IGNORANDO la
@@ -419,9 +419,9 @@ public class GastosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture 
             {
                 await cruda.OpenAsync();
 
-                await using var comandoGastos = cruda.CreateCommand();
-                comandoGastos.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillIdEmpresaGastos;
-                Assert.Equal(0, await comandoGastos.ExecuteNonQueryAsync());
+                await using var comandoPagos = cruda.CreateCommand();
+                comandoPagos.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillIdEmpresaPagos;
+                Assert.Equal(0, await comandoPagos.ExecuteNonQueryAsync());
 
                 await using var comandoMovimientos = cruda.CreateCommand();
                 comandoMovimientos.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillIdEmpresaMovimientos;

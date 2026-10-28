@@ -3,7 +3,7 @@ using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -18,7 +18,7 @@ namespace Ways.IntegrationTests;
 /// nivel EF (LINQ) por tabla. Cubre las cinco tablas nuevas de esta etapa.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class TurnosCajaYPagosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     public static TheoryData<string, string> TablasDeTenant => new()
     {
@@ -26,12 +26,12 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
         { "movimientos_caja", "id_movimiento" },
         { "arqueos_turno", "id_arqueo" },
         { "movimientos_tesoreria", "id_movimiento" },
-        { "gastos", "id_gasto" }
+        { "pagos", "id_pago" }
     };
 
     private sealed record Escenario(
         int IdTenant, int IdPuntoVenta, int IdEmpleado, int IdMedioPago, int IdMedioPagoAlterno,
-        int IdTurnoCaja, int IdMovimientoCaja, int IdArqueoTurno, int IdMovimientoTesoreria, int IdGasto);
+        int IdTurnoCaja, int IdMovimientoCaja, int IdArqueoTurno, int IdMovimientoTesoreria, int IdPago);
 
     /// <summary>Arma la cadena completa de prerequisitos y una fila en cada una de las cinco
     /// tablas nuevas, todas del mismo tenant A — comparte el escenario entero para no repetir
@@ -159,7 +159,7 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
         db.MovimientosTesoreria.Add(movimientoTesoreria);
         await db.SaveChangesAsync();
 
-        var gasto = new Gasto
+        var pago = new Pago
         {
             IdTenant = tenant.Id,
             Fecha = ahora,
@@ -167,20 +167,20 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
             IdPuntoVenta = puntoVenta.Id,
             IdTurnoCaja = turno.Id,
             IdEmpleado = usuario.Id,
-            Categoria = CategoriaGasto.Otros,
-            OrigenFondos = OrigenFondosGasto.CajaTurno,
-            Concepto = "gasto de prueba de RLS",
+            Categoria = CategoriaPago.Otros,
+            OrigenFondos = OrigenFondosPago.CajaTurno,
+            Concepto = "pago de prueba de RLS",
             IdMedioPago = medioPago.Id,
             Importe = 50m,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
-        db.Gastos.Add(gasto);
+        db.Pagos.Add(pago);
         await db.SaveChangesAsync();
 
         return new Escenario(
             tenant.Id, puntoVenta.Id, usuario.Id, medioPago.Id, medioPagoAlterno.Id,
-            turno.Id, movimientoCaja.Id, arqueoTurno.Id, movimientoTesoreria.Id, gasto.Id);
+            turno.Id, movimientoCaja.Id, arqueoTurno.Id, movimientoTesoreria.Id, pago.Id);
     }
 
     private static int IdDeFila(Escenario escenario, string tabla) => tabla switch
@@ -189,7 +189,7 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
         "movimientos_caja" => escenario.IdMovimientoCaja,
         "arqueos_turno" => escenario.IdArqueoTurno,
         "movimientos_tesoreria" => escenario.IdMovimientoTesoreria,
-        "gastos" => escenario.IdGasto,
+        "pagos" => escenario.IdPago,
         _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
     };
 
@@ -251,7 +251,7 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
             "movimientos_caja" => ("motivo", "'motivo actualizado por prueba'"),
             "arqueos_turno" => ("importe_declarado", "999"),
             "movimientos_tesoreria" => ("concepto", "'concepto actualizado'"),
-            "gastos" => ("updated_at", "now()"),
+            "pagos" => ("updated_at", "now()"),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
         };
 
@@ -295,7 +295,7 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
             "movimientos_caja" => await sesionB.MovimientosCaja.AnyAsync(m => m.Id == escenario.IdMovimientoCaja),
             "arqueos_turno" => await sesionB.ArqueosTurno.AnyAsync(a => a.Id == escenario.IdArqueoTurno),
             "movimientos_tesoreria" => await sesionB.MovimientosTesoreria.AnyAsync(m => m.Id == escenario.IdMovimientoTesoreria),
-            "gastos" => await sesionB.Gastos.AnyAsync(g => g.Id == escenario.IdGasto),
+            "pagos" => await sesionB.Pagos.AnyAsync(g => g.Id == escenario.IdPago),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
         };
 
@@ -375,10 +375,10 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdTurnoCaja });
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdEmpleado });
                 }),
-            "gastos" => (
-                "INSERT INTO gastos (id_tenant, fecha, id_punto_venta, id_turno_caja, id_empleado, " +
+            "pagos" => (
+                "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_turno_caja, id_empleado, " +
                 "categoria, concepto, id_medio_pago, importe, created_at, updated_at) " +
-                "VALUES ($1, $2, $3, $4, $5, 'otros', 'gasto intruso', $6, 10, $2, $2)",
+                "VALUES ($1, $2, $3, $4, $5, 'otros', 'pago intruso', $6, 10, $2, $2)",
                 c =>
                 {
                     c.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });

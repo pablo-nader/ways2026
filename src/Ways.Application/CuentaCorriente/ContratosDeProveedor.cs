@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Ways.Domain.CuentaCorriente;
 
 namespace Ways.Application.CuentaCorriente;
@@ -16,7 +17,7 @@ namespace Ways.Application.CuentaCorriente;
 /// </summary>
 public sealed record MovimientoDeCuentaDeProveedor(
     int IdMovimiento, DateTimeOffset Fecha, TipoMovimientoCcProveedor Tipo, decimal Importe,
-    decimal SaldoResultante, string? Detalle, int? IdComprobanteCompra, int? IdGasto,
+    decimal SaldoResultante, string? Detalle, int? IdComprobanteCompra, [property: JsonPropertyName("idGasto")] int? IdPago,
     EtiquetaDeAjuste? Etiqueta, decimal? SaldoPendienteDeLaCompra = null);
 
 /// <summary><see cref="Saldo"/> viene de <c>proveedores.saldo</c> (la caché de

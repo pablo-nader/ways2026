@@ -4,11 +4,11 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -28,7 +28,7 @@ namespace Ways.IntegrationTests;
 ///
 /// stage-tesoreria-por-empresa (PR5): <c>idEmpresa</c> pasa a ser el filtro OBLIGATORIO (ADR-8) y
 /// <c>idPuntoVenta</c> un filtro OPCIONAL adicional sobre la misma cadena — se agregan las pruebas
-/// de empresa multi-PV, 404 de empresa de otro tenant, filas sin punto de venta/con gasto de
+/// de empresa multi-PV, 404 de empresa de otro tenant, filas sin punto de venta/con pago de
 /// origen, y punto de venta dado de baja lógica.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -99,7 +99,7 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     }
 
     /// <summary>stage-tesoreria-por-empresa (PR5, mismo criterio que
-    /// <c>GastosDeAdministracionEndpointsTests.SembrarOtraEmpresaAsync</c>): segunda empresa +
+    /// <c>PagosDeAdministracionEndpointsTests.SembrarOtraEmpresaAsync</c>): segunda empresa +
     /// punto de venta del MISMO tenant, para probar el 404 ADR-8 de una empresa "ajena" que
     /// igualmente existe en la base (nunca visible desde el tenant de <paramref name="ctx"/> si el
     /// filtro/RLS estuviera roto).</summary>
@@ -352,9 +352,9 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Equal(ctx.IdPuntoVenta, fila.IdPuntoVenta);
         Assert.Equal(TipoMovimientoTesoreria.RetiroCaja, fila.Tipo);
         Assert.Equal("Cierre de turno de prueba", fila.Concepto);
-        Assert.Null(fila.IdGasto);
-        Assert.Null(fila.GastoCategoria);
-        Assert.Null(fila.GastoConcepto);
+        Assert.Null(fila.IdPago);
+        Assert.Null(fila.PagoCategoria);
+        Assert.Null(fila.PagoConcepto);
         Assert.Equal(500m, fila.Inicio);
         Assert.Equal(120m, fila.Ingreso);
         Assert.Equal(20m, fila.Egreso);
@@ -364,7 +364,7 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
 
     // ---- dangling-fk-read-models: punto de venta null / dado de baja lógica -------------------
 
-    /// <summary>Una fila sin punto de venta (gasto de administración sin PV, spec owner's use case
+    /// <summary>Una fila sin punto de venta (pago de administración sin PV, spec owner's use case
     /// 2) trae <c>idPuntoVenta</c>/<c>nombrePuntoVenta</c> ambos <c>null</c> — nunca rompe la
     /// fila.</summary>
     [Fact]
@@ -384,7 +384,7 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
 
     /// <summary>dangling-fk-read-models: un punto de venta dado de baja lógica DESPUÉS de que la
     /// fila fue escrita deja <c>nombrePuntoVenta</c> en <c>null</c> (mismo criterio que
-    /// <c>nombreProveedor</c>/<c>nombreArea</c> en <c>GastoDeAdministracionListado</c>), pero la
+    /// <c>nombreProveedor</c>/<c>nombreArea</c> en <c>PagoDeAdministracionListado</c>), pero la
     /// fila sigue apareciendo con su <c>idPuntoVenta</c> intacto — nunca desaparece ni rompe el
     /// listado.</summary>
     [Fact]
@@ -404,23 +404,23 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Null(fila.NombrePuntoVenta);
     }
 
-    // ---- gasto de origen tesorería: la fila trae categoría/concepto del gasto ------------------
+    // ---- pago de origen tesorería: la fila trae categoría/concepto del pago ------------------
 
-    /// <summary>Un gasto de administración (PR3, sin turno, pagado de la tesorería de la empresa)
-    /// escribe su propia fila `Gasto` en la cadena — el libro tiene que poder mostrarla sin una
-    /// segunda consulta: <c>idGasto</c>/<c>gastoCategoria</c>/<c>gastoConcepto</c> resueltos.</summary>
+    /// <summary>Un pago de administración (PR3, sin turno, pagado de la tesorería de la empresa)
+    /// escribe su propia fila `Pago` en la cadena — el libro tiene que poder mostrarla sin una
+    /// segunda consulta: <c>idPago</c>/<c>pagoCategoria</c>/<c>pagoConcepto</c> resueltos.</summary>
     [Fact]
-    public async Task UnaFilaDeGastoDeAdministracionTraeCategoriaYConceptoDelGasto()
+    public async Task UnaFilaDePagoDeAdministracionTraeCategoriaYConceptoDelPago()
     {
-        var ctx = await PrepararAsync(nameof(UnaFilaDeGastoDeAdministracionTraeCategoriaYConceptoDelGasto));
+        var ctx = await PrepararAsync(nameof(UnaFilaDePagoDeAdministracionTraeCategoriaYConceptoDelPago));
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var idMedioEfectivo = await db.MediosPago
             .Where(m => m.Comportamiento == Ways.Domain.Catalogos.ComportamientoMedioPago.Efectivo)
             .Select(m => m.Id).FirstAsync();
 
-        var solicitud = new SolicitudDeGastoDeAdministracion(
-            new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, CategoriaGasto.Otros, null, null,
+        var solicitud = new SolicitudDePagoDeAdministracion(
+            new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
             "Alquiler de depósito", null, idMedioEfectivo, null, 15000m);
         var alta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
@@ -428,11 +428,11 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         var libro = await ListarAsync(ctx.Admin, ctx.IdEmpresa);
 
         Assert.NotNull(libro);
-        var fila = Assert.Single(libro!.Items, m => m.Tipo == TipoMovimientoTesoreria.Gasto);
-        Assert.NotNull(fila.IdGasto);
+        var fila = Assert.Single(libro!.Items, m => m.Tipo == TipoMovimientoTesoreria.Pago);
+        Assert.NotNull(fila.IdPago);
         Assert.Null(fila.IdPuntoVenta);
-        Assert.Equal(CategoriaGasto.Otros, fila.GastoCategoria);
-        Assert.Equal("Alquiler de depósito", fila.GastoConcepto);
+        Assert.Equal(CategoriaPago.Otros, fila.PagoCategoria);
+        Assert.Equal("Alquiler de depósito", fila.PagoConcepto);
         Assert.Equal(15000m, fila.Egreso);
     }
 

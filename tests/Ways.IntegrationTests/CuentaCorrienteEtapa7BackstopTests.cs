@@ -10,7 +10,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -27,7 +27,7 @@ namespace Ways.IntegrationTests;
 /// (1) <c>fk_movimientos_cuenta_corriente_actualizacion</c> — el self-FK del marcador de
 /// reliquidación es inalcanzable bajo operación normal (el id viene del <c>RETURNING</c> de la
 /// misma transacción que la fila que apunta, Slice 3); un INSERT crudo lo fuerza, mismo patrón
-/// que <c>TurnosCajaYGastosBackstopTests</c>.
+/// que <c>TurnosCajaYPagosBackstopTests</c>.
 ///
 /// (2) El INSERT idempotente de <c>RC</c> en la migración <c>CuentaCorrienteEtapa7</c> —
 /// <c>InicializadorDeBaseDeDatos.EjecutarAsync</c> solo siembra <c>tipos_comprobante</c> cuando
@@ -201,7 +201,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     // stage-15-cc-proveedores-ledger, Slice 2 (hallazgo registrado en tasks.md,
@@ -222,8 +222,8 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     // stage-desktop-pos: mismo gap que arriba, ahora con modo_punto_venta.
                     npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
-                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
-                    npgsql.MapEnum<Ways.Domain.Gastos.OrigenFondosGasto>("origen_fondos_gasto");
+                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
+                    npgsql.MapEnum<Ways.Domain.Pagos.OrigenFondosPago>("origen_fondos_pago");
                 })
                 .Options;
 

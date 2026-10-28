@@ -93,7 +93,7 @@ public static class ReportesEndpoints
         grupo.MapGet("/gastos/resumen", (
             ServicioDeReportesDeEgresos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
             Granularidad granularidad, CancellationToken ct) =>
-            servicio.ObtenerGastosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct))
+            servicio.ObtenerPagosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct))
         .WithSummary("Gastos bucketeados por la zona horaria del punto de venta, con desglose por categoría.");
 
         grupo.MapGet("/gastos/resumen/export", async (
@@ -104,7 +104,7 @@ public static class ReportesEndpoints
         {
             FormatoDeExportacion.Parsear(formato);
 
-            var resumen = await servicio.ObtenerGastosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct);
+            var resumen = await servicio.ObtenerPagosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct);
 
             var ctx = ContextoDeExportacionHttp.Construir(
                 usuario, reloj, idEmpresa, idPuntoVenta, desde, hasta, resumen.ZonaHoraria);
@@ -114,7 +114,7 @@ public static class ReportesEndpoints
 
             var bytes = exportador.Generar(tabla);
             var alcance = idPuntoVenta is { } id ? $"pv{id}" : "todos";
-            var nombre = NombreDeArchivo.Construir("gastos_resumen", alcance, desde, hasta);
+            var nombre = NombreDeArchivo.Construir("pagos_resumen", alcance, desde, hasta);
 
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })

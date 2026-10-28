@@ -6,7 +6,7 @@ namespace Ways.Domain.Caja;
 /// Actividad de un medio de pago dentro de un turno (design: The Derivation; Interfaces/
 /// Contracts) — una fila por medio del catálogo del tenant, sin importar si tuvo actividad o no
 /// (<see cref="TuvoFilas"/> es lo que distingue "medio con actividad" de "medio sin actividad",
-/// nunca el valor de <see cref="Pagos"/>/<see cref="Gastos"/>: un medio puede netear exactamente
+/// nunca el valor de <see cref="Pagos"/>/<see cref="Pagos"/>: un medio puede netear exactamente
 /// 0 y seguir debiendo una declaración — spec: Arqueo Rows Only For Medios With Activity).
 ///
 /// <see cref="Vueltos"/> es SIEMPRE por medio del pago original (nunca reasignado al ancla acá):
@@ -19,5 +19,5 @@ public readonly record struct ActividadDeMedio(
     ComportamientoMedioPago Comportamiento,
     decimal Pagos,
     decimal Vueltos,
-    decimal Gastos,
+    decimal PagosDeCaja,
     bool TuvoFilas);

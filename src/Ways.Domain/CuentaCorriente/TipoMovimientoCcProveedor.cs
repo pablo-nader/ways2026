@@ -7,7 +7,7 @@ namespace Ways.Domain.CuentaCorriente;
 /// en la migración (gate §A, proposal.md:499-508): un escritor por valor —
 /// <see cref="Apertura"/> ← la migración `CuentaCorrienteDeProveedoresEtapa15`;
 /// <see cref="Compra"/> ← <c>ServicioDeCompras.ConfirmarAsync</c> (slice 2);
-/// <see cref="Pago"/> ← <c>ServicioDeGastos.InsertarGastoAsync</c> (slice 3);
+/// <see cref="Pago"/> ← <c>ServicioDePagos.InsertarPagoAsync</c> (slice 3);
 /// <see cref="Ajuste"/> ← <c>ServicioDeCompras.AnularAsync</c> (contramovimiento, slice 2) y el
 /// ajuste manual (slice 5). Ningún valor especulativo.
 /// </summary>

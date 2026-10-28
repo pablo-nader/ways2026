@@ -11,7 +11,7 @@ namespace Ways.Domain.Tests.Caja;
 public class ResolvedorDeMedioDeCajaFisicaTests
 {
     private static ActividadDeMedio Medio(int id, ComportamientoMedioPago comportamiento) =>
-        new(id, comportamiento, Pagos: 0m, Vueltos: 0m, Gastos: 0m, TuvoFilas: false);
+        new(id, comportamiento, Pagos: 0m, Vueltos: 0m, PagosDeCaja: 0m, TuvoFilas: false);
 
     [Fact]
     public void UnUnicoMedioEfectivoSeResuelveSinError()

@@ -23,19 +23,19 @@ public class CalculadorDeArqueoTests
 
     private static ActividadDeMedio Actividad(
         int id, ComportamientoMedioPago comportamiento, decimal pagos = 0m, decimal vueltos = 0m,
-        decimal gastos = 0m, bool tuvoFilas = true) =>
-        new(id, comportamiento, pagos, vueltos, gastos, tuvoFilas);
+        decimal pagosDeCaja = 0m, bool tuvoFilas = true) =>
+        new(id, comportamiento, pagos, vueltos, pagosDeCaja, tuvoFilas);
 
-    /// <summary>spec: Efectivo expected includes fondo, pagos, vuelto, gastos, and movimientos —
+    /// <summary>spec: Efectivo expected includes fondo, pagos, vuelto, pagos de caja, and movimientos —
     /// también la prueba de colapso (design decisión 2): con vuelto SOLO en el ancla, la fórmula
-    /// da exactamente lo mismo que la literal de doc 10 (<c>fondo + pagos − vueltos − gastos −
+    /// da exactamente lo mismo que la literal de doc 10 (<c>fondo + pagos − vueltos − pagos de caja −
     /// retiros + refuerzos</c>).</summary>
     [Fact]
-    public void ElEfectivoIncluyeFondoPagosVueltoGastosYMovimientosYColapsaConDoc10()
+    public void ElEfectivoIncluyeFondoPagosVueltoPagosDeCajaYMovimientosYColapsaConDoc10()
     {
         var insumos = new InsumosDeArqueo(
             FondoInicial: 500m, Refuerzos: 100m, Retiros: 200m,
-            Actividad: [Actividad(IdEfectivo, ComportamientoMedioPago.Efectivo, pagos: 3000m, vueltos: 120m, gastos: 400m)]);
+            Actividad: [Actividad(IdEfectivo, ComportamientoMedioPago.Efectivo, pagos: 3000m, vueltos: 120m, pagosDeCaja: 400m)]);
 
         var resultado = CalculadorDeArqueo.Calcular(insumos, IdEfectivo);
 
@@ -44,17 +44,17 @@ public class CalculadorDeArqueoTests
         Assert.Equal(2880m, linea.ImporteEsperado);
     }
 
-    /// <summary>spec: Electrónico expected is pagos net of its own gastos only — sin fondo,
+    /// <summary>spec: Electrónico expected is pagos net of its own pagos only — sin fondo,
     /// vuelto, retiro ni refuerzo (esos son conceptos solo del ancla).</summary>
     [Fact]
-    public void ElElectronicoEsPagosNetoDeSusPropiosGastosSinTerminosDeCajaFisica()
+    public void ElElectronicoEsPagosNetoDeSusPropiosPagosSinTerminosDeCajaFisica()
     {
         var insumos = new InsumosDeArqueo(
             FondoInicial: 500m, Refuerzos: 100m, Retiros: 200m,
             Actividad:
             [
                 Actividad(IdEfectivo, ComportamientoMedioPago.Efectivo, pagos: 1000m),
-                Actividad(IdTarjeta, ComportamientoMedioPago.Electronico, pagos: 1500m, gastos: 200m)
+                Actividad(IdTarjeta, ComportamientoMedioPago.Electronico, pagos: 1500m, pagosDeCaja: 200m)
             ]);
 
         var resultado = CalculadorDeArqueo.Calcular(insumos, IdEfectivo);

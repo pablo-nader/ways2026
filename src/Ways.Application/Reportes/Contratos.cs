@@ -1,4 +1,5 @@
-using Ways.Domain.Gastos;
+using System.Text.Json.Serialization;
+using Ways.Domain.Pagos;
 using Ways.Domain.Reportes;
 using Ways.Domain.Stock;
 
@@ -28,21 +29,21 @@ public sealed record CompraPorProveedor(int IdProveedor, string NombreProveedor,
 public sealed record ComprasPorProveedor(
     DateOnly Desde, DateOnly Hasta, IReadOnlyList<CompraPorProveedor> PorProveedor, decimal TotalGeneral);
 
-/// <summary>Un bucket de la serie de gastos ya rellenada — mismo criterio de gap-fill que
+/// <summary>Un bucket de la serie de pagos ya rellenada — mismo criterio de gap-fill que
 /// <see cref="BucketDeVentas"/> (design decisión 4).</summary>
-public sealed record BucketDeGastos(string Etiqueta, DateOnly Inicio, decimal Importe);
+public sealed record BucketDePagos(string Etiqueta, DateOnly Inicio, decimal Importe);
 
-/// <summary>Desglose por categoría de <c>GET /api/reportes/gastos/resumen</c> (spec: Gastos
+/// <summary>Desglose por categoría de <c>GET /api/reportes/gastos/resumen</c> (spec: Pagos
 /// Resumen, "optionally grouped by categoria") — agregado LINQ aparte de la serie cruda: solo la
 /// serie por fecha necesita SQL crudo (design decisión 1), la categoría no.</summary>
-public sealed record GastoPorCategoria(CategoriaGasto Categoria, decimal Importe, int CantidadGastos);
+public sealed record PagoPorCategoria(CategoriaPago Categoria, decimal Importe, [property: JsonPropertyName("cantidadGastos")] int CantidadPagos);
 
 /// <summary>Respuesta de <c>GET /api/reportes/gastos/resumen</c> — misma forma que
 /// <see cref="ResumenDeVentas"/> más <see cref="PorCategoria"/>; sin NCX ni ticket promedio,
-/// <c>gastos</c> no tiene esa semántica.</summary>
-public sealed record ResumenDeGastos(
+/// <c>pagos</c> no tiene esa semántica.</summary>
+public sealed record ResumenDePagos(
     DateOnly Desde, DateOnly Hasta, Granularidad Granularidad, string ZonaHoraria,
-    IReadOnlyList<BucketDeGastos> Serie, decimal ImporteTotal, IReadOnlyList<GastoPorCategoria> PorCategoria);
+    IReadOnlyList<BucketDePagos> Serie, decimal ImporteTotal, IReadOnlyList<PagoPorCategoria> PorCategoria);
 /// <summary>Una fila de <c>GET /api/reportes/articulos/top</c> (design decisión 10): agrupada por
 /// <c>id_articulo</c> pero etiquetada con el snapshot de <c>descripcion</c> de la línea más
 /// reciente del período — nunca re-unida contra <c>articulos</c> (doc-10 principio 6: la línea es

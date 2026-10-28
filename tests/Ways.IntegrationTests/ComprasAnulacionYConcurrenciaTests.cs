@@ -15,7 +15,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
@@ -145,7 +145,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         await db.SaveChangesAsync();
     }
 
-    private async Task SembrarGastoLigadoAsync(Contexto ctx, int idComprobanteCompra)
+    private async Task SembrarPagoLigadoAsync(Contexto ctx, int idComprobanteCompra)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -162,11 +162,11 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         db.TurnosCaja.Add(turno);
         await db.SaveChangesAsync();
 
-        db.Gastos.Add(new Gasto
+        db.Pagos.Add(new Pago
         {
             IdTenant = ctx.IdTenant, Fecha = ahora, IdEmpresa = idEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
-            IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaGasto.Proveedor,
-            OrigenFondos = OrigenFondosGasto.CajaTurno, IdProveedor = ctx.IdProveedor,
+            IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaPago.Proveedor,
+            OrigenFondos = OrigenFondosPago.CajaTurno, IdProveedor = ctx.IdProveedor,
             Concepto = "Pago de prueba", IdMedioPago = idMedioPago, Importe = 100m,
             IdComprobanteCompra = idComprobanteCompra, CreatedAt = ahora, UpdatedAt = ahora
         });
@@ -188,7 +188,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         var resultado = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpo, OpcionesJson)!;
 
         Assert.Equal(EstadoCompra.Anulada, resultado.Compra.Estado);
-        Assert.Equal(0, resultado.GastosLigados);
+        Assert.Equal(0, resultado.PagosLigados);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var cantidad = await db.Stock
@@ -261,15 +261,15 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.Equal("compra_no_procesada", problema.GetProperty("codigo").GetString());
     }
 
-    /// <summary>La regla invertida (design decisión 6): la anulación NUNCA bloquea por un gasto
+    /// <summary>La regla invertida (design decisión 6): la anulación NUNCA bloquea por un pago
     /// ligado — procede y solo REPORTA cuántos pagos quedaron colgados.</summary>
     [Fact]
-    public async Task AnulacionProcedeConGastosLigadosYLosReportaEnLaRespuesta()
+    public async Task AnulacionProcedeConPagosLigadosYLosReportaEnLaRespuesta()
     {
-        var ctx = await PrepararAsync(nameof(AnulacionProcedeConGastosLigadosYLosReportaEnLaRespuesta));
+        var ctx = await PrepararAsync(nameof(AnulacionProcedeConPagosLigadosYLosReportaEnLaRespuesta));
         var creada = await CrearBorradorAsync(ctx);
         await ConfirmarAsync(ctx, creada.Id);
-        await SembrarGastoLigadoAsync(ctx, creada.Id);
+        await SembrarPagoLigadoAsync(ctx, creada.Id);
 
         var respuesta = await ctx.Admin.PostAsync($"/api/compras/{creada.Id}/anular", null);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -277,7 +277,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         var resultado = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpo, OpcionesJson)!;
         Assert.Equal(EstadoCompra.Anulada, resultado.Compra.Estado);
-        Assert.Equal(1, resultado.GastosLigados);
+        Assert.Equal(1, resultado.PagosLigados);
     }
 
     // ---- task 2.10: atomicidad, un punto de falla por prueba (confirmar) -------------------------
@@ -777,7 +777,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCaja>("tipo_movimiento_caja");
                 npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<CategoriaPago>("categoria_pago");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<OrigenCompra>("origen_compra");
                 // stage-15-cc-proveedores-ledger, Slice 2: ConfirmarAsync/AnularAsync ahora

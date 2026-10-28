@@ -10,7 +10,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// stage-6-turnos-caja, Slice 1 (task 1.9, db-error-backstops, design: Backstop Map):
 /// raw-SQL INSERTs que bypasean por completo <c>ReglaDeTurnos</c>/<c>ReglaDeMovimientosDeCaja</c>
-/// (Slice 2)/<c>ServicioDeGastos</c> (Slice 3)/<c>ServicioDeTurnos.CerrarAsync</c> (Slice 4) — no
+/// (Slice 2)/<c>ServicioDePagos</c> (Slice 3)/<c>ServicioDeTurnos.CerrarAsync</c> (Slice 4) — no
 /// existen todavía — para probar las seis CHECKs de esquema nuevas y los dos índices únicos,
 /// mismo patrón que <c>VentasStockBackstopTests</c>/<c>OfertasCheckBackstopTests</c>.
 ///
@@ -23,7 +23,7 @@ namespace Ways.IntegrationTests;
 /// vez que exista <c>ServicioDeTurnos.AbrirAsync</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class TurnosCajaYPagosBackstopTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private sealed record Prerequisitos(int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdEmpleado, int IdMedioPago);
 
@@ -83,7 +83,7 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
 
     /// <summary>Abre un turno vía EF (sesión de plataforma, sin pasar por el backstop bajo
     /// prueba) — sirve de FK target para los tests de <c>movimientos_caja</c>/
-    /// <c>arqueos_turno</c>/<c>movimientos_tesoreria</c>/<c>gastos</c>.</summary>
+    /// <c>arqueos_turno</c>/<c>movimientos_tesoreria</c>/<c>pagos</c>.</summary>
     private async Task<int> AbrirTurnoAsync(Prerequisitos p)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
@@ -220,20 +220,20 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal("ck_movimientos_caja_motivo_minimo", excepcion.ConstraintName);
     }
 
-    // ---- ck_gastos_importe_positivo ----------------------------------------------------------
+    // ---- ck_pagos_importe_positivo ----------------------------------------------------------
 
     [Fact]
-    public async Task UnGastoConImporteCeroViolaLaCheckDeImportePositivo()
+    public async Task UnPagoConImporteCeroViolaLaCheckDeImportePositivo()
     {
-        var p = await SembrarPrerequisitosAsync(nameof(UnGastoConImporteCeroViolaLaCheckDeImportePositivo));
+        var p = await SembrarPrerequisitosAsync(nameof(UnPagoConImporteCeroViolaLaCheckDeImportePositivo));
         var idTurno = await AbrirTurnoAsync(p);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO gastos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
+            "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
             "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'gasto de prueba', $6, 0, now(), now())";
+            "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'pago de prueba', $6, 0, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
@@ -243,7 +243,7 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
-        Assert.Equal("ck_gastos_importe_positivo", excepcion.ConstraintName);
+        Assert.Equal("ck_pagos_importe_positivo", excepcion.ConstraintName);
     }
 
     // ---- ck_movimientos_tesoreria_cadena -----------------------------------------------------
@@ -328,23 +328,23 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal("ux_arqueos_turno_medio", excepcion.ConstraintName);
     }
 
-    // ---- GastosOrigenFondosYTesoreriaPorEmpresa: ck_gastos_caja_turno_requiere_turno --------
+    // ---- GastosOrigenFondosYTesoreriaPorEmpresa: ck_pagos_caja_turno_requiere_turno --------
 
-    /// <summary>Defensa en profundidad de esquema: <c>ServicioDeGastos.RegistrarAsync</c> siempre
+    /// <summary>Defensa en profundidad de esquema: <c>ServicioDePagos.RegistrarAsync</c> siempre
     /// resuelve un turno abierto ANTES de insertar (nunca deja <c>id_turno_caja</c> nulo con
     /// <c>origen_fondos = caja_turno</c>) — esta CHECK es el backstop de una escritura
     /// cruda/fuera de banda que lo bypasee.</summary>
     [Fact]
-    public async Task UnGastoDeCajaTurnoSinTurnoViolaLaCheckDeCajaTurnoRequiereTurno()
+    public async Task UnPagoDeCajaTurnoSinTurnoViolaLaCheckDeCajaTurnoRequiereTurno()
     {
-        var p = await SembrarPrerequisitosAsync(nameof(UnGastoDeCajaTurnoSinTurnoViolaLaCheckDeCajaTurnoRequiereTurno));
+        var p = await SembrarPrerequisitosAsync(nameof(UnPagoDeCajaTurnoSinTurnoViolaLaCheckDeCajaTurnoRequiereTurno));
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO gastos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
+            "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
             "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, $3, NULL, $4, 'otros', 'caja_turno', 'gasto de prueba', $5, 100, now(), now())";
+            "VALUES ($1, now(), $2, $3, NULL, $4, 'otros', 'caja_turno', 'pago de prueba', $5, 100, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
@@ -353,37 +353,37 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
-        Assert.Equal("ck_gastos_caja_turno_requiere_turno", excepcion.ConstraintName);
+        Assert.Equal("ck_pagos_caja_turno_requiere_turno", excepcion.ConstraintName);
     }
 
-    // ---- GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_gasto ----------
+    // ---- GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_pago ----------
 
-    /// <summary>Inalcanzable hoy (ningún escritor puebla <c>IdGasto</c> todavía) — backstop de
-    /// esquema puro para la etapa futura que sí lo escriba: un gasto no puede originar dos
+    /// <summary>Inalcanzable hoy (ningún escritor puebla <c>IdPago</c> todavía) — backstop de
+    /// esquema puro para la etapa futura que sí lo escriba: un pago no puede originar dos
     /// movimientos de tesorería.</summary>
     [Fact]
-    public async Task DosMovimientosDeTesoreriaConElMismoGastoViolanLaUnicidad()
+    public async Task DosMovimientosDeTesoreriaConElMismoPagoViolanLaUnicidad()
     {
-        var p = await SembrarPrerequisitosAsync(nameof(DosMovimientosDeTesoreriaConElMismoGastoViolanLaUnicidad));
+        var p = await SembrarPrerequisitosAsync(nameof(DosMovimientosDeTesoreriaConElMismoPagoViolanLaUnicidad));
         var idTurno = await AbrirTurnoAsync(p);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
 
-        int idGasto;
-        await using (var comandoGasto = cruda.CreateCommand())
+        int idPago;
+        await using (var comandoPago = cruda.CreateCommand())
         {
-            comandoGasto.CommandText =
-                "INSERT INTO gastos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
+            comandoPago.CommandText =
+                "INSERT INTO pagos (id_tenant, fecha, id_punto_venta, id_empresa, id_turno_caja, id_empleado, " +
                 "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-                "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'gasto de prueba', $6, 100, now(), now()) " +
-                "RETURNING id_gasto";
-            comandoGasto.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
-            comandoGasto.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
-            comandoGasto.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
-            comandoGasto.Parameters.Add(new NpgsqlParameter { Value = idTurno });
-            comandoGasto.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
-            comandoGasto.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
-            idGasto = (int)(await comandoGasto.ExecuteScalarAsync())!;
+                "VALUES ($1, now(), $2, $3, $4, $5, 'otros', 'caja_turno', 'pago de prueba', $6, 100, now(), now()) " +
+                "RETURNING id_pago";
+            comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+            comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
+            comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
+            comandoPago.Parameters.Add(new NpgsqlParameter { Value = idTurno });
+            comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
+            comandoPago.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
+            idPago = (int)(await comandoPago.ExecuteScalarAsync())!;
         }
 
         async Task InsertarMovimientoAsync()
@@ -391,13 +391,13 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
             await using var comando = cruda.CreateCommand();
             comando.CommandText =
                 "INSERT INTO movimientos_tesoreria (id_tenant, id_empresa, id_punto_venta, fecha, tipo, " +
-                "id_turno_caja, id_gasto, concepto, inicio, ingreso, egreso, final, id_empleado) " +
-                "VALUES ($1, $2, $3, now(), 'retiro_caja', $4, $5, 'movimiento de gasto', 0, 100, 0, 100, $6)";
+                "id_turno_caja, id_pago, concepto, inicio, ingreso, egreso, final, id_empleado) " +
+                "VALUES ($1, $2, $3, now(), 'retiro_caja', $4, $5, 'movimiento de pago', 0, 100, 0, 100, $6)";
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
             comando.Parameters.Add(new NpgsqlParameter { Value = idTurno });
-            comando.Parameters.Add(new NpgsqlParameter { Value = idGasto });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idPago });
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
             await comando.ExecuteNonQueryAsync();
         }
@@ -406,26 +406,26 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(InsertarMovimientoAsync);
         Assert.Equal("23505", excepcion.SqlState);
-        Assert.Equal("ux_movimientos_tesoreria_id_gasto", excepcion.ConstraintName);
+        Assert.Equal("ux_movimientos_tesoreria_id_pago", excepcion.ConstraintName);
     }
 
-    // ---- GastosOrigenFondosYTesoreriaPorEmpresa: fk_movimientos_tesoreria_gasto ------------
+    // ---- GastosOrigenFondosYTesoreriaPorEmpresa: fk_movimientos_tesoreria_pago ------------
 
-    /// <summary>Un <c>id_gasto</c> que no existe (o que es de otro tenant, invisible bajo RLS) es
+    /// <summary>Un <c>id_pago</c> que no existe (o que es de otro tenant, invisible bajo RLS) es
     /// una referencia inválida — 23503, capturado por el backstop genérico de <c>fk_*</c> en
     /// <c>ManejadorDeErrores</c>.</summary>
     [Fact]
-    public async Task UnMovimientoDeTesoreriaConIdGastoInexistenteViolaLaFk()
+    public async Task UnMovimientoDeTesoreriaConIdPagoInexistenteViolaLaFk()
     {
-        var p = await SembrarPrerequisitosAsync(nameof(UnMovimientoDeTesoreriaConIdGastoInexistenteViolaLaFk));
+        var p = await SembrarPrerequisitosAsync(nameof(UnMovimientoDeTesoreriaConIdPagoInexistenteViolaLaFk));
         var idTurno = await AbrirTurnoAsync(p);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_tesoreria (id_tenant, id_empresa, id_punto_venta, fecha, tipo, " +
-            "id_turno_caja, id_gasto, concepto, inicio, ingreso, egreso, final, id_empleado) " +
-            "VALUES ($1, $2, $3, now(), 'retiro_caja', $4, 999999, 'movimiento de gasto inexistente', " +
+            "id_turno_caja, id_pago, concepto, inicio, ingreso, egreso, final, id_empleado) " +
+            "VALUES ($1, $2, $3, now(), 'retiro_caja', $4, 999999, 'movimiento de pago inexistente', " +
             "0, 100, 0, 100, $5)";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
@@ -435,40 +435,40 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23503", excepcion.SqlState);
-        Assert.Equal("fk_movimientos_tesoreria_gasto", excepcion.ConstraintName);
+        Assert.Equal("fk_movimientos_tesoreria_pago", excepcion.ConstraintName);
     }
 
     // ---- GastosOrigenFondosYTesoreriaPorEmpresa: id_punto_venta NULLable (design aprobado) ---
 
-    /// <summary>Prueba de ACEPTACIÓN, no de backstop: un gasto de origen <c>tesoreria</c> (etapa
-    /// futura, hoy inalcanzable desde <c>ServicioDeGastos</c>) no nace de ningún punto de venta
+    /// <summary>Prueba de ACEPTACIÓN, no de backstop: un pago de origen <c>tesoreria</c> (etapa
+    /// futura, hoy inalcanzable desde <c>ServicioDePagos</c>) no nace de ningún punto de venta
     /// puntual ni de ningún turno — <c>id_punto_venta</c> y <c>id_turno_caja</c> nulos a la vez son
-    /// un estado válido del esquema, no una violación de <c>ck_gastos_caja_turno_requiere_turno</c>
+    /// un estado válido del esquema, no una violación de <c>ck_pagos_caja_turno_requiere_turno</c>
     /// (que solo exige turno para <c>origen_fondos = caja_turno</c>).</summary>
     [Fact]
-    public async Task UnGastoDeOrigenTesoreriaConPuntoDeVentaYTurnoNulosEsAceptadoPorElEsquema()
+    public async Task UnPagoDeOrigenTesoreriaConPuntoDeVentaYTurnoNulosEsAceptadoPorElEsquema()
     {
         var p = await SembrarPrerequisitosAsync(
-            nameof(UnGastoDeOrigenTesoreriaConPuntoDeVentaYTurnoNulosEsAceptadoPorElEsquema));
+            nameof(UnPagoDeOrigenTesoreriaConPuntoDeVentaYTurnoNulosEsAceptadoPorElEsquema));
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO gastos (id_tenant, fecha, id_empresa, id_punto_venta, id_turno_caja, id_empleado, " +
+            "INSERT INTO pagos (id_tenant, fecha, id_empresa, id_punto_venta, id_turno_caja, id_empleado, " +
             "categoria, origen_fondos, concepto, id_medio_pago, importe, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, NULL, NULL, $3, 'otros', 'tesoreria', 'gasto de tesorería directo', " +
-            "$4, 100, now(), now()) RETURNING id_gasto";
+            "VALUES ($1, now(), $2, NULL, NULL, $3, 'otros', 'tesoreria', 'pago de tesorería directo', " +
+            "$4, 100, now(), now()) RETURNING id_pago";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
 
-        var idGasto = (int)(await comando.ExecuteScalarAsync())!;
-        Assert.True(idGasto > 0);
+        var idPago = (int)(await comando.ExecuteScalarAsync())!;
+        Assert.True(idPago > 0);
     }
 
     /// <summary>Prueba de ACEPTACIÓN, no de backstop: un movimiento de tesorería que no se origina
-    /// en el cierre de un punto de venta puntual (etapa futura — un gasto de origen
+    /// en el cierre de un punto de venta puntual (etapa futura — un pago de origen
     /// <c>tesoreria</c> que escribe directo al libro) acepta <c>id_punto_venta</c> nulo — la
     /// cadena inicio→final ya no depende del punto de venta (design aprobado), solo de
     /// <c>id_empresa</c>.</summary>
