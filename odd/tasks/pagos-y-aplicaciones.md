@@ -125,7 +125,7 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
 - [ ] E3-S1b (written; CI pending) — Dual write: every writer that sets `pagos.id_comprobante_compra` also writes the application, capped at the
   compra saldo; anulación of the compra and baja of the pago release their applications; editing a linked pago resyncs
   its application against the compra saldo (unrestricted edits).
-- [ ] E3-S2 — Readers switch to the applications (pagado / disponible per compra, supplier credit, CC).
+- [ ] E3-S2 (written; CI pending) — Readers switch to the applications (pagado / disponible per compra, supplier credit, CC).
 - [ ] E3-S3 — Endpoints: aplicar, desaplicar, and adoption of a supplierless pago (takes the compra's supplier).
 - [ ] E3-S4 — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
 - [ ] E4-S1 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter.
@@ -185,6 +185,23 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed. Integration tests
   (`AplicacionesDePagoEscritoresTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
   Route: delegated writer.
+
+- 2026-10-28 E3-S2 (branch `pnader/pagos-e3-s2-lectores`, stacked on E3-S1): `LectorDePagadoPorCompra` = Σ live applications
+  (dropped the `pagos.importe` and imputed-`ajuste` terms: the only ajuste imputed to a compra is the anulación
+  counter-movement, `ServicioDeCompras` ~:1026, and anulación releases the applications; manual ajustes and pago ajustes
+  write `id_comprobante_compra` NULL). New `LectorDeDisponiblePorPago` (aplicado/disponible, batch, with the E4 seam in
+  `Disponible`). Additive JSON: `aplicado`/`disponible`/`aplicaciones[]` on `PagoDeAdministracionListado` (filled in
+  `ProyeccionesDePago.ConLineasAsync`, one extra query per page; `disponible` null for non-proveedor pagos),
+  `disponibleDelPago` on CC `pago` rows, `saldoAFavor`/`disponibleEnPagos` on the CC header; POS `PagoListado` and
+  `/saldo` unchanged. Behavior changes documented in docs/10 §5 (over-imputed legacy shows pagado = total; cross-empresa
+  legacy link without application no longer counts; anulada compra shows pagado 0). Seeder in
+  `SaldoDeProveedorReSourceadoTests` now writes the application for its pre-cutover pago. Web: types, "Disponible" column in
+  `Pagos`, "Disponible en pagos sin aplicar" line in the CC header (ResumenSaldoDeProveedor untouched: it reads `/saldo`).
+  `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed; web `tsc -b` clean, lint 0
+  errors, vitest on the two touched files 73 passed. Integration tests (`AplicacionesDePagoLectoresTests`, 10 tests) NOT run
+  locally (Docker down): CI is the proof. Mutation proof PENDING CI: `LaBajaDelPagoLiberaSuAplicacionYLoPagadoVuelveACero`
+  must fail when `LectorDePagadoPorCompra` reads `db.AplicacionesPago.IgnoreQueryFilters()` (counts the released row, 400
+  instead of 100) and pass after reverting. Route: delegated writer.
 
 ## Next step
 
