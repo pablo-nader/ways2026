@@ -127,6 +127,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // corriente y tesorería sin clave de idempotencia; un reintento sobre un commit ambiguo pagaría dos veces.
         { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "PagarCompraConAplicacionesAsync" },
 
+        // Cierre en cero por redondeo: escribe un movimiento de cuenta corriente y mueve el saldo del proveedor sin clave de
+        // idempotencia; un reintento sobre un commit ambiguo perdonaría o absorbería la diferencia dos veces.
+        { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDeCompraAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDePagoAsync" },
+
         // Familias de artículos: editar el nombre y el estado de una familia lee la fila bajo su FOR UPDATE; un
         // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
         // ServicioDeArticulos.ActualizarAsync.

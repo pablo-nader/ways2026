@@ -179,6 +179,14 @@ public static class PagosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Libera una aplicación de un pago a una compra; el proveedor adoptado se conserva.");
 
+        // E4: cerrar en cero lo que queda disponible de un pago, dentro de la tolerancia de redondeo. Mueve la deuda con un
+        // proveedor: apila GestionDeCatalogo.
+        grupo.MapPost("/{id:int}/ajuste-de-redondeo", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.AjustarRedondeoDePagoAsync(id, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Absorbe con un redondeo lo que queda disponible de un pago de proveedor si no supera la tolerancia de redondeo.");
+
         var comprasAplicables = app.MapGroup("/api/compras")
             .WithTags("Pagos")
             .RequireAuthorization(Politicas.GestionDeCatalogo);
@@ -202,7 +210,8 @@ public static class PagosEndpoints
             var resultado = await servicio.PagarCompraConAplicacionesAsync(idCompra, solicitud.AComando(), ct);
             var cuerpo = new ResultadoDePagoDeCompraConLineas(
                 resultado.Pago is null ? null : await servicio.ConLineasAsync(resultado.Pago, ct),
-                resultado.Pagado, resultado.SaldoPendiente, resultado.Aplicaciones, resultado.DisponibleDelPago);
+                resultado.Pagado, resultado.SaldoPendiente, resultado.Aplicaciones, resultado.DisponibleDelPago,
+                resultado.Redondeo);
             return resultado.Pago is null
                 ? Results.Ok(cuerpo)
                 : Results.Created($"/api/pagos/administracion/{resultado.Pago.Id}", cuerpo);
@@ -210,7 +219,8 @@ public static class PagosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Paga una compra confirmada con líneas por medio, con pagos existentes a aplicar o con ambos. " +
-            "Lo que el pago nuevo paga de más que el saldo queda a favor como disponible del propio pago.");
+            "Lo que el pago nuevo paga de más que el saldo queda a favor como disponible del propio pago, salvo que se " +
+            "pida cerrarEnCero y la diferencia entre en la tolerancia de redondeo.");
 
         var administracion = app.MapGroup("/api/pagos/administracion")
             .WithTags("Pagos")

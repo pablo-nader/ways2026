@@ -9,12 +9,17 @@ namespace Ways.Domain.CuentaCorriente;
 /// <see cref="Compra"/> ← <c>ServicioDeCompras.ConfirmarAsync</c> (slice 2);
 /// <see cref="Pago"/> ← <c>ServicioDePagos.InsertarPagoAsync</c> (slice 3);
 /// <see cref="Ajuste"/> ← <c>ServicioDeCompras.AnularAsync</c> (contramovimiento, slice 2) y el
-/// ajuste manual (slice 5). Ningún valor especulativo.
+/// ajuste manual (slice 5); <see cref="Redondeo"/> ← el cierre en cero de una compra o de un pago
+/// (<c>ServicioDePagos</c>, E4): perdona o absorbe una diferencia de hasta la tolerancia configurada, con el signo de la
+/// deuda que deja de existir (negativo si falta pagar de una compra, positivo si sobra de un pago) y exactamente UN
+/// destino — la compra o el pago —; su reversa es otro movimiento <see cref="Redondeo"/> de signo opuesto. Ningún valor
+/// especulativo.
 /// </summary>
 public enum TipoMovimientoCcProveedor
 {
     Apertura,
     Compra,
     Pago,
-    Ajuste
+    Ajuste,
+    Redondeo
 }

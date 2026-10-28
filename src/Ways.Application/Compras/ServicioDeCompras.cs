@@ -8,6 +8,7 @@ using Ways.Application.Auditoria;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Familias;
+using Ways.Application.Pagos;
 using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
@@ -1012,6 +1013,13 @@ public class ServicioDeCompras(
             ? "Contramovimiento de anulación (etapa 15): compra confirmada antes del ledger de " +
               "proveedores; importe tomado del total del comprobante (no existe movimiento compra propio)."
             : null;
+
+        // 5.5. E4: el redondeo vigente de la compra (lo que se perdonó de su saldo) se revierte con otro movimiento de
+        // redondeo de signo opuesto: las aplicaciones se liberaron arriba, así que esa diferencia ya no tiene de qué
+        // depender. Sin esta reversa el contramovimiento de abajo dejaría el saldo del proveedor a favor por lo perdonado.
+        await RedondeoDeProveedor.RevertirDeLaCompraAsync(
+            db, conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, id, idPuntoVenta, idEmpleado,
+            momento, "anulación de la compra", ct);
 
         // 6. proveedores — ÚLTIMO lock de fila for update de esta transacción, igual que en
         // confirmar (design decisión 5/9, mutation target #19 — el mismo orden total aplica acá).

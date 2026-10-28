@@ -541,7 +541,8 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > **Lectores (E3-S2).** Lo pagado de una compra (`LectorDePagadoPorCompra`) es la suma de sus aplicaciones vivas; ya no
 > suma `pagos.id_comprobante_compra` ni los ajustes imputados (el único ajuste imputado a una compra es el
 > contramovimiento de su anulación, y la anulación libera las aplicaciones). Lo aplicado de un pago es la suma de las
-> suyas y su disponible es `pagos.importe - aplicado` (`LectorDeDisponiblePorPago`; E4 restará acá el redondeo).
+> suyas y su disponible es `pagos.importe - aplicado - redondeo` (`LectorDeDisponiblePorPago`; el redondeo es la suma de los
+> movimientos `redondeo` con `id_pago`, ver E4 abajo).
 > Se exponen, solo como campos nuevos del JSON: `aplicado`, `disponible` (null si el pago no es de proveedor) y
 > `aplicaciones[]` en `PagoDeAdministracionListado`; `disponibleDelPago` en las filas `pago` del estado de cuenta del
 > proveedor, y `saldoAFavor` (`max(0, -saldo)`) y `disponibleEnPagos` en su encabezado. `GET /api/proveedores/{id}/saldo`
@@ -608,10 +609,43 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > - `fecha` se valida siempre (no futura) y es la fecha de negocio del pago nuevo y de las aplicaciones nuevas del pedido;
 >   `concepto` sin `lineas` es `400 concepto_sin_pago_nuevo`. Si lo existente salda la compra y vienen líneas, `409
 >   compra_sin_saldo_pendiente` sin escribir. Compra y cada `idPago` inexistentes son 404 antes de validar el cuerpo.
+> - `cerrarEnCero` (booleano, por defecto `false`): ver «Redondeo» abajo.
 > - Orden de locks: compra `FOR UPDATE` → pagos existentes `FOR UPDATE` en id ascendente → por cada pago existente adoptado
 >   (sin proveedor), la fila del proveedor, dentro de ese paso y antes del insert del pago nuevo → insert del pago nuevo (sin
 >   lock) → fila del proveedor del pago nuevo (ya tomada si hubo adopción) → advisory de tesorería, último. Forma (b) de
 >   `ef-retry-safe-writes`.
+
+> **Redondeo: cerrar en cero (E4).** Pagar 1500 una compra de 1503,50 o de 1430,25 puede dejar la cuenta sin saldo, a mano y hasta
+> una tolerancia. Parámetro `tolerancia_redondeo_pago_proveedor` (§9; decimal, default `500`, de 0 a 999999999999.99 con hasta 2
+> decimales, `400 parametro_tolerancia_redondeo_invalida`), resuelto punto de venta de la compra > empresa > default; no es la
+> `tolerancia_pago` de ventas. La diferencia vive en movimientos `redondeo` de la cuenta del proveedor (§8b), no en columnas:
+> - **Pagado de una compra** = Σ aplicaciones vivas **− Σ importe de sus `redondeo`** (negativos, así que suman; su reversa resta).
+>   Una compra con redondeo vigente queda Pagada (saldo 0).
+> - **Disponible de un pago** = `importe − aplicado` − Σ importe de sus movimientos `redondeo` (positivos). Un pago con redondeo vigente queda
+>   con disponible 0. Cuenta también en la lista de pagos aplicables, aplicar, vincular y el crédito del proveedor.
+> - `cerrarEnCero: true` en `POST /api/pagos/de-compra/{idCompra}`: `dif = saldo − (crédito aplicado + total de las líneas)`. `dif = 0`
+>   no escribe nada; `0 < dif ≤ tolerancia` escribe un redondeo del lado de la compra por `dif` (queda Pagada); `−tolerancia ≤ dif < 0`
+>   (pagó de más) convierte el excedente del pago nuevo en un redondeo del lado del pago (disponible 0, sin crédito a favor);
+>   `|dif| > tolerancia` es `409 redondeo_excede_tolerancia` sin escribir nada. La respuesta gana `redondeo` (= `dif` con signo, `null`
+>   sin cierre). Con `false` el comportamiento de E3-S4 no cambia.
+> - `POST /api/compras/{id}/ajuste-de-redondeo` (sin cuerpo): compra confirmada con `0 < saldo ≤ tolerancia` → redondeo del lado de la
+>   compra por todo el saldo (`{idCompra, redondeo, pagado, saldoPendiente}`); sin saldo `409 compra_sin_saldo_pendiente`, más que
+>   la tolerancia `409 redondeo_excede_tolerancia`, anulada o borrador el 409 de siempre; compra inexistente 404. Locks: compra
+>   `FOR UPDATE` → fila del proveedor.
+> - `POST /api/pagos/{id}/ajuste-de-redondeo` (sin cuerpo): pago de proveedor con `0 < disponible ≤ tolerancia` → redondeo del lado
+>   del pago por todo el disponible (`{idPago, redondeo, disponible: 0}`); `409 pago_sin_proveedor`, `409 pago_sin_disponible`, `409
+>   redondeo_excede_tolerancia`; pago inexistente 404. Locks: pago `FOR UPDATE` → fila del proveedor.
+> - `GET /api/compras/{id}/pagos-aplicables` gana `toleranciaRedondeo` (la vigente para esa compra) para que la UI sepa si ofrece
+>   cerrar en cero; la lista de un proveedor lo deja `null`.
+> - Los tres caminos apilan `GestionDeCatalogo`, usan `FabricaDeEstrategiaSinReintento` y auditan `compra.redondeo` (entidad
+>   `comprobante_compra`) o `pago.redondeo` (entidad `pago`), 25 → 27 códigos del catálogo.
+> - **Compensaciones** (el redondeo perdona algo que depende de lo aplicado, así que se revierte con un `redondeo` de signo opuesto
+>   ANTES de que esa dependencia cambie): anular la compra revierte su redondeo (si no, el contramovimiento dejaría el saldo del
+>   proveedor a favor por lo perdonado); desaplicar, dar de baja un pago o recortarle una aplicación (edición que baja el importe)
+>   revierte el redondeo de cada compra a la que ese pago aplica menos que antes (la compra vuelve a deber lo que le falta); la baja o
+>   un cambio de importe de un pago revierte su redondeo del lado del pago (el disponible vuelve a ser `importe − aplicado`); editar
+>   solo concepto, categoría o medios sin cambiar el importe no revierte nada. Aplicar o vincular sobre una compra con redondeo
+>   vigente no tiene lugar (su saldo es 0), y crecer una aplicación por edición descuenta lo perdonado.
 
 ### Órdenes de compra (Etapa 16)
 

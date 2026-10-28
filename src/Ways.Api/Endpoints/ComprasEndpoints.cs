@@ -132,6 +132,13 @@ public static class ComprasEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Anula una compra confirmada: contramovimientos de stock, nunca revierte costo_nominal.");
 
+        grupo.MapPost("/{id:int}/ajuste-de-redondeo", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.AjustarRedondeoDeCompraAsync(id, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Cierra en cero una compra confirmada con saldo pendiente de hasta la tolerancia de redondeo: perdona el saldo " +
+            "con un movimiento de redondeo de la cuenta corriente del proveedor.");
+
         grupo.MapPost("/{id:int}/pagos", async (
             ServicioDePagos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
         {

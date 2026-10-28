@@ -30,6 +30,11 @@ public class MovimientoCuentaCorrienteProveedorConfiguration
                 "ck_movimientos_cuenta_corriente_proveedor_apertura",
                 "(tipo = 'apertura' AND id_punto_venta IS NULL AND id_empleado IS NULL) "
                 + "OR (tipo <> 'apertura' AND id_punto_venta IS NOT NULL AND id_empleado IS NOT NULL)");
+
+            // E4: un redondeo perdona o absorbe una diferencia de UNA compra o de UN pago, nunca de las dos ni de ninguna.
+            t.HasCheckConstraint(
+                "ck_movimientos_cuenta_corriente_proveedor_redondeo_un_destino",
+                "tipo <> 'redondeo' OR num_nonnulls(id_comprobante_compra, id_pago) = 1");
         });
 
         builder.HasKey(m => m.Id).HasName("pk_movimientos_cuenta_corriente_proveedor");

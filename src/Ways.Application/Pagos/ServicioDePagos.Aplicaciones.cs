@@ -4,6 +4,7 @@ using Ways.Application.Compras;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Pagos;
 
@@ -97,7 +98,9 @@ public partial class ServicioDePagos
 
         // Lo aplicado y lo pagado se leen DESPUÉS de los dos locks: nadie más puede cambiarlos hasta el commit.
         var aplicaciones = await db.AplicacionesPago.Where(a => a.IdPago == pago.Id).ToListAsync(ct);
-        var disponible = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicaciones.Sum(a => a.Importe));
+        var redondeoDelPago = (await LectorDeDisponiblePorPago.LeerRedondeoAsync(db, [pago.Id], ct))
+            .GetValueOrDefault(pago.Id, 0m);
+        var disponible = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicaciones.Sum(a => a.Importe), redondeoDelPago);
         if (pedidas.Sum(a => a.Importe) > disponible)
         {
             throw new ErrorDominio(
@@ -117,7 +120,7 @@ public partial class ServicioDePagos
             }
         }
 
-        var valorAnterior = PayloadDeAplicacion(pago, aplicaciones);
+        var valorAnterior = PayloadDeAplicacion(pago, aplicaciones, redondeoDelPago);
 
         foreach (var pedida in pedidas)
         {
@@ -166,7 +169,7 @@ public partial class ServicioDePagos
 
         auditoria.Registrar(new RegistroDeAuditoria(
             idTenant, pago.IdPuntoVenta, AccionAuditada.PagoAplicacion, pago.Id, valorAnterior,
-            PayloadDeAplicacion(pago, aplicaciones)));
+            PayloadDeAplicacion(pago, aplicaciones, redondeoDelPago)));
         await db.SaveChangesAsync(ct);
 
         await transaccion.CommitAsync(ct);
@@ -181,12 +184,14 @@ public partial class ServicioDePagos
     /// «compra de origen» del pago y la imputación de su movimiento de cuenta corriente.
     ///
     /// update-404-first: el pago y la aplicación (que tiene que ser de ese pago y estar viva) responden 404 antes de
-    /// cualquier otra cosa. Orden de locks: compra <c>FOR UPDATE</c> → pago <c>FOR UPDATE</c>.
+    /// cualquier otra cosa. Orden de locks: compra <c>FOR UPDATE</c> → pago <c>FOR UPDATE</c> → fila del proveedor (solo si
+    /// la compra tenía un redondeo vigente, que se revierte: perdonaba una diferencia que dependía de esta aplicación).
     /// </summary>
     public async Task<PagoDeAdministracionListado> DesaplicarAsync(
         int idPago, int idAplicacion, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
         await ExigirPagoExistenteAsync(idPago, ct);
@@ -198,18 +203,19 @@ public partial class ServicioDePagos
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
-            await EjecutarDesaplicarAsync(idTenant, idPago, idAplicacion, idCompra, momento, ct));
+            await EjecutarDesaplicarAsync(idTenant, idPago, idAplicacion, idCompra, idEmpleado, momento, ct));
 
         return await ObtenerDeAdministracionAsync(idPago, ct);
     }
 
     private async Task<int> EjecutarDesaplicarAsync(
-        int idTenant, int idPago, int idAplicacion, int idCompra, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idPago, int idAplicacion, int idCompra, int idEmpleado, DateTimeOffset momento,
+        CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         // Una compra anulada ya liberó sus aplicaciones (la lectura de abajo daría 404): el lock no exige confirmada.
-        await BloquearCompraAsync(idCompra, idTenant, ct, exigirConfirmada: false);
+        var compra = await BloquearCompraAsync(idCompra, idTenant, ct, exigirConfirmada: false);
         await TomarLockDePagoAsync(idPago, idTenant, ct);
         var pago = await db.Pagos.FirstAsync(p => p.Id == idPago, ct);
 
@@ -218,7 +224,9 @@ public partial class ServicioDePagos
             ?? throw ErrorDominio.NoEncontrado($"No existe la aplicación {idAplicacion} del pago {idPago}.");
 
         var anteriores = await db.AplicacionesPago.Where(a => a.IdPago == idPago).ToListAsync(ct);
-        var valorAnterior = PayloadDeAplicacion(pago, anteriores);
+        var redondeoDelPago = (await LectorDeDisponiblePorPago.LeerRedondeoAsync(db, [pago.Id], ct))
+            .GetValueOrDefault(pago.Id, 0m);
+        var valorAnterior = PayloadDeAplicacion(pago, anteriores, redondeoDelPago);
 
         aplicacion.DeletedAt = momento;
         aplicacion.UpdatedAt = momento;
@@ -227,15 +235,19 @@ public partial class ServicioDePagos
 
         auditoria.Registrar(new RegistroDeAuditoria(
             idTenant, pago.IdPuntoVenta, AccionAuditada.PagoDesaplicacion, pago.Id, valorAnterior,
-            PayloadDeAplicacion(pago, anteriores.Where(a => a.Id != idAplicacion).ToList())));
+            PayloadDeAplicacion(pago, anteriores.Where(a => a.Id != idAplicacion).ToList(), redondeoDelPago)));
         await db.SaveChangesAsync(ct);
+
+        await RevertirRedondeoDeLaCompraAsync(
+            idTenant, idCompra, compra, idEmpleado, momento, $"se desaplicó el pago #{idPago}", ct);
 
         await transaccion.CommitAsync(ct);
 
         return pago.Id;
     }
 
-    private static Dictionary<string, object?> PayloadDeAplicacion(Pago pago, IReadOnlyCollection<AplicacionPago> aplicaciones)
+    private static Dictionary<string, object?> PayloadDeAplicacion(
+        Pago pago, IReadOnlyCollection<AplicacionPago> aplicaciones, decimal redondeoAbsorbido = 0m)
     {
         var vivas = aplicaciones.Where(a => a.DeletedAt is null).ToList();
         var aplicado = vivas.Sum(a => a.Importe);
@@ -246,7 +258,8 @@ public partial class ServicioDePagos
             ["id_comprobante_compra"] = pago.IdComprobanteCompra,
             ["importe"] = pago.Importe,
             ["aplicado"] = aplicado,
-            ["disponible"] = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicado),
+            ["redondeo"] = redondeoAbsorbido,
+            ["disponible"] = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicado, redondeoAbsorbido),
             ["aplicaciones"] = vivas
                 .OrderBy(a => a.IdComprobanteCompra)
                 .Select(a => new Dictionary<string, object?>
@@ -326,6 +339,13 @@ public partial class ServicioDePagos
     /// del pago nuevo (<see cref="EscribirPagoAProveedorAsync"/>) → 4) insert del pago nuevo (sin lock propio) → 5) fila
     /// del proveedor del pago nuevo (ya tomada si hubo adopción) → 6) advisory de tesorería de la empresa, ÚLTIMO.
     ///
+    /// Con <c>CerrarEnCero</c> la diferencia entre el saldo y lo que paga este pedido (crédito aplicado + líneas nuevas) se
+    /// cierra a mano si no supera la tolerancia <c>tolerancia_redondeo_pago_proveedor</c> de la compra: si faltó pagar, un
+    /// redondeo del lado de la compra la deja Pagada; si se pagó de más, el excedente del pago nuevo es un redondeo del lado
+    /// del pago (disponible 0) en vez de crédito a favor. Pasada la tolerancia es <c>409 redondeo_excede_tolerancia</c> sin
+    /// escribir nada. El redondeo solo toca la fila del proveedor, que en ese punto ya está tomada (o no hay tesorería
+    /// que tomar después), así que no cambia el orden de locks.
+    ///
     /// <c>fecha</c> se valida siempre (no futura, en la zona del punto de venta) y es la fecha de negocio de lo que crea
     /// este pedido: el pago nuevo y las aplicaciones nuevas de los pagos existentes. <c>concepto</c> es del pago nuevo:
     /// sin líneas se rechaza (<c>400 concepto_sin_pago_nuevo</c>) en vez de descartarlo. Si el crédito existente salda la
@@ -366,11 +386,15 @@ public partial class ServicioDePagos
         ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
         var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
 
+        decimal? toleranciaDeRedondeo = solicitud.CerrarEnCero
+            ? await RedondeoDeProveedor.ResolverToleranciaAsync(db, puntoVenta.IdEmpresa, puntoVenta.Id, ct)
+            : null;
+
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarPagoDeCompraConAplicacionesAsync(
-                idTenant, idCompra, solicitud.Fecha, fechaDeNegocio, puntoVenta, plan, concepto, existentes, idEmpleado,
-                momento, ct));
+                idTenant, idCompra, solicitud.Fecha, fechaDeNegocio, puntoVenta, plan, concepto, existentes,
+                toleranciaDeRedondeo, idEmpleado, momento, ct));
     }
 
     /// <summary>update-404-first: cada <c>idPago</c> pedido que no existe es 404 antes de validar el cuerpo. Una lista
@@ -391,8 +415,8 @@ public partial class ServicioDePagos
 
     private async Task<ResultadoDePagoDeCompraConAplicaciones> EjecutarPagoDeCompraConAplicacionesAsync(
         int idTenant, int idCompra, DateOnly fecha, DateTimeOffset fechaDeNegocio, PuntoVenta puntoVenta,
-        PlanDeLineasDePago? plan, string? concepto, IReadOnlyList<AplicacionDePagoExistente> existentes, int idEmpleado,
-        DateTimeOffset momento, CancellationToken ct)
+        PlanDeLineasDePago? plan, string? concepto, IReadOnlyList<AplicacionDePagoExistente> existentes,
+        decimal? toleranciaDeRedondeo, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -411,6 +435,7 @@ public partial class ServicioDePagos
         var aplicacionesPrevias = idsDeLosPagos.Count == 0
             ? []
             : await db.AplicacionesPago.Where(a => idsDeLosPagos.Contains(a.IdPago)).ToListAsync(ct);
+        var redondeosPrevios = await LectorDeDisponiblePorPago.LeerRedondeoAsync(db, idsDeLosPagos, ct);
 
         var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [idCompra], ct)).GetValueOrDefault(idCompra, 0m);
         var saldo = ReglaDePagoDeCompra.SaldoPendiente(EstadoCompra.Confirmada, compra.Total, pagado);
@@ -437,7 +462,8 @@ public partial class ServicioDePagos
             }
 
             var aplicado = aplicacionesPrevias.Where(a => a.IdPago == pago.Id).Sum(a => a.Importe);
-            if (pedida.Importe > LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicado))
+            if (pedida.Importe > LectorDeDisponiblePorPago.Disponible(
+                    pago.Importe, aplicado, redondeosPrevios.GetValueOrDefault(pago.Id, 0m)))
             {
                 throw new ErrorDominio(
                     "aplicacion_excede_disponible", "El importe a aplicar supera lo disponible del pago.", 409);
@@ -456,11 +482,23 @@ public partial class ServicioDePagos
             throw new ErrorDominio("compra_sin_saldo_pendiente", "La compra no tiene saldo pendiente de pago.", 409);
         }
 
+        // Cerrar en cero: la diferencia que deja este pedido (positiva si falta pagar, negativa si se paga de más) tiene que
+        // entrar en la tolerancia ANTES de escribir nada.
+        var diferencia = saldo - totalExistente - (plan?.Total ?? 0m);
+        if (toleranciaDeRedondeo is { } tolerancia && diferencia != 0m
+            && !ReglaDeRedondeoDePago.EstaEnTolerancia(Math.Abs(diferencia), tolerancia))
+        {
+            throw new ErrorDominio(
+                "redondeo_excede_tolerancia",
+                $"La diferencia de {Math.Abs(diferencia):0.00} supera la tolerancia de redondeo de {tolerancia:0.00}.", 409);
+        }
+
         foreach (var pedida in existentes.OrderBy(a => a.IdPago))
         {
             var pago = pagos.First(p => p.Id == pedida.IdPago);
             var delPago = aplicacionesPrevias.Where(a => a.IdPago == pago.Id).ToList();
-            var valorAnterior = PayloadDeAplicacion(pago, delPago);
+            var redondeoDelPagoExistente = redondeosPrevios.GetValueOrDefault(pago.Id, 0m);
+            var valorAnterior = PayloadDeAplicacion(pago, delPago, redondeoDelPagoExistente);
 
             var adopta = pago.Categoria != CategoriaPago.Proveedor || pago.IdProveedor is null;
             var existente = delPago.FirstOrDefault(a => a.IdComprobanteCompra == idCompra);
@@ -506,7 +544,7 @@ public partial class ServicioDePagos
 
             auditoria.Registrar(new RegistroDeAuditoria(
                 idTenant, pago.IdPuntoVenta, AccionAuditada.PagoAplicacion, pago.Id, valorAnterior,
-                PayloadDeAplicacion(pago, delPago)));
+                PayloadDeAplicacion(pago, delPago, redondeoDelPagoExistente)));
             await db.SaveChangesAsync(ct);
         }
 
@@ -533,19 +571,37 @@ public partial class ServicioDePagos
             .Select(a => new AplicacionALaCompraListada(a.Id, a.IdPago, a.Importe, a.Fecha))
             .ToListAsync(ct);
 
-        await transaccion.CommitAsync(ct);
-
-        var pagadoFinal = aplicaciones.Sum(a => a.Importe);
         var aplicadoDelPagoNuevo = pagoNuevo is null
             ? 0m
             : aplicaciones.Where(a => a.IdPago == pagoNuevo.Id).Sum(a => a.Importe);
+
+        // Cierre en cero: lo que falta de la compra es un redondeo del lado de la compra; lo que sobró del pago nuevo es un
+        // redondeo del lado del pago. La tolerancia ya se validó contra la diferencia calculada de antemano.
+        decimal? redondeo = null;
+        var redondeoDelPagoNuevo = 0m;
+        if (toleranciaDeRedondeo is not null && diferencia > 0m)
+        {
+            await RedondearCompraAsync(idTenant, idCompra, compra, diferencia, idEmpleado, momento, ct);
+            redondeo = diferencia;
+        }
+        else if (toleranciaDeRedondeo is not null && diferencia < 0m)
+        {
+            redondeoDelPagoNuevo = pagoNuevo!.Importe - aplicadoDelPagoNuevo;
+            await RedondearPagoAsync(idTenant, pagoNuevo, compra.IdProveedor, compra.IdPuntoVenta, redondeoDelPagoNuevo, idEmpleado, momento, ct);
+            redondeo = diferencia;
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        var pagadoFinal = (await LectorDePagadoPorCompra.LeerAsync(db, [idCompra], ct)).GetValueOrDefault(idCompra, 0m);
 
         return new ResultadoDePagoDeCompraConAplicaciones(
             pagoNuevo is null ? null : Proyectar(pagoNuevo, plan!.IdMedioPagoDeCompatibilidad),
             pagadoFinal,
             ReglaDePagoDeCompra.SaldoPendiente(EstadoCompra.Confirmada, compra.Total, pagadoFinal),
             aplicaciones,
-            pagoNuevo is null ? null : pagoNuevo.Importe - aplicadoDelPagoNuevo);
+            pagoNuevo is null ? null : pagoNuevo.Importe - aplicadoDelPagoNuevo - redondeoDelPagoNuevo,
+            redondeo);
     }
 
     /// <summary>dto-contract-honesty: cada entrada se usa o se rechaza. De 0 a 20, sin nulos, sin pagos repetidos y con
@@ -594,18 +650,23 @@ public partial class ServicioDePagos
             .Select(c => new
             {
                 c.IdProveedor,
+                c.IdPuntoVenta,
                 IdEmpresa = db.PuntosVenta.Where(pv => pv.Id == c.IdPuntoVenta).Select(pv => pv.IdEmpresa).FirstOrDefault()
             })
             .FirstOrDefaultAsync(ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la compra {idCompra}.");
 
-        return await PagosConDisponibleAsync(
+        var tolerancia = await RedondeoDeProveedor.ResolverToleranciaAsync(db, compra.IdEmpresa, compra.IdPuntoVenta, ct);
+
+        var pagos = await PagosConDisponibleAsync(
             db.Pagos.Where(p =>
                 p.IdMovimientoPersonal == null
                 && p.IdEmpresa == compra.IdEmpresa
                 && ((p.Categoria == CategoriaPago.Proveedor && p.IdProveedor == compra.IdProveedor)
                     || (p.IdProveedor == null && p.Categoria != CategoriaPago.Sueldos))),
             ct);
+
+        return pagos with { ToleranciaRedondeo = tolerancia };
     }
 
     /// <summary>
@@ -632,18 +693,26 @@ public partial class ServicioDePagos
         // El disponible > 0 se resuelve en SQL (importe menos las aplicaciones vivas, que el filtro de baja lógica ya
         // limita) y el tope se aplica después de filtrar.
         var filas = await candidatos
-            .Where(p => p.Importe - (db.AplicacionesPago.Where(a => a.IdPago == p.Id).Sum(a => (decimal?)a.Importe) ?? 0m) > 0m)
+            .Where(p => p.Importe
+                - (db.AplicacionesPago.Where(a => a.IdPago == p.Id).Sum(a => (decimal?)a.Importe) ?? 0m)
+                - (db.MovimientosCuentaCorrienteProveedor
+                    .Where(m => m.Tipo == TipoMovimientoCcProveedor.Redondeo && m.IdPago == p.Id)
+                    .Sum(m => (decimal?)m.Importe) ?? 0m) > 0m)
             .OrderBy(p => p.Fecha).ThenBy(p => p.Id)
             .Take(MaximoDePagosAplicables)
             .Select(p => new { p.Id, p.Fecha, p.Concepto, p.Importe, p.IdProveedor })
             .ToListAsync(ct);
 
-        var aplicado = await LectorDeDisponiblePorPago.LeerAplicadoAsync(db, filas.Select(f => f.Id).ToList(), ct);
+        var idsDeLasFilas = filas.Select(f => f.Id).ToList();
+        var aplicado = await LectorDeDisponiblePorPago.LeerAplicadoAsync(db, idsDeLasFilas, ct);
+        var redondeo = await LectorDeDisponiblePorPago.LeerRedondeoAsync(db, idsDeLasFilas, ct);
 
         return new PagosAplicables(filas
             .Select(f => new PagoAplicable(
                 f.Id, f.Fecha, f.Concepto, f.Importe,
-                LectorDeDisponiblePorPago.Disponible(f.Importe, aplicado.GetValueOrDefault(f.Id, 0m)), f.IdProveedor))
+                LectorDeDisponiblePorPago.Disponible(
+                    f.Importe, aplicado.GetValueOrDefault(f.Id, 0m), redondeo.GetValueOrDefault(f.Id, 0m)),
+                f.IdProveedor))
             .Where(p => p.Disponible > 0m)
             .ToList());
     }

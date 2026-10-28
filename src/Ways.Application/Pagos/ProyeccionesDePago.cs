@@ -60,6 +60,7 @@ internal static class ProyeccionesDePago
         var ids = pagos.Select(p => p.Id).ToList();
         var porPago = await LineasPorPagoAsync(db, ids, ct);
         var aplicaciones = await AplicacionesPorPagoAsync(db, ids, ct);
+        var redondeos = await LectorDeDisponiblePorPago.LeerRedondeoAsync(db, ids, ct);
 
         return pagos
             .Select(p =>
@@ -72,7 +73,7 @@ internal static class ProyeccionesDePago
                     Aplicado = aplicado,
                     // Solo un pago de proveedor tiene crédito; el resto (caja, personal) no se aplica a compras.
                     Disponible = p.Categoria == CategoriaPago.Proveedor
-                        ? LectorDeDisponiblePorPago.Disponible(p.Importe, aplicado)
+                        ? LectorDeDisponiblePorPago.Disponible(p.Importe, aplicado, redondeos.GetValueOrDefault(p.Id, 0m))
                         : null,
                     Aplicaciones = delPago
                 };

@@ -57,7 +57,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_documento", new[] { "cuil", "cuit", "dni", "otro", "pasaporte" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_caja", new[] { "apertura_cajon", "refuerzo", "retiro" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc", new[] { "actualizacion_precios", "ajuste", "consumo", "descuento_personal", "pago" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago", "redondeo" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cuenta", new[] { "ajuste", "cobro", "comision", "deposito", "retencion_ganancias", "retencion_iibb", "retencion_iva", "retiro", "transferencia" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "pago", "retiro_caja" });
@@ -2989,6 +2989,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("movimientos_cuenta_corriente_proveedor", null, t =>
                         {
                             t.HasCheckConstraint("ck_movimientos_cuenta_corriente_proveedor_apertura", "(tipo = 'apertura' AND id_punto_venta IS NULL AND id_empleado IS NULL) OR (tipo <> 'apertura' AND id_punto_venta IS NOT NULL AND id_empleado IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_movimientos_cuenta_corriente_proveedor_redondeo_un_destino", "tipo <> 'redondeo' OR num_nonnulls(id_comprobante_compra, id_pago) = 1");
                         });
                 });
 
