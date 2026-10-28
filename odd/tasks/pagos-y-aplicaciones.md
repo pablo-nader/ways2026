@@ -80,10 +80,16 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   Treasury, supplier-CC adjustments and exports keep the header (category/total only). The turno listing
   (`/api/gastos`, `LectorDeLineasDelTurno` via `ProyeccionesDePago`) still shows the header medio until S4 adds
   `lineas`, so a pago split across two medios appears there under the header medio only.
-- [ ] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
-  movements stay one per pago on the header total.
-- [ ] E2-S3b — Edición de pagos con N líneas: replaces `SincronizarItemDelPagoAsync` (it assumes one live item and
-  throws on two) with a diff of the lines; the closed-turno arqueo recalculation already re-derives from the items,
+- [x] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
+  movements stay one per pago on the header total. Done together with the edit/replace-set and pagar compra:
+  `ReglaDeLineasDePago` (1..20 lines, codes `pago_sin_lineas`, `pago_demasiadas_lineas`,
+  `pago_linea_importe_invalido`, `pago_linea_referencia_muy_larga`), `Comando*` records with `Lineas`, and the
+  current request records adapt to one line. Edit replaces the line set (live items reused by position, surplus
+  soft-deleted, no physical delete); the old PUT routes answer `409 gasto_con_varios_medios` on a multi-item pago.
+  Plantel keeps its own wire codes and shares only the amount arithmetic. The POS alta still does not validate
+  the medio server-side (unchanged). Integration tests (`PagosConLineasTests`) need CI.
+- [ ] E2-S3b — (service-side edit with N lines landed in S3a; what remains here: drop `pagos.id_medio_pago` readers, compensating entries per medio) Edición de pagos con N líneas: (`SincronizarItemDelPagoAsync` was already replaced in S3a by
+  `ReemplazarItemsDelPago`, a positional reuse of the live items); the closed-turno arqueo recalculation already re-derives from the items,
   so only the before/after `EstadoContableDePago` maps need the new lines; compensating entries per medio.
 - [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.

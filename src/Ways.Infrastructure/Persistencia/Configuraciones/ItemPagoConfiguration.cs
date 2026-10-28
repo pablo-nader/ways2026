@@ -8,8 +8,8 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
 /// Mapea <see cref="ItemPago"/> (doc 10 §5, hija operativa de <c>pagos</c>). Las dos CHECKs son defensa en
-/// profundidad: <c>ServicioDePagos</c> ya escribe siempre un único ítem con el medio y el importe validados de
-/// la cabecera. El constraint trigger <c>tg_items_pago_suma_igual_importe</c> lo crea la migración con SQL
+/// profundidad: <c>ServicioDePagos</c> ya escribe un ítem por línea, con el medio y el importe validados por
+/// <c>ReglaDeLineasDePago</c>. El constraint trigger <c>tg_items_pago_suma_igual_importe</c> lo crea la migración con SQL
 /// (EF no lo modela).
 /// </summary>
 public class ItemPagoConfiguration : IEntityTypeConfiguration<ItemPago>

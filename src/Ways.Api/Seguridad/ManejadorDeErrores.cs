@@ -1236,8 +1236,8 @@ public class ManejadorDeErrores(
                     "Un gasto de caja de turno tiene que tener un turno.",
                     "gasto_caja_turno_requiere_turno"),
 
-            // E2-S1 (líneas por medio de pago): ServicioDePagos escribe siempre un único ítem con el medio y el
-            // importe validados de la cabecera, así que ninguna de las tres ramas es alcanzable por operación
+            // E2-S1 (líneas por medio de pago): ServicioDePagos escribe un ítem por línea, con el medio y el
+            // importe validados por ReglaDeLineasDePago, así que ninguna de las tres ramas es alcanzable por operación
             // normal. Son backstops de una escritura cruda/fuera de banda; las FKs fk_items_pago_* salen como
             // referencia_invalida por el backstop genérico de las fk_*.
             "ck_items_pago_importe_positivo" =>
