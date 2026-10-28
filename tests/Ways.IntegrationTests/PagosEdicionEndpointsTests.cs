@@ -339,7 +339,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo);
         var idCuentaCorriente = await MedioDeCuentaCorrienteAsync(ctx);
 
-        Assert.Equal("pago_importe_invalido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(0m, ctx.IdMedioEfectivo))));
+        Assert.Equal("gasto_importe_invalido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(0m, ctx.IdMedioEfectivo))));
         Assert.Equal("gasto_concepto_requerido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(5m, ctx.IdMedioEfectivo, concepto: "  "))));
         Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(ctx.Admin, pago.Id, Edicion(5m, int.MaxValue))).StatusCode);
         Assert.Equal("gasto_medio_pago_cuenta_corriente_invalido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(5m, idCuentaCorriente))));
@@ -663,7 +663,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var respuesta = await EditarAdminAsync(
             ctx.Admin, pago.Id, Edicion(60m, ctx.IdMedioEfectivo, CategoriaPago.Proveedor, ctx.IdProveedor));
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
-        Assert.Equal("pago_de_proveedor_requiere_punto_de_venta", await CodigoDeErrorAsync(respuesta));
+        Assert.Equal("gasto_de_proveedor_requiere_punto_de_venta", await CodigoDeErrorAsync(respuesta));
 
         await using var db = Db(ctx);
         Assert.Equal(CategoriaPago.Otros, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Categoria).SingleAsync());
@@ -680,7 +680,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
         var otraCategoria = await EditarAdminAsync(ctx.Admin, pago.Id, Edicion(400m, ctx.IdMedioEfectivo, CategoriaPago.Otros));
         Assert.Equal(HttpStatusCode.BadRequest, otraCategoria.StatusCode);
-        Assert.Equal("pago_de_compra_debe_ser_de_proveedor", await CodigoDeErrorAsync(otraCategoria));
+        Assert.Equal("gasto_de_compra_debe_ser_de_proveedor", await CodigoDeErrorAsync(otraCategoria));
 
         var otroProveedor = await EditarAdminAsync(
             ctx.Admin, pago.Id, Edicion(400m, ctx.IdMedioEfectivo, CategoriaPago.Proveedor, ctx.IdProveedor2));

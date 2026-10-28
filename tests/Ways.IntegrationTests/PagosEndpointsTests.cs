@@ -157,7 +157,7 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("pago_importe_invalido", problema.GetProperty("codigo").GetString());
+        Assert.Equal("gasto_importe_invalido", problema.GetProperty("codigo").GetString());
     }
 
     // ---- concepto obligatorio (mutation-proof-tests: ExigirConceptoValido) -----------------------

@@ -114,7 +114,7 @@ public static class ReportesEndpoints
 
             var bytes = exportador.Generar(tabla);
             var alcance = idPuntoVenta is { } id ? $"pv{id}" : "todos";
-            var nombre = NombreDeArchivo.Construir("pagos_resumen", alcance, desde, hasta);
+            var nombre = NombreDeArchivo.Construir("gastos_resumen", alcance, desde, hasta);
 
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })

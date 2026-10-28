@@ -310,7 +310,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
         var importeCero = await PagarAsync(ctx.Admin, compra.Id, 0m, ctx.IdMedioEfectivo);
         Assert.Equal(HttpStatusCode.BadRequest, importeCero.StatusCode);
-        Assert.Equal("pago_importe_invalido", await CodigoDeErrorAsync(importeCero));
+        Assert.Equal("gasto_importe_invalido", await CodigoDeErrorAsync(importeCero));
 
         var fechaFutura = await PagarAsync(
             ctx.Admin, compra.Id, 100m, ctx.IdMedioEfectivo, FechaDelNegocio.Hoy().AddDays(2));

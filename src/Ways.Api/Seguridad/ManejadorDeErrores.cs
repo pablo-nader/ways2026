@@ -421,7 +421,7 @@ public class ManejadorDeErrores(
                     uxMovimientoTesoreriaPago, "ux_movimientos_tesoreria_id_pago", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict,
                     "Este gasto ya tiene un movimiento de tesorería vinculado.",
-                    "movimiento_de_tesoreria_de_pago_duplicado"),
+                    "movimiento_de_tesoreria_de_gasto_duplicado"),
 
             // Facturación por medio de pago (db-error-backstops): tres índices únicos que solo escribe el
             // servidor (la decisión de facturar y la emisión del espejo, tareas siguientes de la feature); el 409 es
@@ -1225,7 +1225,7 @@ public class ManejadorDeErrores(
             "ck_pagos_importe_positivo" =>
                 (StatusCodes.Status400BadRequest,
                     "El importe del gasto tiene que ser positivo.",
-                    "pago_importe_invalido"),
+                    "gasto_importe_invalido"),
 
             // GastosOrigenFondosYTesoreriaPorEmpresa: defensa en profundidad de
             // ServicioDePagos.RegistrarAsync, que hoy solo emite origen_fondos = caja_turno y
@@ -1234,7 +1234,7 @@ public class ManejadorDeErrores(
             "ck_pagos_caja_turno_requiere_turno" =>
                 (StatusCodes.Status400BadRequest,
                     "Un gasto de caja de turno tiene que tener un turno.",
-                    "pago_caja_turno_requiere_turno"),
+                    "gasto_caja_turno_requiere_turno"),
 
             "ck_movimientos_tesoreria_cadena" =>
                 (StatusCodes.Status400BadRequest,

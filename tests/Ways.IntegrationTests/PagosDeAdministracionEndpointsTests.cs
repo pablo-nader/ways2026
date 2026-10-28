@@ -234,7 +234,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("pago_importe_invalido", problema.GetProperty("codigo").GetString());
+        Assert.Equal("gasto_importe_invalido", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]
@@ -372,7 +372,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("pago_de_proveedor_requiere_punto_de_venta", problema.GetProperty("codigo").GetString());
+        Assert.Equal("gasto_de_proveedor_requiere_punto_de_venta", problema.GetProperty("codigo").GetString());
     }
 
     // ---- policy: solo GestionDeCatalogo (admin) -----------------------------------------------------
@@ -521,6 +521,6 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("pago_de_compra_debe_ser_de_proveedor", problema.GetProperty("codigo").GetString());
+        Assert.Equal("gasto_de_compra_debe_ser_de_proveedor", problema.GetProperty("codigo").GetString());
     }
 }

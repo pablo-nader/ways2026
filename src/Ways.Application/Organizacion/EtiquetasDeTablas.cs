@@ -70,7 +70,7 @@ public static class EtiquetasDeTablas
             ["ofertas"] = "ofertas",
             ["ofertas_listas"] = "ofertas",
             ["ordenes_compra"] = "órdenes de compra",
-            ["pagos"] = "pagos",
+            ["pagos"] = "gastos",
             ["pagos_comprobante"] = "pagos",
             ["parametros"] = "parámetros",
             ["percepciones_comprobante_compra"] = "compras",

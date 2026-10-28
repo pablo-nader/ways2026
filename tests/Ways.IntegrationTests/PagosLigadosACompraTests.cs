@@ -188,7 +188,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("pago_de_compra_debe_ser_de_proveedor", problema.GetProperty("codigo").GetString());
+        Assert.Equal("gasto_de_compra_debe_ser_de_proveedor", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]

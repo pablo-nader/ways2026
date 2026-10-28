@@ -961,7 +961,7 @@ public class ServicioDePagos(
     {
         if (importe <= 0m)
         {
-            throw new ErrorDominio("pago_importe_invalido", "El importe del gasto tiene que ser positivo.", 400);
+            throw new ErrorDominio("gasto_importe_invalido", "El importe del gasto tiene que ser positivo.", 400);
         }
     }
 
@@ -987,7 +987,7 @@ public class ServicioDePagos(
         if (idComprobanteCompra is not null && categoria != CategoriaPago.Proveedor)
         {
             throw new ErrorDominio(
-                "pago_de_compra_debe_ser_de_proveedor",
+                "gasto_de_compra_debe_ser_de_proveedor",
                 "Un gasto ligado a una compra tiene que ser de categoría proveedor.", 400);
         }
     }
@@ -1005,7 +1005,7 @@ public class ServicioDePagos(
         if (categoria == CategoriaPago.Proveedor && idPuntoVenta is null)
         {
             throw new ErrorDominio(
-                "pago_de_proveedor_requiere_punto_de_venta",
+                "gasto_de_proveedor_requiere_punto_de_venta",
                 "Un gasto de categoría proveedor tiene que indicar un punto de venta.", 400);
         }
     }

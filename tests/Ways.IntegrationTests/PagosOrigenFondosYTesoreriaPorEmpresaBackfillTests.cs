@@ -52,7 +52,7 @@ public class PagosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture f
     /// <summary>El mismo statement que el backfill 2/4 de <c>GastosOrigenFondosYTesoreriaPorEmpresa.Up</c>.</summary>
     private const string SqlBackfillIdEmpresaPagos =
         """
-        UPDATE pagos g
+        UPDATE gastos g
            SET id_empresa = pv.id_empresa
           FROM puntos_venta pv
          WHERE pv.id_punto_venta = g.id_punto_venta
@@ -109,9 +109,9 @@ public class PagosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture f
         try
         {
             // Migra la base nueva SOLO hasta la migración inmediatamente anterior a la mía: sin
-            // id_empresa/id_pago en movimientos_tesoreria, sin id_empresa/origen_fondos en pagos,
-            // id_turno_caja de pagos todavía NOT NULL. OrigenFondosPago no se mapea a propósito:
-            // el tipo origen_fondos_pago todavía no existe en este punto de la historia.
+            // id_empresa/id_gasto en movimientos_tesoreria, sin id_empresa/origen_fondos en gastos,
+            // id_turno_caja de gastos todavía NOT NULL. OrigenFondosPago no se mapea a propósito:
+            // el tipo origen_fondos_gasto todavía no existe en este punto de la historia.
             var opciones = new DbContextOptionsBuilder<WaysDbContext>()
                 .UseNpgsql(cadenaOwner, npgsql =>
                 {
@@ -128,7 +128,7 @@ public class PagosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture f
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
+                    npgsql.MapEnum<CategoriaPago>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -142,7 +142,7 @@ public class PagosOrigenFondosYTesoreriaPorEmpresaBackfillTests(WaysApiFixture f
                     npgsql.MapEnum<Ways.Domain.Fiscal.MotivoDeFacturacion>("motivo_facturacion");
                     npgsql.MapEnum<Ways.Domain.Fiscal.EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
-                    // OrigenFondosPago NO se mapea: origen_fondos_pago todavía no existe.
+                    // OrigenFondosPago NO se mapea: origen_fondos_gasto todavía no existe.
                 })
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
                 .Options;

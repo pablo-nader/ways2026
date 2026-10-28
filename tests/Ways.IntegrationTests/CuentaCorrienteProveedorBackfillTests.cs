@@ -274,7 +274,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
 
     /// <summary>GastosOrigenFondosYTesoreriaPorEmpresa: misma trampa ya documentada en
     /// <see cref="SembrarProveedorPreMigracionAsync"/>/<see cref="SembrarCompraAsync"/>/
-    /// <see cref="SembrarTurnoPreMigracionAsync"/> — <c>pagos.id_empresa</c>/<c>origen_fondos</c>
+    /// <see cref="SembrarTurnoPreMigracionAsync"/> — <c>gastos.id_empresa</c>/<c>origen_fondos</c>
     /// NO existen todavía en el esquema pre-migración (<see cref="MigracionAnterior"/> se detiene
     /// muy ANTES de esa migración) — INSERT crudo con la lista de columnas de ANTES de esa etapa,
     /// nunca vía EF (que, con el modelo HEAD, incluiría las columnas nuevas en el INSERT y
@@ -318,9 +318,10 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             .Where(c => c.IdProveedor == idProveedor && c.Estado == EstadoCompra.Confirmada)
             .SumAsync(c => c.Total);
 
-        var totalPagos = await db.Pagos
-            .Where(g => g.IdProveedor == idProveedor && g.Categoria == CategoriaPago.Proveedor)
-            .SumAsync(g => g.Importe);
+        var totalPagos = await db.Database
+            .SqlQuery<decimal>(
+                $"SELECT COALESCE(SUM(importe), 0) AS \"Value\" FROM gastos WHERE id_proveedor = {idProveedor} AND categoria = 'proveedor'::categoria_gasto AND deleted_at IS NULL")
+            .SingleAsync();
 
         return totalCompras - totalPagos;
     }
