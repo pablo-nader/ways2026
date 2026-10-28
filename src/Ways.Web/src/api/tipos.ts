@@ -368,7 +368,7 @@ export const ZONAS_HORARIAS_OFRECIDAS: { id: string; etiqueta: string }[] = [
 
 // --- Organización: lectura/edición (ServicioDeOrganizacion) ---
 // Alta y baja de tenants/empresas/puntos_venta siguen siendo plataforma-only vía
-// aprovisionamiento (ver NuevoTenant.tsx); estos tipos son solo listado/detalle/edición de
+// aprovisionamiento (ver paginas/tenants/ModalDeNuevoTenant.tsx); estos tipos son solo listado/detalle/edición de
 // datos descriptivos + suspensión de tenants.
 
 export type EstadoTenant = 'Activo' | 'Suspendido' | 'Baja'

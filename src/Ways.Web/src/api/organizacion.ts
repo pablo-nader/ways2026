@@ -3,7 +3,7 @@
  * (plataforma ve/edita cualquiera, un admin de tenant ve/edita solo los propios — lo
  * garantiza `OrganizacionEndpoints`/`ServicioDeOrganizacion` del lado del servidor, acá no
  * hay lógica de alcance). El alta de tenants y empresas sigue siendo plataforma-only vía
- * aprovisionamiento (`NuevoTenant.tsx`); la de puntos de venta sobre una empresa existente es
+ * aprovisionamiento (`paginas/tenants/ModalDeNuevoTenant.tsx`); la de puntos de venta sobre una empresa existente es
  * `crearPuntoVenta`; la BAJA (etapa 20) es lógica y vive en los tres `eliminar*` de abajo.
  */
 import { api } from './cliente'

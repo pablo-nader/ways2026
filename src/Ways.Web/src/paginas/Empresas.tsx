@@ -36,7 +36,7 @@ const ARRASTRE_DE_EMPRESA = ['Sus puntos de venta activos'] as const
 
 /**
  * Lectura/edición/baja de empresas — el alta sigue siendo plataforma-only vía aprovisionamiento
- * (`NuevoTenant.tsx`); la baja (etapa 20) la puede ejecutar también un admin de tenant sobre las
+ * (`paginas/tenants/ModalDeNuevoTenant.tsx`); la baja (etapa 20) la puede ejecutar también un admin de tenant sobre las
  * propias, porque `DELETE /api/empresas/{id}` reusa la policy del grupo
  * (`GestionDeOrganizacion`) y esta pantalla ya está detrás de esos mismos roles.
  * El backend ya filtra por alcance: la plataforma ve
