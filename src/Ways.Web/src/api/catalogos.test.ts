@@ -6,8 +6,13 @@ import {
   descriptorMarcas,
   avisoDeLasCuentas,
   descriptorMediosPago,
+  columnasDeCatalogo,
+  textoDeColumna,
 } from './catalogos'
-import type { ListaPrecioListado, MedioPagoAdministrado } from './tipos'
+import type { DescriptorDeCatalogo } from './catalogos'
+import { filtrarFilas } from '../componentes/grilla/filtros'
+import { ordenarFilas } from '../componentes/grilla/ordenamiento'
+import type { CatalogoListado, ListaPrecioListado, MedioPagoAdministrado } from './tipos'
 
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
   return {
@@ -458,5 +463,111 @@ describe('aAlta de los catálogos genéricos — empresa de la fila', () => {
     )
 
     expect(alta.idEmpresa).toBeNull()
+  })
+})
+
+describe('columnasDeCatalogo', () => {
+  it('arma las celdas del encabezado: ID, Nombre, columnas propias, Estado y Acciones sin filtro', () => {
+    expect(columnasDeCatalogo(descriptorListasPrecio).celdas).toEqual(['id', 'nombre', 'esDefault', 'modo', 'estado', null])
+    expect(columnasDeCatalogo(descriptorMarcas).celdas).toEqual(['id', 'nombre', 'estado', null])
+    expect(columnasDeCatalogo(descriptorMediosPago).celdas).toEqual(['id', 'nombre', 'comportamiento', 'estado', null])
+  })
+
+  it('ordena Orden como número y no como texto', () => {
+    const { ordenables } = columnasDeCatalogo(descriptorAreas)
+    const nueve = { id: 1, nombre: 'a', activo: true, idEmpresa: null, orden: 9 }
+    const diez = { id: 2, nombre: 'b', activo: true, idEmpresa: null, orden: 10 }
+
+    expect(ordenarFilas([diez, nueve], ordenables, { columna: 'orden', direccion: 'ascendente' })).toEqual([nueve, diez])
+  })
+
+  it('un margen vacío es un vacío: va al final aunque se ordene de mayor a menor', () => {
+    const { ordenables } = columnasDeCatalogo(descriptorGrupos)
+    const sin = { id: 1, nombre: 'a', activo: true, idEmpresa: null, margen: null }
+    const con = { id: 2, nombre: 'b', activo: true, idEmpresa: null, margen: 5 }
+    const mas = { id: 3, nombre: 'c', activo: true, idEmpresa: null, margen: 12 }
+
+    expect(ordenarFilas([sin, con, mas], ordenables, { columna: 'margen', direccion: 'descendente' })).toEqual([mas, con, sin])
+  })
+
+  it('la columna booleana se filtra con Sí / No y la de modo con las etiquetas que muestra', () => {
+    const { filtrables } = columnasDeCatalogo(descriptorListasPrecio)
+    const base = listaFixture({ id: 1, esDefault: true })
+    const derivada = listaFixture({ id: 2, modo: 'Derivada', idListaBase: 1, porcentaje: 10 })
+
+    expect(filtrables.esDefault.opciones?.map((o) => o.valor)).toEqual(['Sí', 'No'])
+    expect(filtrarFilas([base, derivada], filtrables, { esDefault: 'Sí' })).toEqual([base])
+    expect(filtrarFilas([base, derivada], filtrables, { modo: 'Derivada (calculada sobre otra lista)' })).toEqual([derivada])
+  })
+
+  it('Estado ofrece Activo e Inactivo', () => {
+    const { filtrables } = columnasDeCatalogo(descriptorMarcas)
+    const activa = { id: 1, nombre: 'Nike', activo: true, idEmpresa: null }
+    const inactiva = { id: 2, nombre: 'Puma', activo: false, idEmpresa: null }
+
+    expect(filtrables.estado.opciones?.map((o) => o.valor)).toEqual(['Activo', 'Inactivo'])
+    expect(filtrarFilas([activa, inactiva], filtrables, { estado: 'Inactivo' })).toEqual([inactiva])
+  })
+
+  it('el ID se filtra por el número que se muestra con ceros', () => {
+    const { filtrables } = columnasDeCatalogo(descriptorMarcas)
+
+    expect(filtrables.id.valor({ id: 7, nombre: 'x', activo: true, idEmpresa: null })).toBe('0007')
+  })
+
+  it('una columna con formatearListado ordena y filtra por la etiqueta, y una referencia colgante cuenta como vacía', () => {
+    const etiquetas: Record<number, string> = { 1: 'Mayorista' }
+    type Fila = CatalogoListado & { idLista: number }
+    const descriptor: DescriptorDeCatalogo<Fila, unknown> = {
+      recurso: 'x',
+      titulo: 'X',
+      tituloSingular: 'x',
+      campos: [
+        {
+          clave: 'idLista',
+          etiqueta: 'Lista',
+          tipo: 'select',
+          columnaEnListado: true,
+          formatearListado: (item) => etiquetas[(item as Fila).idLista] ?? '',
+        },
+      ],
+      valoresPorDefecto: {},
+      aValores: (item) => ({ idLista: String(item.idLista) }),
+      aAlta: () => ({}),
+      sujetoDeBaja: 'el área',
+    }
+    const conLista = { id: 1, nombre: 'a', activo: true, idEmpresa: null, idLista: 1 }
+    const colgante = { id: 2, nombre: 'b', activo: true, idEmpresa: null, idLista: 99 }
+    const { ordenables, filtrables } = columnasDeCatalogo(descriptor)
+
+    expect(filtrables.idLista.opciones).toBeUndefined()
+    expect(filtrarFilas([conLista, colgante], filtrables, { idLista: 'mayor' })).toEqual([conLista])
+    expect(ordenarFilas([colgante, conLista], ordenables, { columna: 'idLista', direccion: 'descendente' })).toEqual([
+      conLista,
+      colgante,
+    ])
+    expect(textoDeColumna(descriptor.campos[0], '99', colgante)).toBe('')
+  })
+})
+
+describe('textoDeColumna', () => {
+  const select = descriptorListasPrecio.campos[1]
+
+  it('un booleano es Sí o No', () => {
+    const booleano = descriptorListasPrecio.campos[0]
+
+    expect(textoDeColumna(booleano, true, null)).toBe('Sí')
+    expect(textoDeColumna(booleano, false, null)).toBe('No')
+  })
+
+  it('un select muestra la etiqueta de su opción y cae al valor si no la encuentra', () => {
+    expect(textoDeColumna(select, 'Derivada', null)).toBe('Derivada (calculada sobre otra lista)')
+    expect(textoDeColumna(select, 'Otra', null)).toBe('Otra')
+  })
+
+  it('sin valor devuelve vacío', () => {
+    expect(textoDeColumna(select, '', null)).toBe('')
+    expect(textoDeColumna(select, undefined, null)).toBe('')
+    expect(textoDeColumna(descriptorAreas.campos[0], '', null)).toBe('')
   })
 })
