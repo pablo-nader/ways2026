@@ -32,6 +32,7 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { guardarPuntoVentaSeleccionado, leerPuntoVentaGuardado, ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -49,6 +50,67 @@ function formatearFechaHora(iso: string): string {
 
 function formatearDisponibilidad(valor: number | null): string {
   return valor === null ? 'Ilimitado' : formatearMoneda(valor)
+}
+
+type LineaDeConsumo = DetalleDeConsumo['lineas'][number]
+
+const COLUMNAS_DE_LINEAS: ColumnasOrdenables<LineaDeConsumo> = {
+  articulo: { valor: (l) => l.idArticulo },
+  cantidad: { valor: (l) => l.cantidad },
+  historico: { valor: (l) => l.precioHistorico },
+  actual: { valor: (l) => l.precioActual },
+  delta: { valor: (l) => l.delta },
+  motivo: { valor: (l) => l.motivo },
+}
+
+function TablaDeLineasDeConsumo({ lineas }: { lineas: LineaDeConsumo[] }) {
+  const { filas, orden, alternar } = useOrdenamiento(lineas, COLUMNAS_DE_LINEAS)
+
+  return (
+    <table className="table table-sm table-bordered mb-0 mt-1">
+      <thead>
+        <tr>
+          <EncabezadoOrdenable columna="articulo" orden={orden} onAlternar={alternar}>
+            Artículo
+          </EncabezadoOrdenable>
+          <EncabezadoOrdenable columna="cantidad" orden={orden} onAlternar={alternar}>
+            Cant.
+          </EncabezadoOrdenable>
+          <EncabezadoOrdenable columna="historico" orden={orden} onAlternar={alternar}>
+            Precio histórico
+          </EncabezadoOrdenable>
+          <EncabezadoOrdenable columna="actual" orden={orden} onAlternar={alternar}>
+            Precio actual
+          </EncabezadoOrdenable>
+          <EncabezadoOrdenable columna="delta" orden={orden} onAlternar={alternar}>
+            Delta
+          </EncabezadoOrdenable>
+          <EncabezadoOrdenable columna="motivo" orden={orden} onAlternar={alternar}>
+            Motivo
+          </EncabezadoOrdenable>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((linea, indice) => (
+          <tr key={indice}>
+            <td>{linea.idArticulo ?? '—'}</td>
+            <td>{linea.cantidad}</td>
+            <td>{formatearMoneda(linea.precioHistorico)}</td>
+            <td>
+              {linea.precioActual === null ? '—' : formatearMoneda(linea.precioActual)}
+              {linea.ajusteManualPorcentaje != null && (
+                <div className="small text-muted" data-testid="cc-reliq-ajuste-manual">
+                  {`${rotuloDeAjusteManual(linea.ajusteManualPorcentaje)} ${formatearPorcentajeDeAjuste(linea.ajusteManualPorcentaje)}%`}
+                </div>
+              )}
+            </td>
+            <td>{formatearMoneda(linea.delta)}</td>
+            <td>{linea.motivo ?? '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
 }
 
 /**
@@ -69,37 +131,7 @@ function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsu
           <summary>
             Movimiento #{consumo.idMovimiento} — {formatearMoneda(consumo.delta)}
           </summary>
-          <table className="table table-sm table-bordered mb-0 mt-1">
-            <thead>
-              <tr>
-                <th>Artículo</th>
-                <th>Cant.</th>
-                <th>Precio histórico</th>
-                <th>Precio actual</th>
-                <th>Delta</th>
-                <th>Motivo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {consumo.lineas.map((linea, indice) => (
-                <tr key={indice}>
-                  <td>{linea.idArticulo ?? '—'}</td>
-                  <td>{linea.cantidad}</td>
-                  <td>{formatearMoneda(linea.precioHistorico)}</td>
-                  <td>
-                    {linea.precioActual === null ? '—' : formatearMoneda(linea.precioActual)}
-                    {linea.ajusteManualPorcentaje != null && (
-                      <div className="small text-muted" data-testid="cc-reliq-ajuste-manual">
-                        {`${rotuloDeAjusteManual(linea.ajusteManualPorcentaje)} ${formatearPorcentajeDeAjuste(linea.ajusteManualPorcentaje)}%`}
-                      </div>
-                    )}
-                  </td>
-                  <td>{formatearMoneda(linea.delta)}</td>
-                  <td>{linea.motivo ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <TablaDeLineasDeConsumo lineas={consumo.lineas} />
         </details>
       ))}
     </div>
@@ -110,15 +142,26 @@ function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsu
  * es el mismo JSON auditable de la reliquidación, nunca un texto libre: se parsea de forma
  * defensiva y se muestra un resumen legible; un JSON malformado cae al texto crudo, nunca rompe la
  * fila. */
+function resumenDeConsumos(cantidad: number): string {
+  return `${cantidad} consumo${cantidad === 1 ? '' : 's'} re-preciado${cantidad === 1 ? '' : 's'}`
+}
+
+/** El texto que la celda "Detalle" muestra para un movimiento (sin el desplegable); `null` si la celda muestra "—". */
+function textoDelDetalle(m: MovimientoDeCuentaCorriente): string | null {
+  if (m.tipo !== 'ActualizacionPrecios') return m.detalle
+  const consumos = parsearDetalleDeActualizacionPrecios(m.detalle)
+  if (consumos === null) return m.detalle
+  if (consumos.length === 0) return 'Sin consumos re-preciados.'
+  return resumenDeConsumos(consumos.length)
+}
+
 function DetalleDeMovimientoDeActualizacionPrecios({ detalle }: { detalle: string | null }) {
   const consumos = parsearDetalleDeActualizacionPrecios(detalle)
   if (consumos === null) return <>{detalle ?? '—'}</>
   if (consumos.length === 0) return <>Sin consumos re-preciados.</>
   return (
     <details>
-      <summary>
-        {consumos.length} consumo{consumos.length === 1 ? '' : 's'} re-preciado{consumos.length === 1 ? '' : 's'}
-      </summary>
+      <summary>{resumenDeConsumos(consumos.length)}</summary>
       <ul className="mb-0 ps-3 small">
         {consumos.map((consumo) => (
           <li key={consumo.idMovimiento}>
@@ -513,6 +556,70 @@ type PropsPantalla = {
   errorPuntosVenta: string
 }
 
+const COLUMNAS_DEL_LIBRO: ColumnasOrdenables<MovimientoDeCuentaCorriente> = {
+  fecha: { valor: (m) => new Date(m.fecha) },
+  tipo: { valor: (m) => etiquetaDeMovimiento(m) },
+  detalle: { valor: textoDelDetalle },
+  importe: { valor: (m) => m.importe },
+  saldo: { valor: (m) => m.saldoResultante },
+}
+
+/** El libro conserva el orden del servidor hasta que se elige una columna. Cada fila muestra el saldo que el servidor
+ * guardó (`saldoResultante`), sin recalcularlo: ordenar por otra columna no altera ningún saldo. */
+function TablaDelLibroDeCuenta({ movimientos }: { movimientos: MovimientoDeCuentaCorriente[] }) {
+  const { filas, orden, alternar } = useOrdenamiento(movimientos, COLUMNAS_DEL_LIBRO)
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-sm table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternar}>
+              Fecha
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="tipo" orden={orden} onAlternar={alternar}>
+              Tipo
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="detalle" orden={orden} onAlternar={alternar}>
+              Detalle
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternar} className="text-end">
+              Importe
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="saldo" orden={orden} onAlternar={alternar} className="text-end">
+              Saldo
+            </EncabezadoOrdenable>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((m) => (
+            <tr key={m.id}>
+              <td>{formatearFechaHora(m.fecha)}</td>
+              <td>{etiquetaDeMovimiento(m)}</td>
+              <td>
+                {m.tipo === 'ActualizacionPrecios' ? (
+                  <DetalleDeMovimientoDeActualizacionPrecios detalle={m.detalle} />
+                ) : (
+                  (m.detalle ?? '—')
+                )}
+              </td>
+              <td className="text-end">{formatearMoneda(m.importe)}</td>
+              <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
+            </tr>
+          ))}
+          {movimientos.length === 0 && (
+            <tr>
+              <td colSpan={5} className="text-center text-muted py-4">
+                No hay movimientos en el período seleccionado.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 /** Remontada por `key={idCliente}` (regla 8) — ningún estado de acá (filtros, ledger, modal de
  * pago) sobrevive a un cambio de cliente. */
 function PantallaCuentaCorriente({
@@ -790,43 +897,7 @@ function PantallaCuentaCorriente({
 
             {cargandoEstado && <p className="text-muted">Actualizando…</p>}
 
-            <div className="table-responsive">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Tipo</th>
-                    <th>Detalle</th>
-                    <th className="text-end">Importe</th>
-                    <th className="text-end">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {estado.movimientos.map((m) => (
-                    <tr key={m.id}>
-                      <td>{formatearFechaHora(m.fecha)}</td>
-                      <td>{etiquetaDeMovimiento(m)}</td>
-                      <td>
-                        {m.tipo === 'ActualizacionPrecios' ? (
-                          <DetalleDeMovimientoDeActualizacionPrecios detalle={m.detalle} />
-                        ) : (
-                          (m.detalle ?? '—')
-                        )}
-                      </td>
-                      <td className="text-end">{formatearMoneda(m.importe)}</td>
-                      <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
-                    </tr>
-                  ))}
-                  {estado.movimientos.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="text-center text-muted py-4">
-                        No hay movimientos en el período seleccionado.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <TablaDelLibroDeCuenta movimientos={estado.movimientos} />
           </>
         )}
       </Box>

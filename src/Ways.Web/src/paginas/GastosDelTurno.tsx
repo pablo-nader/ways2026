@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
@@ -24,6 +24,7 @@ import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
 import type { CajaDeEscritorio } from './Pos'
@@ -356,6 +357,16 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const gastos = detalle?.gastos ?? []
   const total = totalDeGastos(gastos)
+  const columnasDeGastos = useMemo<ColumnasOrdenables<GastoDeTurno>>(
+    () => ({
+      hora: { valor: (g) => new Date(g.fecha) },
+      categoria: { valor: (g) => etiquetaDeCategoriaGasto(g.categoria) },
+      medio: { valor: (g) => medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}` },
+      importe: { valor: (g) => g.importe },
+    }),
+    [medios],
+  )
+  const ordenDeGastos = useOrdenamiento(gastos, columnasDeGastos)
   const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
   const saleDeLaCaja = salidaDeEfectivoDeCaja(
     medios?.find((m) => m.id === idMedioPago),
@@ -538,15 +549,23 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Hora</th>
-                    <th>Categoría</th>
-                    <th>Medio de pago</th>
-                    <th className="text-end">Importe</th>
+                    <EncabezadoOrdenable columna="hora" orden={ordenDeGastos.orden} onAlternar={ordenDeGastos.alternar}>
+                      Hora
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="categoria" orden={ordenDeGastos.orden} onAlternar={ordenDeGastos.alternar}>
+                      Categoría
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="medio" orden={ordenDeGastos.orden} onAlternar={ordenDeGastos.alternar}>
+                      Medio de pago
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="importe" orden={ordenDeGastos.orden} onAlternar={ordenDeGastos.alternar} className="text-end">
+                      Importe
+                    </EncabezadoOrdenable>
                     <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {gastos.map((g) => (
+                  {ordenDeGastos.filas.map((g) => (
                     <tr key={g.id}>
                       <td>{formatearFechaHora(g.fecha)}</td>
                       <td>

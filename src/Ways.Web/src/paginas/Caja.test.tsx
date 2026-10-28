@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -623,5 +623,75 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
     expect(screen.getAllByText('Todavía no hay egresos en este turno.')).toHaveLength(2)
     // sin actividad, no debería renderizarse una fila de "Retiros" suelta.
     expect(screen.queryByText('Retiros')).not.toBeInTheDocument()
+  })
+})
+
+describe('Caja — orden de las tablas del resumen parcial', () => {
+  function primerasCeldas(tabla: HTMLElement): string[] {
+    return Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent ?? '')
+  }
+
+  async function montarConResumen(resumen: ResumenDeTurno) {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumen)
+      return undefined
+    })
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('Turno abierto')
+    return screen.findAllByRole('table')
+  }
+
+  it('los medios se ordenan por el esperado numérico (no por el texto del importe)', async () => {
+    const [medios] = await montarConResumen(
+      resumenFixture({
+        medios: [
+          { idMedioPago: 1, importeEsperado: 640 },
+          { idMedioPago: 2, importeEsperado: 5000 },
+          { idMedioPago: 3, importeEsperado: 70 },
+        ],
+      }),
+    )
+    await within(medios).findByText('$ 5.000,00')
+
+    const esperado = within(medios).getByRole('columnheader', { name: /Esperado/ })
+    fireEvent.click(within(esperado).getByRole('button'))
+
+    expect(esperado).toHaveAttribute('aria-sort', 'ascending')
+    expect(primerasCeldas(medios).map((t) => t.replace('efectivo', ''))).toEqual(['Medio #3', 'Efectivo', 'Medio #2'])
+  })
+
+  it('los ingresos por área se ordenan por total y la fila de retiros de los egresos queda al final', async () => {
+    const tablas = await montarConResumen(
+      resumenFixture({
+        ingresosPorArea: [
+          { idArea: 1, nombreArea: 'Almacén', total: 150 },
+          { idArea: 2, nombreArea: 'Verdulería', total: 2000 },
+          { idArea: 3, nombreArea: 'Bazar', total: 90 },
+        ],
+        egresos: {
+          porCategoria: [
+            { categoria: 'Proveedor', total: 3000 },
+            { categoria: 'Otros', total: 10 },
+          ],
+          porArea: [],
+          retiros: 5,
+        },
+      }),
+    )
+    await screen.findByText('Verdulería')
+    const [, ingresos, porCategoria] = tablas
+
+    fireEvent.click(within(within(ingresos).getByRole('columnheader', { name: /Total/ })).getByRole('button'))
+    expect(primerasCeldas(ingresos)).toEqual(['Bazar', 'Almacén', 'Verdulería'])
+
+    const totalEgresos = within(porCategoria).getByRole('columnheader', { name: /Total/ })
+    fireEvent.click(within(totalEgresos).getByRole('button'))
+    expect(primerasCeldas(porCategoria)).toHaveLength(3)
+    expect(primerasCeldas(porCategoria)[2]).toBe('Retiros')
+    fireEvent.click(within(totalEgresos).getByRole('button'))
+    expect(totalEgresos).toHaveAttribute('aria-sort', 'descending')
+    expect(primerasCeldas(porCategoria)[0]).toBe('Proveedores')
+    expect(primerasCeldas(porCategoria)[2]).toBe('Retiros')
   })
 })

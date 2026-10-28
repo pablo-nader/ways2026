@@ -1,6 +1,14 @@
 import { tieneDesgloseDeCierre } from '../api/caja'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import type { ResumenDeCierrePorRetiro } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
+
+type VentaPorMedio = ResumenDeCierrePorRetiro['ventasPorMedio'][number]
+
+const COLUMNAS: ColumnasOrdenables<VentaPorMedio> = {
+  medio: { valor: (v) => v.nombre },
+  importe: { valor: (v) => v.importe },
+}
 
 type Props = {
   cierre: ResumenDeCierrePorRetiro
@@ -18,6 +26,7 @@ function formatearMoneda(valor: number): string {
  */
 export function VentasPorMedioDeCierre({ cierre }: Props) {
   const traeSubtotales = tieneDesgloseDeCierre(cierre)
+  const { filas, orden, alternar } = useOrdenamiento(cierre.ventasPorMedio, COLUMNAS)
 
   return (
     <>
@@ -26,12 +35,16 @@ export function VentasPorMedioDeCierre({ cierre }: Props) {
         <table className="table table-sm table-striped table-bordered align-middle" data-testid="ventas-por-medio">
           <thead>
             <tr>
-              <th>Medio</th>
-              <th className="text-end">Importe</th>
+              <EncabezadoOrdenable columna="medio" orden={orden} onAlternar={alternar}>
+                Medio
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternar} className="text-end">
+                Importe
+              </EncabezadoOrdenable>
             </tr>
           </thead>
           <tbody>
-            {cierre.ventasPorMedio.map((v) => (
+            {filas.map((v) => (
               <tr key={v.idMedioPago}>
                 <td>{v.nombre}</td>
                 <td className="text-end">{formatearMoneda(v.importe)}</td>

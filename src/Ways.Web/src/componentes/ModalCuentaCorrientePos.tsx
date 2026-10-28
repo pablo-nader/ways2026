@@ -9,11 +9,19 @@ import {
   nombreCompletoDeCliente,
   rangoDeLosUltimosDias,
 } from '../api/cuentaCorriente'
-import type { ClienteListado, ComprobanteEmitido, EstadoDeCuenta, MedioPagoListado, PuntoVentaListado } from '../api/tipos'
+import type {
+  ClienteListado,
+  ComprobanteEmitido,
+  EstadoDeCuenta,
+  MedioPagoListado,
+  MovimientoDeCuentaCorriente,
+  PuntoVentaListado,
+} from '../api/tipos'
 import { fechaHoraATexto, isoATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from './CampoFecha'
 import { Cargando } from './Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import { Modal } from './Modal'
 import { ModalPagoACuenta } from './ModalPagoACuenta'
 
@@ -335,33 +343,58 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
                   Sin movimientos entre el {isoATexto(estadoVigente.rango.desde)} y el {isoATexto(estadoVigente.rango.hasta)}.
                 </p>
               ) : (
-                <div className="table-responsive">
-                  <table className="table table-sm">
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Tipo</th>
-                        <th className="text-end">Importe</th>
-                        <th className="text-end">Saldo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {estadoVigente.datos.movimientos.map((m) => (
-                        <tr key={m.id}>
-                          <td>{fechaHoraATexto(m.fecha)}</td>
-                          <td>{etiquetaDeMovimiento(m)}</td>
-                          <td className="text-end">{formatearMoneda(m.importe)}</td>
-                          <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <TablaDeMovimientos movimientos={estadoVigente.datos.movimientos} />
               )}
             </>
           )}
         </>
       )}
     </Modal>
+  )
+}
+
+const COLUMNAS_DE_MOVIMIENTOS: ColumnasOrdenables<MovimientoDeCuentaCorriente> = {
+  fecha: { valor: (m) => new Date(m.fecha) },
+  tipo: { valor: (m) => etiquetaDeMovimiento(m) },
+  importe: { valor: (m) => m.importe },
+  saldo: { valor: (m) => m.saldoResultante },
+}
+
+/** El libro conserva el orden del servidor hasta que se elige una columna; cada fila muestra el saldo que el servidor
+ * guardó, sin recalcularlo, así que ordenar por otra columna no altera ningún saldo. */
+function TablaDeMovimientos({ movimientos }: { movimientos: MovimientoDeCuentaCorriente[] }) {
+  const { filas, orden, alternar } = useOrdenamiento(movimientos, COLUMNAS_DE_MOVIMIENTOS)
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-sm">
+        <thead>
+          <tr>
+            <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternar}>
+              Fecha
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="tipo" orden={orden} onAlternar={alternar}>
+              Tipo
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternar} className="text-end">
+              Importe
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="saldo" orden={orden} onAlternar={alternar} className="text-end">
+              Saldo
+            </EncabezadoOrdenable>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((m) => (
+            <tr key={m.id}>
+              <td>{fechaHoraATexto(m.fecha)}</td>
+              <td>{etiquetaDeMovimiento(m)}</td>
+              <td className="text-end">{formatearMoneda(m.importe)}</td>
+              <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
