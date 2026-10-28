@@ -161,7 +161,7 @@ public class ImpuestoInternoDelArticuloMigracionTests(WaysApiFixture fixture) : 
     private static async Task<Dictionary<string, decimal>> LeerImportesAsync(NpgsqlConnection owner)
     {
         await using var comando = owner.CreateCommand();
-        comando.CommandText = "SELECT codigo_interno, impuesto_interno FROM articulos";
+        comando.CommandText = "SELECT codigo_interno::text, impuesto_interno FROM articulos";
         var filas = new Dictionary<string, decimal>();
         await using var lector = await comando.ExecuteReaderAsync();
         while (await lector.ReadAsync())
