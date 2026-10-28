@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
@@ -21,6 +22,7 @@ import type { ArticuloListado, ClienteListado, ComprobanteEmitido, RemitoDetalle
 import { clienteDeVentas } from '../api/ventas'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { SelectorDeLote } from '../componentes/SelectorDeLote'
 import { formatearImporte } from '../formato/importes'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
@@ -327,6 +329,8 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
   const [anulando, setAnulando] = useState(false)
   const anulandoRef = useRef(false)
   const [errorAnular, setErrorAnular] = useState('')
+  const [confirmandoAnular, setConfirmandoAnular] = useState(false)
+  const [disparadorDeAnular, setDisparadorDeAnular] = useState<HTMLElement | null>(null)
 
   const ocupado = guardando || emitiendo || anulando
 
@@ -407,8 +411,18 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
     }
   }
 
+  function pedirAnular(evento: MouseEvent<HTMLButtonElement>) {
+    setDisparadorDeAnular(evento.currentTarget)
+    setErrorAnular('')
+    setConfirmandoAnular(true)
+  }
+
+  function cancelarAnular() {
+    setConfirmandoAnular(false)
+    setErrorAnular('')
+  }
+
   async function anular() {
-    if (ocupado) return
     if (anulandoRef.current || idRemito === null) return
 
     anulandoRef.current = true
@@ -420,6 +434,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
       await clienteDeRemitos.anular(idRemito)
       anulandoRef.current = false
       setAnulando(false)
+      setConfirmandoAnular(false)
       setAviso('Remito anulado.')
       cargarDetalle()
     } catch (e) {
@@ -616,13 +631,12 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
                 </button>
               )}
               {puedeAnular && (
-                <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
-                  {anulando ? 'Anulando…' : 'Anular'}
+                <button type="button" className="btn btn-danger" disabled={ocupado} onClick={pedirAnular}>
+                  Anular
                 </button>
               )}
             </div>
             {errorEmitir && <div className="alert alert-danger py-1 px-2 small">{errorEmitir}</div>}
-            {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
           </>
         ) : (
           detalle && (
@@ -676,18 +690,31 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
                 <>
                   <div className="d-flex gap-2 mb-3">
                     {puedeAnular && (
-                      <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
-                        {anulando ? 'Anulando…' : 'Anular'}
+                      <button type="button" className="btn btn-danger" disabled={ocupado} onClick={pedirAnular}>
+                        Anular
                       </button>
                     )}
                   </div>
-                  {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
                 </>
               )}
             </>
           )
         )}
       </Box>
+      {confirmandoAnular && (
+        <ConfirmacionDeBaja
+          titulo={`el remito ${detalle?.numeroFormateado ?? `#${idRemito}`}`}
+          pregunta="Anular"
+          nota={null}
+          etiquetaConfirmar="Confirmar anulación"
+          etiquetaEnCurso="Anulando…"
+          ocupado={anulando}
+          disparador={disparadorDeAnular}
+          error={errorAnular}
+          onConfirmar={anular}
+          onCancelar={cancelarAnular}
+        />
+      )}
     </div>
   )
 }
