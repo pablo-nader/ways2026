@@ -20,13 +20,16 @@ public static class AuditoriaEndpoints
             ServicioDeConsultaDeAuditoria servicio,
             DateTimeOffset? desde, DateTimeOffset? hasta, string? accion, int? idActor,
             string? entidad, int? idEntidad, int? idPuntoVenta, int? pagina, int? tamanio,
-            CancellationToken ct) =>
+            string? orden, string? direccion, CancellationToken ct) =>
         {
             var filtros = new FiltrosDeAuditoria(desde, hasta, accion, idActor, entidad, idEntidad, idPuntoVenta);
-            return servicio.ConsultarAsync(filtros, pagina ?? 1, tamanio ?? 25, ct);
+            return servicio.ConsultarAsync(filtros, pagina ?? 1, tamanio ?? 25, orden, direccion, ct);
         })
         .WithSummary(
-            "Log de auditoría filtrado y paginado — Admin-only (LecturaDeAuditoria), sin apilar " +
+            "Log de auditoría filtrado y paginado — orden (fecha, accion, entidad, idEntidad, actor, " +
+            "puntoVenta) y direccion (ascendente, descendente) ordenan todo el conjunto filtrado antes " +
+            "de paginar, 400 si no son válidos; sin orden, lo más reciente primero. " +
+            "Admin-only (LecturaDeAuditoria), sin apilar " +
             "sobre LecturaDeReportes: dentro de un tenant, un Admin ve filas de TODOS los puntos " +
             "de venta (idPuntoVenta es un filtro, no un alcance). idEntidad exige entidad (400 " +
             "entidad_requerida) — accion/entidad desconocidas no rechazan, devuelven 0 filas " +

@@ -4,9 +4,11 @@ import { api, ErrorApi } from '../api/cliente'
 import { clienteDeCatalogo } from '../api/catalogos'
 import {
   clienteDeReportes,
+  esColumnaOrdenableDeReporteDeArticulos,
   filtrosDeReporteDeArticulosVacios,
   rutasDeExportacion,
   type FiltrosDeReporteDeArticulos,
+  type OrdenDeReporteDeArticulos,
 } from '../api/reportes'
 import { puedeGestionarCatalogos } from '../api/tipos'
 import type {
@@ -25,6 +27,8 @@ import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
@@ -74,6 +78,10 @@ export function ReporteDeArticulos() {
   const [erroresCatalogos, setErroresCatalogos] = useState<string[]>([])
 
   const [filtros, setFiltros] = useState<FiltrosDeReporteDeArticulos>(filtrosDeReporteDeArticulosVacios())
+  // El orden es del servidor (el reporte pagina en el servidor: ordenar solo la página cargada
+  // mentiría); `null` = orden de siempre (nombre). Si una consulta falla, la tabla desaparece junto
+  // con su encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeReporteDeArticulos>(null)
   const [pagina, setPagina] = useState<PaginaDe<ArticuloDeReporte> | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -128,7 +136,7 @@ export function ReporteDeArticulos() {
     setError('')
 
     clienteDeReportes
-      .articulos(filtros)
+      .articulos(filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -142,7 +150,7 @@ export function ReporteDeArticulos() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [filtros])
+  }, [filtros, orden])
 
   useEffect(() => {
     cargar()
@@ -150,6 +158,17 @@ export function ReporteDeArticulos() {
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDeReporteDeArticulos, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
+  }
+
+  // Ascendente → descendente → sin orden. Cambiar el orden vuelve a la página 1 y conserva los
+  // filtros; los dos setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeReporteDeArticulos(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
   }
 
   function cambiarPagina(delta: number) {
@@ -354,14 +373,30 @@ export function ReporteDeArticulos() {
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Código</th>
-                    <th>Nombre</th>
-                    <th>Área</th>
-                    <th>Categoría</th>
-                    <th>Marca</th>
-                    <th>Grupo</th>
-                    <th>Proveedor</th>
-                    <th>Estado</th>
+                    <EncabezadoOrdenable columna="codigo" orden={orden} onAlternar={alternarOrden}>
+                      Código
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternarOrden}>
+                      Nombre
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="area" orden={orden} onAlternar={alternarOrden}>
+                      Área
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="categoria" orden={orden} onAlternar={alternarOrden}>
+                      Categoría
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="marca" orden={orden} onAlternar={alternarOrden}>
+                      Marca
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="grupo" orden={orden} onAlternar={alternarOrden}>
+                      Grupo
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="proveedor" orden={orden} onAlternar={alternarOrden}>
+                      Proveedor
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternarOrden}>
+                      Estado
+                    </EncabezadoOrdenable>
                     {puedeEditarArticulos && <th className="text-end">Acciones</th>}
                   </tr>
                 </thead>

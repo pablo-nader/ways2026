@@ -1,7 +1,9 @@
+using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
+using Ways.Application.Listados;
 using Ways.Domain.Common;
 
 namespace Ways.Application.Auditoria;
@@ -34,12 +36,15 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
         string ValorNuevo);
 
     public async Task<PaginaDeAuditoria> ConsultarAsync(
-        FiltrosDeAuditoria filtros, int pagina = 1, int tamanio = 25, CancellationToken ct = default)
+        FiltrosDeAuditoria filtros, int pagina = 1, int tamanio = 25, string? orden = null, string? direccion = null,
+        CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(filtros);
+        var query = ConstruirQuery(filtros, ordenPedido);
 
         var total = await query.CountAsync(ct);
 
@@ -64,7 +69,7 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
     public async Task<IReadOnlyList<FilaDeAuditoria>> ConsultarParaExportacionAsync(
         FiltrosDeAuditoria filtros, int tope, CancellationToken ct = default)
     {
-        var query = ConstruirQuery(filtros);
+        var query = ConstruirQuery(filtros, null);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, tope);
@@ -103,14 +108,17 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
     ///   cada <c>if (filtro is { } x)</c>           → un filtro ignorado devuelve de más, en
     ///                                                silencio.
     /// </summary>
-    private IQueryable<FilaCrudaDeAuditoria> ConstruirQuery(FiltrosDeAuditoria f)
+    private IQueryable<FilaCrudaDeAuditoria> ConstruirQuery(FiltrosDeAuditoria f, OrdenDeListado<ColumnaDeOrdenDeAuditoria>? orden)
     {
         if (f.IdEntidad is not null && f.Entidad is null)
         {
             throw new ErrorDominio("entidad_requerida", "idEntidad requiere entidad.", 400);
         }
 
-        var query =
+        // El orden va ANTES de proyectar a FilaCrudaDeAuditoria (un record posicional no traduce en un
+        // key selector): se ordena sobre `Unido`, una clase con inicializador de miembros, y recién
+        // después se proyecta.
+        var baseUnida =
             from a in db.Auditoria
             where (f.Desde == null || a.CreadoEl >= f.Desde)
                && (f.Hasta == null || a.CreadoEl <= f.Hasta)
@@ -121,11 +129,125 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
                && (f.IdPuntoVenta == null || a.IdPuntoVenta == f.IdPuntoVenta)
             join u in db.Usuarios.IgnoreQueryFilters(["BajaLogica"]) on a.IdActor equals u.Id into actores
             from u in actores.DefaultIfEmpty()
-            orderby a.CreadoEl descending, a.Id descending
-            select new FilaCrudaDeAuditoria(
-                a.Id, a.CreadoEl, a.Accion, a.Entidad, a.IdEntidad, a.IdActor,
-                u == null ? null : u.NombreUsuario, a.IdPuntoVenta, a.ValorAnterior, a.ValorNuevo);
+            select new Unido { A = a, Actor = u == null ? null : u.NombreUsuario };
 
-        return query;
+        // El LEFT JOIN a puntos de venta existe SOLO cuando se ordena por esa columna: el listado de
+        // siempre, el conteo y el export no lo pagan. La baja lógica se filtra a mano: el
+        // IgnoreQueryFilters(["BajaLogica"]) de usuarios alcanza a toda la consulta, así que el filtro global ya no
+        // protege acá. Un punto de venta dado de baja o colgante llega como null, igual que un evento de todo el tenant.
+        var unido = orden is { Columna: ColumnaDeOrdenDeAuditoria.PuntoVenta }
+            ? from x in baseUnida
+              join pv in db.PuntosVenta.Where(p => p.DeletedAt == null) on x.A.IdPuntoVenta equals pv.Id into puntosVenta
+              from pv in puntosVenta.DefaultIfEmpty()
+              select new Unido { A = x.A, Actor = x.Actor, PuntoVenta = pv == null ? null : pv.Nombre }
+            : baseUnida;
+
+        return Ordenar(unido, orden).Select(x => new FilaCrudaDeAuditoria(
+            x.A.Id, x.A.CreadoEl, x.A.Accion, x.A.Entidad, x.A.IdEntidad, x.A.IdActor,
+            x.Actor, x.A.IdPuntoVenta, x.A.ValorAnterior, x.A.ValorNuevo));
     }
+
+    /// <summary>Sin orden pedido: <c>creado_el desc, id desc</c> (el orden de siempre, también el del
+    /// export). Con orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate, para que dos
+    /// páginas consecutivas nunca repitan ni salteen una fila. Los vacíos (actor sin usuario visible,
+    /// evento de todo el tenant o con punto de venta que ya no resuelve) van al final en las dos
+    /// direcciones. La acción ordena por la etiqueta que muestra la celda
+    /// (<see cref="EtiquetasDeAccion"/>; sin etiqueta, el código crudo, como la pantalla).</summary>
+    private static IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeListado<ColumnaDeOrdenDeAuditoria>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(x => x.A.CreadoEl).ThenByDescending(x => x.A.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<Unido> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeAuditoria.Fecha => desc
+                ? query.OrderByDescending(x => x.A.CreadoEl)
+                : query.OrderBy(x => x.A.CreadoEl),
+            ColumnaDeOrdenDeAuditoria.Accion => desc
+                ? query.OrderByDescending(AccionVisible)
+                : query.OrderBy(AccionVisible),
+            ColumnaDeOrdenDeAuditoria.Entidad => desc
+                ? query.OrderByDescending(x => x.A.Entidad)
+                : query.OrderBy(x => x.A.Entidad),
+            ColumnaDeOrdenDeAuditoria.IdEntidad => desc
+                ? query.OrderByDescending(x => x.A.IdEntidad)
+                : query.OrderBy(x => x.A.IdEntidad),
+            ColumnaDeOrdenDeAuditoria.Actor => desc
+                ? query.OrderBy(x => x.Actor == null).ThenByDescending(x => x.Actor)
+                : query.OrderBy(x => x.Actor == null).ThenBy(x => x.Actor),
+            ColumnaDeOrdenDeAuditoria.PuntoVenta => desc
+                ? query.OrderBy(x => x.PuntoVenta == null).ThenByDescending(x => x.PuntoVenta)
+                : query.OrderBy(x => x.PuntoVenta == null).ThenBy(x => x.PuntoVenta),
+            _ => query.OrderByDescending(x => x.A.CreadoEl),
+        };
+
+        return ordenado.ThenBy(x => x.A.Id);
+    }
+
+    /// <summary>Etiquetas en español de las acciones que muestra la pantalla de auditoría. Espejo de
+    /// <c>CATALOGO_DE_ACCIONES_AUDITADAS</c> en <c>Ways.Web/src/api/tipos.ts</c> (la base solo guarda el
+    /// código): que no se desfasen lo cuidan <c>EtiquetasDeAccionTests</c> (backend) y el test de
+    /// <c>CATALOGO_DE_ACCIONES_AUDITADAS</c> en <c>tipos.test.ts</c> (web), que fijan la misma lista literal.
+    /// Una acción sin etiqueta se muestra, y por lo tanto se ordena, por su código.</summary>
+    public static readonly IReadOnlyDictionary<string, string> EtiquetasDeAccion =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["precio.cambio"] = "Cambio de precio",
+            ["venta.anulacion"] = "Anulación de venta",
+            ["compra.anulacion"] = "Anulación de compra",
+            ["stock.ajuste"] = "Ajuste de stock",
+            ["stock.decomiso"] = "Decomiso de stock",
+            ["stock.conteo"] = "Conteo de inventario",
+            ["cc.reliquidacion"] = "Reliquidación de cuenta corriente",
+            ["usuario.alta"] = "Alta de usuario",
+            ["usuario.actualizacion"] = "Actualización de usuario",
+            ["usuario.baja"] = "Baja de usuario",
+            ["usuario.desbloqueo"] = "Desbloqueo de usuario",
+            ["usuario.password"] = "Cambio de contraseña",
+            ["tenant.baja"] = "Baja de tenant",
+            ["empresa.baja"] = "Baja de empresa",
+            ["pv.baja"] = "Baja de punto de venta",
+        };
+
+    private static readonly Expression<Func<Unido, string>> AccionVisible = ConstruirAccionVisible();
+
+    private static Expression<Func<Unido, string>> ConstruirAccionVisible()
+    {
+        var x = Expression.Parameter(typeof(Unido), "x");
+        var codigo = Expression.Property(Expression.Property(x, nameof(Unido.A)), nameof(Domain.Auditoria.Auditoria.Accion));
+        return Expression.Lambda<Func<Unido, string>>(EtiquetaPorCaso.De(codigo, EtiquetasDeAccion, codigo), x);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeAuditoria> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeAuditoria>(StringComparer.Ordinal)
+        {
+            ["fecha"] = ColumnaDeOrdenDeAuditoria.Fecha,
+            ["accion"] = ColumnaDeOrdenDeAuditoria.Accion,
+            ["entidad"] = ColumnaDeOrdenDeAuditoria.Entidad,
+            ["idEntidad"] = ColumnaDeOrdenDeAuditoria.IdEntidad,
+            ["actor"] = ColumnaDeOrdenDeAuditoria.Actor,
+            ["puntoVenta"] = ColumnaDeOrdenDeAuditoria.PuntoVenta,
+        };
+
+    private sealed class Unido
+    {
+        public Domain.Auditoria.Auditoria A { get; init; } = null!;
+
+        public string? Actor { get; init; }
+
+        public string? PuntoVenta { get; init; }
+    }
+}
+
+public enum ColumnaDeOrdenDeAuditoria
+{
+    Fecha,
+    Accion,
+    Entidad,
+    IdEntidad,
+    Actor,
+    PuntoVenta,
 }

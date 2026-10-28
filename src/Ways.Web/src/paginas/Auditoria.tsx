@@ -1,10 +1,12 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   clienteDeAuditoria,
+  esColumnaOrdenableDeAuditoria,
   filtrosDeAuditoriaVacios,
   puedeExportarAuditoria,
   rutasDeExportacion,
   type FiltrosDeConsultaDeAuditoria,
+  type OrdenDeAuditoria,
 } from '../api/auditoria'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -12,6 +14,8 @@ import { CATALOGO_DE_ACCIONES_AUDITADAS, type FilaDeAuditoria, type PaginaDeAudi
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { PanelDeCambio } from './PanelDeCambio'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -42,6 +46,10 @@ export function Auditoria() {
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
 
   const [filtros, setFiltros] = useState<FiltrosDeConsultaDeAuditoria>(filtrosDeAuditoriaVacios())
+  // El orden es del servidor (el log pagina en el servidor: ordenar solo la página cargada
+  // mentiría); `null` = lo más reciente primero. Si una consulta falla, la tabla desaparece junto
+  // con su encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeAuditoria>(null)
   const [pagina, setPagina] = useState<PaginaDeAuditoria | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -74,7 +82,7 @@ export function Auditoria() {
     setError('')
 
     clienteDeAuditoria
-      .consultar(filtros)
+      .consultar(filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -88,11 +96,22 @@ export function Auditoria() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [filtros])
+  }, [filtros, orden])
 
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  // Ascendente → descendente → sin orden. Cambiar el orden vuelve a la página 1 y conserva los
+  // filtros; los dos setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeAuditoria(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
+  }
 
   /** Un texto que no es un entero (letras, "," o ".") no se acepta: dejarlo pasar vaciaría el campo al volver a pintarlo. */
   function cambiarFiltroNumerico(campo: 'idActor' | 'idEntidad', texto: string) {
@@ -267,12 +286,24 @@ export function Auditoria() {
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Fecha</th>
-                    <th>Acción</th>
-                    <th>Entidad</th>
-                    <th>#Id</th>
-                    <th>Actor</th>
-                    <th>PV</th>
+                    <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternarOrden}>
+                      Fecha
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="accion" orden={orden} onAlternar={alternarOrden}>
+                      Acción
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="entidad" orden={orden} onAlternar={alternarOrden}>
+                      Entidad
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="idEntidad" orden={orden} onAlternar={alternarOrden}>
+                      #Id
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="actor" orden={orden} onAlternar={alternarOrden}>
+                      Actor
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="puntoVenta" orden={orden} onAlternar={alternarOrden}>
+                      PV
+                    </EncabezadoOrdenable>
                     <th>Detalle</th>
                   </tr>
                 </thead>

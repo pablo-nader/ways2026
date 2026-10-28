@@ -21,7 +21,7 @@
  * reportes.
  */
 import { api } from './cliente'
-import { rangoUltimosSieteDias } from './reportes'
+import { agregarOrdenAlQuery, rangoUltimosSieteDias, type OrdenDeServidor } from './reportes'
 import type { PaginaDeAuditoria } from './tipos'
 
 function desplazamientoUtcLocal(anio: number, mes: number, dia: number): string {
@@ -133,16 +133,39 @@ export function filtrosDeAuditoriaVacios(): FiltrosDeConsultaDeAuditoria {
  * builder que usa el export, arriba) — `pagina`/`tamanio` son propios de esta ruta y no viajan al
  * export, mismo criterio que `construirQueryDeHistoricoDeCajas`/`construirQueryDeAlcanceDeCajas`
  * (`reportes.ts:177-189`). */
-export function construirQueryDeConsultaDeAuditoria(filtros: FiltrosDeConsultaDeAuditoria): string {
+export function construirQueryDeConsultaDeAuditoria(
+  filtros: FiltrosDeConsultaDeAuditoria,
+  orden: OrdenDeAuditoria = null,
+): string {
   const parametros = new URLSearchParams(construirQueryDeAlcanceDeAuditoria(filtros).slice(1))
+  agregarOrdenAlQuery(parametros, orden)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
 }
 
+/** Claves de `orden` que acepta `GET /api/auditoria`: una por cada columna de datos del log (el detalle
+ * es un botón, no un dato). `accion` ordena por el código de la acción y no por la etiqueta de la pantalla. */
+export const COLUMNAS_ORDENABLES_DE_AUDITORIA = [
+  'fecha',
+  'accion',
+  'entidad',
+  'idEntidad',
+  'actor',
+  'puntoVenta',
+] as const
+
+export type ColumnaOrdenableDeAuditoria = (typeof COLUMNAS_ORDENABLES_DE_AUDITORIA)[number]
+
+export type OrdenDeAuditoria = OrdenDeServidor<ColumnaOrdenableDeAuditoria>
+
+export function esColumnaOrdenableDeAuditoria(columna: string): columna is ColumnaOrdenableDeAuditoria {
+  return (COLUMNAS_ORDENABLES_DE_AUDITORIA as readonly string[]).includes(columna)
+}
+
 /** Único consumidor JSON de `/api/auditoria` — el export (Slice 6) ya vive en
  * `rutasDeExportacion.auditoria` arriba, sin pasar por `api.get` (es una descarga de archivo). */
 export const clienteDeAuditoria = {
-  consultar: (filtros: FiltrosDeConsultaDeAuditoria) =>
-    api.get<PaginaDeAuditoria>(`/auditoria${construirQueryDeConsultaDeAuditoria(filtros)}`),
+  consultar: (filtros: FiltrosDeConsultaDeAuditoria, orden: OrdenDeAuditoria = null) =>
+    api.get<PaginaDeAuditoria>(`/auditoria${construirQueryDeConsultaDeAuditoria(filtros, orden)}`),
 }

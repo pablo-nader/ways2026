@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { FiltrosDeConsultaDeAuditoria, FiltrosDeExportacionDeAuditoria } from './auditoria'
 
-const { rutasDeExportacion, construirQueryDeConsultaDeAuditoria, puedeExportarAuditoria } = await import('./auditoria')
+const {
+  COLUMNAS_ORDENABLES_DE_AUDITORIA,
+  construirQueryDeConsultaDeAuditoria,
+  esColumnaOrdenableDeAuditoria,
+  puedeExportarAuditoria,
+  rutasDeExportacion,
+} = await import('./auditoria')
 
 function offsetEsperado(anio: number, mes: number, dia: number): string {
   const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
@@ -128,5 +134,51 @@ describe('paridad JSON↔export — construirQueryDeConsultaDeAuditoria vs. ruta
     expect(alcanceDesdeJson).toContain('idActor=3')
     expect(alcanceDesdeJson).toContain('entidad=articulo')
     expect(alcanceDesdeJson).toContain('idEntidad=41')
+  })
+})
+
+describe('orden de /auditoria', () => {
+  const filtrosConsulta: FiltrosDeConsultaDeAuditoria = {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    accion: null,
+    idActor: null,
+    entidad: null,
+    idEntidad: null,
+    idPuntoVenta: null,
+    pagina: 2,
+    tamanio: 25,
+  }
+
+  it('sin orden la consulta no lleva orden ni dirección', () => {
+    const parametros = new URLSearchParams(construirQueryDeConsultaDeAuditoria(filtrosConsulta).slice(1))
+
+    expect(parametros.has('orden')).toBe(false)
+    expect(parametros.has('direccion')).toBe(false)
+  })
+
+  it('con orden lleva orden y dirección junto con el resto de los filtros y la página', () => {
+    const parametros = new URLSearchParams(
+      construirQueryDeConsultaDeAuditoria(filtrosConsulta, { columna: 'actor', direccion: 'descendente' }).slice(1),
+    )
+
+    expect(parametros.get('orden')).toBe('actor')
+    expect(parametros.get('direccion')).toBe('descendente')
+    expect(parametros.get('pagina')).toBe('2')
+    expect(parametros.get('desde')).toContain('2026-08-05')
+  })
+
+  it('el export nunca lleva el orden: sale siempre lo más reciente primero', () => {
+    const ruta = rutasDeExportacion.auditoria({ ...filtrosConsulta })
+
+    expect(ruta).not.toContain('orden=')
+    expect(ruta).not.toContain('direccion=')
+  })
+
+  it('las columnas ordenables son exactamente las claves que acepta el servidor', () => {
+    expect([...COLUMNAS_ORDENABLES_DE_AUDITORIA]).toEqual(['fecha', 'accion', 'entidad', 'idEntidad', 'actor', 'puntoVenta'])
+    expect(esColumnaOrdenableDeAuditoria('actor')).toBe(true)
+    expect(esColumnaOrdenableDeAuditoria('detalle')).toBe(false)
+    expect(esColumnaOrdenableDeAuditoria('Actor')).toBe(false)
   })
 })

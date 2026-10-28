@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import { clienteDeReportes, rangoUltimosSieteDias, rutasDeExportacion, type FiltrosDeTesoreria } from '../api/reportes'
+import {
+  clienteDeReportes,
+  esColumnaOrdenableDeTesoreria,
+  rangoUltimosSieteDias,
+  rutasDeExportacion,
+  type FiltrosDeTesoreria,
+  type OrdenDeTesoreria,
+} from '../api/reportes'
 import { CATEGORIAS_PAGO } from '../api/tipos'
 import type { EmpresaListado, MovimientoTesoreriaListado, PaginaDeMovimientosTesoreria, PuntoVentaListado, TipoMovimientoTesoreria } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -60,9 +69,11 @@ function conceptoEfectivo(m: MovimientoTesoreriaListado): string {
  * entre sí — la pantalla muestra una nota cuando ese filtro está activo, en vez de dejar que el
  * lector asuma que la cadena visible es completa.
  *
- * Las filas se renderizan en el mismo orden que el backend las devuelve (`OrderBy(m => m.Id)`) —
- * sin ningún reordenamiento del lado del cliente, para no enmascarar una regresión del orden de
- * cadena detrás de un `sort` en pantalla.
+ * Las filas se renderizan en el mismo orden que el backend las devuelve (`OrderBy(m => m.Id)`
+ * mientras nadie pida otro) — sin ningún reordenamiento del lado del cliente, para no enmascarar
+ * una regresión del orden de cadena detrás de un `sort` en pantalla. El orden por columna es
+ * opt-in y también lo resuelve el servidor (`orden`/`direccion`, antes de paginar): cada fila
+ * conserva el inicio/final persistidos, así que bajo otro orden la cadena deja de leerse fila a fila.
  */
 export function Tesoreria() {
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
@@ -70,6 +81,9 @@ export function Tesoreria() {
   const [errorCatalogos, setErrorCatalogos] = useState('')
 
   const [filtros, setFiltros] = useState<FiltrosDeTesoreria | null>(null)
+  // `null` = orden de cadena (id ascendente). Si una consulta falla, la tabla desaparece junto con
+  // su encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeTesoreria>(null)
   const [pagina, setPagina] = useState<PaginaDeMovimientosTesoreria | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
@@ -115,7 +129,7 @@ export function Tesoreria() {
     setError('')
 
     clienteDeReportes
-      .tesoreria(filtros)
+      .tesoreria(filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -129,11 +143,22 @@ export function Tesoreria() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [filtros])
+  }, [filtros, orden])
 
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  // Ascendente → descendente → orden de cadena. Cambiar el orden vuelve a la página 1 y conserva los
+  // filtros; los dos setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeTesoreria(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev === null || prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
+  }
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDeTesoreria, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => (prev ? { ...prev, ...cambios, pagina: 1 } : prev))
@@ -290,15 +315,33 @@ export function Tesoreria() {
                       <table className="table table-sm table-striped table-bordered align-middle">
                         <thead>
                           <tr>
-                            <th>Tipo</th>
-                            <th className="text-end">Inicio</th>
-                            <th className="text-end">Ingreso</th>
-                            <th className="text-end">Egreso</th>
-                            <th className="text-end">Final</th>
-                            <th>Concepto</th>
-                            <th>Punto de venta</th>
-                            <th>Empleado</th>
-                            <th>Fecha</th>
+                            <EncabezadoOrdenable columna="tipo" orden={orden} onAlternar={alternarOrden}>
+                              Tipo
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="inicio" orden={orden} onAlternar={alternarOrden} className="text-end">
+                              Inicio
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="ingreso" orden={orden} onAlternar={alternarOrden} className="text-end">
+                              Ingreso
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="egreso" orden={orden} onAlternar={alternarOrden} className="text-end">
+                              Egreso
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="final" orden={orden} onAlternar={alternarOrden} className="text-end">
+                              Final
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="concepto" orden={orden} onAlternar={alternarOrden}>
+                              Concepto
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="puntoVenta" orden={orden} onAlternar={alternarOrden}>
+                              Punto de venta
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="empleado" orden={orden} onAlternar={alternarOrden}>
+                              Empleado
+                            </EncabezadoOrdenable>
+                            <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternarOrden}>
+                              Fecha
+                            </EncabezadoOrdenable>
                           </tr>
                         </thead>
                         <tbody>
