@@ -310,6 +310,239 @@ public partial class ServicioDePagos
         }
     }
 
+    // ---- pagar una compra con pagos a cuenta y con más de lo que se debe (E3-S4) -------------------------------
+
+    /// <summary>
+    /// Paga una compra confirmada combinando crédito que ya existe (<c>Aplicaciones</c>: pagos con disponible) y dinero
+    /// nuevo (<c>Lineas</c>), en UNA transacción. Primero se aplica lo existente y después se crea el pago nuevo por el
+    /// total de sus líneas: se aplica a la compra solo hasta el saldo que quede y el resto queda disponible en ese pago
+    /// (crédito a favor; el movimiento de cuenta corriente es el del pago completo, así que el saldo del proveedor puede
+    /// quedar a favor). A diferencia de <see cref="PagarCompraAsync(int, ComandoDePagoDeCompra, CancellationToken)"/>, esta
+    /// ruta nunca responde <c>pago_excede_saldo_pendiente</c>; sí exige que la compra tenga saldo pendiente.
+    ///
+    /// Orden de locks: 1) compra <c>FOR UPDATE</c> → 2) pagos existentes <c>FOR UPDATE</c> en id ascendente → 3) fila del
+    /// proveedor (adopciones y pago nuevo) → 4) advisory de tesorería de la empresa, ÚLTIMO. El insert del pago nuevo no
+    /// toma locks; va antes del proveedor, igual que en el resto de los escritores. update-404-first: la compra y los pagos
+    /// inexistentes responden 404 antes de validar el cuerpo del pedido. Forma (b) de ef-retry-safe-writes.
+    /// </summary>
+    public async Task<ResultadoDePagoDeCompraConAplicaciones> PagarCompraConAplicacionesAsync(
+        int idCompra, ComandoDePagoDeCompraConAplicaciones solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        await ExigirComprasExistentesAsync([idCompra], ct);
+        var existentes = ExigirAplicacionesDePagosExistentes(solicitud.Aplicaciones);
+        var plan = solicitud.Lineas is { Count: > 0 } ? ReglaDeLineasDePago.Planificar(solicitud.Lineas) : null;
+        if (plan is null && existentes.Count == 0)
+        {
+            throw new ErrorDominio("pago_sin_lineas", "Indicá al menos una línea de pago o un pago a aplicar.", 400);
+        }
+
+        foreach (var idPago in existentes.Select(a => a.IdPago).Order())
+        {
+            await ExigirPagoExistenteAsync(idPago, ct);
+        }
+
+        var concepto = string.IsNullOrWhiteSpace(solicitud.Concepto) ? null : solicitud.Concepto.Trim();
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarPagoDeCompraConAplicacionesAsync(
+                idTenant, idCompra, solicitud.Fecha, plan, concepto, existentes, idEmpleado, momento, ct));
+    }
+
+    private async Task<ResultadoDePagoDeCompraConAplicaciones> EjecutarPagoDeCompraConAplicacionesAsync(
+        int idTenant, int idCompra, DateOnly fecha, PlanDeLineasDePago? plan, string? concepto,
+        IReadOnlyList<AplicacionDePagoExistente> existentes, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var compra = await BloquearCompraAsync(idCompra, idTenant, ct);
+
+        var idsDeLosPagos = existentes.Select(a => a.IdPago).Order().ToList();
+        foreach (var idPago in idsDeLosPagos)
+        {
+            await TomarLockDePagoAsync(idPago, idTenant, ct);
+        }
+
+        // Única lectura de cada pago y de sus aplicaciones, después de todos los locks.
+        var pagos = idsDeLosPagos.Count == 0
+            ? []
+            : await db.Pagos.Where(p => idsDeLosPagos.Contains(p.Id)).OrderBy(p => p.Id).ToListAsync(ct);
+        var aplicacionesPrevias = idsDeLosPagos.Count == 0
+            ? []
+            : await db.AplicacionesPago.Where(a => idsDeLosPagos.Contains(a.IdPago)).ToListAsync(ct);
+
+        var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [idCompra], ct)).GetValueOrDefault(idCompra, 0m);
+        var saldo = ReglaDePagoDeCompra.SaldoPendiente(EstadoCompra.Confirmada, compra.Total, pagado);
+        if (saldo <= 0m)
+        {
+            throw new ErrorDominio("compra_sin_saldo_pendiente", "La compra no tiene saldo pendiente de pago.", 409);
+        }
+
+        foreach (var pedida in existentes.OrderBy(a => a.IdPago))
+        {
+            var pago = pagos.First(p => p.Id == pedida.IdPago);
+            ExigirPagoSinPagoDePersonal(pago.IdMovimientoPersonal);
+            if (pago.Categoria == CategoriaPago.Sueldos)
+            {
+                throw new ErrorDominio("pago_no_aplicable", "Un pago de sueldos no se aplica a compras.", 409);
+            }
+
+            await ExigirCompraDeLaEmpresaAsync(compra, pago.IdEmpresa, ct);
+
+            if (pago.IdProveedor is { } idProveedorDelPago && idProveedorDelPago != compra.IdProveedor)
+            {
+                throw new ErrorDominio(
+                    "compra_de_otro_proveedor", "La compra indicada es de otro proveedor que el del pago.", 409);
+            }
+
+            var aplicado = aplicacionesPrevias.Where(a => a.IdPago == pago.Id).Sum(a => a.Importe);
+            if (pedida.Importe > LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicado))
+            {
+                throw new ErrorDominio(
+                    "aplicacion_excede_disponible", "El importe a aplicar supera lo disponible del pago.", 409);
+            }
+        }
+
+        var totalExistente = existentes.Sum(a => a.Importe);
+        if (totalExistente > saldo)
+        {
+            throw new ErrorDominio(
+                "aplicacion_excede_saldo", "El importe a aplicar supera el saldo pendiente de la compra.", 409);
+        }
+
+        foreach (var pedida in existentes.OrderBy(a => a.IdPago))
+        {
+            var pago = pagos.First(p => p.Id == pedida.IdPago);
+            var delPago = aplicacionesPrevias.Where(a => a.IdPago == pago.Id).ToList();
+            var valorAnterior = PayloadDeAplicacion(pago, delPago);
+
+            var adopta = pago.Categoria != CategoriaPago.Proveedor || pago.IdProveedor is null;
+            var existente = delPago.FirstOrDefault(a => a.IdComprobanteCompra == idCompra);
+            if (existente is not null)
+            {
+                existente.Importe += pedida.Importe;
+                existente.UpdatedAt = momento;
+            }
+            else
+            {
+                var nueva = new AplicacionPago
+                {
+                    IdTenant = idTenant,
+                    IdPago = pago.Id,
+                    IdComprobanteCompra = idCompra,
+                    Importe = pedida.Importe,
+                    Origen = OrigenAplicacionPago.Aplicacion,
+                    IdEmpleado = idEmpleado,
+                    Fecha = momento,
+                    CreatedAt = momento,
+                    UpdatedAt = momento
+                };
+                db.AplicacionesPago.Add(nueva);
+                delPago.Add(nueva);
+            }
+
+            if (adopta)
+            {
+                pago.Categoria = CategoriaPago.Proveedor;
+                pago.IdProveedor = compra.IdProveedor;
+                pago.IdComprobanteCompra = idCompra;
+            }
+
+            pago.UpdatedAt = momento;
+            await db.SaveChangesAsync(ct);
+
+            if (adopta)
+            {
+                await EscribirPagoAProveedorAsync(
+                    idTenant, compra.IdProveedor, pago.IdPuntoVenta ?? compra.IdPuntoVenta, pago.Importe, pago,
+                    idEmpleado, momento, ct);
+            }
+
+            auditoria.Registrar(new RegistroDeAuditoria(
+                idTenant, pago.IdPuntoVenta, AccionAuditada.PagoAplicacion, pago.Id, valorAnterior,
+                PayloadDeAplicacion(pago, delPago)));
+            await db.SaveChangesAsync(ct);
+        }
+
+        Pago? pagoNuevo = null;
+        if (plan is not null)
+        {
+            var puntoVenta = await ResolverPuntoVentaAsync(compra.IdPuntoVenta, ct);
+            await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
+
+            var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+            ExigirFechaNoFutura(fecha, momento, zona);
+            var fechaDeNegocio = FechaDeNegocioAInstante(fecha, zona);
+
+            concepto ??= await ConceptoPorDefectoDelPagoAsync(idCompra, ct);
+
+            // La aplicación del pago nuevo la topea AplicarPagoALaCompraAsync contra lo ya aplicado a la compra, que
+            // incluye lo que se acaba de guardar de los pagos existentes.
+            pagoNuevo = await PersistirPagoDeAdministracionAsync(
+                idTenant, puntoVenta.IdEmpresa, fechaDeNegocio,
+                new ComandoDePagoDeAdministracion(
+                    fecha, puntoVenta.IdEmpresa, puntoVenta.Id, CategoriaPago.Proveedor, compra.IdProveedor,
+                    IdArea: null, concepto, Detalle: null, plan.Lineas, NumeroFactura: null, idCompra),
+                plan, compra.IdProveedor, compra, idEmpleado, momento, ct);
+        }
+
+        var aplicaciones = await db.AplicacionesPago
+            .Where(a => a.IdComprobanteCompra == idCompra)
+            .OrderBy(a => a.Id)
+            .Select(a => new AplicacionALaCompraListada(a.Id, a.IdPago, a.Importe, a.Fecha))
+            .ToListAsync(ct);
+
+        await transaccion.CommitAsync(ct);
+
+        var pagadoFinal = aplicaciones.Sum(a => a.Importe);
+        var aplicadoDelPagoNuevo = pagoNuevo is null
+            ? 0m
+            : aplicaciones.Where(a => a.IdPago == pagoNuevo.Id).Sum(a => a.Importe);
+
+        return new ResultadoDePagoDeCompraConAplicaciones(
+            pagoNuevo is null ? null : Proyectar(pagoNuevo, plan!.IdMedioPagoDeCompatibilidad),
+            pagadoFinal,
+            ReglaDePagoDeCompra.SaldoPendiente(EstadoCompra.Confirmada, compra.Total, pagadoFinal),
+            aplicaciones,
+            pagoNuevo is null ? null : pagoNuevo.Importe - aplicadoDelPagoNuevo);
+    }
+
+    /// <summary>dto-contract-honesty: cada entrada se usa o se rechaza. De 0 a 20, sin nulos, sin pagos repetidos y con
+    /// importes positivos de hasta dos decimales.</summary>
+    private static IReadOnlyList<AplicacionDePagoExistente> ExigirAplicacionesDePagosExistentes(
+        IReadOnlyList<AplicacionDePagoExistente?>? pedidas)
+    {
+        if (pedidas is null || pedidas.Count == 0)
+        {
+            return [];
+        }
+
+        if (pedidas.Count > MaximoDeAplicacionesPorPedido)
+        {
+            throw new ErrorDominio(
+                "aplicacion_demasiados_pagos",
+                $"Se pueden aplicar hasta {MaximoDeAplicacionesPorPedido} pagos por pedido.", 400);
+        }
+
+        if (pedidas.Any(a => a is null || !ReglaDeLineasDePago.EsImporteValido(a.Importe)))
+        {
+            throw new ErrorDominio(
+                "aplicacion_importe_invalido",
+                "Cada pago a aplicar tiene que indicar un importe positivo y con hasta dos decimales.", 400);
+        }
+
+        if (pedidas.Select(a => a!.IdPago).Distinct().Count() != pedidas.Count)
+        {
+            throw new ErrorDominio("aplicacion_pago_repetido", "Un pago no puede figurar dos veces.", 400);
+        }
+
+        return pedidas!;
+    }
+
     // ---- lecturas de pagos aplicables --------------------------------------------------------------------------
 
     /// <summary>

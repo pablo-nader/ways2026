@@ -18,6 +18,7 @@ import {
   completarConArticulo,
   percepcionesAplicables,
   sePuedePagarLaCompra,
+  textoDePagoRegistrado,
   type EncabezadoDeCompraFormulario,
   type LineaDeCompraFormulario,
 } from '../api/compras'
@@ -735,7 +736,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   // llegar vieja después de un pago que sí se registró.
   function alPagar(resultado: ResultadoDePagoDeCompra) {
     setPagoAbierto(false)
-    setAviso(`Pago registrado: ${formatearMoneda(resultado.pago.importe)}.`)
+    setAviso(textoDePagoRegistrado(resultado, formatearMoneda))
     setCompra((prev) =>
       prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
     )

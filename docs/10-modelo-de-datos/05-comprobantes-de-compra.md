@@ -590,6 +590,23 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   personal), que `idProveedor: null` marca como adoptables. La lectura de la compra lista solo pagos de la empresa de la
 >   compra, porque aplicar lo exige; la del proveedor lista los de todas sus empresas. Ambas devuelven como máximo 200
 >   pagos, los más antiguos primero: el resto se alcanza aplicando y volviendo a consultar.
+>
+> **Pagar una compra con pagos a cuenta y con más de lo que se debe (E3-S4).** `POST /api/pagos/de-compra/{idCompra}` (contrato
+> nuevo; `POST /api/compras/{id}/pagos` y `/api/gastos` conservan `409 pago_excede_saldo_pendiente`):
+> - Cuerpo `{fecha, concepto?, lineas: [..0..20], aplicaciones?: [{idPago, importe}..0..20]}`; al menos una de las dos listas
+>   no vacía (`400 pago_sin_lineas`). Primero se aplica lo existente y después se crea el pago nuevo por el TOTAL de sus líneas.
+> - Cada `aplicaciones[i].importe` ≤ disponible de ese pago (`409 aplicacion_excede_disponible`) y la suma ≤ saldo de la compra
+>   (`409 aplicacion_excede_saldo`); un `idPago` repetido es `400 aplicacion_pago_repetido`, un importe no positivo o con más de
+>   dos decimales `400 aplicacion_importe_invalido`, más de 20 `400 aplicacion_demasiados_pagos`. Valen las reglas de adopción y
+>   de empresa de aplicar (`pago_no_aplicable`, `compra_de_otro_proveedor`, `compra_de_otra_empresa`). Una compra sin saldo
+>   pendiente sigue siendo `409 compra_sin_saldo_pendiente`.
+> - La aplicación del pago nuevo es `min(total de las líneas, saldo que quede después de las aplicaciones)`; el resto queda
+>   como `disponible` del propio pago (crédito a favor). El movimiento de cuenta corriente y el egreso de tesorería son los del
+>   pago completo, así que el saldo del proveedor puede quedar negativo (a favor).
+> - Respuesta `{pago | null, pagado, saldoPendiente, aplicaciones: [{idAplicacion, idPago, importe, fecha}], disponibleDelPago | null}`:
+>   `pago` es `null` (y el status 200 en vez de 201) cuando no hubo líneas; `aplicaciones` son todas las vivas de la compra.
+> - Orden de locks: compra `FOR UPDATE` → pagos existentes `FOR UPDATE` en id ascendente → insert del pago nuevo (sin lock) →
+>   fila del proveedor → advisory de tesorería, último. Forma (b) de `ef-retry-safe-writes`.
 
 ### Órdenes de compra (Etapa 16)
 

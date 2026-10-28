@@ -199,16 +199,18 @@ public static class PagosEndpoints
         grupo.MapPost("/de-compra/{idCompra:int}", async (
             ServicioDePagos servicio, int idCompra, SolicitudDePagoDeCompraConLineas solicitud, CancellationToken ct) =>
         {
-            var resultado = await servicio.PagarCompraAsync(idCompra, solicitud.AComando(), ct);
-            return Results.Created(
-                $"/api/pagos/administracion/{resultado.Pago.Id}",
-                new ResultadoDePagoDeCompraConLineas(
-                    await servicio.ConLineasAsync(resultado.Pago, ct), resultado.Pagado, resultado.SaldoPendiente));
+            var resultado = await servicio.PagarCompraConAplicacionesAsync(idCompra, solicitud.AComando(), ct);
+            var cuerpo = new ResultadoDePagoDeCompraConLineas(
+                resultado.Pago is null ? null : await servicio.ConLineasAsync(resultado.Pago, ct),
+                resultado.Pagado, resultado.SaldoPendiente, resultado.Aplicaciones, resultado.DisponibleDelPago);
+            return resultado.Pago is null
+                ? Results.Ok(cuerpo)
+                : Results.Created($"/api/pagos/administracion/{resultado.Pago.Id}", cuerpo);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
-            "Paga una compra confirmada con líneas por medio: crea el pago de tesorería imputado a la compra. " +
-            "El total de las líneas no puede superar el saldo pendiente.");
+            "Paga una compra confirmada con líneas por medio, con pagos existentes a aplicar o con ambos. " +
+            "Lo que el pago nuevo paga de más que el saldo queda a favor como disponible del propio pago.");
 
         var administracion = app.MapGroup("/api/pagos/administracion")
             .WithTags("Pagos")

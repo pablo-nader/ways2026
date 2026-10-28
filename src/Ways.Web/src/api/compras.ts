@@ -7,7 +7,7 @@
  * `costoUnitario`/`descuento`/`idAlicuotaIva`).
  */
 import { api } from './cliente'
-import { aLineasDeSolicitud, errorDeLineasDePago, totalDeLineasDePago, type LineaDePagoEditable } from './lineasDePago'
+import { aLineasDeSolicitud, errorDeLineasDePago, type LineaDePagoEditable } from './lineasDePago'
 import {
   brutoDeLinea,
   cantidadDeLinea,
@@ -26,11 +26,13 @@ import type {
   OrigenCompra,
   EstadoPago,
   PaginaDeCompras,
+  PagosAplicables,
   PercepcionSolicitada,
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
   ResultadoDePagoDeCompra,
   SaldoDeProveedor,
+  AplicacionDePagoSolicitada,
   SolicitudDeAplicarPrecios,
   SolicitudDeCompra,
   SolicitudDePagoDeCompra,
@@ -128,8 +130,10 @@ export const clienteDeCompras = {
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>
     api.post<ResultadoAplicarPrecio[]>(`/compras/${id}/precios`, solicitud),
+  /** `GET /api/compras/{id}/pagos-aplicables` — pagos con disponible que se pueden aplicar a la compra. */
+  obtenerPagosAplicables: (id: number) => api.get<PagosAplicables>(`/compras/${id}/pagos-aplicables`),
   /** `POST /api/pagos/de-compra/{idCompra}` — `GestionDeCatalogo` del lado del servidor: crea el pago de
-   * tesorería con sus líneas por medio y el pago de cuenta corriente imputado a la compra en una transacción. */
+   * tesorería con sus líneas por medio (puede superar el saldo) y/o aplica pagos existentes a la compra, en una transacción. */
   pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
     api.post<ResultadoDePagoDeCompra>(`/pagos/de-compra/${id}`, solicitud),
   /** `GET /api/proveedores/{id}/saldo` — top-level, no dentro de `/api/proveedores` (design: API
@@ -512,27 +516,53 @@ export type PagoDeCompraFormulario = {
   lineas: LineaDePagoEditable[]
   fecha: string
   concepto: string
+  /** Pagos existentes tildados con el importe a aplicar de cada uno. */
+  aplicaciones?: AplicacionDePagoSolicitada[]
 }
 
-/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir (cada línea con medio e
- * importe positivo, total hasta el saldo pendiente, fecha no futura) y, si pasa, arma la
- * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Un concepto en blanco viaja
- * como `null` y el servidor arma `Pago <tipo> <número>`. */
+/** Texto del aviso con el que quien abrió el modal confirma el pago: sin pago nuevo solo se aplicaron pagos a cuenta,
+ * y si el pago nuevo superó el saldo se dice cuánto quedó a favor. */
+export function textoDePagoRegistrado(
+  resultado: Pick<ResultadoDePagoDeCompra, 'pago' | 'disponibleDelPago'>,
+  formatear: (importe: number) => string,
+): string {
+  if (resultado.pago === null) return 'Pagos a cuenta aplicados a la compra.'
+  const base = `Pago registrado: ${formatear(resultado.pago.importe)}.`
+  const aFavor = resultado.disponibleDelPago ?? 0
+  return aFavor > 0 ? `${base} Quedaron ${formatear(aFavor)} a favor.` : base
+}
+
+/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir y, si pasa, arma la
+ * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Las líneas pueden sumar más que el saldo (el
+ * excedente queda a favor). Si hay pagos a aplicar y ninguna línea tiene medio elegido, las líneas se descartan: no se
+ * paga dinero nuevo. Lo aplicado no puede superar el saldo. Un concepto en blanco viaja como `null`. */
 export function prepararPagoDeCompra(
   formulario: PagoDeCompraFormulario,
   saldoPendiente: number,
   hoy: string,
 ): { solicitud: SolicitudDePagoDeCompra } | { error: string } {
-  const errorDeLineas = errorDeLineasDePago(formulario.lineas)
-  if (errorDeLineas !== null) return { error: errorDeLineas }
-  if (totalDeLineasDePago(formulario.lineas) > saldoPendiente) {
-    return { error: 'El total no puede superar el saldo pendiente de la compra.' }
+  const aplicaciones = formulario.aplicaciones ?? []
+  const hayDineroNuevo = formulario.lineas.some((l) => l.idMedioPago !== '')
+
+  if (aplicaciones.length === 0 || hayDineroNuevo) {
+    const errorDeLineas = errorDeLineasDePago(formulario.lineas)
+    if (errorDeLineas !== null) return { error: errorDeLineas }
+  }
+  if (aplicaciones.some((a) => !(a.importe > 0))) return { error: 'El importe de cada pago a aplicar tiene que ser mayor a 0.' }
+  const totalAplicado = redondearImporte(aplicaciones.reduce((suma, a) => suma + a.importe, 0))
+  if (totalAplicado > saldoPendiente) {
+    return { error: 'Lo aplicado de pagos a cuenta no puede superar el saldo pendiente de la compra.' }
   }
   if (!formulario.fecha) return { error: 'Elegí la fecha del pago.' }
   if (formulario.fecha > hoy) return { error: 'La fecha del pago no puede ser futura.' }
 
   const concepto = formulario.concepto.trim()
   return {
-    solicitud: { fecha: formulario.fecha, lineas: aLineasDeSolicitud(formulario.lineas), concepto: concepto === '' ? null : concepto },
+    solicitud: {
+      fecha: formulario.fecha,
+      lineas: hayDineroNuevo || aplicaciones.length === 0 ? aLineasDeSolicitud(formulario.lineas) : [],
+      concepto: concepto === '' ? null : concepto,
+      ...(aplicaciones.length > 0 ? { aplicaciones } : {}),
+    },
   }
 }

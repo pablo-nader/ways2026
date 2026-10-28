@@ -21,6 +21,7 @@ import type {
   PuntoVentaListado,
 } from '../api/tipos'
 import { puedeGestionarCatalogos, puedeSupervisarCuentaDeProveedor } from '../api/tipos'
+import { textoDePagoRegistrado } from '../api/compras'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
@@ -478,7 +479,7 @@ function PantallaCuentaCorrienteDeProveedor({
           onCerrar={() => setCompraAPagar(null)}
           onPagado={(resultado) => {
             setCompraAPagar(null)
-            setAviso(`Pago registrado: ${formatearMoneda(resultado.pago.importe)}.`)
+            setAviso(textoDePagoRegistrado(resultado, formatearMoneda))
             cargar()
           }}
         />
