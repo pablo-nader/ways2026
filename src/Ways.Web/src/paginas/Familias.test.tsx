@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Familias } from './Familias'
 import { CAMPOS_PROPIOS } from './articulos/familia'
@@ -554,6 +554,20 @@ describe('Familias — el renombrado es un modal', () => {
     expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
   })
 
+  /** Cláusula bajo prueba: el efecto que lleva el foco al mensaje del rechazo (el botón enviado queda deshabilitado y el
+   * foco caería en `<body>`). */
+  it('tras un rechazo del servidor el foco queda en el mensaje, dentro del modal', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe una familia llamada "Talles" en este tenant.'))
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await screen.findByRole('alert')
+    await waitFor(() => expect(alerta.parentElement).toHaveFocus())
+    expect(screen.getByRole('dialog', { name: 'Editando familia 7' })).toContainElement(document.activeElement as HTMLElement)
+  })
+
   it('un rechazo del servidor queda adentro del modal, con lo tipeado, y cerrarlo lo descarta', async () => {
     apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe una familia llamada "Talles" en este tenant.'))
     await montarYEsperar()
@@ -646,6 +660,27 @@ describe('Familias — el alta es un modal', () => {
     await userEvent.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
+  })
+
+  /** Cláusula bajo prueba: el efecto del parámetro abre el modal también con la pantalla ya montada: el enlace del menú
+   * ("Nueva familia") vuelve a `/familias` con `?nuevo=1` sin desmontarla. */
+  it('`?nuevo=1` abre el modal también con el listado ya montado', async () => {
+    apiGetMock.mockImplementation((ruta: string) => respuestaDeApi(ruta, [sabores, talles]))
+    render(
+      <MemoryRouter initialEntries={['/familias']}>
+        <Link to="/familias?nuevo=1">Menú: nueva familia</Link>
+        <Routes>
+          <Route path="/familias" element={<Familias />} />
+        </Routes>
+        <SondaDeBusqueda />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
+
+    await userEvent.click(screen.getByRole('link', { name: 'Menú: nueva familia' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Nueva familia' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('busqueda').textContent).toBe(''))
   })
 
   it('sin el parámetro la pantalla no abre ningún modal', async () => {

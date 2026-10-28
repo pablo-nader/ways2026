@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, ErrorApi } from '../../api/cliente'
 import type { ResultadoAprovisionamiento, SolicitudDeAprovisionamiento } from '../../api/tipos'
 import { MODOS_PUNTO_VENTA } from '../../api/tipos'
@@ -40,6 +40,18 @@ export function ModalDeNuevoTenant({ focoDeReserva, onCreado, onCancelar }: Prop
   const [copiado, setCopiado] = useState(false)
   /** Espejo síncrono de "hay un alta en vuelo": un doble envío en el mismo tick no aprovisiona dos tenants. */
   const enviandoRef = useRef(false)
+  const errorRef = useRef<HTMLDivElement>(null)
+  const resultadoRef = useRef<HTMLDivElement>(null)
+
+  // El botón que se envió queda deshabilitado y el foco caería en <body>: tras el envío pasa al mensaje del rechazo o,
+  // si salió bien, a la contraseña temporal.
+  useEffect(() => {
+    if (error) errorRef.current?.focus()
+  }, [error])
+
+  useEffect(() => {
+    if (resultado) resultadoRef.current?.focus()
+  }, [resultado])
 
   async function enviar() {
     if (enviandoRef.current) return
@@ -100,10 +112,12 @@ export function ModalDeNuevoTenant({ focoDeReserva, onCreado, onCancelar }: Prop
         <strong>una sola vez</strong>: no queda guardada en texto plano en ningún lado.
       </p>
 
-      <ErrorDeFormulario mensaje={error} />
+      <div ref={errorRef} tabIndex={-1}>
+        <ErrorDeFormulario mensaje={error} />
+      </div>
 
       {resultado && (
-        <div className="alert alert-success">
+        <div ref={resultadoRef} tabIndex={-1} className="alert alert-success">
           <p className="mb-2">
             Tenant #{resultado.idTenant} creado: empresa #{resultado.idEmpresa}, punto de venta #{resultado.idPuntoVenta}, usuario admin #
             {resultado.idUsuarioAdmin}.

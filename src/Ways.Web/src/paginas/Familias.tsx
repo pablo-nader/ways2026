@@ -85,10 +85,12 @@ export function Familias() {
     void cargar(++generacion.current)
   }, [cargar])
 
-  // El parámetro solo abre el modal al llegar: se consume para que recargar o volver no lo reabra.
+  // El parámetro abre el modal al llegar (también con la pantalla ya montada: el menú vuelve a ella con `?nuevo=1`) y se
+  // consume para que recargar o volver no lo reabra.
   useEffect(() => {
     if (!parametros.has('nuevo')) return
 
+    setCreando(true)
     setParametros(
       (previos) => {
         const siguientes = new URLSearchParams(previos)

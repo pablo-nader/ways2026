@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { ErrorApi } from '../../api/cliente'
 import { clienteDeFamilias } from '../../api/familias'
@@ -58,7 +58,13 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
   const [errorDeCreacion, setErrorDeCreacion] = useState('')
   const { previsualizacion, previsualizando, error: errorDePrevisualizacion, previsualizar, invalidar } = usePrevisualizacion()
   const creandoRef = useRef(false)
+  const errorRef = useRef<HTMLDivElement>(null)
   const montado = useMontado()
+
+  // El botón que se envió queda deshabilitado y el foco caería en <body>: ante un rechazo pasa al mensaje.
+  useEffect(() => {
+    if (errorDeCreacion) errorRef.current?.focus()
+  }, [errorDeCreacion])
 
   const bloqueado = previsualizando || creando
   const excedido = elegidos.length > LIMITE_DE_ARTICULOS
@@ -155,7 +161,9 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
       </div>
 
       {catalogos.aviso && <div className="alert alert-warning">{catalogos.aviso}</div>}
-      <ErrorDeFormulario mensaje={errorDeCreacion} />
+      <div ref={errorRef} tabIndex={-1}>
+        <ErrorDeFormulario mensaje={errorDeCreacion} />
+      </div>
 
       <form
         id={ID_FORMULARIO_NUEVA_FAMILIA}

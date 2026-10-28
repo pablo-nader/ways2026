@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useLocation } from 'react-router'
+import { Link, MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tenants } from './Tenants'
 import { ErrorApi } from '../api/cliente'
@@ -902,6 +902,60 @@ describe('Tenants — el alta es un modal', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // Sin un clic previo no hay disparador: el foco cae en el botón de alta.
     expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toHaveFocus()
+  })
+
+  /** Cláusula bajo prueba: el efecto del parámetro abre el modal también con la pantalla ya montada: el enlace del menú
+   * ("Nuevo tenant") vuelve a `/organizacion/tenants` con `?nuevo=1` sin desmontarla. */
+  it('`?nuevo=1` abre el modal también con el listado ya montado', async () => {
+    apiGetMock.mockImplementation(() => Promise.resolve([tenantUno, tenantDos]))
+    render(
+      <MemoryRouter initialEntries={['/organizacion/tenants']}>
+        <Link to="/organizacion/tenants?nuevo=1">Menú: nuevo tenant</Link>
+        <Tenants />
+        <SondaDeBusqueda />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('link', { name: 'Menú: nuevo tenant' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Nuevo tenant' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('busqueda').textContent).toBe(''))
+  })
+
+  /** Cláusulas bajo prueba: los efectos que llevan el foco tras el envío (el botón enviado queda deshabilitado y el foco
+   * caería en `<body>`): al mensaje del rechazo, o a la contraseña temporal si salió bien. */
+  it('tras un rechazo el foco queda en el mensaje', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'mail_duplicado', 'Ese mail ya está en uso.'))
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    const alerta = await screen.findByRole('alert')
+    await waitFor(() => expect(alerta.parentElement).toHaveFocus())
+  })
+
+  it('tras un alta que salió bien el foco queda en la contraseña temporal', async () => {
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    const bloque = (await screen.findByText('Temp-1234')).closest('.alert') as HTMLElement
+    await waitFor(() => expect(bloque).toHaveFocus())
+  })
+
+  it('tras un rechazo del renombrado el foco queda en el mensaje', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'tenant_duplicado', 'Ya existe un tenant con ese nombre.'))
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+    await userEvent.click(botonEditar('Comercio Sur'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await screen.findByRole('alert')
+    await waitFor(() => expect(alerta.parentElement).toHaveFocus())
   })
 
   it('sin el parámetro la pantalla no abre ningún modal', async () => {

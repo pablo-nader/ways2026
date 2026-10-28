@@ -244,7 +244,7 @@ beforeEach(() => {
   apiPostMock.mockReset()
 })
 
-describe('NuevaFamilia — la pantalla', () => {
+describe('ModalDeNuevaFamilia — el modal', () => {
   it('explica que todos toman de la referencia los trece campos compartidos y los precios, y qué es propio', () => {
     montar()
 
@@ -346,7 +346,7 @@ describe('NuevaFamilia — la pantalla', () => {
   })
 })
 
-describe('NuevaFamilia — elegir la referencia y los demás artículos', () => {
+describe('ModalDeNuevaFamilia — elegir la referencia y los demás artículos', () => {
   it('la referencia se elige entre artículos sin familia, con botones de opción, y queda nombrada', async () => {
     montar()
 
@@ -493,7 +493,7 @@ describe('NuevaFamilia — elegir la referencia y los demás artículos', () => 
   })
 })
 
-describe('NuevaFamilia — previsualizar', () => {
+describe('ModalDeNuevaFamilia — previsualizar', () => {
   it('solo se puede con una referencia elegida; sin otros artículos previsualiza la referencia sola', async () => {
     montar()
     await elegirReferencia()
@@ -604,7 +604,7 @@ describe('NuevaFamilia — previsualizar', () => {
   })
 })
 
-describe('NuevaFamilia — crear', () => {
+describe('ModalDeNuevaFamilia — crear', () => {
   it('"Crear familia" exige nombre, referencia y una previsualización sin problemas', async () => {
     montar()
     apiPostMock.mockResolvedValue(previsualizacionDe())
@@ -713,6 +713,24 @@ describe('NuevaFamilia — crear', () => {
     expect(screen.getByRole('button', { name: 'Quitar referencia' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Agregar artículos' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Quitar A0032 Frutilla' })).toBeDisabled()
+  })
+
+  /** Cláusula bajo prueba: el efecto que lleva el foco al mensaje del rechazo: el botón enviado queda deshabilitado y el
+   * foco caería en `<body>`. */
+  it('tras un rechazo del servidor el foco queda en el mensaje, dentro del modal', async () => {
+    montar()
+    await armarYPrevisualizar()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/familias'
+        ? Promise.reject(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe una familia llamada "Sabores" en este tenant.'))
+        : Promise.resolve(previsualizacionDe()),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
+
+    const alerta = await screen.findByRole('alert')
+    await waitFor(() => expect(alerta.parentElement).toHaveFocus())
+    expect(screen.getByRole('dialog', { name: 'Nueva familia' })).toContainElement(document.activeElement as HTMLElement)
   })
 
   it('un nombre repetido (409) se muestra con su ayuda y CONSERVA la previsualización para volver a intentar con otro nombre', async () => {

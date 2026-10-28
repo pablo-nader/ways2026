@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
 
@@ -17,6 +18,13 @@ type Props = {
 
 /** Renombrado y activación de una familia en un modal: mientras guarda queda inerte entero (campos, pie y cierre). */
 export function ModalDeFamilia({ valor, guardando, error, focoDeReserva, onCambio, onGuardar, onCancelar }: Props) {
+  const errorRef = useRef<HTMLDivElement>(null)
+
+  // El botón que se envió queda deshabilitado y el foco caería en <body>: ante un rechazo pasa al mensaje.
+  useEffect(() => {
+    if (error) errorRef.current?.focus()
+  }, [error])
+
   const pie = (
     <>
       <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={guardando}>
@@ -30,7 +38,9 @@ export function ModalDeFamilia({ valor, guardando, error, focoDeReserva, onCambi
 
   return (
     <Modal titulo={`Editando familia ${valor.id}`} ocupado={guardando} focoDeReserva={focoDeReserva} pie={pie} onCerrar={onCancelar}>
-      <ErrorDeFormulario mensaje={error} />
+      <div ref={errorRef} tabIndex={-1}>
+        <ErrorDeFormulario mensaje={error} />
+      </div>
       <form
         id={ID_FORMULARIO_FAMILIA}
         autoComplete="off"

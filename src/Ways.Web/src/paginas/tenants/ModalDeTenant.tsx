@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
 
@@ -17,6 +18,13 @@ type Props = {
 
 /** Renombrado de un tenant en un modal: mientras guarda queda inerte entero (campo, pie y cierre). */
 export function ModalDeTenant({ valor, guardando, error, focoDeReserva, onCambio, onGuardar, onCancelar }: Props) {
+  const errorRef = useRef<HTMLDivElement>(null)
+
+  // El botón que se envió queda deshabilitado y el foco caería en <body>: ante un rechazo pasa al mensaje.
+  useEffect(() => {
+    if (error) errorRef.current?.focus()
+  }, [error])
+
   const pie = (
     <>
       <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={guardando}>
@@ -30,7 +38,9 @@ export function ModalDeTenant({ valor, guardando, error, focoDeReserva, onCambio
 
   return (
     <Modal titulo={`Editando tenant ${valor.id}`} ocupado={guardando} focoDeReserva={focoDeReserva} pie={pie} onCerrar={onCancelar}>
-      <ErrorDeFormulario mensaje={error} />
+      <div ref={errorRef} tabIndex={-1}>
+        <ErrorDeFormulario mensaje={error} />
+      </div>
       <form
         id={ID_FORMULARIO_TENANT}
         autoComplete="off"
