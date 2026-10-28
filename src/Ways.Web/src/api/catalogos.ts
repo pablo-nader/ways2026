@@ -32,6 +32,8 @@ import type {
 import { COMPORTAMIENTOS_MEDIO_PAGO } from './tipos'
 import { clienteDeCuentasTesoreria, opcionesDeCuentas, type CuentaTesoreriaListado } from './cuentasTesoreria'
 import { parsearNumeroDecimal } from '../formato/numeros'
+import type { ColumnasFiltrables, DefinicionDeFiltro } from '../componentes/grilla/filtros'
+import type { ColumnasOrdenables, ValorOrdenable } from '../componentes/grilla/ordenamiento'
 
 /** Todo campo propio se maneja como texto en el formulario (incl. números y el select de
  * comportamiento) salvo los booleanos — simplifica el estado controlado; cada descriptor
@@ -46,6 +48,7 @@ export type CampoDescriptor = {
   requerido?: boolean
   /** Se muestra también como columna extra en la tabla de listado, no solo en el formulario. */
   columnaEnListado?: boolean
+  /** Texto de la celda en la grilla, en lugar del valor del campo; también es lo que la columna ordena y filtra. */
   formatearListado?: (item: unknown) => string
   /** stage-3-articulos-y-precios (Slice 6): campo condicional a otro campo del mismo
    * formulario — se oculta (no solo se deshabilita) cuando el predicado da `false`, así un
@@ -423,6 +426,86 @@ export const descriptorListasPrecio: DescriptorDeCatalogo<ListaPrecioListado, Li
     }
   },
   sujetoDeBaja: 'la lista de precios',
+}
+
+// --- Columnas de la grilla de la máquina genérica: lo que se muestra, se ordena y se filtra ---
+
+const OPCIONES_DE_ESTADO = [
+  { valor: 'Activo', etiqueta: 'Activo' },
+  { valor: 'Inactivo', etiqueta: 'Inactivo' },
+]
+
+const OPCIONES_SI_NO = [
+  { valor: 'Sí', etiqueta: 'Sí' },
+  { valor: 'No', etiqueta: 'No' },
+]
+
+/**
+ * Lo que muestra la celda de un campo propio; vacío si no hay valor. Una columna con `formatearListado` muestra (y por lo
+ * tanto ordena y filtra) lo que ese formateo devuelve: una referencia a un catálogo con baja lógica tiene que devolver
+ * su etiqueta y, si la fila apunta a un registro que ya no está visible, vacío (igual que sin asignar).
+ */
+export function textoDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | undefined, item: unknown): string {
+  const propio = campo.formatearListado?.(item)
+  if (propio !== undefined) return propio
+  if (campo.tipo === 'booleano') return valor ? 'Sí' : 'No'
+  if (valor === undefined || valor === '') return ''
+  if (campo.tipo === 'select') return campo.opciones?.find((o) => o.valor === valor)?.etiqueta ?? String(valor)
+
+  return String(valor)
+}
+
+function valorOrdenableDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | undefined, item: unknown): ValorOrdenable {
+  if (campo.formatearListado) return textoDeColumna(campo, valor, item)
+  if (campo.tipo === 'booleano') return Boolean(valor)
+  if (campo.tipo === 'numeroEntero' || campo.tipo === 'numeroDecimal') {
+    return typeof valor === 'string' ? parsearNumeroDecimal(valor, { permitirNegativo: true }) : null
+  }
+
+  return textoDeColumna(campo, valor, item)
+}
+
+function opcionesDeFiltroDeColumna(campo: CampoDescriptor): DefinicionDeFiltro['opciones'] {
+  if (campo.formatearListado) return undefined
+  if (campo.tipo === 'booleano') return OPCIONES_SI_NO
+  if (campo.tipo === 'select' && campo.opciones) {
+    return campo.opciones.map((o) => ({ valor: o.etiqueta, etiqueta: o.etiqueta }))
+  }
+
+  return undefined
+}
+
+/**
+ * Columnas de la grilla de un catálogo: ID, Nombre, los campos con `columnaEnListado` y Estado. `celdas` es el orden de
+ * las columnas del `<thead>` (con `null` para Acciones, que no se ordena ni se filtra). Booleanos y selects de opciones
+ * fijas se filtran con un select; el resto, con texto.
+ */
+export function columnasDeCatalogo<TListado extends CatalogoListado, TAlta>(definicion: DescriptorDeCatalogo<TListado, TAlta>) {
+  const extra = definicion.campos.filter((c) => c.columnaEnListado)
+  const ordenables: ColumnasOrdenables<TListado> = {
+    id: { valor: (item) => item.id },
+    nombre: { valor: (item) => item.nombre },
+    estado: { valor: (item) => (item.activo ? 'Activo' : 'Inactivo') },
+  }
+  const filtrables: ColumnasFiltrables<TListado> = {
+    id: { etiqueta: 'ID', valor: (item) => String(item.id).padStart(4, '0') },
+    nombre: { etiqueta: 'Nombre', valor: (item) => item.nombre },
+    estado: { etiqueta: 'Estado', valor: (item) => (item.activo ? 'Activo' : 'Inactivo'), opciones: OPCIONES_DE_ESTADO },
+  }
+
+  for (const campo of extra) {
+    const valorDe = (item: TListado) => definicion.aValores(item)[campo.clave]
+    ordenables[campo.clave] = { valor: (item) => valorOrdenableDeColumna(campo, valorDe(item), item) }
+    filtrables[campo.clave] = {
+      etiqueta: campo.etiqueta,
+      valor: (item) => textoDeColumna(campo, valorDe(item), item),
+      opciones: opcionesDeFiltroDeColumna(campo),
+    }
+  }
+
+  const celdas: (string | null)[] = ['id', 'nombre', ...extra.map((c) => c.clave), 'estado', null]
+
+  return { celdas, ordenables, filtrables }
 }
 
 // --- Catálogos fiscales (globales, solo lectura — ADR-11, gate #4) ---
