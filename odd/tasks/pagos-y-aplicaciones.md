@@ -88,9 +88,17 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   soft-deleted, no physical delete); the old PUT routes answer `409 gasto_con_varios_medios` on a multi-item pago.
   Plantel keeps its own wire codes and shares only the amount arithmetic. The POS alta still does not validate
   the medio server-side (unchanged). Integration tests (`PagosConLineasTests`) need CI.
-- [ ] E2-S3b — (service-side edit with N lines landed in S3a; what remains here: drop `pagos.id_medio_pago` readers, compensating entries per medio) Edición de pagos con N líneas: (`SincronizarItemDelPagoAsync` was already replaced in S3a by
-  `ReemplazarItemsDelPago`, a positional reuse of the live items); the closed-turno arqueo recalculation already re-derives from the items,
-  so only the before/after `EstadoContableDePago` maps need the new lines; compensating entries per medio.
+- [x] E2-S3b — Plantel y baja de `pagos.id_medio_pago`. (1) El pago de personal con N líneas es UN pago con N ítems
+  (la `referencia` de cada línea vive en su ítem, `pagos.detalle` queda vacío) y UN movimiento de tesorería por el
+  total; el desglose comparte `idGasto` y trae un `idItem` por línea (el lector cae a `pagos.detalle` para los pagos
+  históricos, que no se fusionan). (2) Migración `QuitarMedioDeLaCabeceraDelPago`: elimina la columna, `fk_pagos_medio_pago`
+  e `ix_pagos_medio_pago`; `Down` los recrea y rellena con el ítem vivo de menor id (backfill con `SET LOCAL`, probado bajo
+  `ways_app`). Todo lector del medio de la cabecera deriva el «medio de compatibilidad» del ítem vivo de menor id
+  (`ProyeccionesDePago`, historial de administración, respuestas de alta, payload de auditoría `id_medio_pago`), y
+  `PagoListado` gana `lineas` (aditivo). Compensaciones por medio: ya resueltas en S2/S3a (el recálculo del arqueo y los
+  `EstadoContableDePago` leen los ítems). Se retiró el test del backfill de `ItemsDePago` bajo `ways_app`: leía la columna
+  eliminada y ya no puede correr contra el esquema actual. Integration tests (CI): `PagoDePersonalTests`,
+  `PagosConLineasTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
 - [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
 - [ ] E2-W2 — Web: lines in the administration payment form and the history.
@@ -122,6 +130,11 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   failed under that mutation (1 failed of 1893) and passed after restoring the line. Integration tests added (three arqueo/cierre tests with two-item pagos, audit `lineas`,
   `idItem` in the personal desglose) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
 
+- 2026-10-28 E2-S3b (branch `pnader/pagos-e2-s3b-plantel`): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed;
+  Application.Tests 1076 passed (golden `inventario-de-dependientes` sin `MedioPago | pagos`); web `tsc -b` clean;
+  `dotnet ef migrations has-pending-model-changes` clean. Integration tests NOT run locally (Docker down): CI
+  `backend-integration` is the proof, pending.
+
 ## Next step
 
-S1 PR #504 is in CI; next is E2-S3a.
+S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); next is E2-S4 (wire contract `/api/pagos`).
