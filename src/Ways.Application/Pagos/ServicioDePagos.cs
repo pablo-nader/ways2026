@@ -618,6 +618,13 @@ public class ServicioDePagos(
         else
         {
             pago.DeletedAt = momento;
+
+            var itemsVivos = await db.ItemsPago.Where(i => i.IdPago == pago.Id && i.DeletedAt == null).ToListAsync(ct);
+            foreach (var item in itemsVivos)
+            {
+                item.DeletedAt = momento;
+                item.UpdatedAt = momento;
+            }
         }
 
         pago.UpdatedAt = momento;

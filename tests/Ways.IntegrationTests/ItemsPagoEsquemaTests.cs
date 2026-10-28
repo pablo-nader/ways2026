@@ -338,7 +338,8 @@ public class ItemsPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await LaTransaccionComiteaAsync(
             cruda, tx => EjecutarAsync(cruda, tx, "UPDATE pagos SET importe = 999 WHERE id_pago = $1", sinItems));
 
-        // La baja lógica de la cabecera no toca los ítems: la suma sigue valiendo.
+        // Con SQL crudo, la baja de la cabecera deja el ítem vivo: el trigger sigue controlando la suma.
+        // (El servicio, en cambio, da de baja los ítems junto con el pago.)
         var dadoDeBaja = await InsertarPagoAsync(cruda, p, 100m);
         await LaTransaccionComiteaAsync(cruda, tx => InsertarItemAsync(cruda, tx, p, dadoDeBaja, 100m));
         await LaTransaccionComiteaAsync(

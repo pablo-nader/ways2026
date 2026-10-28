@@ -403,7 +403,9 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > insert/update/delete) y `tg_pagos_importe_igual_suma_items` (sobre `pagos` cuando cambia
 > `importe`). Es diferido para que la cabecera y sus ítems se escriban en cualquier orden dentro de
 > una transacción; al comitear, una suma distinta sale como `23514` con el nombre del trigger como
-> constraint. Un pago sin ítems vivos no se controla. La baja lógica de un pago no toca sus ítems.
+> constraint. Un pago sin ítems vivos no se controla. La baja lógica de un pago da de baja sus ítems (el servicio
+> marca el mismo `deleted_at` en la cabecera y en sus ítems vivos, en un solo guardado); el backfill copia
+> el `deleted_at` del pago al ítem.
 >
 > **Escritura doble.** `ServicioDePagos` escribe un único ítem (medio e importe de la cabecera) en
 > la misma transacción que cada pago nuevo (alta del POS, alta administrativa, pagar una compra y

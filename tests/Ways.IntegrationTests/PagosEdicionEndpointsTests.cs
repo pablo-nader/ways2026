@@ -590,6 +590,10 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         await using var db = Db(ctx);
         Assert.NotNull(await db.Pagos.IgnoreQueryFilters().Where(g => g.Id == electronico.Id).Select(g => g.DeletedAt).SingleAsync());
         Assert.False(await db.Pagos.AnyAsync(g => g.Id == electronico.Id));
+        Assert.All(
+            await db.ItemsPago.IgnoreQueryFilters().Where(i => i.IdPago == electronico.Id).ToListAsync(),
+            i => Assert.NotNull(i.DeletedAt));
+        Assert.NotEmpty(await db.ItemsPago.IgnoreQueryFilters().Where(i => i.IdPago == electronico.Id).ToListAsync());
 
         var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).ToListAsync();
         Assert.Equal(2, filas.Count);
@@ -620,6 +624,9 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{pago.Id}")).StatusCode);
 
         await using var db = Db(ctx);
+        var items = await db.ItemsPago.IgnoreQueryFilters().Where(i => i.IdPago == pago.Id).ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.All(items, i => Assert.NotNull(i.DeletedAt));
         Assert.Equal(-1000m, await db.Proveedores.Where(p => p.Id == ctx.IdProveedor).Select(p => p.Saldo).SingleAsync());
         var ajuste = await db.MovimientosCuentaCorrienteProveedor
             .SingleAsync(m => m.IdProveedor == ctx.IdProveedor && m.Tipo == TipoMovimientoCcProveedor.Ajuste);

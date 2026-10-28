@@ -54,6 +54,7 @@ public static class EtiquetasDeTablas
             ["items_comprobante_compra"] = "compras",
             ["items_comprobante_venta"] = "ventas",
             ["items_orden_compra"] = "órdenes de compra",
+            ["items_pago"] = "gastos",
             ["items_presupuesto"] = "presupuestos",
             ["items_remito"] = "remitos",
             ["listas_precio"] = "listas de precios",
