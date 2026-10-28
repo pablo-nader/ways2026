@@ -223,7 +223,8 @@ internal static class ImporteDeUnSoloMedio
 // conservan su forma `{idMedioPago, importe}` y se adaptan a UNA línea con `Desde`.
 
 /// <summary>Alta del POS con líneas por medio. Equivale a <see cref="SolicitudDePago"/> con <c>Lineas</c> en lugar
-/// de medio e importe.</summary>
+/// de medio e importe. <see cref="ValidarMedios"/> hace que el servidor valide cada medio (existe y no es cuenta
+/// corriente); las rutas /api/gastos lo dejan en <c>false</c> porque el POS instalado nunca lo exigió.</summary>
 public sealed record ComandoDePago(
     int IdPuntoVenta,
     CategoriaPago Categoria,
@@ -234,7 +235,8 @@ public sealed record ComandoDePago(
     IReadOnlyList<LineaDePago> Lineas,
     string? NumeroFactura,
     int? IdComprobanteCompra = null,
-    OrigenFondosPago OrigenFondos = OrigenFondosPago.CajaTurno)
+    OrigenFondosPago OrigenFondos = OrigenFondosPago.CajaTurno,
+    bool ValidarMedios = false)
 {
     public static ComandoDePago Desde(SolicitudDePago s) => new(
         s.IdPuntoVenta, s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
@@ -287,3 +289,96 @@ public sealed record ComandoDePagoDeCompra(DateOnly Fecha, IReadOnlyList<LineaDe
     public static ComandoDePagoDeCompra Desde(SolicitudDePagoDeCompra s) =>
         new(s.Fecha, [new LineaDePago(s.IdMedioPago, ImporteDeUnSoloMedio.Redondear(s.Importe), null)], s.Concepto);
 }
+
+// ---- Contrato HTTP /api/pagos con líneas por medio (E2-S4) ---------------------------------------
+// Contrato nuevo, a la par de /api/gastos (que queda igual como adaptador de un solo medio). El importe del pago es la
+// suma de sus líneas, así que ninguna de estas solicitudes lleva `idMedioPago` ni `importe` sueltos.
+
+/// <summary>Cuerpo de <c>POST /api/pagos</c>. Mismos campos que <see cref="SolicitudDePago"/> con <see cref="Lineas"/> en lugar
+/// de medio e importe. Cada línea se valida contra el servidor: el medio tiene que existir y no ser de cuenta corriente.</summary>
+public sealed record SolicitudDePagoConLineas(
+    int IdPuntoVenta,
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    string? NumeroFactura,
+    IReadOnlyList<LineaDePago> Lineas,
+    int? IdComprobanteCompra = null,
+    OrigenFondosPago OrigenFondos = OrigenFondosPago.CajaTurno)
+{
+    public ComandoDePago AComando() => new(
+        IdPuntoVenta, Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura,
+        IdComprobanteCompra, OrigenFondos, ValidarMedios: true);
+}
+
+/// <summary>Cuerpo de <c>POST /api/pagos/administracion</c>. Mismos campos que <see cref="SolicitudDePagoDeAdministracion"/>
+/// con <see cref="Lineas"/> en lugar de medio e importe.</summary>
+public sealed record SolicitudDePagoDeAdministracionConLineas(
+    DateOnly Fecha,
+    int IdEmpresa,
+    int? IdPuntoVenta,
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    string? NumeroFactura,
+    IReadOnlyList<LineaDePago> Lineas,
+    int? IdComprobanteCompra = null)
+{
+    public ComandoDePagoDeAdministracion AComando() => new(
+        Fecha, IdEmpresa, IdPuntoVenta, Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura,
+        IdComprobanteCompra);
+}
+
+/// <summary>Cuerpo de <c>PUT /api/pagos/{id}</c> y <c>PUT /api/pagos/administracion/{id}</c>: reemplaza el conjunto de líneas
+/// del pago. A diferencia de <c>PUT /api/gastos/{id}</c>, también edita un pago con varios medios.</summary>
+public sealed record SolicitudDeEdicionDePagoConLineas(
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    string? NumeroFactura,
+    IReadOnlyList<LineaDePago> Lineas)
+{
+    public ComandoDeEdicionDePago AComando() => new(
+        Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura, DeUnSoloMedio: false);
+}
+
+/// <summary>Cuerpo de <c>POST /api/pagos/de-compra/{idCompra}</c>. Mismas reglas que <see cref="SolicitudDePagoDeCompra"/>
+/// con <see cref="Lineas"/> en lugar de medio e importe.</summary>
+public sealed record SolicitudDePagoDeCompraConLineas(DateOnly Fecha, IReadOnlyList<LineaDePago> Lineas, string? Concepto)
+{
+    public ComandoDePagoDeCompra AComando() => new(Fecha, Lineas, Concepto);
+}
+
+/// <summary>Pago recién persistido del contrato nuevo: sin el medio ni el nombre de la cabecera, el reparto vive en
+/// <see cref="Lineas"/>.</summary>
+public sealed record PagoConLineas(
+    int Id,
+    int? IdTurnoCaja,
+    int? IdPuntoVenta,
+    DateTimeOffset Fecha,
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    string? NumeroFactura,
+    decimal Importe,
+    int IdEmpleado,
+    int? IdComprobanteCompra,
+    OrigenFondosPago OrigenFondos,
+    IReadOnlyList<LineaDePagoListada> Lineas)
+{
+    public static PagoConLineas Desde(PagoRegistrado p, IReadOnlyList<LineaDePagoListada> lineas) => new(
+        p.Id, p.IdTurnoCaja, p.IdPuntoVenta, p.Fecha, p.Categoria, p.IdProveedor, p.IdArea, p.Concepto, p.Detalle,
+        p.NumeroFactura, p.Importe, p.IdEmpleado, p.IdComprobanteCompra, p.OrigenFondos, lineas);
+}
+
+/// <summary>Respuesta de <c>POST /api/pagos/de-compra/{idCompra}</c>: el pago bajo la clave <c>pago</c> (la ruta de compras
+/// conserva <c>gasto</c>) y el estado de pago de la compra.</summary>
+public sealed record ResultadoDePagoDeCompraConLineas(PagoConLineas Pago, decimal Pagado, decimal SaldoPendiente);

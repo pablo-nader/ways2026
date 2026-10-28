@@ -91,6 +91,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Edición de un pago del turno abierto desde el POS: mismo criterio que el alta. Su prueba
         // positiva por rol es PagosEdicionEndpointsTests.UnVendedorEditaUnPagoDeSuTurnoAbierto.
         ("PUT", "/api/gastos/{id:int}"),
+        // E2-S4: contrato nuevo con líneas por medio, mismas políticas que su gemelo de gastos (alta y edición del POS sin
+        // GestionDeCatalogo apilado). Positivos por rol: PagosApiConLineasTests.
+        ("POST", "/api/pagos/"),
+        ("PUT", "/api/pagos/{id:int}"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan
         // GestionDeCatalogo (design: API Surface) — no van en este allowlist. Nada nuevo acá.
@@ -405,6 +409,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-6-turnos-caja (Slice 3, task 3.5): GET /api/gastos (historial) — mismo criterio
         // que "/api/caja/turnos".
         "/api/gastos",
+        // E2-S4: GET /api/pagos (historial con líneas) — mismo criterio que "/api/gastos".
+        "/api/pagos",
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): GET /api/compras
         // (listado) y GET /api/compras/{id} (detalle) — mismo criterio que "/api/gastos".
         "/api/compras",
