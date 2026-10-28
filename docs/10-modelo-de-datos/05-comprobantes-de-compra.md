@@ -529,8 +529,8 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   aplicaciones vivas se recortan automáticamente de la más nueva a la más vieja (`fecha` y `id` descendentes): se dan de
 >   baja las que entran enteras y se achica la última. Si el importe sube y el pago es elegible (categoría `proveedor`,
 >   proveedor de la compra del vínculo, compra confirmada), la aplicación al vínculo crece hasta el aumento, el disponible y
->   el lugar de la compra (se crea, con origen `pago_de_compra`, si no existía); crece solo por el aumento para no deshacer
->   una desaplicación. La edición toma todas las compras del pago (aplicadas y vínculo) `FOR UPDATE` en id ascendente antes
+>   el lugar de la compra, y solo si esa aplicación sigue viva: la edición nunca crea una aplicación (no deshace una
+>   desaplicación); el aumento queda disponible para la ruta explícita. La edición toma todas las compras del pago (aplicadas y vínculo) `FOR UPDATE` en id ascendente antes
 >   que el pago (los conjuntos se pre-leen sin lock y se revalidan bajo el lock del pago: si cambiaron, `409
 >   pago_cambio_concurrente`, sin reintento). Si la compra está anulada la edición sigue siendo válida y no toca
 >   aplicaciones. Cambiar el proveedor o la categoría de un pago con CUALQUIER aplicación viva (con o sin vínculo) es

@@ -457,6 +457,23 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         Assert.Null(ajustada.DeletedAt);
     }
 
+    [Fact]
+    public async Task SubirElImporteDeUnPagoDesaplicadoNoRecreaSuAplicacion()
+    {
+        var ctx = await PrepararAsync(nameof(SubirElImporteDeUnPagoDesaplicadoNoRecreaSuAplicacion));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var pago = await AltaAdminAsync(ctx, 100m, compra.Id);
+        var aplicacion = Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id));
+
+        var desaplicar = await ctx.Admin.DeleteAsync($"/api/pagos/{pago.Id}/aplicaciones/{aplicacion.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, desaplicar.StatusCode);
+
+        await EditarOkAsync(ctx, pago.Id, 110m);
+
+        Assert.Equal(0m, await AplicadoVivoDelPagoAsync(ctx, pago.Id));
+        Assert.Equal(0m, (await DetalleAsync(ctx, compra.Id)).Pagado);
+    }
+
     // ---- lo liberado no se reaplica solo ------------------------------------------------------------------------
 
     private static async Task BajaOkAsync(Contexto ctx, int idPago)

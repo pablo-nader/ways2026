@@ -1775,33 +1775,23 @@ public partial class ServicioDePagos(
             .Where(a => a.IdComprobanteCompra == idCompraDelVinculo && a.IdPago != pago.Id)
             .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
 
+        // Solo crece una aplicación viva: si no hay (se desaplicó o nunca tuvo lugar), la edición no
+        // la recrea; el aumento queda disponible y se aplica con la ruta explícita.
         var existente = aplicaciones.FirstOrDefault(a => a.IdComprobanteCompra == idCompraDelVinculo);
-        var lugar = compra.Total - aplicadoPorOtros - (existente?.Importe ?? 0m);
+        if (existente is null)
+        {
+            return;
+        }
+
+        var lugar = compra.Total - aplicadoPorOtros - existente.Importe;
         var agregado = Math.Min(Math.Min(aumento, pago.Importe - aplicado), lugar);
         if (agregado <= 0m)
         {
             return;
         }
 
-        if (existente is not null)
-        {
-            existente.Importe += agregado;
-            existente.UpdatedAt = momento;
-            return;
-        }
-
-        db.AplicacionesPago.Add(new AplicacionPago
-        {
-            IdTenant = idTenant,
-            IdPago = pago.Id,
-            IdComprobanteCompra = idCompraDelVinculo,
-            Importe = agregado,
-            Origen = OrigenAplicacionPago.PagoDeCompra,
-            IdEmpleado = idEmpleado,
-            Fecha = momento,
-            CreatedAt = momento,
-            UpdatedAt = momento
-        });
+        existente.Importe += agregado;
+        existente.UpdatedAt = momento;
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
