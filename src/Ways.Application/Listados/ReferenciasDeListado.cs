@@ -36,9 +36,12 @@ public static class ReferenciasDeListado
             c => c.Id, c => new ClienteDeListado(c.Numero, NombreDeCliente(c.RazonSocial, c.Nombre, c.Apellido)));
     }
 
-    /// <summary>El catálogo de proveedores es de la gestión de catálogo (<c>GET /api/proveedores</c>, solo Admin): los
-    /// listados de compras, que leen todos los roles de operación, devuelven la razón social únicamente a quien ya podía
-    /// verla ahí; para el resto el resultado es vacío y la pantalla rotula la fila por su id, como antes.</summary>
+    /// <summary>Conserva lo que mostraban las pantallas de compras y órdenes de compra antes de que el servidor
+    /// devolviera el nombre: ellas lo resolvían desde <c>GET /api/proveedores</c> (solo Admin), así que Supervisor y
+    /// Vendedor veían "Proveedor #id". Por eso solo Admin recibe la razón social; para el resto el resultado es vacío y la
+    /// pantalla rotula la fila por su id. No es una barrera de confidencialidad: <c>GET /api/proveedores/opciones</c>
+    /// (<c>OperacionDePos</c>) ya devuelve id y razón social de los proveedores activos a todos los roles de operación,
+    /// de modo que quitar este filtro es una decisión de producto.</summary>
     public static Task<IReadOnlyDictionary<int, string>> ProveedoresVisiblesAsync(
         IWaysDbContext db, IContextoDeUsuario contexto, IReadOnlyCollection<int> ids, CancellationToken ct) =>
         contexto.Rol == RolConocido.Admin
