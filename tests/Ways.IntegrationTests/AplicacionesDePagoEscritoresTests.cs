@@ -243,34 +243,87 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(OrigenAplicacionPago.Aplicacion, aplicacion.Origen);
     }
 
-    [Fact]
-    public async Task UnPagoDeOtraEmpresaConservaElVinculoHeredadoSinAplicacion()
+    private async Task<(int IdEmpresa, int IdPuntoVenta)> SembrarOtraEmpresaAsync(Contexto ctx)
     {
-        var ctx = await PrepararAsync(nameof(UnPagoDeOtraEmpresaConservaElVinculoHeredadoSinAplicacion));
-        var compra = await CrearYConfirmarCompraAsync(ctx);
-
-        int idOtraEmpresa;
-        int idOtroPuntoVenta;
-        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var empresa = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync();
+        var puntoVenta = new PuntoVenta
         {
+            IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = "Otra empresa - Local", CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.PuntosVenta.Add(puntoVenta);
+        await db.SaveChangesAsync();
+        return (empresa.Id, puntoVenta.Id);
+    }
+
+    private static async Task<CompraDetalle> DetalleAsync(Contexto ctx, int idCompra)
+    {
+        var respuesta = await ctx.Admin.GetAsync($"/api/compras/{idCompra}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        return JsonSerializer.Deserialize<CompraDetalle>(cuerpo, OpcionesJson)!;
+    }
+
+    [Fact]
+    public async Task UnAltaNuevaLigadaAUnaCompraDeOtraEmpresaSeRechazaConCompraDeOtraEmpresa()
+    {
+        var ctx = await PrepararAsync(nameof(UnAltaNuevaLigadaAUnaCompraDeOtraEmpresaSeRechazaConCompraDeOtraEmpresa));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var (idOtraEmpresa, idOtroPuntoVenta) = await SembrarOtraEmpresaAsync(ctx);
+
+        var solicitud = new SolicitudDePagoDeAdministracion(
+            FechaDelNegocio.Hoy(), idOtraEmpresa, idOtroPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
+            "Pago de otra empresa", null, ctx.IdMedioEfectivo, null, 100m, compra.Id);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("compra_de_otra_empresa", await CodigoDeErrorAsync(respuesta));
+        Assert.Empty(await AplicacionesDeLaCompraAsync(ctx, compra.Id));
+    }
+
+    /// <summary>Un vínculo heredado entre empresas (el alta ya no lo permite: se simula con SQL crudo y la aplicación que
+    /// escribe la migración <c>AplicacionesEntreEmpresas</c>) sigue contando como pagado, y su edición reajusta la
+    /// aplicación en vez de liberarla por ser de otra empresa.</summary>
+    [Fact]
+    public async Task UnVinculoHeredadoEntreEmpresasSigueContandoYSuEdicionReajustaLaAplicacion()
+    {
+        var ctx = await PrepararAsync(nameof(UnVinculoHeredadoEntreEmpresasSigueContandoYSuEdicionReajustaLaAplicacion));
+        var (_, idOtroPuntoVenta) = await SembrarOtraEmpresaAsync(ctx);
+
+        var solicitudDeCompra = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, idOtroPuntoVenta, "0002-00000001", FechaDelNegocio.Hoy(), null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 10m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var respuestaCrear = await ctx.Admin.PostAsJsonAsync("/api/compras", solicitudDeCompra);
+        Assert.Equal(HttpStatusCode.Created, respuestaCrear.StatusCode);
+        var creada = JsonSerializer.Deserialize<CompraDetalle>(await respuestaCrear.Content.ReadAsStringAsync(), OpcionesJson)!;
+        var confirmar = await ctx.Admin.PostAsync($"/api/compras/{creada.Id}/confirmar", null);
+        Assert.Equal(HttpStatusCode.OK, confirmar.StatusCode);
+        var compraAjena = JsonSerializer.Deserialize<CompraDetalle>(await confirmar.Content.ReadAsStringAsync(), OpcionesJson)!;
+
+        var pago = await AltaAdminAsync(ctx, 400m, idComprobanteCompra: null);
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE pagos SET id_comprobante_compra = {compraAjena.Id} WHERE id_pago = {pago.Id}");
+            var idEmpleado = await db.Pagos.Where(p => p.Id == pago.Id).Select(p => p.IdEmpleado).SingleAsync();
             var ahora = DateTimeOffset.UtcNow;
-            var empresa = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
-            db.Empresas.Add(empresa);
-            await db.SaveChangesAsync();
-            var puntoVenta = new PuntoVenta
+            db.AplicacionesPago.Add(new AplicacionPago
             {
-                IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = "Otra empresa - Local", CreatedAt = ahora, UpdatedAt = ahora
-            };
-            db.PuntosVenta.Add(puntoVenta);
+                IdTenant = ctx.IdTenant, IdPago = pago.Id, IdComprobanteCompra = compraAjena.Id, Importe = 400m,
+                Origen = OrigenAplicacionPago.Migracion, IdEmpleado = idEmpleado, Fecha = ahora, CreatedAt = ahora, UpdatedAt = ahora
+            });
             await db.SaveChangesAsync();
-            idOtraEmpresa = empresa.Id;
-            idOtroPuntoVenta = puntoVenta.Id;
         }
 
-        var pago = await AltaAdminAsync(ctx, 100m, compra.Id, idEmpresa: idOtraEmpresa, idPuntoVenta: idOtroPuntoVenta);
+        Assert.Equal(400m, (await DetalleAsync(ctx, compraAjena.Id)).Pagado);
 
-        Assert.Equal(compra.Id, pago.IdComprobanteCompra);
-        Assert.Empty(await AplicacionesDelPagoAsync(ctx, pago.Id));
+        await EditarOkAsync(ctx, pago.Id, 300m);
+
+        Assert.Equal(300m, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
+        Assert.Equal(300m, (await DetalleAsync(ctx, compraAjena.Id)).Pagado);
     }
 
     // ---- liberación ------------------------------------------------------------------------------------------
@@ -363,9 +416,10 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
     }
 
     [Fact]
-    public async Task EditarUnPagoVinculadoSinSaldoNoCreaAplicacionYSiSeLiberaSaldoLaCrea()
+    public async Task EditarUnPagoVinculadoSinSaldoSeReaplicaAlBajarElLlenadorYLuegoSeReajusta()
     {
-        var ctx = await PrepararAsync(nameof(EditarUnPagoVinculadoSinSaldoNoCreaAplicacionYSiSeLiberaSaldoLaCrea));
+        var ctx = await PrepararAsync(
+            nameof(EditarUnPagoVinculadoSinSaldoSeReaplicaAlBajarElLlenadorYLuegoSeReajusta));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var llenador = await AltaAdminAsync(ctx, compra.Total, compra.Id);
         var sinSaldo = await AltaAdminAsync(ctx, 50m, compra.Id);
@@ -377,12 +431,104 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{llenador.Id}");
         Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
 
+        // La baja libera el lugar y el pago vinculado que no tenía aplicación pasa a aplicarse entero.
+        var reaplicada = Assert.Single(await AplicacionesDelPagoAsync(ctx, sinSaldo.Id));
+        Assert.Equal(80m, reaplicada.Importe);
+        Assert.Equal(OrigenAplicacionPago.PagoDeCompra, reaplicada.Origen);
+
         await EditarOkAsync(ctx, sinSaldo.Id, 60m);
 
-        var creada = Assert.Single(await AplicacionesDelPagoAsync(ctx, sinSaldo.Id));
-        Assert.Equal(60m, creada.Importe);
-        Assert.Equal(OrigenAplicacionPago.PagoDeCompra, creada.Origen);
-        Assert.Null(creada.DeletedAt);
+        var ajustada = Assert.Single(await AplicacionesDelPagoAsync(ctx, sinSaldo.Id));
+        Assert.Equal(60m, ajustada.Importe);
+        Assert.Null(ajustada.DeletedAt);
+    }
+
+    // ---- reaplicación al liberar una aplicación ---------------------------------------------------------------
+
+    private static async Task BajaOkAsync(Contexto ctx, int idPago)
+    {
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+    }
+
+    private async Task<decimal> AplicadoVivoDelPagoAsync(Contexto ctx, int idPago) =>
+        (await AplicacionesDelPagoAsync(ctx, idPago)).Where(a => a.DeletedAt is null).Sum(a => a.Importe);
+
+    [Fact]
+    public async Task LaBajaDelPagoQueLlenabaLaCompraReaplicaElPagoVinculadoQueQuedoConExcedente()
+    {
+        var ctx = await PrepararAsync(nameof(LaBajaDelPagoQueLlenabaLaCompraReaplicaElPagoVinculadoQueQuedoConExcedente));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var primero = await AltaAdminAsync(ctx, 1000m, compra.Id);
+        var segundo = await AltaAdminAsync(ctx, 500m, compra.Id);
+        Assert.Equal(compra.Total - 1000m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+
+        await BajaOkAsync(ctx, primero.Id);
+
+        Assert.Equal(500m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+        var detalle = await DetalleAsync(ctx, compra.Id);
+        Assert.Equal(500m, detalle.Pagado);
+        Assert.Equal(compra.Total - 500m, detalle.SaldoPendiente);
+    }
+
+    [Fact]
+    public async Task EditarHaciaAbajoUnPagoReaplicaElPagoVinculadoConExcedente()
+    {
+        var ctx = await PrepararAsync(nameof(EditarHaciaAbajoUnPagoReaplicaElPagoVinculadoConExcedente));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var primero = await AltaAdminAsync(ctx, 1000m, compra.Id);
+        var segundo = await AltaAdminAsync(ctx, 500m, compra.Id);
+
+        await EditarOkAsync(ctx, primero.Id, 400m);
+
+        Assert.Equal(400m, await AplicadoVivoDelPagoAsync(ctx, primero.Id));
+        Assert.Equal(500m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+        var detalle = await DetalleAsync(ctx, compra.Id);
+        Assert.Equal(900m, detalle.Pagado);
+        Assert.Equal(compra.Total - 900m, detalle.SaldoPendiente);
+    }
+
+    [Fact]
+    public async Task LaReaplicacionSigueElOrdenDeLosPagosYSeCortaAlLugarLiberado()
+    {
+        var ctx = await PrepararAsync(nameof(LaReaplicacionSigueElOrdenDeLosPagosYSeCortaAlLugarLiberado));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var llenador = await AltaAdminAsync(ctx, compra.Total, compra.Id);
+        var segundo = await AltaAdminAsync(ctx, 300m, compra.Id);
+        var tercero = await AltaAdminAsync(ctx, 300m, compra.Id);
+        Assert.Equal(0m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+        Assert.Equal(0m, await AplicadoVivoDelPagoAsync(ctx, tercero.Id));
+
+        // Libera 210: el segundo pago (el más antiguo) lo toma entero y el tercero sigue sin aplicar.
+        await EditarOkAsync(ctx, llenador.Id, compra.Total - 210m);
+
+        Assert.Equal(210m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+        Assert.Equal(0m, await AplicadoVivoDelPagoAsync(ctx, tercero.Id));
+        Assert.Equal(compra.Total, (await DetalleAsync(ctx, compra.Id)).Pagado);
+
+        // La baja del primero libera todo lo suyo: el segundo completa sus 300 y el tercero toma lo que queda.
+        await BajaOkAsync(ctx, llenador.Id);
+
+        Assert.Equal(300m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+        Assert.Equal(300m, await AplicadoVivoDelPagoAsync(ctx, tercero.Id));
+        Assert.Equal(600m, (await DetalleAsync(ctx, compra.Id)).Pagado);
+    }
+
+    [Fact]
+    public async Task NadaSeReaplicaAUnaCompraAnulada()
+    {
+        var ctx = await PrepararAsync(nameof(NadaSeReaplicaAUnaCompraAnulada));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var primero = await AltaAdminAsync(ctx, 1000m, compra.Id);
+        var segundo = await AltaAdminAsync(ctx, 500m, compra.Id);
+        var anulada = await ctx.Admin.PostAsync($"/api/compras/{compra.Id}/anular", null);
+        Assert.True(anulada.StatusCode == HttpStatusCode.OK, await anulada.Content.ReadAsStringAsync());
+
+        await BajaOkAsync(ctx, primero.Id);
+
+        Assert.DoesNotContain(await AplicacionesDeLaCompraAsync(ctx, compra.Id), a => a.DeletedAt is null);
+        Assert.Equal(0m, await AplicadoVivoDelPagoAsync(ctx, segundo.Id));
+        Assert.Equal(0m, (await DetalleAsync(ctx, compra.Id)).Pagado);
     }
 
     [Fact]

@@ -32,6 +32,7 @@ namespace Ways.IntegrationTests;
 public class AplicacionesDePagoMigracionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string MigracionAnterior = "20261028194859_QuitarMedioDeLaCabeceraDelPago";
+    private const string MigracionPropia = "20261028210201_AplicacionesDePago";
 
     private sealed record Sembrado(int IdPagoA, int IdPagoB, int IdPagoC, int IdCompra1);
 
@@ -44,7 +45,7 @@ public class AplicacionesDePagoMigracionTests(WaysApiFixture fixture) : IClassFi
         await owner.OpenAsync();
         var sembrado = await SembrarAsync(owner);
 
-        await entorno.MigrarAsync(null);
+        await entorno.MigrarAsync(MigracionPropia);
 
         await VerificarFilasDelBackfillAsync(owner, sembrado);
         Assert.Equal(
@@ -66,7 +67,7 @@ public class AplicacionesDePagoMigracionTests(WaysApiFixture fixture) : IClassFi
                 "'tg_comprobantes_compra_admiten_aplicaciones', 'tg_pagos_coherentes_con_aplicaciones')"));
 
         // Subir de nuevo reconstruye lo mismo desde los pagos: la migración es repetible.
-        await entorno.MigrarAsync(null);
+        await entorno.MigrarAsync(MigracionPropia);
         await VerificarFilasDelBackfillAsync(owner, sembrado);
     }
 
@@ -86,7 +87,7 @@ public class AplicacionesDePagoMigracionTests(WaysApiFixture fixture) : IClassFi
         {
             await owner.OpenAsync();
             sembrado = await SembrarAsync(owner);
-            await entorno.MigrarAsync(null);
+            await entorno.MigrarAsync(MigracionPropia);
 
             await using var preparacion = owner.CreateCommand();
             preparacion.CommandText =

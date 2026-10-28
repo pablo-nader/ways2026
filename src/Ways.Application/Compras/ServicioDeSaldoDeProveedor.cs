@@ -78,9 +78,10 @@ public class ServicioDeSaldoDeProveedor(IWaysDbContext db)
     }
 }
 
-/// <summary>Estado de pago de una compra confirmada, derivado de sus pagos LIGADOS únicamente
-/// (spec: saldo-de-proveedor / Per-Compra Payment Status From Linked Pagos Only) — un pago sin
-/// ligar reduce el saldo total pero no resuelve el estado de ninguna compra puntual.</summary>
+/// <summary>Estado de pago de una compra confirmada, derivado de las APLICACIONES de pagos a esa compra únicamente
+/// (spec: saldo-de-proveedor / Per-Compra Payment Status From Linked Pagos Only, desde E3-S2 sobre
+/// <c>aplicaciones_pago</c>) — un pago sin aplicar reduce el saldo total pero no resuelve el estado de ninguna compra
+/// puntual.</summary>
 public enum EstadoPago
 {
     Impaga,
@@ -89,8 +90,8 @@ public enum EstadoPago
 }
 
 /// <summary>Una compra confirmada del proveedor con su estado de pago derivado —
-/// <see cref="Pagado"/> es la suma de los pagos LIGADOS a esta compra puntual, nunca el saldo
-/// general del proveedor.</summary>
+/// <see cref="Pagado"/> es la suma de las aplicaciones vivas de pagos a esta compra puntual (acotada al
+/// total de la compra), nunca el saldo general del proveedor.</summary>
 public sealed record CompraConEstadoPago(
     int IdComprobanteCompra, string? NumeroExterno, decimal Total, decimal Pagado, EstadoPago EstadoPago);
 

@@ -156,13 +156,16 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(LoPagadoDeLaCompraEsLaSumaDeLasAplicacionesDeSusPagos));
         var compra = await CrearYConfirmarCompraAsync(ctx);
-        await AltaAdminAsync(ctx, 300m, compra.Id);
-        await AltaAdminAsync(ctx, 410m, compra.Id);
+        // Dos pagos vinculados que juntos superan el total: la suma cruda de los pagos (1400) no es lo pagado; las
+        // aplicaciones suman exactamente el total (800 + 410), que es lo que distingue esta fórmula de la anterior.
+        await AltaAdminAsync(ctx, 800m, compra.Id);
+        await AltaAdminAsync(ctx, 600m, compra.Id);
 
         var detalle = await DetalleAsync(ctx, compra.Id);
 
-        Assert.Equal(710m, detalle.Pagado);
-        Assert.Equal(compra.Total - 710m, detalle.SaldoPendiente);
+        Assert.Equal(compra.Total, detalle.Pagado);
+        Assert.NotEqual(1400m, detalle.Pagado);
+        Assert.Equal(0m, detalle.SaldoPendiente);
     }
 
     [Fact]
@@ -221,9 +224,9 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
     }
 
     [Fact]
-    public async Task LaBajaDelPagoLiberaSuAplicacionYLoPagadoVuelveACero()
+    public async Task LaBajaDeUnPagoLiberaSuAplicacionYLoPagadoNoCuentaLaLiberada()
     {
-        var ctx = await PrepararAsync(nameof(LaBajaDelPagoLiberaSuAplicacionYLoPagadoVuelveACero));
+        var ctx = await PrepararAsync(nameof(LaBajaDeUnPagoLiberaSuAplicacionYLoPagadoNoCuentaLaLiberada));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var queSeDaDeBaja = await AltaAdminAsync(ctx, 300m, compra.Id);
         await AltaAdminAsync(ctx, 100m, compra.Id);

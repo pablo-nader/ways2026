@@ -477,10 +477,12 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   supera `pagos.importe`, y un pago dado de baja no tiene aplicaciones vivas. Dispara en insert/update/delete de
 >   `aplicaciones_pago` y en el update de `importe`/`deleted_at` de `pagos` (`tg_pagos_cubren_aplicaciones`).
 > - `tg_aplicaciones_pago_no_excede_compra` (`409 aplicacion_excede_compra`): la suma de las aplicaciones de una compra
->   no supera `comprobantes_compra.total`, la compra está `confirmada`, y cada pago aplicado es de categoría `proveedor`,
->   del proveedor de la compra y de su empresa (`puntos_venta.id_empresa` de la compra = `pagos.id_empresa`). Dispara
->   además en el update de `total`/`estado` de la compra (`tg_comprobantes_compra_admiten_aplicaciones`) y en el de
->   `id_proveedor`/`categoria`/`id_empresa` del pago (`tg_pagos_coherentes_con_aplicaciones`).
+>   no supera `comprobantes_compra.total`, la compra está `confirmada`, y cada pago aplicado es de categoría `proveedor`
+>   y del proveedor de la compra. La empresa NO es una condición desde la migración `AplicacionesEntreEmpresas` (la
+>   creación original la exigía): un pago puede aplicarse a una compra de otra empresa del mismo tenant, porque antes
+>   de las aplicaciones ese vínculo ya contaba como pagado. Dispara además en el update de `total`/`estado` de la compra
+>   (`tg_comprobantes_compra_admiten_aplicaciones`) y en el de `id_proveedor`/`categoria`/`id_empresa` del pago
+>   (`tg_pagos_coherentes_con_aplicaciones`).
 > - El `23505` de `ux_aplicaciones_pago_pago_compra` sale como `409 aplicacion_duplicada` y el `23514` de la CHECK como
 >   `400 aplicacion_importe_invalido`.
 >
@@ -494,20 +496,35 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > Lo que excede el total de la compra, los pagos ligados a compras anuladas y los pagos que no cumplen las condiciones
 > de arriba quedan sin aplicar (crédito). Es idempotente y los triggers se crean después.
 >
+> **Vínculos entre empresas** (migración `AplicacionesEntreEmpresas`). El backfill de arriba salteaba los pagos ligados a
+> una compra de otra empresa, que antes contaban como pagados. La migración reemplaza
+> `fn_aplicaciones_pago_exigir_compra` sin la condición de empresa (`Down` la restituye y da de baja las aplicaciones
+> entre empresas) y completa esas aplicaciones: por compra, en orden `(pagos.fecha, id_pago)`, cada pago aplica
+> `greatest(0, least(lo que le queda disponible al pago, total - aplicaciones vivas de la compra - suma de los importes
+> de los candidatos anteriores))`, con `origen = 'migracion'`, bajo `SET LOCAL app.acceso = 'plataforma'` e idempotente
+> (un par pago-compra con aplicación viva no es candidato). Los vínculos NUEVOS siguen exigiendo la misma empresa:
+> el alta del POS, el alta administrativa y vincular responden `400 compra_de_otra_empresa`.
+>
 > **Doble escritura y liberación (E3-S1b).** Los lectores derivaban lo pagado de `pagos.id_comprobante_compra` hasta S2
 > (ver «Lectores» abajo), así que cada escritor que fija ese vínculo escribe además la aplicación, y la anulación y la baja la liberan:
 >
 > - Alta del POS, alta administrativa y pagar compra (origen `pago_de_compra`), y vincular (origen `aplicacion`): el
 >   `importe` es `min(pagos.importe, comprobantes_compra.total - suma de las aplicaciones vivas de la compra)`, leído bajo
 >   el lock `FOR UPDATE` de la compra (antes `FOR SHARE` en el alta y en vincular). Si el tope es 0 no se escribe nada:
->   el vínculo queda como siempre y el excedente del pago queda sin aplicar.
-> - Un pago no elegible para el trigger de la compra (otro proveedor, otra empresa o no `proveedor`) conserva el vínculo
->   heredado sin aplicación; hoy solo ocurre en el alta de un pago de otra empresa ligado a una compra.
+>   el vínculo queda y el excedente del pago queda sin aplicar hasta que la compra libere lugar (ver «Reaplicación»).
+> - Un pago no elegible para el trigger de la compra (otro proveedor o no `proveedor`) conserva el vínculo heredado sin
+>   aplicación. La empresa no es una condición: un vínculo heredado entre empresas se aplica igual (alta nueva entre
+>   empresas: `400 compra_de_otra_empresa`).
 > - Orden de locks de los escritores de pagos: turno → compra `FOR UPDATE` → pago → proveedor → tesorería.
 > - La anulación de la compra da de baja (`deleted_at`) todas sus aplicaciones vivas en la misma transacción, bajo el
->   header exclusivo; la baja del pago hace lo mismo con las suyas, bajo el lock del pago. Soltar no necesita lock de las
->   compras: los triggers solo exigen que lo aplicado no supere al total, y soltar nunca lo sube. El pago y sus
->   movimientos no se tocan: lo liberado queda como crédito.
+>   header exclusivo; la baja del pago hace lo mismo con las suyas, tomando antes la compra del vínculo `FOR UPDATE` y
+>   después el pago. El pago y sus movimientos no se tocan: lo liberado queda como crédito.
+> - **Reaplicación.** Cuando la baja de un pago o su edición a la baja liberan lugar en una compra confirmada, los demás
+>   pagos vivos VINCULADOS a ella (`pagos.id_comprobante_compra`, de categoría `proveedor` y del proveedor de la compra)
+>   con importe sin aplicar se aplican en orden `(pagos.fecha, id_pago)` hasta el lugar liberado, cada uno con tope en su
+>   disponible (importe menos sus aplicaciones a cualquier compra) y en lo que le queda a la compra; si ya tenían
+>   aplicación a la compra la agrandan, si no la crean con origen `pago_de_compra`. Corre bajo el lock de la compra, así
+>   una compra pagada por sus vínculos sigue pagada. La anulación no reaplica: la compra queda anulada.
 > - Editar un pago ligado a una compra confirmada no se restringe: reajusta su aplicación al vínculo a
 >   `min(nuevo importe, comprobantes_compra.total - suma de las aplicaciones vivas de los otros pagos de la compra)`.
 >   Si eso da 0 la aplicación se da de baja; si no había aplicación y ahora hay saldo (y el pago es elegible) se crea, con
@@ -529,8 +546,8 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >
 > Cambios de comportamiento: (1) una compra con pagos sobre-imputados de forma heredada (un pago editado hacia arriba, o
 > dos pagos que superan el total) muestra `pagado` = total y no la suma cruda de los pagos; el saldo pendiente no cambia
-> porque ya se acotaba en 0. (2) El pago cuyo vínculo heredado no tiene aplicación (otra empresa) ya no cuenta en lo
-> pagado de la compra. (3) El detalle de una compra anulada muestra `pagado` 0, porque sus aplicaciones están liberadas.
+> porque ya se acotaba en 0. (2) El detalle de una compra anulada muestra `pagado` 0, porque sus aplicaciones están
+> liberadas. Los vínculos heredados entre empresas siguen contando como pagados (migración `AplicacionesEntreEmpresas`).
 
 ### Órdenes de compra (Etapa 16)
 
