@@ -629,7 +629,7 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
         var ids = new List<long>();
         for (var pagina = 1; pagina <= 10; pagina++)
         {
-            var p = await ConsultarAsync(cliente, $"?{query}&pagina={pagina}&tamanio={tamanio}");
+            var p = await ConsultarAsync(cliente, $"?{(query.Length == 0 ? "" : query + "&")}pagina={pagina}&tamanio={tamanio}");
             ids.AddRange(p.Items.Select(f => f.IdAuditoria));
             if (pagina * tamanio >= p.Total) break;
         }
@@ -694,7 +694,7 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
         var ctx = await PrepararAsync(nameof(SinOrdenSigueLoMasRecientePrimero));
         var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
 
-        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, "tamanio=3");
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, "");
 
         Assert.Equal(Posiciones(ids, "R8,R7,R6,R5,R4,R3,R2,R1"), obtenido);
     }
