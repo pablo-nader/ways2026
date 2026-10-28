@@ -9,6 +9,7 @@
  */
 import { api } from './cliente'
 import { rangoUltimoMes } from './cuentaCorriente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   EtiquetaDeAjuste,
   MovimientoDeCuentaDeProveedor,
@@ -36,6 +37,24 @@ function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
   return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
 }
 
+/** Claves de `orden` que acepta `GET …/cuenta-corriente` de un proveedor: una por cada columna de datos del libro. */
+export const COLUMNAS_ORDENABLES_DE_CUENTA_DE_PROVEEDOR = [
+  'fecha',
+  'tipo',
+  'referencia',
+  'detalle',
+  'importe',
+  'saldoResultante',
+] as const
+
+export type ColumnaOrdenableDeCuentaDeProveedor = (typeof COLUMNAS_ORDENABLES_DE_CUENTA_DE_PROVEEDOR)[number]
+
+export type OrdenDeCuentaDeProveedor = OrdenDeServidor<ColumnaOrdenableDeCuentaDeProveedor>
+
+export function esColumnaOrdenableDeCuentaDeProveedor(columna: string): columna is ColumnaOrdenableDeCuentaDeProveedor {
+  return (COLUMNAS_ORDENABLES_DE_CUENTA_DE_PROVEEDOR as readonly string[]).includes(columna)
+}
+
 export type FiltrosDeEstadoDeCuentaDeProveedor = {
   desde: string
   hasta: string
@@ -55,7 +74,10 @@ export function filtrosDeEstadoDeCuentaDeProveedorVacios(): FiltrosDeEstadoDeCue
 /** Arma el query string de `GET …/cuenta-corriente` — `historico` gana sobre `desde`/`hasta`
  * (mismo criterio que `ObtenerEstadoDeCuentaAsync`); `pagina`/`tamanio` viajan siempre (design
  * decisión 10, la superficie PAGINADA). */
-export function construirQueryEstadoDeCuentaDeProveedor(filtros: FiltrosDeEstadoDeCuentaDeProveedor): string {
+export function construirQueryEstadoDeCuentaDeProveedor(
+  filtros: FiltrosDeEstadoDeCuentaDeProveedor,
+  orden: OrdenDeCuentaDeProveedor = null,
+): string {
   const parametros = new URLSearchParams()
   if (filtros.historico) {
     parametros.set('historico', 'true')
@@ -63,6 +85,7 @@ export function construirQueryEstadoDeCuentaDeProveedor(filtros: FiltrosDeEstado
     if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
     if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   }
+  agregarOrdenAlQuery(parametros, orden)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
@@ -71,9 +94,9 @@ export function construirQueryEstadoDeCuentaDeProveedor(filtros: FiltrosDeEstado
 export const clienteDeCuentaCorrienteDeProveedor = {
   /** `GET /api/proveedores/{id}/cuenta-corriente` — `Politicas.OperacionDePos` (grupo, sin policy
    * apilada): 200 siempre, header + página en un único payload (design decisión 9). */
-  obtenerEstado: (idProveedor: number, filtros: FiltrosDeEstadoDeCuentaDeProveedor) =>
+  obtenerEstado: (idProveedor: number, filtros: FiltrosDeEstadoDeCuentaDeProveedor, orden: OrdenDeCuentaDeProveedor = null) =>
     api.get<PaginaDeEstadoDeCuentaDeProveedor>(
-      `/proveedores/${idProveedor}/cuenta-corriente${construirQueryEstadoDeCuentaDeProveedor(filtros)}`,
+      `/proveedores/${idProveedor}/cuenta-corriente${construirQueryEstadoDeCuentaDeProveedor(filtros, orden)}`,
     ),
   /** `POST /api/proveedores/{id}/cuenta-corriente/ajustes` — TOP-LEVEL, `Politicas.
    * SupervisionDeCuentaDeProveedor` SOLA (design decisión 12): 201 con el movimiento `Ajuste`. Sin

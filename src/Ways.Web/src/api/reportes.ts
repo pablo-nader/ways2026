@@ -142,8 +142,8 @@ export const clienteDeReportes = {
   },
   comisiones: (filtros: FiltrosDeBreakdownConPv) =>
     api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
-  historicoDeCajas: (filtros: FiltrosDeHistoricoDeCajas) =>
-    api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros)}`),
+  historicoDeCajas: (filtros: FiltrosDeHistoricoDeCajas, orden: OrdenDeHistoricoDeCajas = null) =>
+    api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros, orden)}`),
   tesoreria: (filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null) =>
     api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros, orden)}`),
   cuentasDeTesoreria: (idEmpresa: number) =>
@@ -232,8 +232,32 @@ function construirQueryDeAlcanceDeCajas(filtros: { idPuntoVenta: number | null; 
   return `?${parametros.toString()}`
 }
 
-export function construirQueryDeHistoricoDeCajas(filtros: FiltrosDeHistoricoDeCajas): string {
+/** Claves de `orden` que acepta `GET /api/reportes/cajas`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_HISTORICO_DE_CAJAS = [
+  'turno',
+  'puntoVenta',
+  'apertura',
+  'cierre',
+  'esperado',
+  'declarado',
+  'diferencia',
+] as const
+
+export type ColumnaOrdenableDeHistoricoDeCajas = (typeof COLUMNAS_ORDENABLES_DE_HISTORICO_DE_CAJAS)[number]
+
+export type OrdenDeHistoricoDeCajas = OrdenDeServidor<ColumnaOrdenableDeHistoricoDeCajas>
+
+export function esColumnaOrdenableDeHistoricoDeCajas(columna: string): columna is ColumnaOrdenableDeHistoricoDeCajas {
+  return (COLUMNAS_ORDENABLES_DE_HISTORICO_DE_CAJAS as readonly string[]).includes(columna)
+}
+
+/** El orden solo viaja al listado: la exportación (`rutasDeExportacion.historicoDeCajas`) conserva el suyo. */
+export function construirQueryDeHistoricoDeCajas(
+  filtros: FiltrosDeHistoricoDeCajas,
+  orden: OrdenDeHistoricoDeCajas = null,
+): string {
   const parametros = new URLSearchParams(construirQueryDeAlcanceDeCajas(filtros).slice(1))
+  agregarOrdenAlQuery(parametros, orden)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`

@@ -5,6 +5,7 @@
  */
 import { api } from './cliente'
 import { rangoUltimoMes } from './cuentaCorriente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   MovimientoDePersonal,
   PaginaDeCuentaDePersonal,
@@ -13,6 +14,25 @@ import type {
   SolicitudDeCargaDeHoras,
   SolicitudDePagoDePersonal,
 } from './tipos'
+
+/** Claves de `orden` que acepta `GET /api/personal/{id}/cuenta`: una por cada columna de datos del libro. */
+export const COLUMNAS_ORDENABLES_DE_CUENTA_DE_PERSONAL = [
+  'fecha',
+  'tipo',
+  'horas',
+  'valorHora',
+  'importe',
+  'saldoResultante',
+  'detalle',
+] as const
+
+export type ColumnaOrdenableDeCuentaDePersonal = (typeof COLUMNAS_ORDENABLES_DE_CUENTA_DE_PERSONAL)[number]
+
+export type OrdenDeCuentaDePersonal = OrdenDeServidor<ColumnaOrdenableDeCuentaDePersonal>
+
+export function esColumnaOrdenableDeCuentaDePersonal(columna: string): columna is ColumnaOrdenableDeCuentaDePersonal {
+  return (COLUMNAS_ORDENABLES_DE_CUENTA_DE_PERSONAL as readonly string[]).includes(columna)
+}
 
 export type FiltrosDeCuentaDePersonal = {
   /** `YYYY-MM-DD`. Vacío no pide "sin límite": el servidor aplica su default de un mes atrás, y la única
@@ -23,6 +43,8 @@ export type FiltrosDeCuentaDePersonal = {
   historico: boolean
   pagina: number
   tamanio: number
+  /** Opt-in: ausente o `null` = el orden del libro (fecha descendente). Ordenar nunca recalcula saldos. */
+  orden?: OrdenDeCuentaDePersonal
 }
 
 /** Mismo default que el servidor: desde un mes atrás y sin tope superior, así un movimiento con fecha
@@ -74,6 +96,7 @@ export function construirQueryDeCuentaDePersonal(filtros: FiltrosDeCuentaDePerso
     if (filtros.hasta) parametros.set('hasta', filtros.hasta)
   }
 
+  agregarOrdenAlQuery(parametros, filtros.orden ?? null)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
 

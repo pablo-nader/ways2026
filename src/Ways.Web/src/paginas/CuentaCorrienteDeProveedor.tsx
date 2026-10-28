@@ -6,11 +6,13 @@ import {
   aSolicitudDeAjusteDeProveedor,
   clienteDeCuentaCorrienteDeProveedor,
   compraPagableDelMovimiento,
+  esColumnaOrdenableDeCuentaDeProveedor,
   esSaldoAFavor,
   etiquetaDeTipoDeMovimiento,
   filtrosDeEstadoDeCuentaDeProveedorVacios,
   referenciaDeMovimiento,
   type FiltrosDeEstadoDeCuentaDeProveedor,
+  type OrdenDeCuentaDeProveedor,
 } from '../api/cuentaCorrienteDeProveedor'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
@@ -25,6 +27,8 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { ModalDePagoDeCompra } from '../componentes/ModalDePagoDeCompra'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -215,6 +219,9 @@ function PantallaCuentaCorrienteDeProveedor({
 }: PropsPantalla) {
   const [filtros, setFiltros] = useState<FiltrosDeEstadoDeCuentaDeProveedor>(filtrosDeEstadoDeCuentaDeProveedorVacios())
 
+  // El orden es opt-in: null = el del libro (fecha descendente). Ordenar nunca recalcula nada, cada fila conserva su saldo
+  // resultante guardado. Si una consulta falla, la tabla desaparece junto con su encabezado.
+  const [orden, setOrden] = useState<OrdenDeCuentaDeProveedor>(null)
   const [pagina, setPagina] = useState<PaginaDeEstadoDeCuentaDeProveedor | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -237,7 +244,7 @@ function PantallaCuentaCorrienteDeProveedor({
     setError('')
 
     clienteDeCuentaCorrienteDeProveedor
-      .obtenerEstado(idProveedor, filtros)
+      .obtenerEstado(idProveedor, filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -251,11 +258,22 @@ function PantallaCuentaCorrienteDeProveedor({
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [idProveedor, filtros])
+  }, [idProveedor, filtros, orden])
 
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  // Ascendente → descendente → orden del libro. Cambiar el orden vuelve a la página 1 y conserva el rango; los dos
+  // setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeCuentaDeProveedor(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
+  }
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDeEstadoDeCuentaDeProveedor, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
@@ -391,12 +409,24 @@ function PantallaCuentaCorrienteDeProveedor({
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Fecha</th>
-                    <th>Tipo</th>
-                    <th>Comprobante/Gasto</th>
-                    <th>Detalle</th>
-                    <th className="text-end">Importe</th>
-                    <th className="text-end">Saldo resultante</th>
+                    <EncabezadoOrdenable columna="fecha" orden={orden} onAlternar={alternarOrden}>
+                      Fecha
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="tipo" orden={orden} onAlternar={alternarOrden}>
+                      Tipo
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="referencia" orden={orden} onAlternar={alternarOrden}>
+                      Comprobante/Gasto
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="detalle" orden={orden} onAlternar={alternarOrden}>
+                      Detalle
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternarOrden} className="text-end">
+                      Importe
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="saldoResultante" orden={orden} onAlternar={alternarOrden} className="text-end">
+                      Saldo resultante
+                    </EncabezadoOrdenable>
                     {puedePagar && <th />}
                   </tr>
                 </thead>

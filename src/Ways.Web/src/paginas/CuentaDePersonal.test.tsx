@@ -1909,3 +1909,158 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
     })
   })
 })
+
+describe('CuentaDePersonal — orden en el servidor', () => {
+  it('sin clic el pedido no lleva orden y el clic en un encabezado recorre ascendente, descendente y el orden del libro', async () => {
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    expect(lecturasDeCuenta().every((c) => !(c[0] as string).includes('orden='))).toBe(true)
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toContain('orden=importe&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Importe/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toContain('orden=importe&direccion=descendente'))
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).not.toContain('orden='))
+    expect(screen.getByRole('columnheader', { name: /Importe/ })).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it.each([
+    ['Fecha', 'fecha'],
+    ['Tipo', 'tipo'],
+    ['Horas', 'horas'],
+    ['Valor hora', 'valorHora'],
+    ['Importe', 'importe'],
+    ['Saldo resultante', 'saldoResultante'],
+    ['Detalle', 'detalle'],
+  ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+
+    await evento.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toContain(`orden=${clave}&direccion=ascendente`))
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva el rango', async () => {
+    mockearRutas({ cuenta: (ruta) => Promise.resolve(paginaSegunLaRuta(ruta, { total: 60 })) })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    await evento.click(screen.getByLabelText('Ver histórico completo'))
+    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
+    await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+
+    await evento.click(screen.getByRole('button', { name: /^Saldo resultante/ }))
+
+    await waitFor(() => {
+      const ultima = lecturasDeCuenta().at(-1)?.[0] as string
+      expect(ultima).toContain('orden=saldoResultante&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+      expect(ultima).toContain('historico=true')
+    })
+    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
+  })
+
+  it('el orden sobrevive a un cambio de página', async () => {
+    mockearRutas({ cuenta: (ruta) => Promise.resolve(paginaSegunLaRuta(ruta, { total: 60 })) })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toContain('orden=importe'))
+
+    await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
+
+    await waitFor(() => {
+      const ultima = lecturasDeCuenta().at(-1)?.[0] as string
+      expect(ultima).toContain('orden=importe&direccion=ascendente')
+      expect(ultima).toContain('pagina=2')
+    })
+  })
+
+  it('si la consulta con orden falla, el encabezado conserva el orden que las filas tienen y el siguiente clic vuelve a pedir el mismo', async () => {
+    let pedidasPorImporte = 0
+    mockearRutas({
+      cuenta: (ruta) =>
+        ruta.includes('orden=importe') && ++pedidasPorImporte === 1
+          ? Promise.reject(new ErrorApi(500, 'error', 'Se cayó el orden.'))
+          : Promise.resolve(paginaSegunLaRuta(ruta)),
+    })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+
+    await screen.findByText('Se cayó el orden.')
+    expect(screen.getByText('Turno mañana')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Importe/ })).toHaveAttribute('aria-sort', 'none')
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toContain('orden=importe&direccion=ascendente'))
+    await waitFor(() => expect(screen.getByRole('columnheader', { name: /Importe/ })).toHaveAttribute('aria-sort', 'ascending'))
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo ni su encabezado', async () => {
+    const vieja = diferido<PaginaDeCuentaDePersonal>()
+    mockearRutas({
+      cuenta: (ruta) => {
+        if (ruta.includes('orden=importe')) return vieja.promesa
+        if (ruta.includes('orden=fecha')) {
+          return Promise.resolve(paginaSegunLaRuta(ruta, { items: [movimiento({ idMovimiento: 9, detalle: 'La nueva' })], total: 1 }))
+        }
+        return Promise.resolve(paginaSegunLaRuta(ruta))
+      },
+    })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+    await evento.click(screen.getByRole('button', { name: /^Fecha/ }))
+    await screen.findByText('La nueva')
+
+    await act(async () => {
+      vieja.resolver(paginaDeCuenta({ items: [movimiento({ idMovimiento: 8, detalle: 'La vieja' })], total: 1 }))
+      await vieja.promesa
+    })
+
+    expect(screen.getByText('La nueva')).toBeInTheDocument()
+    expect(screen.queryByText('La vieja')).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Fecha/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(screen.getByRole('columnheader', { name: /Importe/ })).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('cada fila conserva el saldo resultante que manda el servidor: ordenar nunca lo recalcula', async () => {
+    mockearRutas({
+      cuenta: (ruta) =>
+        Promise.resolve(
+          ruta.includes('orden=importe')
+            ? paginaSegunLaRuta(ruta, {
+                items: [
+                  movimiento({ idMovimiento: 5, importe: 100, saldoResultante: 987654, detalle: 'Primero por importe' }),
+                  MOV_HORAS,
+                ],
+                total: 2,
+              })
+            : paginaSegunLaRuta(ruta),
+        ),
+    })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+
+    await evento.click(screen.getByRole('button', { name: /^Importe/ }))
+
+    const fila = (await screen.findByText('Primero por importe')).closest('tr')!
+    expect(within(fila).getByText('$ 987.654,00')).toBeInTheDocument()
+  })
+})

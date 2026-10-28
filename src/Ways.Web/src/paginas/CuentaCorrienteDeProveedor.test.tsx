@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -549,5 +549,142 @@ describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => 
     expect(apiPostMock).toHaveBeenCalledWith('/compras/10/pagos', expect.objectContaining({ importe: 120, idMedioPago: 1 }))
     const lecturasDelEstado = apiGetMock.mock.calls.filter((call: unknown[]) => String(call[0]).includes('/cuenta-corriente'))
     expect(lecturasDelEstado).toHaveLength(2)
+  })
+})
+
+describe('CuentaCorrienteDeProveedor — orden en el servidor', () => {
+  const llamadasAlLibro = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((ruta) => ruta.includes('/cuenta-corriente'))
+
+  it('sin clic el pedido no lleva orden y el clic en un encabezado recorre ascendente, descendente y el orden del libro', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await screen.findByText('Compra #10')
+    expect(llamadasAlLibro().every((ruta) => !ruta.includes('orden='))).toBe(true)
+
+    await usuario.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(llamadasAlLibro().at(-1)).toContain('orden=importe&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Importe/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(llamadasAlLibro().at(-1)).toContain('orden=importe&direccion=descendente'))
+
+    await usuario.click(screen.getByRole('button', { name: /^Importe/ }))
+    await waitFor(() => expect(llamadasAlLibro().at(-1)).not.toContain('orden='))
+  })
+
+  it.each([
+    ['Fecha', 'fecha'],
+    ['Tipo', 'tipo'],
+    ['Comprobante/Gasto', 'referencia'],
+    ['Detalle', 'detalle'],
+    ['Importe', 'importe'],
+    ['Saldo resultante', 'saldoResultante'],
+  ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await screen.findByText('Compra #10')
+
+    await usuario.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(llamadasAlLibro().at(-1)).toContain(`orden=${clave}&direccion=ascendente`))
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva el rango', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.includes('/cuenta-corriente')
+        ? Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(paginaFixture({ total: 50, pagina: ruta.includes('pagina=2') ? 2 : 1 }))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await screen.findByText(/Página 1 de 2/)
+    await usuario.click(screen.getByLabelText('Ver histórico completo'))
+    await screen.findByText(/Página 1 de 2/)
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 2/)
+
+    await usuario.click(screen.getByRole('button', { name: /^Saldo resultante/ }))
+
+    await waitFor(() => {
+      const ultima = llamadasAlLibro().at(-1)!
+      expect(ultima).toContain('orden=saldoResultante&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+      expect(ultima).toContain('historico=true')
+    })
+    await screen.findByText(/Página 1 de 2/)
+  })
+
+  it('las filas conservan el saldo resultante que manda el servidor: ordenar nunca lo recalcula', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.includes('orden=importe')
+        ? Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(
+            paginaFixture({
+              items: [
+                movimientoFixture({ idMovimiento: 2, importe: 10, saldoResultante: 777, idComprobanteCompra: 11 }),
+                movimientoFixture({ idMovimiento: 1, importe: 300, saldoResultante: 200, idComprobanteCompra: 10 }),
+              ],
+              total: 2,
+            }),
+          )
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await screen.findByText('Compra #10')
+
+    await usuario.click(screen.getByRole('button', { name: /^Importe/ }))
+
+    const fila = (await screen.findByText('Compra #11')).closest('tr')!
+    expect(within(fila).getByText('$ 777,00')).toBeInTheDocument()
+    expect(within(screen.getByText('Compra #10').closest('tr')!).getByText('$ 200,00')).toBeInTheDocument()
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
+    let resolverPorImporte: (v: PaginaDeEstadoDeCuentaDeProveedor) => void = () => {}
+    let promesaPorImporte: Promise<PaginaDeEstadoDeCuentaDeProveedor> = Promise.resolve(paginaFixture())
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('orden=importe')) {
+        promesaPorImporte = new Promise((resolve) => (resolverPorImporte = resolve))
+        return promesaPorImporte
+      }
+      if (ruta.includes('orden=fecha')) {
+        return Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(
+          paginaFixture({ items: [movimientoFixture({ idMovimiento: 2, idComprobanteCompra: 20 })] }),
+        )
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await screen.findByText('Compra #10')
+
+    await usuario.click(screen.getByRole('button', { name: /^Importe/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Fecha/ }))
+    await screen.findByText('Compra #20')
+
+    await act(async () => {
+      resolverPorImporte(paginaFixture({ items: [movimientoFixture({ idMovimiento: 3, idComprobanteCompra: 30 })] }))
+      await promesaPorImporte
+    })
+
+    expect(screen.getByText('Compra #20')).toBeInTheDocument()
+    expect(screen.queryByText('Compra #30')).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Fecha/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
+    mockearRutasBase((ruta) => (ruta.includes('orden=importe') ? Promise.reject(new Error('caída')) : undefined))
+    const usuario = userEvent.setup()
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await screen.findByText('Compra #10')
+
+    await usuario.click(screen.getByRole('button', { name: /^Importe/ }))
+
+    await screen.findByText('No se pudo cargar el estado de cuenta.')
+    expect(screen.queryByRole('columnheader', { name: /Importe/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('Compra #10')).not.toBeInTheDocument()
   })
 })

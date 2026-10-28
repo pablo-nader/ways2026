@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Listados;
 using Ways.Domain.Common;
 using Ways.Domain.Plantel;
 
@@ -55,8 +56,10 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
 
     public async Task<PaginaDeCuentaDePersonal> ObtenerCuentaAsync(
         int idPersonal, DateOnly? desde, DateOnly? hasta, bool historico, int pagina, int tamanio,
-        CancellationToken ct = default)
+        string? orden = null, string? direccion = null, CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         var personal = await db.Personal
             .Where(p => p.Id == idPersonal)
             .Select(p => new { p.Nombre, p.Saldo })
@@ -98,10 +101,7 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
 
         var total = await consulta.CountAsync(ct);
 
-        // El desempate por id mantiene estable la paginación cuando varias cargas comparten el día.
-        var items = await consulta
-            .OrderByDescending(m => m.Fecha)
-            .ThenByDescending(m => m.Id)
+        var items = await Ordenar(consulta, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(m => new MovimientoDePersonal(
@@ -121,6 +121,49 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
             new EncabezadoDeCuentaDePersonal(idPersonal, personal.Nombre, personal.Saldo),
             items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);
     }
+
+    /// <summary>Sin orden pedido: fecha e <c>Id</c> descendentes (el orden de siempre del libro; el desempate por id
+    /// mantiene estable la paginación cuando varias cargas comparten el día). Con orden: la columna pedida y SIEMPRE
+    /// <c>Id</c> ascendente como desempate; ordenar nunca recalcula nada, cada fila conserva el saldo resultante
+    /// guardado. Horas y valor hora solo existen en una carga de horas y un detalle puede faltar: los vacíos van al
+    /// final en las dos direcciones. "Detalle" ordena por el texto del detalle; el desglose de un pago que la celda
+    /// muestra debajo no entra en la clave.</summary>
+    private static IOrderedQueryable<MovimientoPersonal> Ordenar(
+        IQueryable<MovimientoPersonal> query, OrdenDeListado<ColumnaDeOrdenDeCuentaDePersonal>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeCuentaDePersonal.Fecha => OrdenarPor.Clave(query, m => m.Fecha, desc),
+            ColumnaDeOrdenDeCuentaDePersonal.Tipo => OrdenarPor.Clave(
+                query, EtiquetaPorCaso.Selector((MovimientoPersonal m) => m.Tipo, EtiquetasDeMovimientoDeCuenta.Personal), desc),
+            ColumnaDeOrdenDeCuentaDePersonal.Horas => OrdenarPor.ClaveConVacios(query, m => m.Horas, desc),
+            ColumnaDeOrdenDeCuentaDePersonal.ValorHora => OrdenarPor.ClaveConVacios(query, m => m.ValorHora, desc),
+            ColumnaDeOrdenDeCuentaDePersonal.Importe => OrdenarPor.Clave(query, m => m.Importe, desc),
+            ColumnaDeOrdenDeCuentaDePersonal.SaldoResultante => OrdenarPor.Clave(query, m => m.SaldoResultante, desc),
+            ColumnaDeOrdenDeCuentaDePersonal.Detalle => OrdenarPor.ClaveConVacios(query, m => m.Detalle, desc),
+            _ => query.OrderByDescending(m => m.Fecha),
+        };
+
+        return ordenado.ThenBy(m => m.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeCuentaDePersonal> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeCuentaDePersonal>(StringComparer.Ordinal)
+        {
+            ["fecha"] = ColumnaDeOrdenDeCuentaDePersonal.Fecha,
+            ["tipo"] = ColumnaDeOrdenDeCuentaDePersonal.Tipo,
+            ["horas"] = ColumnaDeOrdenDeCuentaDePersonal.Horas,
+            ["valorHora"] = ColumnaDeOrdenDeCuentaDePersonal.ValorHora,
+            ["importe"] = ColumnaDeOrdenDeCuentaDePersonal.Importe,
+            ["saldoResultante"] = ColumnaDeOrdenDeCuentaDePersonal.SaldoResultante,
+            ["detalle"] = ColumnaDeOrdenDeCuentaDePersonal.Detalle,
+        };
 
     /// <summary>Existencia del personal vivo del tenant, primera sentencia de las escrituras. Devuelve su
     /// valor hora vigente.</summary>

@@ -59,12 +59,17 @@ public static class CajaEndpoints
             int? pagina,
             int? tamanio,
             EstadoTurno? estado,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
         {
             var visibles = await visibilidad.ResolverPredicadoAsync(ct);
-            return await servicio.ListarAsync(visibles, idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, estado, ct);
+            return await servicio.ListarAsync(
+                visibles, idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, estado, orden, direccion, ct);
         })
-        .WithSummary("Historial de turnos, paginado.");
+        .WithSummary(
+            "Historial de turnos, paginado. orden (turno, apertura, cierre) y direccion (ascendente, descendente) " +
+            "ordenan todo el conjunto filtrado antes de paginar; sin ellos, apertura descendente; 400 si no son válidos.");
 
         // task 2.6, design: API Surface — retiro / refuerzo / apertura de cajón contra el turno
         // que identifica la ruta (nunca contra un idTurnoCaja del cuerpo).
