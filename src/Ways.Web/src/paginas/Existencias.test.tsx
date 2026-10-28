@@ -284,6 +284,47 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
   })
 })
 
+describe('Existencias — orden por columna', () => {
+  it('ordena por cantidad como número (900 antes que 1.500) y por Sugerido con el mapa de rotación', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/existencias?')) {
+        return Promise.resolve(
+          existenciasFixture([
+            filaFixture({ idArticulo: 1, nombre: 'Arroz', cantidad: 1500 }),
+            filaFixture({ idArticulo: 2, nombre: 'Fideos', cantidad: 900 }),
+          ]),
+        )
+      }
+      if (ruta.startsWith('/reportes/stock/rotacion?')) {
+        return Promise.resolve(
+          rotacionFixture([
+            { idArticulo: 1, articulo: 'Arroz', consumoEnVentana: 1, consumoDiarioPromedio: 1, minimoSugerido: 20 },
+            { idArticulo: 2, articulo: 'Fideos', consumoEnVentana: 1, consumoDiarioPromedio: 1, minimoSugerido: 5 },
+          ]),
+        )
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Arroz')
+    await waitFor(() => expect(screen.getAllByRole('row')[1]).toHaveTextContent('20'))
+    const nombres = () => screen.getAllByRole('row').slice(1).map((f) => within(f).getAllByRole('cell')[1].textContent)
+    expect(nombres()).toEqual(['Arroz', 'Fideos'])
+
+    await usuario.click(screen.getByRole('button', { name: /Cantidad/ }))
+    expect(nombres()).toEqual(['Fideos', 'Arroz'])
+    expect(screen.getByRole('columnheader', { name: /Cantidad/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /Sugerido/ }))
+    expect(nombres()).toEqual(['Fideos', 'Arroz'])
+    await usuario.click(screen.getByRole('button', { name: /Sugerido/ }))
+    expect(nombres()).toEqual(['Arroz', 'Fideos'])
+    expect(screen.getByRole('columnheader', { name: /Sugerido/ })).toHaveAttribute('aria-sort', 'descending')
+  })
+})
+
 describe('Existencias — columna Sugerido (stage-13-stock-inteligente, Slice 7)', () => {
   it('un artículo presente en /rotacion muestra su minimoSugerido; uno ausente muestra "—", nunca "0"', async () => {
     const filaConRotacion = filaFixture({ idArticulo: 1, nombre: 'Aceite de girasol 900ml', cantidad: 12 })
@@ -640,6 +681,29 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
+  })
+
+  it('con un orden activo, la fila agregada sin guardar queda al final y no salta a su posición ordenada', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/reportes/stock/existencias?')) {
+        return Promise.resolve(
+          existenciasFixture([filaFixture({ idArticulo: 1, nombre: 'Yerba mate 1kg' }), filaFixture({ idArticulo: 2, nombre: 'Zeta' })]),
+        )
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    await usuario.click(screen.getByRole('button', { name: /Nombre/ }))
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+
+    await screen.findByLabelText('Mínimo de Arroz largo fino 1kg')
+    const nombres = screen.getAllByRole('row').slice(1).map((f) => within(f).getAllByRole('cell')[1].textContent)
+    expect(nombres).toEqual(['Yerba mate 1kg', 'Zeta', 'Arroz largo fino 1kg'])
   })
 
   it('agregar X por el picker sin guardar ni cancelar esconde el picker — no hay forma de agregar Z hasta cerrar la edición (judgment-day ronda final A, residual FINDING 1 CRITICAL)', async () => {

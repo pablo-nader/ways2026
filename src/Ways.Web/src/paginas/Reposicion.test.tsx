@@ -213,6 +213,35 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     expect(screen.getByText('Sin proveedor (1)')).toBeInTheDocument()
   })
 
+  it('ordena dentro de cada grupo por una columna numérica y los grupos conservan su posición', async () => {
+    const filas = [
+      filaFixture({ idArticulo: 1, articulo: 'Alfa', cantidad: 1500, idProveedor: 1, proveedor: 'Proveedor Uno' }),
+      filaFixture({ idArticulo: 2, articulo: 'Zeta', cantidad: 900, idProveedor: 1, proveedor: 'Proveedor Uno' }),
+      filaFixture({ idArticulo: 3, articulo: 'Beta', cantidad: 1500, idProveedor: 2, proveedor: 'Proveedor Dos' }),
+      filaFixture({ idArticulo: 4, articulo: 'Gama', cantidad: 900, idProveedor: 2, proveedor: 'Proveedor Dos' }),
+    ]
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture(filas))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReposicion()
+
+    await screen.findByText('Proveedor Uno (2)')
+    const orden = () => screen.getAllByRole('row').slice(1).map((f) => f.textContent?.replace(/Generar OC/, '').replace(/[\d.,]+$/, '').trim())
+    expect(orden()).toEqual(['Proveedor Uno (2)', 'Alfa', 'Zeta', 'Proveedor Dos (2)', 'Beta', 'Gama'])
+
+    await usuario.click(screen.getByRole('button', { name: /Cantidad/ }))
+    expect(screen.getByRole('columnheader', { name: /Cantidad/ })).toHaveAttribute('aria-sort', 'ascending')
+    const ascendente = screen.getAllByRole('row').slice(1).map((f) => f.textContent ?? '')
+    expect(ascendente[0]).toContain('Proveedor Uno')
+    expect(ascendente[1]).toContain('Zeta')
+    expect(ascendente[2]).toContain('Alfa')
+    expect(ascendente[3]).toContain('Proveedor Dos')
+    expect(ascendente[4]).toContain('Gama')
+    expect(ascendente[5]).toContain('Beta')
+  })
+
   it('el botón de descarga apunta a /reportes/stock/reposicion/export con el idPuntoVenta elegido', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
@@ -377,5 +406,28 @@ describe('Reposicion — "Generar OC" (stage-16-ordenes-de-compra, Slice 6)', ()
     const items = JSON.parse(screen.getByText(/^items=/).textContent!.replace('items=', ''))
     expect(items).toHaveLength(1)
     expect(items[0].idArticulo).toBe(1)
+  })
+
+  it('con un orden activo en el grupo, "Generar OC" manda los items en el orden original del grupo', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    const primera = filaFixture({ idArticulo: 1, articulo: 'Alfa', cantidad: 1500, idProveedor: 5, proveedor: 'Proveedor Cinco', sugerido: 10 })
+    const segunda = filaFixture({ idArticulo: 2, articulo: 'Zeta', cantidad: 900, idProveedor: 5, proveedor: 'Proveedor Cinco', sugerido: 20 })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([primera, segunda]))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReposicionConDestino()
+
+    await screen.findByText('Alfa')
+    await usuario.click(screen.getByRole('button', { name: /Cantidad/ }))
+    const articulos = screen.getAllByRole('row').slice(2).map((f) => within(f).getAllByRole('cell')[0].textContent)
+    expect(articulos).toEqual(['Zeta', 'Alfa'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Generar OC' }))
+
+    await screen.findByText('idProveedor=5')
+    const items = JSON.parse(screen.getByText(/^items=/).textContent!.replace('items=', ''))
+    expect(items.map((i: { idArticulo: number }) => i.idArticulo)).toEqual([1, 2])
   })
 })
