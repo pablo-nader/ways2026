@@ -12,8 +12,7 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
-import type { EmpresaListado, ModoPuntoVenta, PuntoVentaListado } from '../api/tipos'
-import { MODOS_PUNTO_VENTA } from '../api/tipos'
+import type { EmpresaListado, PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
@@ -21,53 +20,16 @@ import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { ROL } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
-
-type Formulario = {
-  id: number
-  nombre: string
-  domicilio: string
-  horario: string
-  whatsapp: string
-  instagram: string
-  facebook: string
-  web: string
-  envioPorDefecto: boolean
-}
-
-/** Alta de un punto de venta. `idEmpresa` y `modo` arrancan en '' (sin elegir) a propósito: el
- * modo nunca se infiere (docs/10 §9.1) y la empresa no tiene un valor razonable por defecto. */
-type FormularioAlta = {
-  idEmpresa: string
-  nombre: string
-  modo: ModoPuntoVenta | ''
-  domicilio: string
-  horario: string
-  whatsapp: string
-  instagram: string
-  facebook: string
-  web: string
-}
-
-const ALTA_VACIA: FormularioAlta = {
-  idEmpresa: '',
-  nombre: '',
-  modo: '',
-  domicilio: '',
-  horario: '',
-  whatsapp: '',
-  instagram: '',
-  facebook: '',
-  web: '',
-}
-
-const CAMPOS_DESCRIPTIVOS_DE_ALTA = [
-  { clave: 'domicilio', etiqueta: 'Domicilio', max: 255, columnas: 'col-md-4' },
-  { clave: 'horario', etiqueta: 'Horario', max: 255, columnas: 'col-md-3' },
-  { clave: 'whatsapp', etiqueta: 'WhatsApp', max: 30, columnas: 'col-md-2' },
-  { clave: 'instagram', etiqueta: 'Instagram', max: 150, columnas: 'col-md-3' },
-  { clave: 'facebook', etiqueta: 'Facebook', max: 150, columnas: 'col-md-3' },
-  { clave: 'web', etiqueta: 'Sitio web', max: 255, columnas: 'col-md-3' },
-] as const
+import { ModalDeAltaDePuntoVenta } from './organizacion/ModalDeAltaDePuntoVenta'
+import { ModalDeModoDePuntoVenta } from './organizacion/ModalDeModoDePuntoVenta'
+import { ModalDePuntoVenta } from './organizacion/ModalDePuntoVenta'
+import {
+  ALTA_VACIA,
+  aFormularioDePuntoVenta,
+  type FormularioDeAltaDePuntoVenta,
+  type FormularioDeModoDePuntoVenta,
+  type FormularioDePuntoVenta,
+} from './organizacion/puntoVentaFormulario'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -95,15 +57,17 @@ export function PuntosVenta() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
-  const [formulario, setFormulario] = useState<Formulario | null>(null)
+  const [formulario, setFormulario] = useState<FormularioDePuntoVenta | null>(null)
   /** Formulario del flip de modo — separado del de edición descriptiva: precondición y rastro de
    * auditoría propios (ver `organizacion.ts`, `actualizarModoPuntoVenta`). */
-  const [formularioModo, setFormularioModo] = useState<{ id: number; nombre: string; modo: ModoPuntoVenta } | null>(
-    null,
-  )
+  const [formularioModo, setFormularioModo] = useState<FormularioDeModoDePuntoVenta | null>(null)
+  /** Rechazo del guardado de cualquiera de los tres modales. Solo hay uno abierto a la vez, así que
+   * comparten el espacio; cada apertura lo vacía. Va aparte del `error` de la pantalla (carga y baja). */
+  const [errorFormulario, setErrorFormulario] = useState('')
+  const [disparoDeError, setDisparoDeError] = useState(0)
   /** Formulario de alta y las empresas que ofrece. Las empresas se piden al abrirlo (no al montar):
    * cambian desde otra pantalla y un listado viejo ofrecería una empresa dada de baja. */
-  const [alta, setAlta] = useState<FormularioAlta | null>(null)
+  const [alta, setAlta] = useState<FormularioDeAltaDePuntoVenta | null>(null)
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [errorEmpresas, setErrorEmpresas] = useState('')
   /** `ocupado` es el id de la fila en escritura; el alta no tiene fila todavía y usa 0. */
@@ -135,8 +99,11 @@ export function PuntosVenta() {
    * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
   const filtroTenantVigente = useRef(SIN_FILTRO)
+  /** Destino de foco al cerrar un modal de edición cuando su "Editar" o "Modo" ya no existe (la tabla se
+   * reemplaza por "Cargando…" durante el refresco): el botón de alta, que es estable. */
+  const nuevoRef = useRef<HTMLButtonElement>(null)
 
-  const cargar = useCallback(async (token: number, propagar = false, conservarError = false) => {
+  const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
     try {
       const filas = await clienteDeOrganizacion.listarPuntosVenta()
@@ -151,7 +118,7 @@ export function PuntosVenta() {
       filtroTenantVigente.current = tenantReconciliado
       setFiltroTenant(tenantReconciliado)
       setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenantReconciliado), prev))
-      if (!conservarError) setError('')
+      setError('')
     } catch (e) {
       if (generacion.current !== token) return
       if (propagar) throw e
@@ -194,8 +161,11 @@ export function PuntosVenta() {
     ocupadoRef.current = true
     setOcupado(datos.id)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
+      // La respuesta de la escritura no se compara con la generación: el modal queda inerte hasta
+      // que el refresco aterriza y nada puede acuñar otro token ni reabrir el formulario mientras tanto.
       try {
         await clienteDeOrganizacion.editarPuntoVenta(datos.id, {
           nombre: datos.nombre,
@@ -208,15 +178,15 @@ export function PuntosVenta() {
           envioPorDefecto: datos.envioPorDefecto,
         })
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
 
-      if (generacion.current !== token) return
-
-      setFormulario(null)
       await refrescarTrasEscribir(token, `Se actualizó "${datos.nombre}".`, AVISO_REFRESCO_FALLIDO)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`
+      // (el `finally` corre en el mismo tick): así los controles ya están habilitados al devolver el foco.
+      setFormulario(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
@@ -230,6 +200,7 @@ export function PuntosVenta() {
     setAlta(ALTA_VACIA)
     setEmpresas(null)
     setErrorEmpresas('')
+    setErrorFormulario('')
     setError('')
     setAviso('')
     try {
@@ -253,7 +224,8 @@ export function PuntosVenta() {
     const datos = alta
     const nombre = datos.nombre.trim()
     if (datos.idEmpresa === '' || datos.modo === '' || nombre === '') {
-      setError('Elegí la empresa y el modo, y completá el nombre.')
+      setErrorFormulario('Elegí la empresa y el modo, y completá el nombre.')
+      setDisparoDeError((n) => n + 1)
 
       return
     }
@@ -265,8 +237,10 @@ export function PuntosVenta() {
     ocupadoRef.current = true
     setOcupado(0)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
+      // Sin comparar con la generación (ver `guardar`): el modal está inerte durante toda la escritura.
       try {
         await clienteDeOrganizacion.crearPuntoVenta({
           idEmpresa: Number(datos.idEmpresa),
@@ -280,25 +254,19 @@ export function PuntosVenta() {
           web: datos.web || null,
         })
       } catch (e) {
-        if (generacion.current === token) {
-          const mensaje = e instanceof ErrorApi ? e.message : 'No se pudo crear el punto de venta.'
-          setError(mensaje)
-          // Esta relectura no limpia el error al aterrizar: lo que está en pantalla es el motivo del rechazo.
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, false, true)
-        }
+        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo crear el punto de venta.')
+        if (habiaLecturaEnVuelo) void cargar(++generacion.current)
 
         return
       }
 
-      if (generacion.current !== token) return
-
-      cerrarAlta()
       // El punto de venta nuevo puede caer fuera de los filtros vigentes: se limpian para que la
       // fila creada se vea en el listado que se refresca a continuación.
       filtroTenantVigente.current = SIN_FILTRO
       setFiltroTenant(SIN_FILTRO)
       setFiltroEmpresa(SIN_FILTRO)
       await refrescarTrasEscribir(token, `Se creó el punto de venta "${nombre}".`, AVISO_REFRESCO_FALLIDO)
+      cerrarAlta()
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
@@ -313,24 +281,34 @@ export function PuntosVenta() {
     ocupadoRef.current = true
     setOcupado(datos.id)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
+      // Sin comparar con la generación (ver `guardar`): el modal está inerte durante toda la escritura.
       try {
         await clienteDeOrganizacion.actualizarModoPuntoVenta(datos.id, { modo: datos.modo })
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo cambiar el modo.')
+        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo cambiar el modo.')
 
         return
       }
 
-      if (generacion.current !== token) return
-
-      setFormularioModo(null)
       await refrescarTrasEscribir(token, `Se cambió el modo de "${datos.nombre}" a ${datos.modo}.`, AVISO_REFRESCO_FALLIDO)
+      setFormularioModo(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
     }
+  }
+
+  function abrirEdicion(puntoVenta: PuntoVentaListado) {
+    setErrorFormulario('')
+    setFormulario(aFormularioDePuntoVenta(puntoVenta))
+  }
+
+  function abrirModo(puntoVenta: PuntoVentaListado) {
+    setErrorFormulario('')
+    setFormularioModo({ id: puntoVenta.id, nombre: puntoVenta.nombre, modo: puntoVenta.modo })
   }
 
   /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
@@ -437,293 +415,67 @@ export function PuntosVenta() {
           />
         )}
 
-        {puedeCrear && !alta && (
+        {puedeCrear && (
           <div className="mb-3">
-            <button type="button" className="btn btn-primary" onClick={() => void abrirAlta()} disabled={bloqueado}>
+            <button
+              ref={nuevoRef}
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void abrirAlta()}
+              disabled={bloqueado}
+            >
               Nuevo punto de venta
             </button>
           </div>
         )}
 
-        {alta && (
-          <form
-            className="row g-3 border p-3 mb-4 bg-body"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void guardarAlta()
-            }}
-          >
-            <div className="col-12">
-              <strong>Nuevo punto de venta</strong>
-              <p className="text-muted mb-0">
-                Se crea sobre una empresa existente. El modo no tiene valor por defecto: Escritorio exige un
-                dispositivo vinculado para vender; Web vende desde el navegador.
-              </p>
-            </div>
-            {errorEmpresas && <div className="col-12 alert alert-danger mb-0">{errorEmpresas}</div>}
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="pv-alta-empresa">
-                Empresa destino
-              </label>
-              <select
-                id="pv-alta-empresa"
-                className="form-select"
-                value={alta.idEmpresa}
-                onChange={(e) => setAlta({ ...alta, idEmpresa: e.target.value })}
-                disabled={bloqueado || empresas === null}
-                required
-              >
-                <option value="">{empresas === null && !errorEmpresas ? 'Cargando…' : 'Elegí una empresa…'}</option>
-                {(empresas ?? []).map((e) => (
-                  <option key={e.id} value={String(e.id)}>
-                    {esPlataforma ? `${e.razonSocial} (${e.nombreTenant ?? ETIQUETA_SIN_DUENIO})` : e.razonSocial}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="pv-alta-nombre">
-                Nombre
-              </label>
-              <input
-                id="pv-alta-nombre"
-                className="form-control"
-                maxLength={150}
-                value={alta.nombre}
-                onChange={(e) => setAlta({ ...alta, nombre: e.target.value })}
-                disabled={bloqueado}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-alta-modo">
-                Modo
-              </label>
-              <select
-                id="pv-alta-modo"
-                className="form-select"
-                value={alta.modo}
-                onChange={(e) => setAlta({ ...alta, modo: e.target.value as ModoPuntoVenta | '' })}
-                disabled={bloqueado}
-                required
-              >
-                <option value="">Elegí un modo…</option>
-                {MODOS_PUNTO_VENTA.map((modo) => (
-                  <option key={modo} value={modo}>
-                    {modo}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {CAMPOS_DESCRIPTIVOS_DE_ALTA.map((campo) => (
-              <div key={campo.clave} className={campo.columnas}>
-                <label className="form-label" htmlFor={`pv-alta-${campo.clave}`}>
-                  {campo.etiqueta}
-                </label>
-                <input
-                  id={`pv-alta-${campo.clave}`}
-                  className="form-control"
-                  maxLength={campo.max}
-                  value={alta[campo.clave]}
-                  onChange={(e) => setAlta({ ...alta, [campo.clave]: e.target.value })}
-                  disabled={bloqueado}
-                />
-              </div>
-            ))}
-            <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success" disabled={bloqueado || empresas === null}>
-                {ocupado !== null ? 'Guardando…' : 'Crear'}
-              </button>
-              <button type="button" className="btn btn-outline-secondary" onClick={cerrarAlta} disabled={bloqueado}>
-                Cancelar
-              </button>
-            </div>
-          </form>
-        )}
+        {/* Los modales van en su propio contenedor, DESPUÉS del botón de alta: al cerrarse, React procesa el
+            desmontaje del modal antes de actualizar a sus hermanos directos, y ahí el botón todavía estaría
+            deshabilitado y no podría recibir el foco que el modal le devuelve. */}
+        <div>
+          {alta && (
+            <ModalDeAltaDePuntoVenta
+              valor={alta}
+              empresas={empresas}
+              errorEmpresas={errorEmpresas}
+              esPlataforma={esPlataforma}
+              guardando={ocupado !== null}
+              bloqueado={bloqueado}
+              error={errorFormulario}
+              disparoDeError={disparoDeError}
+              focoDeReserva={nuevoRef}
+              onCambio={setAlta}
+              onGuardar={() => void guardarAlta()}
+              onCancelar={cerrarAlta}
+            />
+          )}
 
-        {formulario && (
-          <form
-            className="row g-3 border p-3 mb-4 bg-body"
-            onSubmit={(e) => {
-              e.preventDefault()
-              guardar()
-            }}
-          >
-            <div className="col-12">
-              <strong>Editando punto de venta {formulario.id}</strong>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-nombre">
-                Nombre
-              </label>
-              <input
-                id="pv-nombre"
-                className="form-control"
-                maxLength={150}
-                value={formulario.nombre}
-                onChange={(e) => setFormulario({ ...formulario, nombre: e.target.value })}
-                disabled={bloqueado}
-                required
-              />
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="pv-domicilio">
-                Domicilio
-              </label>
-              <input
-                id="pv-domicilio"
-                className="form-control"
-                maxLength={255}
-                value={formulario.domicilio}
-                onChange={(e) => setFormulario({ ...formulario, domicilio: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-horario">
-                Horario
-              </label>
-              <input
-                id="pv-horario"
-                className="form-control"
-                maxLength={255}
-                value={formulario.horario}
-                onChange={(e) => setFormulario({ ...formulario, horario: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="pv-whatsapp">
-                WhatsApp
-              </label>
-              <input
-                id="pv-whatsapp"
-                className="form-control"
-                maxLength={30}
-                value={formulario.whatsapp}
-                onChange={(e) => setFormulario({ ...formulario, whatsapp: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-instagram">
-                Instagram
-              </label>
-              <input
-                id="pv-instagram"
-                className="form-control"
-                maxLength={150}
-                value={formulario.instagram}
-                onChange={(e) => setFormulario({ ...formulario, instagram: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-facebook">
-                Facebook
-              </label>
-              <input
-                id="pv-facebook"
-                className="form-control"
-                maxLength={150}
-                value={formulario.facebook}
-                onChange={(e) => setFormulario({ ...formulario, facebook: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-web">
-                Sitio web
-              </label>
-              <input
-                id="pv-web"
-                className="form-control"
-                maxLength={255}
-                value={formulario.web}
-                onChange={(e) => setFormulario({ ...formulario, web: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-12">
-              <div className="form-check">
-                <input
-                  id="pv-envio-por-defecto"
-                  type="checkbox"
-                  className="form-check-input"
-                  checked={formulario.envioPorDefecto}
-                  onChange={(e) => setFormulario({ ...formulario, envioPorDefecto: e.target.checked })}
-                  disabled={bloqueado}
-                />
-                <label className="form-check-label" htmlFor="pv-envio-por-defecto">
-                  Envío por defecto en el POS
-                </label>
-              </div>
-            </div>
-            <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success" disabled={bloqueado}>
-                {ocupado !== null ? 'Guardando…' : 'Guardar'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setFormulario(null)}
-                disabled={bloqueado}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
-        )}
+          {formulario && (
+            <ModalDePuntoVenta
+              valor={formulario}
+              guardando={ocupado !== null}
+              bloqueado={bloqueado}
+              error={errorFormulario}
+              focoDeReserva={nuevoRef}
+              onCambio={setFormulario}
+              onGuardar={() => void guardar()}
+              onCancelar={() => setFormulario(null)}
+            />
+          )}
 
-        {formularioModo && (
-          <form
-            className="row g-3 border p-3 mb-4 bg-body"
-            onSubmit={(e) => {
-              e.preventDefault()
-              guardarModo()
-            }}
-          >
-            <div className="col-12">
-              <strong>Modo de {formularioModo.nombre}</strong>
-              <p className="text-muted mb-0">
-                Escritorio exige a lo sumo un dispositivo vinculado y solo ese dispositivo puede vender contra este
-                punto de venta; Web exige sesión sin dispositivo. Si tiene un dispositivo vinculado, revocalo primero
-                desde la pantalla de Dispositivos.
-              </p>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="pv-modo">
-                Modo
-              </label>
-              <select
-                id="pv-modo"
-                className="form-select"
-                value={formularioModo.modo}
-                onChange={(e) => setFormularioModo({ ...formularioModo, modo: e.target.value as ModoPuntoVenta })}
-                disabled={bloqueado}
-              >
-                {MODOS_PUNTO_VENTA.map((modo) => (
-                  <option key={modo} value={modo}>
-                    {modo}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success" disabled={bloqueado}>
-                {ocupado !== null ? 'Guardando…' : 'Guardar'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setFormularioModo(null)}
-                disabled={bloqueado}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
-        )}
+          {formularioModo && (
+            <ModalDeModoDePuntoVenta
+              valor={formularioModo}
+              guardando={ocupado !== null}
+              bloqueado={bloqueado}
+              error={errorFormulario}
+              focoDeReserva={nuevoRef}
+              onCambio={setFormularioModo}
+              onGuardar={() => void guardarModo()}
+              onCancelar={() => setFormularioModo(null)}
+            />
+          )}
+        </div>
 
         {cargando ? (
           <Cargando />
@@ -801,7 +553,7 @@ export function PuntosVenta() {
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-secondary me-1"
-                          onClick={() => setFormularioModo({ id: p.id, nombre: p.nombre, modo: p.modo })}
+                          onClick={() => abrirModo(p)}
                           disabled={bloqueado}
                         >
                           Modo
@@ -809,19 +561,7 @@ export function PuntosVenta() {
                         <BotonIcono
                           icono="editar"
                           className="me-1"
-                          onClick={() =>
-                            setFormulario({
-                              id: p.id,
-                              nombre: p.nombre,
-                              domicilio: p.domicilio ?? '',
-                              horario: p.horario ?? '',
-                              whatsapp: p.whatsapp ?? '',
-                              instagram: p.instagram ?? '',
-                              facebook: p.facebook ?? '',
-                              web: p.web ?? '',
-                              envioPorDefecto: p.envioPorDefecto ?? false,
-                            })
-                          }
+                          onClick={() => abrirEdicion(p)}
                           disabled={bloqueado}
                         />
                         <BotonIcono
