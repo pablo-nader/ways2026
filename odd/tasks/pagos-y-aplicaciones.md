@@ -73,9 +73,16 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 - [ ] E2-S1 — `items_pago` (one payment-method line per pago), migration `ItemsDePago` with backfill and the
   deferred header-sum constraint trigger, dual write in every `ServicioDePagos` writer, error-translation
   backstops, doc 10. No behavior change: each pago has exactly one item equal to its header.
-- [ ] E2-S2 — Read paths (arqueo, cierre, treasury, exports) derive the per-medio amounts from the items.
-- [ ] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract.
-- [ ] E2-S3b — Edición de pagos con N líneas, compensating entries per line.
+- [x] E2-S2 — Per-medio readers derive from the items: the arqueo/cierre pagos-per-medio totals
+  (`LectorDeMovimientosDelTurno`), the personal desglose (one line per item, `idItem` added, `idGasto` kept), and
+  `CalculadorDeAjustesDePago` (`EstadoContableDePago.ImportePorMedio`, `AfectaElArqueo` compares per-medio maps).
+  The audit payload of edit/baja gains `lineas: [{id_medio_pago, importe}]` (header `id_medio_pago` kept).
+  Treasury, supplier-CC adjustments, listings and exports keep the header (they need category/total only).
+- [ ] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
+  movements stay one per pago on the header total.
+- [ ] E2-S3b — Edición de pagos con N líneas: replaces `SincronizarItemDelPagoAsync` (it assumes one live item and
+  throws on two) with a diff of the lines; the closed-turno arqueo recalculation already re-derives from the items,
+  so only the before/after `EstadoContableDePago` maps need the new lines; compensating entries per medio.
 - [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
 - [ ] E2-W2 — Web: lines in the administration payment form and the history.
@@ -97,6 +104,13 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 - E1b (web + docs) is written and verified in worktree `pagos-compras-e1b` (build, lint, vitest
   7876 passed) but must be committed from this worktree; it must also add `pagos` to
   `RutasDeLaSpa.RutasHeredadasDelBackOffice` (App.tsx gains `/pagos` plus the `/gastos` redirect).
+
+- 2026-10-28 E2-S2 (branch `pnader/pagos-e2-s2-lectores`, commit f0bbe4c3): readers derive per-medio from
+  `items_pago`; `RecalcularArqueoAsync` needed no change (it re-derives the whole arqueo through the shared reader,
+  so it follows the items). Evidence: `dotnet build Ways.slnx` 0 errors; Domain.Tests 1892 passed; Application.Tests
+  1076 passed; web `tsc -b` clean, vitest on the two touched files 190 passed; mutation check on the map comparison
+  killed by 2-3 domain tests. Integration tests added (three arqueo/cierre tests with two-item pagos, audit `lineas`,
+  `idItem` in the personal desglose) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
 
 ## Next step
 
