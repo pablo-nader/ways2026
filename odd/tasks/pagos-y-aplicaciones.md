@@ -101,9 +101,9 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   la columna todavía existe). Integration tests (CI): `PagoDePersonalTests`, `PagosConLineasTests`,
   `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
 - [ ] E2-S4 (written; CI pending) — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
-- [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
-- [ ] E2-W2 — Web: lines in the administration payment form and the history.
-- [ ] E2-W3 — Web: lines in pagar compra and personal payments.
+- [x] E2-W1 — Web foundation: types and clients for the `/api/pagos` contract, pure helpers (`api/lineasDePago.ts`, with tests) and the shared `EditorDeLineasDePago` component. The POS payment form (`PagosDelTurno`, still on `/api/gastos` with one medio) does NOT use it yet: pending, tracked under E2-W2.
+- [ ] E2-W2 — Web: lines in the POS payment form (`PagosDelTurno`, shared `ModalDeEdicionDePago` one-medio mode). The administration part (form, edit modal in lines mode, history column) shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`).
+- [x] E2-W3 — Web: administración (`Pagos`/`ModalDeAltaDePago`/edición with lines, `/api/pagos/administracion`) and pagar compra (`ModalDePagoDeCompra` via `/api/pagos/de-compra/{idCompra}`, result key `pago`; `CompraEditor` and `CuentaCorrienteDeProveedor` updated; `vincular-compra` and `desdePago` read on `/api/pagos`). Personal payments untouched (E2-P).
 - [x] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items. Done by S3b (column, FK and index
   dropped).
 - [ ] E2-P — Pago de sueldo en un solo pago, después del release del POS (and after E2-W2): the personal payment with N
@@ -146,6 +146,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 
 - 2026-10-28 E2-S4 (branch `pnader/pagos-e2-s4-api`): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed. Integration tests NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
 
+- 2026-10-28 E2-W1 + E2-W3 (branch `pnader/pagos-e2-w1-w3-web`): web `tsc -b` clean; `npm run lint` 0 errors; full `vitest run` 260 files / 8111 tests passed. Route: delegated writer (2+ non-trivial files).
+
 ## Next step
 
-S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); E2-S4 is written (branch `pnader/pagos-e2-s4-api`); next is E2-W1 (web lines editor).
+S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); E2-S4 is written (branch `pnader/pagos-e2-s4-api`); E2-W1 + E2-W3 are written (branch `pnader/pagos-e2-w1-w3-web`); next is E2-W2 (POS payment form with lines).
