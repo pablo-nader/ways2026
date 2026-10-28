@@ -159,7 +159,7 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
 
         // FK 9 (proposal §D): compuesta, MATCH SIMPLE (el default) — con id_orden_compra NULL
         // la constraint no se chequea, mismo precedente que fk_auditoria_punto_venta/
-        // gastos.id_comprobante_compra. Índice de soporte declarado a mano (nombrado por
+        // pagos.id_comprobante_compra. Índice de soporte declarado a mano (nombrado por
         // doc-10, nunca el IX_... autogenerado que ArticuloEmpresaConfiguration/
         // NumeracionComprobanteConfiguration.cs:44-49 ya documentan como trampa).
         builder.HasOne<OrdenCompra>()

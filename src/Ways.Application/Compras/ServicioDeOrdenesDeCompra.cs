@@ -28,7 +28,7 @@ namespace Ways.Application.Compras;
 /// PRIVADOS y PROPIOS de esta clase — copian la FORMA exacta de
 /// <see cref="ServicioDeCompras.ResolverProveedorAsync"/>/<c>ResolverPuntoVentaAsync</c> (ambos
 /// <c>private</c> ahí, así que no hay nada que reusar por composición) en vez de promoverlos a un
-/// helper compartido: mismo criterio que <c>ServicioDeGastos</c> ya aplica frente a
+/// helper compartido: mismo criterio que <c>ServicioDePagos</c> ya aplica frente a
 /// <c>ServicioDeCompras</c> para el mismo par de resoluciones.
 /// </summary>
 public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)

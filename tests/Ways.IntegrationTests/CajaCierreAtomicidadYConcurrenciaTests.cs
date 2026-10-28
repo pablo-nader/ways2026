@@ -8,12 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
@@ -26,7 +26,7 @@ namespace Ways.IntegrationTests;
 /// racy/atómicas del cierre — fallas forzadas en cada punto de escritura real de la transacción
 /// (statements 1/5/6; los pasos 2-4 son puros/de solo lectura, sin punto de falla propio),
 /// dos cierres concurrentes del mismo turno, el presupuesto de consultas del resumen, y las dos
-/// carreras <c>FOR SHARE</c> (movimiento/gasto vs. cierre) que el hallazgo de judgment-day de la
+/// carreras <c>FOR SHARE</c> (movimiento/pago vs. cierre) que el hallazgo de judgment-day de la
 /// task 4.17 cierra.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -304,47 +304,47 @@ public class CajaCierreAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IC
     }
 
     /// <summary>stage-gastos-origen-fondos-pos (PR2): el invariante de esta carrera cambió. Antes
-    /// (PR1) el cierre restaba <c>Σ gastos</c> de la tesorería, así que el `Egreso` de la fila de
-    /// cierre dependía de si el gasto ganó o perdió la carrera. Ahora un gasto de origen
-    /// <see cref="OrigenFondosGasto.CajaTurno"/> (default de esta solicitud) ya descuenta el
+    /// (PR1) el cierre restaba <c>Σ pagos</c> de la tesorería, así que el `Egreso` de la fila de
+    /// cierre dependía de si el pago ganó o perdió la carrera. Ahora un pago de origen
+    /// <see cref="OrigenFondosPago.CajaTurno"/> (default de esta solicitud) ya descuenta el
     /// efectivo del cajón en el momento en que se registra — el cierre NUNCA vuelve a tocar la
-    /// tesorería por gastos, gane o pierda la carrera. El invariante nuevo es más simple:
-    /// <c>Egreso = 0</c> siempre, y el gasto (si ganó) queda contado en <c>gastos</c> igual.</summary>
+    /// tesorería por pagos, gane o pierda la carrera. El invariante nuevo es más simple:
+    /// <c>Egreso = 0</c> siempre, y el pago (si ganó) queda contado en <c>pagos</c> igual.</summary>
     [Fact]
-    public async Task UnGastoQueCompiteConUnCierreQuedaContadoORechazadoPeroNuncaDescontadoDeLaTesoreria()
+    public async Task UnPagoQueCompiteConUnCierreQuedaContadoORechazadoPeroNuncaDescontadoDeLaTesoreria()
     {
         for (var ronda = 0; ronda < 3; ronda++)
         {
-            var ctx = await PrepararAsync($"{nameof(UnGastoQueCompiteConUnCierreQuedaContadoORechazadoPeroNuncaDescontadoDeLaTesoreria)}-{ronda}");
+            var ctx = await PrepararAsync($"{nameof(UnPagoQueCompiteConUnCierreQuedaContadoORechazadoPeroNuncaDescontadoDeLaTesoreria)}-{ronda}");
             var turno = await AbrirTurnoAsync(ctx);
             await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, 500m);
 
             var solicitudDeCierre = new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 500m)], null);
 
-            var tareaGasto = ctx.Admin.PostAsJsonAsync(
+            var tareaPago = ctx.Admin.PostAsJsonAsync(
                 "/api/gastos",
-                new SolicitudDeGasto(
-                    ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "gasto en carrera con cierre", null,
+                new SolicitudDePago(
+                    ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "pago en carrera con cierre", null,
                     ctx.IdMedioEfectivo, null, 30m));
             var tareaCierre = ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitudDeCierre);
 
-            var respuestaGasto = await tareaGasto;
+            var respuestaPago = await tareaPago;
             var respuestaCierre = await tareaCierre;
 
-            Assert.Contains(respuestaGasto.StatusCode, new[] { HttpStatusCode.Created, HttpStatusCode.Conflict });
-            if (respuestaGasto.StatusCode == HttpStatusCode.Conflict)
+            Assert.Contains(respuestaPago.StatusCode, new[] { HttpStatusCode.Created, HttpStatusCode.Conflict });
+            if (respuestaPago.StatusCode == HttpStatusCode.Conflict)
             {
-                var problema = await respuestaGasto.Content.ReadFromJsonAsync<JsonElement>();
+                var problema = await respuestaPago.Content.ReadFromJsonAsync<JsonElement>();
                 Assert.Equal("turno_no_abierto", problema.GetProperty("codigo").GetString());
             }
 
             Assert.Equal(HttpStatusCode.OK, respuestaCierre.StatusCode);
 
             await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-            var sumaDeGastos = await db.Gastos.Where(g => g.IdTurnoCaja == turno.Id).SumAsync(g => g.Importe);
-            // Si el gasto ganó la carrera queda contado (30); si la perdió, 0 — ambos representan
-            // "nunca sin contar" (el 409 no dejó un gasto fantasma).
-            Assert.Equal(respuestaGasto.StatusCode == HttpStatusCode.Created ? 30m : 0m, sumaDeGastos);
+            var sumaDePagos = await db.Pagos.Where(g => g.IdTurnoCaja == turno.Id).SumAsync(g => g.Importe);
+            // Si el pago ganó la carrera queda contado (30); si la perdió, 0 — ambos representan
+            // "nunca sin contar" (el 409 no dejó un pago fantasma).
+            Assert.Equal(respuestaPago.StatusCode == HttpStatusCode.Created ? 30m : 0m, sumaDePagos);
 
             var egresoDeTesoreria = await db.MovimientosTesoreria
                 .Where(m => m.IdTurnoCaja == turno.Id && m.Tipo == TipoMovimientoTesoreria.RetiroCaja)

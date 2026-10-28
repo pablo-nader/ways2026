@@ -15,7 +15,7 @@ using Ways.Application.Dominios;
 using Ways.Application.Etiquetas;
 using Ways.Application.Familias;
 using Ways.Application.Fiscal;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
@@ -130,7 +130,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<VisibilidadDeTurnos>();
-        services.AddScoped<ServicioDeGastos>();
+        services.AddScoped<ServicioDePagos>();
 
         // stage-7-cuenta-corriente (Slice 2): pago a cuenta (RC) — reusa
         // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync, se registra junto a la caja.
@@ -194,7 +194,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeFichaDeArticulo>();
 
         // stage-10-agregacion-dashboard, Slice 5: ServicioDeReportesDeEgresos reusa
-        // LectorDeSerieTemporal para gastos/resumen; compras/por-proveedor es LINQ puro.
+        // LectorDeSerieTemporal para pagos/resumen; compras/por-proveedor es LINQ puro.
         services.AddScoped<ServicioDeReportesDeEgresos>();
         services.AddScoped<ServicioDeLibroIva>();
         // stage-10-agregacion-dashboard, Slice 5: top artículos — LINQ puro, sin costo/margen

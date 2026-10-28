@@ -84,12 +84,12 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // efectivo contado y cierra, así que exigirle GestionDeCatalogo le sacaría a Vendedor la
         // operación que este modo existe para modelar.
         ("POST", "/api/caja/turnos/{id:int}/cierre-por-retiro"),
-        // stage-6-turnos-caja (Slice 3, task 3.2): captura de gasto — sin GestionDeCatalogo
-        // apilado, mismo criterio que las rutas de caja de arriba (spec: gastos / Gasto
-        // Authorization, un Vendedor tiene que poder registrar un gasto).
+        // stage-6-turnos-caja (Slice 3, task 3.2): captura de pago — sin GestionDeCatalogo
+        // apilado, mismo criterio que las rutas de caja de arriba (spec: pagos / Pago
+        // Authorization, un Vendedor tiene que poder registrar un pago).
         ("POST", "/api/gastos/"),
-        // Edición de un gasto del turno abierto desde el POS: mismo criterio que el alta. Su prueba
-        // positiva por rol es GastosEdicionEndpointsTests.UnVendedorEditaUnGastoDeSuTurnoAbierto.
+        // Edición de un pago del turno abierto desde el POS: mismo criterio que el alta. Su prueba
+        // positiva por rol es PagosEdicionEndpointsTests.UnVendedorEditaUnPagoDeSuTurnoAbierto.
         ("PUT", "/api/gastos/{id:int}"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan

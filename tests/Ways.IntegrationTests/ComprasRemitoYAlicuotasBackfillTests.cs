@@ -8,7 +8,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
@@ -83,7 +83,7 @@ public class ComprasRemitoYAlicuotasBackfillTests(WaysApiFixture fixture) : ICla
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -97,7 +97,7 @@ public class ComprasRemitoYAlicuotasBackfillTests(WaysApiFixture fixture) : ICla
                     npgsql.MapEnum<Ways.Domain.Fiscal.MotivoDeFacturacion>("motivo_facturacion");
                     npgsql.MapEnum<Ways.Domain.Fiscal.EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
-                    npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
+                    npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
                 })
                 .Options;
 

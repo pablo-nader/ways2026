@@ -54,7 +54,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
             .Take(tamanio)
             .Select(m => new
             {
-                m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteCompra, m.IdGasto
+                m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteCompra, m.IdPago
             })
             .ToListAsync(ct);
 
@@ -67,7 +67,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
 
         var items = filas
             .Select(f => new MovimientoDeCuentaDeProveedor(
-                f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteCompra, f.IdGasto,
+                f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteCompra, f.IdPago,
                 f.Tipo == TipoMovimientoCcProveedor.Ajuste
                     ? CalculadorDeEstadoDeCuentaDeProveedor.EtiquetarAjuste(f.IdComprobanteCompra)
                     : null,
@@ -183,7 +183,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         await ResolverSaldoDeProveedorAsync(idProveedor, ct);
 
         // 3. Punto de venta — provenance, no autoridad (design decisión 14); 404 ANTES de la
-        // transacción sin turno (mismo orden que ServicioDeGastos.cs:28-31 / ServicioDeCuentaCorriente,
+        // transacción sin turno (mismo orden que ServicioDePagos.cs:28-31 / ServicioDeCuentaCorriente,
         // cliente: un PV apócrifo tiene que dar 404, nunca abrir una transacción para nada).
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
@@ -206,22 +206,22 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         var nuevoSaldo = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
             conexion, transaccionCruda, idTenant, idProveedor, importe, ct);
 
-        // 2. Movimiento — id_comprobante_compra e id_gasto NULL (marca estructural: es un ajuste
+        // 2. Movimiento — id_comprobante_compra e id_pago NULL (marca estructural: es un ajuste
         // manual, nunca un contramovimiento de anulación ni un pago).
         var idMovimiento = await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, idProveedor, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idGasto: null, importe, nuevoSaldo,
+            TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idPago: null, importe, nuevoSaldo,
             detalle, ct);
 
         await transaccion.CommitAsync(ct);
 
         return new MovimientoDeCuentaDeProveedor(
             idMovimiento, momento, TipoMovimientoCcProveedor.Ajuste, importe, nuevoSaldo, detalle,
-            IdComprobanteCompra: null, IdGasto: null, Etiqueta: EtiquetaDeAjuste.Manual);
+            IdComprobanteCompra: null, IdPago: null, Etiqueta: EtiquetaDeAjuste.Manual);
     }
 
     /// <summary>ADR-8: mismo 404 para "no existe" y "es de otro tenant" — mismo criterio que
-    /// <c>ServicioDeGastos.ResolverPuntoVentaAsync</c>/<c>ServicioDeCuentaCorriente.ResolverPuntoVentaAsync</c>
+    /// <c>ServicioDePagos.ResolverPuntoVentaAsync</c>/<c>ServicioDeCuentaCorriente.ResolverPuntoVentaAsync</c>
     /// (cliente).</summary>
     private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
         await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
@@ -243,7 +243,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         contexto.IdTenant
             // OperacionDePos/SupervisionDeCuentaDeProveedor (capa de API) ya exigen un actor de
             // tenant — un actor de plataforma (root) nunca llega hasta acá. Defensa en
-            // profundidad, mismo criterio que ServicioDeGastos.ExigirTenantDeLaSesion.
+            // profundidad, mismo criterio que ServicioDePagos.ExigirTenantDeLaSesion.
             ?? throw new InvalidOperationException(
                 "ServicioDeCuentaCorrienteDeProveedor requiere un actor de tenant; las policies de este servicio no admiten plataforma.");
 }

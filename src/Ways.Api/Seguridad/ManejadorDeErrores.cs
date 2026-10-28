@@ -410,15 +410,15 @@ public class ManejadorDeErrores(
                     "Este dispositivo ya tiene una reserva de numeración vigente para esa serie.",
                     "reserva_de_numeracion_duplicada"),
 
-            // GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_gasto — un gasto
+            // GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_pago — un pago
             // no puede originar dos movimientos de tesorería. Exact-match, sin ordering trap: "
-            // _id_gasto" no colisiona con ninguna substring de ClasificarUnicidad. Inalcanzable
-            // hoy — ningún escritor de esta etapa puebla IdGasto todavía (ver el doc-comment de
-            // MovimientoTesoreria.IdGasto); queda como backstop de esquema puro para la etapa
+            // _id_pago" no colisiona con ninguna substring de ClasificarUnicidad. Inalcanzable
+            // hoy — ningún escritor de esta etapa puebla IdPago todavía (ver el doc-comment de
+            // MovimientoTesoreria.IdPago); queda como backstop de esquema puro para la etapa
             // futura que sí lo escriba.
-            { SqlState: "23505", ConstraintName: string uxMovimientoTesoreriaGasto }
+            { SqlState: "23505", ConstraintName: string uxMovimientoTesoreriaPago }
                 when string.Equals(
-                    uxMovimientoTesoreriaGasto, "ux_movimientos_tesoreria_id_gasto", StringComparison.OrdinalIgnoreCase) =>
+                    uxMovimientoTesoreriaPago, "ux_movimientos_tesoreria_id_pago", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict,
                     "Este gasto ya tiene un movimiento de tesorería vinculado.",
                     "movimiento_de_tesoreria_de_gasto_duplicado"),
@@ -722,9 +722,9 @@ public class ManejadorDeErrores(
 
             // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
             // switch por nombre EXACTO de las seis CHECKs nuevas de turnos_caja/movimientos_caja/
-            // gastos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
+            // pagos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
             // (mismo motivo que ClasificarCheckDeVentas). ReglaDeTurnos/ReglaDeMovimientosDeCaja
-            // (Slice 2), ServicioDeGastos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
+            // (Slice 2), ServicioDePagos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
             // validan estos invariantes en el camino de servicio — bajo operación normal ninguna
             // de las seis ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
             // de banda.
@@ -1178,7 +1178,7 @@ public class ManejadorDeErrores(
 
     /// <summary>stage-6-turnos-caja (Slice 1, task 1.7, tasks.md "Orchestrator Decisions
     /// Recorded This Phase" — design decisión 8): switch por nombre EXACTO de las seis CHECKs
-    /// nuevas de <c>turnos_caja</c>/<c>movimientos_caja</c>/<c>gastos</c>/
+    /// nuevas de <c>turnos_caja</c>/<c>movimientos_caja</c>/<c>pagos</c>/
     /// <c>movimientos_tesoreria</c>. <c>ck_movimientos_caja_motivo_minimo</c> y
     /// <c>ck_movimientos_caja_importe</c> cubren, cada una, una sola regla UNIFORME sobre los
     /// tres <c>tipo_movimiento_caja</c> (design decisión 8: sin rama por tipo) — la CHECK en sí
@@ -1222,16 +1222,16 @@ public class ManejadorDeErrores(
                     "El motivo del movimiento de caja tiene que tener al menos 5 caracteres.",
                     "movimiento_de_caja_motivo_invalido"),
 
-            "ck_gastos_importe_positivo" =>
+            "ck_pagos_importe_positivo" =>
                 (StatusCodes.Status400BadRequest,
                     "El importe del gasto tiene que ser positivo.",
                     "gasto_importe_invalido"),
 
             // GastosOrigenFondosYTesoreriaPorEmpresa: defensa en profundidad de
-            // ServicioDeGastos.RegistrarAsync, que hoy solo emite origen_fondos = caja_turno y
+            // ServicioDePagos.RegistrarAsync, que hoy solo emite origen_fondos = caja_turno y
             // siempre con un turno resuelto. Inalcanzable por operación normal — backstop de una
             // escritura cruda/fuera de banda (misma familia que ck_turnos_caja_medio_efectivo_solo_cerrado).
-            "ck_gastos_caja_turno_requiere_turno" =>
+            "ck_pagos_caja_turno_requiere_turno" =>
                 (StatusCodes.Status400BadRequest,
                     "Un gasto de caja de turno tiene que tener un turno.",
                     "gasto_caja_turno_requiere_turno"),

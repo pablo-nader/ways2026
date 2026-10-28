@@ -11,7 +11,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
@@ -904,7 +904,7 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<CategoriaPago>("categoria_pago");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<OrigenCompra>("origen_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -921,8 +921,8 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 // Assert.False(HasPendingModelChanges()) más abajo lo exigen) — necesita conocer
                 // cada enum nuevo que aparezca, para siempre.
                 npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
-                // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
-                npgsql.MapEnum<Ways.Domain.Gastos.OrigenFondosGasto>("origen_fondos_gasto");
+                // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
+                npgsql.MapEnum<Ways.Domain.Pagos.OrigenFondosPago>("origen_fondos_pago");
             })
             .Options;
 

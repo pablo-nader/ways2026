@@ -7,7 +7,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Plantel;
 using Ways.Application.Usuarios;
@@ -17,7 +17,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Usuarios;
@@ -28,8 +28,8 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// <c>POST /api/personal/{id}/pagos</c> punta a punta contra Postgres real: cada combinación de líneas y de
 /// origen de fondos, el desglose en el estado de cuenta, los rechazos sin escrituras parciales, la atomicidad
-/// entre los cuatro libros (personal, cuenta corriente del cliente, gastos y tesorería), la concurrencia sobre
-/// los saldos y la inmutabilidad de los gastos que nacen de un pago.
+/// entre los cuatro libros (personal, cuenta corriente del cliente, pagos y tesorería), la concurrencia sobre
+/// los saldos y la inmutabilidad de los pagos que nacen de un pago.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -188,7 +188,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// ajuste que siembra la deuda es anterior a la foto).</summary>
     private sealed record Foto(
         decimal SaldoDelPersonal, decimal SaldoDelCliente, int AsientosDelPersonal, int AsientosDeCuentaCorriente,
-        int Gastos, int AsientosDeTesoreria);
+        int Pagos, int AsientosDeTesoreria);
 
     private async Task<Foto> FotoAsync(Contexto ctx, int idPersonal, int? idCliente = null)
     {
@@ -199,7 +199,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             idCliente is { } c ? await db.Clientes.Where(x => x.Id == c).Select(x => x.Saldo).SingleAsync() : 0m,
             await db.MovimientosPersonal.CountAsync(),
             await db.MovimientosCuentaCorriente.CountAsync(),
-            await db.Gastos.CountAsync(),
+            await db.Pagos.CountAsync(),
             await db.MovimientosTesoreria.CountAsync());
     }
 
@@ -248,31 +248,31 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal("Descuento por pago de personal: Ana", descuento.Detalle);
         Assert.Equal(2500m, await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).SingleAsync());
 
-        var gastos = await db.Gastos.Where(g => g.IdMovimientoPersonal == idMovimiento).OrderBy(g => g.Id).ToListAsync();
-        Assert.Equal(2, gastos.Count);
-        Assert.All(gastos, g =>
+        var pagos = await db.Pagos.Where(g => g.IdMovimientoPersonal == idMovimiento).OrderBy(g => g.Id).ToListAsync();
+        Assert.Equal(2, pagos.Count);
+        Assert.All(pagos, g =>
         {
-            Assert.Equal(CategoriaGasto.Sueldos, g.Categoria);
-            Assert.Equal(OrigenFondosGasto.Tesoreria, g.OrigenFondos);
+            Assert.Equal(CategoriaPago.Sueldos, g.Categoria);
+            Assert.Equal(OrigenFondosPago.Tesoreria, g.OrigenFondos);
             Assert.Null(g.IdTurnoCaja);
             Assert.Equal(ctx.IdEmpresa, g.IdEmpresa);
             Assert.Equal(ctx.IdPuntoVenta, g.IdPuntoVenta);
             Assert.Equal("Pago de personal: Ana", g.Concepto);
-            // La fecha de negocio retroactiva elegida es la que persiste en el gasto.
+            // La fecha de negocio retroactiva elegida es la que persiste en el pago.
             Assert.Equal(FechaDelNegocio.Hoy().AddDays(-10), DateOnly.FromDateTime(g.Fecha.UtcDateTime));
         });
-        Assert.Equal((ctx.IdMedioEfectivo, 2000m, (string?)null), (gastos[0].IdMedioPago, gastos[0].Importe, gastos[0].Detalle));
-        Assert.Equal((ctx.IdMedioTarjeta, 500m, "cup-77"), (gastos[1].IdMedioPago, gastos[1].Importe, gastos[1].Detalle));
+        Assert.Equal((ctx.IdMedioEfectivo, 2000m, (string?)null), (pagos[0].IdMedioPago, pagos[0].Importe, pagos[0].Detalle));
+        Assert.Equal((ctx.IdMedioTarjeta, 500m, "cup-77"), (pagos[1].IdMedioPago, pagos[1].Importe, pagos[1].Detalle));
 
         var egresos = await db.MovimientosTesoreria.Where(m => m.IdEmpresa == ctx.IdEmpresa).OrderBy(m => m.Id).ToListAsync();
         Assert.Equal(2, egresos.Count);
-        Assert.Equal([gastos[0].Id, gastos[1].Id], egresos.Select(e => e.IdGasto));
+        Assert.Equal([pagos[0].Id, pagos[1].Id], egresos.Select(e => e.IdPago));
         Assert.Equal([0m, -2000m], egresos.Select(e => e.Inicio));
         Assert.Equal([-2000m, -2500m], egresos.Select(e => e.Final));
         Assert.Equal([2000m, 500m], egresos.Select(e => e.Egreso));
         Assert.All(egresos, e =>
         {
-            Assert.Equal(TipoMovimientoTesoreria.Gasto, e.Tipo);
+            Assert.Equal(TipoMovimientoTesoreria.Pago, e.Tipo);
             Assert.Equal(ctx.IdPuntoVenta, e.IdPuntoVenta);
             Assert.Null(e.IdTurnoCaja);
         });
@@ -284,7 +284,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(1500m, desglose.GetProperty("descuentoDeCuentaCorriente").GetDecimal());
         var lineas = desglose.GetProperty("lineas").EnumerateArray().ToList();
         Assert.Equal(2, lineas.Count);
-        Assert.Equal([gastos[0].Id, gastos[1].Id], lineas.Select(l => l.GetProperty("idGasto").GetInt32()));
+        Assert.Equal([pagos[0].Id, pagos[1].Id], lineas.Select(l => l.GetProperty("idGasto").GetInt32()));
         Assert.Equal([ctx.IdMedioEfectivo, ctx.IdMedioTarjeta], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
         Assert.Equal([2000m, 500m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
         Assert.All(lineas, l => Assert.Equal("tesoreria", l.GetProperty("origenFondos").GetString(), ignoreCase: true));
@@ -298,9 +298,9 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task UnPagoSoloDeDescuentoBajaLaDeudaSinGastosNiTesoreriaNiOrigen()
+    public async Task UnPagoSoloDeDescuentoBajaLaDeudaSinPagosNiTesoreriaNiOrigen()
     {
-        var ctx = await PrepararAsync(nameof(UnPagoSoloDeDescuentoBajaLaDeudaSinGastosNiTesoreriaNiOrigen));
+        var ctx = await PrepararAsync(nameof(UnPagoSoloDeDescuentoBajaLaDeudaSinPagosNiTesoreriaNiOrigen));
         var idCliente = await CrearClienteConDeudaAsync(ctx, 1000m);
         var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 700m);
 
@@ -315,14 +315,14 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var foto = await FotoAsync(ctx, idPersonal, idCliente);
         Assert.Equal(-300m, foto.SaldoDelPersonal);
         Assert.Equal(0m, foto.SaldoDelCliente);
-        Assert.Equal(0, foto.Gastos);
+        Assert.Equal(0, foto.Pagos);
         Assert.Equal(0, foto.AsientosDeTesoreria);
     }
 
     [Fact]
-    public async Task UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaDejaElGastoYSuEgresoSinPuntoDeVenta()
+    public async Task UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaDejaElPagoYSuEgresoSinPuntoDeVenta()
     {
-        var ctx = await PrepararAsync(nameof(UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaDejaElGastoYSuEgresoSinPuntoDeVenta));
+        var ctx = await PrepararAsync(nameof(UnPagoSoloDeDineroPorTesoreriaSinPuntoDeVentaDejaElPagoYSuEgresoSinPuntoDeVenta));
         var idPersonal = await CrearPersonalAsync(ctx.Admin);
 
         var pago = await CuerpoAsync(
@@ -333,9 +333,9 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(-300m, pago.GetProperty("saldoResultante").GetDecimal());
 
         await using var abierto = Abrir(ctx);
-        var gasto = await abierto.Gastos.SingleAsync();
-        Assert.Null(gasto.IdPuntoVenta);
-        Assert.Equal(CategoriaGasto.Sueldos, gasto.Categoria);
+        var pagoPersistido = await abierto.Pagos.SingleAsync();
+        Assert.Null(pagoPersistido.IdPuntoVenta);
+        Assert.Equal(CategoriaPago.Sueldos, pagoPersistido.Categoria);
         Assert.Equal(0, await abierto.MovimientosCuentaCorriente.CountAsync());
         var egreso = await abierto.MovimientosTesoreria.SingleAsync();
         Assert.Null(egreso.IdPuntoVenta);
@@ -378,15 +378,15 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(650m, pago.GetProperty("saldoResultante").GetDecimal());
 
         await using var abierto = Abrir(ctx);
-        var gastos = await abierto.Gastos.OrderBy(g => g.Id).ToListAsync();
-        Assert.Equal(2, gastos.Count);
-        Assert.All(gastos, g =>
+        var pagos = await abierto.Pagos.OrderBy(g => g.Id).ToListAsync();
+        Assert.Equal(2, pagos.Count);
+        Assert.All(pagos, g =>
         {
-            Assert.Equal(OrigenFondosGasto.CajaTurno, g.OrigenFondos);
+            Assert.Equal(OrigenFondosPago.CajaTurno, g.OrigenFondos);
             Assert.Equal(idTurno, g.IdTurnoCaja);
             Assert.Equal(ctx.IdPuntoVenta, g.IdPuntoVenta);
-            Assert.Equal(CategoriaGasto.Sueldos, g.Categoria);
-            // Igual que el gasto del POS, la fecha del cajón es el instante real.
+            Assert.Equal(CategoriaPago.Sueldos, g.Categoria);
+            // Igual que el pago del POS, la fecha del cajón es el instante real.
             Assert.InRange(g.Fecha, antes.AddSeconds(-1), despues.AddSeconds(1));
         });
         Assert.Equal(0, await abierto.MovimientosTesoreria.CountAsync());
@@ -794,9 +794,9 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     // ---- atomicidad -------------------------------------------------------------------------------
 
     [Fact]
-    public async Task UnFalloEnElUltimoPasoDeTesoreriaRevierteElAsientoElDescuentoLosGastosYLosSaldos()
+    public async Task UnFalloEnElUltimoPasoDeTesoreriaRevierteElAsientoElDescuentoLosPagosYLosSaldos()
     {
-        var ctx = await PrepararAsync(nameof(UnFalloEnElUltimoPasoDeTesoreriaRevierteElAsientoElDescuentoLosGastosYLosSaldos));
+        var ctx = await PrepararAsync(nameof(UnFalloEnElUltimoPasoDeTesoreriaRevierteElAsientoElDescuentoLosPagosYLosSaldos));
         var idCliente = await CrearClienteConDeudaAsync(ctx, 2000m);
         var idPersonal = await CrearPersonalAsync(ctx.Admin, idCliente, saldoInicial: 5000m);
         var antes = await FotoAsync(ctx, idPersonal, idCliente);
@@ -954,7 +954,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         Assert.Equal("descuento_supera_la_deuda", await CodigoAsync(await pagoTask, HttpStatusCode.Conflict));
         var despues = await FotoAsync(ctx, idPersonal, idCliente);
-        // Solo queda el cobro ajeno: el pago revirtió el personal, el gasto y la tesorería.
+        // Solo queda el cobro ajeno: el pago revirtió el personal, el pago y la tesorería.
         Assert.Equal(antes with { SaldoDelCliente = 200m }, despues);
     }
 
@@ -1051,12 +1051,12 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
 
         Assert.Equal(-pagos * 50m, final);
-        Assert.Equal(pagos, await db.Gastos.CountAsync(g => g.IdMovimientoPersonal != null));
+        Assert.Equal(pagos, await db.Pagos.CountAsync(g => g.IdMovimientoPersonal != null));
     }
 
     /// <summary>Un cierre en curso (el turno pasa a cerrado sin comitear) hace esperar al pago del cajón en el
     /// <c>FOR SHARE</c> del turno. El pre-chequeo previo a la transacción ya vio el turno abierto; solo el
-    /// re-chequeo bajo el lock puede rechazar el pago cuando el cierre comitea. Sin él, el gasto entraría a un
+    /// re-chequeo bajo el lock puede rechazar el pago cuando el cierre comitea. Sin él, el pago entraría a un
     /// turno cuyo arqueo ya se derivó.</summary>
     [Fact]
     public async Task UnPagoDelCajonQueEsperaAlCierreSeRechazaSiElTurnoQuedoCerradoYNoEscribeNada()
@@ -1131,12 +1131,12 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(1000m - comiteados * 10m, esperado);
 
         await using var abierto = Abrir(ctx);
-        Assert.Equal(comiteados, await abierto.Gastos.CountAsync(g => g.IdTurnoCaja == idTurno));
+        Assert.Equal(comiteados, await abierto.Pagos.CountAsync(g => g.IdTurnoCaja == idTurno));
     }
 
-    // ---- los gastos de un pago no se tocan por separado ---------------------------------------------
+    // ---- los pagos de un pago no se tocan por separado ---------------------------------------------
 
-    private async Task<(int IdGastoDeTesoreria, int IdGastoDeCajon)> PagarYObtenerGastosAsync(Contexto ctx, int idPersonal)
+    private async Task<(int IdPagoDeTesoreria, int IdPagoDeCajon)> PagarYObtenerPagosAsync(Contexto ctx, int idPersonal)
     {
         await AbrirTurnoAsync(ctx);
         await CuerpoAsync(
@@ -1149,19 +1149,19 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             HttpStatusCode.Created);
 
         await using var abierto = Abrir(ctx);
-        var gastos = await abierto.Gastos.OrderBy(g => g.Id).ToListAsync();
-        return (gastos[0].Id, gastos[1].Id);
+        var pagos = await abierto.Pagos.OrderBy(g => g.Id).ToListAsync();
+        return (pagos[0].Id, pagos[1].Id);
     }
 
-    private static SolicitudDeEdicionDeGasto EdicionValida(Contexto ctx) =>
-        new(CategoriaGasto.Sueldos, null, null, "Concepto editado", null, ctx.IdMedioEfectivo, null, 5m);
+    private static SolicitudDeEdicionDePago EdicionValida(Contexto ctx) =>
+        new(CategoriaPago.Sueldos, null, null, "Concepto editado", null, ctx.IdMedioEfectivo, null, 5m);
 
     [Fact]
-    public async Task UnGastoDeUnPagoNoSeEditaNiSeDaDeBajaNiSeLigaPorSeparadoYSiguenEditablesLosDemas()
+    public async Task UnPagoDeUnPagoNoSeEditaNiSeDaDeBajaNiSeLigaPorSeparadoYSiguenEditablesLosDemas()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeUnPagoNoSeEditaNiSeDaDeBajaNiSeLigaPorSeparadoYSiguenEditablesLosDemas));
+        var ctx = await PrepararAsync(nameof(UnPagoDeUnPagoNoSeEditaNiSeDaDeBajaNiSeLigaPorSeparadoYSiguenEditablesLosDemas));
         var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
-        var (idDeTesoreria, idDelCajon) = await PagarYObtenerGastosAsync(ctx, idPersonal);
+        var (idDeTesoreria, idDelCajon) = await PagarYObtenerPagosAsync(ctx, idPersonal);
         var antes = await FotoAsync(ctx, idPersonal);
 
         foreach (var id in new[] { idDeTesoreria, idDelCajon })
@@ -1173,7 +1173,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(baja, HttpStatusCode.Conflict));
         }
 
-        // La edición del POS exige el turno abierto: el gasto del cajón lo cumple y aun así se rechaza por su vínculo;
+        // La edición del POS exige el turno abierto: el pago del cajón lo cumple y aun así se rechaza por su vínculo;
         // el de tesorería no tiene turno, y el código tiene que seguir siendo el del vínculo y no gasto_turno_cerrado
         // (la guarda va antes de la comprobación del turno).
         foreach (var id in new[] { idDelCajon, idDeTesoreria })
@@ -1185,17 +1185,17 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(antes, await FotoAsync(ctx, idPersonal));
         await using (var abierto = Abrir(ctx))
         {
-            var gastos = await abierto.Gastos.OrderBy(g => g.Id).ToListAsync();
-            Assert.Equal([70m, 30m], gastos.Select(g => g.Importe));
-            Assert.All(gastos, g => Assert.Null(g.DeletedAt));
-            Assert.All(gastos, g => Assert.Equal("Pago de personal: Ana", g.Concepto));
+            var pagos = await abierto.Pagos.OrderBy(g => g.Id).ToListAsync();
+            Assert.Equal([70m, 30m], pagos.Select(g => g.Importe));
+            Assert.All(pagos, g => Assert.Null(g.DeletedAt));
+            Assert.All(pagos, g => Assert.Equal("Pago de personal: Ana", g.Concepto));
         }
 
-        // Un gasto administrativo común sigue editable y con baja.
+        // Un pago administrativo común sigue editable y con baja.
         var comun = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos/administracion",
-            new SolicitudDeGastoDeAdministracion(
-                FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaGasto.Otros, null, null, "Gasto común", null,
+            new SolicitudDePagoDeAdministracion(
+                FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null, "Gasto común", null,
                 ctx.IdMedioEfectivo, null, 20m));
         var idComun = (await CuerpoAsync(comun, HttpStatusCode.Created)).GetProperty("id").GetInt32();
         Assert.Equal(
@@ -1203,29 +1203,29 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idComun}")).StatusCode);
     }
 
-    /// <summary>El cliente no puede adivinar qué gastos van a responder 409 <c>gasto_de_pago_de_personal</c>: los
+    /// <summary>El cliente no puede adivinar qué pagos van a responder 409 <c>gasto_de_pago_de_personal</c>: los
     /// listados del POS y de administración, y el detalle administrativo, traen <c>idMovimientoPersonal</c>. Un
-    /// gasto común lo trae en <c>null</c>.</summary>
+    /// pago común lo trae en <c>null</c>.</summary>
     [Fact]
-    public async Task LosListadosDeGastosExponenElVinculoConElPagoYUnGastoComunLoTraeNulo()
+    public async Task LosListadosDePagosExponenElVinculoConElPagoYUnPagoComunLoTraeNulo()
     {
-        var ctx = await PrepararAsync(nameof(LosListadosDeGastosExponenElVinculoConElPagoYUnGastoComunLoTraeNulo));
+        var ctx = await PrepararAsync(nameof(LosListadosDePagosExponenElVinculoConElPagoYUnPagoComunLoTraeNulo));
         var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
-        var (idDeTesoreria, idDelCajon) = await PagarYObtenerGastosAsync(ctx, idPersonal);
+        var (idDeTesoreria, idDelCajon) = await PagarYObtenerPagosAsync(ctx, idPersonal);
 
         var comunDeAdministracion = await CuerpoAsync(
             await ctx.Admin.PostAsJsonAsync(
                 "/api/gastos/administracion",
-                new SolicitudDeGastoDeAdministracion(
-                    FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaGasto.Otros, null, null, "Gasto común", null,
+                new SolicitudDePagoDeAdministracion(
+                    FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null, "Gasto común", null,
                     ctx.IdMedioEfectivo, null, 20m)),
             HttpStatusCode.Created);
         var idComunDeAdministracion = comunDeAdministracion.GetProperty("id").GetInt32();
         var comunDelPos = await CuerpoAsync(
             await ctx.Admin.PostAsJsonAsync(
                 "/api/gastos",
-                new SolicitudDeGasto(
-                    ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto común del POS", null, ctx.IdMedioEfectivo, null, 15m)),
+                new SolicitudDePago(
+                    ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto común del POS", null, ctx.IdMedioEfectivo, null, 15m)),
             HttpStatusCode.Created);
         var idComunDelPos = comunDelPos.GetProperty("id").GetInt32();
 
@@ -1233,8 +1233,8 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         int idAsientoDelCajon;
         await using (var abierto = Abrir(ctx))
         {
-            idAsientoDeTesoreria = await abierto.Gastos.Where(g => g.Id == idDeTesoreria).Select(g => g.IdMovimientoPersonal!.Value).SingleAsync();
-            idAsientoDelCajon = await abierto.Gastos.Where(g => g.Id == idDelCajon).Select(g => g.IdMovimientoPersonal!.Value).SingleAsync();
+            idAsientoDeTesoreria = await abierto.Pagos.Where(g => g.Id == idDeTesoreria).Select(g => g.IdMovimientoPersonal!.Value).SingleAsync();
+            idAsientoDelCajon = await abierto.Pagos.Where(g => g.Id == idDelCajon).Select(g => g.IdMovimientoPersonal!.Value).SingleAsync();
         }
 
         Assert.NotEqual(idAsientoDeTesoreria, idAsientoDelCajon);
@@ -1258,12 +1258,12 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task ElRechazoDeUnGastoDeUnPagoVieneDespuesDelCuatrocientosCuatroYNuncaAntes()
+    public async Task ElRechazoDeUnPagoDeUnPagoVieneDespuesDelCuatrocientosCuatroYNuncaAntes()
     {
-        var ctx = await PrepararAsync(nameof(ElRechazoDeUnGastoDeUnPagoVieneDespuesDelCuatrocientosCuatroYNuncaAntes));
-        var otro = await PrepararAsync(nameof(ElRechazoDeUnGastoDeUnPagoVieneDespuesDelCuatrocientosCuatroYNuncaAntes) + "otro");
+        var ctx = await PrepararAsync(nameof(ElRechazoDeUnPagoDeUnPagoVieneDespuesDelCuatrocientosCuatroYNuncaAntes));
+        var otro = await PrepararAsync(nameof(ElRechazoDeUnPagoDeUnPagoVieneDespuesDelCuatrocientosCuatroYNuncaAntes) + "otro");
         var idPersonalAjeno = await CrearPersonalAsync(otro.Admin, saldoInicial: 1000m);
-        var (idAjeno, _) = await PagarYObtenerGastosAsync(otro, idPersonalAjeno);
+        var (idAjeno, _) = await PagarYObtenerPagosAsync(otro, idPersonalAjeno);
 
         foreach (var id in new[] { 987654, idAjeno })
         {
@@ -1276,11 +1276,11 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task UnGastoDeUnPagoNoSeVinculaAUnaCompraYElVinculoQuedaSinEscribir()
+    public async Task UnPagoDeUnPagoNoSeVinculaAUnaCompraYElVinculoQuedaSinEscribir()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeUnPagoNoSeVinculaAUnaCompraYElVinculoQuedaSinEscribir));
+        var ctx = await PrepararAsync(nameof(UnPagoDeUnPagoNoSeVinculaAUnaCompraYElVinculoQuedaSinEscribir));
         var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
-        var (idGasto, _) = await PagarYObtenerGastosAsync(ctx, idPersonal);
+        var (idPago, _) = await PagarYObtenerPagosAsync(ctx, idPersonal);
         var idCompra = await SembrarCompraConfirmadaAsync(ctx);
         decimal saldoDelProveedorAntes;
         await using (var previo = Abrir(ctx))
@@ -1289,13 +1289,13 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{idGasto}/vincular-compra", new SolicitudDeVincularCompra(idCompra));
+            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(idCompra));
 
         Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
         await using var abierto = Abrir(ctx);
-        var gasto = await abierto.Gastos.SingleAsync(g => g.Id == idGasto);
-        Assert.Equal(CategoriaGasto.Sueldos, gasto.Categoria);
-        Assert.Null(gasto.IdComprobanteCompra);
+        var pago = await abierto.Pagos.SingleAsync(g => g.Id == idPago);
+        Assert.Equal(CategoriaPago.Sueldos, pago.Categoria);
+        Assert.Null(pago.IdComprobanteCompra);
         Assert.Equal(saldoDelProveedorAntes, await abierto.Proveedores.Select(p => p.Saldo).SingleAsync());
     }
 

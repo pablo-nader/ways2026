@@ -1599,7 +1599,7 @@ public class ServicioDeVentas(
         // transacción — sin este re-chequeo, una venta concurrente a un cierre podría comitear
         // dentro de un turno cuyo arqueo YA se derivó. Reusa
         // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync tal cual (mismo criterio que
-        // ServicioDeGastos.InsertarGastoAsync) — el IWaysDbContext es el mismo por scope de DI,
+        // ServicioDePagos.InsertarPagoAsync) — el IWaysDbContext es el mismo por scope de DI,
         // así que ve esta misma transacción recién abierta.
         await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(plan.IdTurnoCaja, ct);
 

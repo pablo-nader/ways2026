@@ -13,7 +13,7 @@ namespace Ways.Application.CuentaCorriente;
 /// comitea nada), mismos parámetros por <see cref="ParametrosDeComando"/>. El único cambio real
 /// es el <c>ValidarFormaPorTipo</c> propio, porque la matriz 4×3 de esta tabla (design.md:113-118)
 /// no es la de <c>TipoMovimientoCc</c>. <c>ServicioDeCompras</c> (confirm/anulación) y, en slice 3,
-/// <c>ServicioDeGastos</c> (pago) y el ajuste manual (slice 5) llaman a esta clase en vez de
+/// <c>ServicioDePagos</c> (pago) y el ajuste manual (slice 5) llaman a esta clase en vez de
 /// duplicar el SQL: así queda exactamente UN <c>UPDATE proveedores ... saldo ... RETURNING</c> y
 /// UN <c>INSERT movimientos_cuenta_corriente_proveedor</c> en todo el codebase — "la extracción es
 /// lo que compra seguridad" (design: Technical Approach, decisión 1).
@@ -55,16 +55,16 @@ public static class EscriturasDeCuentaCorrienteProveedor
     public static async Task<int> InsertarMovimientoCcProveedorAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idProveedor, DateTimeOffset fecha,
         int? idPuntoVenta, int? idEmpleado, TipoMovimientoCcProveedor tipo, int? idComprobanteCompra,
-        int? idGasto, decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct)
+        int? idPago, decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct)
     {
-        ValidarFormaPorTipo(tipo, idComprobanteCompra, idGasto, idPuntoVenta, idEmpleado);
+        ValidarFormaPorTipo(tipo, idComprobanteCompra, idPago, idPuntoVenta, idEmpleado);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
             "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, " +
-            " id_gasto, importe, saldo_resultante, detalle) " +
+            " id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
             "RETURNING id_movimiento";
 
@@ -75,7 +75,7 @@ public static class EscriturasDeCuentaCorrienteProveedor
         ParametrosDeComando.AgregarNulo(comando, idEmpleado);
         ParametrosDeComando.Agregar(comando, tipo);
         ParametrosDeComando.AgregarNulo(comando, idComprobanteCompra);
-        ParametrosDeComando.AgregarNulo(comando, idGasto);
+        ParametrosDeComando.AgregarNulo(comando, idPago);
         ParametrosDeComando.Agregar(comando, importe);
         ParametrosDeComando.Agregar(comando, saldoResultante);
         ParametrosDeComando.AgregarNulo(comando, detalle);
@@ -87,30 +87,30 @@ public static class EscriturasDeCuentaCorrienteProveedor
 
     /// <summary>stage-gasto-a-compra (PR4): el ÚNICO <c>UPDATE</c> de
     /// <c>movimientos_cuenta_corriente_proveedor</c> — pone la imputación (<c>id_comprobante_compra</c>)
-    /// en el movimiento <c>Pago</c> que un gasto YA escribió al crearse (<see
-    /// cref="Ways.Application.Gastos.ServicioDeGastos"/>, categoría proveedor con proveedor). El
+    /// en el movimiento <c>Pago</c> que un pago YA escribió al crearse (<see
+    /// cref="Ways.Application.Pagos.ServicioDePagos"/>, categoría proveedor con proveedor). El
     /// saldo no cambia (el pago ya estaba contado): esto es solo trazabilidad, nunca un segundo
-    /// <c>ActualizarSaldoProveedorAsync</c>. 0 filas es un defecto de invariante (todo gasto con
+    /// <c>ActualizarSaldoProveedorAsync</c>. 0 filas es un defecto de invariante (todo pago con
     /// categoría proveedor + proveedor no nulo escribe exactamente un <c>Pago</c> al crearse) — no
     /// un <c>ErrorDominio</c> 4xx, mismo criterio que el resto de esta clase.</summary>
     public static async Task ImputarMovimientoDePagoAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idGasto, int idComprobanteCompra,
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPago, int idComprobanteCompra,
         CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "UPDATE movimientos_cuenta_corriente_proveedor SET id_comprobante_compra = $1 " +
-            "WHERE id_gasto = $2 AND id_tenant = $3 AND tipo = $4 RETURNING id_movimiento";
+            "WHERE id_pago = $2 AND id_tenant = $3 AND tipo = $4 RETURNING id_movimiento";
 
         ParametrosDeComando.Agregar(comando, idComprobanteCompra);
-        ParametrosDeComando.Agregar(comando, idGasto);
+        ParametrosDeComando.Agregar(comando, idPago);
         ParametrosDeComando.Agregar(comando, idTenant);
         ParametrosDeComando.Agregar(comando, TipoMovimientoCcProveedor.Pago);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException(
-                $"El gasto {idGasto} no tiene un movimiento de pago para imputar — invariante de escritura violado.");
+                $"El pago {idPago} no tiene un movimiento de pago para imputar — invariante de escritura violado.");
         _ = resultado;
     }
 
@@ -120,7 +120,7 @@ public static class EscriturasDeCuentaCorrienteProveedor
     /// clausula, mismo criterio que <c>EscriturasDeCuentaCorriente.ValidarFormaPorTipo</c>, para que
     /// cada mutation target (#12, #13) tenga una línea propia para borrar.</summary>
     private static void ValidarFormaPorTipo(
-        TipoMovimientoCcProveedor tipo, int? idComprobanteCompra, int? idGasto, int? idPuntoVenta, int? idEmpleado)
+        TipoMovimientoCcProveedor tipo, int? idComprobanteCompra, int? idPago, int? idPuntoVenta, int? idEmpleado)
     {
         if (tipo == TipoMovimientoCcProveedor.Apertura && (idPuntoVenta is not null || idEmpleado is not null))
         {
@@ -134,10 +134,10 @@ public static class EscriturasDeCuentaCorrienteProveedor
                 "Un movimiento de tipo Apertura no lleva id_comprobante_compra — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCcProveedor.Apertura && idGasto is not null)
+        if (tipo == TipoMovimientoCcProveedor.Apertura && idPago is not null)
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo Apertura no lleva id_gasto — invariante de escritura violado.");
+                "Un movimiento de tipo Apertura no lleva id_pago — invariante de escritura violado.");
         }
 
         if (tipo == TipoMovimientoCcProveedor.Compra && idComprobanteCompra is null)
@@ -146,22 +146,22 @@ public static class EscriturasDeCuentaCorrienteProveedor
                 "Un movimiento de tipo Compra requiere id_comprobante_compra — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCcProveedor.Compra && idGasto is not null)
+        if (tipo == TipoMovimientoCcProveedor.Compra && idPago is not null)
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo Compra nunca lleva id_gasto — invariante de escritura violado.");
+                "Un movimiento de tipo Compra nunca lleva id_pago — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCcProveedor.Pago && idGasto is null)
+        if (tipo == TipoMovimientoCcProveedor.Pago && idPago is null)
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo Pago requiere id_gasto — invariante de escritura violado.");
+                "Un movimiento de tipo Pago requiere id_pago — invariante de escritura violado.");
         }
 
-        if (tipo == TipoMovimientoCcProveedor.Ajuste && idGasto is not null)
+        if (tipo == TipoMovimientoCcProveedor.Ajuste && idPago is not null)
         {
             throw new InvalidOperationException(
-                "Un movimiento de tipo Ajuste nunca lleva id_gasto — invariante de escritura violado.");
+                "Un movimiento de tipo Ajuste nunca lleva id_pago — invariante de escritura violado.");
         }
 
         if (tipo != TipoMovimientoCcProveedor.Apertura && (idPuntoVenta is null || idEmpleado is null))

@@ -114,14 +114,14 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>id_entidad</c> es el comprobante; el payload lleva cliente, saldos y límite.</summary>
     public static readonly AccionAuditada VentaExcedioLimiteSinValidar = new("venta.sobrelimite", "comprobante_venta");
 
-    /// <summary>Edición de un gasto ya registrado — <c>Gastos/ServicioDeGastos.cs</c>, los caminos
+    /// <summary>Edición de un pago ya registrado — <c>Pagos/ServicioDePagos.cs</c>, los caminos
     /// del POS (turno abierto) y de administración. <c>valor_anterior</c>/<c>valor_nuevo</c> llevan
     /// los campos editables más el importe.</summary>
-    public static readonly AccionAuditada GastoEdicion = new("gasto.edicion", "gasto");
+    public static readonly AccionAuditada PagoEdicion = new("pago.edicion", "pago");
 
-    /// <summary>Baja lógica administrativa de un gasto — <c>Gastos/ServicioDeGastos.cs</c>. Mismos
-    /// campos que <see cref="GastoEdicion"/> más <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
-    public static readonly AccionAuditada GastoBaja = new("gasto.baja", "gasto");
+    /// <summary>Baja lógica administrativa de un pago — <c>Pagos/ServicioDePagos.cs</c>. Mismos
+    /// campos que <see cref="PagoEdicion"/> más <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
+    public static readonly AccionAuditada PagoBaja = new("pago.baja", "pago");
 
     /// <summary>Alta de un punto de venta sobre una empresa existente —
     /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearPuntoVentaAsync</c>. Mismo dominio
@@ -133,7 +133,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
-    /// validarlo y la edición/baja de gastos y el alta de puntos de venta, más el descarte de un borrador de compra) — usada por el catálogo genérico de tests (naming
+    /// validarlo y la edición/baja de pagos y el alta de puntos de venta, más el descarte de un borrador de compra) — usada por el catálogo genérico de tests (naming
     /// <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier consumidor que
     /// necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
@@ -158,8 +158,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         VentaDiscrepanciaDePrecio,
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
-        GastoEdicion,
-        GastoBaja,
+        PagoEdicion,
+        PagoBaja,
         PuntoVentaAlta
     ];
 }

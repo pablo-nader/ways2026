@@ -11,7 +11,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
@@ -62,7 +62,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<CategoriaPago>("categoria_pago");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<OrigenCompra>("origen_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
@@ -82,8 +82,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 // del repo a propósito (ver el comentario de MigrateAsync() más abajo), así que
                 // necesita conocer cada enum nuevo que aparezca, para siempre.
                 npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
-                // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
-                npgsql.MapEnum<Ways.Domain.Gastos.OrigenFondosGasto>("origen_fondos_gasto");
+                // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
+                npgsql.MapEnum<Ways.Domain.Pagos.OrigenFondosPago>("origen_fondos_pago");
             })
             .Options;
 
@@ -199,8 +199,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
     /// ANTES de <c>TurnosCajaMedioPagoEfectivo</c>) — INSERT crudo con la lista de columnas de
     /// ANTES de esa migración, nunca vía EF (que, con el modelo HEAD, incluiría la columna nueva
     /// en el INSERT y rompería contra el esquema viejo con <c>42703</c>).
-    /// <para>El turno es pura estructura de soporte de la fixture: <c>gastos.id_turno_caja</c> es
-    /// NOT NULL con FK compuesta, así que sin una fila de turno no se puede sembrar ningún gasto —
+    /// <para>El turno es pura estructura de soporte de la fixture: <c>pagos.id_turno_caja</c> es
+    /// NOT NULL con FK compuesta, así que sin una fila de turno no se puede sembrar ningún pago —
     /// el backfill bajo prueba no lee <c>turnos_caja</c> en ningún statement.</para></summary>
     private static async Task<int> SembrarTurnoPreMigracionAsync(
         NpgsqlConnection cruda, int idTenant, int idPuntoVenta, int idEmpleadoApertura, DateTimeOffset ahora)
@@ -279,9 +279,9 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
     /// muy ANTES de esa migración) — INSERT crudo con la lista de columnas de ANTES de esa etapa,
     /// nunca vía EF (que, con el modelo HEAD, incluiría las columnas nuevas en el INSERT y
     /// rompería contra el esquema viejo con <c>42703</c>).</summary>
-    private static async Task SembrarGastoAsync(
+    private static async Task SembrarPagoAsync(
         NpgsqlConnection cruda, Entorno ctx, int? idProveedor, int? idComprobanteCompra, decimal importe, bool eliminado,
-        CategoriaGasto categoria = CategoriaGasto.Proveedor)
+        CategoriaPago categoria = CategoriaPago.Proveedor)
     {
         var ahora = DateTimeOffset.UtcNow;
 
@@ -308,7 +308,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
     /// <summary>La fórmula RETIRADA, verbatim (mismo predicado que
     /// <c>ServicioDeSaldoDeProveedor.ObtenerAsync</c> tenía antes de la tarea 4.5 — spec:
     /// saldo-de-proveedor, REMOVED "Saldo Is A Derived Read, Never Persisted"): <c>Σ compras
-    /// confirmadas − Σ gastos (categoria = proveedor)</c>. Inlineada acá porque esta prueba
+    /// confirmadas − Σ pagos (categoria = proveedor)</c>. Inlineada acá porque esta prueba
     /// necesita evaluarla contra una base migrada SOLO hasta <see cref="MigracionAnterior"/>,
     /// donde <c>movimientos_cuenta_corriente_proveedor</c> todavía no existe — el punto exacto
     /// que hace que el backfill tenga algo que leer.</summary>
@@ -318,20 +318,21 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             .Where(c => c.IdProveedor == idProveedor && c.Estado == EstadoCompra.Confirmada)
             .SumAsync(c => c.Total);
 
-        var totalGastos = await db.Gastos
-            .Where(g => g.IdProveedor == idProveedor && g.Categoria == CategoriaGasto.Proveedor)
-            .SumAsync(g => g.Importe);
+        var totalPagos = await db.Database
+            .SqlQuery<decimal>(
+                $"SELECT COALESCE(SUM(importe), 0) AS \"Value\" FROM gastos WHERE id_proveedor = {idProveedor} AND categoria = 'proveedor'::categoria_gasto AND deleted_at IS NULL")
+            .SingleAsync();
 
-        return totalCompras - totalGastos;
+        return totalCompras - totalPagos;
     }
 
     private sealed record Fixture(
         string NombreBase, string CadenaAdmin, string CadenaNueva,
         int IdConDeuda, int IdCompraConDeuda, decimal SaldoPrevioConDeuda,
         int IdSoftDeleteCompra,
-        int IdSoftDeleteGasto,
+        int IdSoftDeletePago,
         int IdSoftDeleteProveedor,
-        int IdGastoHuerfano,
+        int IdPagoHuerfano,
         int IdBorradorYAnulada,
         int IdSinHistoria);
 
@@ -378,37 +379,37 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         var ctx = await SembrarEntornoAsync(db2, sufijo);
 
         // P1 "ConDeuda" — los números EXACTOS del escenario de spec.md ("The backfill reproduces
-        // the exact pre-migration saldo"): confirmada 2000, anulada 500, borrador 300, gasto
-        // ligado 700, gasto sin ligar 200 ⇒ derivado = 2000 − 700 − 200 = 1100.
+        // the exact pre-migration saldo"): confirmada 2000, anulada 500, borrador 300, pago
+        // ligado 700, pago sin ligar 200 ⇒ derivado = 2000 − 700 − 200 = 1100.
         var idConDeuda = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "ConDeuda", eliminado: false);
         var idCompraConDeuda = await SembrarCompraAsync(conexionCruda, ctx, idConDeuda, 2000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000001");
         await SembrarCompraAsync(conexionCruda, ctx, idConDeuda, 500m, EstadoCompra.Anulada, eliminada: false, "F0001-00000002");
         await SembrarCompraAsync(conexionCruda, ctx, idConDeuda, 300m, EstadoCompra.Borrador, eliminada: false, "F0001-00000003");
-        await SembrarGastoAsync(conexionCruda, ctx, idConDeuda, idCompraConDeuda, 700m, eliminado: false);
-        await SembrarGastoAsync(conexionCruda, ctx, idConDeuda, null, 200m, eliminado: false);
+        await SembrarPagoAsync(conexionCruda, ctx, idConDeuda, idCompraConDeuda, 700m, eliminado: false);
+        await SembrarPagoAsync(conexionCruda, ctx, idConDeuda, null, 200m, eliminado: false);
 
         // Target #1: deleted_at IS NULL en comprobantes_compra — una compra confirmada de 1000
         // pero soft-deleted no debe generar fila ni saldo.
         var idSoftDeleteCompra = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "SoftDeleteCompra", eliminado: false);
         await SembrarCompraAsync(conexionCruda, ctx, idSoftDeleteCompra, 1000m, EstadoCompra.Confirmada, eliminada: true, "F0001-00000004");
 
-        // Target #2: deleted_at IS NULL en gastos — compra de 1000 vigente, gasto ligado de 1000
-        // soft-deleted: si el filtro se respeta, el gasto NO resta y el saldo derivado es 1000.
-        var idSoftDeleteGasto = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "SoftDeleteGasto", eliminado: false);
-        var idCompraSoftDeleteGasto = await SembrarCompraAsync(conexionCruda, ctx, idSoftDeleteGasto, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000005");
-        await SembrarGastoAsync(conexionCruda, ctx, idSoftDeleteGasto, idCompraSoftDeleteGasto, 1000m, eliminado: true);
+        // Target #2: deleted_at IS NULL en pagos — compra de 1000 vigente, pago ligado de 1000
+        // soft-deleted: si el filtro se respeta, el pago NO resta y el saldo derivado es 1000.
+        var idSoftDeletePago = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "SoftDeleteGasto", eliminado: false);
+        var idCompraSoftDeletePago = await SembrarCompraAsync(conexionCruda, ctx, idSoftDeletePago, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000005");
+        await SembrarPagoAsync(conexionCruda, ctx, idSoftDeletePago, idCompraSoftDeletePago, 1000m, eliminado: true);
 
         // Target #3: deleted_at IS NULL en proveedores — el proveedor mismo está soft-deleted:
         // ninguna fila de apertura, sin importar que tenga una compra vigente de 1000.
         var idSoftDeleteProveedor = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "SoftDeleteProveedor", eliminado: true);
         await SembrarCompraAsync(conexionCruda, ctx, idSoftDeleteProveedor, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000006");
 
-        // Target #4: id_proveedor IS NOT NULL en el predicate de gastos — un gasto huérfano
+        // Target #4: id_proveedor IS NOT NULL en el predicate de pagos — un pago huérfano
         // (categoria=proveedor, id_proveedor NULL) no debe entrar en NINGÚN proveedor. Este
-        // proveedor tiene su propia compra de 1000 sin gastos ligados: derivado = 1000.
-        var idGastoHuerfano = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "GastoHuerfano", eliminado: false);
-        await SembrarCompraAsync(conexionCruda, ctx, idGastoHuerfano, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000007");
-        await SembrarGastoAsync(conexionCruda, ctx, null, null, 9999m, eliminado: false);
+        // proveedor tiene su propia compra de 1000 sin pagos ligados: derivado = 1000.
+        var idPagoHuerfano = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "GastoHuerfano", eliminado: false);
+        await SembrarCompraAsync(conexionCruda, ctx, idPagoHuerfano, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000007");
+        await SembrarPagoAsync(conexionCruda, ctx, null, null, 9999m, eliminado: false);
 
         // Target #5: estado = 'confirmada' — solo borrador + anulada, ninguna confirmada:
         // derivado = 0, sin fila.
@@ -424,7 +425,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         return new Fixture(
             nombreBase, cadenaAdmin, cadenaNueva,
             idConDeuda, idCompraConDeuda, saldoPrevioConDeuda,
-            idSoftDeleteCompra, idSoftDeleteGasto, idSoftDeleteProveedor, idGastoHuerfano,
+            idSoftDeleteCompra, idSoftDeletePago, idSoftDeleteProveedor, idPagoHuerfano,
             idBorradorYAnulada, idSinHistoria);
     }
 
@@ -534,22 +535,22 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             Assert.Null(await LeerAperturaAsync(f.IdSoftDeleteCompra));
             Assert.Equal(0m, await LeerSaldoAsync(f.IdSoftDeleteCompra));
 
-            // target #2: gasto soft-deleted excluido ⇒ derivado = 1000 (la compra sola).
-            var aperturaSoftDeleteGasto = await LeerAperturaAsync(f.IdSoftDeleteGasto);
-            Assert.NotNull(aperturaSoftDeleteGasto);
-            Assert.Equal(1000m, aperturaSoftDeleteGasto!.Value.Importe);
-            Assert.Equal(1000m, await LeerSaldoAsync(f.IdSoftDeleteGasto));
+            // target #2: pago soft-deleted excluido ⇒ derivado = 1000 (la compra sola).
+            var aperturaSoftDeletePago = await LeerAperturaAsync(f.IdSoftDeletePago);
+            Assert.NotNull(aperturaSoftDeletePago);
+            Assert.Equal(1000m, aperturaSoftDeletePago!.Value.Importe);
+            Assert.Equal(1000m, await LeerSaldoAsync(f.IdSoftDeletePago));
 
             // target #3: proveedor soft-deleted ⇒ sin fila pese a la compra vigente.
             Assert.Null(await LeerAperturaAsync(f.IdSoftDeleteProveedor));
             Assert.Equal(0m, await LeerSaldoAsync(f.IdSoftDeleteProveedor));
 
-            // target #4: el gasto huérfano (id_proveedor NULL) no reduce a NADIE — este
-            // proveedor solo tiene su propia compra de 1000, sin gasto ligado.
-            var aperturaGastoHuerfano = await LeerAperturaAsync(f.IdGastoHuerfano);
-            Assert.NotNull(aperturaGastoHuerfano);
-            Assert.Equal(1000m, aperturaGastoHuerfano!.Value.Importe);
-            Assert.Equal(1000m, await LeerSaldoAsync(f.IdGastoHuerfano));
+            // target #4: el pago huérfano (id_proveedor NULL) no reduce a NADIE — este
+            // proveedor solo tiene su propia compra de 1000, sin pago ligado.
+            var aperturaPagoHuerfano = await LeerAperturaAsync(f.IdPagoHuerfano);
+            Assert.NotNull(aperturaPagoHuerfano);
+            Assert.Equal(1000m, aperturaPagoHuerfano!.Value.Importe);
+            Assert.Equal(1000m, await LeerSaldoAsync(f.IdPagoHuerfano));
 
             // target #5: borrador + anulada, ninguna confirmada ⇒ derivado 0, sin fila.
             Assert.Null(await LeerAperturaAsync(f.IdBorradorYAnulada));
@@ -608,6 +609,10 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             // — target #7). Mismo patrón de reintento que ComprasTipoSeedTests/
             // CuentaCorrienteEtapa7BackstopTests, pero con la fuente de verdad correcta.
             var (statement1, statement2) = LeerStatementsDelBackfillDesdeElArchivoDeLaMigracion();
+            // La migración escribió su SQL contra el esquema de entonces; la base ya está en el actual,
+            // donde la tabla y la columna del vínculo se llaman pagos/id_pago.
+            statement1 = statement1.Replace("FROM gastos", "FROM pagos", StringComparison.Ordinal)
+                .Replace("id_gasto", "id_pago", StringComparison.Ordinal);
 
             await using (var comando = verificacion.CreateCommand())
             {
@@ -636,7 +641,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
     /// <summary>Target #4 — PROVABLY EQUIVALENT AT RUNTIME, prueba de TEXTO FUENTE en su lugar
     /// (mutation-proof-tests rule 3 agotada primero, finding registrado en tasks.md). La prueba
     /// de fidelidad de punta a punta NO puede matar el mutante que borra
-    /// <c>id_proveedor IS NOT NULL</c> del predicate de gastos: la CTE <c>derivado</c> está
+    /// <c>id_proveedor IS NOT NULL</c> del predicate de pagos: la CTE <c>derivado</c> está
     /// enraizada en <c>proveedores</c> (<c>FROM proveedores p LEFT JOIN (...) g ON g.id_proveedor
     /// = p.id_proveedor</c>) y bajo semántica NULL de SQL ningún <c>p.id_proveedor</c> real
     /// (NOT NULL) puede emparejar con un grupo <c>g.id_proveedor IS NULL</c> — así que NINGÚN
@@ -649,7 +654,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
     /// que enrutar (la regla 3 asume un componente invocable por separado; acá el predicate vive
     /// dentro de un único literal SQL embebido, sin costura). La única prueba que SÍ detecta esta
     /// mutación es de texto fuente: lee el archivo de migración REAL y confirma que la cláusula
-    /// sigue presente en el fragmento de gastos.</summary>
+    /// sigue presente en el fragmento de pagos.</summary>
     [Fact]
     public void ElTextoFuenteDeLaMigracionConservaElFiltroIdProveedorNoNuloTarget4()
     {

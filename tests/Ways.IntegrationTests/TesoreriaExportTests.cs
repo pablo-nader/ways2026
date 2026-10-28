@@ -8,12 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -112,13 +112,13 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         return movimiento.Id;
     }
 
-    /// <summary>judgment-day PR5, hallazgo #2: registra un gasto de administración real (mismo
-    /// camino que <c>GastosDeAdministracionEndpointsTests</c>) para que
-    /// <c>EscriturasDeTesoreria</c> escriba su propia fila `tipo = gasto` en la cadena — necesario
-    /// para probar que el export usa la ETIQUETA en español de <see cref="CategoriaGasto"/>, no el
+    /// <summary>judgment-day PR5, hallazgo #2: registra un pago de administración real (mismo
+    /// camino que <c>PagosDeAdministracionEndpointsTests</c>) para que
+    /// <c>EscriturasDeTesoreria</c> escriba su propia fila `tipo = pago` en la cadena — necesario
+    /// para probar que el export usa la ETIQUETA en español de <see cref="CategoriaPago"/>, no el
     /// nombre crudo del enum.</summary>
-    private async Task RegistrarGastoDeAdministracionAsync(
-        Contexto ctx, DateOnly dia, CategoriaGasto categoria, string concepto, decimal importe)
+    private async Task RegistrarPagoDeAdministracionAsync(
+        Contexto ctx, DateOnly dia, CategoriaPago categoria, string concepto, decimal importe)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var idMedioEfectivo = await db.MediosPago
@@ -127,7 +127,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         // idPuntoVenta = ctx.IdPuntoVenta (no null): LlamarExportAsync de esta clase siempre
         // filtra por ctx.IdPuntoVenta (ConstruirQuery no admite "Todos" acá) — una fila sin punto
         // de venta quedaría afuera del export y este test nunca vería la celda.
-        var solicitud = new SolicitudDeGastoDeAdministracion(
+        var solicitud = new SolicitudDePagoDeAdministracion(
             dia, ctx.IdEmpresa, ctx.IdPuntoVenta, categoria, null, null, concepto, null, idMedioEfectivo, null, importe);
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -209,22 +209,22 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     /// <summary>judgment-day PR5, hallazgo confirmado #2: el export usa la MISMA etiqueta en
-    /// español que <c>Tesoreria.tsx</c>/<c>CATEGORIAS_GASTO</c> ("Viáticos"), nunca el nombre
-    /// crudo del enum <see cref="CategoriaGasto"/> ("Viaticos", sin tilde y en inglés-ish). Mutación
-    /// aplicada (revertir <c>EtiquetaDeCategoriaGasto</c> a interpolar <c>f.GastoCategoria</c>
+    /// español que <c>Tesoreria.tsx</c>/<c>CATEGORIAS_PAGO</c> ("Viáticos"), nunca el nombre
+    /// crudo del enum <see cref="CategoriaPago"/> ("Viaticos", sin tilde y en inglés-ish). Mutación
+    /// aplicada (revertir <c>EtiquetaDeCategoriaPago</c> a interpolar <c>f.PagoCategoria</c>
     /// crudo): esta prueba pasó de FALLAR (celda "Viaticos — ...") a pasar al revertir — evidencia
     /// registrada en el cuerpo de esta corrección.</summary>
     [Fact]
-    public async Task LaCeldaDeConceptoDeUnaFilaDeGastoUsaLaEtiquetaEnEspanolDeLaCategoria()
+    public async Task LaCeldaDeConceptoDeUnaFilaDePagoUsaLaEtiquetaEnEspanolDeLaCategoria()
     {
-        var ctx = await PrepararAsync(nameof(LaCeldaDeConceptoDeUnaFilaDeGastoUsaLaEtiquetaEnEspanolDeLaCategoria), fixture);
-        // Fecha de NEGOCIO retroactiva del gasto (lo único que el admin controla) — el movimiento
+        var ctx = await PrepararAsync(nameof(LaCeldaDeConceptoDeUnaFilaDePagoUsaLaEtiquetaEnEspanolDeLaCategoria), fixture);
+        // Fecha de NEGOCIO retroactiva del pago (lo único que el admin controla) — el movimiento
         // de tesorería que escribe EscriturasDeTesoreria lleva su propia Fecha = reloj.Ahora (hoy),
-        // así que el rango del export tiene que cubrir HOY, no la fecha retroactiva del gasto.
+        // así que el rango del export tiene que cubrir HOY, no la fecha retroactiva del pago.
         var fechaDeNegocio = new DateOnly(2026, 8, 1);
         var hoy = FechaDelNegocio.Hoy();
 
-        await RegistrarGastoDeAdministracionAsync(ctx, fechaDeNegocio, CategoriaGasto.Viaticos, "Pasaje a Rosario", 5000m);
+        await RegistrarPagoDeAdministracionAsync(ctx, fechaDeNegocio, CategoriaPago.Viaticos, "Pasaje a Rosario", 5000m);
 
         var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx, hoy, hoy);
         var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();

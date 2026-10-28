@@ -413,7 +413,7 @@ public partial class FacturacionDeVentasEmisionTests
     }
 
     [Fact]
-    public async Task ElPresupuestoDelIntentoEsLoQueQuedaDelTopeCuandoLaDecisionYaGastoTiempo()
+    public async Task ElPresupuestoDelIntentoEsLoQueQuedaDelTopeCuandoLaDecisionYaPagoTiempo()
     {
         var t = await PrepararCobroAsync("cobrorestante");
         t.Interceptor.ConsumoDeLaDecision = TimeSpan.FromSeconds(5);

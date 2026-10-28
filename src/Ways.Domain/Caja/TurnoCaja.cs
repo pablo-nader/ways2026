@@ -4,7 +4,7 @@ namespace Ways.Domain.Caja;
 
 /// <summary>
 /// Turno de caja (doc 10 §7, design: Table Shapes — write path A): serializa cada camino que
-/// toca la caja física de un punto de venta (venta, anulación, gasto, movimiento de caja) — el
+/// toca la caja física de un punto de venta (venta, anulación, pago, movimiento de caja) — el
 /// turno abierto es el lock de primer orden de toda la etapa (design: lock-order invariant, The
 /// Cierre Transaction). Se abre con <see cref="FondoInicial"/> y se cierra una sola vez (nunca
 /// hay reapertura, design decisión 10): <see cref="Estado"/> solo transiciona abierto → cerrado.
@@ -13,7 +13,7 @@ namespace Ways.Domain.Caja;
 /// misma etapa): la fila se abre y después se cierra —dos escrituras sobre la misma fila—, así
 /// que <c>updated_at</c> tiene sentido acá, a diferencia de <see cref="MovimientoCaja"/>/
 /// <see cref="MovimientoTesoreria"/>. El cierre sigue sin reapertura, pero un admin que edita o da
-/// de baja un gasto de caja de un turno ya cerrado recalcula su arqueo y deja la marca en
+/// de baja un pago de caja de un turno ya cerrado recalcula su arqueo y deja la marca en
 /// <see cref="FechaRecalculo"/>/<see cref="IdEmpleadoRecalculo"/>.
 /// </summary>
 public class TurnoCaja : EntidadTenant
@@ -53,7 +53,7 @@ public class TurnoCaja : EntidadTenant
     public int? IdMedioPagoEfectivo { get; set; }
 
     /// <summary>Último recálculo administrativo del arqueo de este turno ya cerrado (edición o baja
-    /// de un gasto de caja). Los dos campos van juntos o no van
+    /// de un pago de caja). Los dos campos van juntos o no van
     /// (<c>ck_turnos_caja_recalculo_consistente</c>); el último recálculo pisa al anterior.</summary>
     public DateTimeOffset? FechaRecalculo { get; set; }
 

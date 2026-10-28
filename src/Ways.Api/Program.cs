@@ -309,7 +309,7 @@ app.MapearVentas();
 app.MapearPos();
 app.MapearStock();
 app.MapearCaja();
-app.MapearGastos();
+app.MapearPagos();
 app.MapearCuentaCorriente();
 app.MapearCompras();
 // stage-16-ordenes-de-compra, Slice 2: borrador CRUD + enviar (numeración propia, serie 'OC').

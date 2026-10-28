@@ -8,7 +8,7 @@ namespace Ways.Application.Reportes;
 /// <see cref="TablaExportable"/> — la etapa 11 nunca vuelve a consultar la base para exportar
 /// (design decisión 11, spec exportacion-de-reportes: "No Re-Query"). Uno por reporte:
 /// <c>ventas/resumen</c> llegó en slice 1b; los ocho restantes de stage-10 (por-punto-venta,
-/// por-vendedor, por-medio-pago, articulos/top, compras/por-proveedor, gastos/resumen,
+/// por-vendedor, por-medio-pago, articulos/top, compras/por-proveedor, pagos/resumen,
 /// rentabilidad, comisiones) se agregan acá en slice 2.
 /// </summary>
 public static class ExportacionDeReportes
@@ -238,18 +238,18 @@ public static class ExportacionDeReportes
         return new TablaExportable("Compras por proveedor", ctx, ColumnasComprasPorProveedor, filas);
     }
 
-    private static readonly IReadOnlyList<ColumnaExportable> ColumnasGastosResumen =
+    private static readonly IReadOnlyList<ColumnaExportable> ColumnasPagosResumen =
     [
         new ColumnaExportable("Período", TipoDeColumna.Texto),
         new ColumnaExportable("Importe", TipoDeColumna.Moneda)
     ];
 
-    /// <summary>Una fila por bucket de <see cref="ResumenDeGastos.Serie"/> más una fila de
-    /// totales con <see cref="ResumenDeGastos.ImporteTotal"/> — mismo criterio de gap-fill y
+    /// <summary>Una fila por bucket de <see cref="ResumenDePagos.Serie"/> más una fila de
+    /// totales con <see cref="ResumenDePagos.ImporteTotal"/> — mismo criterio de gap-fill y
     /// totales que <c>ventas/resumen</c>. Sin el desglose por categoría: la serie temporal es la
     /// figura que este export prueba igual al endpoint, mismo alcance que el resto de los ocho
     /// mappers de esta slice.</summary>
-    public static TablaExportable De(ResumenDeGastos respuesta, ContextoDeExportacion ctx)
+    public static TablaExportable De(ResumenDePagos respuesta, ContextoDeExportacion ctx)
     {
         var filas = respuesta.Serie
             .Select(bucket => (IReadOnlyList<Celda>)
@@ -261,7 +261,7 @@ public static class ExportacionDeReportes
 
         filas.Add([Celda.Texto("Total"), Celda.Moneda(respuesta.ImporteTotal)]);
 
-        return new TablaExportable("Gastos resumen", ctx, ColumnasGastosResumen, filas);
+        return new TablaExportable("Gastos resumen", ctx, ColumnasPagosResumen, filas);
     }
 
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasRentabilidad =

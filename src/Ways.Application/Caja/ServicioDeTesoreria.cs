@@ -3,7 +3,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
 using Ways.Domain.Caja;
 using Ways.Domain.Common;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 namespace Ways.Application.Caja;
 
@@ -167,21 +167,21 @@ public class ServicioDeTesoreria(IWaysDbContext db)
 
     /// <summary>Proyección compartida de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> — dangling-fk-read-models: tanto
-    /// <c>NombrePuntoVenta</c> como <c>GastoCategoria</c>/<c>GastoConcepto</c> resuelven a
-    /// <c>null</c> tanto sin punto de venta/gasto como con uno dado de baja lógica (el filtro
+    /// <c>NombrePuntoVenta</c> como <c>PagoCategoria</c>/<c>PagoConcepto</c> resuelven a
+    /// <c>null</c> tanto sin punto de venta/pago como con uno dado de baja lógica (el filtro
     /// global de baja lógica de EF ya los deja invisibles), nunca excluyen ni rompen la fila —
-    /// mismo criterio que <c>ServicioDeGastos.ProyeccionDeAdministracion</c>.
+    /// mismo criterio que <c>ServicioDePagos.ProyeccionDeAdministracion</c>.
     ///
-    /// judgment-day PR5, hallazgo #4: <c>GastoCategoria</c>/<c>GastoConcepto</c> resolvían por DOS
-    /// subqueries correlacionadas separadas contra <see cref="IWaysDbContext.Gastos"/> (una por
+    /// judgment-day PR5, hallazgo #4: <c>PagoCategoria</c>/<c>PagoConcepto</c> resolvían por DOS
+    /// subqueries correlacionadas separadas contra <see cref="IWaysDbContext.Pagos"/> (una por
     /// campo) — un <c>let</c> las colapsa en UNA sola consulta (EF Core la traduce a un
     /// <c>OUTER APPLY</c>/<c>LEFT JOIN LATERAL</c> único), reusando su resultado para ambos
     /// campos.</summary>
     private IQueryable<MovimientoTesoreriaListado> Proyectar(IQueryable<MovimientoTesoreria> query) =>
         from m in query
-        let gasto = m.IdGasto == null
+        let pago = m.IdPago == null
             ? null
-            : db.Gastos.Where(g => g.Id == m.IdGasto).Select(g => new { g.Categoria, g.Concepto }).FirstOrDefault()
+            : db.Pagos.Where(g => g.Id == m.IdPago).Select(g => new { g.Categoria, g.Concepto }).FirstOrDefault()
         select new MovimientoTesoreriaListado(
             m.Id,
             m.IdEmpresa,
@@ -192,9 +192,9 @@ public class ServicioDeTesoreria(IWaysDbContext db)
             m.Fecha,
             m.Tipo,
             m.IdTurnoCaja,
-            m.IdGasto,
-            gasto == null ? null : (CategoriaGasto?)gasto.Categoria,
-            gasto == null ? null : gasto.Concepto,
+            m.IdPago,
+            pago == null ? null : (CategoriaPago?)pago.Categoria,
+            pago == null ? null : pago.Concepto,
             m.Concepto,
             m.Inicio,
             m.Ingreso,

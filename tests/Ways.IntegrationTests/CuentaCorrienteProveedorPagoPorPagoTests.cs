@@ -7,14 +7,14 @@ using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Compras;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
@@ -25,7 +25,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// stage-15-cc-proveedores-ledger, Slice 3: el movimiento `pago` dentro de
-/// <c>ServicioDeGastos.InsertarGastoAsync</c> (task 3.1) — la predicado (tasks 3.3-3.5), el guard
+/// <c>ServicioDePagos.InsertarPagoAsync</c> (task 3.1) — la predicado (tasks 3.3-3.5), el guard
 /// de turno intacto (task 3.6), el no-regresión de arqueo (task 3.7), las dos carreras REALES
 /// (tasks 3.8-3.9, decisión 7 de tasks.md: slice 2 solo pudo simular el pago llamando directo al
 /// writer), el punto de falla (task 3.10) y el backstop de <c>fk_..._comprobante_compra</c> (task
@@ -33,7 +33,7 @@ namespace Ways.IntegrationTests;
 /// body, no en este archivo.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
@@ -77,7 +77,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
 
         // MedioPago es tenant-scoped — bajo TenantActualFijo.Plataforma el filtro de EF no acota
         // por tenant y .FirstAsync() puede devolver la fila de OTRO tenant creado en paralelo por
-        // otra prueba de esta colección (mismo criterio que GastosLigadosACompraTests.PrepararAsync).
+        // otra prueba de esta colección (mismo criterio que PagosLigadosACompraTests.PrepararAsync).
         await using var dbTenant = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var idMedioEfectivo = await dbTenant.MediosPago
             .Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
@@ -142,19 +142,19 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    private static SolicitudDeGasto SolicitudDePago(
+    private static SolicitudDePago SolicitudDePago(
         Contexto ctx, decimal importe, int? idComprobanteCompra = null, int? idProveedor = null,
-        CategoriaGasto categoria = CategoriaGasto.Proveedor) =>
+        CategoriaPago categoria = CategoriaPago.Proveedor) =>
         new(
-            ctx.IdPuntoVenta, categoria, idProveedor ?? (categoria == CategoriaGasto.Proveedor ? ctx.IdProveedor : null),
+            ctx.IdPuntoVenta, categoria, idProveedor ?? (categoria == CategoriaPago.Proveedor ? ctx.IdProveedor : null),
             null, "Pago a proveedor", null, ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
 
-    // ---- task 3.3: gasto proveedor ligado escribe exactamente un pago imputado ---------------------
+    // ---- task 3.3: pago proveedor ligado escribe exactamente un pago imputado ---------------------
 
     [Fact]
-    public async Task UnGastoDeCategoriaProveedorLigadoEscribeExactamenteUnPagoImputado()
+    public async Task UnPagoDeCategoriaProveedorLigadoEscribeExactamenteUnPagoImputado()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeCategoriaProveedorLigadoEscribeExactamenteUnPagoImputado));
+        var ctx = await PrepararAsync(nameof(UnPagoDeCategoriaProveedorLigadoEscribeExactamenteUnPagoImputado));
         // deuda previa REAL (≠ 0) de otra compra que se queda VIVA — discrimina el
         // saldo_resultante del RETURNING de un mutante de valor (hallazgo del juez B, slice 2:
         // ningún assert de saldo/saldo_resultante contra un proveedor "fresco").
@@ -166,33 +166,33 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
             "/api/gastos", SolicitudDePago(ctx, importe: 1000m, idComprobanteCompra: compra.Id));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var pagos = await db.MovimientosCuentaCorrienteProveedor
-            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Pago && m.IdGasto == gasto.Id)
+            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Pago && m.IdPago == pago.Id)
             .ToListAsync();
 
-        // mutation target #22 (el write movido ANTES de SaveChangesAsync): si id_gasto viniera de
+        // mutation target #22 (el write movido ANTES de SaveChangesAsync): si id_pago viniera de
         // una fila todavía no flusheada, sería 0 — nunca el id real recién generado.
-        var pago = Assert.Single(pagos);
-        Assert.Equal(gasto.Id, pago.IdGasto);
-        Assert.True(pago.IdGasto > 0);
-        Assert.Equal(-1000m, pago.Importe);
-        Assert.Equal(compra.Id, pago.IdComprobanteCompra);
+        var movimiento = Assert.Single(pagos);
+        Assert.Equal(pago.Id, movimiento.IdPago);
+        Assert.True(movimiento.IdPago > 0);
+        Assert.Equal(-1000m, movimiento.Importe);
+        Assert.Equal(compra.Id, movimiento.IdComprobanteCompra);
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
         // 300 (otra compra viva) + 1000 (esta compra) − 1000 (este pago) = 300.
         Assert.Equal(300m, proveedor.Saldo);
-        Assert.Equal(proveedor.Saldo, pago.SaldoResultante);
+        Assert.Equal(proveedor.Saldo, movimiento.SaldoResultante);
     }
 
-    // ---- task 3.4: gasto sin comprobante reduce el saldo sin imputación ----------------------------
+    // ---- task 3.4: pago sin comprobante reduce el saldo sin imputación ----------------------------
 
     [Fact]
-    public async Task UnGastoDeCategoriaProveedorSinComprobanteEscribeUnPagoSinImputacion()
+    public async Task UnPagoDeCategoriaProveedorSinComprobanteEscribeUnPagoSinImputacion()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeCategoriaProveedorSinComprobanteEscribeUnPagoSinImputacion));
+        var ctx = await PrepararAsync(nameof(UnPagoDeCategoriaProveedorSinComprobanteEscribeUnPagoSinImputacion));
         // deuda previa REAL para discriminar el saldo_resultante del mutante de valor (mismo
         // criterio, hallazgo del juez B slice 2: ningún assert de saldo_resultante contra un
         // proveedor "fresco").
@@ -202,49 +202,49 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 300m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var pago = await db.MovimientosCuentaCorrienteProveedor.SingleAsync(m => m.IdGasto == gasto.Id);
+        var movimiento = await db.MovimientosCuentaCorrienteProveedor.SingleAsync(m => m.IdPago == pago.Id);
 
-        Assert.Null(pago.IdComprobanteCompra);
-        Assert.Equal(-300m, pago.Importe);
+        Assert.Null(movimiento.IdComprobanteCompra);
+        Assert.Equal(-300m, movimiento.Importe);
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
         Assert.Equal(500m, proveedor.Saldo); // 800 − 300
-        Assert.Equal(proveedor.Saldo, pago.SaldoResultante);
+        Assert.Equal(proveedor.Saldo, movimiento.SaldoResultante);
     }
 
     // ---- task 3.5 / mutation target #21: los DOS conjuntos del predicado, cada uno por separado ----
 
     [Fact]
-    public async Task UnGastoDeOtraCategoriaConIdProveedorNoEscribeMovimiento()
+    public async Task UnPagoDeOtraCategoriaConIdProveedorNoEscribeMovimiento()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeOtraCategoriaConIdProveedorNoEscribeMovimiento));
+        var ctx = await PrepararAsync(nameof(UnPagoDeOtraCategoriaConIdProveedorNoEscribeMovimiento));
         await AbrirTurnoAsync(ctx);
 
         // categoria != proveedor, con id_proveedor de todos modos presente en la solicitud (el
-        // servicio lo ignora: SolicitudDeGasto.IdProveedor solo se usa cuando la categoría ES
+        // servicio lo ignora: SolicitudDePago.IdProveedor solo se usa cuando la categoría ES
         // proveedor) — discrimina el conjunto "categoria = proveedor" del predicado.
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Servicios, ctx.IdProveedor, null, "Gasto de servicios", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Servicios, ctx.IdProveedor, null, "Gasto de servicios", null,
                 ctx.IdMedioEfectivo, null, 200m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.IdGasto == gasto.Id));
+        Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.IdPago == pago.Id));
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
         Assert.Equal(0m, proveedor.Saldo);
     }
 
     [Fact]
-    public async Task UnGastoDeCategoriaProveedorSinIdProveedorNoEscribeMovimiento()
+    public async Task UnPagoDeCategoriaProveedorSinIdProveedorNoEscribeMovimiento()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeCategoriaProveedorSinIdProveedorNoEscribeMovimiento));
+        var ctx = await PrepararAsync(nameof(UnPagoDeCategoriaProveedorSinIdProveedorNoEscribeMovimiento));
         await AbrirTurnoAsync(ctx);
 
         // categoria = proveedor, id_proveedor NULL — discrimina el conjunto "id_proveedor no
@@ -253,23 +253,23 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         // ctx.IdProveedor por defecto cuando la categoría es proveedor).
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, null, null, "Gasto sin proveedor", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Proveedor, null, null, "Gasto sin proveedor", null,
                 ctx.IdMedioEfectivo, null, 200m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.IdGasto == gasto.Id));
+        Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.IdPago == pago.Id));
     }
 
     // ---- task 3.6: el guard de turno sigue intacto — 409 no escribe movimiento ----------------------
 
     [Fact]
-    public async Task UnGastoDeProveedorSinTurnoAbiertoEsRechazadoYNoEscribeMovimiento()
+    public async Task UnPagoDeProveedorSinTurnoAbiertoEsRechazadoYNoEscribeMovimiento()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeProveedorSinTurnoAbiertoEsRechazadoYNoEscribeMovimiento));
+        var ctx = await PrepararAsync(nameof(UnPagoDeProveedorSinTurnoAbiertoEsRechazadoYNoEscribeMovimiento));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 200m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -297,10 +297,10 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno}/resumen", OpcionesJson);
         Assert.NotNull(resumen);
 
-        // El gasto pesa en Egresos.PorCategoria exactamente como antes de esta etapa (design "What
+        // El pago pesa en Egresos.PorCategoria exactamente como antes de esta etapa (design "What
         // does NOT change": ningún término nuevo, ninguna derivación nueva) — el ledger de
         // proveedores no agrega ni resta nada acá.
-        var proveedor = Assert.Single(resumen!.Egresos.PorCategoria, e => e.Categoria == CategoriaGasto.Proveedor);
+        var proveedor = Assert.Single(resumen!.Egresos.PorCategoria, e => e.Categoria == CategoriaPago.Proveedor);
         Assert.Equal(120m, proveedor.Total);
     }
 
@@ -383,7 +383,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var cuerpoAnulacion = await respuestaAnulacion.Content.ReadAsStringAsync();
         Assert.True(respuestaAnulacion.StatusCode == HttpStatusCode.OK, cuerpoAnulacion);
         var resultadoAnulacion = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpoAnulacion, OpcionesJson)!;
-        Assert.Equal(1, resultadoAnulacion.GastosLigados);
+        Assert.Equal(1, resultadoAnulacion.PagosLigados);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
@@ -406,9 +406,9 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     /// gana la carrera — commitea completa mientras el pago sigue pausado sin haber tomado su
     /// propio <c>FOR SHARE</c> todavía. El pago retoma, <c>ExigirCompraLigableAsync</c> ve
     /// <c>anulada</c> ya comiteada y rechaza con <c>409 compra_anulada</c> — ningún movimiento de
-    /// ledger, ninguna fila de <c>gastos</c>, ningún riesgo de violar
+    /// ledger, ninguna fila de <c>pagos</c>, ningún riesgo de violar
     /// <c>fk_..._comprobante_compra</c> con una imputación a una compra que ya no admite pagos.
-    /// Mismo patrón que <c>GastosLigadosACompraTests.LaAnulacionGanandoLaCarreraDejaAlGastoRechazadoSinVinculoCorrupto</c>,
+    /// Mismo patrón que <c>PagosLigadosACompraTests.LaAnulacionGanandoLaCarreraDejaAlPagoRechazadoSinVinculoCorrupto</c>,
     /// con el assert propio de esta etapa sobre el ledger.</summary>
     [Fact]
     public async Task UnPagoQueIntentaImputarseAUnaCompraSiendoAnuladaConcurrentementeEsRechazadoSinEscribirMovimiento()
@@ -453,7 +453,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal("compra_anulada", problema.GetProperty("codigo").GetString());
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        Assert.Equal(0, await db.Gastos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
+        Assert.Equal(0, await db.Pagos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
         Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.Tipo == TipoMovimientoCcProveedor.Pago));
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
@@ -462,7 +462,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal(300m, proveedor.Saldo);
     }
 
-    // ---- task 3.10: falla en el punto del ledger deja saldo/ledger/el gasto sin cambios ------------
+    // ---- task 3.10: falla en el punto del ledger deja saldo/ledger/el pago sin cambios ------------
 
     private async Task RevocarAsync(string tabla, string privilegios)
     {
@@ -483,9 +483,9 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     }
 
     [Fact]
-    public async Task UnaFallaAlEscribirElLedgerDeProveedorDejaSaldoLedgerYElGastoSinCambios()
+    public async Task UnaFallaAlEscribirElLedgerDeProveedorDejaSaldoLedgerYElPagoSinCambios()
     {
-        var ctx = await PrepararAsync(nameof(UnaFallaAlEscribirElLedgerDeProveedorDejaSaldoLedgerYElGastoSinCambios));
+        var ctx = await PrepararAsync(nameof(UnaFallaAlEscribirElLedgerDeProveedorDejaSaldoLedgerYElPagoSinCambios));
         // deuda previa REAL (≠ 0) — para que "sin cambios" sea una prueba real de que el saldo NO
         // se movió, no una coincidencia con el 0 inicial de un proveedor fresco (hallazgo del juez
         // B, slice 2).
@@ -506,9 +506,9 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        // La transacción entera (INSERT gastos + UPDATE saldo + INSERT ledger) revierte junta — el
-        // gasto NUNCA queda huérfano de su movimiento.
-        Assert.Equal(0, await db.Gastos.CountAsync(g => g.IdProveedor == ctx.IdProveedor));
+        // La transacción entera (INSERT pagos + UPDATE saldo + INSERT ledger) revierte junta — el
+        // pago NUNCA queda huérfano de su movimiento.
+        Assert.Equal(0, await db.Pagos.CountAsync(g => g.IdProveedor == ctx.IdProveedor));
         Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.Tipo == TipoMovimientoCcProveedor.Pago));
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
@@ -517,7 +517,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal(700m, proveedor.Saldo);
     }
 
-    // ---- mutation target #23: importe = −gasto.Importe — el invariante saldo == Σ importe ----------
+    // ---- mutation target #23: importe = −pago.Importe — el invariante saldo == Σ importe ----------
 
     [Fact]
     public async Task ElSaldoDelProveedorIgualaLaSumaDeMovimientosTrasCompraYPago()
@@ -537,7 +537,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var pago = await db.MovimientosCuentaCorrienteProveedor
             .SingleAsync(m => m.IdComprobanteCompra == compra.Id && m.Tipo == TipoMovimientoCcProveedor.Pago);
 
-        // Si la negación se perdiera (`importe = gasto.Importe`), el pago SUMARÍA en vez de restar
+        // Si la negación se perdiera (`importe = pago.Importe`), el pago SUMARÍA en vez de restar
         // y el invariante saldo == Σ importe seguiría cumpliéndose trivialmente por construcción —
         // por eso se compara además contra el valor NEGATIVO explícito, no solo la suma.
         Assert.Equal(-600m, pago.Importe);
@@ -578,12 +578,12 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var respuesta = await cliente.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 150m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var pago = await db.MovimientosCuentaCorrienteProveedor.SingleAsync(m => m.IdGasto == gasto.Id);
+        var movimiento = await db.MovimientosCuentaCorrienteProveedor.SingleAsync(m => m.IdPago == pago.Id);
 
-        Assert.Equal(instanteFijo.UtcDateTime, pago.Fecha.UtcDateTime);
-        Assert.Equal(TimeSpan.Zero, pago.Fecha.Offset);
+        Assert.Equal(instanteFijo.UtcDateTime, movimiento.Fecha.UtcDateTime);
+        Assert.Equal(TimeSpan.Zero, movimiento.Fecha.Offset);
     }
 }

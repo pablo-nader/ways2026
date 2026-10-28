@@ -30,7 +30,7 @@ public class GuardaDeReferenciasTests
     public void DosEtiquetasSeUnenConYSinComa()
     {
         var mensaje = GuardaDeReferencias.ComponerMensaje(
-            "el área", ["articulos", "gastos"], etiquetasPropias: null);
+            "el área", ["articulos", "pagos"], etiquetasPropias: null);
 
         Assert.Equal("No se puede dar de baja el área porque tiene artículos y gastos.", mensaje);
         Assert.DoesNotContain(", y", mensaje);
@@ -42,7 +42,7 @@ public class GuardaDeReferenciasTests
     public void TresEtiquetasSeUnenConComasYUnSoloYFinal()
     {
         var mensaje = GuardaDeReferencias.ComponerMensaje(
-            "el proveedor", ["articulos", "gastos", "ordenes_compra"], etiquetasPropias: null);
+            "el proveedor", ["articulos", "pagos", "ordenes_compra"], etiquetasPropias: null);
 
         Assert.Equal(
             "No se puede dar de baja el proveedor porque tiene artículos, gastos y órdenes de compra.", mensaje);

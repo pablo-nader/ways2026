@@ -160,7 +160,7 @@ public class InspectorDeUsoEjecucionTests(WaysApiFixture fixture) : IClassFixtur
     /// pv."id_tenant"</c> con <c>pv."id_empresa" = $1 AND pv."id_tenant" = $2</c>.
     ///
     /// NINGUNA tabla operativa lleva <c>id_empresa</c> — comprobantes, items, pagos, movimientos de
-    /// stock/caja/tesorería/cuenta corriente, turnos, presupuestos, remitos, órdenes y gastos se
+    /// stock/caja/tesorería/cuenta corriente, turnos, presupuestos, remitos, órdenes y pagos se
     /// clavan todos en <c>id_punto_venta</c> —, así que los referenciantes DIRECTOS de una empresa
     /// son solo estructura y catálogo. Sin esta familia, una empresa con historia operativa
     /// completa lee PRÍSTINA: la plataforma la da de baja junto con su punto de venta. Falla

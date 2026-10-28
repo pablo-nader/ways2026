@@ -17,7 +17,7 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// que fija <see cref="TurnoCaja.IdMedioPagoEfectivo"/> DESPUÉS del UPDATE guardado que transiciona
 /// <c>estado</c> a <c>cerrado</c> (design: The Cierre Transaction, statement 1 sigue primero) —
 /// nunca antes. <c>ck_turnos_caja_recalculo_consistente</c> respalda a
-/// <c>ServicioDeGastos</c>, el único escritor de la marca de recálculo (fecha y empleado juntos).
+/// <c>ServicioDePagos</c>, el único escritor de la marca de recálculo (fecha y empleado juntos).
 /// </summary>
 public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
 {
@@ -47,7 +47,7 @@ public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
         builder.Property(t => t.IdTenant).HasColumnName("id_tenant").IsRequired();
 
         // Habilita las FKs compuestas de movimientos_caja/arqueos_turno/movimientos_tesoreria/
-        // gastos/comprobantes_venta — mismo patrón que ComprobanteVenta/Oferta/Cliente.
+        // pagos/comprobantes_venta — mismo patrón que ComprobanteVenta/Oferta/Cliente.
         builder.HasAlternateKey(t => new { t.Id, t.IdTenant })
             .HasName("ak_turnos_caja_id_turno_caja_id_tenant");
 

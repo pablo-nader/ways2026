@@ -1,5 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore.Migrations;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 #nullable disable
 
@@ -111,7 +111,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             // no produce — emite el 0 crudo del enum subyacente y Postgres lo rechaza
             // (42804: "default expression is of type integer"). Tres pasos: nullable -> backfill
             // -> SET NOT NULL.
-            migrationBuilder.AddColumn<OrigenFondosGasto>(
+            migrationBuilder.AddColumn<OrigenFondosPago>(
                 name: "origen_fondos",
                 table: "gastos",
                 type: "origen_fondos_gasto",
@@ -129,12 +129,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                  WHERE origen_fondos IS NULL;
                 """);
 
-            migrationBuilder.AlterColumn<OrigenFondosGasto>(
+            migrationBuilder.AlterColumn<OrigenFondosPago>(
                 name: "origen_fondos",
                 table: "gastos",
                 type: "origen_fondos_gasto",
                 nullable: false,
-                oldClrType: typeof(OrigenFondosGasto),
+                oldClrType: typeof(OrigenFondosPago),
                 oldType: "origen_fondos_gasto",
                 oldNullable: true);
 

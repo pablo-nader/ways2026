@@ -7,13 +7,13 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Compras;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
@@ -24,14 +24,14 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// stage-8-compras-transferencias-inventario, Slice 4 (tasks 4.1, 4.5, 4.6, design decisión 7):
-/// el guard <c>SELECT ... FOR SHARE</c> que <c>ServicioDeGastos</c> toma sobre el header de la
+/// el guard <c>SELECT ... FOR SHARE</c> que <c>ServicioDePagos</c> toma sobre el header de la
 /// compra cuando la solicitud trae <c>idComprobanteCompra</c> — el vínculo feliz, los cuatro
 /// rechazos (categoría incoherente, compra inexistente/de otro tenant, borrador, anulada,
-/// proveedor que no coincide) y la superficie racy 5 del Backstop Map (gasto ligado ×
+/// proveedor que no coincide) y la superficie racy 5 del Backstop Map (pago ligado ×
 /// anulación de la misma compra).
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
@@ -75,8 +75,8 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
         // MedioPago es tenant-scoped (CatalogoSimple : EntidadTenant) — bajo TenantActualFijo
         // .Plataforma el filtro de EF no acota por tenant y .FirstAsync() puede devolver la fila
         // de OTRO tenant creado en paralelo por otra prueba de esta misma colección, violando
-        // fk_gastos_medio_pago más adelante. Contexto tenant-scoped propio, mismo criterio que
-        // GastosEndpointsTests.PrepararAsync.
+        // fk_pagos_medio_pago más adelante. Contexto tenant-scoped propio, mismo criterio que
+        // PagosEndpointsTests.PrepararAsync.
         await using var dbTenant = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var idMedioEfectivo = await dbTenant.MediosPago
             .Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
@@ -143,9 +143,9 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    private static SolicitudDeGasto SolicitudDeGastoLigado(
+    private static SolicitudDePago SolicitudDePagoLigado(
         Contexto ctx, int idComprobanteCompra, decimal importe = 1000m, int? idProveedor = null,
-        CategoriaGasto categoria = CategoriaGasto.Proveedor) =>
+        CategoriaPago categoria = CategoriaPago.Proveedor) =>
         new(
             ctx.IdPuntoVenta, categoria, idProveedor, null, "Pago de compra", null, ctx.IdMedioEfectivo, null,
             importe, idComprobanteCompra);
@@ -153,23 +153,23 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
     // ---- task 4.5: vínculo feliz + el pre-check de categoría, antes de la DB ------------------
 
     [Fact]
-    public async Task UnGastoSeLigaAUnaCompraConfirmadaBajoElGateDeTurnoAbierto()
+    public async Task UnPagoSeLigaAUnaCompraConfirmadaBajoElGateDeTurnoAbierto()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoSeLigaAUnaCompraConfirmadaBajoElGateDeTurnoAbierto));
+        var ctx = await PrepararAsync(nameof(UnPagoSeLigaAUnaCompraConfirmadaBajoElGateDeTurnoAbierto));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id, importe: 500m));
+            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, importe: 500m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
-        Assert.Equal(compra.Id, gasto.IdComprobanteCompra);
-        Assert.Equal(ctx.IdProveedor, gasto.IdProveedor);
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
+        Assert.Equal(compra.Id, pago.IdComprobanteCompra);
+        Assert.Equal(ctx.IdProveedor, pago.IdProveedor);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var persistido = await db.Gastos.FirstAsync(g => g.Id == gasto.Id);
+        var persistido = await db.Pagos.FirstAsync(g => g.Id == pago.Id);
         Assert.Equal(compra.Id, persistido.IdComprobanteCompra);
     }
 
@@ -182,8 +182,8 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
         // tocar la base, la respuesta sería 409 turno_no_abierto (o 404), nunca este 400.
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Servicios, null, null, "Gasto mal categorizado", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Servicios, null, null, "Gasto mal categorizado", null,
                 ctx.IdMedioEfectivo, null, 100m, IdComprobanteCompra: 999999));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
@@ -192,13 +192,13 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     [Fact]
-    public async Task UnGastoLigadoAUnaCompraSigueExigiendoTurnoAbierto()
+    public async Task UnPagoLigadoAUnaCompraSigueExigiendoTurnoAbierto()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraSigueExigiendoTurnoAbierto));
+        var ctx = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraSigueExigiendoTurnoAbierto));
         var compra = await CrearYConfirmarCompraAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id));
+            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -208,41 +208,41 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
     // ---- rechazos de la compra ligada: inexistente / otro tenant / borrador / anulada ---------
 
     [Fact]
-    public async Task UnGastoLigadoAUnaCompraInexistenteDevuelve404()
+    public async Task UnPagoLigadoAUnaCompraInexistenteDevuelve404()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraInexistenteDevuelve404));
+        var ctx = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraInexistenteDevuelve404));
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, idComprobanteCompra: 999999));
+            "/api/gastos", SolicitudDePagoLigado(ctx, idComprobanteCompra: 999999));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
     [Fact]
-    public async Task UnGastoLigadoAUnaCompraDeOtroTenantDevuelve404()
+    public async Task UnPagoLigadoAUnaCompraDeOtroTenantDevuelve404()
     {
-        var ctxA = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraDeOtroTenantDevuelve404) + "-A");
-        var ctxB = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraDeOtroTenantDevuelve404) + "-B");
+        var ctxA = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraDeOtroTenantDevuelve404) + "-A");
+        var ctxB = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraDeOtroTenantDevuelve404) + "-B");
         var compraDeB = await CrearYConfirmarCompraAsync(ctxB);
         await AbrirTurnoAsync(ctxA);
 
         var respuesta = await ctxA.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctxA, compraDeB.Id));
+            "/api/gastos", SolicitudDePagoLigado(ctxA, compraDeB.Id));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
     [Fact]
-    public async Task UnGastoLigadoAUnaCompraEnBorradorEsRechazado()
+    public async Task UnPagoLigadoAUnaCompraEnBorradorEsRechazado()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraEnBorradorEsRechazado));
+        var ctx = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraEnBorradorEsRechazado));
         var respuestaCrear = await ctx.Admin.PostAsJsonAsync("/api/compras", SolicitudSimple(ctx, ctx.IdProveedor));
         var borrador = JsonSerializer.Deserialize<CompraDetalle>(await respuestaCrear.Content.ReadAsStringAsync(), OpcionesJson)!;
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, borrador.Id));
+            "/api/gastos", SolicitudDePagoLigado(ctx, borrador.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -250,16 +250,16 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     [Fact]
-    public async Task UnGastoLigadoAUnaCompraAnuladaEsRechazado()
+    public async Task UnPagoLigadoAUnaCompraAnuladaEsRechazado()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraAnuladaEsRechazado));
+        var ctx = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraAnuladaEsRechazado));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var anulacion = await ctx.Admin.PostAsync($"/api/compras/{compra.Id}/anular", null);
         Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id));
+            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -276,12 +276,12 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id, idProveedor: null));
+            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, idProveedor: null));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
-        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpo, OpcionesJson)!;
-        Assert.Equal(ctx.IdProveedor, gasto.IdProveedor);
+        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
+        Assert.Equal(ctx.IdProveedor, pago.IdProveedor);
     }
 
     [Fact]
@@ -292,7 +292,7 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id, idProveedor: ctx.IdProveedor2));
+            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, idProveedor: ctx.IdProveedor2));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -302,13 +302,13 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
     // ---- task 4.6: superficie racy 5, forced rendezvous (row lock natural) --------------------
 
     /// <summary>design decisión 7, Backstop Map racy surface 5: la anulación gana la carrera —
-    /// commitea ANTES de que la transacción del gasto retome y tome su <c>FOR SHARE</c>. El
-    /// gasto retoma viendo <c>anulada</c> ya comiteada — <c>409 compra_anulada</c>, nunca un
+    /// commitea ANTES de que la transacción del pago retome y tome su <c>FOR SHARE</c>. El
+    /// pago retoma viendo <c>anulada</c> ya comiteada — <c>409 compra_anulada</c>, nunca un
     /// vínculo corrupto a una compra anulada.</summary>
     [Fact]
-    public async Task LaAnulacionGanandoLaCarreraDejaAlGastoRechazadoSinVinculoCorrupto()
+    public async Task LaAnulacionGanandoLaCarreraDejaAlPagoRechazadoSinVinculoCorrupto()
     {
-        var ctx = await PrepararAsync(nameof(LaAnulacionGanandoLaCarreraDejaAlGastoRechazadoSinVinculoCorrupto));
+        var ctx = await PrepararAsync(nameof(LaAnulacionGanandoLaCarreraDejaAlPagoRechazadoSinVinculoCorrupto));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         await AbrirTurnoAsync(ctx);
 
@@ -320,44 +320,44 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
             builder.ConfigureServices(services =>
                 services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
 
-        using var clienteGasto = factory.CreateClient();
-        var login = await clienteGasto.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        using var clientePago = factory.CreateClient();
+        var login = await clientePago.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        var tareaGasto = clienteGasto.PostAsJsonAsync("/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id));
+        var tareaPago = clientePago.PostAsJsonAsync("/api/gastos", SolicitudDePagoLigado(ctx, compra.Id));
 
         await transaccionIniciada.Task;
 
-        // La anulación corre y commitea COMPLETA mientras el gasto sigue pausado justo después
+        // La anulación corre y commitea COMPLETA mientras el pago sigue pausado justo después
         // de abrir su propia transacción — todavía no tomó ningún lock.
         var anulacion = await ctx.Admin.PostAsync($"/api/compras/{compra.Id}/anular", null);
         var cuerpoAnulacion = await anulacion.Content.ReadAsStringAsync();
         Assert.True(anulacion.StatusCode == HttpStatusCode.OK, cuerpoAnulacion);
         var resultadoAnulacion = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpoAnulacion, OpcionesJson)!;
-        Assert.Equal(0, resultadoAnulacion.GastosLigados);
+        Assert.Equal(0, resultadoAnulacion.PagosLigados);
 
         puedeContinuar.TrySetResult();
 
-        var respuestaGasto = await tareaGasto;
-        var cuerpoGasto = await respuestaGasto.Content.ReadAsStringAsync();
-        Assert.True(respuestaGasto.StatusCode == HttpStatusCode.Conflict, cuerpoGasto);
-        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpoGasto, OpcionesJson);
+        var respuestaPago = await tareaPago;
+        var cuerpoPago = await respuestaPago.Content.ReadAsStringAsync();
+        Assert.True(respuestaPago.StatusCode == HttpStatusCode.Conflict, cuerpoPago);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpoPago, OpcionesJson);
         Assert.Equal("compra_anulada", problema.GetProperty("codigo").GetString());
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        Assert.Equal(0, await db.Gastos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
+        Assert.Equal(0, await db.Pagos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
     }
 
-    /// <summary>design decisión 7, Backstop Map racy surface 5, la otra dirección: el gasto gana
+    /// <summary>design decisión 7, Backstop Map racy surface 5, la otra dirección: el pago gana
     /// la carrera — su transacción entera (turno + <c>FOR SHARE</c> + INSERT + COMMIT) corre y
     /// commitea mientras la anulación sigue pausada justo después de abrir la suya, todavía sin
     /// tomar el lock exclusivo del header. La anulación retoma, procede igual (regla invertida,
-    /// decisión 6 — nunca bloquea) y su conteo informativo ve el gasto recién comiteado, sin
+    /// decisión 6 — nunca bloquea) y su conteo informativo ve el pago recién comiteado, sin
     /// staleness.</summary>
     [Fact]
-    public async Task ElGastoGanandoLaCarreraQuedaCorrectamenteContadoPorLaAnulacionQueLlegaDespues()
+    public async Task ElPagoGanandoLaCarreraQuedaCorrectamenteContadoPorLaAnulacionQueLlegaDespues()
     {
-        var ctx = await PrepararAsync(nameof(ElGastoGanandoLaCarreraQuedaCorrectamenteContadoPorLaAnulacionQueLlegaDespues));
+        var ctx = await PrepararAsync(nameof(ElPagoGanandoLaCarreraQuedaCorrectamenteContadoPorLaAnulacionQueLlegaDespues));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         await AbrirTurnoAsync(ctx);
 
@@ -377,9 +377,9 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
 
         await transaccionIniciada.Task;
 
-        var respuestaGasto = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDeGastoLigado(ctx, compra.Id, importe: 750m));
-        var cuerpoGasto = await respuestaGasto.Content.ReadAsStringAsync();
-        Assert.True(respuestaGasto.StatusCode == HttpStatusCode.Created, cuerpoGasto);
+        var respuestaPago = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, importe: 750m));
+        var cuerpoPago = await respuestaPago.Content.ReadAsStringAsync();
+        Assert.True(respuestaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
 
         puedeContinuar.TrySetResult();
 
@@ -387,9 +387,9 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
         var cuerpoAnulacion = await respuestaAnulacion.Content.ReadAsStringAsync();
         Assert.True(respuestaAnulacion.StatusCode == HttpStatusCode.OK, cuerpoAnulacion);
         var resultadoAnulacion = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpoAnulacion, OpcionesJson)!;
-        Assert.Equal(1, resultadoAnulacion.GastosLigados);
+        Assert.Equal(1, resultadoAnulacion.PagosLigados);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        Assert.Equal(1, await db.Gastos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
+        Assert.Equal(1, await db.Pagos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
     }
 }

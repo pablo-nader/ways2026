@@ -1,6 +1,6 @@
 using Ways.Application.Exportacion;
 using Ways.Domain.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 namespace Ways.Application.Caja;
 
@@ -29,38 +29,38 @@ public static class ExportacionDeCaja
     {
         TipoMovimientoTesoreria.RetiroCaja => "Retiro de caja",
         TipoMovimientoTesoreria.Deposito => "Depósito",
-        TipoMovimientoTesoreria.Gasto => "Gasto",
+        TipoMovimientoTesoreria.Pago => "Gasto",
         TipoMovimientoTesoreria.Ajuste => "Ajuste",
         _ => tipo.ToString()
     };
 
     /// <summary>judgment-day PR5, hallazgo #2: mismas etiquetas en español que
-    /// <c>CATEGORIAS_GASTO</c> (<c>Ways.Web/src/api/tipos.ts</c>) — no existía ningún mapeo de
-    /// <see cref="CategoriaGasto"/> a etiqueta del lado del servidor (se buscó en
+    /// <c>CATEGORIAS_PAGO</c> (<c>Ways.Web/src/api/tipos.ts</c>) — no existía ningún mapeo de
+    /// <see cref="CategoriaPago"/> a etiqueta del lado del servidor (se buscó en
     /// <c>Ways.Application.Exportacion</c>/<c>Ways.Application.Reportes</c>, ninguno lo tenía), así
     /// que este mapeo nace acá, junto al único lugar que hoy lo necesita.</summary>
-    private static string EtiquetaDeCategoriaGasto(CategoriaGasto categoria) => categoria switch
+    private static string EtiquetaDeCategoriaPago(CategoriaPago categoria) => categoria switch
     {
-        CategoriaGasto.Proveedor => "Proveedores",
-        CategoriaGasto.Sueldos => "Sueldos",
-        CategoriaGasto.Viaticos => "Viáticos",
-        CategoriaGasto.Impuestos => "Impuestos",
-        CategoriaGasto.Servicios => "Servicios",
-        CategoriaGasto.Otros => "Otros",
+        CategoriaPago.Proveedor => "Proveedores",
+        CategoriaPago.Sueldos => "Sueldos",
+        CategoriaPago.Viaticos => "Viáticos",
+        CategoriaPago.Impuestos => "Impuestos",
+        CategoriaPago.Servicios => "Servicios",
+        CategoriaPago.Otros => "Otros",
         _ => categoria.ToString()
     };
 
     /// <summary>stage-tesoreria-por-empresa (PR5): mismo criterio de "concepto efectivo" que
-    /// <c>Tesoreria.tsx</c> — una fila de tipo <see cref="TipoMovimientoTesoreria.Gasto"/> muestra
-    /// la categoría/concepto del gasto de origen (más legible que el <c>Concepto</c> genérico del
+    /// <c>Tesoreria.tsx</c> — una fila de tipo <see cref="TipoMovimientoTesoreria.Pago"/> muestra
+    /// la categoría/concepto del pago de origen (más legible que el <c>Concepto</c> genérico del
     /// movimiento); cualquier otra fila muestra su propio <c>Concepto</c>. judgment-day hallazgo
-    /// #2: la categoría usa <see cref="EtiquetaDeCategoriaGasto"/> — antes interpolaba el enum
+    /// #2: la categoría usa <see cref="EtiquetaDeCategoriaPago"/> — antes interpolaba el enum
     /// crudo (p.ej. "Viaticos") en vez de la etiqueta en español que ya muestra la UI
     /// ("Viáticos").</summary>
     private static string ConceptoEfectivo(MovimientoTesoreriaListado f) =>
-        f.GastoConcepto is null || f.GastoCategoria is null
+        f.PagoConcepto is null || f.PagoCategoria is null
             ? f.Concepto
-            : $"{EtiquetaDeCategoriaGasto(f.GastoCategoria.Value)} — {f.GastoConcepto}";
+            : $"{EtiquetaDeCategoriaPago(f.PagoCategoria.Value)} — {f.PagoConcepto}";
 
     /// <summary>Libro de tesorería (G3, spec tesoreria: The Book Has An Export Sibling Equal To
     /// Its JSON) — misma orden de columnas que la tabla del libro (design: Slice 7 task 7.5,
@@ -131,10 +131,10 @@ public static class ExportacionDeCaja
     ];
 
     /// <summary>Z-report del turno (spec historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus
-    /// Ticket And Gasto Listings) — <see cref="TablaExportable"/> solo admite UNA hoja (design:
+    /// Ticket And Pago Listings) — <see cref="TablaExportable"/> solo admite UNA hoja (design:
     /// Interfaces/Contracts), así que el detalle vive en una única hoja seccionada por
     /// <c>Sección</c> en vez de varias hojas: medios de pago (esperado por medio), egresos por
-    /// categoría, egresos por área, retiros, tickets y gastos, en ese orden — mismo agrupamiento
+    /// categoría, egresos por área, retiros, tickets y pagos, en ese orden — mismo agrupamiento
     /// que <see cref="ResumenDeTurno.Egresos"/> ya expone. <c>CantidadTickets</c>/
     /// <c>PrimerTicket</c>/<c>UltimoTicket</c>/<c>IngresosPorArea</c> no se repiten como filas
     /// propias: son contenido derivable de la sección Tickets (o de las líneas de venta, fuera del
@@ -209,15 +209,15 @@ public static class ExportacionDeCaja
             ]);
         }
 
-        foreach (var gasto in respuesta.Gastos)
+        foreach (var pago in respuesta.Pagos)
         {
-            // Los gastos de caja general no entran en los egresos por categoría/área del arqueo.
+            // Los pagos de caja general no entran en los egresos por categoría/área del arqueo.
             filas.Add(
             [
-                Celda.Texto(gasto.OrigenFondos == OrigenFondosGasto.Tesoreria ? "Gastos (caja general)" : "Gastos"),
-                Celda.Texto(gasto.Categoria.ToString()),
-                Celda.FechaHora(gasto.Fecha, zona),
-                Celda.Moneda(gasto.Importe)
+                Celda.Texto(pago.OrigenFondos == OrigenFondosPago.Tesoreria ? "Gastos (caja general)" : "Gastos"),
+                Celda.Texto(pago.Categoria.ToString()),
+                Celda.FechaHora(pago.Fecha, zona),
+                Celda.Moneda(pago.Importe)
             ]);
         }
 

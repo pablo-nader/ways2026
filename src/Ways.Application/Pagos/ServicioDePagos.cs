@@ -16,15 +16,15 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 
-namespace Ways.Application.Gastos;
+namespace Ways.Application.Pagos;
 
 /// <summary>
-/// Captura de gastos contra un turno abierto (design: Table Shapes — write path C; tasks.md
+/// Captura de pagos contra un turno abierto (design: Table Shapes — write path C; tasks.md
 /// Slice 3). Reutiliza <see cref="ServicioDeTurnos.ResolverTurnoAbiertoAsync"/> (tasks.md,
 /// Orchestrator Decision 3) en vez de escribir su propia consulta de turno abierto — mismo
 /// criterio que <c>ServicioDeVentas.EmitirAsync</c> (Slice 5).
@@ -35,16 +35,16 @@ namespace Ways.Application.Gastos;
 /// concurrente de la misma compra (el mismo statement crudo/sibling raw SQL que
 /// <c>ServicioDeCompras</c>, ver su doc-comment de clase).
 /// </summary>
-public class ServicioDeGastos(
+public class ServicioDePagos(
     IWaysDbContext db, ServicioDeTurnos servicioDeTurnos, ServicioDeParametros servicioDeParametros,
     IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lectorDeMovimientos,
     ServicioDeAuditoria auditoria)
 {
-    /// <summary>Resuelve el punto de venta (404 ADR-8) antes que el turno abierto (spec: Gasto
+    /// <summary>Resuelve el punto de venta (404 ADR-8) antes que el turno abierto (spec: Pago
     /// Requires An Open Turno) — mismo orden que <c>ServicioDeVentas.EmitirAsync</c> (design
     /// decisión 11): un punto de venta apócrifo tiene que dar 404, nunca el 409 de "sin turno
     /// abierto" de un punto de venta que ni siquiera existe.</summary>
-    public async Task<GastoRegistrado> RegistrarAsync(SolicitudDeGasto solicitud, CancellationToken ct = default)
+    public async Task<PagoRegistrado> RegistrarAsync(SolicitudDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -52,7 +52,7 @@ public class ServicioDeGastos(
 
         ExigirImporteValido(solicitud.Importe);
         ExigirConceptoValido(solicitud.Concepto);
-        // spec: gastos / A Comprobante Compra Link Requires Categoria Proveedor — "rejected
+        // spec: pagos / A Comprobante Compra Link Requires Categoria Proveedor — "rejected
         // before reaching the database": chequeo de dominio puro, ANTES de cualquier consulta.
         ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
 
@@ -72,24 +72,24 @@ public class ServicioDeGastos(
         }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
-        var gasto = await estrategia.ExecuteAsync(async () =>
-            await InsertarGastoAsync(
+        var pago = await estrategia.ExecuteAsync(async () =>
+            await InsertarPagoAsync(
                 idTenant, puntoVenta.IdEmpresa, turno.Id, solicitud, idEmpleado, momento, ct));
 
-        return Proyectar(gasto);
+        return Proyectar(pago);
     }
 
     /// <summary>stage-gastos-admin-retroactivos (PR3), owner's use case 2: alta administrativa de
-    /// un gasto SIN turno, pagado directo de la tesorería de la empresa — puede llevar una
-    /// <see cref="SolicitudDeGastoDeAdministracion.Fecha"/> retroactiva. A diferencia de <see
+    /// un pago SIN turno, pagado directo de la tesorería de la empresa — puede llevar una
+    /// <see cref="SolicitudDePagoDeAdministracion.Fecha"/> retroactiva. A diferencia de <see
     /// cref="RegistrarAsync"/> (que resuelve el punto de venta y DESPUÉS el turno abierto), acá no
     /// hay ningún turno que resolver: el orden de validación es empresa (404 ADR-8) → punto de
     /// venta opcional (404 si no existe, 400 si es de otra empresa) → medio de pago (excluye
     /// cuenta corriente, mismo criterio que el POS) → fecha (nunca futura, resuelta en la zona
     /// horaria de la empresa/punto de venta) — recién ahí se abre la transacción de
     /// escritura.</summary>
-    public async Task<GastoRegistrado> RegistrarDeAdministracionAsync(
-        SolicitudDeGastoDeAdministracion solicitud, CancellationToken ct = default)
+    public async Task<PagoRegistrado> RegistrarDeAdministracionAsync(
+        SolicitudDePagoDeAdministracion solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -120,14 +120,14 @@ public class ServicioDeGastos(
         var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
-        var gasto = await estrategia.ExecuteAsync(async () =>
-            await InsertarGastoDeAdministracionAsync(
+        var pago = await estrategia.ExecuteAsync(async () =>
+            await InsertarPagoDeAdministracionAsync(
                 idTenant, empresa.Id, fechaDeNegocio, solicitud, idEmpleado, momento, ct));
 
-        return Proyectar(gasto);
+        return Proyectar(pago);
     }
 
-    /// <summary>Paga una compra confirmada en UNA transacción: crea el gasto administrativo (categoría
+    /// <summary>Paga una compra confirmada en UNA transacción: crea el pago administrativo (categoría
     /// proveedor, origen tesorería, punto de venta y proveedor de la compra, fecha de negocio del
     /// pedido) y, por el mismo camino de escritura del alta administrativa, el movimiento
     /// <c>pago</c> de cuenta corriente imputado a la compra y el egreso de tesorería. El importe no
@@ -138,9 +138,9 @@ public class ServicioDeGastos(
     ///
     /// Orden de locks: 1) header de la compra <c>FOR UPDATE</c> (lock y lectura en una sola
     /// sentencia, sin entidad: es la ÚNICA lectura del total y del estado) → 2) pagado de la compra,
-    /// leído después del lock → 3) fila del gasto (insert, sin lock) → 4) fila del proveedor
+    /// leído después del lock → 3) fila del pago (insert, sin lock) → 4) fila del proveedor
     /// (<c>UPDATE saldo</c>, último lock de fila) → 5) advisory de tesorería de la empresa, ÚLTIMO.
-    /// Es el mismo orden que el alta administrativa (<see cref="InsertarGastoDeAdministracionAsync"/>)
+    /// Es el mismo orden que el alta administrativa (<see cref="InsertarPagoDeAdministracionAsync"/>)
     /// con el lock de la compra endurecido a exclusivo. Sin ciclo: la anulación toma el header
     /// exclusivo como primer lock; la confirmación lo toma exclusivo después del lock de membresía de
     /// familias compartido, que este método no pide; y los demás escritores que tocan la compra (alta
@@ -183,10 +183,10 @@ public class ServicioDeGastos(
 
         concepto ??= await ConceptoPorDefectoDelPagoAsync(idComprobanteCompra, ct);
 
-        var gasto = await PersistirGastoDeAdministracionAsync(
+        var pago = await PersistirPagoDeAdministracionAsync(
             idTenant, puntoVenta.IdEmpresa, fechaDeNegocio,
-            new SolicitudDeGastoDeAdministracion(
-                solicitud.Fecha, puntoVenta.IdEmpresa, puntoVenta.Id, CategoriaGasto.Proveedor, compra.IdProveedor,
+            new SolicitudDePagoDeAdministracion(
+                solicitud.Fecha, puntoVenta.IdEmpresa, puntoVenta.Id, CategoriaPago.Proveedor, compra.IdProveedor,
                 IdArea: null, concepto, Detalle: null, solicitud.IdMedioPago, NumeroFactura: null, solicitud.Importe,
                 idComprobanteCompra),
             compra.IdProveedor, idEmpleado, momento, ct);
@@ -194,7 +194,7 @@ public class ServicioDeGastos(
         await transaccion.CommitAsync(ct);
 
         return new ResultadoDePagoDeCompra(
-            Proyectar(gasto), pagado + solicitud.Importe, saldoPendiente - solicitud.Importe);
+            Proyectar(pago), pagado + solicitud.Importe, saldoPendiente - solicitud.Importe);
     }
 
     private async Task<string> ConceptoPorDefectoDelPagoAsync(int idComprobanteCompra, CancellationToken ct)
@@ -212,16 +212,16 @@ public class ServicioDeGastos(
         return ReglaDePagoDeCompra.ConceptoPorDefecto(datos.NombreDelTipo, datos.NumeroExterno, idComprobanteCompra);
     }
 
-    /// <summary>stage-gasto-a-compra (PR4), owner requirement: cualquier gasto (POS o admin) se
+    /// <summary>stage-gasto-a-compra (PR4), owner requirement: cualquier pago (POS o admin) se
     /// puede ligar a una compra DESPUÉS de creado — a diferencia de
-    /// <see cref="SolicitudDeGasto.IdComprobanteCompra"/>/<see
-    /// cref="SolicitudDeGastoDeAdministracion.IdComprobanteCompra"/>, que solo aplican en el alta.
+    /// <see cref="SolicitudDePago.IdComprobanteCompra"/>/<see
+    /// cref="SolicitudDePagoDeAdministracion.IdComprobanteCompra"/>, que solo aplican en el alta.
     ///
     /// Orden de locks de la transacción (single-read-under-lock + deadlock-safe ordering):
     /// 1) compra <c>FOR SHARE</c> (mismo statement/orden relativo que <see
     ///    cref="ExigirCompraLigableAsync"/> en el alta: PRIMER lock, así que un alta concurrente
     ///    con <c>idComprobanteCompra</c> y esta vinculación nunca se ordenan al revés) →
-    /// 2) gasto <c>FOR UPDATE</c> (lock-only, mismo patrón que <c>ServicioDeOrganizacion.
+    /// 2) pago <c>FOR UPDATE</c> (lock-only, mismo patrón que <c>ServicioDeOrganizacion.
     ///    TomarLockDePuntoVentaAsync</c> — la ÚNICA lectura EF de la fila nace DESPUÉS, bajo este
     ///    lock) → 3) fila de proveedor/movimiento de CC (adentro de <see
     ///    cref="EscribirPagoAProveedorAsync"/>/<see
@@ -230,37 +230,37 @@ public class ServicioDeGastos(
     ///    clase).
     ///
     /// Análisis de ciclo: la anulación de compra (<c>ServicioDeCompras.MarcarAnuladaAsync</c>) toma
-    /// el header EXCLUSIVO como su ÚNICO y primer lock — nunca toca <c>gastos</c> ni el ledger de
+    /// el header EXCLUSIVO como su ÚNICO y primer lock — nunca toca <c>pagos</c> ni el ledger de
     /// proveedor, así que no puede formar un ciclo con el orden 1→2→3 de acá (se serializa contra
     /// el paso 1, nunca espera detrás del 2 o el 3). La confirmación de compra
-    /// (<c>ServicioDeCompras.ConfirmarAsync</c>) tampoco toca <c>gastos</c>: su único lock
+    /// (<c>ServicioDeCompras.ConfirmarAsync</c>) tampoco toca <c>pagos</c>: su único lock
     /// compartido con esta transacción es el propio header de la compra (paso 1 acá; allá viene
     /// justo después del lock de membresía de familias, que esta transacción no toma) — mismo
     /// orden relativo entre los locks que comparten, sin ciclo. El cierre de turno
-    /// (<c>ServicioDeTurnos</c>) no lockea ni compras ni gastos existentes (solo el turno mismo y,
+    /// (<c>ServicioDeTurnos</c>) no lockea ni compras ni pagos existentes (solo el turno mismo y,
     /// al insertar, filas nuevas de tesorería/CC) — no comparte ningún recurso con este método,
-    /// así que tampoco puede ciclar. Los caminos de alta de gasto (<see cref="InsertarGastoAsync"/>/
-    /// <see cref="InsertarGastoDeAdministracionAsync"/>) toman compra (paso 1, mismo orden) y DESPUÉS
-    /// insertan una fila NUEVA de <c>gastos</c> (sin lock: es un insert) — nunca lockean una fila de
-    /// <c>gastos</c> EXISTENTE, así que no compiten con el paso 2 de acá.</summary>
-    public async Task<GastoRegistrado> VincularCompraAsync(
-        int idGasto, SolicitudDeVincularCompra solicitud, CancellationToken ct = default)
+    /// así que tampoco puede ciclar. Los caminos de alta de pago (<see cref="InsertarPagoAsync"/>/
+    /// <see cref="InsertarPagoDeAdministracionAsync"/>) toman compra (paso 1, mismo orden) y DESPUÉS
+    /// insertan una fila NUEVA de <c>pagos</c> (sin lock: es un insert) — nunca lockean una fila de
+    /// <c>pagos</c> EXISTENTE, así que no compiten con el paso 2 de acá.</summary>
+    public async Task<PagoRegistrado> VincularCompraAsync(
+        int idPago, SolicitudDeVincularCompra solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
-        var gasto = await estrategia.ExecuteAsync(async () =>
-            await EjecutarVincularCompraAsync(idTenant, idGasto, solicitud.IdComprobanteCompra, idEmpleado, momento, ct));
+        var pago = await estrategia.ExecuteAsync(async () =>
+            await EjecutarVincularCompraAsync(idTenant, idPago, solicitud.IdComprobanteCompra, idEmpleado, momento, ct));
 
-        return Proyectar(gasto);
+        return Proyectar(pago);
     }
 
     /// <summary>Ver el doc-comment de <see cref="VincularCompraAsync"/> para el orden de locks y el
     /// análisis de ciclo completos.</summary>
-    private async Task<Gasto> EjecutarVincularCompraAsync(
-        int idTenant, int idGasto, int idComprobanteCompra, int idEmpleado, DateTimeOffset momento,
+    private async Task<Pago> EjecutarVincularCompraAsync(
+        int idTenant, int idPago, int idComprobanteCompra, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -269,13 +269,13 @@ public class ServicioDeGastos(
         var (idProveedorDeLaCompra, idPuntoVentaDeLaCompra, _) =
             await BloquearCompraAsync(idComprobanteCompra, idTenant, paraPagar: false, ct);
 
-        // Paso 2 — gasto FOR UPDATE (lock-only), y la ÚNICA lectura EF de la fila, DESPUÉS del
+        // Paso 2 — pago FOR UPDATE (lock-only), y la ÚNICA lectura EF de la fila, DESPUÉS del
         // lock (single-read-under-lock).
-        await TomarLockDeGastoAsync(idGasto, idTenant, ct);
-        var gasto = await db.Gastos.FirstAsync(g => g.Id == idGasto, ct);
-        ExigirGastoSinPagoDePersonal(gasto.IdMovimientoPersonal);
+        await TomarLockDePagoAsync(idPago, idTenant, ct);
+        var pago = await db.Pagos.FirstAsync(g => g.Id == idPago, ct);
+        ExigirPagoSinPagoDePersonal(pago.IdMovimientoPersonal);
 
-        if (gasto.IdComprobanteCompra is not null)
+        if (pago.IdComprobanteCompra is not null)
         {
             throw new ErrorDominio(
                 "gasto_ya_vinculado", "El gasto ya está vinculado a una compra.", 409);
@@ -289,7 +289,7 @@ public class ServicioDeGastos(
             .Select(pv => pv.IdEmpresa)
             .FirstAsync(ct);
 
-        if (idEmpresaDeLaCompra != gasto.IdEmpresa)
+        if (idEmpresaDeLaCompra != pago.IdEmpresa)
         {
             throw new ErrorDominio(
                 "compra_de_otra_empresa", "La compra indicada pertenece a otra empresa.", 400);
@@ -298,49 +298,49 @@ public class ServicioDeGastos(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        if (gasto.Categoria == CategoriaGasto.Proveedor && gasto.IdProveedor is { } idProveedorDelGasto)
+        if (pago.Categoria == CategoriaPago.Proveedor && pago.IdProveedor is { } idProveedorDelPago)
         {
-            // El gasto YA tiene proveedor: solo se admite si coincide con el de la compra —
+            // El pago YA tiene proveedor: solo se admite si coincide con el de la compra —
             // reusa el mismo código que ExigirCompraLigableAsync para el mismo caso en el alta.
-            if (idProveedorDelGasto != idProveedorDeLaCompra)
+            if (idProveedorDelPago != idProveedorDeLaCompra)
             {
                 throw new ErrorDominio(
                     "proveedor_no_coincide_con_la_compra",
                     "El proveedor indicado no coincide con el proveedor de la compra.", 400);
             }
 
-            // El pago ya se escribió al crear el gasto (saldo ya descontado) — solo se imputa
+            // El pago ya se escribió al crear el pago (saldo ya descontado) — solo se imputa
             // la compra en el movimiento existente, el saldo NO cambia.
-            gasto.IdComprobanteCompra = idComprobanteCompra;
-            gasto.UpdatedAt = momento;
+            pago.IdComprobanteCompra = idComprobanteCompra;
+            pago.UpdatedAt = momento;
             await db.SaveChangesAsync(ct);
 
             await EscriturasDeCuentaCorrienteProveedor.ImputarMovimientoDePagoAsync(
-                conexion, transaccionCruda, idTenant, gasto.Id, idComprobanteCompra, ct);
+                conexion, transaccionCruda, idTenant, pago.Id, idComprobanteCompra, ct);
         }
         else
         {
-            // Conversión: el gasto (categoría distinta de Proveedor, o Proveedor sin proveedor
+            // Conversión: el pago (categoría distinta de Proveedor, o Proveedor sin proveedor
             // asignado) nunca escribió un Pago al crearse — se convierte y se escribe AHORA, con
             // el importe reduciendo el saldo del proveedor por primera vez.
-            gasto.Categoria = CategoriaGasto.Proveedor;
-            gasto.IdProveedor = idProveedorDeLaCompra;
-            gasto.IdComprobanteCompra = idComprobanteCompra;
-            gasto.UpdatedAt = momento;
+            pago.Categoria = CategoriaPago.Proveedor;
+            pago.IdProveedor = idProveedorDeLaCompra;
+            pago.IdComprobanteCompra = idComprobanteCompra;
+            pago.UpdatedAt = momento;
             await db.SaveChangesAsync(ct);
 
-            // El ledger de CC exige un punto de venta (ValidarFormaPorTipo): un gasto admin sin
+            // El ledger de CC exige un punto de venta (ValidarFormaPorTipo): un pago admin sin
             // punto de venta propio usa el de la compra (las compras siempre tienen uno) — nunca
-            // al revés, el punto de venta DEL GASTO manda cuando existe (es el que realmente pagó).
-            var idPuntoVentaDelPago = gasto.IdPuntoVenta ?? idPuntoVentaDeLaCompra;
+            // al revés, el punto de venta DEL PAGO manda cuando existe (es el que realmente pagó).
+            var idPuntoVentaDelPago = pago.IdPuntoVenta ?? idPuntoVentaDeLaCompra;
 
             await EscribirPagoAProveedorAsync(
-                idTenant, idProveedorDeLaCompra, idPuntoVentaDelPago, gasto.Importe, gasto, idEmpleado, momento, ct);
+                idTenant, idProveedorDeLaCompra, idPuntoVentaDelPago, pago.Importe, pago, idEmpleado, momento, ct);
         }
 
         await transaccion.CommitAsync(ct);
 
-        return gasto;
+        return pago;
     }
 
     /// <summary>Lock del header de la compra, mismos códigos 404/409 que
@@ -391,34 +391,34 @@ public class ServicioDeGastos(
     /// <summary>Lock-only, mismo patrón que <c>ServicioDeOrganizacion.TomarLockDePuntoVentaAsync</c>
     /// (<c>SELECT 1 ... FOR UPDATE</c>): nunca materializa una entidad — la ÚNICA lectura EF de la
     /// fila nace DESPUÉS, en <see cref="EjecutarVincularCompraAsync"/> (single-read-under-lock). Filtra
-    /// <c>deleted_at IS NULL</c> igual que el filtro global de EF: un gasto dado de baja es 404.</summary>
-    private async Task TomarLockDeGastoAsync(int idGasto, int idTenant, CancellationToken ct)
+    /// <c>deleted_at IS NULL</c> igual que el filtro global de EF: un pago dado de baja es 404.</summary>
+    private async Task TomarLockDePagoAsync(int idPago, int idTenant, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
-        comando.CommandText = "SELECT 1 FROM gastos WHERE id_gasto = $1 AND id_tenant = $2 AND deleted_at IS NULL FOR UPDATE";
-        ParametrosDeComando.Agregar(comando, idGasto);
+        comando.CommandText = "SELECT 1 FROM pagos WHERE id_pago = $1 AND id_tenant = $2 AND deleted_at IS NULL FOR UPDATE";
+        ParametrosDeComando.Agregar(comando, idPago);
         ParametrosDeComando.Agregar(comando, idTenant);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
         {
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
-            throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
+            throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
         }
     }
 
     // ---- edición y baja -----------------------------------------------------------------------
 
-    /// <summary>Edición desde el POS: solo mientras el turno del gasto siga abierto, decidido bajo
-    /// el lock del turno (un gasto sin turno, o con el turno ya cerrado, es <c>409
+    /// <summary>Edición desde el POS: solo mientras el turno del pago siga abierto, decidido bajo
+    /// el lock del turno (un pago sin turno, o con el turno ya cerrado, es <c>409
     /// gasto_turno_cerrado</c>). Ver <see cref="EjecutarEscrituraAsync"/> para el orden de locks y
     /// el análisis de ciclo.</summary>
-    public async Task<GastoRegistrado> EditarAsync(
-        int idGasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct = default)
+    public async Task<PagoRegistrado> EditarAsync(
+        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -427,25 +427,25 @@ public class ServicioDeGastos(
         ExigirImporteValido(solicitud.Importe);
         ExigirConceptoValido(solicitud.Concepto);
 
-        var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
-        ExigirGastoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
+        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         if (inmutables.IdTurnoCaja is null)
         {
-            throw GastoTurnoCerrado();
+            throw PagoTurnoCerrado();
         }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
-        var gasto = await estrategia.ExecuteAsync(async () =>
+        var pago = await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
-                idTenant, idGasto, inmutables, solicitud, ModoDeEscritura.Pos, idEmpleado, momento, ct));
+                idTenant, idPago, inmutables, solicitud, ModoDeEscritura.Pos, idEmpleado, momento, ct));
 
-        return Proyectar(gasto);
+        return Proyectar(pago);
     }
 
-    /// <summary>Edición administrativa de cualquier gasto: con turno abierto, cerrado (recalcula el
+    /// <summary>Edición administrativa de cualquier pago: con turno abierto, cerrado (recalcula el
     /// arqueo si cambia algo que el arqueo cuenta) o sin turno.</summary>
-    public async Task<GastoDeAdministracionListado> EditarDeAdministracionAsync(
-        int idGasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct = default)
+    public async Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
+        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -454,32 +454,32 @@ public class ServicioDeGastos(
         ExigirImporteValido(solicitud.Importe);
         ExigirConceptoValido(solicitud.Concepto);
 
-        var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
-        ExigirGastoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
+        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
-                idTenant, idGasto, inmutables, solicitud, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
+                idTenant, idPago, inmutables, solicitud, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
 
-        return await ObtenerDeAdministracionAsync(idGasto, ct);
+        return await ObtenerDeAdministracionAsync(idPago, ct);
     }
 
-    /// <summary>Baja lógica administrativa de cualquier gasto: revierte su pago a proveedor y su
-    /// egreso de tesorería con ajustes, y recalcula el arqueo si era un gasto de caja de un turno
+    /// <summary>Baja lógica administrativa de cualquier pago: revierte su pago a proveedor y su
+    /// egreso de tesorería con ajustes, y recalcula el arqueo si era un pago de caja de un turno
     /// cerrado.</summary>
-    public async Task EliminarDeAdministracionAsync(int idGasto, CancellationToken ct = default)
+    public async Task EliminarDeAdministracionAsync(int idPago, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
-        ExigirGastoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
+        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
+        ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
-                idTenant, idGasto, inmutables, solicitud: null, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
+                idTenant, idPago, inmutables, solicitud: null, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
     }
 
     private enum ModoDeEscritura
@@ -491,41 +491,41 @@ public class ServicioDeGastos(
     /// <summary>Columnas que ninguna escritura cambia después del alta, así que se pueden leer
     /// antes de los locks (single-read-under-lock regla 6): el turno es la clave del primer lock.
     /// <c>id_comprobante_compra</c> NO está acá: la vinculación posterior lo cambia.
-    /// <c>id_movimiento_personal</c> sí: se escribe al insertar el gasto y no hay escritor que lo cambie.</summary>
-    private sealed record DatosInmutablesDeGasto(
-        int? IdTurnoCaja, int IdEmpresa, OrigenFondosGasto OrigenFondos, int? IdMovimientoPersonal);
+    /// <c>id_movimiento_personal</c> sí: se escribe al insertar el pago y no hay escritor que lo cambie.</summary>
+    private sealed record DatosInmutablesDePago(
+        int? IdTurnoCaja, int IdEmpresa, OrigenFondosPago OrigenFondos, int? IdMovimientoPersonal);
 
-    private async Task<DatosInmutablesDeGasto> LeerDatosInmutablesAsync(int idGasto, CancellationToken ct) =>
-        await db.Gastos
-            .Where(g => g.Id == idGasto)
-            .Select(g => new DatosInmutablesDeGasto(g.IdTurnoCaja, g.IdEmpresa, g.OrigenFondos, g.IdMovimientoPersonal))
+    private async Task<DatosInmutablesDePago> LeerDatosInmutablesAsync(int idPago, CancellationToken ct) =>
+        await db.Pagos
+            .Where(g => g.Id == idPago)
+            .Select(g => new DatosInmutablesDePago(g.IdTurnoCaja, g.IdEmpresa, g.OrigenFondos, g.IdMovimientoPersonal))
             .FirstOrDefaultAsync(ct)
         // ADR-8: mismo 404 para "no existe", "es de otro tenant" y "está dado de baja".
-        ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
+        ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
 
     /// <summary>Mismas validaciones de referencias que el alta, pero solo para las referencias NUEVAS
-    /// (OD4: una referencia que el gasto ya tenía puede estar dada de baja y la edición sigue siendo
+    /// (OD4: una referencia que el pago ya tenía puede estar dada de baja y la edición sigue siendo
     /// válida): medio de pago visible y que no sea cuenta corriente, proveedor visible (404). Se compara
-    /// contra el gasto leído bajo el lock. El área sigue el criterio del alta: sin pre-chequeo, la FK
+    /// contra el pago leído bajo el lock. El área sigue el criterio del alta: sin pre-chequeo, la FK
     /// compuesta es el respaldo.</summary>
     private async Task ExigirReferenciasNuevasDeLaEdicionAsync(
-        Gasto gasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct)
+        Pago pago, SolicitudDeEdicionDePago solicitud, CancellationToken ct)
     {
-        if (solicitud.IdMedioPago != gasto.IdMedioPago)
+        if (solicitud.IdMedioPago != pago.IdMedioPago)
         {
             await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
         }
 
-        if (solicitud.IdProveedor is { } idProveedor && idProveedor != gasto.IdProveedor)
+        if (solicitud.IdProveedor is { } idProveedor && idProveedor != pago.IdProveedor)
         {
             await ResolverProveedorAsync(idProveedor, ct);
         }
     }
 
-    /// <summary>Un gasto que nació de un pago de personal se mueve junto con los libros de ese pago (saldo del
+    /// <summary>Un pago que nació de un pago de personal se mueve junto con los libros de ese pago (saldo del
     /// personal, cuenta corriente del cliente, tesorería o cajón): tocarlo por separado los desalinearía. Anular
     /// o revertir un pago es una operación aparte que todavía no existe.</summary>
-    private static void ExigirGastoSinPagoDePersonal(int? idMovimientoPersonal)
+    private static void ExigirPagoSinPagoDePersonal(int? idMovimientoPersonal)
     {
         if (idMovimientoPersonal is not null)
         {
@@ -535,40 +535,40 @@ public class ServicioDeGastos(
         }
     }
 
-    private static ErrorDominio GastoTurnoCerrado() =>
+    private static ErrorDominio PagoTurnoCerrado() =>
         new("gasto_turno_cerrado", "El gasto solo se puede editar mientras su turno siga abierto.", 409);
 
     /// <summary>
-    /// Edición (<paramref name="solicitud"/> no nula) o baja de un gasto, en una sola transacción.
+    /// Edición (<paramref name="solicitud"/> no nula) o baja de un pago, en una sola transacción.
     ///
     /// Orden de locks:
-    /// 1) turno del gasto (si tiene): POS <c>FOR SHARE</c> con el estado leído bajo el lock (mismo
+    /// 1) turno del pago (si tiene): POS <c>FOR SHARE</c> con el estado leído bajo el lock (mismo
     ///    criterio que <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/> en el alta, con
     ///    su propio <c>409 gasto_turno_cerrado</c>); administración <c>FOR UPDATE</c>, que además
     ///    serializa entre sí los recálculos del arqueo de un turno cerrado →
-    /// 2) gasto <c>FOR UPDATE</c> (lock-only, <see cref="TomarLockDeGastoAsync"/>) y la ÚNICA lectura
+    /// 2) pago <c>FOR UPDATE</c> (lock-only, <see cref="TomarLockDePagoAsync"/>) y la ÚNICA lectura
     ///    EF de la fila, después del lock →
     /// 3) filas de proveedor de los ajustes de cuenta corriente, en orden ascendente de id →
     /// 4) filas de <c>arqueos_turno</c> y la marca del turno (ya cubiertas por el lock 1) →
     /// 5) advisory de tesorería de la empresa, ÚLTIMO.
     ///
     /// Análisis de ciclo: el cierre (<see cref="ServicioDeTurnos"/>, los dos modos) toma el turno
-    /// EXCLUSIVO como primer statement y después solo el advisory de tesorería; nunca lockea gastos
+    /// EXCLUSIVO como primer statement y después solo el advisory de tesorería; nunca lockea pagos
     /// ni proveedores, y su orden turno → advisory es el mismo relativo que el de acá. El alta de
-    /// gasto toma el turno <c>FOR SHARE</c> primero y después compra/proveedor/advisory, sin lockear
-    /// ningún gasto existente. <see cref="VincularCompraAsync"/> no toca turnos y toma gasto →
+    /// pago toma el turno <c>FOR SHARE</c> primero y después compra/proveedor/advisory, sin lockear
+    /// ningún pago existente. <see cref="VincularCompraAsync"/> no toca turnos y toma pago →
     /// proveedor, el mismo orden relativo que los pasos 2 → 3. Dos ediciones que mueven pagos entre
     /// los mismos dos proveedores en sentidos opuestos no se cruzan porque las dos lockean en orden
     /// ascendente de id.
     ///
     /// Carrera con el cierre: si la edición del POS gana el <c>FOR SHARE</c>, el cierre espera y
-    /// deriva el arqueo con el gasto ya editado; si el cierre gana, la edición lee <c>cerrado</c> y
+    /// deriva el arqueo con el pago ya editado; si el cierre gana, la edición lee <c>cerrado</c> y
     /// responde 409. La edición administrativa: si gana el cierre, lee <c>cerrado</c> bajo su
-    /// <c>FOR UPDATE</c> y recalcula; si gana la edición, el cierre deriva con el gasto ya editado.
-    /// En ningún orden queda un arqueo persistido que no refleje el gasto comiteado.
+    /// <c>FOR UPDATE</c> y recalcula; si gana la edición, el cierre deriva con el pago ya editado.
+    /// En ningún orden queda un arqueo persistido que no refleje el pago comiteado.
     /// </summary>
-    private async Task<Gasto> EjecutarEscrituraAsync(
-        int idTenant, int idGasto, DatosInmutablesDeGasto inmutables, SolicitudDeEdicionDeGasto? solicitud,
+    private async Task<Pago> EjecutarEscrituraAsync(
+        int idTenant, int idPago, DatosInmutablesDePago inmutables, SolicitudDeEdicionDePago? solicitud,
         ModoDeEscritura modo, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -581,86 +581,86 @@ public class ServicioDeGastos(
             {
                 if (modo == ModoDeEscritura.Pos)
                 {
-                    throw GastoTurnoCerrado();
+                    throw PagoTurnoCerrado();
                 }
 
                 turnoCerrado = turno;
             }
         }
 
-        await TomarLockDeGastoAsync(idGasto, idTenant, ct);
-        var gasto = await db.Gastos.FirstOrDefaultAsync(g => g.Id == idGasto, ct)
-            ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
+        await TomarLockDePagoAsync(idPago, idTenant, ct);
+        var pago = await db.Pagos.FirstOrDefaultAsync(g => g.Id == idPago, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
 
-        var anterior = EstadoContable(gasto);
-        var valorAnterior = PayloadDeEdicion(gasto);
+        var anterior = EstadoContable(pago);
+        var valorAnterior = PayloadDeEdicion(pago);
 
         if (solicitud is not null)
         {
-            await ExigirReferenciasNuevasDeLaEdicionAsync(gasto, solicitud, ct);
-            ExigirEdicionCoherenteConLaCompra(gasto, solicitud);
+            await ExigirReferenciasNuevasDeLaEdicionAsync(pago, solicitud, ct);
+            ExigirEdicionCoherenteConLaCompra(pago, solicitud);
 
-            if (gasto.IdComprobanteCompra is null)
+            if (pago.IdComprobanteCompra is null)
             {
-                ExigirPuntoVentaParaElPagoAProveedor(solicitud.Categoria, gasto.IdPuntoVenta);
+                ExigirPuntoVentaParaElPagoAProveedor(solicitud.Categoria, pago.IdPuntoVenta);
             }
 
-            gasto.Categoria = solicitud.Categoria;
-            gasto.IdProveedor = solicitud.IdProveedor;
-            gasto.IdArea = solicitud.IdArea;
-            gasto.Concepto = solicitud.Concepto;
-            gasto.Detalle = solicitud.Detalle;
-            gasto.IdMedioPago = solicitud.IdMedioPago;
-            gasto.NumeroFactura = solicitud.NumeroFactura;
-            gasto.Importe = solicitud.Importe;
+            pago.Categoria = solicitud.Categoria;
+            pago.IdProveedor = solicitud.IdProveedor;
+            pago.IdArea = solicitud.IdArea;
+            pago.Concepto = solicitud.Concepto;
+            pago.Detalle = solicitud.Detalle;
+            pago.IdMedioPago = solicitud.IdMedioPago;
+            pago.NumeroFactura = solicitud.NumeroFactura;
+            pago.Importe = solicitud.Importe;
         }
         else
         {
-            gasto.DeletedAt = momento;
+            pago.DeletedAt = momento;
         }
 
-        gasto.UpdatedAt = momento;
+        pago.UpdatedAt = momento;
         await db.SaveChangesAsync(ct);
 
-        var nuevo = solicitud is null ? null : EstadoContable(gasto);
-        var detalle = solicitud is null ? $"Baja del gasto #{gasto.Id}" : $"Edición del gasto #{gasto.Id}";
+        var nuevo = solicitud is null ? null : EstadoContable(pago);
+        var detalle = solicitud is null ? $"Baja del gasto #{pago.Id}" : $"Edición del gasto #{pago.Id}";
 
         await EscribirAjustesDeProveedorAsync(
-            idTenant, gasto, CalculadorDeAjustesDeGasto.AjustesDeProveedor(anterior, nuevo), detalle, idEmpleado,
+            idTenant, pago, CalculadorDeAjustesDePago.AjustesDeProveedor(anterior, nuevo), detalle, idEmpleado,
             momento, ct);
 
-        if (turnoCerrado is not null && CalculadorDeAjustesDeGasto.AfectaElArqueo(gasto.OrigenFondos, anterior, nuevo))
+        if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(pago.OrigenFondos, anterior, nuevo))
         {
             await RecalcularArqueoAsync(idTenant, turnoCerrado, idEmpleado, momento, ct);
         }
 
-        if (CalculadorDeAjustesDeGasto.AjusteDeTesoreriaPara(gasto.OrigenFondos, anterior.Importe, nuevo?.Importe)
+        if (CalculadorDeAjustesDePago.AjusteDeTesoreriaPara(pago.OrigenFondos, anterior.Importe, nuevo?.Importe)
             is { } ajusteDeTesoreria)
         {
             var conexion = await ObtenerConexionAbiertaAsync(ct);
             var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
-            await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, gasto.IdEmpresa, ct);
+            await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, pago.IdEmpresa, ct);
 
             await EscriturasDeTesoreria.ApendearAsync(
-                db, idTenant, gasto.IdEmpresa, gasto.IdPuntoVenta, momento, TipoMovimientoTesoreria.Ajuste,
-                gasto.IdTurnoCaja, idGasto: null, detalle, ajusteDeTesoreria.Ingreso, ajusteDeTesoreria.Egreso,
+                db, idTenant, pago.IdEmpresa, pago.IdPuntoVenta, momento, TipoMovimientoTesoreria.Ajuste,
+                pago.IdTurnoCaja, idPago: null, detalle, ajusteDeTesoreria.Ingreso, ajusteDeTesoreria.Egreso,
                 idEmpleado, ct);
         }
 
-        var valorNuevo = PayloadDeEdicion(gasto);
+        var valorNuevo = PayloadDeEdicion(pago);
         if (solicitud is null)
         {
-            valorNuevo["deleted_at"] = gasto.DeletedAt;
+            valorNuevo["deleted_at"] = pago.DeletedAt;
         }
 
         auditoria.Registrar(new RegistroDeAuditoria(
-            idTenant, gasto.IdPuntoVenta, solicitud is null ? AccionAuditada.GastoBaja : AccionAuditada.GastoEdicion,
-            gasto.Id, valorAnterior, valorNuevo));
+            idTenant, pago.IdPuntoVenta, solicitud is null ? AccionAuditada.PagoBaja : AccionAuditada.PagoEdicion,
+            pago.Id, valorAnterior, valorNuevo));
         await db.SaveChangesAsync(ct);
 
         await transaccion.CommitAsync(ct);
 
-        return gasto;
+        return pago;
     }
 
     private sealed record TurnoBloqueado(int Id, bool Abierto, int? IdMedioPagoEfectivo);
@@ -694,13 +694,13 @@ public class ServicioDeGastos(
             idTurnoCaja, lector.GetString(0) == "abierto", lector.IsDBNull(1) ? null : lector.GetInt32(1));
     }
 
-    /// <summary>Mismos códigos que el alta para un gasto ligado a una compra: sigue siendo de
+    /// <summary>Mismos códigos que el alta para un pago ligado a una compra: sigue siendo de
     /// categoría proveedor y con el proveedor de la compra.</summary>
-    private static void ExigirEdicionCoherenteConLaCompra(Gasto gasto, SolicitudDeEdicionDeGasto solicitud)
+    private static void ExigirEdicionCoherenteConLaCompra(Pago pago, SolicitudDeEdicionDePago solicitud)
     {
-        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, gasto.IdComprobanteCompra);
+        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, pago.IdComprobanteCompra);
 
-        if (gasto.IdComprobanteCompra is not null && solicitud.IdProveedor != gasto.IdProveedor)
+        if (pago.IdComprobanteCompra is not null && solicitud.IdProveedor != pago.IdProveedor)
         {
             throw new ErrorDominio(
                 "proveedor_no_coincide_con_la_compra",
@@ -709,11 +709,11 @@ public class ServicioDeGastos(
     }
 
     /// <summary>Ajustes de cuenta corriente de proveedor (<see cref="TipoMovimientoCcProveedor.Ajuste"/>
-    /// no admite <c>id_gasto</c>: el gasto queda referenciado en el detalle). El punto de venta es el
-    /// del gasto; un gasto administrativo sin punto de venta solo pudo pagar a un proveedor al
+    /// no admite <c>id_pago</c>: el pago queda referenciado en el detalle). El punto de venta es el
+    /// del pago; un pago administrativo sin punto de venta solo pudo pagar a un proveedor al
     /// vincularse a una compra, y ese pago usó el punto de venta de la compra.</summary>
     private async Task EscribirAjustesDeProveedorAsync(
-        int idTenant, Gasto gasto, IReadOnlyList<AjusteDeSaldoDeProveedor> ajustes, string detalle, int idEmpleado,
+        int idTenant, Pago pago, IReadOnlyList<AjusteDeSaldoDeProveedor> ajustes, string detalle, int idEmpleado,
         DateTimeOffset momento, CancellationToken ct)
     {
         if (ajustes.Count == 0)
@@ -721,7 +721,7 @@ public class ServicioDeGastos(
             return;
         }
 
-        var idPuntoVenta = gasto.IdPuntoVenta ?? await PuntoVentaDeLaCompraAsync(gasto.IdComprobanteCompra, ct);
+        var idPuntoVenta = pago.IdPuntoVenta ?? await PuntoVentaDeLaCompraAsync(pago.IdComprobanteCompra, ct);
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
@@ -732,7 +732,7 @@ public class ServicioDeGastos(
 
             await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
                 conexion, transaccionCruda, idTenant, ajuste.IdProveedor, momento, idPuntoVenta, idEmpleado,
-                TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idGasto: null, ajuste.Importe, nuevoSaldo,
+                TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idPago: null, ajuste.Importe, nuevoSaldo,
                 detalle, ct);
         }
     }
@@ -804,24 +804,24 @@ public class ServicioDeGastos(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
-    private static EstadoContableDeGasto EstadoContable(Gasto gasto) =>
-        new(gasto.Categoria, gasto.IdProveedor, gasto.IdMedioPago, gasto.Importe);
+    private static EstadoContableDePago EstadoContable(Pago pago) =>
+        new(pago.Categoria, pago.IdProveedor, pago.IdMedioPago, pago.Importe);
 
-    private static Dictionary<string, object?> PayloadDeEdicion(Gasto gasto) => new()
+    private static Dictionary<string, object?> PayloadDeEdicion(Pago pago) => new()
     {
-        ["categoria"] = gasto.Categoria,
-        ["id_proveedor"] = gasto.IdProveedor,
-        ["id_area"] = gasto.IdArea,
-        ["concepto"] = gasto.Concepto,
-        ["detalle"] = gasto.Detalle,
-        ["id_medio_pago"] = gasto.IdMedioPago,
-        ["numero_factura"] = gasto.NumeroFactura,
-        ["importe"] = gasto.Importe
+        ["categoria"] = pago.Categoria,
+        ["id_proveedor"] = pago.IdProveedor,
+        ["id_area"] = pago.IdArea,
+        ["concepto"] = pago.Concepto,
+        ["detalle"] = pago.Detalle,
+        ["id_medio_pago"] = pago.IdMedioPago,
+        ["numero_factura"] = pago.NumeroFactura,
+        ["importe"] = pago.Importe
     };
 
     /// <summary>Historial paginado (design: API Surface, <c>GET /api/gastos</c>) — mismo criterio
     /// de paginado que <c>ServicioDeTurnos.ListarAsync</c>.</summary>
-    public async Task<PaginaDeGastos> ListarAsync(
+    public async Task<PaginaDePagos> ListarAsync(
         int? idPuntoVenta = null,
         DateTimeOffset? desde = null,
         DateTimeOffset? hasta = null,
@@ -832,7 +832,7 @@ public class ServicioDeGastos(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = db.Gastos.AsQueryable();
+        var query = db.Pagos.AsQueryable();
 
         if (idPuntoVenta is { } pv)
         {
@@ -855,10 +855,10 @@ public class ServicioDeGastos(
             .OrderByDescending(g => g.Fecha)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(ProyeccionesDeGasto.Listado(db))
+            .Select(ProyeccionesDePago.Listado(db))
             .ToListAsync(ct);
 
-        return new PaginaDeGastos(items, total, pagina, tamanio);
+        return new PaginaDePagos(items, total, pagina, tamanio);
     }
 
     /// <summary>Historial de gestión (design: API Surface, <c>GET /api/gastos/administracion</c>)
@@ -870,17 +870,17 @@ public class ServicioDeGastos(
     ///
     /// dangling-fk-read-models: proveedor/área/medio de pago se resuelven con una subquery
     /// correlacionada equivalente a un LEFT JOIN (nunca un <c>Include</c>/join que dependa de que
-    /// la fila exista) — un catálogo dado de baja lógica nunca hace desaparecer el gasto de
+    /// la fila exista) — un catálogo dado de baja lógica nunca hace desaparecer el pago de
     /// <c>items</c> ni desalinea <c>total</c>; el nombre sale <c>null</c> y el filtro
     /// <c>idProveedor</c> exige la fila VISIBLE (regla 2) para no matchear un id ya invisible por
     /// baja lógica.</summary>
-    public async Task<PaginaDeGastosDeAdministracion> ListarDeAdministracionAsync(
+    public async Task<PaginaDePagosDeAdministracion> ListarDeAdministracionAsync(
         int? idEmpresa = null,
         int? idPuntoVenta = null,
         DateTimeOffset? desde = null,
         DateTimeOffset? hasta = null,
-        CategoriaGasto? categoria = null,
-        OrigenFondosGasto? origenFondos = null,
+        CategoriaPago? categoria = null,
+        OrigenFondosPago? origenFondos = null,
         int? idProveedor = null,
         int pagina = 1,
         int tamanio = 25,
@@ -889,7 +889,7 @@ public class ServicioDeGastos(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = db.Gastos.AsQueryable();
+        var query = db.Pagos.AsQueryable();
 
         if (idEmpresa is { } e) query = query.Where(g => g.IdEmpresa == e);
         if (idPuntoVenta is { } pv) query = query.Where(g => g.IdPuntoVenta == pv);
@@ -913,7 +913,7 @@ public class ServicioDeGastos(
             .Select(ProyeccionDeAdministracion())
             .ToListAsync(ct);
 
-        return new PaginaDeGastosDeAdministracion(items, total, pagina, tamanio);
+        return new PaginaDePagosDeAdministracion(items, total, pagina, tamanio);
     }
 
     /// <summary>stage-gasto-a-compra (PR4), judgment follow-up: <c>GET
@@ -921,15 +921,15 @@ public class ServicioDeGastos(
     /// cref="ListarDeAdministracionAsync"/> (dangling-fk-read-models), pero de una sola fila. Nace
     /// para que <c>POST /api/gastos/administracion</c> tenga un <c>Location</c> que realmente
     /// resuelve (antes apuntaba a <c>/api/gastos/{id}</c>, que exige <c>OperacionDePos</c> pero
-    /// devuelve el shape reducido de <see cref="GastoListado"/> — un mismatch de contrato para un
+    /// devuelve el shape reducido de <see cref="PagoListado"/> — un mismatch de contrato para un
     /// cliente que siguiera el header).</summary>
-    public async Task<GastoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default) =>
-        await db.Gastos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
+    public async Task<PagoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default) =>
+        await db.Pagos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
             ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
 
-    private Expression<Func<Gasto, GastoDeAdministracionListado>> ProyeccionDeAdministracion() => g =>
-        new GastoDeAdministracionListado(
+    private Expression<Func<Pago, PagoDeAdministracionListado>> ProyeccionDeAdministracion() => g =>
+        new PagoDeAdministracionListado(
             g.Id,
             g.Fecha,
             g.IdEmpresa,
@@ -953,7 +953,7 @@ public class ServicioDeGastos(
 
     // ---- validación de dominio -------------------------------------------------------------
 
-    /// <summary>Mismo código que la CHECK de esquema <c>ck_gastos_importe_positivo</c> (design:
+    /// <summary>Mismo código que la CHECK de esquema <c>ck_pagos_importe_positivo</c> (design:
     /// Backstop Map, Slice 1 task 1.7): esta validación de servicio es la UX rápida, la CHECK es
     /// el contrato real (db-error-backstops — nunca tratar el pre-check como la protección).
     /// (spec: Importe Must Be Positive).</summary>
@@ -979,12 +979,12 @@ public class ServicioDeGastos(
         }
     }
 
-    /// <summary>spec: gastos / A Comprobante Compra Link Requires Categoria Proveedor — chequeo de
-    /// dominio puro, sin DB: un gasto ligado a una compra SIEMPRE tiene que ser de categoría
+    /// <summary>spec: pagos / A Comprobante Compra Link Requires Categoria Proveedor — chequeo de
+    /// dominio puro, sin DB: un pago ligado a una compra SIEMPRE tiene que ser de categoría
     /// proveedor (la compra la paga un proveedor, nunca sueldos/viáticos/etc.).</summary>
-    private static void ExigirCategoriaCoherenteConLaCompra(CategoriaGasto categoria, int? idComprobanteCompra)
+    private static void ExigirCategoriaCoherenteConLaCompra(CategoriaPago categoria, int? idComprobanteCompra)
     {
-        if (idComprobanteCompra is not null && categoria != CategoriaGasto.Proveedor)
+        if (idComprobanteCompra is not null && categoria != CategoriaPago.Proveedor)
         {
             throw new ErrorDominio(
                 "gasto_de_compra_debe_ser_de_proveedor",
@@ -994,15 +994,15 @@ public class ServicioDeGastos(
 
     /// <summary>stage-gastos-admin-retroactivos (PR3): <see
     /// cref="EscriturasDeCuentaCorrienteProveedor.ValidarFormaPorTipo"/> exige <c>id_punto_venta</c>
-    /// no nulo para CUALQUIER movimiento de CC de proveedor que no sea <c>Apertura</c> — un gasto
-    /// administrativo de categoría <see cref="CategoriaGasto.Proveedor"/> siempre escribe un
+    /// no nulo para CUALQUIER movimiento de CC de proveedor que no sea <c>Apertura</c> — un pago
+    /// administrativo de categoría <see cref="CategoriaPago.Proveedor"/> siempre escribe un
     /// <c>Pago</c> (<see cref="EscribirPagoAProveedorAsync"/>), así que el punto de venta deja de
     /// ser opcional en ESTE caso puntual (a diferencia del resto de las categorías, donde el
-    /// gasto administrativo nunca lo necesita). Chequeo de dominio puro, antes de tocar la base —
+    /// pago administrativo nunca lo necesita). Chequeo de dominio puro, antes de tocar la base —
     /// mismo criterio que <see cref="ExigirCategoriaCoherenteConLaCompra"/>.</summary>
-    private static void ExigirPuntoVentaParaElPagoAProveedor(CategoriaGasto categoria, int? idPuntoVenta)
+    private static void ExigirPuntoVentaParaElPagoAProveedor(CategoriaPago categoria, int? idPuntoVenta)
     {
-        if (categoria == CategoriaGasto.Proveedor && idPuntoVenta is null)
+        if (categoria == CategoriaPago.Proveedor && idPuntoVenta is null)
         {
             throw new ErrorDominio(
                 "gasto_de_proveedor_requiere_punto_de_venta",
@@ -1029,9 +1029,9 @@ public class ServicioDeGastos(
     /// (privado a esa clase, no reusable acá): medianoche LOCAL de la fecha de negocio, resuelta
     /// con <see cref="TimeZoneInfo.GetUtcOffset(DateTime)"/> — nunca <c>ConvertTimeToUtc</c>, que
     /// tira <c>ArgumentException</c> sobre una medianoche local inválida (un salto de DST exacto a
-    /// las 24:00). El resultado es el <see cref="Gasto.Fecha"/> que persiste — la ÚNICA columna
+    /// las 24:00). El resultado es el <see cref="Pago.Fecha"/> que persiste — la ÚNICA columna
     /// que lleva la fecha de negocio elegida por el admin; los movimientos de ledger (tesorería,
-    /// pago a proveedor) llevan <c>momento</c> (ver <see cref="InsertarGastoDeAdministracionAsync"/>),
+    /// pago a proveedor) llevan <c>momento</c> (ver <see cref="InsertarPagoDeAdministracionAsync"/>),
     /// nunca esta fecha retroactiva.</summary>
     private static DateTimeOffset FechaDeNegocioAInstante(DateOnly fecha, TimeZoneInfo zona)
     {
@@ -1054,8 +1054,8 @@ public class ServicioDeGastos(
     }
 
     /// <summary>spec: "exclude cuenta-corriente medios like the POS does" — el POS (<see
-    /// cref="RegistrarAsync"/>) solo lo filtra client-side (<c>mediosValidosParaGasto</c>,
-    /// Ways.Web); este es el primer camino de alta de gasto expuesto directo a un cliente HTTP sin
+    /// cref="RegistrarAsync"/>) solo lo filtra client-side (<c>mediosValidosParaPago</c>,
+    /// Ways.Web); este es el primer camino de alta de pago expuesto directo a un cliente HTTP sin
     /// ese filtro de UI garantizado (un admin puede llamar la API a mano), así que acá el guard es
     /// de servidor: cuenta corriente es el crédito del CLIENTE en una venta, nunca una salida real
     /// de dinero de una caja/tesorería.</summary>
@@ -1082,7 +1082,7 @@ public class ServicioDeGastos(
 
     /// <summary>400, no 404: el punto de venta SÍ existe (ya pasó <see
     /// cref="ResolverPuntoVentaAsync"/>, que da 404 si no) — lo que está mal es la combinación con
-    /// la empresa del gasto, mismo criterio 400 que <c>proveedor_no_coincide_con_la_compra</c> en
+    /// la empresa del pago, mismo criterio 400 que <c>proveedor_no_coincide_con_la_compra</c> en
     /// <see cref="ExigirCompraLigableAsync"/>.</summary>
     private async Task ExigirPuntoVentaDeLaEmpresaAsync(int idPuntoVenta, int idEmpresa, CancellationToken ct)
     {
@@ -1101,23 +1101,23 @@ public class ServicioDeGastos(
     /// vía <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/> como PRIMER statement
     /// de esta transacción de escritura): el turno ya vino resuelto como abierto (<see
     /// cref="ServicioDeTurnos.ResolverTurnoAbiertoAsync"/>, arriba, ANTES de abrir esta
-    /// transacción) — sin este re-chequeo bajo <c>FOR SHARE</c>, un gasto concurrente a un
+    /// transacción) — sin este re-chequeo bajo <c>FOR SHARE</c>, un pago concurrente a un
     /// cierre podría comitear dentro de un turno cuyo arqueo YA se derivó (design decisión 1).
     ///
     /// Slice 4 (design decisión 7): el guard de la compra ligada corre DESPUÉS de ese lock de
-    /// turno — mismo orden que el design pseudocódigo (Transactions — GASTO LIGADO A UNA
+    /// turno — mismo orden que el design pseudocódigo (Transactions — PAGO LIGADO A UNA
     /// COMPRA).
     ///
-    /// stage-gastos-origen-fondos-pos (PR2): cuando <see cref="SolicitudDeGasto.OrigenFondos"/> es
-    /// <see cref="OrigenFondosGasto.Tesoreria"/>, <see cref="EscribirMovimientoDeTesoreriaAsync"/>
+    /// stage-gastos-origen-fondos-pos (PR2): cuando <see cref="SolicitudDePago.OrigenFondos"/> es
+    /// <see cref="OrigenFondosPago.Tesoreria"/>, <see cref="EscribirMovimientoDeTesoreriaAsync"/>
     /// corre COMO ÚLTIMO paso antes del commit — después del turno <c>FOR SHARE</c>, la compra
     /// ligada <c>FOR SHARE</c> (si aplica) y el pago a proveedor (si aplica): mismo orden relativo
     /// que <c>ServicioDeTurnos.InsertarArqueosYTesoreriaAsync</c> (locks de fila primero, advisory
     /// de tesorería de la empresa al final) — ver el doc-comment de clase de
     /// <see cref="EscriturasDeTesoreria"/> para el análisis completo de por qué esto no puede
     /// formar un ciclo con el cierre.</summary>
-    private async Task<Gasto> InsertarGastoAsync(
-        int idTenant, int idEmpresa, int idTurnoCaja, SolicitudDeGasto solicitud, int idEmpleado,
+    private async Task<Pago> InsertarPagoAsync(
+        int idTenant, int idEmpresa, int idTurnoCaja, SolicitudDePago solicitud, int idEmpleado,
         DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -1130,7 +1130,7 @@ public class ServicioDeGastos(
             idProveedor = await ExigirCompraLigableAsync(idComprobanteCompra, idTenant, solicitud.IdProveedor, ct);
         }
 
-        var gasto = new Gasto
+        var pago = new Pago
         {
             IdTenant = idTenant,
             IdEmpresa = idEmpresa,
@@ -1152,43 +1152,43 @@ public class ServicioDeGastos(
             UpdatedAt = momento
         };
 
-        db.Gastos.Add(gasto);
+        db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
 
         // stage-15-cc-proveedores-ledger, Slice 3 (design decisión 7, tasks.md task 3.1): el
-        // movimiento `pago` va DESPUÉS de SaveChangesAsync — id_gasto es identity, recién existe
+        // movimiento `pago` va DESPUÉS de SaveChangesAsync — id_pago es identity, recién existe
         // acá — y es el ÚLTIMO lock de fila (for update) antes del commit. El predicado es
         // ServicioDeSaldoDeProveedor.cs:39-43 VERBATIM (la fórmula retirada que este ledger
         // reemplaza): categoría proveedor Y id_proveedor no nulo. `idProveedor` ya es el valor
         // RESUELTO (derivado por ExigirCompraLigableAsync cuando la solicitud no lo trae) — el
         // movimiento usa el mismo valor que la fila guarda, nunca el crudo de la solicitud.
-        if (solicitud.Categoria == CategoriaGasto.Proveedor && idProveedor is { } idProveedorDelPago)
+        if (solicitud.Categoria == CategoriaPago.Proveedor && idProveedor is { } idProveedorDelPago)
         {
             await EscribirPagoAProveedorAsync(
-                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, solicitud.Importe, gasto, idEmpleado, momento, ct);
+                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, solicitud.Importe, pago, idEmpleado, momento, ct);
         }
 
-        if (solicitud.OrigenFondos == OrigenFondosGasto.Tesoreria)
+        if (solicitud.OrigenFondos == OrigenFondosPago.Tesoreria)
         {
-            await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, gasto, idEmpleado, momento, ct);
+            await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, pago, idEmpleado, momento, ct);
         }
 
         await transaccion.CommitAsync(ct);
 
-        return gasto;
+        return pago;
     }
 
     /// <summary>stage-gastos-admin-retroactivos (PR3): mismo protocolo exacto que <see
-    /// cref="InsertarGastoAsync"/> (locks de fila primero, advisory de tesorería de la empresa al
+    /// cref="InsertarPagoAsync"/> (locks de fila primero, advisory de tesorería de la empresa al
     /// final) MENOS el turno — acá no hay ningún turno que lockear/re-chequear (owner's use case
-    /// 2: el gasto administrativo nunca pasa por un turno). Orden: compra ligada <c>FOR SHARE</c>
-    /// (si aplica) → insert del gasto → pago a proveedor (si aplica, su propio lock de fila) →
+    /// 2: el pago administrativo nunca pasa por un turno). Orden: compra ligada <c>FOR SHARE</c>
+    /// (si aplica) → insert del pago → pago a proveedor (si aplica, su propio lock de fila) →
     /// movimiento de tesorería (advisory de empresa, ÚLTIMO) → commit. <see
-    /// cref="Gasto.OrigenFondos"/> es SIEMPRE <see cref="OrigenFondosGasto.Tesoreria"/> acá (spec:
-    /// "never from a POS drawer") — nunca condicional como en <see cref="InsertarGastoAsync"/>.
+    /// cref="Pago.OrigenFondos"/> es SIEMPRE <see cref="OrigenFondosPago.Tesoreria"/> acá (spec:
+    /// "never from a POS drawer") — nunca condicional como en <see cref="InsertarPagoAsync"/>.
     ///
     /// <paramref name="fechaDeNegocio"/> (posiblemente retroactiva) es la ÚNICA que persiste en
-    /// <c>Gasto.Fecha</c>; el movimiento de tesorería y el pago a proveedor llevan <paramref
+    /// <c>Pago.Fecha</c>; el movimiento de tesorería y el pago a proveedor llevan <paramref
     /// name="momento"/> (el instante REAL del alta) — decisión documentada en el doc-comment de
     /// clase de este método más abajo y en <see cref="FechaDeNegocioAInstante"/>: los dos ledgers
     /// se LEEN por <c>fecha</c> (tesorería: por <c>id</c> de cadena, irrelevante; cuenta corriente
@@ -1197,10 +1197,10 @@ public class ServicioDeGastos(
     /// <c>saldo</c>/<c>final</c> que cada fila graba es el acumulado en el momento REAL del
     /// insert, nunca recalculado para su posición cronológica — grabar una fecha retroactiva en
     /// esos ledgers dejaría un saldo/final "del futuro" apareciendo entre filas más viejas.
-    /// <c>Gasto.Fecha</c> no tiene ese problema (no es un ledger acumulado, es un documento de
+    /// <c>Pago.Fecha</c> no tiene ese problema (no es un ledger acumulado, es un documento de
     /// autoría) y por eso sí lleva la fecha real elegida por el admin.</summary>
-    private async Task<Gasto> InsertarGastoDeAdministracionAsync(
-        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDeGastoDeAdministracion solicitud,
+    private async Task<Pago> InsertarPagoDeAdministracionAsync(
+        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDePagoDeAdministracion solicitud,
         int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -1211,24 +1211,24 @@ public class ServicioDeGastos(
             idProveedor = await ExigirCompraLigableAsync(idComprobanteCompra, idTenant, solicitud.IdProveedor, ct);
         }
 
-        var gasto = await PersistirGastoDeAdministracionAsync(
+        var pago = await PersistirPagoDeAdministracionAsync(
             idTenant, idEmpresa, fechaDeNegocio, solicitud, idProveedor, idEmpleado, momento, ct);
 
         await transaccion.CommitAsync(ct);
 
-        return gasto;
+        return pago;
     }
 
-    /// <summary>Escrituras del gasto administrativo dentro de la transacción del llamador, que ya
+    /// <summary>Escrituras del pago administrativo dentro de la transacción del llamador, que ya
     /// tomó el lock de la compra (si hay) y es quien comitea. Las comparten el alta administrativa y
-    /// <see cref="PagarCompraAsync"/>: un solo camino de escritura del gasto, del pago a proveedor y
+    /// <see cref="PagarCompraAsync"/>: un solo camino de escritura del pago, del pago a proveedor y
     /// del egreso de tesorería. <paramref name="idProveedor"/> ya viene resuelto contra la
     /// compra.</summary>
-    private async Task<Gasto> PersistirGastoDeAdministracionAsync(
-        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDeGastoDeAdministracion solicitud,
+    private async Task<Pago> PersistirPagoDeAdministracionAsync(
+        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDePagoDeAdministracion solicitud,
         int? idProveedor, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
-        var gasto = new Gasto
+        var pago = new Pago
         {
             IdTenant = idTenant,
             IdEmpresa = idEmpresa,
@@ -1237,7 +1237,7 @@ public class ServicioDeGastos(
             IdTurnoCaja = null,
             IdEmpleado = idEmpleado,
             Categoria = solicitud.Categoria,
-            OrigenFondos = OrigenFondosGasto.Tesoreria,
+            OrigenFondos = OrigenFondosPago.Tesoreria,
             IdProveedor = idProveedor,
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
@@ -1250,63 +1250,63 @@ public class ServicioDeGastos(
             UpdatedAt = momento
         };
 
-        db.Gastos.Add(gasto);
+        db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
 
-        if (solicitud.Categoria == CategoriaGasto.Proveedor && idProveedor is { } idProveedorDelPago)
+        if (solicitud.Categoria == CategoriaPago.Proveedor && idProveedor is { } idProveedorDelPago)
         {
             await EscribirPagoAProveedorAsync(
-                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, solicitud.Importe, gasto, idEmpleado, momento, ct);
+                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, solicitud.Importe, pago, idEmpleado, momento, ct);
         }
 
-        // ÚLTIMO lock de esta transacción (mismo criterio que InsertarGastoAsync) — acá no hay
+        // ÚLTIMO lock de esta transacción (mismo criterio que InsertarPagoAsync) — acá no hay
         // ningún lock de turno antes: la compra ligada FOR SHARE (si aplica) y el pago a proveedor
         // (si aplica) son los únicos locks de fila que pueden preceder a este advisory.
-        await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, gasto, idEmpleado, momento, ct);
+        await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, pago, idEmpleado, momento, ct);
 
-        return gasto;
+        return pago;
     }
 
-    /// <summary>stage-gastos-origen-fondos-pos (PR2): un gasto de origen
-    /// <see cref="OrigenFondosGasto.Tesoreria"/> se paga DIRECTO del fondo de tesorería de la
+    /// <summary>stage-gastos-origen-fondos-pos (PR2): un pago de origen
+    /// <see cref="OrigenFondosPago.Tesoreria"/> se paga DIRECTO del fondo de tesorería de la
     /// empresa, sin pasar por el efectivo del cajón — sigue atado al turno abierto
-    /// (<c>gasto.IdTurnoCaja</c>, trazabilidad) pero NO afecta ningún arqueo (<see
+    /// (<c>pago.IdTurnoCaja</c>, trazabilidad) pero NO afecta ningún arqueo (<see
     /// cref="Ways.Application.Caja.LectorDeMovimientosDelTurno"/> excluye este origen de
-    /// <c>gastosPorMedio</c>). Reusa <see cref="EscriturasDeTesoreria"/> — el mismo protocolo
+    /// <c>pagosPorMedio</c>). Reusa <see cref="EscriturasDeTesoreria"/> — el mismo protocolo
     /// lock+lectura+insert que el cierre — para que la cadena de tesorería tenga un solo escritor
-    /// real. <c>Ingreso = 0</c>/<c>Egreso = gasto.Importe</c> (design: la tesorería se reduce en el
-    /// momento del gasto, no se difiere al cierre); <c>Tipo = Gasto</c>, <c>IdGasto = gasto.Id</c>
-    /// (único por <c>ux_movimientos_tesoreria_id_gasto</c> — este es el ÚNICO call site que puebla
+    /// real. <c>Ingreso = 0</c>/<c>Egreso = pago.Importe</c> (design: la tesorería se reduce en el
+    /// momento del pago, no se difiere al cierre); <c>Tipo = Pago</c>, <c>IdPago = pago.Id</c>
+    /// (único por <c>ux_movimientos_tesoreria_id_pago</c> — este es el ÚNICO call site que puebla
     /// esa columna).</summary>
     private async Task EscribirMovimientoDeTesoreriaAsync(
-        int idTenant, int idEmpresa, Gasto gasto, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idEmpresa, Pago pago, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         // Último lock de esta transacción, después del turno/compra/proveedor (ver el doc-comment
-        // de InsertarGastoAsync) — mismo orden relativo que el cierre, nunca puede formar un ciclo.
+        // de InsertarPagoAsync) — mismo orden relativo que el cierre, nunca puede formar un ciclo.
         await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, idEmpresa, ct);
 
         await EscriturasDeTesoreria.ApendearAsync(
-            db, idTenant, idEmpresa, gasto.IdPuntoVenta, momento, TipoMovimientoTesoreria.Gasto, gasto.IdTurnoCaja,
-            gasto.Id, gasto.Concepto, ingreso: 0m, egreso: gasto.Importe, idEmpleado, ct);
+            db, idTenant, idEmpresa, pago.IdPuntoVenta, momento, TipoMovimientoTesoreria.Pago, pago.IdTurnoCaja,
+            pago.Id, pago.Concepto, ingreso: 0m, egreso: pago.Importe, idEmpleado, ct);
     }
 
     /// <summary>stage-15-cc-proveedores-ledger, Slice 3: el ÚNICO call site de
     /// <see cref="EscriturasDeCuentaCorrienteProveedor"/> para pagos — <c>importe = −importe</c>
-    /// (el pago REDUCE el saldo), <c>id_gasto</c> = la fila recién flusheada,
-    /// <c>id_comprobante_compra</c> = el vínculo del gasto (puede ser null: la imputación es
-    /// opcional, spec: An Unlinked Proveedor Gasto Reduces The Saldo Without Imputación). Misma
+    /// (el pago REDUCE el saldo), <c>id_pago</c> = la fila recién flusheada,
+    /// <c>id_comprobante_compra</c> = el vínculo del pago (puede ser null: la imputación es
+    /// opcional, spec: An Unlinked Proveedor Pago Reduces The Saldo Without Imputación). Misma
     /// conexión/transacción cruda que <see cref="ExigirCompraLigableAsync"/> reutiliza — nunca una
     /// segunda transacción.
     ///
-    /// stage-gastos-admin-retroactivos (PR3): parámetros primitivos (no el <c>SolicitudDeGasto</c>
-    /// del POS) para que <see cref="InsertarGastoDeAdministracionAsync"/> lo reuse sin duplicar el
+    /// stage-gastos-admin-retroactivos (PR3): parámetros primitivos (no el <c>SolicitudDePago</c>
+    /// del POS) para que <see cref="InsertarPagoDeAdministracionAsync"/> lo reuse sin duplicar el
     /// SQL — <paramref name="idPuntoVenta"/> viaja nullable (el camino administrativo no siempre
     /// trae uno).</summary>
     private async Task EscribirPagoAProveedorAsync(
-        int idTenant, int idProveedor, int? idPuntoVenta, decimal importe, Gasto gasto, int idEmpleado,
+        int idTenant, int idProveedor, int? idPuntoVenta, decimal importe, Pago pago, int idEmpleado,
         DateTimeOffset momento, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -1317,20 +1317,20 @@ public class ServicioDeGastos(
 
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, idProveedor, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Pago, gasto.IdComprobanteCompra, gasto.Id, -importe, nuevoSaldo,
+            TipoMovimientoCcProveedor.Pago, pago.IdComprobanteCompra, pago.Id, -importe, nuevoSaldo,
             detalle: null, ct);
     }
 
     /// <summary>design decisión 7: <c>SELECT ... FOR SHARE</c> crudo sobre el header de la compra
     /// — cierra el TOCTOU contra una anulación concurrente de la MISMA compra. La anulación toma
     /// el lock EXCLUSIVO del header como su propio primer statement (<c>ServicioDeCompras.
-    /// MarcarAnuladaAsync</c>): este gasto o bien bloquea y retoma viendo <c>anulada</c> ya
+    /// MarcarAnuladaAsync</c>): este pago o bien bloquea y retoma viendo <c>anulada</c> ya
     /// comiteada (<c>409 compra_anulada</c>), o gana la carrera y queda simplemente visible para
     /// la anulación que llega después — ambos estados representables, ninguno corrupto. <c>estado
     /// ::text</c> en vez del enum nativo, mismo criterio cauteloso que
     /// <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/>. Devuelve el
     /// <c>id_proveedor</c> de la compra: se usa para derivarlo cuando el request no lo trae (spec:
-    /// gastos / A Comprobante Compra Link — <c>id_proveedor</c> ausente se deriva, distinto se
+    /// pagos / A Comprobante Compra Link — <c>id_proveedor</c> ausente se deriva, distinto se
     /// rechaza).</summary>
     private async Task<int> ExigirCompraLigableAsync(
         int idComprobanteCompra, int idTenant, int? idProveedorSolicitado, CancellationToken ct)
@@ -1389,23 +1389,23 @@ public class ServicioDeGastos(
         return conexion;
     }
 
-    // ---- gastos de sueldo de un pago de personal -------------------------------------------
+    // ---- pagos de sueldo de un pago de personal -------------------------------------------
 
     /// <summary>Validaciones previas a la transacción de un pago de personal, con las mismas reglas y los
-    /// mismos códigos que los gastos que el pago reemplaza: con origen tesorería, las del alta administrativa
+    /// mismos códigos que los pagos que el pago reemplaza: con origen tesorería, las del alta administrativa
     /// (empresa 404, punto de venta opcional de esa empresa, medio de pago visible y que no sea cuenta
     /// corriente, fecha no futura en la zona de la empresa); con origen cajón, las del alta del POS (punto de
     /// venta 404 y turno abierto 409). El pago solo de descuento no tiene origen y solo resuelve el punto de
     /// venta y la fecha. Este método no escribe nada.</summary>
-    public async Task<EntornoDeGastoDeSueldo> PrepararGastosDeSueldoAsync(
-        OrigenFondosGasto? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly fecha,
+    public async Task<EntornoDePagoDeSueldo> PrepararPagosDeSueldoAsync(
+        OrigenFondosPago? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly fecha,
         IReadOnlyCollection<int> idsMedioPago, CancellationToken ct = default)
     {
         var momento = reloj.Ahora;
         int idEmpresaResuelta;
         int? idPuntoVentaResuelto = null;
 
-        if (origenFondos == OrigenFondosGasto.Tesoreria)
+        if (origenFondos == OrigenFondosPago.Tesoreria)
         {
             idEmpresaResuelta = (await ResolverEmpresaAsync(idEmpresa!.Value, ct)).Id;
             if (idPuntoVenta is { } idPuntoVentaPedido)
@@ -1422,7 +1422,7 @@ public class ServicioDeGastos(
         }
 
         int? idTurnoCaja = null;
-        if (origenFondos == OrigenFondosGasto.CajaTurno)
+        if (origenFondos == OrigenFondosPago.CajaTurno)
         {
             idTurnoCaja = (await servicioDeTurnos.ResolverTurnoAbiertoAsync(idPuntoVentaResuelto!.Value, ct)).Id;
         }
@@ -1436,31 +1436,31 @@ public class ServicioDeGastos(
         var zona = await ResolverZonaAsync(idEmpresaResuelta, idPuntoVentaResuelto, ct);
         ExigirFechaNoFutura(fecha, momento, zona);
 
-        return new EntornoDeGastoDeSueldo(
+        return new EntornoDePagoDeSueldo(
             idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona), nombresDeMedios);
     }
 
-    /// <summary>Un gasto de categoría sueldos por línea de dinero, dentro de la transacción del llamador, que ya
+    /// <summary>Un pago de categoría sueldos por línea de dinero, dentro de la transacción del llamador, que ya
     /// tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que el alta del
-    /// POS y el alta administrativa: el gasto del cajón entra al arqueo del turno por su origen
+    /// POS y el alta administrativa: el pago del cajón entra al arqueo del turno por su origen
     /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe su egreso encadenado con
     /// <see cref="EscribirMovimientoDeTesoreriaAsync"/>, cuyo advisory de la empresa es el ÚLTIMO lock de la
-    /// transacción. El gasto de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería,
-    /// la fecha de negocio elegida. Cada gasto apunta al movimiento <c>pago</c> del libro de personal.</summary>
-    public async Task<IReadOnlyList<Gasto>> PersistirGastosDeSueldoAsync(
-        int idTenant, EntornoDeGastoDeSueldo entorno, OrigenFondosGasto origenFondos, string nombreDelPersonal,
+    /// transacción. El pago de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería,
+    /// la fecha de negocio elegida. Cada pago apunta al movimiento <c>pago</c> del libro de personal.</summary>
+    public async Task<IReadOnlyList<Pago>> PersistirPagosDeSueldoAsync(
+        int idTenant, EntornoDePagoDeSueldo entorno, OrigenFondosPago origenFondos, string nombreDelPersonal,
         int idMovimientoPersonal, IReadOnlyList<LineaDePagoDePersonal> lineas, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct = default)
     {
-        var gastos = lineas.Select(linea => new Gasto
+        var pagos = lineas.Select(linea => new Pago
         {
             IdTenant = idTenant,
             IdEmpresa = entorno.IdEmpresa,
-            Fecha = origenFondos == OrigenFondosGasto.Tesoreria ? entorno.FechaDeNegocio : momento,
+            Fecha = origenFondos == OrigenFondosPago.Tesoreria ? entorno.FechaDeNegocio : momento,
             IdPuntoVenta = entorno.IdPuntoVenta,
             IdTurnoCaja = entorno.IdTurnoCaja,
             IdEmpleado = idEmpleado,
-            Categoria = CategoriaGasto.Sueldos,
+            Categoria = CategoriaPago.Sueldos,
             OrigenFondos = origenFondos,
             Concepto = $"Pago de personal: {nombreDelPersonal}",
             Detalle = linea.Referencia,
@@ -1471,18 +1471,18 @@ public class ServicioDeGastos(
             UpdatedAt = momento
         }).ToList();
 
-        db.Gastos.AddRange(gastos);
+        db.Pagos.AddRange(pagos);
         await db.SaveChangesAsync(ct);
 
-        if (origenFondos == OrigenFondosGasto.Tesoreria)
+        if (origenFondos == OrigenFondosPago.Tesoreria)
         {
-            foreach (var gasto in gastos)
+            foreach (var pago in pagos)
             {
-                await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, gasto, idEmpleado, momento, ct);
+                await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
             }
         }
 
-        return gastos;
+        return pagos;
     }
 
     // ---- resolución interna ---------------------------------------------------------------
@@ -1508,24 +1508,24 @@ public class ServicioDeGastos(
             // (root) nunca llega hasta acá. Defensa en profundidad, mismo criterio que
             // ServicioDeTurnos.ExigirTenantDeLaSesion.
             ?? throw new InvalidOperationException(
-                "ServicioDeGastos requiere un actor de tenant; OperacionDePos no admite plataforma.");
+                "ServicioDePagos requiere un actor de tenant; OperacionDePos no admite plataforma.");
 
     // ---- proyecciones -----------------------------------------------------------------------
 
-    private static GastoRegistrado Proyectar(Gasto gasto) => new(
-        gasto.Id,
-        gasto.IdTurnoCaja,
-        gasto.IdPuntoVenta,
-        gasto.Fecha,
-        gasto.Categoria,
-        gasto.IdProveedor,
-        gasto.IdArea,
-        gasto.Concepto,
-        gasto.Detalle,
-        gasto.IdMedioPago,
-        gasto.NumeroFactura,
-        gasto.Importe,
-        gasto.IdEmpleado,
-        gasto.IdComprobanteCompra,
-        gasto.OrigenFondos);
+    private static PagoRegistrado Proyectar(Pago pago) => new(
+        pago.Id,
+        pago.IdTurnoCaja,
+        pago.IdPuntoVenta,
+        pago.Fecha,
+        pago.Categoria,
+        pago.IdProveedor,
+        pago.IdArea,
+        pago.Concepto,
+        pago.Detalle,
+        pago.IdMedioPago,
+        pago.NumeroFactura,
+        pago.Importe,
+        pago.IdEmpleado,
+        pago.IdComprobanteCompra,
+        pago.OrigenFondos);
 }

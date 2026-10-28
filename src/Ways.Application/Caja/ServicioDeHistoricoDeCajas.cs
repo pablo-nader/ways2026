@@ -11,7 +11,7 @@ namespace Ways.Application.Caja;
 /// nueva de la slice: para un turno YA CERRADO los totales salen de sumar las filas persistidas de
 /// <see cref="ArqueoTurno"/>, jamás re-corriendo <see cref="Ways.Domain.Caja.CalculadorDeArqueo"/>
 /// (un recálculo administrativo ya dejó esas filas al día). <see cref="EgresosDeTurno"/> reusa la MISMA definición que
-/// <see cref="ServicioDeResumenDeTurno"/> — gastos por categoría/área más retiros — pero agrupada
+/// <see cref="ServicioDeResumenDeTurno"/> — pagos por categoría/área más retiros — pero agrupada
 /// de una sola vez para toda la página (nunca una consulta por fila, mismo criterio de "cantidad
 /// fija de consultas agrupadas" que <see cref="LectorDeContenidoDeResumen"/>).
 /// </summary>
@@ -159,16 +159,16 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
     private async Task<Dictionary<int, EgresosDeTurno>> LeerEgresosDeLaPaginaAsync(
         IReadOnlyList<int> ids, CancellationToken ct)
     {
-        // Gasto.IdTurnoCaja ya es nullable (GastosOrigenFondosYTesoreriaPorEmpresa) — un gasto sin
+        // Pago.IdTurnoCaja ya es nullable (GastosOrigenFondosYTesoreriaPorEmpresa) — un pago sin
         // turno no pertenece a ninguna página de historico-de-turnos, así que se excluye con el
         // mismo `!= null` que cierra el hueco de tipos de ids.Contains<int>.
-        var gastosPorCategoria = await db.Gastos
+        var pagosPorCategoria = await db.Pagos
             .Where(g => g.IdTurnoCaja != null && ids.Contains(g.IdTurnoCaja.Value))
             .GroupBy(g => new { g.IdTurnoCaja, g.Categoria })
             .Select(g => new { g.Key.IdTurnoCaja, g.Key.Categoria, Total = g.Sum(x => x.Importe) })
             .ToListAsync(ct);
 
-        var gastosPorArea = await db.Gastos
+        var pagosPorArea = await db.Pagos
             .Where(g => g.IdTurnoCaja != null && ids.Contains(g.IdTurnoCaja.Value))
             .GroupBy(g => new { g.IdTurnoCaja, g.IdArea })
             .Select(g => new { g.Key.IdTurnoCaja, g.Key.IdArea, Total = g.Sum(x => x.Importe) })
@@ -186,13 +186,13 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
             id => id,
             id =>
             {
-                var porCategoria = gastosPorCategoria
+                var porCategoria = pagosPorCategoria
                     .Where(x => x.IdTurnoCaja == id)
                     .OrderBy(x => x.Categoria)
                     .Select(x => new EgresoPorCategoria(x.Categoria, x.Total))
                     .ToList();
 
-                var porArea = gastosPorArea
+                var porArea = pagosPorArea
                     .Where(x => x.IdTurnoCaja == id)
                     .OrderBy(x => x.IdArea)
                     .Select(x => new EgresoPorArea(
