@@ -377,7 +377,7 @@ export function Usuarios() {
       try {
         await api.delete(`/usuarios/${fila.id}`)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo. La copia la elige
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta y el motivo adentro de ella. La copia la elige
         // el `codigo` (`usuario_en_uso` y los rechazos preexistentes de `PoliticaDeRoles`), nunca
         // el `mensaje` — que igual se rinde porque es lo único que nombra QUÉ hay a nombre de la
         // cuenta.
@@ -465,7 +465,7 @@ export function Usuarios() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Usuarios" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {/* Gateado en `esPlataforma` como todo lo demás que depende del universo de tenants: para
             un admin de tenant ese `GET` ni se dispara, así que la bandera no puede prender — el
             gate es paridad con sus elementos hermanos, no una rama viva. */}
@@ -481,6 +481,7 @@ export function Usuarios() {
             titulo={`al usuario "${baja.usuario}"`}
             ocupado={ocupado}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

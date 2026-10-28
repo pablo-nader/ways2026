@@ -197,7 +197,7 @@ export function Dominios() {
       try {
         await clienteDeOrganizacion.eliminarDominio(dominio.idTenant, dominio.id)
       } catch (e) {
-        // La puerta queda abierta con el motivo al lado: el operador ve por qué no se pudo sin
+        // La puerta queda abierta y muestra el motivo adentro: el operador ve por qué no se pudo sin
         // perder de vista qué estaba por eliminar.
         setErrorDeAccion(copiaDeFalloDeBaja(e, 'el dominio'))
         if (debeReleerTrasFallo(e)) await releerTrasFallo(dominio.idTenant)
@@ -251,7 +251,7 @@ export function Dominios() {
             )}
           </div>
         )}
-        {errorDeAccion && <div className="alert alert-danger">{errorDeAccion}</div>}
+        {errorDeAccion && !confirmacion && <div className="alert alert-danger">{errorDeAccion}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {confirmacion && (
@@ -263,6 +263,7 @@ export function Dominios() {
             etiquetaEnCurso="Eliminando…"
             ocupado={ocupado}
             disparador={disparadorDeLaPuerta}
+            error={errorDeAccion}
             onConfirmar={() => void eliminar(confirmacion)}
             onCancelar={cancelarEliminar}
           />

@@ -180,7 +180,7 @@ export function Empresas() {
       try {
         await clienteDeOrganizacion.eliminarEmpresa(fila.id)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo.
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta y el motivo adentro de ella.
         setError(copiaDeFalloDeBaja(e, 'la empresa'))
 
         return
@@ -216,7 +216,7 @@ export function Empresas() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Empresas" variante="inverse">
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
@@ -225,6 +225,7 @@ export function Empresas() {
             arrastra={ARRASTRE_DE_EMPRESA}
             ocupado={ocupado !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

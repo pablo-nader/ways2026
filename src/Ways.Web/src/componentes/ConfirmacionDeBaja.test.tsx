@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,13 +6,13 @@ import { ConfirmacionDeBaja } from './ConfirmacionDeBaja'
 import { Modal } from './Modal'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1 y C5). La puerta es
-// COMPARTIDA por las cuatro pantallas raíz, así que su disciplina modal se prueba UNA vez acá y
-// vale para las cuatro (`react-async-state` regla 10 por construcción).
+// COMPARTIDA por las pantallas anfitrionas, así que su disciplina modal se prueba UNA vez acá
+// (`react-async-state` regla 10 por construcción).
 
 /** Anfitrión mínimo: la puerta se monta y se desmonta como en las pantallas —`{abierta && …}`— y el
  * botón "Baja" es el disparador cuyo foco hay que devolver al cerrarla. El disparador se captura
- * SÍNCRONAMENTE en el `onClick`, antes de cualquier `setState`, igual que en las cuatro pantallas
- * raíz: cuando la puerta se monta, ese botón ya está `disabled`.
+ * SÍNCRONAMENTE en el `onClick`, antes de cualquier `setState`, igual que en las pantallas
+ * anfitrionas: cuando la puerta se monta, ese botón ya está `disabled`.
  *
  * `conFixup` reproduce la *focus fixup rule* del navegador: deshabilitar el elemento enfocado le
  * saca el foco y lo manda al `<body>`. jsdom NO la aplica, y tampoco se la puede forzar en su
@@ -20,8 +20,8 @@ import { Modal } from './Modal'
  * focus()` como no-ops sobre un área no focusable, así que `document.activeElement` se queda
  * pegado al botón—. Por eso el blur se ADELANTA un tick, al `onClick`, cuando el botón todavía
  * está habilitado: el mecanismo difiere, pero el estado observable es exactamente el que importa
- * —el foco ya está en el `<body>` cuando corre el efecto de montaje de la puerta—, que es donde
- * la captura tardía leía `document.activeElement`. */
+ * —el foco ya está en el `<body>` cuando corre el componente se monta—, que es donde
+ * una captura tardía leería `document.activeElement`. */
 function Anfitrion({
   ocupado = false,
   alConfirmar = () => {},
@@ -123,7 +123,7 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
   })
 
   /**
-   * Cláusula bajo prueba: el `cancelarRef.current?.focus()` del efecto de apertura. Sin él el foco
+   * Cláusula bajo prueba: el `autoFocus` del botón Cancelar. Sin él el foco
    * se queda en el disparador —o en el `body`, si la fila desapareció— y quien navega por teclado
    * tiene que buscar a ciegas una puerta que acaba de reclamar la pantalla.
    */
@@ -137,7 +137,7 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
   })
 
   /**
-   * Cláusula bajo prueba: el `return` del efecto de apertura, que devuelve el foco al disparador
+   * Cláusula bajo prueba: el cleanup del efecto de foco, que devuelve el foco al disparador
    * recibido por prop. Cerrar sin devolverlo lo manda al `body` y pierde el lugar de la tabla.
    */
   it('al cerrarse devuelve el foco al disparador', async () => {
@@ -153,8 +153,8 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
 
   /**
    * Cláusula bajo prueba (ronda 2, R2-2): que el disparador llegue por PROP —capturado en el
-   * `onClick`, antes de cualquier `setState`— y no de un `document.activeElement` leído dentro del
-   * efecto de montaje. Ese efecto pasivo corre DESPUÉS del commit que dejó el disparador
+   * `onClick`, antes de cualquier `setState`— y no de un `document.activeElement` leído dentro de
+   * un efecto de montaje. Un efecto pasivo corre DESPUÉS del commit que dejó el disparador
    * `disabled`, y un navegador real ya aplicó ahí la *focus fixup rule*: el foco está en el
    * `<body>`, así que la captura tardía se quedaba con el `<body>` y "devolver el foco" era un
    * no-op.
@@ -185,7 +185,7 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
 
   /**
    * Cláusula bajo prueba (ronda 2, R2-2): la rama de respaldo del cierre —`esAlcanzable` en `false`
-   * → `regresoRef`—. Cuando la baja sale bien, la fila que tenía el disparador ya no existe:
+   * → el título de la `Box` resuelto al montar—. Cuando la baja sale bien, la fila que tenía el disparador ya no existe:
    * enfocar un nodo desprendido no hace nada y el foco se queda en el `<body>`, o sea al principio
    * de todo el documento. El respaldo es un punto de referencia estable de la pantalla.
    */
@@ -201,7 +201,7 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
   })
 
   /**
-   * Cláusula bajo prueba: el listener de `Escape` sobre `document`. Es la salida que todo diálogo
+   * Cláusula bajo prueba: el Escape del `Modal` (listener de `document`). Es la salida que todo diálogo
    * modal debe tener; sin ella la puerta solo se cierra con el mouse.
    */
   it('Escape equivale a Cancelar', async () => {
@@ -254,8 +254,79 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
     expect(alCerrarEditor).not.toHaveBeenCalled()
   })
 
+  /** Cláusula bajo prueba: `ocupado` también vuelve inerte el clic en el fondo del `Modal`. */
+  it('con la escritura en vuelo, el clic en el fondo no cierra nada', async () => {
+    const usuario = userEvent.setup()
+    render(<Anfitrion ocupado />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    fireEvent.click(screen.getByRole('alertdialog'))
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `aria-describedby` apunta al bloque con la pregunta. */
+  it('la descripción accesible del diálogo contiene la pregunta', async () => {
+    const usuario = userEvent.setup()
+    render(<Anfitrion />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+
+    expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(/¿Dar de baja el tenant "Comercio Sur"\?/)
+  })
+
+  /** Cláusula bajo prueba: la prop `error` se rinde dentro del modal, como alerta, sin cerrarlo. */
+  it('el motivo del rechazo se muestra dentro del diálogo', () => {
+    render(
+      <ConfirmacionDeBaja
+        titulo="la fila"
+        ocupado={false}
+        error="No se pudo dar de baja."
+        onConfirmar={() => {}}
+        onCancelar={() => {}}
+      />,
+    )
+
+    expect(within(screen.getByRole('alertdialog')).getByRole('alert')).toHaveTextContent('No se pudo dar de baja.')
+  })
+
   /**
-   * Cláusula bajo prueba: el `|| ocupado` del listener de `Escape`. Con la escritura en vuelo los
+   * Cláusula bajo prueba: el chequeo de origen del Tab del `Modal`. Con la puerta apilada sobre otro
+   * modal, Tab en su último control vuelve a su primero y el foco nunca cae en el editor de abajo.
+   */
+  it('dentro de otro Modal, Tab no deja salir el foco hacia el editor', async () => {
+    const usuario = userEvent.setup()
+    function EditorConPuertaAbierta() {
+      const [abierta, setAbierta] = useState(true)
+
+      return (
+        <Modal titulo="Editor" onCerrar={() => {}}>
+          <button type="button">Control del editor</button>
+          {abierta && (
+            <ConfirmacionDeBaja
+              titulo="la fila"
+              ocupado={false}
+              onConfirmar={() => {}}
+              onCancelar={() => setAbierta(false)}
+            />
+          )}
+        </Modal>
+      )
+    }
+    render(<EditorConPuertaAbierta />)
+
+    const puerta = screen.getByRole('alertdialog')
+    const cancelar = within(puerta).getByRole('button', { name: 'Cancelar' })
+    const cruz = within(puerta).getByRole('button', { name: 'Cerrar' })
+    cancelar.focus()
+    await usuario.tab()
+
+    expect(cruz).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Control del editor' })).not.toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `ocupado` del `Modal`, que ignora Escape. Con la escritura en vuelo los
    * dos botones están inertes; que el teclado siga cerrando la puerta la sacaría de la pantalla
    * mientras el DELETE sigue viajando, y el operador perdería de vista qué se está borrando.
    */

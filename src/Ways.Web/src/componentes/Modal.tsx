@@ -103,6 +103,8 @@ type PropsModalBase = {
   etiquetaCerrar?: string
   /** `alertdialog` para las confirmaciones que exigen una respuesta; por defecto, `dialog`. */
   rol?: 'dialog' | 'alertdialog'
+  /** Id del elemento del contenido que describe el diálogo (`aria-describedby`). */
+  idDescripcion?: string
 }
 
 /** Un modal descartable exige `onCerrar`; uno `noDescartable` no tiene × y ignora Escape y el
@@ -132,6 +134,7 @@ export function Modal({
   restaurarFoco = true,
   etiquetaCerrar = 'Cerrar',
   rol = 'dialog',
+  idDescripcion,
   noDescartable = false,
   onCerrar,
 }: PropsModal) {
@@ -225,6 +228,9 @@ export function Modal({
     if (evento.key !== 'Tab') return
     const contenedor = contenidoRef.current
     if (!contenedor) return
+    // Los eventos de React burbujean por los portales: el Tab de un modal apilado llega acá con el
+    // foco fuera de este contenido, y no es de este modal atraparlo.
+    if (!evento.currentTarget.contains(evento.target as Node)) return
 
     const focusables = obtenerFocusables(contenedor)
     if (focusables.length === 0) {
@@ -267,6 +273,7 @@ export function Modal({
         role={rol}
         aria-modal="true"
         aria-labelledby={idTitulo}
+        aria-describedby={idDescripcion}
         onKeyDown={atraparTab}
         onClick={alHacerClickEnElFondo}
       >

@@ -483,7 +483,9 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
 
     await screen.findByText(/porque tiene artículos/)
     expect(screen.getByText(/Reasigná esos datos o desactivá la marca/)).toBeInTheDocument()
-    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    expect(within(puerta).getByRole('alert')).toHaveTextContent(/porque tiene artículos/)
+    expect(screen.getAllByText(/porque tiene artículos/)).toHaveLength(1)
   })
 
   /** Cláusula bajo prueba: el `setError('')` de `cancelarBaja` — ver `Empresas.test.tsx`. */

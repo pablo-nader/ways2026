@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect, useRef, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -404,6 +404,34 @@ describe('Modal — trampa de foco', () => {
     cerrar.focus()
     fireEvent.keyDown(cerrar, { key: 'Tab', shiftKey: true })
     expect(guardar).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el chequeo `currentTarget.contains(target)` de `atraparTab`. Un modal
+   * hijo en el árbol de React burbuja su Tab al `onKeyDown` del padre aunque viva en otro portal;
+   * sin el chequeo el padre se llevaba el foco al primer control detrás del hijo.
+   */
+  it('con un modal apilado, el Tab del de arriba no lo atrapa el de abajo', () => {
+    render(
+      <Modal titulo="Editor" onCerrar={() => {}}>
+        <button type="button">Control del editor</button>
+        <Modal titulo="Confirmación" onCerrar={() => {}}>
+          <button type="button">Aceptar</button>
+        </Modal>
+      </Modal>,
+    )
+
+    const aceptar = screen.getByRole('button', { name: 'Aceptar' })
+    const cerrarInterno = within(screen.getByRole('dialog', { name: 'Confirmación' })).getByRole('button', {
+      name: 'Cerrar',
+    })
+    const editor = screen.getByRole('button', { name: 'Control del editor' })
+
+    aceptar.focus()
+    fireEvent.keyDown(aceptar, { key: 'Tab' })
+
+    expect(cerrarInterno).toHaveFocus()
+    expect(editor).not.toHaveFocus()
   })
 })
 

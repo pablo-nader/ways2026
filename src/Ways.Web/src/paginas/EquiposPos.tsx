@@ -117,7 +117,7 @@ export function EquiposPos() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Equipos POS" variante="inverse">
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !revocacion && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {revocacion && (
@@ -129,6 +129,7 @@ export function EquiposPos() {
             etiquetaEnCurso="Revocando…"
             ocupado={ocupado !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarRevocacion}
             onCancelar={cancelarRevocacion}
           />

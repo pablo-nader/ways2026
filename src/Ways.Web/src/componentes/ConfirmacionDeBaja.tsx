@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { Modal } from './Modal'
 
@@ -46,6 +46,8 @@ type Props = {
    * de la `Box`.
    */
   regreso?: RefObject<HTMLElement | null> | null
+  /** Motivo del rechazo de la acción confirmada; se muestra dentro del modal, que sigue abierto. */
+  error?: string | null
   onConfirmar: () => void
   onCancelar: () => void
 }
@@ -73,6 +75,7 @@ export function ConfirmacionDeBaja({
   ocupado,
   disparador = null,
   regreso: regresoExplicito = null,
+  error = null,
   onConfirmar,
   onCancelar,
 }: Props) {
@@ -85,6 +88,7 @@ export function ConfirmacionDeBaja({
     () => disparador?.closest('.box')?.querySelector<HTMLElement>('header h5, table') ?? null,
   )
   const confirmandoRef = useRef(false)
+  const idDescripcion = useId()
 
   useEffect(() => {
     return () => {
@@ -121,6 +125,7 @@ export function ConfirmacionDeBaja({
       titulo={etiquetaConfirmar}
       tamano="sm"
       rol="alertdialog"
+      idDescripcion={idDescripcion}
       ocupado={ocupado}
       restaurarFoco={false}
       onCerrar={onCancelar}
@@ -141,22 +146,29 @@ export function ConfirmacionDeBaja({
         </>
       }
     >
-      <p className="mb-2">
-        <strong>
-          ¿{pregunta} {titulo}?
-        </strong>
-      </p>
-      {arrastra.length > 0 && (
-        <>
-          <p className="mb-1">También se dan de baja:</p>
-          <ul className="mb-2">
-            {arrastra.map((linea) => (
-              <li key={linea}>{linea}</li>
-            ))}
-          </ul>
-        </>
+      <div id={idDescripcion}>
+        <p className="mb-2">
+          <strong>
+            ¿{pregunta} {titulo}?
+          </strong>
+        </p>
+        {arrastra.length > 0 && (
+          <>
+            <p className="mb-1">También se dan de baja:</p>
+            <ul className="mb-2">
+              {arrastra.map((linea) => (
+                <li key={linea}>{linea}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {nota && <p className="mb-0">{nota}</p>}
+      </div>
+      {error && (
+        <div className="alert alert-danger mt-3 mb-0" role="alert">
+          {error}
+        </div>
       )}
-      {nota && <p className="mb-0">{nota}</p>}
     </Modal>
   )
 }
