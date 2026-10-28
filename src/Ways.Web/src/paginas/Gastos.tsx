@@ -486,20 +486,18 @@ export function Gastos() {
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
-          <>
-            {errorBaja && <div className="alert alert-danger">{errorBaja}</div>}
-            <ConfirmacionDeBaja
-              titulo={`el gasto "${baja.concepto}"`}
-              pregunta="Eliminar"
-              nota={advertenciasDeGastoDeAdministracion(baja).join(' ') || null}
-              etiquetaConfirmar="Confirmar eliminación"
-              etiquetaEnCurso="Eliminando…"
-              ocupado={eliminando}
-              disparador={disparadorDeLaBaja}
-              onConfirmar={() => void confirmarBaja()}
-              onCancelar={cancelarBaja}
-            />
-          </>
+          <ConfirmacionDeBaja
+            titulo={`el gasto "${baja.concepto}"`}
+            pregunta="Eliminar"
+            nota={advertenciasDeGastoDeAdministracion(baja).join(' ') || null}
+            etiquetaConfirmar="Confirmar eliminación"
+            etiquetaEnCurso="Eliminando…"
+            ocupado={eliminando}
+            disparador={disparadorDeLaBaja}
+            error={errorBaja}
+            onConfirmar={() => void confirmarBaja()}
+            onCancelar={cancelarBaja}
+          />
         )}
 
         {mostrarFormulario && (

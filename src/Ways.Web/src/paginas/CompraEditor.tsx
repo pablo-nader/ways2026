@@ -1387,7 +1387,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 Se están buscando códigos de proveedor: espere a que terminen y vuelva a guardar.
               </div>
             )}
-            {(impedimentoParaGuardar ?? error) && (
+            {(impedimentoParaGuardar ?? (descartarBorradorAbierto ? '' : error)) && (
               <div className="alert alert-danger py-1 px-2 small" role="alert">
                 {impedimentoParaGuardar ?? error}
               </div>
@@ -1446,6 +1446,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 etiquetaEnCurso="Descartando…"
                 ocupado={descartandoBorrador}
                 disparador={disparadorDeDescartarBorrador}
+                error={error}
                 onConfirmar={() => void descartarBorrador()}
                 onCancelar={() => setDescartarBorradorAbierto(false)}
               />

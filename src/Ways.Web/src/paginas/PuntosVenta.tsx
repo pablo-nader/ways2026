@@ -371,7 +371,7 @@ export function PuntosVenta() {
       try {
         await clienteDeOrganizacion.eliminarPuntoVenta(fila.id)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo.
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta y el motivo adentro de ella.
         setError(copiaDeFalloDeBaja(e, 'el punto de venta'))
 
         return
@@ -423,7 +423,7 @@ export function PuntosVenta() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Puntos de venta" variante="inverse">
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
@@ -431,6 +431,7 @@ export function PuntosVenta() {
             titulo={`el punto de venta "${baja.nombre}"`}
             ocupado={ocupado !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

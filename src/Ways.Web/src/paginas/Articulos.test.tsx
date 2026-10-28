@@ -3104,8 +3104,8 @@ describe('Articulos — disponibilidad del artículo', () => {
 
   /**
    * Cláusula bajo prueba: la sección avisa a `alDeEscribir` mientras la puerta de "Quitar imagen" está abierta. Sin
-   * eso el resto del formulario seguía operable y se podía apilar una alta rápida encima de la puerta, cuyo Escape en
-   * captura le impedía cerrarse. Mutación: quitar `alDeEscribir(true)` de la apertura deja "Nueva marca" habilitado.
+   * eso el resto del formulario seguía operable y se podía apilar una alta rápida encima de la puerta, cuyo Escape
+   * le impedía cerrarse. Mutación: quitar `alDeEscribir(true)` de la apertura deja "Nueva marca" habilitado.
    */
   it('con la puerta de "Quitar imagen" abierta el resto del formulario queda inerte y Escape solo cierra la puerta', async () => {
     mockearApiGet({ articulos: [articuloFixture({ id: 1, tieneImagen: true }), articuloDos] })
@@ -3116,13 +3116,13 @@ describe('Articulos — disponibilidad del artículo', () => {
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Quitar imagen' }))
 
-    expect(within(dialogo).getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     expect(nuevaMarca).toBeDisabled()
     expect(within(dialogo).getByRole('button', { name: 'Nueva categoría' })).toBeDisabled()
 
     await userEvent.keyboard('{Escape}')
 
-    expect(within(dialogo).queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
     await waitFor(() => expect(nuevaMarca).toBeEnabled())
   })
@@ -3137,7 +3137,7 @@ describe('Articulos — disponibilidad del artículo', () => {
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Quitar imagen' }))
     expect(nuevaMarca).toBeDisabled()
 
-    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar quitar imagen' }))
+    await userEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Confirmar quitar imagen' }))
 
     expect(await within(dialogo).findByText('Se quitó la imagen.')).toBeInTheDocument()
     await waitFor(() => expect(nuevaMarca).toBeEnabled())

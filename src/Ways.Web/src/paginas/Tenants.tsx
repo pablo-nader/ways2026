@@ -236,7 +236,7 @@ export function Tenants() {
       try {
         await clienteDeOrganizacion.eliminarTenant(fila.id)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde y la puerta queda ABIERTA con el motivo al lado: el operador
+        // Un rechazo SIEMPRE se rinde y la puerta queda ABIERTA con el motivo adentro: el operador
         // ve por qué no se pudo sin perder de vista qué estaba por dar de baja. La copia la elige
         // el `codigo`, nunca el `mensaje` — que igual se rinde, porque es lo único que nombra qué
         // bloquea.
@@ -290,7 +290,7 @@ export function Tenants() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Tenants" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !confirmacion && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {confirmacion && (
@@ -309,6 +309,7 @@ export function Tenants() {
             }
             ocupado={ocupado !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmar}
             onCancelar={cancelarConfirmacion}
           />

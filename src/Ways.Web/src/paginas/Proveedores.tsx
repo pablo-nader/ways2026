@@ -348,7 +348,7 @@ export function Proveedores() {
   return (
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Proveedores" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
@@ -356,6 +356,7 @@ export function Proveedores() {
             titulo={`el proveedor "${baja.razonSocial}"`}
             ocupado={ocupadoBaja !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />
