@@ -4,15 +4,19 @@ import { api, ErrorApi } from '../api/cliente'
 import {
   claseDeBadgeDeEstadoOrdenCompra,
   clienteDeOrdenesDeCompra,
+  esColumnaOrdenableDeOrdenesDeCompra,
   etiquetaDeEstadoOrdenCompra,
   filtrosDeOrdenesDeCompraVacios,
   type FiltrosDeOrdenesDeCompra,
+  type OrdenDeOrdenesDeCompra,
 } from '../api/ordenesDeCompra'
 import { ROL } from '../api/tipos'
 import type { EstadoOrdenCompra, OrdenDeCompraListada, PaginaDe, PaginaDeOrdenesDeCompra, ProveedorListado, PuntoVentaListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { CampoFecha } from '../componentes/CampoFecha'
 
 const OPCIONES_ESTADO: { valor: EstadoOrdenCompra | ''; etiqueta: string }[] = [
@@ -47,6 +51,9 @@ export function OrdenesDeCompra() {
 
   const [filtros, setFiltros] = useState<FiltrosDeOrdenesDeCompra>(filtrosDeOrdenesDeCompraVacios())
 
+  // `null` = el orden de siempre del listado (más nuevas primero). Si una consulta falla, la tabla desaparece junto con
+  // su encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeOrdenesDeCompra>(null)
   const [pagina, setPagina] = useState<PaginaDeOrdenesDeCompra | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -91,7 +98,7 @@ export function OrdenesDeCompra() {
     setError('')
 
     clienteDeOrdenesDeCompra
-      .listar(filtros)
+      .listar(filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -105,11 +112,22 @@ export function OrdenesDeCompra() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [filtros])
+  }, [filtros, orden])
 
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  // Ascendente → descendente → orden de siempre. Cambiar el orden vuelve a la página 1 y conserva los filtros; los dos
+  // setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeOrdenesDeCompra(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
+  }
 
   const proveedorPorId: Record<number, ProveedorListado> = {}
   for (const p of proveedores ?? []) proveedorPorId[p.id] = p
@@ -231,12 +249,24 @@ export function OrdenesDeCompra() {
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Número</th>
-                    <th>Proveedor</th>
-                    <th>Punto de venta</th>
-                    <th>Estado</th>
-                    <th>Fecha de emisión</th>
-                    <th>Fecha esperada</th>
+                    <EncabezadoOrdenable columna="numero" orden={orden} onAlternar={alternarOrden}>
+                      Número
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="proveedor" orden={orden} onAlternar={alternarOrden}>
+                      Proveedor
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="puntoVenta" orden={orden} onAlternar={alternarOrden}>
+                      Punto de venta
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternarOrden}>
+                      Estado
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="fechaEmision" orden={orden} onAlternar={alternarOrden}>
+                      Fecha de emisión
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="fechaEsperada" orden={orden} onAlternar={alternarOrden}>
+                      Fecha esperada
+                    </EncabezadoOrdenable>
                   </tr>
                 </thead>
                 <tbody>

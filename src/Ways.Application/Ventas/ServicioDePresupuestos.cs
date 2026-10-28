@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Listados;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
@@ -66,8 +67,12 @@ public class ServicioDePresupuestos(
         DateTimeOffset? hasta = null,
         int pagina = 1,
         int tamanio = 25,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -92,9 +97,7 @@ public class ServicioDePresupuestos(
 
         var total = await query.CountAsync(ct);
 
-        var pagados = await query
-            .OrderByDescending(p => p.FechaEmision)
-            .ThenByDescending(p => p.Id)
+        var pagados = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .ToListAsync(ct);
@@ -106,6 +109,59 @@ public class ServicioDePresupuestos(
 
         return new PaginaDePresupuestos(items, total, pagina, tamanio);
     }
+
+    /// <summary>Sin orden pedido: <c>FechaEmision</c> y <c>Id</c> descendentes (el orden de siempre). Con orden: la
+    /// columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. El número se ordena como lo muestra la
+    /// celda (<c>0001-00000012</c>: punto de venta y después número); un borrador sin número, que la pantalla
+    /// rotula con su id, va al final en las dos direcciones. Cliente ordena por el número de cliente (la celda
+    /// empieza con él) y punto de venta por su nombre; un cliente o PV dado de baja o con FK colgante llega
+    /// vacío (<c>db.Clientes</c>/<c>db.PuntosVenta</c> ya excluyen las bajas) y va al final. El vencimiento
+    /// solo existe mientras el presupuesto está Enviado (la celda muestra un guion en cualquier otro estado).</summary>
+    private IOrderedQueryable<Presupuesto> Ordenar(
+        IQueryable<Presupuesto> query, OrdenDeListado<ColumnaDeOrdenDePresupuestos>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(p => p.FechaEmision).ThenByDescending(p => p.Id);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDePresupuestos.Numero => desc
+                ? query.OrderBy(p => p.Numero == null).ThenByDescending(p => p.IdPuntoVenta).ThenByDescending(p => p.Numero)
+                : query.OrderBy(p => p.Numero == null).ThenBy(p => p.IdPuntoVenta).ThenBy(p => p.Numero),
+            ColumnaDeOrdenDePresupuestos.Cliente => OrdenarPor.ClaveConVacios(
+                query,
+                p => db.Clientes.Where(c => c.Id == p.IdCliente).Select(c => (int?)c.Numero).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDePresupuestos.PuntoVenta => OrdenarPor.ClaveConVacios(
+                query,
+                p => db.PuntosVenta.Where(pv => pv.Id == p.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDePresupuestos.Estado => OrdenarPor.Clave(
+                query, EtiquetaPorCaso.Selector((Presupuesto p) => p.Estado, EtiquetasDeEstadoDeDocumento.Presupuesto), desc),
+            ColumnaDeOrdenDePresupuestos.Vencimiento => OrdenarPor.ClaveConVacios(
+                query, p => p.Estado == EstadoPresupuesto.Enviado ? p.Vencimiento : null, desc),
+            ColumnaDeOrdenDePresupuestos.FechaEmision => OrdenarPor.Clave(query, p => p.FechaEmision, desc),
+            ColumnaDeOrdenDePresupuestos.Total => OrdenarPor.Clave(query, p => p.Total, desc),
+            _ => query.OrderByDescending(p => p.FechaEmision),
+        };
+
+        return ordenado.ThenBy(p => p.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDePresupuestos> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDePresupuestos>(StringComparer.Ordinal)
+        {
+            ["numero"] = ColumnaDeOrdenDePresupuestos.Numero,
+            ["cliente"] = ColumnaDeOrdenDePresupuestos.Cliente,
+            ["puntoVenta"] = ColumnaDeOrdenDePresupuestos.PuntoVenta,
+            ["estado"] = ColumnaDeOrdenDePresupuestos.Estado,
+            ["vencimiento"] = ColumnaDeOrdenDePresupuestos.Vencimiento,
+            ["fechaEmision"] = ColumnaDeOrdenDePresupuestos.FechaEmision,
+            ["total"] = ColumnaDeOrdenDePresupuestos.Total,
+        };
 
     /// <summary>Cláusulas bajo prueba (<c>mutation-proof-tests</c>, mutation target #59, mitad
     /// presupuesto), en orden de daño si se pierden:

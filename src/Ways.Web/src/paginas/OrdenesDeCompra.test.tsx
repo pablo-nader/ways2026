@@ -240,6 +240,120 @@ describe('OrdenesDeCompra — pager', () => {
   })
 })
 
+describe('OrdenesDeCompra — orden en el servidor', () => {
+  const llamadasAlListado = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((ruta) => ruta.startsWith('/ordenes-compra?'))
+
+  it('el clic en un encabezado pide el orden al servidor, recorre ascendente, descendente y el orden de siempre', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('12')
+    expect(llamadasAlListado().every((ruta) => !ruta.includes('orden='))).toBe(true)
+
+    await usuario.click(screen.getByRole('button', { name: /^Fecha esperada/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=fechaEsperada&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Fecha esperada/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /^Fecha esperada/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=fechaEsperada&direccion=descendente'))
+
+    await usuario.click(screen.getByRole('button', { name: /^Fecha esperada/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).not.toContain('orden='))
+  })
+
+  it.each([
+    ['Número', 'numero'],
+    ['Proveedor', 'proveedor'],
+    ['Punto de venta', 'puntoVenta'],
+    ['Estado', 'estado'],
+    ['Fecha de emisión', 'fechaEmision'],
+    ['Fecha esperada', 'fechaEsperada'],
+  ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('12')
+
+    await usuario.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain(`orden=${clave}&direccion=ascendente`))
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/ordenes-compra?')
+        ? Promise.resolve(paginaFixture({ total: 50, pagina: ruta.includes('pagina=2') ? 2 : 1, tamanio: 25 }))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText(/Página 1 de 2/)
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Cerrada')
+    await screen.findByText(/Página 1 de 2/)
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 2/)
+
+    await usuario.click(screen.getByRole('button', { name: /^Estado/ }))
+
+    await waitFor(() => {
+      const ultima = llamadasAlListado().at(-1)!
+      expect(ultima).toContain('orden=estado&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+      expect(ultima).toContain('estado=Cerrada')
+    })
+    await screen.findByText(/Página 1 de 2/)
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
+    let resolverPorNumero: (v: PaginaDeOrdenesDeCompra) => void = () => {}
+    let promesaPorNumero: Promise<PaginaDeOrdenesDeCompra> = Promise.resolve(paginaFixture())
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/ordenes-compra?') && ruta.includes('orden=numero')) {
+        promesaPorNumero = new Promise((resolve) => (resolverPorNumero = resolve))
+        return promesaPorNumero
+      }
+      if (ruta.startsWith('/ordenes-compra?') && ruta.includes('orden=estado')) {
+        return Promise.resolve(paginaFixture({ items: [ordenFixture({ id: 2, numero: 99 })] }))
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('12')
+
+    await usuario.click(screen.getByRole('button', { name: /^Número/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Estado/ }))
+    await screen.findByText('99')
+
+    await act(async () => {
+      resolverPorNumero(paginaFixture({ items: [ordenFixture({ id: 3, numero: 199 })] }))
+      await promesaPorNumero
+    })
+
+    expect(screen.getByText('99')).toBeInTheDocument()
+    expect(screen.queryByText('199')).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Estado/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/ordenes-compra?') && ruta.includes('orden=numero')
+        ? Promise.reject(new Error('caída'))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderPantalla()
+    await screen.findByText('12')
+
+    await usuario.click(screen.getByRole('button', { name: /^Número/ }))
+
+    await screen.findByText('No se pudieron cargar las órdenes de compra.')
+    expect(screen.queryByRole('columnheader', { name: /Número/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('12')).not.toBeInTheDocument()
+  })
+})
+
 describe('OrdenesDeCompra — "Nueva orden de compra" (Admin-only)', () => {
   it('Admin ve el botón; Vendedor no', async () => {
     mockearRutasBase()

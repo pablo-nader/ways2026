@@ -8,6 +8,7 @@ using Ways.Application.Auditoria;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Familias;
+using Ways.Application.Listados;
 using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
@@ -84,8 +85,12 @@ public class ServicioDeCompras(
         int pagina = 1,
         int tamanio = 25,
         OrigenCompra? origen = null,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -93,8 +98,7 @@ public class ServicioDeCompras(
 
         var total = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderByDescending(c => c.Id)
+        var items = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
@@ -102,6 +106,54 @@ public class ServicioDeCompras(
 
         return new PaginaDeCompras(await ConSaldoPendienteAsync(items, ct), total, pagina, tamanio);
     }
+
+    /// <summary>Sin orden pedido: <c>Id</c> descendente (el orden de siempre del listado y de su export). Con
+    /// orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. El número ordena por el número
+    /// externo (una compra sin número, que la pantalla rotula con su id, va al final en las dos direcciones);
+    /// proveedor y tipo, por lo que muestra la celda (razón social, código); un proveedor dado de baja o con
+    /// FK colgante llega vacío (<c>db.Proveedores</c> ya excluye las bajas) y va al final; el estado, por su
+    /// etiqueta. "Estado de pago" no es ordenable: la pantalla lo deriva de otra consulta (el saldo del
+    /// proveedor) y solo lo muestra con un proveedor filtrado.</summary>
+    private IOrderedQueryable<ComprobanteCompra> Ordenar(
+        IQueryable<ComprobanteCompra> query, OrdenDeListado<ColumnaDeOrdenDeCompras>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(c => c.Id);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeCompras.Numero => OrdenarPor.ClaveConVacios(query, c => c.NumeroExterno, desc),
+            ColumnaDeOrdenDeCompras.Proveedor => OrdenarPor.ClaveConVacios(
+                query,
+                c => db.Proveedores.Where(p => p.Id == c.IdProveedor).Select(p => p.RazonSocial).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeCompras.Tipo => OrdenarPor.ClaveConVacios(
+                query,
+                c => db.TiposComprobante.Where(t => t.Id == c.IdTipoComprobante).Select(t => t.Codigo).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeCompras.Estado => OrdenarPor.Clave(
+                query, EtiquetaPorCaso.Selector((ComprobanteCompra c) => c.Estado, EtiquetasDeEstadoDeDocumento.Compra), desc),
+            ColumnaDeOrdenDeCompras.FechaRecepcion => OrdenarPor.ClaveConVacios(query, c => c.FechaRecepcion, desc),
+            ColumnaDeOrdenDeCompras.Total => OrdenarPor.Clave(query, c => c.Total, desc),
+            _ => query.OrderByDescending(c => c.Id),
+        };
+
+        return ordenado.ThenBy(c => c.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeCompras> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeCompras>(StringComparer.Ordinal)
+        {
+            ["numero"] = ColumnaDeOrdenDeCompras.Numero,
+            ["proveedor"] = ColumnaDeOrdenDeCompras.Proveedor,
+            ["tipo"] = ColumnaDeOrdenDeCompras.Tipo,
+            ["estado"] = ColumnaDeOrdenDeCompras.Estado,
+            ["fechaRecepcion"] = ColumnaDeOrdenDeCompras.FechaRecepcion,
+            ["total"] = ColumnaDeOrdenDeCompras.Total,
+        };
 
     /// <summary>stage-11-exportacion-reportes (Slice 3, design decisión 7): mismo criterio que
     /// <c>ServicioDeVentas.ListarParaExportacionAsync</c> — <see cref="ConstruirQuery"/>

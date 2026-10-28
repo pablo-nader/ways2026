@@ -7,6 +7,7 @@
  * `costoUnitario`/`descuento`/`idAlicuotaIva`).
  */
 import { api } from './cliente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import {
   brutoDeLinea,
   cantidadDeLinea,
@@ -79,11 +80,31 @@ export function filtrosDeComprasVacios(): FiltrosDeCompras {
   return { idProveedor: null, estado: null, origen: null, desde: '', hasta: '', idEmpresa: null, pagina: 1, tamanio: 25 }
 }
 
+/** Claves de `orden` que acepta `GET /api/compras`: una por cada columna de datos de la grilla salvo "Estado de pago",
+ * que la pantalla deriva de otra consulta y solo muestra con un proveedor filtrado. */
+export const COLUMNAS_ORDENABLES_DE_COMPRAS = [
+  'numero',
+  'proveedor',
+  'tipo',
+  'estado',
+  'fechaRecepcion',
+  'total',
+] as const
+
+export type ColumnaOrdenableDeCompras = (typeof COLUMNAS_ORDENABLES_DE_COMPRAS)[number]
+
+export type OrdenDeCompras = OrdenDeServidor<ColumnaOrdenableDeCompras>
+
+export function esColumnaOrdenableDeCompras(columna: string): columna is ColumnaOrdenableDeCompras {
+  return (COLUMNAS_ORDENABLES_DE_COMPRAS as readonly string[]).includes(columna)
+}
+
 /** Arma el query string de `GET /api/compras` — `desde`/`hasta` filtran por `fecha_recepcion`
  * (`ServicioDeCompras.ListarAsync`), nunca por `fecha_comprobante`, así que llevan el mismo
  * offset horario explícito que el resto de la web. */
-export function construirQueryDeCompras(filtros: FiltrosDeCompras): string {
+export function construirQueryDeCompras(filtros: FiltrosDeCompras, orden: OrdenDeCompras = null): string {
   const parametros = new URLSearchParams()
+  agregarOrdenAlQuery(parametros, orden)
   if (filtros.idProveedor !== null) parametros.set('idProveedor', String(filtros.idProveedor))
   if (filtros.estado !== null) parametros.set('estado', filtros.estado)
   if (filtros.origen !== null) parametros.set('origen', filtros.origen)
@@ -114,7 +135,8 @@ export function construirQueryDeDuplicados(parametros: ParametrosDeDuplicados): 
 }
 
 export const clienteDeCompras = {
-  listar: (filtros: FiltrosDeCompras) => api.get<PaginaDeCompras>(`/compras${construirQueryDeCompras(filtros)}`),
+  listar: (filtros: FiltrosDeCompras, orden: OrdenDeCompras = null) =>
+    api.get<PaginaDeCompras>(`/compras${construirQueryDeCompras(filtros, orden)}`),
   obtener: (id: number) => api.get<CompraDetalle>(`/compras/${id}`),
   /** `GET /api/compras/duplicados` — compras no anuladas del mismo proveedor y tipo con ese número, comparado por su valor. */
   buscarDuplicados: (parametros: ParametrosDeDuplicados) =>

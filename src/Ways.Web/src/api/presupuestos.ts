@@ -5,6 +5,7 @@
  * (design.md: "client + pure mappers; `tipos.ts` mirrors the read/write DTOs").
  */
 import { api } from './cliente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import { esTextoDeCantidadValido } from './cantidadPorUnidad'
 import type {
   EstadoPresupuesto,
@@ -54,13 +55,33 @@ export function filtrosDePresupuestosVacios(): FiltrosDePresupuestos {
   return { idPuntoVenta: null, idCliente: null, estado: null, vencido: null, desde: '', hasta: '', pagina: 1, tamanio: 25 }
 }
 
+/** Claves de `orden` que acepta `GET /api/presupuestos`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_PRESUPUESTOS = [
+  'numero',
+  'cliente',
+  'puntoVenta',
+  'estado',
+  'vencimiento',
+  'fechaEmision',
+  'total',
+] as const
+
+export type ColumnaOrdenableDePresupuestos = (typeof COLUMNAS_ORDENABLES_DE_PRESUPUESTOS)[number]
+
+export type OrdenDePresupuestos = OrdenDeServidor<ColumnaOrdenableDePresupuestos>
+
+export function esColumnaOrdenableDePresupuestos(columna: string): columna is ColumnaOrdenableDePresupuestos {
+  return (COLUMNAS_ORDENABLES_DE_PRESUPUESTOS as readonly string[]).includes(columna)
+}
+
 /** Arma el query string de `GET /api/presupuestos` — `vencido` requiere `idPuntoVenta` (design
  * decisión 16, `400 punto_venta_requerido` del lado del servidor si se manda sin uno): esta
  * función nunca lo manda si no hay punto de venta elegido, la pantalla además deshabilita el
  * toggle (tarea 7.11) como defensa en profundidad. `desde`/`hasta` con el mismo offset horario
  * explícito que el resto de la web (mutation-proof-tests regla 10). */
-export function construirQueryDePresupuestos(filtros: FiltrosDePresupuestos): string {
+export function construirQueryDePresupuestos(filtros: FiltrosDePresupuestos, orden: OrdenDePresupuestos = null): string {
   const parametros = new URLSearchParams()
+  agregarOrdenAlQuery(parametros, orden)
   if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
   if (filtros.idCliente !== null) parametros.set('idCliente', String(filtros.idCliente))
   if (filtros.estado !== null) parametros.set('estado', filtros.estado)
@@ -73,7 +94,8 @@ export function construirQueryDePresupuestos(filtros: FiltrosDePresupuestos): st
 }
 
 export const clienteDePresupuestos = {
-  listar: (filtros: FiltrosDePresupuestos) => api.get<PaginaDePresupuestos>(`/presupuestos${construirQueryDePresupuestos(filtros)}`),
+  listar: (filtros: FiltrosDePresupuestos, orden: OrdenDePresupuestos = null) =>
+    api.get<PaginaDePresupuestos>(`/presupuestos${construirQueryDePresupuestos(filtros, orden)}`),
   obtener: (id: number) => api.get<PresupuestoDetalle>(`/presupuestos/${id}`),
   crear: (solicitud: SolicitudDePresupuesto) => api.post<PresupuestoDetalle>('/presupuestos', solicitud),
   actualizar: (id: number, solicitud: SolicitudDePresupuesto) => api.put<PresupuestoDetalle>(`/presupuestos/${id}`, solicitud),

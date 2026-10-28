@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -286,6 +286,132 @@ describe('Compras — listado', () => {
     resolverPrimera(paginaFixture([compraListadaFixture({ id: 1, numeroExterno: 'primera-respuesta-vieja' })]))
     await waitFor(() => expect(screen.queryByText('primera-respuesta-vieja')).not.toBeInTheDocument())
     expect(screen.getByText('segunda-respuesta')).toBeInTheDocument()
+  })
+})
+
+describe('Compras — orden en el servidor', () => {
+  const llamadasAlListado = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((ruta) => ruta.startsWith('/compras?'))
+
+  const conUnaFila = (ruta: string) =>
+    ruta.startsWith('/compras?') ? Promise.resolve(paginaFixture([compraListadaFixture()])) : undefined
+
+  it('el clic en un encabezado pide el orden al servidor, recorre ascendente, descendente y el orden de siempre', async () => {
+    mockearRutasBase(conUnaFila)
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('0003-00012345')
+    expect(llamadasAlListado().every((ruta) => !ruta.includes('orden='))).toBe(true)
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=total&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Total/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=total&direccion=descendente'))
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).not.toContain('orden='))
+  })
+
+  it.each([
+    ['Número', 'numero'],
+    ['Proveedor', 'proveedor'],
+    ['Tipo', 'tipo'],
+    ['Estado', 'estado'],
+    ['Fecha de recepción', 'fechaRecepcion'],
+    ['Total', 'total'],
+  ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
+    mockearRutasBase(conUnaFila)
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('0003-00012345')
+
+    await usuario.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain(`orden=${clave}&direccion=ascendente`))
+  })
+
+  it('"Estado de pago" no ordena: la pantalla lo deriva de otra consulta y no es una clave del servidor', async () => {
+    mockearRutasBase(conUnaFila)
+    renderCompras()
+    await screen.findByText('0003-00012345')
+
+    expect(screen.getByRole('columnheader', { name: 'Estado de pago' })).not.toHaveAttribute('aria-sort')
+    expect(screen.queryByRole('button', { name: /Estado de pago/ })).not.toBeInTheDocument()
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/compras?')
+        ? Promise.resolve(
+            paginaFixture([compraListadaFixture()], { total: 50, pagina: ruta.includes('pagina=2') ? 2 : 1, tamanio: 25 }),
+          )
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText(/Página 1 de 2/)
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Anulada')
+    await screen.findByText(/Página 1 de 2/)
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 2/)
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+
+    await waitFor(() => {
+      const ultima = llamadasAlListado().at(-1)!
+      expect(ultima).toContain('orden=total&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+      expect(ultima).toContain('estado=Anulada')
+    })
+    await screen.findByText(/Página 1 de 2/)
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
+    let resolverPorTotal: (v: PaginaDeCompras) => void = () => {}
+    let promesaPorTotal: Promise<PaginaDeCompras> = Promise.resolve(paginaFixture([]))
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/compras?') && ruta.includes('orden=total')) {
+        promesaPorTotal = new Promise((resolve) => (resolverPorTotal = resolve))
+        return promesaPorTotal
+      }
+      if (ruta.startsWith('/compras?') && ruta.includes('orden=estado')) {
+        return Promise.resolve(paginaFixture([compraListadaFixture({ id: 2, numeroExterno: 'nueva-99' })]))
+      }
+      return conUnaFila(ruta)
+    })
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('0003-00012345')
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Estado/ }))
+    await screen.findByText('nueva-99')
+
+    await act(async () => {
+      resolverPorTotal(paginaFixture([compraListadaFixture({ id: 3, numeroExterno: 'vieja-199' })]))
+      await promesaPorTotal
+    })
+
+    expect(screen.getByText('nueva-99')).toBeInTheDocument()
+    expect(screen.queryByText('vieja-199')).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Estado$/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/compras?') && ruta.includes('orden=total') ? Promise.reject(new Error('caída')) : conUnaFila(ruta),
+    )
+    const usuario = userEvent.setup()
+    renderCompras()
+    await screen.findByText('0003-00012345')
+
+    await usuario.click(screen.getByRole('button', { name: /^Total/ }))
+
+    await screen.findByText('No se pudieron cargar las compras.')
+    expect(screen.queryByRole('columnheader', { name: /Total/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('0003-00012345')).not.toBeInTheDocument()
   })
 })
 
