@@ -358,9 +358,12 @@ public sealed record SolicitudDeEdicionDePagoConLineas(
 
 /// <summary>Cuerpo de <c>POST /api/pagos/de-compra/{idCompra}</c>. Mismas reglas que <see cref="SolicitudDePagoDeCompra"/>
 /// con <see cref="Lineas"/> en lugar de medio e importe, y a diferencia de aquella admite pagar de más (el excedente queda a
-/// favor en el pago nuevo) y aplicar pagos ya existentes. Todo campo se usa: <c>fecha</c> y <c>concepto</c> son los del pago
-/// nuevo, <c>lineas</c> (0 a 20) son el pago nuevo y <c>aplicaciones</c> (0 a 20) son pagos existentes cuyo disponible se
-/// aplica a esta compra; al menos una de las dos listas no puede estar vacía.</summary>
+/// favor en el pago nuevo) y aplicar pagos ya existentes. Todo campo se usa o se rechaza: <c>fecha</c> se valida siempre (no
+/// futura) y es la fecha de negocio del pago nuevo y de las aplicaciones que crea el pedido, <c>concepto</c> es del pago
+/// nuevo (sin <c>lineas</c> es <c>400 concepto_sin_pago_nuevo</c>), <c>lineas</c> (0 a 20) son el pago nuevo y
+/// <c>aplicaciones</c> (0 a 20) son pagos existentes cuyo disponible se aplica a esta compra; al menos una de las dos
+/// listas no puede estar vacía. Con <c>lineas</c>, la compra tiene que seguir con saldo después de aplicar lo existente
+/// (<c>409 compra_sin_saldo_pendiente</c>).</summary>
 public sealed record SolicitudDePagoDeCompraConLineas(
     DateOnly Fecha,
     IReadOnlyList<LineaDePago>? Lineas,

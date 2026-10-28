@@ -12,6 +12,8 @@ import { CampoFecha } from './CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
+const CLAVE_DE_LA_LINEA_PRECARGADA = 1
+
 type Props = {
   idCompra: number
   /** Cómo se nombra la compra en pantalla: su número externo o `#id`. */
@@ -35,7 +37,9 @@ type Props = {
  *
  * Se puede pagar con crédito que ya existe (pagos a cuenta tildados, cada uno con el importe a aplicar) y con dinero
  * nuevo (las líneas por medio), que puede superar el saldo: el excedente queda a favor en el pago nuevo. Si hay pagos
- * tildados y ninguna línea tiene medio elegido, no se paga dinero nuevo. La lista de pagos aplicables es una lectura
+ * tildados, las líneas vacías (sin medio ni importe) se descartan y no se paga dinero nuevo; un importe tipeado sin medio es
+ * un error, nunca se descarta en silencio. El importe de la línea precargada sigue a lo que resta de pagar mientras
+ * quien paga no lo edite; si lo aplicado cubre el saldo queda vacía y no se pueden tildar más pagos. La lista de pagos aplicables es una lectura
  * con flag de vigencia; si falla, el modal sigue sirviendo para pagar solo con líneas.
  */
 export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendiente, onCerrar, onPagado }: Props) {
@@ -48,7 +52,9 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
   // idPago -> importe a aplicar; la presencia de la clave es el tilde.
   const [seleccion, setSeleccion] = useState<Record<number, number | null>>({})
 
-  const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => [lineaDePagoVacia(1, saldoPendiente)])
+  const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => [lineaDePagoVacia(CLAVE_DE_LA_LINEA_PRECARGADA, saldoPendiente)])
+  // Mientras quien paga no edite el importe de la línea precargada, ese importe sigue a lo que resta de pagar.
+  const [importeTocado, setImporteTocado] = useState(false)
   const [fecha, setFecha] = useState(hoy)
   const [concepto, setConcepto] = useState('')
 
@@ -106,8 +112,21 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
 
   const totalAplicado = redondearImporte(Object.values(seleccion).reduce<number>((suma, importe) => suma + (importe ?? 0), 0))
   const restante = Math.max(0, redondearImporte(saldoPendiente - totalAplicado))
-  const hayDineroNuevo = lineas.some((l) => l.idMedioPago !== '')
-  const excedente = hayDineroNuevo ? redondearImporte(totalDeLineasDePago(lineas) - restante) : 0
+  const lineasVigentes = importeTocado
+    ? lineas
+    : lineas.map((l) =>
+        l.clave === CLAVE_DE_LA_LINEA_PRECARGADA ? { ...l, importe: restante > 0 ? restante : null } : l,
+      )
+  const hayDineroNuevo = lineasVigentes.some((l) => l.idMedioPago !== '')
+  const excedente = hayDineroNuevo ? redondearImporte(totalDeLineasDePago(lineasVigentes) - restante) : 0
+
+  function cambiarLineas(reductor: (prev: LineaDePagoEditable[]) => LineaDePagoEditable[]) {
+    const despues = reductor(lineasVigentes)
+    const importeAntes = lineasVigentes.find((l) => l.clave === CLAVE_DE_LA_LINEA_PRECARGADA)?.importe
+    const importeDespues = despues.find((l) => l.clave === CLAVE_DE_LA_LINEA_PRECARGADA)?.importe
+    if (importeAntes !== importeDespues) setImporteTocado(true)
+    setLineas(despues)
+  }
 
   function alternarPago(pago: PagoAplicable, marcado: boolean) {
     setSeleccion((prev) => {
@@ -130,7 +149,7 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
       return
     }
 
-    const preparado = prepararPagoDeCompra({ lineas, fecha, concepto, aplicaciones }, saldoPendiente, hoy)
+    const preparado = prepararPagoDeCompra({ lineas: lineasVigentes, fecha, concepto, aplicaciones }, saldoPendiente, hoy)
     if ('error' in preparado) {
       setError(preparado.error)
       return
@@ -216,6 +235,7 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
                           type="checkbox"
                           className="form-check-input"
                           checked={marcado}
+                          disabled={!marcado && restante === 0}
                           onChange={(e) => alternarPago(pago, e.target.checked)}
                         />
                         <label className="form-check-label" htmlFor={`pago-a-cuenta-${pago.idPago}`}>
@@ -241,8 +261,8 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
             </div>
             {totalAplicado > 0 && (
               <div className="form-text">
-                Se aplican {formatearImporte(totalAplicado, { simbolo: true })} de pagos a cuenta. Si no elegís medio en las
-                líneas de abajo, no se paga dinero nuevo.
+                Se aplican {formatearImporte(totalAplicado, { simbolo: true })} de pagos a cuenta. Una línea sin medio ni
+                importe no paga dinero nuevo.
               </div>
             )}
           </div>
@@ -250,9 +270,9 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
 
         <div className="col-12">
           <EditorDeLineasDePago
-            lineas={lineas}
+            lineas={lineasVigentes}
             medios={medios ?? []}
-            onCambio={setLineas}
+            onCambio={cambiarLineas}
             objetivo={excedente > 0 ? null : restante}
           />
           {excedente > 0 && (

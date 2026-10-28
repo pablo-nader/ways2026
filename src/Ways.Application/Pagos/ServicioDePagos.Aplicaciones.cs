@@ -4,6 +4,7 @@ using Ways.Application.Compras;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Pagos;
 
 namespace Ways.Application.Pagos;
@@ -320,10 +321,17 @@ public partial class ServicioDePagos
     /// quedar a favor). A diferencia de <see cref="PagarCompraAsync(int, ComandoDePagoDeCompra, CancellationToken)"/>, esta
     /// ruta nunca responde <c>pago_excede_saldo_pendiente</c>; sí exige que la compra tenga saldo pendiente.
     ///
-    /// Orden de locks: 1) compra <c>FOR UPDATE</c> → 2) pagos existentes <c>FOR UPDATE</c> en id ascendente → 3) fila del
-    /// proveedor (adopciones y pago nuevo) → 4) advisory de tesorería de la empresa, ÚLTIMO. El insert del pago nuevo no
-    /// toma locks; va antes del proveedor, igual que en el resto de los escritores. update-404-first: la compra y los pagos
-    /// inexistentes responden 404 antes de validar el cuerpo del pedido. Forma (b) de ef-retry-safe-writes.
+    /// Orden de locks: 1) compra <c>FOR UPDATE</c> → 2) pagos existentes <c>FOR UPDATE</c> en id ascendente → 3) por cada
+    /// pago existente que se adopta (sin proveedor), la fila del proveedor, adentro de ese mismo paso y ANTES del insert
+    /// del pago nuevo (<see cref="EscribirPagoAProveedorAsync"/>) → 4) insert del pago nuevo (sin lock propio) → 5) fila
+    /// del proveedor del pago nuevo (ya tomada si hubo adopción) → 6) advisory de tesorería de la empresa, ÚLTIMO.
+    ///
+    /// <c>fecha</c> se valida siempre (no futura, en la zona del punto de venta) y es la fecha de negocio de lo que crea
+    /// este pedido: el pago nuevo y las aplicaciones nuevas de los pagos existentes. <c>concepto</c> es del pago nuevo:
+    /// sin líneas se rechaza (<c>400 concepto_sin_pago_nuevo</c>) en vez de descartarlo. Si el crédito existente salda la
+    /// compra y además vienen líneas, no hay dónde aplicar el pago nuevo: <c>409 compra_sin_saldo_pendiente</c> sin escribir.
+    /// update-404-first: la compra y cada pago existente inexistentes responden 404 antes de validar el cuerpo del
+    /// pedido. Forma (b) de ef-retry-safe-writes.
     /// </summary>
     public async Task<ResultadoDePagoDeCompraConAplicaciones> PagarCompraConAplicacionesAsync(
         int idCompra, ComandoDePagoDeCompraConAplicaciones solicitud, CancellationToken ct = default)
@@ -332,7 +340,13 @@ public partial class ServicioDePagos
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        await ExigirComprasExistentesAsync([idCompra], ct);
+        var idPuntoVentaDeLaCompra = await db.ComprobantesCompra
+            .Where(c => c.Id == idCompra)
+            .Select(c => (int?)c.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la compra {idCompra}.");
+        await ExigirPagosPedidosExistentesAsync(solicitud.Aplicaciones, ct);
+
         var existentes = ExigirAplicacionesDePagosExistentes(solicitud.Aplicaciones);
         var plan = solicitud.Lineas is { Count: > 0 } ? ReglaDeLineasDePago.Planificar(solicitud.Lineas) : null;
         if (plan is null && existentes.Count == 0)
@@ -340,22 +354,45 @@ public partial class ServicioDePagos
             throw new ErrorDominio("pago_sin_lineas", "Indicá al menos una línea de pago o un pago a aplicar.", 400);
         }
 
-        foreach (var idPago in existentes.Select(a => a.IdPago).Order())
+        var concepto = string.IsNullOrWhiteSpace(solicitud.Concepto) ? null : solicitud.Concepto.Trim();
+        if (plan is null && concepto is not null)
         {
-            await ExigirPagoExistenteAsync(idPago, ct);
+            throw new ErrorDominio(
+                "concepto_sin_pago_nuevo", "El concepto es del pago nuevo: sin líneas de pago no hay a qué ponérselo.", 400);
         }
 
-        var concepto = string.IsNullOrWhiteSpace(solicitud.Concepto) ? null : solicitud.Concepto.Trim();
+        var puntoVenta = await ResolverPuntoVentaAsync(idPuntoVentaDeLaCompra, ct);
+        var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+        ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
+        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarPagoDeCompraConAplicacionesAsync(
-                idTenant, idCompra, solicitud.Fecha, plan, concepto, existentes, idEmpleado, momento, ct));
+                idTenant, idCompra, solicitud.Fecha, fechaDeNegocio, puntoVenta, plan, concepto, existentes, idEmpleado,
+                momento, ct));
+    }
+
+    /// <summary>update-404-first: cada <c>idPago</c> pedido que no existe es 404 antes de validar el cuerpo. Una lista
+    /// con más pagos que el máximo se deja pasar: la validación del cuerpo la rechaza con 400 sin recorrerla.</summary>
+    private async Task ExigirPagosPedidosExistentesAsync(
+        IReadOnlyList<AplicacionDePagoExistente?>? pedidas, CancellationToken ct)
+    {
+        if (pedidas is null || pedidas.Count > MaximoDeAplicacionesPorPedido)
+        {
+            return;
+        }
+
+        foreach (var idPago in pedidas.Where(a => a is not null).Select(a => a!.IdPago).Distinct().Order())
+        {
+            await ExigirPagoExistenteAsync(idPago, ct);
+        }
     }
 
     private async Task<ResultadoDePagoDeCompraConAplicaciones> EjecutarPagoDeCompraConAplicacionesAsync(
-        int idTenant, int idCompra, DateOnly fecha, PlanDeLineasDePago? plan, string? concepto,
-        IReadOnlyList<AplicacionDePagoExistente> existentes, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idCompra, DateOnly fecha, DateTimeOffset fechaDeNegocio, PuntoVenta puntoVenta,
+        PlanDeLineasDePago? plan, string? concepto, IReadOnlyList<AplicacionDePagoExistente> existentes, int idEmpleado,
+        DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -414,6 +451,11 @@ public partial class ServicioDePagos
                 "aplicacion_excede_saldo", "El importe a aplicar supera el saldo pendiente de la compra.", 409);
         }
 
+        if (plan is not null && totalExistente == saldo)
+        {
+            throw new ErrorDominio("compra_sin_saldo_pendiente", "La compra no tiene saldo pendiente de pago.", 409);
+        }
+
         foreach (var pedida in existentes.OrderBy(a => a.IdPago))
         {
             var pago = pagos.First(p => p.Id == pedida.IdPago);
@@ -437,7 +479,7 @@ public partial class ServicioDePagos
                     Importe = pedida.Importe,
                     Origen = OrigenAplicacionPago.Aplicacion,
                     IdEmpleado = idEmpleado,
-                    Fecha = momento,
+                    Fecha = fechaDeNegocio,
                     CreatedAt = momento,
                     UpdatedAt = momento
                 };
@@ -471,12 +513,7 @@ public partial class ServicioDePagos
         Pago? pagoNuevo = null;
         if (plan is not null)
         {
-            var puntoVenta = await ResolverPuntoVentaAsync(compra.IdPuntoVenta, ct);
             await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
-
-            var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
-            ExigirFechaNoFutura(fecha, momento, zona);
-            var fechaDeNegocio = FechaDeNegocioAInstante(fecha, zona);
 
             concepto ??= await ConceptoPorDefectoDelPagoAsync(idCompra, ct);
 

@@ -534,18 +534,25 @@ export function textoDePagoRegistrado(
 
 /** Valida el formulario con lo mismo que el servidor rechaza antes de escribir y, si pasa, arma la
  * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Las líneas pueden sumar más que el saldo (el
- * excedente queda a favor). Si hay pagos a aplicar y ninguna línea tiene medio elegido, las líneas se descartan: no se
- * paga dinero nuevo. Lo aplicado no puede superar el saldo. Un concepto en blanco viaja como `null`. */
+ * excedente queda a favor). Si hay pagos a aplicar, solo se descartan las líneas vacías (sin medio y sin importe): un
+ * importe tipeado sin medio es un error, nunca se pierde en silencio. Sin líneas el pedido solo aplica pagos y no lleva
+ * concepto (es del pago nuevo). Lo aplicado no puede superar el saldo. Un concepto en blanco viaja como `null`. */
 export function prepararPagoDeCompra(
   formulario: PagoDeCompraFormulario,
   saldoPendiente: number,
   hoy: string,
 ): { solicitud: SolicitudDePagoDeCompra } | { error: string } {
   const aplicaciones = formulario.aplicaciones ?? []
-  const hayDineroNuevo = formulario.lineas.some((l) => l.idMedioPago !== '')
+
+  if (aplicaciones.length > 0) {
+    const sinMedio = formulario.lineas.findIndex((l) => l.idMedioPago === '' && (l.importe ?? 0) !== 0)
+    if (sinMedio >= 0) return { error: `Elegí el medio de la línea ${sinMedio + 1}.` }
+  }
+  const lineas = aplicaciones.length > 0 ? formulario.lineas.filter((l) => l.idMedioPago !== '') : formulario.lineas
+  const hayDineroNuevo = lineas.length > 0
 
   if (aplicaciones.length === 0 || hayDineroNuevo) {
-    const errorDeLineas = errorDeLineasDePago(formulario.lineas)
+    const errorDeLineas = errorDeLineasDePago(lineas)
     if (errorDeLineas !== null) return { error: errorDeLineas }
   }
   if (aplicaciones.some((a) => !(a.importe > 0))) return { error: 'El importe de cada pago a aplicar tiene que ser mayor a 0.' }
@@ -560,8 +567,8 @@ export function prepararPagoDeCompra(
   return {
     solicitud: {
       fecha: formulario.fecha,
-      lineas: hayDineroNuevo || aplicaciones.length === 0 ? aLineasDeSolicitud(formulario.lineas) : [],
-      concepto: concepto === '' ? null : concepto,
+      lineas: hayDineroNuevo ? aLineasDeSolicitud(lineas) : [],
+      concepto: !hayDineroNuevo || concepto === '' ? null : concepto,
       ...(aplicaciones.length > 0 ? { aplicaciones } : {}),
     },
   }

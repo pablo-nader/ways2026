@@ -234,8 +234,69 @@ describe('ModalDePagoDeCompra', () => {
     await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #70/ }))
     expect(screen.getByLabelText('Importe a aplicar del pago 70')).toHaveValue('320,00')
 
-    await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #71/ }))
-    expect(screen.getByLabelText('Importe a aplicar del pago 71')).toHaveValue('0,00')
+    expect(screen.getByRole('checkbox', { name: /Usar el pago #71/ })).toBeDisabled()
+    expect(screen.getByLabelText('Importe a aplicar del pago 71')).toBeDisabled()
+  })
+
+  it('al tildar un pago a cuenta la línea precargada baja a lo que resta, y al destildar vuelve al saldo', async () => {
+    mockearMedios(undefined, [pagoAplicable({ idPago: 70, disponible: 100 })])
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    montar()
+    await screen.findByRole('checkbox', { name: /Usar el pago #70/ })
+
+    await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #70/ }))
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('220,00')
+
+    await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #70/ }))
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('320,00')
+  })
+
+  it('un importe que quien paga ya editó no se pisa al tildar un pago a cuenta', async () => {
+    mockearMedios(undefined, [pagoAplicable({ idPago: 70, disponible: 100 })])
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    montar()
+    await screen.findByRole('checkbox', { name: /Usar el pago #70/ })
+
+    const importe = screen.getByLabelText('Importe de la línea 1')
+    await usuario.clear(importe)
+    await usuario.type(importe, '150')
+    await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #70/ }))
+
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('150,00')
+  })
+
+  it('si los pagos a cuenta cubren el saldo la línea queda vacía y el pedido solo aplica, sin líneas ni concepto', async () => {
+    mockearMedios(undefined, [pagoAplicable({ idPago: 70, disponible: 500 })])
+    apiPostMock.mockResolvedValue(resultado({ pago: null, disponibleDelPago: null }))
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    const { onPagado } = montar()
+    await screen.findByRole('checkbox', { name: /Usar el pago #70/ })
+
+    await usuario.type(screen.getByLabelText('Concepto (opcional)'), 'No debería viajar')
+    await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #70/ }))
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    await waitFor(() => expect(onPagado).toHaveBeenCalledTimes(1))
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/9', {
+      fecha: '2026-10-03',
+      lineas: [],
+      concepto: null,
+      aplicaciones: [{ idPago: 70, importe: 320 }],
+    })
+  })
+
+  it('un importe en una línea sin medio no se descarta: lo avisa y no llama al servidor', async () => {
+    mockearMedios(undefined, [pagoAplicable({ idPago: 70, disponible: 100 })])
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    montar()
+    await screen.findByRole('checkbox', { name: /Usar el pago #70/ })
+
+    await usuario.click(screen.getByRole('checkbox', { name: /Usar el pago #70/ }))
+    await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    expect(screen.getByText('Elegí el medio de la línea 1.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 
   it('con pagos a cuenta y sin medio en las líneas no paga dinero nuevo: manda solo las aplicaciones', async () => {

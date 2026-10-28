@@ -605,8 +605,13 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   pago completo, así que el saldo del proveedor puede quedar negativo (a favor).
 > - Respuesta `{pago | null, pagado, saldoPendiente, aplicaciones: [{idAplicacion, idPago, importe, fecha}], disponibleDelPago | null}`:
 >   `pago` es `null` (y el status 200 en vez de 201) cuando no hubo líneas; `aplicaciones` son todas las vivas de la compra.
-> - Orden de locks: compra `FOR UPDATE` → pagos existentes `FOR UPDATE` en id ascendente → insert del pago nuevo (sin lock) →
->   fila del proveedor → advisory de tesorería, último. Forma (b) de `ef-retry-safe-writes`.
+> - `fecha` se valida siempre (no futura) y es la fecha de negocio del pago nuevo y de las aplicaciones nuevas del pedido;
+>   `concepto` sin `lineas` es `400 concepto_sin_pago_nuevo`. Si lo existente salda la compra y vienen líneas, `409
+>   compra_sin_saldo_pendiente` sin escribir. Compra y cada `idPago` inexistentes son 404 antes de validar el cuerpo.
+> - Orden de locks: compra `FOR UPDATE` → pagos existentes `FOR UPDATE` en id ascendente → por cada pago existente adoptado
+>   (sin proveedor), la fila del proveedor, dentro de ese paso y antes del insert del pago nuevo → insert del pago nuevo (sin
+>   lock) → fila del proveedor del pago nuevo (ya tomada si hubo adopción) → advisory de tesorería, último. Forma (b) de
+>   `ef-retry-safe-writes`.
 
 ### Órdenes de compra (Etapa 16)
 

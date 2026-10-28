@@ -263,6 +263,11 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1082 passed; web `tsc -b` clean, lint 0 errors,
   vitest on the four touched files green. Integration tests (`PagosApiConLineasTests`: overpay, only aplicaciones,
   aplicaciones + lineas, 409/400/404 cases, legacy route still 409) NOT run locally (Docker down): CI is the proof, pending.
+  Judgment-day fix round (E3-S4): real lock order is compra -> existing pagos (asc) -> proveedor row inside each adopted pago's
+  step (before the new pago insert) -> new pago insert -> proveedor (already held if adopted) -> treasury advisory. `fecha` is
+  always validated and dates the new applications; `concepto` without lineas is `400 concepto_sin_pago_nuevo`; 404 for compra and
+  each idPago comes before body validation; exact fill + lineas is `409 compra_sin_saldo_pendiente`. The modal never drops typed
+  money (line with importe and no medio is an error) and its prefilled line follows the remaining amount until the user edits it.
 
 ## Next step
 

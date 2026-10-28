@@ -498,7 +498,9 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
         var (idCompra, total) = await CrearYConfirmarCompraAsync(ctx);
         var credito = await CrearPagoDeProveedorAsync(ctx, 1000m);
 
-        // Saldo 1210: 1000 del crédito dejan 210; las líneas pagan 400, así que 210 se aplican y 190 quedan a favor.
+        // El crédito deja total - 1000 por pagar; las líneas pagan 400, así que se aplica ese resto y lo demás queda a favor.
+        var restante = total - 1000m;
+        Assert.InRange(restante, 1m, 399m);
         var resultado = await LeerAsync<ResultadoDePagoDeCompraConLineas>(
             await ctx.Admin.PostAsJsonAsync(
                 $"/api/pagos/de-compra/{idCompra}",
@@ -509,10 +511,178 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal(total, resultado.Pagado);
         Assert.Equal(0m, resultado.SaldoPendiente);
-        Assert.Equal(190m, resultado.DisponibleDelPago);
+        Assert.Equal(400m - restante, resultado.DisponibleDelPago);
         Assert.Equal(
-            [(credito.Id, 1000m), (resultado.Pago!.Id, 210m)],
+            [(credito.Id, 1000m), (resultado.Pago!.Id, restante)],
             resultado.Aplicaciones.Select(a => (a.IdPago, a.Importe)));
+    }
+
+    private async Task<int> CrearOtroProveedorAsync(Contexto ctx)
+    {
+        await using var plataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+        var idCondicion = await plataforma.CondicionesFiscales.Select(c => c.Id).FirstAsync();
+        var otro = new Proveedor
+        {
+            IdTenant = ctx.IdTenant, RazonSocial = $"{ctx.Nombre} Otro", IdCondicionFiscal = idCondicion,
+            CreatedAt = ahora, UpdatedAt = ahora
+        };
+        plataforma.Proveedores.Add(otro);
+        await plataforma.SaveChangesAsync();
+        return otro.Id;
+    }
+
+    [Fact]
+    public async Task UnPagoSinProveedorSeAdoptaAdentroDePagarLaCompraYElLibroRecibeSuImporteCompletoMasElPagoNuevo()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoSinProveedorSeAdoptaAdentroDePagarLaCompraYElLibroRecibeSuImporteCompletoMasElPagoNuevo));
+        var (idCompra, total) = await CrearYConfirmarCompraAsync(ctx);
+        var sinProveedor = await LeerAsync<PagoConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/pagos/administracion", AltaAdmin(ctx, CategoriaPago.Otros, null, new LineaDePago(ctx.IdEfectivo, 500m, null))),
+            HttpStatusCode.Created);
+        var saldoAntes = await SaldoDelProveedorAsync(ctx);
+
+        var resultado = await LeerAsync<ResultadoDePagoDeCompraConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                $"/api/pagos/de-compra/{idCompra}",
+                new SolicitudDePagoDeCompraConLineas(
+                    Ayer(), [new LineaDePago(ctx.IdEfectivo, total, null)], null,
+                    [new AplicacionDePagoExistente(sinProveedor.Id, 500m)])),
+            HttpStatusCode.Created);
+
+        Assert.Equal(total, resultado.Pagado);
+        Assert.Equal(500m, resultado.DisponibleDelPago);
+
+        var adoptado = await ctx.Admin.GetFromJsonAsync<PagoDeAdministracionListado>(
+            $"/api/pagos/administracion/{sinProveedor.Id}", OpcionesJson);
+        Assert.Equal((CategoriaPago.Proveedor, (int?)ctx.IdProveedor), (adoptado!.Categoria, adoptado.IdProveedor));
+
+        // El libro recibe el pago adoptado por sus 500 completos y el pago nuevo por todo su importe: saldo = Σ ledger.
+        var saldo = await SaldoDelProveedorAsync(ctx);
+        Assert.Equal(saldoAntes - 500m - total, saldo);
+        await using var db = Db(ctx);
+        var movimientoAdoptado = await db.MovimientosCuentaCorrienteProveedor
+            .SingleAsync(m => m.IdPago == sinProveedor.Id && m.IdProveedor == ctx.IdProveedor);
+        Assert.Equal(-500m, movimientoAdoptado.Importe);
+        Assert.Equal(
+            saldo,
+            await db.MovimientosCuentaCorrienteProveedor.Where(m => m.IdProveedor == ctx.IdProveedor).SumAsync(m => m.Importe));
+    }
+
+    [Fact]
+    public async Task PagarDeMasEgresaDeTesoreriaElImporteCompletoDelPagoNuevo()
+    {
+        var ctx = await PrepararAsync(nameof(PagarDeMasEgresaDeTesoreriaElImporteCompletoDelPagoNuevo));
+        var (idCompra, total) = await CrearYConfirmarCompraAsync(ctx);
+
+        var resultado = await LeerAsync<ResultadoDePagoDeCompraConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                $"/api/pagos/de-compra/{idCompra}",
+                new SolicitudDePagoDeCompraConLineas(Ayer(), [new LineaDePago(ctx.IdEfectivo, total + 300m, null)], null)),
+            HttpStatusCode.Created);
+
+        await using var db = Db(ctx);
+        var movimiento = await db.MovimientosTesoreria.SingleAsync(m => m.IdPago == resultado.Pago!.Id);
+        Assert.Equal((0m, total + 300m), (movimiento.Ingreso, movimiento.Egreso));
+    }
+
+    [Fact]
+    public async Task UnPagoDeOtroProveedorOUnoDeSueldosNoSeAplicanPorEstaRuta()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoDeOtroProveedorOUnoDeSueldosNoSeAplicanPorEstaRuta));
+        var (idCompra, _) = await CrearYConfirmarCompraAsync(ctx);
+        var idOtro = await CrearOtroProveedorAsync(ctx);
+        var deOtro = await LeerAsync<PagoConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/pagos/administracion",
+                AltaAdmin(ctx, CategoriaPago.Proveedor, idOtro, new LineaDePago(ctx.IdEfectivo, 100m, null))),
+            HttpStatusCode.Created);
+        var deSueldos = await LeerAsync<PagoConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                "/api/pagos/administracion", AltaAdmin(ctx, CategoriaPago.Sueldos, null, new LineaDePago(ctx.IdEfectivo, 100m, null))),
+            HttpStatusCode.Created);
+        var ruta = $"/api/pagos/de-compra/{idCompra}";
+
+        var otroProveedor = await ctx.Admin.PostAsJsonAsync(
+            ruta, new SolicitudDePagoDeCompraConLineas(Ayer(), null, null, [new AplicacionDePagoExistente(deOtro.Id, 50m)]));
+        Assert.Equal(HttpStatusCode.Conflict, otroProveedor.StatusCode);
+        Assert.Equal("compra_de_otro_proveedor", await CodigoAsync(otroProveedor));
+
+        var sueldos = await ctx.Admin.PostAsJsonAsync(
+            ruta, new SolicitudDePagoDeCompraConLineas(Ayer(), null, null, [new AplicacionDePagoExistente(deSueldos.Id, 50m)]));
+        Assert.Equal(HttpStatusCode.Conflict, sueldos.StatusCode);
+        Assert.Equal("pago_no_aplicable", await CodigoAsync(sueldos));
+    }
+
+    [Fact]
+    public async Task UnaCompraYaPagadaOSaldadaPorElCreditoNoAceptaLineasNuevasYNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCompraYaPagadaOSaldadaPorElCreditoNoAceptaLineasNuevasYNoEscribeNada));
+        var (idCompra, total) = await CrearYConfirmarCompraAsync(ctx);
+        var ruta = $"/api/pagos/de-compra/{idCompra}";
+        var credito = await CrearPagoDeProveedorAsync(ctx, total);
+
+        // El crédito salda la compra justo: hay líneas pero no queda dónde aplicarlas.
+        var saldadaPorElCredito = await ctx.Admin.PostAsJsonAsync(
+            ruta,
+            new SolicitudDePagoDeCompraConLineas(
+                Ayer(), [new LineaDePago(ctx.IdEfectivo, 50m, null)], null, [new AplicacionDePagoExistente(credito.Id, total)]));
+        Assert.Equal(HttpStatusCode.Conflict, saldadaPorElCredito.StatusCode);
+        Assert.Equal("compra_sin_saldo_pendiente", await CodigoAsync(saldadaPorElCredito));
+        await using (var db = Db(ctx))
+        {
+            Assert.Empty(await db.AplicacionesPago.Where(a => a.IdComprobanteCompra == idCompra).ToListAsync());
+            Assert.Single(await db.Pagos.ToListAsync());
+        }
+
+        // Ya pagada: aplicar el crédito y pagar de nuevo.
+        await LeerAsync<ResultadoDePagoDeCompraConLineas>(
+            await ctx.Admin.PostAsJsonAsync(
+                ruta, new SolicitudDePagoDeCompraConLineas(Ayer(), null, null, [new AplicacionDePagoExistente(credito.Id, total)])),
+            HttpStatusCode.OK);
+        var yaPagada = await ctx.Admin.PostAsJsonAsync(
+            ruta, new SolicitudDePagoDeCompraConLineas(Ayer(), [new LineaDePago(ctx.IdEfectivo, 10m, null)], null));
+        Assert.Equal(HttpStatusCode.Conflict, yaPagada.StatusCode);
+        Assert.Equal("compra_sin_saldo_pendiente", await CodigoAsync(yaPagada));
+    }
+
+    [Fact]
+    public async Task ElConceptoSinLineasSeRechazaLaFechaSiempreSeValidaYDataLasAplicacionesNuevas()
+    {
+        var ctx = await PrepararAsync(nameof(ElConceptoSinLineasSeRechazaLaFechaSiempreSeValidaYDataLasAplicacionesNuevas));
+        var (idCompra, _) = await CrearYConfirmarCompraAsync(ctx);
+        var credito = await CrearPagoDeProveedorAsync(ctx, 500m);
+        var ruta = $"/api/pagos/de-compra/{idCompra}";
+        var aplicar = new[] { new AplicacionDePagoExistente(credito.Id, 100m) };
+
+        var conConcepto = await ctx.Admin.PostAsJsonAsync(ruta, new SolicitudDePagoDeCompraConLineas(Ayer(), null, "Se perdería", aplicar));
+        Assert.Equal(HttpStatusCode.BadRequest, conConcepto.StatusCode);
+        Assert.Equal("concepto_sin_pago_nuevo", await CodigoAsync(conConcepto));
+
+        var futura = await ctx.Admin.PostAsJsonAsync(
+            ruta, new SolicitudDePagoDeCompraConLineas(DateOnly.FromDateTime(DateTime.UtcNow.AddDays(3)), null, null, aplicar));
+        Assert.Equal(HttpStatusCode.BadRequest, futura.StatusCode);
+        Assert.Equal("gasto_fecha_futura", await CodigoAsync(futura));
+
+        var resultado = await LeerAsync<ResultadoDePagoDeCompraConLineas>(
+            await ctx.Admin.PostAsJsonAsync(ruta, new SolicitudDePagoDeCompraConLineas(Ayer(), null, null, aplicar)),
+            HttpStatusCode.OK);
+        var aplicacion = Assert.Single(resultado.Aplicaciones);
+        Assert.Equal(Ayer().ToDateTime(TimeOnly.MinValue).Date, aplicacion.Fecha.UtcDateTime.Date);
+    }
+
+    [Fact]
+    public async Task UnPagoInexistenteDa404AunqueElImporteDeLaAplicacionSeaInvalido()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoInexistenteDa404AunqueElImporteDeLaAplicacionSeaInvalido));
+        var (idCompra, _) = await CrearYConfirmarCompraAsync(ctx);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/pagos/de-compra/{idCompra}",
+            new SolicitudDePagoDeCompraConLineas(Ayer(), null, null, [new AplicacionDePagoExistente(999_999, 0m)]));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
     [Fact]

@@ -64,11 +64,39 @@ describe('prepararPagoDeCompra', () => {
     expect(error(f)).toBeNull()
   })
 
-  it('con pagos a cuenta y sin medio elegido manda solo las aplicaciones', () => {
-    const f = formulario({ lineas: [linea({ idMedioPago: '' })], aplicaciones: [{ idPago: 5, importe: 300 }] })
+  it('con pagos a cuenta y una línea vacía manda solo las aplicaciones, sin concepto', () => {
+    const f = formulario({
+      lineas: [linea({ idMedioPago: '', importe: null })],
+      concepto: 'Un concepto que no tiene a qué ponerse',
+      aplicaciones: [{ idPago: 5, importe: 300 }],
+    })
     expect(prepararPagoDeCompra(f, 1000, HOY)).toEqual({
       solicitud: { fecha: HOY, lineas: [], concepto: null, aplicaciones: [{ idPago: 5, importe: 300 }] },
     })
+  })
+
+  it('con pagos a cuenta descarta la línea vacía (sin medio y con importe 0) y conserva las demás', () => {
+    const f = formulario({
+      lineas: [linea({ clave: 1, idMedioPago: '', importe: 0 }), linea({ clave: 2, idMedioPago: 9, importe: 50 })],
+      concepto: 'Saldo',
+      aplicaciones: [{ idPago: 5, importe: 300 }],
+    })
+    expect(prepararPagoDeCompra(f, 1000, HOY)).toEqual({
+      solicitud: {
+        fecha: HOY,
+        lineas: [{ idMedioPago: 9, importe: 50, referencia: null }],
+        concepto: 'Saldo',
+        aplicaciones: [{ idPago: 5, importe: 300 }],
+      },
+    })
+  })
+
+  it('con pagos a cuenta, un importe tipeado sin medio es un error y no se descarta en silencio', () => {
+    const f = formulario({
+      lineas: [linea({ clave: 1, idMedioPago: '', importe: null }), linea({ clave: 2, idMedioPago: '', importe: 120 })],
+      aplicaciones: [{ idPago: 5, importe: 300 }],
+    })
+    expect(error(f)).toBe('Elegí el medio de la línea 2.')
   })
 
   it('con pagos a cuenta y un medio elegido manda las líneas y las aplicaciones', () => {
@@ -89,7 +117,7 @@ describe('prepararPagoDeCompra', () => {
   })
 
   it('rechaza aplicar más que el saldo pendiente o un importe a aplicar que no es positivo', () => {
-    const sinMedio = linea({ idMedioPago: '' })
+    const sinMedio = linea({ idMedioPago: '', importe: null })
     expect(error(formulario({ lineas: [sinMedio], aplicaciones: [{ idPago: 5, importe: 1000.01 }] }))).toBe(
       'Lo aplicado de pagos a cuenta no puede superar el saldo pendiente de la compra.',
     )
