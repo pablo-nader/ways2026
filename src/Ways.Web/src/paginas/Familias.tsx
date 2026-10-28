@@ -208,7 +208,7 @@ export function Familias() {
         </p>
 
         {errorDeCarga && <div className="alert alert-danger">{errorDeCarga}</div>}
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !disolucion && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {disolucion && (
@@ -220,6 +220,7 @@ export function Familias() {
             etiquetaEnCurso="Disolviendo…"
             ocupado={ocupadoDisolucion !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarDisolucion}
             onCancelar={cancelarDisolucion}
           />

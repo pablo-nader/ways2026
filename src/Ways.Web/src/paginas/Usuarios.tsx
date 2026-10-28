@@ -10,8 +10,7 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
-import type { OpcionDeFiltro } from '../api/organizacion'
-import { ESTADOS_USUARIO, ROL } from '../api/tipos'
+import { ROL } from '../api/tipos'
 import type {
   ActualizarUsuario,
   CrearUsuario,
@@ -27,28 +26,8 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { fechaHoraATexto } from '../formato/fechas'
-
-type Formulario = {
-  id: number | null
-  usuario: string
-  mail: string
-  rolId: number
-  estado: EstadoUsuario
-  password: string
-  /** Solo se manda en el alta: `ActualizarUsuario` no acepta tenant. `null` es a la vez el valor
-   * del rol root y el que manda un admin de tenant, a quien el servidor le impone el suyo. */
-  idTenant: number | null
-}
-
-const FORMULARIO_VACIO: Formulario = {
-  id: null,
-  usuario: '',
-  mail: '',
-  rolId: ROL.Vendedor,
-  estado: 'Activo',
-  password: '',
-  idTenant: null,
-}
+import { ModalDeUsuario } from './usuarios/ModalDeUsuario'
+import { FORMULARIO_VACIO, type Formulario } from './usuarios/usuarioFormulario'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -87,6 +66,9 @@ export function Usuarios() {
    * lo borraba el `setError('')` de cualquier carga posterior (misma clase que R2-1): es un aviso
    * del FORMULARIO, no de la tabla, y comparte dueño con él — un slot, un dueño. */
   const [errorAlta, setErrorAlta] = useState('')
+  /** Rechazo del servidor al guardar: se rinde DENTRO del modal, porque un alert de la pantalla
+   * quedaría detrás del fondo. Slot propio, igual que `errorAlta`. */
+  const [errorFormulario, setErrorFormulario] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
@@ -113,8 +95,11 @@ export function Usuarios() {
    * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
    */
   const ocupadoRef = useRef(false)
+  /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la tabla se reemplaza por
+   * "Cargando…" durante el refresco): el botón de alta, que es estable. */
+  const agregarRef = useRef<HTMLButtonElement>(null)
 
-  const cargar = useCallback(async (token: number, termino: string, propagar = false, conservarError = false) => {
+  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
     setCargando(true)
     try {
       const parametros = termino ? `?busqueda=${encodeURIComponent(termino)}` : ''
@@ -122,7 +107,7 @@ export function Usuarios() {
       if (generacion.current !== token) return
       setPagina(respuesta)
       setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(respuesta.items), prev))
-      if (!conservarError) setError('')
+      setError('')
     } catch (e) {
       if (generacion.current !== token) return
       if (propagar) throw e
@@ -217,6 +202,7 @@ export function Usuarios() {
     setError('')
     setErrorPassword('')
     setErrorAlta('')
+    setErrorFormulario('')
     setAviso('')
 
     try {
@@ -245,10 +231,8 @@ export function Usuarios() {
         }
       } catch (e) {
         if (generacion.current === token) {
-          const mensaje = e instanceof ErrorApi ? e.message : 'No se pudo guardar.'
-          setError(mensaje)
-          // Esta relectura no limpia el error al aterrizar: lo que está en pantalla es el motivo del rechazo.
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, busquedaAplicada, false, true)
+          setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, busquedaAplicada)
         }
 
         return
@@ -271,8 +255,10 @@ export function Usuarios() {
         }
       }
 
-      setFormulario(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`:
+      // así el disparador ya está habilitado cuando el modal restaura el foco.
       await refrescarTrasEscribir(token, mensajeOk, AVISO_REFRESCO_FALLIDO)
+      setFormulario(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -377,7 +363,7 @@ export function Usuarios() {
       try {
         await api.delete(`/usuarios/${fila.id}`)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo. La copia la elige
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta y el motivo adentro de ella. La copia la elige
         // el `codigo` (`usuario_en_uso` y los rechazos preexistentes de `PoliticaDeRoles`), nunca
         // el `mensaje` — que igual se rinde porque es lo único que nombra QUÉ hay a nombre de la
         // cuenta.
@@ -442,6 +428,7 @@ export function Usuarios() {
         Buscar
       </button>
       <BotonIcono
+        ref={agregarRef}
         icono="agregar"
         className="text-nowrap"
         onClick={() => {
@@ -450,6 +437,7 @@ export function Usuarios() {
           setError('')
           setErrorPassword('')
           setErrorAlta('')
+          setErrorFormulario('')
           // Reintento del universo de tenants: abrir el alta es el único momento en que hace falta.
           // `!tenantsDePlataformaCargando` evita que reabrir "Nuevo" con el reintento EN VUELO
           // dispare un segundo `GET /plataforma/tenants` por click.
@@ -465,14 +453,13 @@ export function Usuarios() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Usuarios" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {/* Gateado en `esPlataforma` como todo lo demás que depende del universo de tenants: para
             un admin de tenant ese `GET` ni se dispara, así que la bandera no puede prender — el
             gate es paridad con sus elementos hermanos, no una rama viva. */}
         {esPlataforma && tenantsDePlataformaFallo && (
           <div className="alert alert-danger">{ERROR_TENANTS}</div>
         )}
-        {errorAlta && <div className="alert alert-danger">{errorAlta}</div>}
         {errorPassword && <div className="alert alert-danger">{errorPassword}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
@@ -481,13 +468,14 @@ export function Usuarios() {
             titulo={`al usuario "${baja.usuario}"`}
             ocupado={ocupado}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />
         )}
 
         {formulario && (
-          <FormularioUsuario
+          <ModalDeUsuario
             key={formulario.id ?? 'nuevo'}
             valor={formulario}
             roles={roles}
@@ -497,12 +485,15 @@ export function Usuarios() {
             tenantIndisponible={universoDeTenantsIndisponible}
             guardando={ocupado}
             bloqueado={bloqueado}
+            error={errorAlta || errorFormulario}
+            focoDeReserva={agregarRef}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => {
               setFormulario(null)
               setErrorPassword('')
               setErrorAlta('')
+              setErrorFormulario('')
             }}
           />
         )}
@@ -588,6 +579,7 @@ export function Usuarios() {
                               setError('')
                               setErrorPassword('')
                               setErrorAlta('')
+                              setErrorFormulario('')
                             }}
                             disabled={bloqueado}
                           />
@@ -643,207 +635,4 @@ function EtiquetaEstado({ estado }: { estado: EstadoUsuario }) {
         : 'text-bg-secondary'
 
   return <span className={`badge ${clase}`}>{estado}</span>
-}
-
-/**
- * `tenants` es el conjunto de tenants ASIGNABLES, y solo se ofrece a un actor de plataforma
- * (`ofreceTenant`): un admin de tenant no enumera tenants — crea siempre dentro del suyo y el
- * servidor se lo impone (spec S5).
- *
- * El selector espeja `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance`, que sigue siendo la
- * autoridad: root SIEMPRE es de plataforma (tenant nulo) y cualquier otro rol SIEMPRE necesita
- * uno. La rama de rol root es DEFENSA EN PROFUNDIDAD, no un camino vivo: `GET /roles`
- * (`PoliticaDeRoles.RolesAsignablesPor`) no devuelve Root para NINGÚN actor, ni siquiera para un
- * root, así que la opción no llega al `<select>` de rol y la combinación rol-root-con-tenant no es
- * alcanzable desde esta pantalla. La rama existe por si el catálogo de roles cambiara. Lo que sí
- * es camino vivo es el `required` del tenant para cualquier otro rol: sin él el servidor contesta
- * 400 `tenant_requerido`, y ese error se rinde por el camino de siempre.
- */
-function FormularioUsuario({
-  valor,
-  roles,
-  tenants,
-  ofreceTenant,
-  tenantsCargando,
-  tenantIndisponible,
-  guardando,
-  bloqueado,
-  onCambio,
-  onGuardar,
-  onCancelar,
-}: {
-  valor: Formulario
-  roles: RolListado[]
-  tenants: OpcionDeFiltro[]
-  ofreceTenant: boolean
-  tenantsCargando: boolean
-  tenantIndisponible: boolean
-  /** Solo gobierna la ETIQUETA del botón: "Guardando…" es cierto de una escritura en vuelo, no de
-   * una puerta de confirmación abierta. */
-  guardando: boolean
-  /** Escritura en vuelo O puerta de confirmación abierta: gobierna todo `disabled`. */
-  bloqueado: boolean
-  onCambio: (f: Formulario) => void
-  onGuardar: () => void
-  onCancelar: () => void
-}) {
-  const esNuevo = valor.id === null
-  const esRolDePlataforma = valor.rolId === ROL.Root
-  const sinTenantAsignable = esNuevo && ofreceTenant && tenantIndisponible
-
-  return (
-    <form
-      className="row g-3 border p-3 mb-4 bg-body"
-      autoComplete="off"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onGuardar()
-      }}
-    >
-      <div className="col-12">
-        <strong>{esNuevo ? 'Nuevo usuario' : `Editando usuario ${valor.id}`}</strong>
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="f-usuario">
-          Usuario
-        </label>
-        <input
-          id="f-usuario"
-          className="form-control"
-          maxLength={40}
-          value={valor.usuario}
-          onChange={(e) => onCambio({ ...valor, usuario: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="f-mail">
-          Mail
-        </label>
-        <input
-          id="f-mail"
-          type="email"
-          className="form-control"
-          maxLength={255}
-          value={valor.mail}
-          onChange={(e) => onCambio({ ...valor, mail: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
-
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="f-rol">
-          Rol
-        </label>
-        <select
-          id="f-rol"
-          className="form-select"
-          value={valor.rolId}
-          onChange={(e) => {
-            // El tenant se limpia en el ESTADO, no solo al pintarlo: el alta manda `idTenant` tal
-            // cual. Defensa en profundidad — ver el doc-comment: `GET /roles` no ofrece Root.
-            const rolId = Number(e.target.value)
-            onCambio({ ...valor, rolId, idTenant: rolId === ROL.Root ? null : valor.idTenant })
-          }}
-          disabled={bloqueado}
-        >
-          {roles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.nombre}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {esNuevo && ofreceTenant && (
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="f-tenant">
-            Tenant de la cuenta
-          </label>
-          <select
-            id="f-tenant"
-            className="form-select"
-            value={valor.idTenant === null ? '' : String(valor.idTenant)}
-            onChange={(e) =>
-              onCambio({ ...valor, idTenant: e.target.value === '' ? null : Number(e.target.value) })
-            }
-            disabled={bloqueado || tenantsCargando || esRolDePlataforma || sinTenantAsignable}
-            required
-          >
-            <option value="">
-              {esRolDePlataforma
-                ? 'Sin tenant (plataforma)'
-                : tenantsCargando
-                  ? 'Cargando…'
-                  : sinTenantAsignable
-                    ? 'No se pudo cargar la lista'
-                    : 'Elegí un tenant'}
-            </option>
-            {tenants.map((t) => (
-              <option key={t.valor} value={t.valor}>
-                {t.etiqueta}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="f-estado">
-          Estado
-        </label>
-        <select
-          id="f-estado"
-          className="form-select"
-          value={valor.estado}
-          onChange={(e) => onCambio({ ...valor, estado: e.target.value as EstadoUsuario })}
-          disabled={bloqueado}
-        >
-          {ESTADOS_USUARIO.map((e) => (
-            <option key={e} value={e}>
-              {e}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="f-password">
-          Contraseña
-        </label>
-        <input
-          id="f-password"
-          type="password"
-          className="form-control"
-          placeholder={esNuevo ? 'Mínimo 8 caracteres' : 'Dejar vacío para no cambiar'}
-          value={valor.password}
-          onChange={(e) => onCambio({ ...valor, password: e.target.value })}
-          disabled={bloqueado}
-          required={esNuevo}
-        />
-      </div>
-
-      <div className="col-12 d-flex gap-2">
-        <button
-          type="submit"
-          className="btn btn-success"
-          disabled={bloqueado || sinTenantAsignable}
-        >
-          {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-secondary"
-          onClick={onCancelar}
-          disabled={bloqueado}
-        >
-          Cancelar
-        </button>
-      </div>
-    </form>
-  )
 }

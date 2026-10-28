@@ -49,8 +49,8 @@ export function SeccionDeDisponibilidad(props: Props) {
  *
  * La puerta de confirmación de "Quitar imagen" es inerte a nivel del modal entero: mientras está abierta se avisa a
  * `alDeEscribir` (igual que durante una escritura) y se suelta al cerrarla o desmontar la sección, así que el resto del
- * formulario queda deshabilitado y no se puede abrir ningún modal apilado (alta rápida) sobre ella. Su Escape en
- * captura es el correcto porque la puerta es la capa de arriba.
+ * formulario queda deshabilitado y no se puede abrir ningún modal apilado (alta rápida) sobre ella. La puerta es un `Modal`
+ * apilado sobre el del artículo: Escape y Tab los atiende solo el de arriba, y su rechazo se muestra adentro.
  */
 function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, alDeEscribir, alCambiar }: Props) {
   const [disponibleVenta, setDisponibleVenta] = useState(inicial.disponibleVenta)
@@ -354,7 +354,7 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
           PNG, JPG o WebP, hasta 1 MB. Al elegir el archivo se sube y reemplaza la imagen actual.
           {escribiendo === 'imagen' && ' Subiendo…'}
         </div>
-        {errorDeImagen && (
+        {errorDeImagen && !puertaAbierta && (
           <div id="art-imagen-error" className="text-danger small mt-1" role="alert">
             {errorDeImagen}
           </div>
@@ -368,20 +368,19 @@ function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, a
       </div>
 
       {puertaAbierta && (
-        <div className="mt-3">
-          <ConfirmacionDeBaja
-            titulo="la imagen del artículo"
-            pregunta="Quitar"
-            nota="Podés volver a subir una cuando quieras."
-            etiquetaConfirmar="Confirmar quitar imagen"
-            etiquetaEnCurso="Quitando…"
-            ocupado={ocupado}
-            disparador={disparador}
-            regreso={tituloRef}
-            onConfirmar={() => void confirmarQuitarImagen()}
-            onCancelar={cerrarPuerta}
-          />
-        </div>
+        <ConfirmacionDeBaja
+          titulo="la imagen del artículo"
+          pregunta="Quitar"
+          nota="Podés volver a subir una cuando quieras."
+          etiquetaConfirmar="Confirmar quitar imagen"
+          etiquetaEnCurso="Quitando…"
+          ocupado={ocupado}
+          disparador={disparador}
+          regreso={tituloRef}
+          error={errorDeImagen}
+          onConfirmar={() => void confirmarQuitarImagen()}
+          onCancelar={cerrarPuerta}
+        />
       )}
 
       {aviso && (

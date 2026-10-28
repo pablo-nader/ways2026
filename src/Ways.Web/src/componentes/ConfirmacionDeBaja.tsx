@@ -1,22 +1,19 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { Modal } from './Modal'
 
 /**
- * Puerta MODAL de confirmación (etapa 20, slice 5), compartida por las CUATRO pantallas raíz —
- * `react-async-state` regla 10: el patrón se replica en todas las superficies hermanas, y la forma
- * más barata de garantizarlo es que haya una sola. Sus valores por defecto son los de la baja
- * lógica (de ahí el nombre), pero el panel es genérico: `Tenants` lo reusa para suspender y
- * reactivar, que estaban con `confirm()` nativo en el MISMO archivo que introdujo la puerta.
+ * Confirmación MODAL (etapa 20, slice 5), compartida por las pantallas que dan de baja o cambian
+ * el estado de algo — `react-async-state` regla 10: una sola puerta para todas. Sus valores por
+ * defecto son los de la baja lógica (de ahí el nombre), pero es genérica: `Tenants` la reusa para
+ * suspender y reactivar.
  *
- * MODAL DE VERDAD, y ahí está la seguridad: mientras esta puerta está montada, la pantalla que la
- * monta deja INERTE todo el resto de sus controles (`bloqueado = ocupado || puerta abierta`). Eso
- * es la regla 9 por construcción —nada puede supersederla— y de paso hace innecesaria una trampa
- * de foco: un control deshabilitado no es tabulable, así que no queda nada afuera para enfocar.
+ * Se rinde dentro de `Modal` (portal, trampa de foco, apilado): la confirmación nunca vive
+ * incrustada en la página. Mientras `ocupado`, el modal no se cierra (cruz, Cancelar, Escape y
+ * fondo quedan inertes). Los anfitriones pueden seguir bloqueando sus propios controles.
  *
- * NO usa `window.confirm`: la puerta tiene que NOMBRAR qué se va a borrar, y en el caso del
- * tenant eso incluye a sus hijos, que se van con él en la misma cascada. Un `confirm` nativo
- * bloquea el hilo, no se puede rendir con listas y —lo que importa acá— no se puede dejar
- * inerte mientras el DELETE está en vuelo.
+ * NO usa `window.confirm`: tiene que NOMBRAR qué se va a borrar, incluidos sus hijos, y no se
+ * puede dejar inerte mientras el DELETE está en vuelo.
  */
 type Props = {
   /** Qué se está por tocar, ya nombrado ("el tenant \"Comercio Sur\""). */
@@ -49,6 +46,8 @@ type Props = {
    * de la `Box`.
    */
   regreso?: RefObject<HTMLElement | null> | null
+  /** Motivo del rechazo de la acción confirmada; se muestra dentro del modal, que sigue abierto. */
+  error?: string | null
   onConfirmar: () => void
   onCancelar: () => void
 }
@@ -76,21 +75,22 @@ export function ConfirmacionDeBaja({
   ocupado,
   disparador = null,
   regreso: regresoExplicito = null,
+  error = null,
   onConfirmar,
   onCancelar,
 }: Props) {
-  const cancelarRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  /** Adónde va el foco cuando el disparador ya no sirve (la fila que lo contenía se fue con la
-   * baja): un punto de referencia estable de la pantalla —el título de la `Box` o, si no hay, la
-   * tabla— en vez del `<body>`, que deja a quien navega por teclado al principio de todo. */
-  const regresoRef = useRef<HTMLElement | null>(null)
+  /** Foco al abrir, capturado en el render (antes de que el commit deshabilite el disparador). */
+  const [focoPrevio] = useState<HTMLElement | null>(() => document.activeElement as HTMLElement | null)
+  /** Punto de referencia estable de la pantalla (título de la `Box` o tabla) para cuando el
+   * disparador se fue con la baja. Se resuelve al abrir porque, ya en el portal, no hay `.box`
+   * ancestro al cual subir al cerrar. */
+  const [respaldo] = useState<HTMLElement | null>(
+    () => disparador?.closest('.box')?.querySelector<HTMLElement>('header h5, table') ?? null,
+  )
+  const confirmandoRef = useRef(false)
+  const idDescripcion = useId()
 
   useEffect(() => {
-    regresoRef.current =
-      panelRef.current?.closest('.box')?.querySelector<HTMLElement>('header h5, table') ?? null
-    cancelarRef.current?.focus()
-
     return () => {
       if (esAlcanzable(disparador)) {
         disparador.focus()
@@ -98,76 +98,77 @@ export function ConfirmacionDeBaja({
         return
       }
 
-      const regreso = regresoExplicito?.current ?? regresoRef.current
-      if (!regreso) return
+      const regreso = regresoExplicito?.current ?? respaldo
+      if (regreso?.isConnected) {
+        // Un encabezado o una tabla no son tabulables: necesitan un `tabindex` que React no rinde.
+        if (!regreso.hasAttribute('tabindex')) regreso.setAttribute('tabindex', '-1')
+        regreso.focus()
 
-      // Un encabezado o una tabla no son tabulables: para poder recibir el foco necesitan un
-      // `tabindex` que React no rinde (no es un nodo suyo) y que se pone una sola vez.
-      if (!regreso.hasAttribute('tabindex')) regreso.setAttribute('tabindex', '-1')
-      regreso.focus()
+        return
+      }
+
+      if (esAlcanzable(focoPrevio) && focoPrevio !== document.body) focoPrevio.focus()
     }
-  }, [disparador, regresoExplicito])
+  }, [disparador, regresoExplicito, respaldo, focoPrevio])
 
-  /** Escape = Cancelar, y se escucha en `document` y no en el panel a propósito: el foco puede
-   * haberse ido a la nada si la fila que lo tenía desapareció. Mientras la escritura está en vuelo
-   * no cancela nada, igual que el botón.
-   *
-   * Se escucha en la fase de captura y se corta la propagación: la puerta puede montarse DENTRO de un
-   * `Modal` (la sección de tienda del artículo), cuyo propio listener de `document` cerraría el editor
-   * entero con la misma tecla. En captura la puerta corre antes que cualquier listener de burbujeo,
-   * sin importar quién se registró primero. */
-  useEffect(() => {
-    function alTeclado(evento: KeyboardEvent) {
-      if (evento.key !== 'Escape' || ocupado) return
-
-      evento.preventDefault()
-      evento.stopImmediatePropagation()
-      onCancelar()
-    }
-
-    document.addEventListener('keydown', alTeclado, true)
-
-    return () => document.removeEventListener('keydown', alTeclado, true)
-  }, [ocupado, onCancelar])
+  function alConfirmar() {
+    if (confirmandoRef.current) return
+    confirmandoRef.current = true
+    queueMicrotask(() => {
+      confirmandoRef.current = false
+    })
+    onConfirmar()
+  }
 
   return (
-    <div
-      ref={panelRef}
-      className="alert alert-warning"
-      role="alertdialog"
-      aria-modal="true"
-      aria-label={etiquetaConfirmar}
-    >
-      <p className="mb-2">
-        <strong>
-          ¿{pregunta} {titulo}?
-        </strong>
-      </p>
-      {arrastra.length > 0 && (
+    <Modal
+      titulo={etiquetaConfirmar}
+      tamano="sm"
+      rol="alertdialog"
+      idDescripcion={idDescripcion}
+      ocupado={ocupado}
+      restaurarFoco={false}
+      onCerrar={onCancelar}
+      pie={
         <>
-          <p className="mb-1">También se dan de baja:</p>
-          <ul className="mb-2">
-            {arrastra.map((linea) => (
-              <li key={linea}>{linea}</li>
-            ))}
-          </ul>
+          <button type="button" className="btn btn-danger" onClick={alConfirmar} disabled={ocupado}>
+            {ocupado ? etiquetaEnCurso : etiquetaConfirmar}
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-secondary"
+            onClick={onCancelar}
+            disabled={ocupado}
+            autoFocus
+          >
+            Cancelar
+          </button>
         </>
-      )}
-      {nota && <p className="mb-3">{nota}</p>}
-      <div className="d-flex gap-2">
-        <button type="button" className="btn btn-danger" onClick={onConfirmar} disabled={ocupado}>
-          {ocupado ? etiquetaEnCurso : etiquetaConfirmar}
-        </button>
-        <button
-          ref={cancelarRef}
-          type="button"
-          className="btn btn-outline-secondary"
-          onClick={onCancelar}
-          disabled={ocupado}
-        >
-          Cancelar
-        </button>
+      }
+    >
+      <div id={idDescripcion}>
+        <p className="mb-2">
+          <strong>
+            ¿{pregunta} {titulo}?
+          </strong>
+        </p>
+        {arrastra.length > 0 && (
+          <>
+            <p className="mb-1">También se dan de baja:</p>
+            <ul className="mb-2">
+              {arrastra.map((linea) => (
+                <li key={linea}>{linea}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {nota && <p className="mb-0">{nota}</p>}
       </div>
-    </div>
+      {error && (
+        <div className="alert alert-danger mt-3 mb-0" role="alert">
+          {error}
+        </div>
+      )}
+    </Modal>
   )
 }
