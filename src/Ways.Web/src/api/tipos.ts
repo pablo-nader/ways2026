@@ -1825,9 +1825,12 @@ export type PagoRegistrado = {
 // la tesorería de la empresa, con fecha de negocio potencialmente retroactiva — espejo de los
 // pagos de administración de `Ways.Application.Pagos.Contratos`.
 
-/** Cuerpo de `POST /api/gastos/administracion` — espejo de
- * `SolicitudDePagoDeAdministracion`. `fecha` viaja como `YYYY-MM-DD` (mismo shape que
- * `SolicitudDeCompra.fechaComprobante`) — nunca un ISO con hora: la hora la pone el servidor. */
+/** Una entrega de dinero de un pago, por un medio (espejo de `LineaDePago`). `referencia` nula si no se carga. */
+export type LineaDePagoSolicitud = { idMedioPago: number; importe: number; referencia: string | null }
+
+/** Cuerpo de `POST /api/pagos/administracion` — espejo de `SolicitudDePagoDeAdministracionConLineas`. `fecha`
+ * viaja como `YYYY-MM-DD` (mismo shape que `SolicitudDeCompra.fechaComprobante`) — nunca un ISO con hora: la hora
+ * la pone el servidor. El importe del pago es la suma de las líneas. */
 export type SolicitudDePagoDeAdministracion = {
   fecha: string
   idEmpresa: number
@@ -1837,10 +1840,28 @@ export type SolicitudDePagoDeAdministracion = {
   idArea: number | null
   concepto: string
   detalle: string | null
-  idMedioPago: number
+  numeroFactura: string | null
+  lineas: LineaDePagoSolicitud[]
+  idComprobanteCompra: number | null
+}
+
+/** Pago recién persistido del contrato con líneas (espejo de `PagoConLineas`): sin medio en la cabecera. */
+export type PagoConLineas = {
+  id: number
+  idTurnoCaja: number | null
+  idPuntoVenta: number | null
+  fecha: string
+  categoria: CategoriaPago
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
   numeroFactura: string | null
   importe: number
+  idEmpleado: number
   idComprobanteCompra: number | null
+  origenFondos: OrigenFondosPago
+  lineas: LineaDePagoListada[]
 }
 
 /** Fila de `GET /api/gastos/administracion` — espejo de `GastoDeAdministracionListado`, con
@@ -1890,7 +1911,19 @@ export type SolicitudDeEdicionDePago = {
   importe: number
 }
 
-/** Página de resultados de `GET /api/gastos/administracion` — espejo de
+/** Cuerpo de `PUT /api/pagos/administracion/{id}` — espejo de `SolicitudDeEdicionDePagoConLineas`: reemplaza el
+ * conjunto de líneas del pago. */
+export type SolicitudDeEdicionDePagoConLineas = {
+  categoria: CategoriaPago
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  numeroFactura: string | null
+  lineas: LineaDePagoSolicitud[]
+}
+
+/** Página de resultados de `GET /api/pagos/administracion` — espejo de
  * `PaginaDePagosDeAdministracion`. */
 export type PaginaDePagosDeAdministracion = {
   items: PagoDeAdministracionListado[]
@@ -2616,13 +2649,13 @@ export type CompraDuplicada = {
   origen: OrigenCompra
 }
 
-/** Cuerpo de `POST /api/compras/{id}/pagos` (espejo de `SolicitudDePagoDeCompra`). `fecha` viaja como
- * `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. */
-export type SolicitudDePagoDeCompra = { fecha: string; importe: number; idMedioPago: number; concepto: string | null }
+/** Cuerpo de `POST /api/pagos/de-compra/{idCompra}` (espejo de `SolicitudDePagoDeCompraConLineas`). `fecha` viaja
+ * como `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. */
+export type SolicitudDePagoDeCompra = { fecha: string; lineas: LineaDePagoSolicitud[]; concepto: string | null }
 
-/** Respuesta de `POST /api/compras/{id}/pagos` (espejo de `ResultadoDePagoDeCompra`): el pago creado
- * y el estado de pago de la compra después de este pago. */
-export type ResultadoDePagoDeCompra = { gasto: PagoRegistrado; pagado: number; saldoPendiente: number }
+/** Respuesta de `POST /api/pagos/de-compra/{idCompra}` (espejo de `ResultadoDePagoDeCompraConLineas`): el pago
+ * creado bajo la clave `pago` y el estado de pago de la compra después de este pago. */
+export type ResultadoDePagoDeCompra = { pago: PagoConLineas; pagado: number; saldoPendiente: number }
 
 /** Página de resultados de `GET /api/compras` (espejo de `PaginaDeCompras`). */
 export type PaginaDeCompras = { items: CompraListada[]; total: number; pagina: number; tamanio: number }

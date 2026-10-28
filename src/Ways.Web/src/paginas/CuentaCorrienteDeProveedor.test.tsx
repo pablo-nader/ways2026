@@ -529,8 +529,8 @@ describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => 
     usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
     mockearConFilas([movimientoFixture({ saldoPendienteDeLaCompra: 120 })])
     apiPostMock.mockImplementation((ruta: string) =>
-      ruta === '/compras/10/pagos'
-        ? Promise.resolve({ gasto: { id: 9, importe: 120 }, pagado: 300, saldoPendiente: 0 })
+      ruta === '/pagos/de-compra/10'
+        ? Promise.resolve({ pago: { id: 9, importe: 120 }, pagado: 300, saldoPendiente: 0 })
         : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
     )
     const usuario = userEvent.setup()
@@ -539,14 +539,14 @@ describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => 
     await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
 
     expect(await screen.findByRole('dialog', { name: 'Pagar compra #10' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Importe')).toHaveValue('120,00')
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('120,00')
     await screen.findByRole('option', { name: 'Efectivo' })
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     expect(await screen.findByText('Pago registrado: $ 120,00.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(apiPostMock).toHaveBeenCalledWith('/compras/10/pagos', expect.objectContaining({ importe: 120, idMedioPago: 1 }))
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/10', expect.objectContaining({ lineas: [{ idMedioPago: 1, importe: 120, referencia: null }] }))
     const lecturasDelEstado = apiGetMock.mock.calls.filter((call: unknown[]) => String(call[0]).includes('/cuenta-corriente'))
     expect(lecturasDelEstado).toHaveLength(2)
   })

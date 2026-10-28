@@ -19,9 +19,8 @@ function formularioFixture(sobrescribir: Partial<FormularioDePagoDeAdministracio
     idArea: '',
     concepto: 'Alquiler de septiembre',
     detalle: '',
-    idMedioPago: 7,
     numeroFactura: '',
-    importe: 1000,
+    lineas: [{ clave: 1, idMedioPago: 7, importe: 1000, referencia: '' }],
     ...sobrescribir,
   }
 }
@@ -50,7 +49,7 @@ describe('formularioDePagoDeAdministracionVacio', () => {
     expect(formulario.fecha).toBe('2026-09-28')
     expect(formulario.categoria).toBe('Otros')
     expect(formulario.idEmpresa).toBe('')
-    expect(formulario.importe).toBeNull()
+    expect(formulario.lineas).toEqual([{ clave: 1, idMedioPago: '', importe: null, referencia: '' }])
   })
 
   it('preselecciona la empresa cuando se la pasa (empresa única del tenant)', () => {
@@ -67,9 +66,25 @@ describe('aSolicitudDePagoDeAdministracion', () => {
     expect(solicitud.idEmpresa).toBe(3)
     expect(solicitud.categoria).toBe('Otros')
     expect(solicitud.concepto).toBe('Alquiler de septiembre')
-    expect(solicitud.idMedioPago).toBe(7)
-    expect(solicitud.importe).toBe(1000)
+    expect(solicitud.lineas).toEqual([{ idMedioPago: 7, importe: 1000, referencia: null }])
     expect(solicitud.idComprobanteCompra).toBeNull()
+  })
+
+  it('cada línea viaja con su medio, su importe y su referencia recortada (en blanco, null)', () => {
+    const solicitud = aSolicitudDePagoDeAdministracion(
+      formularioFixture({
+        lineas: [
+          { clave: 1, idMedioPago: 7, importe: 600, referencia: '' },
+          { clave: 2, idMedioPago: 9, importe: 400, referencia: '  Op 55 ' },
+        ],
+      }),
+    )
+    expect(solicitud.lineas).toEqual([
+      { idMedioPago: 7, importe: 600, referencia: null },
+      { idMedioPago: 9, importe: 400, referencia: 'Op 55' },
+    ])
+    expect(Object.keys(solicitud)).not.toContain('importe')
+    expect(Object.keys(solicitud)).not.toContain('idMedioPago')
   })
 
   it('los selects opcionales en blanco viajan null, nunca 0 ni string vacío', () => {
@@ -96,18 +111,19 @@ describe('aSolicitudDePagoDeAdministracion', () => {
 })
 
 describe('formularioDePagoDeAdministracionCompleto', () => {
-  it('true cuando fecha, empresa, medio de pago, concepto e importe positivo están', () => {
+  it('true cuando fecha, empresa, concepto y todas las líneas válidas están', () => {
     expect(formularioDePagoDeAdministracionCompleto(formularioFixture())).toBe(true)
   })
 
   it.each([
     ['fecha', { fecha: '' }],
     ['idEmpresa', { idEmpresa: '' as const }],
-    ['idMedioPago', { idMedioPago: '' as const }],
+    ['el medio de una línea', { lineas: [{ clave: 1, idMedioPago: '' as const, importe: 1000, referencia: '' }] }],
+    ['ninguna línea', { lineas: [] }],
     ['concepto en blanco', { concepto: '   ' }],
-    ['importe null', { importe: null }],
-    ['importe cero', { importe: 0 }],
-    ['importe negativo', { importe: -5 }],
+    ['importe null', { lineas: [{ clave: 1, idMedioPago: 7, importe: null, referencia: '' }] }],
+    ['importe cero', { lineas: [{ clave: 1, idMedioPago: 7, importe: 0, referencia: '' }] }],
+    ['importe negativo', { lineas: [{ clave: 1, idMedioPago: 7, importe: -5, referencia: '' }] }],
   ])('false cuando falta %s', (_nombre, cambios) => {
     expect(formularioDePagoDeAdministracionCompleto(formularioFixture(cambios))).toBe(false)
   })

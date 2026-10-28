@@ -48,7 +48,7 @@ const cuentaCorriente = medio({ id: 2, nombre: 'Cuenta corriente', comportamient
 
 function resultado(sobrescribir: Partial<ResultadoDePagoDeCompra> = {}): ResultadoDePagoDeCompra {
   return {
-    gasto: {
+    pago: {
       id: 50,
       idTurnoCaja: null,
       idPuntoVenta: 2,
@@ -58,12 +58,12 @@ function resultado(sobrescribir: Partial<ResultadoDePagoDeCompra> = {}): Resulta
       idArea: null,
       concepto: 'Pago Factura A 0001-00000009',
       detalle: null,
-      idMedioPago: 1,
       numeroFactura: null,
       importe: 320,
       idEmpleado: 1,
       idComprobanteCompra: 9,
       origenFondos: 'Tesoreria',
+      lineas: [{ idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: 320, referencia: null }],
     },
     pagado: 320,
     saldoPendiente: 0,
@@ -116,7 +116,7 @@ describe('ModalDePagoDeCompra', () => {
     montar()
     await esperarMedios()
 
-    expect(screen.getByLabelText('Importe')).toHaveValue('320,00')
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('320,00')
     expect(screen.getByLabelText('Fecha')).toHaveValue('03/10/2026')
     expect(screen.getByLabelText('Fecha').closest('.position-relative')!.querySelector('input[type="date"]')).toHaveAttribute('max', '2026-10-03')
     expect(screen.getByRole('option', { name: 'Transferencia' })).toBeInTheDocument()
@@ -131,19 +131,66 @@ describe('ModalDePagoDeCompra', () => {
     const { onPagado } = montar()
     await esperarMedios()
 
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Transferencia')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Transferencia')
     await usuario.type(screen.getByLabelText('Concepto (opcional)'), '  Pago parcial ')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     await waitFor(() => expect(onPagado).toHaveBeenCalledTimes(1))
     expect(apiPostMock).toHaveBeenCalledTimes(1)
-    expect(apiPostMock).toHaveBeenCalledWith('/compras/9/pagos', {
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/9', {
       fecha: '2026-10-03',
-      importe: 320,
-      idMedioPago: 3,
+      lineas: [{ idMedioPago: 3, importe: 320, referencia: null }],
       concepto: 'Pago parcial',
     })
     expect(onPagado).toHaveBeenCalledWith(resultado())
+  })
+
+  it('paga con varios medios: prellena una línea con el saldo, informa lo que falta y manda una línea por medio', async () => {
+    mockearMedios()
+    apiPostMock.mockResolvedValue(resultado())
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    const { onPagado } = montar()
+    await esperarMedios()
+
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    const importeUno = screen.getByLabelText('Importe de la línea 1')
+    await usuario.clear(importeUno)
+    await usuario.type(importeUno, '200')
+    expect(screen.getByText(/Falta \$\s120,00/)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar medio' }))
+    expect(screen.getByLabelText('Importe de la línea 2')).toHaveValue('120,00')
+    expect(screen.getByText('Sin diferencia')).toBeInTheDocument()
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 2'), 'Transferencia')
+    await usuario.type(screen.getByLabelText('Referencia de la línea 2'), 'Op 77')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    await waitFor(() => expect(onPagado).toHaveBeenCalledTimes(1))
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/9', {
+      fecha: '2026-10-03',
+      lineas: [
+        { idMedioPago: 1, importe: 200, referencia: null },
+        { idMedioPago: 3, importe: 120, referencia: 'Op 77' },
+      ],
+      concepto: null,
+    })
+  })
+
+  it('un total mayor al saldo, sumando varias líneas, se rechaza sin llamar al servidor', async () => {
+    mockearMedios()
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    montar()
+    await esperarMedios()
+
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar medio' }))
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 2'), 'Transferencia')
+    await usuario.type(screen.getByLabelText('Importe de la línea 2'), '10')
+    expect(screen.getByText(/Sobra \$\s10,00/)).toBeInTheDocument()
+    await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    expect(screen.getByText('El total no puede superar el saldo pendiente de la compra.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 
   it('un importe mayor al saldo o sin medio de pago se rechaza sin llamar al servidor', async () => {
@@ -153,15 +200,15 @@ describe('ModalDePagoDeCompra', () => {
     await esperarMedios()
 
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
-    expect(screen.getByText('Elegí el medio de pago.')).toBeInTheDocument()
+    expect(screen.getByText('Línea 1: elegí el medio de pago.')).toBeInTheDocument()
 
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
-    const importe = screen.getByLabelText('Importe')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    const importe = screen.getByLabelText('Importe de la línea 1')
     await usuario.clear(importe)
     await usuario.type(importe, '320,01')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
-    expect(screen.getByText('El importe no puede superar el saldo pendiente de la compra.')).toBeInTheDocument()
+    expect(screen.getByText('El total no puede superar el saldo pendiente de la compra.')).toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
@@ -172,7 +219,7 @@ describe('ModalDePagoDeCompra', () => {
     const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     const { onPagado } = montar()
     await esperarMedios()
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
 
     const registrar = screen.getByRole('button', { name: 'Registrar pago' })
     await usuario.dblClick(registrar)
@@ -180,9 +227,9 @@ describe('ModalDePagoDeCompra', () => {
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Registrando…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
-    expect(screen.getByLabelText('Importe')).toBeDisabled()
+    expect(screen.getByLabelText('Importe de la línea 1')).toBeDisabled()
     expect(screen.getByLabelText('Fecha')).toBeDisabled()
-    expect(screen.getByLabelText('Medio de pago')).toBeDisabled()
+    expect(screen.getByLabelText('Medio de la línea 1')).toBeDisabled()
     expect(screen.getByLabelText('Concepto (opcional)')).toBeDisabled()
 
     await act(async () => resolverPago(resultado()))
@@ -195,7 +242,7 @@ describe('ModalDePagoDeCompra', () => {
     const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     montar()
     await esperarMedios()
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
 
     const registrar = screen.getByRole('button', { name: 'Registrar pago' })
     act(() => {
@@ -214,14 +261,14 @@ describe('ModalDePagoDeCompra', () => {
     const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     const { onPagado } = montar()
     await esperarMedios()
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
 
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     expect(await screen.findByText('El importe del pago supera el saldo pendiente de la compra.')).toBeInTheDocument()
     expect(onPagado).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Registrar pago' })).toBeEnabled()
-    expect(screen.getByLabelText('Importe')).toBeEnabled()
+    expect(screen.getByLabelText('Importe de la línea 1')).toBeEnabled()
   })
 
   it('no permite registrar hasta que llegan los medios de pago', async () => {
@@ -251,7 +298,7 @@ describe('ModalDePagoDeCompra', () => {
     const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     const { onPagado, unmount } = montar()
     await esperarMedios()
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     unmount()

@@ -6,9 +6,12 @@ import {
   advertenciasDePagoDeAdministracion,
   esPagoOriginadoEnPersonal,
   aFormularioDeEdicion,
+  aSolicitudDeEdicionConLineas,
   aSolicitudDeEdicionDePago,
   copiaDeFalloDeEdicion,
   formularioDeEdicionCompleto,
+  formularioDeEdicionConLineasCompleto,
+  lineasIniciales,
   type FormularioDeEdicionDePago,
   type PagoEditable,
 } from './registroDePagos'
@@ -169,5 +172,65 @@ describe('advertenciasDePagoDeAdministracion', () => {
     expect(
       advertenciasDePagoDeAdministracion({ idTurnoCaja: 9, turnoAbierto: false, origenFondos: 'Tesoreria', categoria: 'Proveedor', idProveedor: 5 }),
     ).toEqual(['Se registrará un ajuste compensatorio sobre el saldo del proveedor y la caja general.'])
+  })
+})
+
+describe('lineasIniciales', () => {
+  it('usa el reparto que devolvió el servidor, una fila por línea', () => {
+    const lineas = lineasIniciales({
+      idMedioPago: 4,
+      importe: 1000,
+      lineas: [
+        { idItem: 1, idMedioPago: 4, nombreMedioPago: 'Efectivo', importe: 600, referencia: null },
+        { idItem: 2, idMedioPago: 5, nombreMedioPago: 'Transferencia', importe: 400, referencia: 'Op 9' },
+      ],
+    })
+
+    expect(lineas).toEqual([
+      expect.objectContaining({ clave: 1, idMedioPago: 4, importe: 600, referencia: '' }),
+      expect.objectContaining({ clave: 2, idMedioPago: 5, importe: 400, referencia: 'Op 9', nombreMedioPago: 'Transferencia' }),
+    ])
+  })
+
+  it('sin líneas en la respuesta arma una sola con el medio y el importe del pago', () => {
+    expect(lineasIniciales({ idMedioPago: 4, importe: 1500 })).toEqual([{ clave: 1, idMedioPago: 4, importe: 1500, referencia: '' }])
+    expect(lineasIniciales({ idMedioPago: 4, importe: 1500, lineas: [] })).toEqual([
+      { clave: 1, idMedioPago: 4, importe: 1500, referencia: '' },
+    ])
+  })
+})
+
+describe('aSolicitudDeEdicionConLineas', () => {
+  it('lleva los campos editables y el reparto, sin medio ni importe sueltos', () => {
+    const solicitud = aSolicitudDeEdicionConLineas(formularioFixture({ concepto: '  Luz  ', detalle: '   ', numeroFactura: '' }), [
+      { clave: 1, idMedioPago: 4, importe: 1000, referencia: '' },
+      { clave: 2, idMedioPago: 5, importe: 500, referencia: ' R-1 ' },
+    ])
+
+    expect(solicitud).toEqual({
+      categoria: 'Servicios',
+      idProveedor: null,
+      idArea: null,
+      concepto: 'Luz',
+      detalle: null,
+      numeroFactura: null,
+      lineas: [
+        { idMedioPago: 4, importe: 1000, referencia: null },
+        { idMedioPago: 5, importe: 500, referencia: 'R-1' },
+      ],
+    })
+  })
+})
+
+describe('formularioDeEdicionConLineasCompleto', () => {
+  const lineasValidas = [{ clave: 1, idMedioPago: 4, importe: 1500, referencia: '' }]
+
+  it('acepta concepto y líneas válidas', () => {
+    expect(formularioDeEdicionConLineasCompleto(formularioFixture(), lineasValidas)).toBe(true)
+  })
+
+  it('rechaza el concepto en blanco y una línea inválida', () => {
+    expect(formularioDeEdicionConLineasCompleto(formularioFixture({ concepto: ' ' }), lineasValidas)).toBe(false)
+    expect(formularioDeEdicionConLineasCompleto(formularioFixture(), [{ ...lineasValidas[0], importe: 0 }])).toBe(false)
   })
 })

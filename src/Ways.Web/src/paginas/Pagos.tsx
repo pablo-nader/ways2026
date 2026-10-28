@@ -34,7 +34,7 @@ import type {
   OrigenFondosPago,
   PaginaDePagosDeAdministracion,
   PuntoVentaListado,
-  SolicitudDeEdicionDePago,
+  SolicitudDeEdicionDePagoConLineas,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -45,6 +45,7 @@ import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
 import { ModalDeAltaDePago } from './pagos/ModalDeAltaDePago'
 import { areaPorDefecto } from './utilidadesPagosDelTurno'
+import { errorDeLineasDePago, textoDeMediosDelPago } from '../api/lineasDePago'
 import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
@@ -297,7 +298,11 @@ export function Pagos() {
     setAviso('')
 
     if (!formularioDePagoDeAdministracionCompleto(formulario)) {
-      setErrorGuardar('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')
+      setErrorGuardar(
+        formulario.fecha.trim() !== '' && formulario.idEmpresa !== '' && formulario.concepto.trim() !== ''
+          ? (errorDeLineasDePago(formulario.lineas) ?? 'Revisá los medios de pago.')
+          : 'Completá fecha, empresa, concepto y, en cada medio de pago, el medio y un importe mayor a 0.',
+      )
       setDisparoDeError((n) => n + 1)
       return
     }
@@ -361,7 +366,7 @@ export function Pagos() {
     setErrorEdicion('')
   }
 
-  async function guardarEdicion(solicitud: SolicitudDeEdicionDePago) {
+  async function guardarEdicion(solicitud: SolicitudDeEdicionDePagoConLineas) {
     if (!edicion || ocupadoEscribiendo()) return
 
     const idGasto = edicion.id
@@ -654,7 +659,7 @@ export function Pagos() {
                       <td>{g.idProveedor === null ? '—' : (g.nombreProveedor ?? proveedorPorId[g.idProveedor]?.razonSocial ?? '(no disponible)')}</td>
                       <td>{g.idArea === null ? '—' : (g.nombreArea ?? '(no disponible)')}</td>
                       <td>{g.concepto}</td>
-                      <td>{g.nombreMedioPago ?? '(no disponible)'}</td>
+                      <td>{textoDeMediosDelPago(g)}</td>
                       <td>
                         <span className={`badge ${g.origenFondos === 'Tesoreria' ? 'text-bg-secondary' : 'bg-body-secondary text-body border'}`}>
                           {ORIGENES_DE_FONDOS_PAGO.find((o) => o.valor === g.origenFondos)?.etiqueta ?? g.origenFondos}
@@ -809,10 +814,11 @@ export function Pagos() {
           proveedores={proveedores ?? []}
           areas={areas ?? []}
           ligadoACompra={edicion.idComprobanteCompra !== null}
+          origenFondos={edicion.origenFondos}
           advertencias={advertenciasDePagoDeAdministracion(edicion)}
           guardando={guardandoEdicion}
           error={errorEdicion}
-          onGuardar={(solicitud) => void guardarEdicion(solicitud)}
+          onGuardarConLineas={(solicitud) => void guardarEdicion(solicitud)}
           onCancelar={cancelarEdicion}
         />
       )}

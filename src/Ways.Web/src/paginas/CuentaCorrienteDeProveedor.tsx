@@ -473,7 +473,7 @@ function PantallaCuentaCorrienteDeProveedor({
           onCerrar={() => setCompraAPagar(null)}
           onPagado={(resultado) => {
             setCompraAPagar(null)
-            setAviso(`Pago registrado: ${formatearMoneda(resultado.gasto.importe)}.`)
+            setAviso(`Pago registrado: ${formatearMoneda(resultado.pago.importe)}.`)
             cargar()
           }}
         />

@@ -735,7 +735,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   // llegar vieja después de un pago que sí se registró.
   function alPagar(resultado: ResultadoDePagoDeCompra) {
     setPagoAbierto(false)
-    setAviso(`Pago registrado: ${formatearMoneda(resultado.gasto.importe)}.`)
+    setAviso(`Pago registrado: ${formatearMoneda(resultado.pago.importe)}.`)
     setCompra((prev) =>
       prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
     )

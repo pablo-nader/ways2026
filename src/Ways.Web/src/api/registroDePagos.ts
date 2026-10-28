@@ -4,13 +4,23 @@
  * en el cuerpo (mismo criterio que `clienteDeCaja.abrir`).
  */
 import { api, ErrorApi } from './cliente'
+import {
+  aLineasDeSolicitud,
+  errorDeLineasDePago,
+  lineaDePagoVacia,
+  lineasEditablesDesdeListado,
+  type LineaDePagoEditable,
+} from './lineasDePago'
 import type {
   CategoriaPago,
+  LineaDePagoListada,
+  PagoConLineas,
   PagoDeAdministracionListado,
   PagoRegistrado,
   OrigenFondosPago,
   PaginaDePagosDeAdministracion,
   SolicitudDeEdicionDePago,
+  SolicitudDeEdicionDePagoConLineas,
   SolicitudDePago,
   SolicitudDePagoDeAdministracion,
 } from './tipos'
@@ -19,11 +29,11 @@ export const clienteDePagos = {
   /** `POST /api/gastos` — 201 + pago registrado, o `409 turno_no_abierto` si el punto de venta
    * no tiene un turno abierto. */
   registrar: (solicitud: SolicitudDePago) => api.post<PagoRegistrado>('/gastos', solicitud),
-  /** stage-gasto-a-compra (PR4): `POST /api/gastos/{id}/vincular-compra` — liga (o convierte a
-   * proveedor) un pago YA existente a una compra confirmada. `GestionDeCatalogo` del lado del
-   * servidor (mismo gate que toda escritura de `/api/compras`). */
+  /** stage-gasto-a-compra (PR4): `POST /api/pagos/{id}/vincular-compra` — liga (o convierte a
+   * proveedor) un pago YA existente a una compra confirmada; responde el pago con sus líneas.
+   * `GestionDeCatalogo` del lado del servidor (mismo gate que toda escritura de `/api/compras`). */
   vincularCompra: (id: number, idComprobanteCompra: number) =>
-    api.post<PagoRegistrado>(`/gastos/${id}/vincular-compra`, { idComprobanteCompra }),
+    api.post<PagoConLineas>(`/pagos/${id}/vincular-compra`, { idComprobanteCompra }),
   /** `PUT /api/gastos/{id}` — edición desde el POS, solo con el turno del pago abierto: si está
    * cerrado (o el pago no tiene turno) el servidor responde `409 gasto_turno_cerrado`. */
   actualizar: (id: number, solicitud: SolicitudDeEdicionDePago) => api.put<PagoRegistrado>(`/gastos/${id}`, solicitud),
@@ -89,21 +99,21 @@ export function construirQueryDePagosDeAdministracion(filtros: FiltrosDePagosDeA
   return `?${parametros.toString()}`
 }
 
+/** Contrato con líneas por medio (`/api/pagos/administracion`): cada pago lleva su reparto en `lineas`. */
 export const clienteDePagosDeAdministracion = {
   listar: (filtros: FiltrosDePagosDeAdministracion) =>
-    api.get<PaginaDePagosDeAdministracion>(`/gastos/administracion${construirQueryDePagosDeAdministracion(filtros)}`),
-  registrar: (solicitud: SolicitudDePagoDeAdministracion) =>
-    api.post<PagoRegistrado>('/gastos/administracion', solicitud),
-  /** stage-gasto-a-compra (PR4), judgment follow-up: `GET /api/gastos/administracion/{id}` — un
+    api.get<PaginaDePagosDeAdministracion>(`/pagos/administracion${construirQueryDePagosDeAdministracion(filtros)}`),
+  registrar: (solicitud: SolicitudDePagoDeAdministracion) => api.post<PagoConLineas>('/pagos/administracion', solicitud),
+  /** stage-gasto-a-compra (PR4), judgment follow-up: `GET /api/pagos/administracion/{id}` — un
    * solo pago, mismo shape que el listado. Usado por `CompraEditor.tsx` para prefillear desde
    * `?desdePago=`. */
-  obtener: (id: number) => api.get<PagoDeAdministracionListado>(`/gastos/administracion/${id}`),
-  /** `PUT /api/gastos/administracion/{id}` — edita cualquier pago; si es de caja de un turno
-   * cerrado el servidor recalcula su arqueo. */
-  actualizar: (id: number, solicitud: SolicitudDeEdicionDePago) =>
-    api.put<PagoDeAdministracionListado>(`/gastos/administracion/${id}`, solicitud),
-  /** `DELETE /api/gastos/administracion/{id}` — 204 sin cuerpo. */
-  eliminar: (id: number) => api.delete<void>(`/gastos/administracion/${id}`),
+  obtener: (id: number) => api.get<PagoDeAdministracionListado>(`/pagos/administracion/${id}`),
+  /** `PUT /api/pagos/administracion/{id}` — edita cualquier pago reemplazando sus líneas; si es de caja
+   * de un turno cerrado el servidor recalcula su arqueo. */
+  actualizar: (id: number, solicitud: SolicitudDeEdicionDePagoConLineas) =>
+    api.put<PagoDeAdministracionListado>(`/pagos/administracion/${id}`, solicitud),
+  /** `DELETE /api/pagos/administracion/{id}` — 204 sin cuerpo. */
+  eliminar: (id: number) => api.delete<void>(`/pagos/administracion/${id}`),
 }
 
 export type FormularioDePagoDeAdministracion = {
@@ -115,9 +125,8 @@ export type FormularioDePagoDeAdministracion = {
   idArea: number | ''
   concepto: string
   detalle: string
-  idMedioPago: number | ''
   numeroFactura: string
-  importe: number | null
+  lineas: LineaDePagoEditable[]
 }
 
 export function formularioDePagoDeAdministracionVacio(
@@ -133,9 +142,8 @@ export function formularioDePagoDeAdministracionVacio(
     idArea: '',
     concepto: '',
     detalle: '',
-    idMedioPago: '',
     numeroFactura: '',
-    importe: null,
+    lineas: [lineaDePagoVacia()],
   }
 }
 
@@ -164,24 +172,16 @@ export function aSolicitudDePagoDeAdministracion(f: FormularioDePagoDeAdministra
     idArea: f.idArea === '' ? null : f.idArea,
     concepto: f.concepto.trim(),
     detalle: f.detalle.trim() === '' ? null : f.detalle.trim(),
-    idMedioPago: f.idMedioPago === '' ? 0 : f.idMedioPago,
     numeroFactura: f.numeroFactura.trim() === '' ? null : f.numeroFactura.trim(),
-    importe: f.importe ?? 0,
+    lineas: aLineasDeSolicitud(f.lineas),
     idComprobanteCompra: null,
   }
 }
 
 /** Feedback instantáneo client-side (el servidor vuelve a validar todo, `dto-contract-honesty`):
- * fecha elegida, empresa, medio de pago, concepto no vacío e importe positivo. */
+ * fecha elegida, empresa, concepto no vacío y todas las líneas válidas (`errorDeLineasDePago`). */
 export function formularioDePagoDeAdministracionCompleto(f: FormularioDePagoDeAdministracion): boolean {
-  return (
-    f.fecha.trim() !== '' &&
-    f.idEmpresa !== '' &&
-    f.idMedioPago !== '' &&
-    f.concepto.trim() !== '' &&
-    f.importe !== null &&
-    f.importe > 0
-  )
+  return f.fecha.trim() !== '' && f.idEmpresa !== '' && f.concepto.trim() !== '' && errorDeLineasDePago(f.lineas) === null
 }
 
 // --- Edición de pagos (POS y administración comparten formulario y mapeo) ---------------------
@@ -240,6 +240,34 @@ export function aSolicitudDeEdicionDePago(f: FormularioDeEdicionDePago): Solicit
 
 export function formularioDeEdicionCompleto(f: FormularioDeEdicionDePago): boolean {
   return f.idMedioPago !== '' && f.concepto.trim() !== '' && f.importe !== null && f.importe > 0
+}
+
+/** Reparto con el que abre la edición de administración: el que devolvió el servidor o, si la respuesta no
+ * trae líneas, una sola con el medio y el importe del pago. */
+export function lineasIniciales(pago: Pick<PagoEditable, 'idMedioPago' | 'importe'> & { lineas?: readonly LineaDePagoListada[] }): LineaDePagoEditable[] {
+  if (pago.lineas !== undefined && pago.lineas.length > 0) return lineasEditablesDesdeListado(pago.lineas)
+  return [{ ...lineaDePagoVacia(), idMedioPago: pago.idMedioPago, importe: pago.importe }]
+}
+
+/** Cuerpo del `PUT /api/pagos/administracion/{id}`: los campos del formulario (sin medio ni importe, que viven en
+ * las líneas) más el reparto. El llamador garantiza `formularioDeEdicionConLineasCompleto`. */
+export function aSolicitudDeEdicionConLineas(
+  f: FormularioDeEdicionDePago,
+  lineas: readonly LineaDePagoEditable[],
+): SolicitudDeEdicionDePagoConLineas {
+  return {
+    categoria: f.categoria,
+    idProveedor: f.idProveedor === '' ? null : f.idProveedor,
+    idArea: f.idArea === '' ? null : f.idArea,
+    concepto: f.concepto.trim(),
+    detalle: f.detalle.trim() === '' ? null : f.detalle.trim(),
+    numeroFactura: f.numeroFactura.trim() === '' ? null : f.numeroFactura.trim(),
+    lineas: aLineasDeSolicitud(lineas),
+  }
+}
+
+export function formularioDeEdicionConLineasCompleto(f: FormularioDeEdicionDePago, lineas: readonly LineaDePagoEditable[]): boolean {
+  return f.concepto.trim() !== '' && errorDeLineasDePago(lineas) === null
 }
 
 export const COPIA_PAGO_TURNO_CERRADO =
