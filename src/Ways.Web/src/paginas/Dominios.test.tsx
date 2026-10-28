@@ -721,3 +721,178 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     expect(screen.queryByText(/No se pudo dar de baja el dominio\./)).not.toBeInTheDocument()
   })
 })
+
+describe('Dominios — orden y filtros por columna', () => {
+  const zeta = dominio({ id: 31, idTenant: 1, host: 'zeta.com', verificadoEn: '2026-10-11T12:00:00Z' })
+  const alfa = dominio({ id: 32, idTenant: 1, host: 'alfa.com', esPrincipal: true })
+  const medio = dominio({ id: 33, idTenant: 1, host: 'medio.com', verificadoEn: '2026-12-01T12:00:00Z' })
+
+  /** Las dos primeras filas son el encabezado y los filtros; la celda 0 de cada fila de datos es el host. */
+  function hostsEnPantalla() {
+    return screen
+      .getAllByRole('row')
+      .slice(2)
+      .map((f) => within(f).getAllByRole('cell')[0]?.textContent)
+  }
+
+  async function montarConDominios(usuario: ReturnType<typeof userEvent.setup>) {
+    const montado = montar({ 1: [zeta, alfa, medio], 2: [dominioDelOtro] })
+    await elegirTenant(usuario, 1)
+    await screen.findByText('zeta.com')
+
+    return montado
+  }
+
+  it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    const [encabezados, filtros] = screen.getAllByRole('row')
+    const celdasDeEncabezado = within(encabezados).getAllByRole('columnheader')
+    const celdasDeFiltros = within(filtros).getAllByRole('columnheader')
+
+    expect(celdasDeFiltros).toHaveLength(celdasDeEncabezado.length)
+    expect(celdasDeEncabezado.at(-1)).toHaveTextContent('Acciones')
+    expect(within(celdasDeFiltros.at(-1)!).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+  })
+
+  it('cada columna de datos se puede ordenar y Acciones no', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    for (const nombre of ['Host', 'Principal', 'Verificación']) {
+      expect(screen.getByRole('button', { name: nombre })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).not.toHaveAttribute('aria-sort')
+  })
+
+  it('el host se ordena ascendente, descendente y vuelve al orden del servidor', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+    const boton = screen.getByRole('button', { name: 'Host' })
+    const encabezado = screen.getByRole('columnheader', { name: 'Host' })
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com', 'medio.com'])
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['alfa.com', 'medio.com', 'zeta.com'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com', 'alfa.com'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com', 'medio.com'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('la verificación se ordena por fecha (11/10 antes que 1/12) y lo sin verificar va al final en ambas direcciones', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+    const boton = screen.getByRole('button', { name: 'Verificación' })
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com', 'alfa.com'])
+
+    await usuario.click(boton)
+    expect(hostsEnPantalla()).toEqual(['medio.com', 'zeta.com', 'alfa.com'])
+  })
+
+  it('la columna principal se ordena por el texto mostrado', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Principal' }))
+
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com', 'alfa.com'])
+  })
+
+  it('el filtro de host ignora mayúsculas y el de verificación distingue verificados de sin verificar', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'ALFA')
+    expect(hostsEnPantalla()).toEqual(['alfa.com'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por verificación' }), 'sin verificar')
+    expect(hostsEnPantalla()).toEqual(['alfa.com'])
+
+    await usuario.clear(screen.getByRole('searchbox', { name: 'Filtrar por verificación' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por verificación' }), 'verificado')
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com'])
+  })
+
+  it('el filtro de principal es un select y se combina con el de texto; limpiar los quita', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por principal' }), 'Principal')
+    expect(hostsEnPantalla()).toEqual(['alfa.com'])
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por principal' }), 'No')
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'medio.com'])
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'alfa')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com', 'medio.com'])
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toHaveValue('')
+  })
+
+  it('el campo de filtro sigue montado y con su valor mientras la lista se recarga tras verificar', async () => {
+    const usuario = userEvent.setup()
+    const refresco = diferida<DominioListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantUno, tenantDos])
+      if (ruta === RUTA_UNO) return ++lecturas === 1 ? Promise.resolve([zeta, alfa, medio]) : refresco.promesa
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    render(<Dominios />)
+    await elegirTenant(usuario, 1)
+    await screen.findByText('zeta.com')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'a')
+    const campo = screen.getByRole('searchbox', { name: 'Filtrar por host' })
+
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: alfa.com' }))
+
+    expect(await screen.findByText('Se marcó como verificado "alfa.com".')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+
+    await act(async () => {
+      refresco.resolver([zeta, { ...alfa, verificadoEn: '2026-11-05T12:00:00Z' }, medio])
+      await refresco.promesa
+    })
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Marcar verificado: alfa.com' })).not.toBeInTheDocument())
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toBe(campo)
+    expect(campo).toHaveValue('a')
+    expect(hostsEnPantalla()).toEqual(['zeta.com', 'alfa.com'])
+  })
+
+  it('al elegir otro tenant los filtros del anterior no quedan aplicados', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por host' }), 'zeta')
+
+    await elegirTenant(usuario, 2)
+    await screen.findByText('este.example.com')
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toHaveValue('')
+    expect(hostsEnPantalla()).toEqual(['este.example.com'])
+  })
+
+  it('con la puerta de baja abierta los filtros quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    await montarConDominios(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar zeta.com' }))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por host' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Filtrar por principal' })).toBeDisabled()
+  })
+})
