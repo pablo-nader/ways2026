@@ -14,6 +14,7 @@ import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { ModalDeDominio } from './dominios/ModalDeDominio'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
@@ -42,6 +43,8 @@ export function Dominios() {
 
   const [host, setHost] = useState('')
   const [esPrincipal, setEsPrincipal] = useState(false)
+  /** El alta vive en un modal: mientras está abierta la pantalla queda inerte (`bloqueado`). */
+  const [altaAbierta, setAltaAbierta] = useState(false)
 
   // `limpiarMensajes` borra el rechazo del alta, el de la acción (verificar y eliminar comparten ese
   // slot) y el aviso. El error de lectura solo lo escriben `elegirTenant` y `cargarDominios`.
@@ -63,6 +66,7 @@ export function Dominios() {
   /** Espejo SÍNCRONO de `ocupado` y única guarda de re-entrancia: dos clics del mismo tick leen el
    * mismo render. Se apaga en el `finally` de cada escritura, sin gate. */
   const ocupadoRef = useRef(false)
+  const agregarRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     const token = ++generacionTenants.current
@@ -153,15 +157,31 @@ export function Dominios() {
 
       setHost('')
       setEsPrincipal(false)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`:
+      // así el disparador ya está habilitado cuando el modal restaura el foco.
       await refrescarTrasEscribir(
         id,
         `Se agregó el dominio "${creado.host}". Cuando su DNS apunte al servidor, marcalo como verificado.`,
       )
+      setAltaAbierta(false)
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
       setAgregando(false)
     }
+  }
+
+  function abrirAlta() {
+    limpiarMensajes()
+    setAltaAbierta(true)
+  }
+
+  /** El modal no ofrece cancelar con una escritura en vuelo, así que cerrar no supersede nada. */
+  function cancelarAlta() {
+    limpiarMensajes()
+    setHost('')
+    setEsPrincipal(false)
+    setAltaAbierta(false)
   }
 
   async function verificar(dominio: DominioListado) {
@@ -226,15 +246,22 @@ export function Dominios() {
   }
 
   /** La puerta abierta bloquea la pantalla entera, no solo la escritura en vuelo. */
-  const bloqueado = ocupado || confirmacion !== null
+  const bloqueado = ocupado || confirmacion !== null || altaAbierta
   /** Mientras la lista se lee no se escribe sobre ella; elegir otro tenant sí está permitido. */
   const inerte = bloqueado || cargandoDominios
 
   const opciones = opcionesDeTenantAsignable(tenants ?? [])
 
+  const herramientas =
+    idTenant !== '' ? (
+      <nav className="p-2 d-flex gap-2">
+        <BotonIcono ref={agregarRef} icono="agregar" etiqueta="Agregar dominio" className="text-nowrap" onClick={abrirAlta} disabled={inerte} />
+      </nav>
+    ) : undefined
+
   return (
     <div className="container-fluid py-4">
-      <Box titulo="Dominios" variante="inverse">
+      <Box titulo="Dominios" variante="inverse" herramientas={herramientas}>
         {errorDeTenants && <div className="alert alert-danger">{errorDeTenants}</div>}
         {errorDeLectura && (
           <div className="alert alert-danger d-flex align-items-center justify-content-between gap-2">
@@ -268,6 +295,20 @@ export function Dominios() {
           />
         )}
 
+        {altaAbierta && (
+          <ModalDeDominio
+            host={host}
+            esPrincipal={esPrincipal}
+            error={errorDeAlta}
+            guardando={agregando}
+            focoDeReserva={agregarRef}
+            onHostCambio={setHost}
+            onPrincipalCambio={setEsPrincipal}
+            onGuardar={agregar}
+            onCancelar={cancelarAlta}
+          />
+        )}
+
         {tenants === null ? (
           <Cargando />
         ) : (
@@ -295,51 +336,6 @@ export function Dominios() {
             {idTenant !== '' && (
               <>
                 <p className="text-muted small">{AYUDA_DE_VERIFICACION}</p>
-
-                <form className="row g-3 border p-3 mb-4 bg-body" onSubmit={agregar}>
-                  <div className="col-md-5">
-                    <label className="form-label" htmlFor="dom-host">
-                      Host
-                    </label>
-                    <input
-                      id="dom-host"
-                      className="form-control"
-                      placeholder="tienda.ejemplo.com"
-                      maxLength={253}
-                      value={host}
-                      onChange={(e) => setHost(e.target.value)}
-                      disabled={inerte}
-                      aria-invalid={errorDeAlta !== ''}
-                      aria-describedby={errorDeAlta ? 'dom-host-error' : undefined}
-                      required
-                    />
-                    {errorDeAlta && (
-                      <div id="dom-host-error" className="text-danger small mt-1" role="alert">
-                        {errorDeAlta}
-                      </div>
-                    )}
-                  </div>
-                  <div className="col-md-3 d-flex align-items-end">
-                    <div className="form-check mb-2">
-                      <input
-                        id="dom-principal"
-                        type="checkbox"
-                        className="form-check-input"
-                        checked={esPrincipal}
-                        onChange={(e) => setEsPrincipal(e.target.checked)}
-                        disabled={inerte}
-                      />
-                      <label className="form-check-label" htmlFor="dom-principal">
-                        Principal
-                      </label>
-                    </div>
-                  </div>
-                  <div className="col-md-4 d-flex align-items-end">
-                    <button type="submit" className="btn btn-success" disabled={inerte}>
-                      {agregando ? 'Guardando…' : 'Agregar dominio'}
-                    </button>
-                  </div>
-                </form>
 
                 {dominios === null ? (
                   cargandoDominios && <Cargando />

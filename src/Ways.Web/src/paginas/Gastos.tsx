@@ -39,11 +39,11 @@ import type {
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
-import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
-import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
+import { ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
+import { ModalDeAltaDeGasto } from './gastos/ModalDeAltaDeGasto'
 import { areaPorDefecto } from './utilidadesGastosDelTurno'
 import { CampoFecha } from '../componentes/CampoFecha'
 
@@ -113,9 +113,13 @@ export function Gastos() {
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [errorGuardar, setErrorGuardar] = useState('')
+  /** Cambia en cada rechazo: el mismo mensaje repetido igual se vuelve a anunciar y a traer a la vista. */
+  const [disparoDeError, setDisparoDeError] = useState(0)
   const [aviso, setAviso] = useState('')
 
   const generacionRef = useRef(0)
+  /** Destino de foco si el disparador ya no es alcanzable al cerrar un modal. */
+  const contenedorRef = useRef<HTMLDivElement>(null)
 
   const [edicion, setEdicion] = useState<GastoDeAdministracionListado | null>(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
@@ -294,6 +298,7 @@ export function Gastos() {
 
     if (!formularioDeGastoDeAdministracionCompleto(formulario)) {
       setErrorGuardar('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')
+      setDisparoDeError((n) => n + 1)
       return
     }
 
@@ -303,24 +308,40 @@ export function Gastos() {
 
     // regla 3: bumpea la generación ANTES de la escritura — un refresco del listado en vuelo
     // desde antes de este alta queda obsoleto aunque su respuesta llegue después.
-    const miGeneracion = (generacionRef.current += 1)
+    generacionRef.current += 1
 
+    // La respuesta de la escritura no se gatea por la generación del listado: el modal queda inerte
+    // mientras dura y nada puede reabrirlo ni reemplazarlo, así que siempre se aplica y siempre libera
+    // `guardando`. Gatearla dejaba el modal trabado si otra lectura acuñaba una generación en el medio.
     try {
       await clienteDeGastosDeAdministracion.registrar(aSolicitudDeGastoDeAdministracion(formulario))
-      if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
       setAviso('Gasto registrado.')
       setMostrarFormulario(false)
     } catch (e) {
-      if (generacionRef.current !== miGeneracion) return
       setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el gasto.')
+      setDisparoDeError((n) => n + 1)
       return
     } finally {
       guardandoRef.current = false
-      if (generacionRef.current === miGeneracion) setGuardando(false)
+      setGuardando(false)
     }
 
     cargar()
+  }
+
+  function abrirAlta() {
+    setAviso('')
+    setErrorGuardar('')
+    setMostrarFormulario(true)
+  }
+
+  /** El modal no ofrece cancelar con un alta en vuelo (`ocupado`), así que cerrar no supersede nada.
+   * Cancelar descarta lo escrito: el próximo alta abre con los valores por defecto. */
+  function cancelarAlta() {
+    limpiarFormulario()
+    setErrorGuardar('')
+    setMostrarFormulario(false)
   }
 
   function ocupadoEscribiendo() {
@@ -431,7 +452,15 @@ export function Gastos() {
 
   /** La edición o la baja abiertas, o cualquier escritura (y su refresco) en vuelo, dejan inerte la
    * pantalla entera: ver el comentario del componente. */
-  const bloqueado = guardando || vinculando || pickerGastoId !== null || guardandoEdicion || eliminando || edicion !== null || baja !== null
+  const bloqueado =
+    guardando ||
+    vinculando ||
+    pickerGastoId !== null ||
+    guardandoEdicion ||
+    eliminando ||
+    edicion !== null ||
+    baja !== null ||
+    mostrarFormulario
   /** Las acciones de fila además esperan al refresco posterior a una escritura. */
   const filasBloqueadas = bloqueado || cargando
 
@@ -443,15 +472,15 @@ export function Gastos() {
         type="button"
         className="btn btn-sm btn-success text-nowrap"
         disabled={bloqueado}
-        onClick={() => setMostrarFormulario((prev) => !prev)}
+        onClick={abrirAlta}
       >
-        {mostrarFormulario ? 'Cancelar' : 'Nuevo gasto'}
+        Nuevo gasto
       </button>
     </nav>
   )
 
   return (
-    <div className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Gastos" variante="inverse" herramientas={herramientas}>
         {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
@@ -474,206 +503,23 @@ export function Gastos() {
         )}
 
         {mostrarFormulario && (
-          <fieldset disabled={guardando} className="row g-2 align-items-end border p-3 mb-3 bg-body m-0">
-            {errorGuardar && (
-              <div className="col-12">
-                <div className="alert alert-danger py-1 px-2 small mb-2">{errorGuardar}</div>
-              </div>
-            )}
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-fecha">
-                Fecha
-              </label>
-              <CampoFecha
-                id="gasto-admin-fecha"
-                className="form-control"
-                max={fechaDeHoy()}
-                value={formulario.fecha}
-                onChange={(valor) => setFormulario((prev) => ({ ...prev, fecha: valor }))}
-              />
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-empresa">
-                Empresa
-              </label>
-              <select
-                id="gasto-admin-empresa"
-                className="form-select"
-                value={formulario.idEmpresa}
-                onChange={(e) =>
-                  setFormulario((prev) => ({
-                    ...prev,
-                    idEmpresa: e.target.value === '' ? '' : Number(e.target.value),
-                    idPuntoVenta: '',
-                  }))
-                }
-              >
-                <option value="">Elegir…</option>
-                {(empresas ?? []).map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.razonSocial}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-pv">
-                Punto de venta (opcional)
-              </label>
-              <select
-                id="gasto-admin-pv"
-                className="form-select"
-                value={formulario.idPuntoVenta}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
-              >
-                <option value="">Sin punto de venta</option>
-                {puntosVentaDeLaEmpresaDelFormulario.map((pv) => (
-                  <option key={pv.id} value={pv.id}>
-                    {pv.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-categoria">
-                Categoría
-              </label>
-              <select
-                id="gasto-admin-categoria"
-                className="form-select"
-                value={formulario.categoria}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, categoria: e.target.value as CategoriaGasto }))}
-              >
-                {CATEGORIAS_GASTO.map((c) => (
-                  <option key={c.valor} value={c.valor}>
-                    {c.etiqueta}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-proveedor">
-                Proveedor (opcional)
-              </label>
-              <select
-                id="gasto-admin-proveedor"
-                className="form-select"
-                value={formulario.idProveedor}
-                onChange={(e) => alCambiarProveedorDelFormulario(e.target.value)}
-              >
-                <option value="">Sin proveedor</option>
-                {proveedoresOrdenados.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {etiquetaDeProveedor(p)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-area">
-                Área
-              </label>
-              <select
-                id="gasto-admin-area"
-                className="form-select"
-                value={formulario.idArea}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, idArea: Number(e.target.value) }))}
-              >
-                {(areas ?? []).length === 0 && (
-                  <option value="" disabled>
-                    Sin áreas
-                  </option>
-                )}
-                {(areas ?? []).map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="gasto-admin-concepto">
-                Concepto
-              </label>
-              <input
-                id="gasto-admin-concepto"
-                type="text"
-                className="form-control"
-                value={formulario.concepto}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, concepto: e.target.value }))}
-              />
-            </div>
-
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="gasto-admin-detalle">
-                Detalle (opcional)
-              </label>
-              <input
-                id="gasto-admin-detalle"
-                type="text"
-                className="form-control"
-                value={formulario.detalle}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, detalle: e.target.value }))}
-              />
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-medio-pago">
-                Medio de pago
-              </label>
-              <select
-                id="gasto-admin-medio-pago"
-                className="form-select"
-                value={formulario.idMedioPago}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))}
-              >
-                <option value="">Elegir…</option>
-                {mediosParaGasto.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-factura">
-                N° de factura (opcional)
-              </label>
-              <input
-                id="gasto-admin-factura"
-                type="text"
-                className="form-control"
-                value={formulario.numeroFactura}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, numeroFactura: e.target.value }))}
-              />
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label" htmlFor="gasto-admin-importe">
-                Importe
-              </label>
-              <CampoImporte
-                id="gasto-admin-importe"
-                className="form-control"
-                valor={formulario.importe}
-                onChange={(v) => setFormulario((prev) => ({ ...prev, importe: v }))}
-              />
-            </div>
-
-            <div className="col-md-2">
-              <button type="button" className="btn btn-primary w-100" onClick={() => void registrarGasto()}>
-                {guardando ? 'Guardando…' : 'Registrar'}
-              </button>
-            </div>
-          </fieldset>
+          <ModalDeAltaDeGasto
+            valor={formulario}
+            onCambio={setFormulario}
+            onProveedorCambio={alCambiarProveedorDelFormulario}
+            empresas={empresas ?? []}
+            puntosVenta={puntosVentaDeLaEmpresaDelFormulario}
+            medios={mediosParaGasto}
+            areas={areas ?? []}
+            proveedores={proveedoresOrdenados}
+            fechaMaxima={fechaDeHoy()}
+            error={errorGuardar}
+            disparoDeError={disparoDeError}
+            guardando={guardando}
+            focoDeReserva={contenedorRef}
+            onRegistrar={() => void registrarGasto()}
+            onCancelar={cancelarAlta}
+          />
         )}
 
         <fieldset disabled={bloqueado} className="row g-2 align-items-end mb-3 border-0 p-0 m-0">

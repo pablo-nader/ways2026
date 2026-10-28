@@ -179,9 +179,8 @@ describe('Gastos (administración) — carga inicial', () => {
     expect(screen.getByLabelText('Empresa')).toHaveValue('1')
 
     await userEvent.click(screen.getByRole('button', { name: 'Nuevo gasto' }))
-    // El select de empresa del FORMULARIO precede al del filtro en el DOM (el formulario se
-    // pinta antes que la fila de filtros) — índice 0.
-    expect(screen.getAllByLabelText('Empresa')[0]).toHaveValue('1')
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    expect(within(dialogo).getByLabelText('Empresa')).toHaveValue('1')
   })
 })
 
@@ -199,10 +198,9 @@ describe('Gastos (administración) — medio de pago', () => {
 })
 
 describe('Gastos (administración) — proveedor cambia la categoría', () => {
-  // El formulario de alta y el filtro de arriba comparten la etiqueta "Categoría" — con el
-  // formulario abierto, el select del FORMULARIO es el primero en el DOM (índice 0).
+  // El modal de alta y el filtro de la pantalla comparten la etiqueta "Categoría": se acota al diálogo.
   function categoriaDelFormulario() {
-    return screen.getAllByLabelText('Categoría')[0]
+    return within(screen.getByRole('dialog', { name: 'Nuevo gasto' })).getByLabelText('Categoría')
   }
 
   it('elegir un proveedor cambia la categoría a Proveedor', async () => {
@@ -398,6 +396,135 @@ describe('Gastos (administración) — alta', () => {
 
     await screen.findByText('La fecha del gasto no puede ser futura.')
     expect(screen.getByLabelText('Concepto')).toBeInTheDocument()
+  })
+
+  it('el botón "Nuevo gasto" abre el formulario en un modal y no en la página', async () => {
+    mockearRutas({})
+    renderGastos()
+    await screen.findByRole('option', { name: 'Empresa Demo SA' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo gasto' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    expect(within(dialogo).getByLabelText('Concepto')).toBeInTheDocument()
+  })
+
+  it('el error del servidor y la validación local se rinden dentro del modal', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearRutas({})
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_fecha_futura', 'La fecha del gasto no puede ser futura.'))
+    renderGastos()
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Completá fecha, empresa, medio de pago, concepto e importe')
+
+    await userEvent.type(within(dialogo).getByLabelText('Concepto'), 'Alquiler')
+    await userEvent.type(within(dialogo).getByLabelText('Importe'), '1500')
+    await userEvent.selectOptions(within(dialogo).getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
+
+    expect(await within(dialogo).findByText('La fecha del gasto no puede ser futura.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Concepto')).toHaveValue('Alquiler')
+    expect(within(dialogo).getByRole('button', { name: 'Registrar' })).toBeEnabled()
+  })
+
+  it('cancelar descarta lo escrito sin tocar la API y el próximo alta abre vacío', async () => {
+    mockearRutas({})
+    renderGastos()
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    await userEvent.type(within(dialogo).getByLabelText('Concepto'), 'Alquiler')
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo gasto' }))
+    expect(await screen.findByLabelText('Concepto')).toHaveValue('')
+  })
+
+  it('Escape cierra el modal sin guardar y devuelve el foco al disparador', async () => {
+    mockearRutas({})
+    renderGastos()
+    const disparador = await screen.findByRole('button', { name: 'Nuevo gasto' })
+    await userEvent.click(disparador)
+    await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(disparador).toHaveFocus()
+  })
+
+  it('si otra lectura acuña una generación durante el alta, el modal igual se libera y se cierra al responder', async () => {
+    mockearRutas({})
+    let resolverPost: (valor: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolverPost = resolve
+        }),
+    )
+    renderGastos()
+    await abrirYCompletarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled())
+
+    // El filtro de la pantalla recarga el listado y acuña una generación nueva en pleno alta.
+    fireEvent.change(screen.getAllByLabelText('Categoría')[0], { target: { value: 'Proveedor' } })
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('categoria=Proveedor')))
+    await act(async () => resolverPost({ id: 1 }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByText('Gasto registrado.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nuevo gasto' })).toBeEnabled()
+  })
+
+  it('un segundo rechazo local con el mismo mensaje vuelve a traer el error a la vista', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      mockearRutas({})
+      renderGastos()
+      await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
+      await within(dialogo).findByRole('alert')
+      expect(scrollIntoView).toHaveBeenCalledTimes(1)
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
+
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2))
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
+  it('mientras el alta está en vuelo el modal no se puede cerrar ni cancelar', async () => {
+    mockearRutas({})
+    let resolverPost: (valor: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolverPost = resolve
+        }),
+    )
+    renderGastos()
+    await abrirYCompletarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled())
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nuevo gasto' })).toBeInTheDocument()
+
+    await act(async () => resolverPost({ id: 1 }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
 

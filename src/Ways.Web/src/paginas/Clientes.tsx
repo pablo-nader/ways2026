@@ -3,115 +3,12 @@ import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { clienteDeClientes } from '../api/clientes'
-import { TIPOS_DOCUMENTO } from '../api/tipos'
-import type {
-  AltaCliente,
-  ClienteListado,
-  CondicionFiscalListado,
-  ListaPrecioAsignable,
-  PaginaDe,
-  TipoDocumento,
-} from '../api/tipos'
+import type { ClienteListado, CondicionFiscalListado, ListaPrecioAsignable, PaginaDe } from '../api/tipos'
 import { Box } from '../componentes/Box'
-import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
-import { CampoFecha } from '../componentes/CampoFecha'
-
-type Formulario = {
-  id: number | null
-  nombre: string
-  apellido: string
-  razonSocial: string
-  tipoDocumento: TipoDocumento | ''
-  numeroDocumento: string
-  idCondicionFiscal: number | ''
-  nacimiento: string
-  domicilio: string
-  telefono: string
-  celular: string
-  email: string
-  observaciones: string
-  idListaPrecio: number | ''
-  limiteCredito: number | null
-  creditoIlimitado: boolean
-  activo: boolean
-  /** Empresa de la fila que se edita; null en un alta y en un cliente de todo el tenant. */
-  idEmpresa: number | null
-}
-
-function formularioVacio(idListaPrecioPorDefecto: number | ''): Formulario {
-  return {
-    id: null,
-    nombre: '',
-    apellido: '',
-    razonSocial: '',
-    tipoDocumento: '',
-    numeroDocumento: '',
-    idCondicionFiscal: '',
-    nacimiento: '',
-    domicilio: '',
-    telefono: '',
-    celular: '',
-    email: '',
-    observaciones: '',
-    idListaPrecio: idListaPrecioPorDefecto,
-    limiteCredito: 0,
-    creditoIlimitado: false,
-    activo: true,
-    idEmpresa: null,
-  }
-}
-
-function aFormulario(c: ClienteListado): Formulario {
-  return {
-    id: c.id,
-    nombre: c.nombre,
-    apellido: c.apellido ?? '',
-    razonSocial: c.razonSocial ?? '',
-    tipoDocumento: c.tipoDocumento ?? '',
-    numeroDocumento: c.numeroDocumento ?? '',
-    idCondicionFiscal: c.idCondicionFiscal,
-    nacimiento: c.nacimiento ?? '',
-    domicilio: c.domicilio ?? '',
-    telefono: c.telefono ?? '',
-    celular: c.celular ?? '',
-    email: c.email ?? '',
-    observaciones: c.observaciones ?? '',
-    idListaPrecio: c.idListaPrecio,
-    limiteCredito: c.limiteCredito,
-    creditoIlimitado: c.creditoIlimitado,
-    activo: c.activo,
-    idEmpresa: c.idEmpresa,
-  }
-}
-
-function aVacioNulo(valor: string): string | null {
-  const limpio = valor.trim()
-  return limpio === '' ? null : limpio
-}
-
-function aAlta(f: Formulario): AltaCliente {
-  return {
-    nombre: f.nombre.trim(),
-    apellido: aVacioNulo(f.apellido),
-    razonSocial: aVacioNulo(f.razonSocial),
-    tipoDocumento: f.tipoDocumento === '' ? null : f.tipoDocumento,
-    numeroDocumento: aVacioNulo(f.numeroDocumento),
-    idCondicionFiscal: f.idCondicionFiscal === '' ? 0 : f.idCondicionFiscal,
-    nacimiento: f.nacimiento === '' ? null : f.nacimiento,
-    domicilio: aVacioNulo(f.domicilio),
-    telefono: aVacioNulo(f.telefono),
-    celular: aVacioNulo(f.celular),
-    email: aVacioNulo(f.email),
-    observaciones: aVacioNulo(f.observaciones),
-    idListaPrecio: f.idListaPrecio === '' ? 0 : f.idListaPrecio,
-    limiteCredito: f.limiteCredito ?? 0,
-    creditoIlimitado: f.creditoIlimitado,
-    idEmpresa: f.idEmpresa,
-    activo: f.activo,
-  }
-}
+import { aAlta, aFormulario, formularioVacio, type Formulario } from './clientes/clienteFormulario'
+import { ModalDeCliente } from './clientes/ModalDeCliente'
 
 /**
  * ABM dedicado de clientes (design decision 1: no la máquina genérica de catálogos). La fila
@@ -128,7 +25,13 @@ export function Clientes() {
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
+  const [errorFormulario, setErrorFormulario] = useState('')
   const [guardando, setGuardando] = useState(false)
+  /** Espejo síncrono de "hay un guardado en vuelo": un doble clic en el mismo tick no emite dos escrituras. */
+  const guardandoRef = useRef(false)
+  /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la fila de "Editar" se
+   * reemplaza por "Cargando…" durante el refresco): el botón de alta, que es estable. */
+  const agregarRef = useRef<HTMLButtonElement>(null)
   // Último término pedido: el refresco posterior a una escritura recarga con ese, no con el texto de la caja sin enviar.
   const terminoVigente = useRef('')
 
@@ -154,10 +57,12 @@ export function Clientes() {
   const idListaPorDefecto = listas.find((l) => l.esDefault)?.id ?? listas[0]?.id ?? ''
 
   async function guardar() {
-    if (!formulario) return
+    if (!formulario || guardandoRef.current) return
 
+    guardandoRef.current = true
     setGuardando(true)
     setError('')
+    setErrorFormulario('')
     setAviso('')
 
     try {
@@ -171,13 +76,23 @@ export function Clientes() {
         setAviso(`Cliente "${formulario.nombre}" actualizado.`)
       }
 
-      setFormulario(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `guardando`:
+      // así el disparador ya está habilitado cuando el modal restaura el foco.
       await cargar(terminoVigente.current)
+      setFormulario(null)
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
     } finally {
+      guardandoRef.current = false
       setGuardando(false)
     }
+  }
+
+  function abrirFormulario(valor: Formulario) {
+    setFormulario(valor)
+    setAviso('')
+    setError('')
+    setErrorFormulario('')
   }
 
   async function eliminar(c: ClienteListado) {
@@ -213,13 +128,11 @@ export function Clientes() {
         Buscar
       </button>
       <BotonIcono
+        ref={agregarRef}
         icono="agregar"
         className="text-nowrap"
-        onClick={() => {
-          setFormulario(formularioVacio(idListaPorDefecto))
-          setAviso('')
-          setError('')
-        }}
+        disabled={guardando}
+        onClick={() => abrirFormulario(formularioVacio(idListaPorDefecto))}
       />
     </nav>
   )
@@ -231,11 +144,13 @@ export function Clientes() {
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {formulario && (
-          <FormularioCliente
+          <ModalDeCliente
             valor={formulario}
             condiciones={condiciones}
             listas={listas}
             guardando={guardando}
+            error={errorFormulario}
+            focoDeReserva={agregarRef}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => setFormulario(null)}
@@ -293,13 +208,9 @@ export function Clientes() {
                       <BotonIcono
                         icono="editar"
                         className="me-1"
-                        disabled={c.esConsumidorFinal}
+                        disabled={c.esConsumidorFinal || guardando}
                         title={c.esConsumidorFinal ? 'El Consumidor Final no se puede editar.' : undefined}
-                        onClick={() => {
-                          setFormulario(aFormulario(c))
-                          setAviso('')
-                          setError('')
-                        }}
+                        onClick={() => abrirFormulario(aFormulario(c))}
                       />
                       <BotonIcono
                         icono="eliminar"
@@ -323,296 +234,5 @@ export function Clientes() {
         )}
       </Box>
     </div>
-  )
-}
-
-function FormularioCliente({
-  valor,
-  condiciones,
-  listas,
-  guardando,
-  onCambio,
-  onGuardar,
-  onCancelar,
-}: {
-  valor: Formulario
-  condiciones: CondicionFiscalListado[]
-  listas: ListaPrecioAsignable[]
-  guardando: boolean
-  onCambio: (f: Formulario) => void
-  onGuardar: () => void
-  onCancelar: () => void
-}) {
-  const esNuevo = valor.id === null
-
-  return (
-    <form
-      className="row g-3 border p-3 mb-4 bg-body"
-      autoComplete="off"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onGuardar()
-      }}
-    >
-      <div className="col-12">
-        <strong>{esNuevo ? 'Nuevo cliente' : `Editando cliente ${valor.id}`}</strong>
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-nombre">
-          Nombre
-        </label>
-        <input
-          id="c-nombre"
-          className="form-control"
-          maxLength={150}
-          value={valor.nombre}
-          onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
-          required
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-apellido">
-          Apellido
-        </label>
-        <input
-          id="c-apellido"
-          className="form-control"
-          maxLength={150}
-          value={valor.apellido}
-          onChange={(e) => onCambio({ ...valor, apellido: e.target.value })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-razon-social">
-          Razón social
-        </label>
-        <input
-          id="c-razon-social"
-          className="form-control"
-          maxLength={150}
-          value={valor.razonSocial}
-          onChange={(e) => onCambio({ ...valor, razonSocial: e.target.value })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-condicion-fiscal">
-          Condición fiscal
-        </label>
-        <select
-          id="c-condicion-fiscal"
-          className="form-select"
-          value={valor.idCondicionFiscal}
-          onChange={(e) => onCambio({ ...valor, idCondicionFiscal: Number(e.target.value) })}
-          required
-        >
-          <option value="" disabled>
-            Elegir…
-          </option>
-          {condiciones.map((cf) => (
-            <option key={cf.id} value={cf.id}>
-              {cf.nombre}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-tipo-documento">
-          Tipo de documento
-        </label>
-        <select
-          id="c-tipo-documento"
-          className="form-select"
-          value={valor.tipoDocumento}
-          onChange={(e) => onCambio({ ...valor, tipoDocumento: e.target.value as Formulario['tipoDocumento'] })}
-        >
-          <option value="">Sin especificar</option>
-          {TIPOS_DOCUMENTO.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-numero-documento">
-          N° de documento
-        </label>
-        <input
-          id="c-numero-documento"
-          className="form-control"
-          maxLength={30}
-          value={valor.numeroDocumento}
-          onChange={(e) => onCambio({ ...valor, numeroDocumento: e.target.value })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-nacimiento">
-          Nacimiento
-        </label>
-        <CampoFecha
-          id="c-nacimiento"
-          className="form-control"
-          value={valor.nacimiento}
-          onChange={(fecha) => onCambio({ ...valor, nacimiento: fecha })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-lista-precio">
-          Lista de precios
-        </label>
-        <select
-          id="c-lista-precio"
-          className="form-select"
-          value={valor.idListaPrecio}
-          onChange={(e) => onCambio({ ...valor, idListaPrecio: Number(e.target.value) })}
-          required
-        >
-          <option value="" disabled>
-            Elegir…
-          </option>
-          {listas.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.nombre}
-              {l.esDefault ? ' (default)' : ''}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-domicilio">
-          Domicilio
-        </label>
-        <input
-          id="c-domicilio"
-          className="form-control"
-          maxLength={255}
-          value={valor.domicilio}
-          onChange={(e) => onCambio({ ...valor, domicilio: e.target.value })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-telefono">
-          Teléfono
-        </label>
-        <input
-          id="c-telefono"
-          className="form-control"
-          maxLength={50}
-          value={valor.telefono}
-          onChange={(e) => onCambio({ ...valor, telefono: e.target.value })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-celular">
-          Celular
-        </label>
-        <input
-          id="c-celular"
-          className="form-control"
-          maxLength={50}
-          value={valor.celular}
-          onChange={(e) => onCambio({ ...valor, celular: e.target.value })}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-email">
-          Email
-        </label>
-        <input
-          id="c-email"
-          type="email"
-          className="form-control"
-          maxLength={255}
-          value={valor.email}
-          onChange={(e) => onCambio({ ...valor, email: e.target.value })}
-        />
-      </div>
-
-      <div className="col-12">
-        <label className="form-label" htmlFor="c-observaciones">
-          Observaciones
-        </label>
-        <textarea
-          id="c-observaciones"
-          className="form-control"
-          rows={2}
-          value={valor.observaciones}
-          onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
-        />
-      </div>
-
-      <div className="col-12">
-        <strong>Crédito</strong>
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="c-limite-credito">
-          Límite de crédito
-        </label>
-        <CampoImporte
-          id="c-limite-credito"
-          className="form-control"
-          valor={valor.limiteCredito}
-          disabled={valor.creditoIlimitado}
-          onChange={(limiteCredito) => onCambio({ ...valor, limiteCredito })}
-        />
-      </div>
-
-      <div className="col-md-3 d-flex align-items-end">
-        <div className="form-check">
-          <input
-            id="c-credito-ilimitado"
-            type="checkbox"
-            className="form-check-input"
-            checked={valor.creditoIlimitado}
-            onChange={(e) => onCambio({ ...valor, creditoIlimitado: e.target.checked })}
-          />
-          <label className="form-check-label" htmlFor="c-credito-ilimitado">
-            Crédito ilimitado
-          </label>
-        </div>
-      </div>
-
-      <div className="col-md-3 d-flex align-items-end">
-        <div className="form-check">
-          <input
-            id="c-activo"
-            type="checkbox"
-            className="form-check-input"
-            checked={valor.activo}
-            onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
-          />
-          <label className="form-check-label" htmlFor="c-activo">
-            Activo
-          </label>
-        </div>
-      </div>
-
-      <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success" disabled={guardando}>
-          {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-secondary"
-          onClick={onCancelar}
-          disabled={guardando}
-        >
-          Cancelar
-        </button>
-      </div>
-    </form>
   )
 }
