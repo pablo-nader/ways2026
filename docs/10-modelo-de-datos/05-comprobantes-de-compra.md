@@ -449,8 +449,8 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 
 Un pago se aplica por partes a una o más compras, y una compra recibe partes de varios pagos; la parte de un pago
 que no está aplicada es un crédito a favor del proveedor. La hija `aplicaciones_pago` lleva una fila por par
-pago-compra. Esta rebanada solo trae el esquema y el backfill: ningún escritor la usa todavía y los lectores siguen
-derivando lo pagado de `pagos.id_comprobante_compra`.
+pago-compra. S1a trajo el esquema y el backfill; desde S1b los escritores de vínculos la escriben (ver «Doble escritura
+y liberación») y los lectores siguen derivando lo pagado de `pagos.id_comprobante_compra`.
 
 ```sql
 aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únicamente]
@@ -508,8 +508,12 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   header exclusivo; la baja del pago hace lo mismo con las suyas, bajo el lock del pago. Soltar no necesita lock de las
 >   compras: los triggers solo exigen que lo aplicado no supere al total, y soltar nunca lo sube. El pago y sus
 >   movimientos no se tocan: lo liberado queda como crédito.
-> - Editar un pago con un importe menor que la suma de sus aplicaciones vivas es `409 pago_importe_menor_que_aplicado`
->   (antes dejaba la compra sobreimputada). Cambiar el proveedor o la categoría de un pago ligado sigue siendo
+> - Editar un pago ligado a una compra confirmada no se restringe: reajusta su aplicación al vínculo a
+>   `min(nuevo importe, comprobantes_compra.total - suma de las aplicaciones vivas de los otros pagos de la compra)`.
+>   Si eso da 0 la aplicación se da de baja; si no había aplicación y ahora hay saldo (y el pago es elegible) se crea, con
+>   origen `pago_de_compra`. La edición toma la compra `FOR UPDATE` antes que el pago (el vínculo se pre-lee sin lock y se
+>   revalida bajo el lock del pago: si cambió, `409 pago_cambio_concurrente`, sin reintento). Si la compra está anulada la
+>   edición sigue siendo válida y no toca aplicaciones. Cambiar el proveedor o la categoría de un pago ligado sigue siendo
 >   `proveedor_no_coincide_con_la_compra` / `gasto_de_compra_debe_ser_de_proveedor`; la empresa no es editable.
 > - No hay códigos de auditoría nuevos: el alta, la edición y la baja del pago ya se auditan y la aplicación es un efecto
 >   interno de esas operaciones.

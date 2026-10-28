@@ -24,6 +24,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         public const string SqlDelBackfill =
             """
             SET LOCAL app.acceso = 'plataforma';
+            -- rls-migration-backfills: sin el SET LOCAL de arriba, ways_app (NOBYPASSRLS) no ve filas y el INSERT reporta éxito.
 
             INSERT INTO aplicaciones_pago
                 (id_tenant, id_pago, id_comprobante_compra, importe, origen, id_empleado, fecha, created_at, updated_at)

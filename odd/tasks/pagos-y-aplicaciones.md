@@ -122,9 +122,9 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   constraint triggers (an application never exceeds its pago or its compra; only on `confirmada` compras; pago must be
   `proveedor`, same supplier and empresa), backfill from `pagos.id_comprobante_compra` capped at the compra total (the
   excess and pagos of anuladas compras stay unapplied = credit). Schema + backfill only: no writer, readers unchanged (writers arrive in S1b).
-- [x] E3-S1b (written; CI pending) — Dual write: every writer that sets `pagos.id_comprobante_compra` also writes the application, capped at the
-  compra saldo; anulación of the compra and baja of the pago release their applications; edit guard (a pago with
-  applications cannot drop below what it applied).
+- [ ] E3-S1b (written; CI pending) — Dual write: every writer that sets `pagos.id_comprobante_compra` also writes the application, capped at the
+  compra saldo; anulación of the compra and baja of the pago release their applications; editing a linked pago resyncs
+  its application against the compra saldo (unrestricted edits).
 - [ ] E3-S2 — Readers switch to the applications (pagado / disponible per compra, supplier credit, CC).
 - [ ] E3-S3 — Endpoints: aplicar, desaplicar, and adoption of a supplierless pago (takes the compra's supplier).
 - [ ] E3-S4 — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
@@ -177,8 +177,10 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
 - 2026-10-28 E3-S1b (same branch, ships in ONE PR with S1a): `ServicioDePagos` (POS alta, admin alta, `PagarCompraAsync`,
   `VincularCompraAsync`) writes the application capped at the compra saldo from live applications, under the compra lock now
   `FOR UPDATE` everywhere (`BloquearCompraAsync`, also behind `ExigirCompraLigableAsync`); anulación
-  (`ServicioDeCompras.LiberarAplicacionesDeLaCompraAsync`) and pago baja release them; edit below the applied sum is
-  `409 pago_importe_menor_que_aplicado`. A cross-empresa pago keeps the legacy link without application. No audit codes
+  (`ServicioDeCompras.LiberarAplicacionesDeLaCompraAsync`) and pago baja release them; editing a linked pago is
+  unrestricted and resyncs its application to `min(new importe, compra.total - other live applications)` (0 releases it,
+  none + room creates one) under the lock order turno -> compra -> pago, with a revalidation of the link under the pago
+  lock (`409 pago_cambio_concurrente`). A cross-empresa pago keeps the legacy link without application. No audit codes
   added (sub-effect of already audited operations); no new execution strategies, so the structural maps are unchanged.
   `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed. Integration tests
   (`AplicacionesDePagoEscritoresTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.

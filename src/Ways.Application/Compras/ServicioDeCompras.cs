@@ -478,7 +478,7 @@ public class ServicioDeCompras(
     /// confirmada o anulada ya movió stock y cuenta corriente, y su historia no se borra.
     ///
     /// <para>Ninguna otra tabla puede referenciar un borrador: los pagos se ligan únicamente a una compra
-    /// confirmada (<c>ServicioDePagos.ExigirCompraLigableAsync</c>, bajo <c>FOR SHARE</c> sobre este mismo
+    /// confirmada (<c>ServicioDePagos.ExigirCompraLigableAsync</c>, bajo <c>FOR UPDATE</c> sobre este mismo
     /// encabezado), y los movimientos de stock y de cuenta corriente nacen en <c>EjecutarConfirmarAsync</c>,
     /// después de pasar el estado a confirmada, que nunca vuelve a borrador. Por eso no hay un rechazo
     /// previo por referencias y la baja no necesita un código propio para la FK.</para></summary>

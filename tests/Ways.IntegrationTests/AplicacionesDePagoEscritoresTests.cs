@@ -1,7 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
+using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Compras;
@@ -21,8 +25,8 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// E3-S1b: doble escritura de <c>aplicaciones_pago</c> junto con cada vínculo <c>pagos.id_comprobante_compra</c>
 /// (alta del POS, alta administrativa, pagar compra, vincular), con tope en el saldo de la compra según sus
-/// aplicaciones vivas, y liberación en la anulación de la compra y en la baja del pago. La edición no deja el
-/// importe por debajo de lo aplicado (<c>409 pago_importe_menor_que_aplicado</c>).
+/// aplicaciones vivas, y liberación en la anulación de la compra y en la baja del pago. La edición de un pago vinculado
+/// reajusta su aplicación contra el saldo de la compra.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -306,34 +310,108 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
 
     // ---- edición -----------------------------------------------------------------------------------------------
 
-    [Fact]
-    public async Task EditarElImporteDebajoDeLoAplicadoEsUn409YNoCambiaNada()
+    private async Task<decimal> ImporteDelPagoAsync(Contexto ctx, int idPago)
     {
-        var ctx = await PrepararAsync(nameof(EditarElImporteDebajoDeLoAplicadoEsUn409YNoCambiaNada));
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        return await db.Pagos.Where(p => p.Id == idPago).Select(p => p.Importe).SingleAsync();
+    }
+
+    private static async Task EditarOkAsync(Contexto ctx, int idPago, decimal importe)
+    {
+        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{idPago}", Edicion(ctx, importe));
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task EditarElImporteHaciaArribaDentroDelSaldoAgrandaLaAplicacion()
+    {
+        var ctx = await PrepararAsync(nameof(EditarElImporteHaciaArribaDentroDelSaldoAgrandaLaAplicacion));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var pago = await AltaAdminAsync(ctx, 300m, compra.Id);
 
-        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{pago.Id}", Edicion(ctx, 250m));
+        await EditarOkAsync(ctx, pago.Id, 500m);
 
-        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
-        Assert.Equal("pago_importe_menor_que_aplicado", await CodigoDeErrorAsync(respuesta));
+        Assert.Equal(500m, await ImporteDelPagoAsync(ctx, pago.Id));
+        Assert.Equal(500m, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
+    }
 
-        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        Assert.Equal(300m, await db.Pagos.Where(p => p.Id == pago.Id).Select(p => p.Importe).SingleAsync());
+    [Fact]
+    public async Task EditarElImporteHaciaArribaMasAllaDelSaldoCortaLaAplicacionAlSaldo()
+    {
+        var ctx = await PrepararAsync(nameof(EditarElImporteHaciaArribaMasAllaDelSaldoCortaLaAplicacionAlSaldo));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var pago = await AltaAdminAsync(ctx, 100m, compra.Id);
+        await AltaAdminAsync(ctx, compra.Total - 300m, compra.Id);
+
+        await EditarOkAsync(ctx, pago.Id, 500m);
+
+        Assert.Equal(500m, await ImporteDelPagoAsync(ctx, pago.Id));
         Assert.Equal(300m, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
     }
 
     [Fact]
-    public async Task EditarElImporteSinBajarDeLoAplicadoEsValido()
+    public async Task EditarElImporteHaciaAbajoEncogeLaAplicacionSinConflicto()
     {
-        var ctx = await PrepararAsync(nameof(EditarElImporteSinBajarDeLoAplicadoEsValido));
+        var ctx = await PrepararAsync(nameof(EditarElImporteHaciaAbajoEncogeLaAplicacionSinConflicto));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var pago = await AltaAdminAsync(ctx, 300m, compra.Id);
 
-        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{pago.Id}", Edicion(ctx, 350m));
+        await EditarOkAsync(ctx, pago.Id, 120m);
 
-        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
-        Assert.Equal(300m, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
+        Assert.Equal(120m, await ImporteDelPagoAsync(ctx, pago.Id));
+        Assert.Equal(120m, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
+    }
+
+    [Fact]
+    public async Task EditarUnPagoVinculadoSinSaldoNoCreaAplicacionYSiSeLiberaSaldoLaCrea()
+    {
+        var ctx = await PrepararAsync(nameof(EditarUnPagoVinculadoSinSaldoNoCreaAplicacionYSiSeLiberaSaldoLaCrea));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var llenador = await AltaAdminAsync(ctx, compra.Total, compra.Id);
+        var sinSaldo = await AltaAdminAsync(ctx, 50m, compra.Id);
+        Assert.Empty(await AplicacionesDelPagoAsync(ctx, sinSaldo.Id));
+
+        await EditarOkAsync(ctx, sinSaldo.Id, 80m);
+        Assert.Empty(await AplicacionesDelPagoAsync(ctx, sinSaldo.Id));
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{llenador.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+
+        await EditarOkAsync(ctx, sinSaldo.Id, 60m);
+
+        var creada = Assert.Single(await AplicacionesDelPagoAsync(ctx, sinSaldo.Id));
+        Assert.Equal(60m, creada.Importe);
+        Assert.Equal(OrigenAplicacionPago.PagoDeCompra, creada.Origen);
+        Assert.Null(creada.DeletedAt);
+    }
+
+    [Fact]
+    public async Task EditarUnPagoSobreimputadoHeredadoSigueCortadoAlTotalDeLaCompra()
+    {
+        var ctx = await PrepararAsync(nameof(EditarUnPagoSobreimputadoHeredadoSigueCortadoAlTotalDeLaCompra));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var pago = await AltaAdminAsync(ctx, compra.Total + 500m, compra.Id);
+        Assert.Equal(compra.Total, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
+
+        await EditarOkAsync(ctx, pago.Id, compra.Total + 800m);
+
+        Assert.Equal(compra.Total + 800m, await ImporteDelPagoAsync(ctx, pago.Id));
+        Assert.Equal(compra.Total, Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).Importe);
+    }
+
+    [Fact]
+    public async Task EditarUnPagoDeUnaCompraAnuladaSigueSiendoValidoYNoTocaAplicaciones()
+    {
+        var ctx = await PrepararAsync(nameof(EditarUnPagoDeUnaCompraAnuladaSigueSiendoValidoYNoTocaAplicaciones));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var pago = await AltaAdminAsync(ctx, 300m, compra.Id);
+        var anulada = await ctx.Admin.PostAsync($"/api/compras/{compra.Id}/anular", null);
+        Assert.True(anulada.StatusCode == HttpStatusCode.OK, await anulada.Content.ReadAsStringAsync());
+
+        await EditarOkAsync(ctx, pago.Id, 400m);
+
+        Assert.Equal(400m, await ImporteDelPagoAsync(ctx, pago.Id));
+        Assert.NotNull(Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id)).DeletedAt);
     }
 
     [Fact]
@@ -349,5 +427,80 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.Equal("proveedor_no_coincide_con_la_compra", await CodigoDeErrorAsync(respuesta));
         Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id));
+    }
+
+    // ---- carrera y respaldo ---------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task DosPagosConcurrentesLigadosALaMismaCompraNuncaSuperanSuTotal()
+    {
+        var ctx = await PrepararAsync(nameof(DosPagosConcurrentesLigadosALaMismaCompraNuncaSuperanSuTotal));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var importe = Math.Round(compra.Total * 0.7m, 2);
+
+        using var puerta = new Barrier(2);
+        var respuestas = await Task.WhenAll(
+            Enumerable.Range(0, 2).Select(_ => Task.Run(async () =>
+            {
+                puerta.SignalAndWait(TimeSpan.FromSeconds(10));
+                return await ctx.Admin.PostAsJsonAsync(
+                    "/api/gastos/administracion",
+                    new SolicitudDePagoDeAdministracion(
+                        FechaDelNegocio.Hoy(), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor,
+                        null, "Pago concurrente", null, ctx.IdMedioEfectivo, null, importe, compra.Id));
+            })));
+
+        foreach (var respuesta in respuestas)
+        {
+            Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
+        }
+
+        var aplicaciones = (await AplicacionesDeLaCompraAsync(ctx, compra.Id)).Where(a => a.DeletedAt is null).ToList();
+        Assert.Equal(2, aplicaciones.Count);
+        Assert.Equal(compra.Total, aplicaciones.Sum(a => a.Importe));
+        Assert.Single(aplicaciones, a => a.Importe < importe);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var saldo = await db.Proveedores.Where(p => p.Id == ctx.IdProveedor).Select(p => p.Saldo).SingleAsync();
+        var libro = (await db.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.IdProveedor == ctx.IdProveedor).Select(m => m.Importe).ToListAsync()).Sum();
+        Assert.Equal(libro, saldo);
+    }
+
+    private sealed class ProblemDetailsFalso : IProblemDetailsService
+    {
+        public ProblemDetailsContext? Ultimo { get; private set; }
+
+        public ValueTask<bool> TryWriteAsync(ProblemDetailsContext context)
+        {
+            Ultimo = context;
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask WriteAsync(ProblemDetailsContext context)
+        {
+            Ultimo = context;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Theory]
+    [InlineData("23505", "ux_aplicaciones_pago_pago_compra", StatusCodes.Status409Conflict, "aplicacion_duplicada")]
+    [InlineData("23514", "ck_aplicaciones_pago_importe_positivo", StatusCodes.Status400BadRequest, "aplicacion_importe_invalido")]
+    [InlineData("23514", "tg_aplicaciones_pago_no_excede_pago", StatusCodes.Status409Conflict, "aplicacion_excede_pago")]
+    [InlineData("23514", "tg_aplicaciones_pago_no_excede_compra", StatusCodes.Status409Conflict, "aplicacion_excede_compra")]
+    public async Task LosRespaldosDeAplicacionesSeTraducenAlCodigoDeNegocio(
+        string sqlState, string constraint, int estado, string codigo)
+    {
+        var postgres = new PostgresException("rechazo de la base", "ERROR", "ERROR", sqlState, constraintName: constraint);
+        var falso = new ProblemDetailsFalso();
+        var manejador = new ManejadorDeErrores(falso, NullLogger<ManejadorDeErrores>.Instance);
+        var contexto = new DefaultHttpContext();
+
+        var manejado = await manejador.TryHandleAsync(contexto, new DbUpdateException("respaldo", postgres), CancellationToken.None);
+
+        Assert.True(manejado);
+        Assert.Equal(estado, contexto.Response.StatusCode);
+        Assert.Equal(codigo, falso.Ultimo!.ProblemDetails.Extensions["codigo"] as string);
     }
 }

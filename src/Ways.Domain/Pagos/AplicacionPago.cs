@@ -7,8 +7,8 @@ namespace Ways.Domain.Pagos;
 /// operativa de <c>pagos</c>: scope <c>id_tenant</c> únicamente. Un pago puede aplicarse a varias compras y una compra
 /// recibir varios pagos; la parte del pago sin aplicar es un crédito a favor.
 ///
-/// Rebanada E3-S1a: solo esquema y backfill. Ningún escritor la usa todavía y los lectores siguen derivando lo pagado de
-/// <c>pagos.id_comprobante_compra</c>. Las invariantes («lo aplicado no supera al pago ni a la compra, la compra está
+/// Desde E3-S1b los escritores de vínculos de pago a compra (alta, pagar compra, vincular, edición, baja y anulación) la
+/// escriben junto con <c>pagos.id_comprobante_compra</c>, y los lectores siguen derivando lo pagado de esa columna. Las invariantes («lo aplicado no supera al pago ni a la compra, la compra está
 /// confirmada y el pago es de proveedor del mismo proveedor y empresa») las sostienen constraint triggers diferidos.
 /// </summary>
 public class AplicacionPago : EntidadTenant

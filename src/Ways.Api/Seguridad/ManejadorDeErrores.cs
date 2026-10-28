@@ -190,8 +190,9 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_movimientos_cuenta_cierre" } =>
                 (StatusCodes.Status409Conflict, "El turno ya está cerrado.", "turno_ya_cerrado"),
 
-            // E3-S1a: una sola aplicación viva por par pago-compra. Ningún escritor la usa todavía; desde S1b, dos
-            // aplicaciones concurrentes del mismo par chocan acá y el servicio suma al importe de la existente.
+            // E3-S1a: una sola aplicación viva por par pago-compra. El servicio escribe una por (pago, compra) y los
+            // escritores se serializan con el FOR UPDATE de la compra, así que este índice es solo el respaldo de una
+            // escritura que se salte ese lock.
             { SqlState: "23505", ConstraintName: "ux_aplicaciones_pago_pago_compra" } =>
                 (StatusCodes.Status409Conflict, "Ese pago ya está aplicado a esa compra.", "aplicacion_duplicada"),
 
@@ -1261,9 +1262,9 @@ public class ManejadorDeErrores(
                     "La suma de las líneas del pago no coincide con su importe.",
                     "pago_suma_de_items_invalida"),
 
-            // E3-S1a (aplicaciones de pagos a compras): ningún escritor usa todavía la tabla, así que ninguna rama
-            // es alcanzable por operación normal; son el backstop de una escritura cruda y, desde S1b, de una carrera
-            // entre dos aplicaciones. Los dos constraint triggers son diferidos: fallan al comitear, no al insertar.
+            // E3-S1a (aplicaciones de pagos a compras): el servicio calcula el tope de cada aplicación bajo el lock
+            // exclusivo de la compra, así que ninguna rama es alcanzable por operación normal; son el backstop de una
+            // escritura que se salte ese lock. Los dos constraint triggers son diferidos: fallan al comitear, no al insertar.
             // Las FKs fk_aplicaciones_pago_* salen como referencia_invalida por el backstop genérico de las fk_*.
             "ck_aplicaciones_pago_importe_positivo" =>
                 (StatusCodes.Status400BadRequest,
