@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
 import { copiaDeFalloDeBaja } from '../api/bajas'
+import { columnasDeCatalogo, textoDeColumna } from '../api/catalogos'
 import type { CampoDescriptor, DescriptorDeCatalogo, ValorDeCampo } from '../api/catalogos'
 import type { CatalogoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
@@ -9,6 +10,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
+import { EncabezadoOrdenable, FilaDeFiltros, useFiltrosDeColumna, useOrdenamiento } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
 import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
 
@@ -93,6 +95,16 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   const [lecturaRemota, setLecturaRemota] = useState<LecturaRemota>({ apertura: 0, porClave: {} })
 
   const { recurso, titulo, tituloSingular, campos, valoresPorDefecto, aValores, aAlta, sujetoDeBaja } = definicion
+
+  const columnas = useMemo(() => columnasDeCatalogo(definicion), [definicion])
+  const {
+    filas: filasFiltradas,
+    filtros,
+    cambiar: cambiarFiltro,
+    limpiar: limpiarFiltros,
+    hayFiltros,
+  } = useFiltrosDeColumna(items, columnas.filtrables)
+  const { filas: filasVisibles, orden, alternar } = useOrdenamiento(filasFiltradas, columnas.ordenables)
 
   const cargar = useCallback(
     async (token: number, conInactivos: boolean, propagar = false) => {
@@ -339,24 +351,43 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Nombre</th>
+                  <EncabezadoOrdenable columna="id" orden={orden} onAlternar={alternar}>
+                    ID
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
                   {columnasExtra.map((c) => (
-                    <th key={c.clave}>{c.etiqueta}</th>
+                    <EncabezadoOrdenable key={c.clave} columna={c.clave} orden={orden} onAlternar={alternar}>
+                      {c.etiqueta}
+                    </EncabezadoOrdenable>
                   ))}
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={columnas.celdas}
+                  columnas={columnas.filtrables}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {items.map((item) => {
+                {filasVisibles.map((item) => {
                   const valores = aValores(item)
                   return (
                     <tr key={item.id}>
                       <td>{String(item.id).padStart(4, '0')}</td>
                       <td>{item.nombre}</td>
                       {columnasExtra.map((c) => (
-                        <td key={c.clave}>{formatearValorDeColumna(c, valores[c.clave])}</td>
+                        <td key={c.clave}>{textoDeColumna(c, valores[c.clave], item) || '—'}</td>
                       ))}
                       <td>
                         <span className={`badge ${item.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
@@ -381,10 +412,12 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
                     </tr>
                   )
                 })}
-                {items.length === 0 && (
+                {filasVisibles.length === 0 && (
                   <tr>
                     <td colSpan={4 + columnasExtra.length} className="text-center text-muted py-4">
-                      No hay {titulo.toLowerCase()} cargados.
+                      {items.length === 0
+                        ? `No hay ${titulo.toLowerCase()} cargados.`
+                        : 'Ningún registro coincide con los filtros.'}
                     </td>
                   </tr>
                 )}
@@ -412,14 +445,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
       )}
     </div>
   )
-}
-
-function formatearValorDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | undefined) {
-  if (campo.tipo === 'booleano') return valor ? 'Sí' : 'No'
-  if (campo.tipo === 'select') {
-    return campo.opciones?.find((o) => o.valor === valor)?.etiqueta ?? String(valor ?? '—')
-  }
-  return valor === '' || valor === undefined || valor === null ? '—' : String(valor)
 }
 
 function ModalDeCatalogo({
