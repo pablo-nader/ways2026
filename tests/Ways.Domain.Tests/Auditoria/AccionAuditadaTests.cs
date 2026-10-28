@@ -5,7 +5,7 @@ namespace Ways.Domain.Tests.Auditoria;
 
 /// <summary>
 /// stage-14-auditoria-trazabilidad, Slice 1 (task 1.13, design decisión 4): el catálogo genérico
-/// — 27 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
+/// — 28 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
 /// no vacía. Las tres de <c>pv.baja</c>/<c>tenant.baja</c>/<c>empresa.baja</c> las agregó la etapa
 /// 20 slice 4 (judgment-day ronda 1, hallazgo C1): las bajas de organización no dejaban rastro.
 /// <c>pv.modo</c> la agregó stage-desktop-pos (DB CHANGE GATE aprobado): el flip administrativo de
@@ -17,6 +17,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos.
 /// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
+/// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
 /// bajos en el dominio.
 /// </summary>
@@ -26,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneVeintisieteEntradas()
+    public void TieneVeintiochoEntradas()
     {
-        Assert.Equal(27, AccionAuditada.Todas.Count);
+        Assert.Equal(28, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -60,9 +61,9 @@ public partial class AccionAuditadaTests
     /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
     /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
     /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
-    /// 27 pares exactos que el resto del código asume.</summary>
+    /// 28 pares exactos que el resto del código asume.</summary>
     [Fact]
-    public void ElCatalogoTieneExactamenteLosVeintisieteParesEsperados()
+    public void ElCatalogoTieneExactamenteLosVeintiochoParesEsperados()
     {
         (string Accion, string Entidad)[] esperado =
         [
@@ -92,7 +93,8 @@ public partial class AccionAuditadaTests
             ("pago.desaplicacion", "pago"),
             ("compra.redondeo", "comprobante_compra"),
             ("pago.redondeo", "pago"),
-            ("pv.alta", "punto_venta")
+            ("pv.alta", "punto_venta"),
+            ("compra.edicion", "comprobante_compra")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

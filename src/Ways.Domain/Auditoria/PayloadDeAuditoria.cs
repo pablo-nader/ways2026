@@ -141,6 +141,54 @@ public static class PayloadDeAuditoria
                 ["cantidad_de_items"] = cantidadDeItems
             });
 
+    /// <summary><c>compra.edicion</c>. El estado de la compra antes y después (proveedor, punto de venta, número, orden de
+    /// compra, total y líneas) y, solo en el valor nuevo, lo que la edición asentó en el stock y en la cuenta de cada
+    /// proveedor: son los asientos por diferencia, no una copia de los libros. Las claves del anterior son un
+    /// subconjunto de las del nuevo.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        EdicionDeCompra(
+            ResumenDeCompraEditada anterior, ResumenDeCompraEditada nuevo,
+            IReadOnlyList<DiferenciaDeStockDeCompra> diferenciasDeStock,
+            IReadOnlyList<DiferenciaDeCuentaDeCompra> diferenciasDeCuenta)
+    {
+        var valorNuevo = ResumenComoPayload(nuevo);
+        valorNuevo["diferencias_de_stock"] = diferenciasDeStock
+            .Select(d => (object?)new Dictionary<string, object?>
+            {
+                ["id_articulo"] = d.IdArticulo,
+                ["id_punto_venta"] = d.IdPuntoVenta,
+                ["id_lote"] = d.IdLote,
+                ["cantidad"] = d.Delta
+            })
+            .ToList();
+        valorNuevo["diferencias_de_cuenta"] = diferenciasDeCuenta
+            .Select(d => (object?)new Dictionary<string, object?>
+            {
+                ["id_proveedor"] = d.IdProveedor,
+                ["importe"] = d.Delta
+            })
+            .ToList();
+
+        return (ResumenComoPayload(anterior), valorNuevo);
+    }
+
+    private static Dictionary<string, object?> ResumenComoPayload(ResumenDeCompraEditada resumen) => new()
+    {
+        ["id_proveedor"] = resumen.IdProveedor,
+        ["id_punto_venta"] = resumen.IdPuntoVenta,
+        ["numero_externo"] = resumen.NumeroExterno,
+        ["id_orden_compra"] = resumen.IdOrdenCompra,
+        ["total"] = resumen.Total,
+        ["items"] = resumen.Lineas
+            .Select(l => (object?)new Dictionary<string, object?>
+            {
+                ["id_articulo"] = l.IdArticulo,
+                ["cantidad"] = l.Cantidad,
+                ["total"] = l.Total
+            })
+            .ToList()
+    };
+
     /// <summary><c>stock.ajuste</c> — call site 9. <paramref name="cantidadAnterior"/> se deriva
     /// de <c>nueva − delta</c> (design decisión 9), nunca de un <c>SELECT</c> extra.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
