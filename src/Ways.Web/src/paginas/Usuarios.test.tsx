@@ -388,7 +388,7 @@ describe('Usuarios (stage-20, tarea 2.17 — selector de tenant en el alta)', ()
   }
 
   /**
-   * Cláusula bajo prueba: `esNuevo && ofreceTenant` en `FormularioUsuario` — el selector existe
+   * Cláusula bajo prueba: `esNuevo && ofreceTenant` en `ModalDeUsuario` — el selector existe
    * para un actor de plataforma, y sus opciones salen de `tenantsAsignables`, que es
    * `opcionesDeTenant(filas)` MENOS el token de plataforma (que no es un id y ningún rol que no
    * sea root puede llevar).
@@ -1580,6 +1580,169 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
   })
 })
 
+describe('Usuarios — alta y edición en un modal', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
+    usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+  })
+
+  async function montarYAbrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
+    montar([cuentaDeTenant])
+    await screen.findByText('vendedor.sur')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    return screen.findByRole('dialog', { name: 'Nuevo usuario' })
+  }
+
+  async function completar(dialogo: HTMLElement, usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.type(within(dialogo).getByLabelText('Usuario'), 'nuevo.admin')
+    await usuario.type(within(dialogo).getByLabelText('Mail'), 'nuevo.admin@ways.test')
+    await usuario.type(within(dialogo).getByLabelText('Contraseña'), 'unaClaveLarga')
+  }
+
+  function rutasDeUsuarios() {
+    return apiGetMock.mock.calls.map(([ruta]) => ruta as string).filter((r) => r.startsWith('/usuarios'))
+  }
+
+  it('el botón de agregar abre el formulario en un modal y no en la página', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await screen.findByText('vendedor.sur')
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo usuario' })
+    expect(within(dialogo).getByLabelText('Usuario')).toBeInTheDocument()
+  })
+
+  it('un alta cierra el modal, avisa y vuelve a pedir el listado', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await montarYAbrirAlta(usuario)
+    await completar(dialogo, usuario)
+    const antes = rutasDeUsuarios().length
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('Usuario "nuevo.admin" creado.')).toBeInTheDocument()
+    expect(rutasDeUsuarios()).toHaveLength(antes + 1)
+  })
+
+  it('la edición abre el modal precargado y manda un PUT', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await screen.findByText('vendedor.sur')
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando usuario 50' })
+    expect(within(dialogo).getByLabelText('Usuario')).toHaveValue('vendedor.sur')
+    await usuario.clear(within(dialogo).getByLabelText('Usuario'))
+    await usuario.type(within(dialogo).getByLabelText('Usuario'), 'vendedor.norte')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/usuarios/50')
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ usuario: 'vendedor.norte' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('un rechazo del servidor deja el modal abierto con el error adentro y los datos escritos', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'usuario_duplicado', 'Ya existe un usuario con ese nombre.'))
+    const dialogo = await montarYAbrirAlta(usuario)
+    await completar(dialogo, usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Ya existe un usuario con ese nombre.')
+    expect(within(dialogo).getByLabelText('Usuario')).toHaveValue('nuevo.admin')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('cancelar descarta lo escrito y el próximo alta abre vacío', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await montarYAbrirAlta(usuario)
+    await completar(dialogo, usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    expect(await screen.findByLabelText('Usuario')).toHaveValue('')
+  })
+
+  it('Escape cierra el modal sin guardar y devuelve el foco al disparador', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await screen.findByText('vendedor.sur')
+    const disparador = screen.getByRole('button', { name: 'Agregar' })
+    await usuario.click(disparador)
+    await screen.findByRole('dialog', { name: 'Nuevo usuario' })
+
+    await usuario.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(disparador).toHaveFocus()
+  })
+
+  it('tras un alta exitosa el foco vuelve al botón de agregar', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await montarYAbrirAlta(usuario)
+    await completar(dialogo, usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Usuario "nuevo.admin" creado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
+  it('tras una edición exitosa el foco cae en el botón de agregar, porque la tabla se reemplaza durante el refresco', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await screen.findByText('vendedor.sur')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando usuario 50' })
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Usuario "vendedor.sur" actualizado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
+  it('un doble clic sincrónico en Guardar emite una sola escritura y el modal no se cierra mientras guarda', async () => {
+    const usuario = userEvent.setup()
+    let resolver: () => void = () => {}
+    apiPostMock.mockReturnValue(new Promise<void>((r) => (resolver = r)))
+    const dialogo = await montarYAbrirAlta(usuario)
+    await completar(dialogo, usuario)
+    const guardar = within(dialogo).getByRole('button', { name: 'Guardar' })
+
+    act(() => {
+      guardar.click()
+      guardar.click()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Guardando…' })).toBeDisabled())
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    await usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nuevo usuario' })).toBeInTheDocument()
+
+    await act(async () => resolver())
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+})
+
 describe('Usuarios — lectura en vuelo al guardar', () => {
   beforeEach(() => {
     apiGetMock.mockReset()
@@ -1671,7 +1834,7 @@ describe('Usuarios — lectura en vuelo al guardar', () => {
     expect(await screen.findByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `conservarError` de la relectura; reabrir el formulario mientras relee no deja el rechazo viejo. */
+  /** Cláusula bajo prueba: el rechazo vive en el modal y se descarta al cancelar; reabrir el formulario mientras relee no deja el rechazo viejo. */
   it('reabrir el formulario mientras la relectura está en vuelo no resucita el rechazo anterior', async () => {
     const usuario = userEvent.setup()
     const inicial = diferido<PaginaDe<UsuarioListado>>()
@@ -1698,8 +1861,8 @@ describe('Usuarios — lectura en vuelo al guardar', () => {
     expect(screen.queryByText('Ya existe un usuario con ese nombre.')).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: la relectura que falla deja su propio mensaje de carga, no el del rechazo de la escritura. */
-  it('una relectura que falla tras un alta rechazada muestra el fallo de la carga', async () => {
+  /** Cláusula bajo prueba: la relectura que falla deja su propio mensaje de carga en la pantalla y el rechazo sigue en el modal, cada uno en su slot. */
+  it('una relectura que falla tras un alta rechazada muestra el fallo de la carga y deja el rechazo en el modal', async () => {
     const usuario = userEvent.setup()
     const inicial = diferido<PaginaDe<UsuarioListado>>()
     const relectura = diferido<PaginaDe<UsuarioListado>>()
@@ -1719,7 +1882,9 @@ describe('Usuarios — lectura en vuelo al guardar', () => {
 
     expect(await screen.findByText('Se cayó.')).toBeInTheDocument()
     expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
-    expect(screen.queryByText('Ya existe un usuario con ese nombre.')).not.toBeInTheDocument()
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo usuario' })
+    expect(within(dialogo).getByText('Ya existe un usuario con ese nombre.')).toBeInTheDocument()
+    expect(within(dialogo).queryByText('Se cayó.')).not.toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: la condición `habiaLecturaEnVuelo`; con el listado ya cargado, un rechazo no relee. */
