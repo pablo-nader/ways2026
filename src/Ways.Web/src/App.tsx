@@ -28,7 +28,6 @@ import { Familias } from './paginas/Familias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
-import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
 import { Combos } from './paginas/Combos'
 import { OrdenDeCompra } from './paginas/OrdenDeCompra'
@@ -633,7 +632,7 @@ export function App() {
               path="/organizacion/nuevo-tenant"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root]}>
-                  <NuevoTenant />
+                  <Navigate to="/organizacion/tenants?nuevo=1" replace />
                 </RutaProtegida>
               }
             />

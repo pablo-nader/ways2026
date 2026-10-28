@@ -90,6 +90,7 @@ describe('App — ruta /combos', () => {
    * modal de alta abierto, y el parámetro que lo abre se consume. */
   it.each([
     ['/admin/familias/nueva', ROL.Admin, '/admin/familias', 'Nueva familia'],
+    ['/admin/organizacion/nuevo-tenant', ROL.Root, '/admin/organizacion/tenants', 'Nuevo tenant'],
   ])('%s redirige al listado con el modal de alta abierto', async (ruta, rolId, destino, titulo) => {
     apiGetMock.mockImplementation((rutaApi: string) => {
       if (rutaApi === '/auth/me') {
