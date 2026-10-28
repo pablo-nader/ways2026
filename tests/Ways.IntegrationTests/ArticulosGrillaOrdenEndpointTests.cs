@@ -186,7 +186,7 @@ public class ArticulosGrillaOrdenEndpointTests(WaysApiFixture fixture) : IClassF
         for (var pagina = 1; pagina <= 10; pagina++)
         {
             var p = await cliente.GetFromJsonAsync<PaginaDeArticulosGrilla>(
-                $"/api/articulos/grilla?{query}&pagina={pagina}&tamanio={tamanio}", OpcionesJson);
+                $"/api/articulos/grilla?{(query.Length == 0 ? "" : query + "&")}pagina={pagina}&tamanio={tamanio}", OpcionesJson);
             Assert.NotNull(p);
             ids.AddRange(p!.Items.Select(i => i.Id));
             if (pagina * tamanio >= p.Total) break;
@@ -231,7 +231,7 @@ public class ArticulosGrillaOrdenEndpointTests(WaysApiFixture fixture) : IClassF
         using var admin = await ClienteAsync(e.MailAdmin, e.PasswordAdmin, fixture);
         var ids = await SembrarCincoAsync(e);
 
-        var obtenido = await RecorrerTodasLasPaginasAsync(admin, "pagina=1");
+        var obtenido = await RecorrerTodasLasPaginasAsync(admin, "");
 
         Assert.Equal(PorPosicion(ids, "2,4,1,5,3"), obtenido);
     }
