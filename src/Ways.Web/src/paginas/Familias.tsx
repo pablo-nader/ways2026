@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { copiaDeFalloDeBaja } from '../api/bajas'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeFamilias } from '../api/familias'
@@ -10,11 +10,11 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { CAMPOS_PROPIOS, cantidadDeArticulos } from './articulos/familia'
 import { mensajeDeFalloDeEscritura } from './familias/mensajes'
+import { ModalDeFamilia, type FormularioDeFamilia } from './familias/ModalDeFamilia'
+import { ModalDeNuevaFamilia } from './familias/ModalDeNuevaFamilia'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_DISOLUCION = 'Se disolvió, pero no se pudo actualizar la vista. Recargá la pantalla.'
-
-type Formulario = { id: number; nombre: string; activo: boolean }
 
 /** Lo que la puerta de la disolución dice que pasa con los artículos: sus valores y sus precios no se tocan. */
 function notaDeDisolucion(familia: FamiliaListado): string {
@@ -30,12 +30,13 @@ function notaDeDisolucion(familia: FamiliaListado): string {
 }
 
 /**
- * Listado de familias de artículos (doc 10 §3): renombrar, activar o desactivar y disolver; el detalle y las
- * altas están en `/familias/:id` y `/familias/nueva`. `bloqueado` deja inerte la pantalla entera mientras el
- * guardado, la disolución o la puerta (`ConfirmacionDeBaja`) están abiertos —los enlaces, con `preventDefault`—, así
- * que nada supera a una escritura en vuelo: solo las lecturas llevan generación (la más nueva gana) y las escrituras
- * no, a diferencia de `Categorias.tsx`, donde guardar y dar de baja acuñan el suyo. Un espejo sincrónico
- * (`ocupadoRef`) frena el doble clic en el mismo tick (`react-async-state` reglas 9, 11 y 13).
+ * Listado de familias de artículos (doc 10 §3): alta, renombrar, activar o desactivar y disolver; el detalle está en
+ * `/familias/:id`. El alta (`ModalDeNuevaFamilia`) y el renombrado (`ModalDeFamilia`) son modales. `bloqueado` deja
+ * inerte la pantalla entera mientras el guardado, la disolución o la puerta (`ConfirmacionDeBaja`) están abiertos
+ * —los enlaces, con `preventDefault`—, así que nada supera a una escritura en vuelo: solo las lecturas llevan
+ * generación (la más nueva gana) y las escrituras no, a diferencia de `Categorias.tsx`, donde guardar y dar de baja
+ * acuñan el suyo. Un espejo sincrónico (`ocupadoRef`) frena el doble clic en el mismo tick (`react-async-state`
+ * reglas 9, 11 y 13). `/familias/nueva` redirige acá con `?nuevo=1`, que abre el modal de alta una sola vez.
  */
 export function Familias() {
   const [items, setItems] = useState<FamiliaListado[]>([])
@@ -44,8 +45,12 @@ export function Familias() {
   const [errorDeCarga, setErrorDeCarga] = useState('')
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
-  const [formulario, setFormulario] = useState<Formulario | null>(null)
+  const [parametros, setParametros] = useSearchParams()
+  const [formulario, setFormulario] = useState<FormularioDeFamilia | null>(null)
+  /** El rechazo del guardado vive en el modal; `error` queda para lo que le pasó a la pantalla (una familia que ya no existe, la disolución). */
+  const [errorDeFormulario, setErrorDeFormulario] = useState('')
   const [guardando, setGuardando] = useState(false)
+  const [creando, setCreando] = useState(() => parametros.get('nuevo') === '1')
   const [disolucion, setDisolucion] = useState<FamiliaListado | null>(null)
   /** Id de la familia cuya disolución está en vuelo (distinto de `guardando`, que cubre el renombrado). */
   const [ocupadoDisolucion, setOcupadoDisolucion] = useState<number | null>(null)
@@ -56,6 +61,9 @@ export function Familias() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo": dos clics en el mismo tick pasan la guarda de estado. */
   const ocupadoRef = useRef(false)
+  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (la tabla se reemplaza por "Cargando…"
+   * durante el refresco): el botón de alta, que es estable. */
+  const nuevaRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
@@ -77,6 +85,21 @@ export function Familias() {
     void cargar(++generacion.current)
   }, [cargar])
 
+  // El parámetro solo abre el modal al llegar: se consume para que recargar o volver no lo reabra.
+  useEffect(() => {
+    if (!parametros.has('nuevo')) return
+
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete('nuevo')
+
+        return siguientes
+      },
+      { replace: true },
+    )
+  }, [parametros, setParametros])
+
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (`react-async-state` regla 6). */
   async function refrescarTrasEscribir(mensajeOk: string, avisoDeFallo: string) {
@@ -95,25 +118,31 @@ export function Familias() {
     const nombre = datos.nombre.trim()
     ocupadoRef.current = true
     setGuardando(true)
-    setError('')
-    setAviso('')
+    setErrorDeFormulario('')
     try {
       try {
         await clienteDeFamilias.actualizar(datos.id, { nombre, activo: datos.activo })
       } catch (e) {
-        setError(mensajeDeFalloDeEscritura(e, 'guardar la familia'))
-        // La familia ya no existe: el formulario ofrecería guardar sobre algo que dejó de estar, así que se cierra y se
-        // vuelve a leer el listado.
-        if (e instanceof ErrorApi && e.estado === 404) {
-          setFormulario(null)
-          await cargar(++generacion.current)
+        const mensaje = mensajeDeFalloDeEscritura(e, 'guardar la familia')
+        if (!(e instanceof ErrorApi && e.estado === 404)) {
+          setErrorDeFormulario(mensaje)
+
+          return
         }
+
+        // La familia ya no existe: el modal ofrecería guardar sobre algo que dejó de estar, así que se cierra con el
+        // rechazo a la vista y se vuelve a leer el listado. Sigue montado durante la relectura y se cierra al liberarse.
+        setError(mensaje)
+        await cargar(++generacion.current)
+        setFormulario(null)
 
         return
       }
 
-      setFormulario(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `guardando`: así el
+      // disparador (o el botón de alta, si la fila se reemplazó) ya está habilitado cuando el modal restaura el foco.
       await refrescarTrasEscribir(`Se actualizó la familia "${nombre}".`, AVISO_REFRESCO_FALLIDO)
+      setFormulario(null)
     } finally {
       ocupadoRef.current = false
       setGuardando(false)
@@ -145,11 +174,9 @@ export function Familias() {
         await clienteDeFamilias.disolver(familia.id)
       } catch (e) {
         setError(copiaDeFalloDeBaja(e, 'la familia', 'disolver'))
-        // La familia ya no existe: no hay nada que confirmar, así que la puerta se cierra, se cierra el formulario de
-        // esa familia si estaba abierto y se vuelve a leer el listado.
+        // La familia ya no existe: no hay nada que confirmar, así que la puerta se cierra y se vuelve a leer el listado.
         if (e instanceof ErrorApi && e.estado === 404) {
           setDisolucion(null)
-          setFormulario((prev) => (prev?.id === familia.id ? null : prev))
           await cargar(++generacion.current)
         }
 
@@ -157,9 +184,6 @@ export function Familias() {
       }
 
       setDisolucion(null)
-      // Disolver la familia que se está editando se lleva también su formulario: dejarlo abierto ofrecía guardar
-      // sobre una familia que ya no existe, y el PUT moría en 404.
-      setFormulario((prev) => (prev?.id === familia.id ? null : prev))
       await refrescarTrasEscribir(
         `Se disolvió la familia "${familia.nombre}": sus artículos quedaron sin familia.`,
         AVISO_REFRESCO_FALLIDO_DISOLUCION,
@@ -174,28 +198,24 @@ export function Familias() {
     setFormulario({ id: familia.id, nombre: familia.nombre, activo: familia.activo })
     setAviso('')
     setError('')
+    setErrorDeFormulario('')
   }
 
-  function cancelarEdicion() {
-    setFormulario(null)
+  function abrirAlta() {
+    setCreando(true)
+    setAviso('')
     setError('')
   }
 
-  /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera. */
+  /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera. Un modal abierto no entra acá: su
+   * fondo ya deja inerte el resto, y los disparadores tienen que seguir habilitados para recibir el foco al cerrarlo. */
   const bloqueado = guardando || ocupadoDisolucion !== null || disolucion !== null
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <Link
-        to="/familias/nueva"
-        className="btn btn-sm btn-success text-nowrap"
-        aria-disabled={bloqueado}
-        onClick={(evento) => {
-          if (bloqueado) evento.preventDefault()
-        }}
-      >
+      <button ref={nuevaRef} type="button" className="btn btn-sm btn-success text-nowrap" disabled={bloqueado} onClick={abrirAlta}>
         Nueva familia
-      </Link>
+      </button>
     </nav>
   )
 
@@ -227,15 +247,18 @@ export function Familias() {
         )}
 
         {formulario && (
-          <FormularioDeFamilia
+          <ModalDeFamilia
             valor={formulario}
             guardando={guardando}
-            bloqueado={bloqueado}
+            error={errorDeFormulario}
+            focoDeReserva={nuevaRef}
             onCambio={setFormulario}
             onGuardar={guardar}
-            onCancelar={cancelarEdicion}
+            onCancelar={() => setFormulario(null)}
           />
         )}
+
+        {creando && <ModalDeNuevaFamilia focoDeReserva={nuevaRef} onCancelar={() => setCreando(false)} />}
 
         {cargando ? (
           <Cargando />
@@ -303,80 +326,5 @@ export function Familias() {
         )}
       </Box>
     </div>
-  )
-}
-
-function FormularioDeFamilia({
-  valor,
-  guardando,
-  bloqueado,
-  onCambio,
-  onGuardar,
-  onCancelar,
-}: {
-  valor: Formulario
-  guardando: boolean
-  bloqueado: boolean
-  onCambio: (f: Formulario) => void
-  onGuardar: () => void
-  onCancelar: () => void
-}) {
-  return (
-    <form
-      className="row g-3 border p-3 mb-4 bg-body"
-      autoComplete="off"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onGuardar()
-      }}
-    >
-      <div className="col-12">
-        <strong>Editando familia {valor.id}</strong>
-      </div>
-
-      <div className="col-md-6">
-        <label className="form-label" htmlFor="ff-nombre">
-          Nombre
-        </label>
-        <input
-          id="ff-nombre"
-          className="form-control"
-          maxLength={150}
-          value={valor.nombre}
-          onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="ff-estado">
-          Estado
-        </label>
-        <select
-          id="ff-estado"
-          className="form-select"
-          value={valor.activo ? 'activa' : 'inactiva'}
-          aria-describedby="ff-estado-ayuda"
-          onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activa' })}
-          disabled={bloqueado}
-        >
-          <option value="activa">Activa</option>
-          <option value="inactiva">Inactiva</option>
-        </select>
-        <div id="ff-estado-ayuda" className="form-text">
-          Una familia inactiva no admite artículos nuevos.
-        </div>
-      </div>
-
-      <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success" disabled={bloqueado}>
-          {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
-        <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={bloqueado}>
-          Cancelar
-        </button>
-      </div>
-    </form>
   )
 }

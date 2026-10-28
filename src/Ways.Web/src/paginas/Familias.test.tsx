@@ -1,21 +1,22 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Familias } from './Familias'
 import { CAMPOS_PROPIOS } from './articulos/familia'
 import { ErrorApi } from '../api/cliente'
-import type { FamiliaListado } from '../api/tipos'
+import type { ArticuloListado, FamiliaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
 const apiPutMock = vi.fn()
 const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
-    post: vi.fn(),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
@@ -33,6 +34,9 @@ vi.mock('../api/cliente', () => ({
 const sabores: FamiliaListado = { id: 7, nombre: 'Sabores', activo: true, cantidadArticulos: 3 }
 const talles: FamiliaListado = { id: 8, nombre: 'Talles', activo: false, cantidadArticulos: 1 }
 
+/** Lo mínimo que el buscador del modal de alta lee de un artículo. */
+const articuloDePrueba = { id: 31, codigoInterno: 'A0031', nombre: 'Vainilla', idFamilia: null, activo: true } as ArticuloListado
+
 function diferida<T>() {
   let resolver!: (valor: T) => void
   let rechazar!: (motivo: unknown) => void
@@ -43,17 +47,31 @@ function diferida<T>() {
   return { promesa, resolver, rechazar }
 }
 
-function montar(items: FamiliaListado[] = [sabores, talles]) {
-  apiGetMock.mockImplementation((ruta: string) =>
-    ruta === '/familias' ? Promise.resolve(items) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
-  )
+/** Sonda de la búsqueda de la URL: el `?nuevo=1` que abre el modal de alta se consume al llegar. */
+function SondaDeBusqueda() {
+  const { search } = useLocation()
+
+  return <span data-testid="busqueda">{search}</span>
+}
+
+/** Lo que el modal de alta pide al abrirse (los nombres de los catálogos), vacío: acá solo importa que el modal abre. */
+function respuestaDeApi(ruta: string, items: FamiliaListado[]) {
+  if (ruta === '/familias') return Promise.resolve(items)
+  if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
+  if (ruta.startsWith('/catalogos')) return Promise.resolve([])
+
+  return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+}
+
+function montar(items: FamiliaListado[] = [sabores, talles], ruta = '/familias') {
+  apiGetMock.mockImplementation((rutaApi: string) => respuestaDeApi(rutaApi, items))
   return render(
-    <MemoryRouter initialEntries={['/familias']}>
+    <MemoryRouter initialEntries={[ruta]}>
       <Routes>
         <Route path="/familias" element={<Familias />} />
-        <Route path="/familias/nueva" element={<p>Pantalla de nueva familia</p>} />
         <Route path="/familias/:id" element={<p>Pantalla de detalle de la familia</p>} />
       </Routes>
+      <SondaDeBusqueda />
     </MemoryRouter>,
   )
 }
@@ -76,6 +94,7 @@ function celdas(nombre: string) {
 
 beforeEach(() => {
   apiGetMock.mockReset()
+  apiPostMock.mockReset()
   apiPutMock.mockReset()
   apiDeleteMock.mockReset()
   apiPutMock.mockResolvedValue(sabores)
@@ -215,12 +234,14 @@ describe('Familias — listado', () => {
     expect(screen.getByText(/en el precio de cada lista de precios fija: lo que se cambia en uno se aplica a todos/)).toBeInTheDocument()
   })
 
-  it('"Nueva familia" lleva a la pantalla de alta', async () => {
+  it('"Nueva familia" abre el modal de alta sin salir del listado', async () => {
     await montarYEsperar()
 
-    await userEvent.click(screen.getByRole('link', { name: 'Nueva familia' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
 
-    expect(await screen.findByText('Pantalla de nueva familia')).toBeInTheDocument()
+    const dialogo = await screen.findByRole('dialog', { name: 'Nueva familia' })
+    expect(within(dialogo).getByLabelText('Nombre de la familia')).toBeInTheDocument()
+    expect(screen.getByText('Sabores')).toBeInTheDocument()
   })
 
   it('"Ver detalle" lleva al detalle de esa familia', async () => {
@@ -349,8 +370,8 @@ describe('Familias — renombrar y activar o desactivar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByText('No existe la familia 7.')).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByText('Sabores')).not.toBeInTheDocument())
-    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument())
+    expect(screen.queryByText('Sabores')).not.toBeInTheDocument()
     expect(lecturas).toBe(2)
     expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeEnabled()
   })
@@ -376,12 +397,12 @@ describe('Familias — renombrar y activar o desactivar', () => {
     await screen.findByText('No existe la familia 7.')
 
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
 
     await act(async () => {
       relectura.resolver([talles])
     })
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Nueva familia' })).not.toHaveAttribute('aria-disabled', 'true'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled())
   })
 
   /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `guardar`: con un 5xx o la red caída no se sabe si el PUT llegó
@@ -421,9 +442,9 @@ describe('Familias — renombrar y activar o desactivar', () => {
     expect(screen.getByLabelText('Estado')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Disolver Talles' })).toBeDisabled()
-    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
-    await userEvent.click(screen.getByRole('link', { name: 'Nueva familia' }))
-    expect(screen.queryByText('Pantalla de nueva familia')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
 
     await act(async () => {
       escritura.resolver(sabores)
@@ -451,12 +472,12 @@ describe('Familias — renombrar y activar o desactivar', () => {
     await screen.findByText('Se actualizó la familia "Sabores".')
 
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
 
     await act(async () => {
       refresco.resolver([sabores, talles])
     })
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Nueva familia' })).not.toHaveAttribute('aria-disabled', 'true'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled())
   })
 
   /** Cláusula bajo prueba: `ocupadoRef`, el espejo sincrónico (react-async-state regla 11): dos envíos del
@@ -466,7 +487,7 @@ describe('Familias — renombrar y activar o desactivar', () => {
     await montarYEsperar()
     await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
 
-    const formulario = screen.getByRole('button', { name: 'Guardar' }).closest('form') as HTMLFormElement
+    const formulario = screen.getByLabelText('Nombre').closest('form') as HTMLFormElement
     await act(async () => {
       fireEvent.submit(formulario)
       fireEvent.submit(formulario)
@@ -498,16 +519,178 @@ describe('Familias — renombrar y activar o desactivar', () => {
     expect(screen.queryByText(/No se pudo guardar/)).not.toBeInTheDocument()
     expect(screen.queryByText('Se cayó el refresco.')).not.toBeInTheDocument()
   })
+})
 
-  it('editar otra familia reemplaza el formulario abierto', async () => {
+describe('Familias — el renombrado es un modal', () => {
+  it('"Editar" abre un modal; "Cancelar" y Escape lo descartan sin escribir y devuelven el foco al botón', async () => {
+    await montarYEsperar()
+    const disparador = screen.getByRole('button', { name: 'Editar Talles' })
+
+    await userEvent.click(disparador)
+    expect(screen.getByRole('dialog', { name: 'Editando familia 8' })).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('Nombre'), ' 2')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(disparador).toHaveFocus()
+
+    await userEvent.click(disparador)
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Talles')
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(disparador).toHaveFocus()
+  })
+
+  /** Advertencia (react-async-state regla 12): jsdom no implementa el "focus fixup" del navegador. Aquí la fila que abrió el
+   * modal se reemplaza por "Cargando…" durante el refresco, así que el foco cae en el botón de alta (`focoDeReserva`). */
+  it('después de guardar, el modal se cierra con la lista ya refrescada y el foco queda en "Nueva familia"', async () => {
     await montarYEsperar()
     await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
 
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Talles' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
-    expect(screen.getByText('Editando familia 8')).toBeInTheDocument()
-    expect(screen.getByLabelText('Nombre')).toHaveValue('Talles')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByText('Se actualizó la familia "Sabores".')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
+  })
+
+  it('un rechazo del servidor queda adentro del modal, con lo tipeado, y cerrarlo lo descarta', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe una familia llamada "Talles" en este tenant.'))
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+    await userEvent.clear(screen.getByLabelText('Nombre'))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Talles')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Editando familia 7' })
+    expect(await within(dialogo).findByText(/Ya existe una familia llamada "Talles"/)).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Talles')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+    expect(screen.queryByText(/Ya existe una familia llamada "Talles"/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Sabores')
+  })
+
+  /** Cláusula bajo prueba: `ocupado={guardando}` del modal y la ventana inerte (react-async-state regla 5): con el PUT en
+   * vuelo no se cierra ni con Escape, ni con la ×, ni desde el pie; y dos clics del mismo tick emiten un solo PUT. */
+  it('con el PUT en vuelo el modal no se cierra y un doble clic sincrónico en "Guardar" emite un solo PUT', async () => {
+    const escritura = diferida<FamiliaListado>()
+    apiPutMock.mockReturnValue(escritura.promesa)
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Editando familia 7' })).toBeInTheDocument()
+    await act(async () => {
+      escritura.resolver(sabores)
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+})
+
+describe('Familias — el alta es un modal', () => {
+  it('"Nueva familia" abre el modal; "Cancelar" lo descarta y devuelve el foco al botón', async () => {
+    await montarYEsperar()
+    const boton = screen.getByRole('button', { name: 'Nueva familia' })
+
+    await userEvent.click(boton)
+    await userEvent.type(await screen.findByLabelText('Nombre de la familia'), 'Colores')
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Nueva familia' })).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(boton).toHaveFocus()
+    await userEvent.click(boton)
+    expect(await screen.findByLabelText('Nombre de la familia')).toHaveValue('')
+  })
+
+  it('Escape cierra el modal y devuelve el foco al botón', async () => {
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+    await screen.findByRole('dialog', { name: 'Nueva familia' })
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
+  })
+
+  /** Cláusula bajo prueba: `abrirAlta` borra el aviso de la escritura anterior (react-async-state regla 16). */
+  it('abrir el alta borra el aviso de la escritura anterior', async () => {
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Se actualizó la familia "Sabores".')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+
+    expect(screen.queryByText(/Se actualizó la familia/)).not.toBeInTheDocument()
+  })
+
+  it('`?nuevo=1` abre el modal de alta al llegar y se consume: la URL queda limpia y el foco cae en el botón al cerrarlo', async () => {
+    montar([sabores, talles], '/familias?nuevo=1')
+
+    expect(await screen.findByRole('dialog', { name: 'Nueva familia' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('busqueda').textContent).toBe(''))
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
+  })
+
+  it('sin el parámetro la pantalla no abre ningún modal', async () => {
+    await montarYEsperar()
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('el alta lleva al detalle de la familia creada (la navegación que ya tenía la página de alta)', async () => {
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/familias/previsualizacion'
+        ? Promise.resolve({ idArticuloReferencia: 31, idFamilia: null, articulos: [], problemas: [] })
+        : Promise.resolve({ idFamilia: 7, nombre: 'Colores', idArticuloReferencia: 31, articulos: [] }),
+    )
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=')) {
+        return Promise.resolve({ items: [articuloDePrueba], total: 1, pagina: 1, tamanio: 25 })
+      }
+
+      return respuestaDeApi(ruta, [sabores, talles])
+    })
+    render(
+      <MemoryRouter initialEntries={['/familias']}>
+        <Routes>
+          <Route path="/familias" element={<Familias />} />
+          <Route path="/familias/:id" element={<p>Pantalla de detalle de la familia</p>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+    await userEvent.type(await screen.findByLabelText('Nombre de la familia'), 'Colores')
+    await userEvent.click(screen.getByRole('button', { name: 'Elegir artículo de referencia' }))
+    const selector = await screen.findByRole('dialog', { name: 'Elegir el artículo de referencia' })
+    await userEvent.type(within(selector).getByLabelText('Buscar artículo'), 'art')
+    await userEvent.click(within(selector).getByRole('button', { name: 'Buscar' }))
+    await userEvent.click(await within(selector).findByLabelText('Elegir A0031 Vainilla'))
+    await userEvent.click(within(selector).getByRole('button', { name: 'Listo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Previsualizar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Crear familia' })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
+
+    expect(await screen.findByText('Pantalla de detalle de la familia')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledWith('/familias', { nombre: 'Colores', idArticuloReferencia: 31, idsArticulos: [] })
   })
 })
 
@@ -530,25 +713,6 @@ describe('Familias — los mensajes de la acción anterior no sobreviven a la si
     expect(screen.queryByText(/Ya existe una familia llamada "Talles"/)).not.toBeInTheDocument()
     await act(async () => {
       segundo.resolver(sabores)
-    })
-  })
-
-  it('guardar borra el aviso de la escritura anterior apenas empieza', async () => {
-    const guardado = diferida<FamiliaListado>()
-    apiPutMock.mockReturnValue(guardado.promesa)
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Talles' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
-    await screen.findByText(/Se disolvió la familia "Sabores"/)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled())
-
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-
-    expect(apiPutMock).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText(/Se disolvió la familia/)).not.toBeInTheDocument()
-    await act(async () => {
-      guardado.resolver(talles)
     })
   })
 
@@ -581,18 +745,6 @@ describe('Familias — los mensajes de la acción anterior no sobreviven a la si
     expect(screen.queryByText(/Se actualizó la familia/)).not.toBeInTheDocument()
   })
 
-  it('abrir la puerta borra el rechazo del guardado anterior', async () => {
-    apiPutMock.mockRejectedValueOnce(rechazoDeNombre)
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-    await screen.findByText(/Ya existe una familia llamada "Talles"/)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Disolver Talles' }))
-
-    expect(screen.queryByText(/Ya existe una familia llamada "Talles"/)).not.toBeInTheDocument()
-  })
-
   it('abrir el formulario borra el aviso de la disolución anterior', async () => {
     await montarYEsperar()
     await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
@@ -605,17 +757,6 @@ describe('Familias — los mensajes de la acción anterior no sobreviven a la si
     expect(screen.queryByText(/Se disolvió la familia/)).not.toBeInTheDocument()
   })
 
-  it('abrir el formulario de otra familia borra el rechazo del guardado anterior', async () => {
-    apiPutMock.mockRejectedValueOnce(rechazoDeNombre)
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-    await screen.findByText(/Ya existe una familia llamada "Talles"/)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Talles' }))
-
-    expect(screen.queryByText(/Ya existe una familia llamada "Talles"/)).not.toBeInTheDocument()
-  })
 })
 
 describe('Familias — disolver', () => {
@@ -665,7 +806,7 @@ describe('Familias — disolver', () => {
 
     expect(screen.getByRole('button', { name: 'Editar Sabores' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Disolver Talles' })).toBeDisabled()
-    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
     expect(screen.getByRole('link', { name: 'Ver detalle de Sabores' })).toHaveAttribute('aria-disabled', 'true')
     await userEvent.click(screen.getByRole('link', { name: 'Ver detalle de Sabores' }))
     expect(screen.queryByText('Pantalla de detalle de la familia')).not.toBeInTheDocument()
@@ -739,7 +880,7 @@ describe('Familias — disolver', () => {
     })
     await screen.findByText(/Se disolvió la familia "Sabores"/)
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
 
     await act(async () => {
       refresco.resolver([talles])
@@ -821,40 +962,12 @@ describe('Familias — disolver', () => {
     await screen.findByText(/Ya no existe o no está a tu alcance/)
 
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
 
     await act(async () => {
       relectura.resolver([talles])
     })
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Nueva familia' })).not.toHaveAttribute('aria-disabled', 'true'))
-  })
-
-  /** Cláusula bajo prueba: el `setFormulario(...)` de la rama `estado === 404` de `confirmarDisolucion`: el formulario
-   * abierto sobre la familia que ya no existe se cierra. Evidencia de mutación (mutation-proof-tests): sacarlo hace fallar
-   * este test; revertido, vuelve a verde. */
-  it('un 404 al disolver la familia que se está editando cierra también su formulario', async () => {
-    apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
-
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
-
-    await screen.findByText(/Ya no existe o no está a tu alcance/)
-    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
-  })
-
-  it('disolver la familia que se está editando cierra también su formulario', async () => {
-    await montarYEsperar()
-    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
-    expect(screen.getByText('Editando familia 7')).toBeInTheDocument()
-    // La puerta deja inerte el formulario, pero lo deja abierto hasta que la disolución se confirma.
-    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
-
-    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
-
-    await screen.findByText(/Se disolvió la familia "Sabores"/)
-    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled())
   })
 
   /** Advertencia (react-async-state regla 12): jsdom no implementa la regla de "focus fixup" del navegador, así que

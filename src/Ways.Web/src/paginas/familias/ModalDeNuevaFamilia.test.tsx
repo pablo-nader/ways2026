@@ -1,10 +1,11 @@
+import { useRef, useState } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { NuevaFamilia } from './NuevaFamilia'
-import { CAMPOS_COMPARTIDOS, CAMPOS_PROPIOS } from './articulos/familia'
-import { ErrorApi } from '../api/cliente'
+import { ModalDeNuevaFamilia } from './ModalDeNuevaFamilia'
+import { CAMPOS_COMPARTIDOS, CAMPOS_PROPIOS } from '../articulos/familia'
+import { ErrorApi } from '../../api/cliente'
 import type {
   ArticuloListado,
   CambiosDeUnArticulo,
@@ -12,12 +13,12 @@ import type {
   PrevisualizacionDeAgrupacion,
   ResultadoDeAgrupacion,
   ValoresCompartidosDeLaFamilia,
-} from '../api/tipos'
+} from '../../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 
-vi.mock('../api/cliente', () => ({
+vi.mock('../../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
@@ -150,14 +151,30 @@ function DetalleDeFamilia() {
   )
 }
 
+/** Hace de listado de familias: un botón estable que abre el modal (y es su destino de foco de reserva), como `Familias`. */
+function Anfitrion() {
+  const [abierto, setAbierto] = useState(true)
+  const nuevaRef = useRef<HTMLButtonElement>(null)
+
+  return (
+    <>
+      <button ref={nuevaRef} type="button" disabled={abierto} onClick={() => setAbierto(true)}>
+        Nueva familia
+      </button>
+      {/* El modal vive dentro de un contenedor, como en `Familias` (dentro del cuerpo de `Box`): así el botón queda
+          habilitado antes de que el modal, al desmontarse, le devuelva el foco. */}
+      <div>{abierto && <ModalDeNuevaFamilia focoDeReserva={nuevaRef} onCancelar={() => setAbierto(false)} />}</div>
+    </>
+  )
+}
+
 function montar(escenario: Escenario = {}) {
   mockearApi(escenario)
   return render(
-    <MemoryRouter initialEntries={['/familias/nueva']}>
+    <MemoryRouter initialEntries={['/familias']}>
       <Routes>
-        <Route path="/familias/nueva" element={<NuevaFamilia />} />
+        <Route path="/familias" element={<Anfitrion />} />
         <Route path="/familias/:id" element={<DetalleDeFamilia />} />
-        <Route path="/familias" element={<p>Pantalla del listado de familias</p>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -168,15 +185,20 @@ function montar(escenario: Escenario = {}) {
 function montarConMenu() {
   mockearApi()
   return render(
-    <MemoryRouter initialEntries={['/familias/nueva']}>
+    <MemoryRouter initialEntries={['/familias']}>
       <Link to="/otra">Ir a otra pantalla</Link>
       <Routes>
-        <Route path="/familias/nueva" element={<NuevaFamilia />} />
+        <Route path="/familias" element={<Anfitrion />} />
         <Route path="/familias/:id" element={<DetalleDeFamilia />} />
         <Route path="/otra" element={<p>Otra pantalla</p>} />
       </Routes>
     </MemoryRouter>,
   )
+}
+
+/** El `<form>` del modal: su botón de envío vive en el pie, fuera de él, así que no se llega con `closest`. */
+function formularioDelModal() {
+  return within(screen.getByRole('dialog', { name: 'Nueva familia' })).getByLabelText('Nombre de la familia').closest('form') as HTMLFormElement
 }
 
 async function buscarYElegir(titulo: string, ...ids: number[]) {
@@ -256,46 +278,65 @@ describe('NuevaFamilia — la pantalla', () => {
     expect(screen.getByLabelText('Nombre de la familia')).toHaveAttribute('maxlength', '150')
   })
 
-  it('"Volver al listado" lleva al listado', async () => {
+  it('"Cancelar" cierra el modal y devuelve el foco al botón que lo abrió', async () => {
     montar()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    await userEvent.click(screen.getByRole('link', { name: 'Volver al listado' }))
-
-    expect(await screen.findByText('Pantalla del listado de familias')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
   })
 
-  /** Cláusula bajo prueba: `aria-disabled={creando}` y el `preventDefault` del enlace: con el POST en vuelo no se puede ir
-   * por "Volver al listado". Evidencia de mutación (mutation-proof-tests): sacar cualquiera de los dos hace fallar este
-   * test; revertido, vuelve a verde. */
-  it('con el POST en vuelo "Volver al listado" no lleva a ningún lado', async () => {
+  it('Escape cierra el modal y devuelve el foco al botón que lo abrió', async () => {
+    montar()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toHaveFocus()
+  })
+
+  it('cerrarlo descarta lo tipeado y elegido: al volver a abrirlo arranca vacío', async () => {
+    montar()
+    await escribirNombre('Sabores')
+    await elegirReferencia()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+
+    expect(screen.getByLabelText('Nombre de la familia')).toHaveValue('')
+    expect(screen.getByText('Todavía no elegiste el artículo de referencia.')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `ocupado={creando}` del modal: con el POST en vuelo no se puede cerrar con Escape ni con la ×,
+   * y "Cancelar" del pie está deshabilitado. Evidencia de mutación (mutation-proof-tests): pasar `ocupado={false}` hace
+   * fallar este test; revertido, vuelve a verde. */
+  it('con el POST en vuelo el modal no se puede cerrar', async () => {
     montar()
     await armarYPrevisualizar()
     apiPostMock.mockImplementation(() => new Promise(() => {}))
     await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
     expect(screen.getByRole('button', { name: 'Creando…' })).toBeDisabled()
 
-    const enlace = screen.getByRole('link', { name: 'Volver al listado' })
-    expect(enlace).toHaveAttribute('aria-disabled', 'true')
-    await userEvent.click(enlace)
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
 
-    expect(screen.queryByText('Pantalla del listado de familias')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Creando…' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Nueva familia' })).toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: el enlace se bloquea con la escritura (`creando`), no con la previsualización: es una lectura y
-   * irse a mitad de ella no deja nada a medias. Evidencia de mutación (mutation-proof-tests): bloquearlo con `bloqueado`
-   * (que incluye `previsualizando`) hace fallar este test; revertido, vuelve a verde. */
-  it('con la previsualización en vuelo "Volver al listado" sigue llevando al listado', async () => {
+  /** Cláusula bajo prueba: Escape cierra el modal con la previsualización en vuelo (`ocupado` solo cubre el POST): es una
+   * lectura y irse a mitad de ella no deja nada a medias. Evidencia de mutación (mutation-proof-tests): pasar
+   * `ocupado={bloqueado}` (que incluye `previsualizando`) hace fallar este test; revertido, vuelve a verde. */
+  it('con la previsualización en vuelo el modal sí se puede cerrar', async () => {
     montar()
     apiPostMock.mockImplementation(() => new Promise(() => {}))
     await elegirReferencia()
     await previsualizar()
     expect(screen.getByRole('button', { name: 'Previsualizando…' })).toBeDisabled()
 
-    expect(screen.getByRole('link', { name: 'Volver al listado' })).not.toHaveAttribute('aria-disabled', 'true')
-    await userEvent.click(screen.getByRole('link', { name: 'Volver al listado' }))
+    await userEvent.keyboard('{Escape}')
 
-    expect(await screen.findByText('Pantalla del listado de familias')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
   })
 
   it('si un catálogo no carga lo avisa', async () => {
@@ -317,7 +358,7 @@ describe('NuevaFamilia — elegir la referencia y los demás artículos', () => 
     await userEvent.click(within(dialogo).getByLabelText('Elegir A0031 Vainilla'))
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Listo' }))
 
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: /^Elegir/ })).not.toBeInTheDocument()
     expect(screen.getByText('A0031 — Vainilla')).toBeInTheDocument()
     expect(screen.queryByText('Todavía no elegiste el artículo de referencia.')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cambiar artículo de referencia' })).toBeInTheDocument()
@@ -333,7 +374,7 @@ describe('NuevaFamilia — elegir la referencia y los demás artículos', () => 
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: /^Elegir/ })).not.toBeInTheDocument()
     expect(screen.getByText('Todavía no elegiste el artículo de referencia.')).toBeInTheDocument()
     expect(screen.getByText('Todavía no elegiste otros artículos.')).toBeInTheDocument()
   })
@@ -391,7 +432,7 @@ describe('NuevaFamilia — elegir la referencia y los demás artículos', () => 
 
     await agregarOtros(32, 33)
 
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: /^Elegir/ })).not.toBeInTheDocument()
     expect(screen.getByText('A0032 — Frutilla')).toBeInTheDocument()
     expect(screen.getByText('A0033 — Chocolate')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Quitar A0032 Frutilla' }))
@@ -596,7 +637,7 @@ describe('NuevaFamilia — crear', () => {
 
     expect(screen.getByText(/No se puede alinear el precio de "Frutilla" en "General"\. Un precio nunca se quita/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Crear familia' })).toBeDisabled()
-    fireEvent.submit(screen.getByRole('button', { name: 'Crear familia' }).closest('form') as HTMLFormElement)
+    fireEvent.submit(formularioDelModal())
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/familias')).toHaveLength(0)
   })
 
@@ -611,7 +652,7 @@ describe('NuevaFamilia — crear', () => {
       screen.getByText('El artículo de referencia ya es miembro de una familia: agrupar no mueve a nadie de la que tiene. Para sumarle artículos usá el detalle de su familia.'),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Crear familia' })).toBeDisabled()
-    fireEvent.submit(screen.getByRole('button', { name: 'Crear familia' }).closest('form') as HTMLFormElement)
+    fireEvent.submit(formularioDelModal())
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/familias')).toHaveLength(0)
     // Y "manda a su detalle": el aviso trae el enlace a la familia que ya tiene la referencia.
     const enlace = screen.getByRole('link', { name: 'Ver el detalle de su familia' })
@@ -657,7 +698,7 @@ describe('NuevaFamilia — crear', () => {
     await armarYPrevisualizar()
     apiPostMock.mockImplementation(() => new Promise(() => {}))
 
-    const formulario = screen.getByRole('button', { name: 'Crear familia' }).closest('form') as HTMLFormElement
+    const formulario = formularioDelModal()
     await act(async () => {
       fireEvent.submit(formulario)
       fireEvent.submit(formulario)
