@@ -300,7 +300,7 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
         var cuerpo = JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal("no_encontrado", cuerpo.GetProperty("codigo").GetString());
-        Assert.Contains("No existe el gasto 999999", cuerpo.GetProperty("mensaje").GetString());
+        Assert.Contains("No existe el gasto 999999", cuerpo.GetProperty("title").GetString());
     }
 
     /// <summary>El Location del alta resuelve: mismas líneas que la respuesta del POST, mismo alcance que el listado.</summary>
