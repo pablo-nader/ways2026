@@ -19,7 +19,11 @@ vi.mock('./cliente', () => ({
 }))
 
 const {
+  COLUMNAS_ORDENABLES_DE_REPORTE_DE_ARTICULOS,
+  COLUMNAS_ORDENABLES_DE_TESORERIA,
   clienteDeReportes,
+  esColumnaOrdenableDeReporteDeArticulos,
+  esColumnaOrdenableDeTesoreria,
   construirQueryDeBreakdown,
   construirQueryDeBreakdownConPv,
   construirQueryDeHistoricoDeCajas,
@@ -283,6 +287,109 @@ describe('clienteDeReportes.historicoDeCajas / clienteDeReportes.tesoreria', () 
     await clienteDeReportes.tesoreria(filtrosTesoreriaFixture())
 
     expect(apiGetMock).toHaveBeenCalledWith(expect.stringMatching(/^\/reportes\/tesoreria\?idEmpresa=1&idPuntoVenta=7/))
+  })
+})
+
+describe('orden de /reportes/tesoreria', () => {
+  it('sin orden la consulta no lleva orden ni dirección (el libro sale en orden de cadena)', () => {
+    const parametros = new URLSearchParams(construirQueryDeTesoreria(filtrosTesoreriaFixture()).slice(1))
+
+    expect(parametros.has('orden')).toBe(false)
+    expect(parametros.has('direccion')).toBe(false)
+  })
+
+  it('con orden lleva orden y dirección junto con el resto de los filtros y la página', () => {
+    const parametros = new URLSearchParams(
+      construirQueryDeTesoreria(filtrosTesoreriaFixture({ pagina: 3 }), { columna: 'puntoVenta', direccion: 'descendente' }).slice(1),
+    )
+
+    expect(parametros.get('orden')).toBe('puntoVenta')
+    expect(parametros.get('direccion')).toBe('descendente')
+    expect(parametros.get('pagina')).toBe('3')
+    expect(parametros.get('idEmpresa')).toBe('1')
+    expect(parametros.get('idPuntoVenta')).toBe('7')
+  })
+
+  it('el cliente pasa el orden al query', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.tesoreria(filtrosTesoreriaFixture(), { columna: 'fecha', direccion: 'ascendente' })
+
+    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('orden=fecha&direccion=ascendente'))
+  })
+
+  it('el export nunca lleva el orden', () => {
+    const ruta = rutasDeExportacion.tesoreria(filtrosTesoreriaFixture())
+
+    expect(ruta).not.toContain('orden=')
+    expect(ruta).not.toContain('direccion=')
+  })
+
+  it('las columnas ordenables son exactamente las claves que acepta el servidor', () => {
+    expect([...COLUMNAS_ORDENABLES_DE_TESORERIA]).toEqual([
+      'tipo',
+      'inicio',
+      'ingreso',
+      'egreso',
+      'final',
+      'concepto',
+      'puntoVenta',
+      'empleado',
+      'fecha',
+    ])
+    expect(esColumnaOrdenableDeTesoreria('final')).toBe(true)
+    expect(esColumnaOrdenableDeTesoreria('saldo')).toBe(false)
+  })
+})
+
+describe('orden de /reportes/articulos', () => {
+  it('sin orden la consulta no lleva orden ni dirección', () => {
+    const parametros = new URLSearchParams(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture()).slice(1))
+
+    expect(parametros.has('orden')).toBe(false)
+    expect(parametros.has('direccion')).toBe(false)
+  })
+
+  it('con orden lleva orden y dirección junto con los filtros y la página', () => {
+    const parametros = new URLSearchParams(
+      construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idArea: 3, pagina: 2 }), {
+        columna: 'proveedor',
+        direccion: 'descendente',
+      }).slice(1),
+    )
+
+    expect(parametros.get('orden')).toBe('proveedor')
+    expect(parametros.get('direccion')).toBe('descendente')
+    expect(parametros.get('idArea')).toBe('3')
+    expect(parametros.get('pagina')).toBe('2')
+  })
+
+  it('el cliente pasa el orden al query', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.articulos(filtrosReporteDeArticulosFixture(), { columna: 'codigo', direccion: 'ascendente' })
+
+    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('orden=codigo&direccion=ascendente'))
+  })
+
+  it('el export nunca lleva el orden: sale siempre por nombre', () => {
+    const ruta = rutasDeExportacion.articulos(filtrosReporteDeArticulosFixture({ idArea: 3 }))
+
+    expect(ruta).not.toContain('orden=')
+    expect(ruta).not.toContain('direccion=')
+  })
+
+  it('las columnas ordenables son exactamente las claves que acepta el servidor', () => {
+    expect([...COLUMNAS_ORDENABLES_DE_REPORTE_DE_ARTICULOS]).toEqual([
+      'codigo',
+      'nombre',
+      'area',
+      'categoria',
+      'marca',
+      'grupo',
+      'proveedor',
+      'estado',
+    ])
+    expect(esColumnaOrdenableDeReporteDeArticulos('area')).toBe(true)
+    expect(esColumnaOrdenableDeReporteDeArticulos('acciones')).toBe(false)
   })
 })
 

@@ -33,6 +33,23 @@ import type {
   VentasPorVendedor,
 } from './tipos'
 
+/** Orden pedido al servidor por un listado paginado: `null` = el orden de siempre del endpoint. Las
+ * direcciones son las del servidor (`orden` + `direccion`). */
+export type OrdenDeServidor<Columna extends string> = {
+  columna: Columna
+  direccion: 'ascendente' | 'descendente'
+} | null
+
+/** Agrega `orden` y `direccion` al query solo cuando hay orden: sin él el endpoint responde en su orden de siempre. */
+export function agregarOrdenAlQuery<Columna extends string>(
+  parametros: URLSearchParams,
+  orden: OrdenDeServidor<Columna>,
+): void {
+  if (orden === null) return
+  parametros.set('orden', orden.columna)
+  parametros.set('direccion', orden.direccion)
+}
+
 export type FiltrosDeReporte = {
   idEmpresa: number
   idPuntoVenta: number | null
@@ -127,8 +144,8 @@ export const clienteDeReportes = {
     api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
   historicoDeCajas: (filtros: FiltrosDeHistoricoDeCajas) =>
     api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros)}`),
-  tesoreria: (filtros: FiltrosDeTesoreria) =>
-    api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros)}`),
+  tesoreria: (filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null) =>
+    api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros, orden)}`),
   cuentasDeTesoreria: (idEmpresa: number) =>
     api.get<CuentasDeLaEmpresa>(`/reportes/tesoreria/cuentas?idEmpresa=${idEmpresa}`),
   libroDeCuenta: (idCuenta: number, filtros: FiltrosDeLibroDeCuenta) =>
@@ -158,8 +175,8 @@ export const clienteDeReportes = {
   /** stage-13-stock-inteligente (Slice 7): tile de Tablero, mismo criterio que `vencimientosResumen`. */
   reposicionResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
-  articulos: (filtros: FiltrosDeReporteDeArticulos) =>
-    api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros)}`),
+  articulos: (filtros: FiltrosDeReporteDeArticulos, orden: OrdenDeReporteDeArticulos = null) =>
+    api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros, orden)}`),
   ventasPorArticulo: (filtros: FiltrosDeVentasPorArticulo) =>
     api.get<VentasPorArticulo>(`/reportes/ventas/por-articulo${construirQueryDeVentasPorArticulo(filtros)}`),
   ventasPorHora: (filtros: FiltrosDeVentasPorHora) =>
@@ -249,8 +266,32 @@ function construirQueryDeAlcanceDeTesoreria(
   return `?${parametros.toString()}`
 }
 
-export function construirQueryDeTesoreria(filtros: FiltrosDeTesoreria): string {
+/** Claves de `orden` que acepta `GET /api/reportes/tesoreria`: una por cada columna de datos del libro. */
+export const COLUMNAS_ORDENABLES_DE_TESORERIA = [
+  'tipo',
+  'inicio',
+  'ingreso',
+  'egreso',
+  'final',
+  'concepto',
+  'puntoVenta',
+  'empleado',
+  'fecha',
+] as const
+
+export type ColumnaOrdenableDeTesoreria = (typeof COLUMNAS_ORDENABLES_DE_TESORERIA)[number]
+
+export type OrdenDeTesoreria = OrdenDeServidor<ColumnaOrdenableDeTesoreria>
+
+export function esColumnaOrdenableDeTesoreria(columna: string): columna is ColumnaOrdenableDeTesoreria {
+  return (COLUMNAS_ORDENABLES_DE_TESORERIA as readonly string[]).includes(columna)
+}
+
+/** Sin `orden` el libro llega en su orden de cadena (id ascendente). Con `orden`, cada fila conserva el
+ * inicio y el final que el servidor persistió: ordenar no recalcula saldos. */
+export function construirQueryDeTesoreria(filtros: FiltrosDeTesoreria, orden: OrdenDeTesoreria = null): string {
   const parametros = new URLSearchParams(construirQueryDeAlcanceDeTesoreria(filtros).slice(1))
+  agregarOrdenAlQuery(parametros, orden)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
@@ -429,9 +470,34 @@ function construirQueryDeAlcanceDeArticulos(
   return query === '' ? '' : `?${query}`
 }
 
-export function construirQueryDeReporteDeArticulos(filtros: FiltrosDeReporteDeArticulos): string {
+/** Claves de `orden` que acepta `GET /api/reportes/articulos`: una por cada columna de datos del reporte. */
+export const COLUMNAS_ORDENABLES_DE_REPORTE_DE_ARTICULOS = [
+  'codigo',
+  'nombre',
+  'area',
+  'categoria',
+  'marca',
+  'grupo',
+  'proveedor',
+  'estado',
+] as const
+
+export type ColumnaOrdenableDeReporteDeArticulos = (typeof COLUMNAS_ORDENABLES_DE_REPORTE_DE_ARTICULOS)[number]
+
+export type OrdenDeReporteDeArticulos = OrdenDeServidor<ColumnaOrdenableDeReporteDeArticulos>
+
+export function esColumnaOrdenableDeReporteDeArticulos(columna: string): columna is ColumnaOrdenableDeReporteDeArticulos {
+  return (COLUMNAS_ORDENABLES_DE_REPORTE_DE_ARTICULOS as readonly string[]).includes(columna)
+}
+
+/** `orden` solo viaja en el listado: el export (que usa el builder de alcance) sale siempre por nombre. */
+export function construirQueryDeReporteDeArticulos(
+  filtros: FiltrosDeReporteDeArticulos,
+  orden: OrdenDeReporteDeArticulos = null,
+): string {
   const alcance = construirQueryDeAlcanceDeArticulos(filtros)
   const parametros = new URLSearchParams(alcance === '' ? '' : alcance.slice(1))
+  agregarOrdenAlQuery(parametros, orden)
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
