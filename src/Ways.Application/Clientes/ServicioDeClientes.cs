@@ -30,8 +30,14 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
         bool incluirEliminados = false,
         int pagina = 1,
         int tamanio = 25,
+        FiltrosDeClientes? filtros = null,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        // Antes de leer nada: una clave o dirección de orden desconocida es un pedido inválido aunque no haya filas.
+        var ordenPedido = OrdenDeClientes.Interpretar(orden, direccion);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -57,10 +63,14 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
                 (c.Apellido != null && Coincide(c.Nombre + " " + c.Apellido, patron)));
         }
 
+        if (filtros is not null)
+        {
+            query = OrdenDeClientes.Filtrar(query, filtros);
+        }
+
         var total = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderBy(c => c.Numero)
+        var items = await OrdenDeClientes.Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(c => new ClienteListado(

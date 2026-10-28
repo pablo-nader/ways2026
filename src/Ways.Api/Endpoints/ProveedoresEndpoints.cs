@@ -19,12 +19,34 @@ public static class ProveedoresEndpoints
             int? pagina,
             int? tamanio,
             string? cuit,
+            string? razonSocial,
+            string? cuitContiene,
+            string? telefono,
+            string? email,
+            decimal? margenDesde,
+            decimal? margenHasta,
+            bool? activo,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(busqueda, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, cuit, ct))
+            servicio.ListarAsync(
+                busqueda,
+                incluirEliminados ?? false,
+                pagina ?? 1,
+                tamanio ?? 25,
+                cuit,
+                new FiltrosDeProveedores(razonSocial, cuitContiene, telefono, email, margenDesde, margenHasta, activo),
+                orden,
+                direccion,
+                ct))
         .WithSummary(
             "Lista proveedores con búsqueda y paginado. cuit filtra por igualdad exacta comparando solo " +
             "dígitos (con o sin guiones y espacios) y se combina con los demás filtros; si no tiene 11 " +
-            "dígitos responde 400 cuit_invalido.");
+            "dígitos responde 400 cuit_invalido. Filtros por columna: razonSocial (también mira el nombre de " +
+            "fantasía), cuitContiene, telefono y email contienen el texto; margenDesde y margenHasta son un rango " +
+            "inclusivo; activo es exacto. orden (razonSocial, cuit, telefono, email, margen, estado) y direccion " +
+            "(ascendente, descendente) ordenan todo el resultado antes de paginar; un valor desconocido responde " +
+            "400 orden_invalido o direccion_invalida.");
 
         grupo.MapGet("/{id:int}", (ServicioDeProveedores servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))

@@ -18,9 +18,30 @@ public static class PersonalEndpoints
             string? busqueda,
             int? pagina,
             int? tamanio,
+            string? nombre,
+            decimal? valorHoraDesde,
+            decimal? valorHoraHasta,
+            decimal? saldoDesde,
+            decimal? saldoHasta,
+            string? usuario,
+            string? cliente,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(busqueda, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista el personal con búsqueda y paginado, con el nombre del usuario y del cliente vinculados.");
+            servicio.ListarAsync(
+                busqueda,
+                pagina ?? 1,
+                tamanio ?? 25,
+                new FiltrosDePersonal(nombre, valorHoraDesde, valorHoraHasta, saldoDesde, saldoHasta, usuario, cliente),
+                orden,
+                direccion,
+                ct))
+        .WithSummary(
+            "Lista el personal con búsqueda y paginado, con el nombre del usuario y del cliente vinculados. " +
+            "Filtros por columna: nombre (también mira el documento), usuario y cliente contienen el texto; " +
+            "valorHoraDesde/valorHoraHasta y saldoDesde/saldoHasta son rangos inclusivos. orden (nombre, valorHora, " +
+            "saldo, usuario, cliente) y direccion (ascendente, descendente) ordenan todo el resultado antes de " +
+            "paginar; un valor desconocido responde 400 orden_invalido o direccion_invalida.");
 
         lectura.MapGet("/{id:int}", (ServicioDePersonal servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
