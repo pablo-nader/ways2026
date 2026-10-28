@@ -552,7 +552,7 @@ describe('CompraEditor — borradores que arrancan de un origen y referencia que
 
   it('un borrador desde un pago aplica el modo y las percepciones del proveedor al elegir el tipo', async () => {
     mockearReferencia([proveedorFixture()], (ruta) =>
-      ruta === '/gastos/administracion/5' ? Promise.resolve(pago) : undefined,
+      ruta === '/pagos/administracion/5' ? Promise.resolve(pago) : undefined,
     )
     const usuario = userEvent.setup()
 

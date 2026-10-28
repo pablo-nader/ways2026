@@ -1,19 +1,36 @@
 import { useState } from 'react'
+import { errorDeLineasDePago, type LineaDePagoEditable } from '../api/lineasDePago'
 import {
   aFormularioDeEdicion,
+  aSolicitudDeEdicionConLineas,
   aSolicitudDeEdicionDePago,
   categoriaAlElegirProveedorAdministracion,
   formularioDeEdicionCompleto,
+  lineasIniciales,
 } from '../api/registroDePagos'
 import type { FormularioDeEdicionDePago, PagoEditable } from '../api/registroDePagos'
 import { CATEGORIAS_PAGO } from '../api/tipos'
-import type { AreaListado, MedioPagoListado, OpcionDeProveedor, SolicitudDeEdicionDePago } from '../api/tipos'
+import type {
+  AreaListado,
+  LineaDePagoListada,
+  MedioPagoListado,
+  OpcionDeProveedor,
+  SolicitudDeEdicionDePago,
+  SolicitudDeEdicionDePagoConLineas,
+} from '../api/tipos'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { EditorDeLineasDePago } from '../componentes/EditorDeLineasDePago'
 import { Modal } from '../componentes/Modal'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 
-type Props = {
-  pago: PagoEditable
+/** Cómo entrega la solicitud el modal. El POS (`PagosDelTurno`) edita un solo medio contra `/api/gastos`; la
+ * administración (`Pagos`) edita el reparto por medio contra `/api/pagos/administracion`. */
+type Salida =
+  | { onGuardar: (solicitud: SolicitudDeEdicionDePago) => void; onGuardarConLineas?: undefined }
+  | { onGuardarConLineas: (solicitud: SolicitudDeEdicionDePagoConLineas) => void; onGuardar?: undefined }
+
+type Props = Salida & {
+  pago: PagoEditable & { lineas?: readonly LineaDePagoListada[] }
   medios: MedioPagoListado[]
   proveedores: OpcionDeProveedor[]
   areas: AreaListado[]
@@ -25,7 +42,6 @@ type Props = {
   guardando: boolean
   /** Error de la escritura, dueño: la pantalla. */
   error: string
-  onGuardar: (solicitud: SolicitudDeEdicionDePago) => void
   onCancelar: () => void
 }
 
@@ -45,10 +61,13 @@ export function ModalDeEdicionDePago({
   guardando,
   error,
   onGuardar,
+  onGuardarConLineas,
   onCancelar,
 }: Props) {
   const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
+  const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
   const [errorLocal, setErrorLocal] = useState('')
+  const conLineas = onGuardarConLineas !== undefined
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
   // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del pago en silencio: la
@@ -68,12 +87,28 @@ export function ModalDeEdicionDePago({
 
   function guardar() {
     if (guardando) return
+
+    if (onGuardarConLineas !== undefined) {
+      const errorDeLineas = errorDeLineasDePago(lineas)
+      if (formulario.concepto.trim() === '') {
+        setErrorLocal('Completá el concepto.')
+        return
+      }
+      if (errorDeLineas !== null) {
+        setErrorLocal(errorDeLineas)
+        return
+      }
+      setErrorLocal('')
+      onGuardarConLineas(aSolicitudDeEdicionConLineas(formulario, lineas))
+      return
+    }
+
     if (!formularioDeEdicionCompleto(formulario)) {
       setErrorLocal('Completá el medio de pago, el concepto y un importe mayor a 0.')
       return
     }
     setErrorLocal('')
-    onGuardar(aSolicitudDeEdicionDePago(formulario))
+    onGuardar?.(aSolicitudDeEdicionDePago(formulario))
   }
 
   const pie = (
@@ -102,37 +137,47 @@ export function ModalDeEdicionDePago({
       {(error || errorLocal) && <div className="alert alert-danger py-2 px-3 small">{error || errorLocal}</div>}
 
       <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="pago-edicion-importe">
-            Importe
-          </label>
-          <CampoImporte
-            id="pago-edicion-importe"
-            className="form-control"
-            valor={formulario.importe}
-            onChange={(v) => setFormulario((prev) => ({ ...prev, importe: v }))}
-          />
-        </div>
+        {conLineas ? (
+          <div className="col-12">
+            <EditorDeLineasDePago lineas={lineas} medios={medios} onCambio={setLineas} />
+          </div>
+        ) : (
+          <>
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pago-edicion-importe">
+                Importe
+              </label>
+              <CampoImporte
+                id="pago-edicion-importe"
+                className="form-control"
+                valor={formulario.importe}
+                onChange={(v) => setFormulario((prev) => ({ ...prev, importe: v }))}
+              />
+            </div>
 
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="pago-edicion-medio-pago">
-            Medio de pago
-          </label>
-          <select
-            id="pago-edicion-medio-pago"
-            className="form-select"
-            value={formulario.idMedioPago}
-            onChange={(e) => setFormulario((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))}
-          >
-            <option value="">Elegir…</option>
-            {medioFaltante && <option value={formulario.idMedioPago}>Medio #{formulario.idMedioPago} (no disponible)</option>}
-            {medios.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pago-edicion-medio-pago">
+                Medio de pago
+              </label>
+              <select
+                id="pago-edicion-medio-pago"
+                className="form-select"
+                value={formulario.idMedioPago}
+                onChange={(e) =>
+                  setFormulario((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))
+                }
+              >
+                <option value="">Elegir…</option>
+                {medioFaltante && <option value={formulario.idMedioPago}>Medio #{formulario.idMedioPago} (no disponible)</option>}
+                {medios.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
 
         <div className="col-md-4">
           <label className="form-label" htmlFor="pago-edicion-categoria">

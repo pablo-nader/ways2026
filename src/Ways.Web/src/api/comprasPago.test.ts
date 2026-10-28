@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { fechaDeHoyParaPago, prepararPagoDeCompra, sePuedePagarLaCompra, type PagoDeCompraFormulario } from './compras'
+import type { LineaDePagoEditable } from './lineasDePago'
 
 const HOY = '2026-10-03'
 
+function linea(sobrescribir: Partial<LineaDePagoEditable> = {}): LineaDePagoEditable {
+  return { clave: 1, idMedioPago: 7, importe: 400, referencia: '', ...sobrescribir }
+}
+
 function formulario(sobrescribir: Partial<PagoDeCompraFormulario> = {}): PagoDeCompraFormulario {
-  return { importe: 400, fecha: HOY, idMedioPago: 7, concepto: '', ...sobrescribir }
+  return { lineas: [linea()], fecha: HOY, concepto: '', ...sobrescribir }
 }
 
 function error(f: PagoDeCompraFormulario, saldo = 1000): string | null {
@@ -13,28 +18,49 @@ function error(f: PagoDeCompraFormulario, saldo = 1000): string | null {
 }
 
 describe('prepararPagoDeCompra', () => {
-  it('arma la solicitud con el concepto en blanco como null', () => {
+  it('arma la solicitud con el concepto en blanco como null y la referencia en blanco como null', () => {
     expect(prepararPagoDeCompra(formulario({ concepto: '   ' }), 1000, HOY)).toEqual({
-      solicitud: { fecha: HOY, importe: 400, idMedioPago: 7, concepto: null },
+      solicitud: { fecha: HOY, lineas: [{ idMedioPago: 7, importe: 400, referencia: null }], concepto: null },
     })
   })
 
   it('recorta el concepto escrito', () => {
     expect(prepararPagoDeCompra(formulario({ concepto: '  Saldo final ' }), 1000, HOY)).toEqual({
-      solicitud: { fecha: HOY, importe: 400, idMedioPago: 7, concepto: 'Saldo final' },
+      solicitud: { fecha: HOY, lineas: [{ idMedioPago: 7, importe: 400, referencia: null }], concepto: 'Saldo final' },
     })
   })
 
-  it('acepta pagar exactamente el saldo pendiente y una fecha retroactiva', () => {
-    expect(error(formulario({ importe: 1000, fecha: '2026-09-01' }))).toBeNull()
+  it('manda una línea por medio, en orden, con su referencia recortada', () => {
+    const f = formulario({
+      lineas: [linea({ clave: 1, idMedioPago: 7, importe: 600 }), linea({ clave: 2, idMedioPago: 9, importe: 400, referencia: ' Op 55 ' })],
+    })
+    expect(prepararPagoDeCompra(f, 1000, HOY)).toEqual({
+      solicitud: {
+        fecha: HOY,
+        lineas: [
+          { idMedioPago: 7, importe: 600, referencia: null },
+          { idMedioPago: 9, importe: 400, referencia: 'Op 55' },
+        ],
+        concepto: null,
+      },
+    })
   })
 
-  it.each([null, 0, -5])('rechaza un importe que no es positivo (%s)', (importe) => {
-    expect(error(formulario({ importe }))).toBe('Ingresá un importe mayor a 0.')
+  it('acepta pagar exactamente el saldo pendiente repartido en varias líneas y una fecha retroactiva', () => {
+    const f = formulario({
+      lineas: [linea({ clave: 1, importe: 600.5 }), linea({ clave: 2, idMedioPago: 9, importe: 399.5 })],
+      fecha: '2026-09-01',
+    })
+    expect(error(f)).toBeNull()
   })
 
-  it('rechaza un importe mayor al saldo pendiente', () => {
-    expect(error(formulario({ importe: 1000.01 }))).toBe('El importe no puede superar el saldo pendiente de la compra.')
+  it.each([null, 0, -5])('rechaza una línea con importe que no es positivo (%s)', (importe) => {
+    expect(error(formulario({ lineas: [linea({ importe })] }))).toBe('Línea 1: ingresá un importe mayor a 0.')
+  })
+
+  it('rechaza un total mayor al saldo pendiente, aunque cada línea sola no lo supere', () => {
+    const f = formulario({ lineas: [linea({ clave: 1, importe: 600 }), linea({ clave: 2, importe: 400.01 })] })
+    expect(error(f)).toBe('El total no puede superar el saldo pendiente de la compra.')
   })
 
   it('rechaza una fecha vacía y una fecha futura', () => {
@@ -42,8 +68,9 @@ describe('prepararPagoDeCompra', () => {
     expect(error(formulario({ fecha: '2026-10-04' }))).toBe('La fecha del pago no puede ser futura.')
   })
 
-  it('rechaza un pago sin medio de pago', () => {
-    expect(error(formulario({ idMedioPago: null }))).toBe('Elegí el medio de pago.')
+  it('rechaza una línea sin medio de pago, nombrando su número', () => {
+    const f = formulario({ lineas: [linea({ clave: 1 }), linea({ clave: 2, idMedioPago: '' })] })
+    expect(error(f)).toBe('Línea 2: elegí el medio de pago.')
   })
 })
 

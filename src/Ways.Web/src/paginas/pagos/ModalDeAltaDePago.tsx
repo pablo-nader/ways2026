@@ -10,7 +10,7 @@ import type {
   PuntoVentaListado,
 } from '../../api/tipos'
 import { CampoFecha } from '../../componentes/CampoFecha'
-import { CampoImporte } from '../../componentes/CampoImporte'
+import { EditorDeLineasDePago } from '../../componentes/EditorDeLineasDePago'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
 import { etiquetaDeProveedor } from '../articulos/helpers'
@@ -232,27 +232,6 @@ export function ModalDeAltaDePago({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="pago-admin-medio-pago">
-              Medio de pago
-            </label>
-            <select
-              id="pago-admin-medio-pago"
-              className="form-select"
-              value={valor.idMedioPago}
-              onChange={(e) =>
-                onCambio((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))
-              }
-            >
-              <option value="">Elegir…</option>
-              {medios.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-md-4">
             <label className="form-label" htmlFor="pago-admin-factura">
               N° de factura (opcional)
             </label>
@@ -265,15 +244,11 @@ export function ModalDeAltaDePago({
             />
           </div>
 
-          <div className="col-md-4">
-            <label className="form-label" htmlFor="pago-admin-importe">
-              Importe
-            </label>
-            <CampoImporte
-              id="pago-admin-importe"
-              className="form-control"
-              valor={valor.importe}
-              onChange={(importe) => onCambio((prev) => ({ ...prev, importe }))}
+          <div className="col-12">
+            <EditorDeLineasDePago
+              lineas={valor.lineas}
+              medios={medios}
+              onCambio={(cambios) => onCambio((prev) => ({ ...prev, lineas: cambios(prev.lineas) }))}
             />
           </div>
         </fieldset>

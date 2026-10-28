@@ -104,6 +104,19 @@ const medioCuentaCorriente: MedioPagoListado = {
   porcentajeFacturacion: 0,
 }
 
+const medioTransferencia: MedioPagoListado = {
+  id: 4,
+  nombre: 'Transferencia',
+  activo: true,
+  idEmpresa: null,
+  orden: 3,
+  comportamiento: 'Electronico',
+  admiteVuelto: false,
+  requiereReferencia: false,
+  recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
+}
+
 function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
   return { id: 1, nombre: 'General', activo: true, idEmpresa: null, orden: 1, ...sobrescribir }
 }
@@ -134,6 +147,7 @@ function pagoFixture(sobrescribir: Partial<PagoDeAdministracionListado> = {}): P
     idComprobanteCompra: null,
     turnoAbierto: false,
     idMovimientoPersonal: null,
+    lineas: [{ idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: sobrescribir.importe ?? 1000, referencia: null }],
     ...sobrescribir,
   }
 }
@@ -156,7 +170,7 @@ function mockearRutas(opciones: {
     if (ruta === '/catalogos/medios-pago') return Promise.resolve(opciones.medios ?? [medioEfectivo, medioCuentaCorriente])
     if (ruta === '/catalogos/areas') return Promise.resolve(opciones.areas ?? [areaFixture()])
     if (ruta === '/proveedores/opciones') return Promise.resolve(opciones.proveedores ?? [proveedorFixture()])
-    if (ruta.startsWith('/gastos/administracion')) return Promise.resolve(opciones.pagina ?? paginaFixture())
+    if (ruta.startsWith('/pagos/administracion')) return Promise.resolve(opciones.pagina ?? paginaFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -184,6 +198,27 @@ describe('Pagos (administración) — carga inicial', () => {
   })
 })
 
+describe('Pagos (administración) — columna de medios', () => {
+  it('un pago con varios medios lista el reparto; uno con un solo medio muestra el medio', async () => {
+    const repartido = pagoFixture({
+      id: 40,
+      concepto: 'Flete',
+      importe: 1000,
+      lineas: [
+        { idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: 600, referencia: null },
+        { idItem: 2, idMedioPago: 4, nombreMedioPago: 'Transferencia', importe: 400, referencia: null },
+      ],
+    })
+    const simple = pagoFixture({ id: 41, concepto: 'Alquiler', nombreMedioPago: 'Efectivo' })
+    mockearRutas({ pagina: paginaFixture([repartido, simple]) })
+    renderPagos()
+
+    expect(await screen.findByText(/Efectivo \$\s600,00 · Transferencia \$\s400,00/)).toBeInTheDocument()
+    const filaSimple = screen.getByText('Alquiler').closest('tr')!
+    expect(within(filaSimple).getByText('Efectivo')).toBeInTheDocument()
+  })
+})
+
 describe('Pagos (administración) — medio de pago', () => {
   it('excluye del selector del formulario los medios de comportamiento CuentaCorriente', async () => {
     mockearRutas({})
@@ -191,6 +226,7 @@ describe('Pagos (administración) — medio de pago', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
 
     expect(screen.getByRole('option', { name: 'Efectivo' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Cuenta corriente' })).not.toBeInTheDocument()
@@ -209,6 +245,7 @@ describe('Pagos (administración) — proveedor cambia la categoría', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
     expect(categoriaDelFormulario()).toHaveValue('Otros')
 
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
@@ -222,6 +259,7 @@ describe('Pagos (administración) — proveedor cambia la categoría', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
 
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Sin proveedor')
@@ -256,6 +294,7 @@ describe('Pagos (administración) — fecha', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
 
     const maniana = new Date()
     maniana.setDate(maniana.getDate() + 1)
@@ -264,12 +303,12 @@ describe('Pagos (administración) — fecha', () => {
     await userEvent.clear(campoFecha)
     await userEvent.type(campoFecha, `${dia}/${mes}/${anio}`)
     await userEvent.type(screen.getByLabelText('Concepto'), 'Pago futuro')
-    await userEvent.type(screen.getByLabelText('Importe'), '500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     expect(campoFecha).toHaveClass('is-invalid')
-    expect(await screen.findByText('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')).toBeInTheDocument()
+    expect(await screen.findByText('Completá fecha, empresa, concepto y, en cada medio de pago, el medio y un importe mayor a 0.')).toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 })
@@ -278,9 +317,10 @@ describe('Pagos (administración) — alta', () => {
   async function abrirYCompletarFormulario() {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
     await userEvent.type(screen.getByLabelText('Concepto'), 'Alquiler de septiembre')
-    await userEvent.type(screen.getByLabelText('Importe'), '1500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '1500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
   }
 
   it('arma el cuerpo del POST con fecha, empresa y medio de pago elegidos, sin turno', async () => {
@@ -293,18 +333,63 @@ describe('Pagos (administración) — alta', () => {
 
     await waitFor(() =>
       expect(apiPostMock).toHaveBeenCalledWith(
-        '/gastos/administracion',
+        '/pagos/administracion',
         expect.objectContaining({
           idEmpresa: 1,
           idPuntoVenta: null,
           categoria: 'Otros',
           concepto: 'Alquiler de septiembre',
-          idMedioPago: 1,
-          importe: 1500,
+          lineas: [{ idMedioPago: 1, importe: 1500, referencia: null }],
           idComprobanteCompra: null,
         }),
       ),
     )
+  })
+
+  it('reparte el pago entre varios medios: una línea por medio, con su importe y su referencia', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente, medioTransferencia] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    await screen.findByRole('option', { name: 'Transferencia' })
+    await userEvent.type(screen.getByLabelText('Concepto'), 'Alquiler de septiembre')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '600')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar medio' }))
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 2'), 'Transferencia')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 2'), '400')
+    await userEvent.type(screen.getByLabelText('Referencia de la línea 2'), 'Op 31')
+    expect(screen.getByText(/Total: \$\s1\.000,00/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith(
+        '/pagos/administracion',
+        expect.objectContaining({
+          lineas: [
+            { idMedioPago: 1, importe: 600, referencia: null },
+            { idMedioPago: 4, importe: 400, referencia: 'Op 31' },
+          ],
+        }),
+      ),
+    )
+  })
+
+  it('una línea inválida se rechaza nombrando la línea, sin llegar al servidor', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente, medioTransferencia] })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
+    await screen.findByRole('option', { name: 'Transferencia' })
+    await userEvent.type(screen.getByLabelText('Concepto'), 'Alquiler')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '600')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar medio' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    expect(await screen.findByText('Línea 2: elegí el medio de pago.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 
   it('una fecha retroactiva elegida por el admin viaja tal cual en el POST', async () => {
@@ -316,7 +401,7 @@ describe('Pagos (administración) — alta', () => {
     fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '15/01/2026' } })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ fecha: '2026-01-15' })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ fecha: '2026-01-15' })))
   })
 
   it('al confirmar con éxito, limpia y cierra el formulario, y refresca el listado', async () => {
@@ -377,11 +462,12 @@ describe('Pagos (administración) — alta', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     await screen.findByLabelText('Concepto')
-    await userEvent.type(screen.getByLabelText('Importe'), '1500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '1500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')
+    await screen.findByText('Completá fecha, empresa, concepto y, en cada medio de pago, el medio y un importe mayor a 0.')
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
@@ -418,11 +504,11 @@ describe('Pagos (administración) — alta', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo pago' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Nuevo pago' })
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
-    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Completá fecha, empresa, medio de pago, concepto e importe')
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Completá fecha, empresa, concepto')
 
     await userEvent.type(within(dialogo).getByLabelText('Concepto'), 'Alquiler')
-    await userEvent.type(within(dialogo).getByLabelText('Importe'), '1500')
-    await userEvent.selectOptions(within(dialogo).getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(within(dialogo).getByLabelText('Importe de la línea 1'), '1500')
+    await userEvent.selectOptions(within(dialogo).getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
 
     expect(await within(dialogo).findByText('La fecha del pago no puede ser futura.')).toBeInTheDocument()
@@ -538,9 +624,10 @@ describe('Pagos (administración) — área del alta', () => {
   }
 
   async function completarYRegistrar() {
+    await screen.findByRole('option', { name: 'Efectivo' }) // espera al dato: los medios llegan después del modal
     await userEvent.type(screen.getByLabelText('Concepto'), 'Alquiler de septiembre')
-    await userEvent.type(screen.getByLabelText('Importe'), '1500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '1500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
   }
 
@@ -557,7 +644,7 @@ describe('Pagos (administración) — área del alta', () => {
 
     await completarYRegistrar()
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 10 })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ idArea: 10 })))
   })
 
   it('el área elegida a mano es la que viaja, y al reabrir el formulario vuelve a la primera activa', async () => {
@@ -569,7 +656,7 @@ describe('Pagos (administración) — área del alta', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
     await completarYRegistrar()
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 11 })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ idArea: 11 })))
 
     await screen.findByText('Pago registrado.')
     await abrirFormulario()
@@ -578,7 +665,7 @@ describe('Pagos (administración) — área del alta', () => {
     // El select puede mostrar la primera opción aunque el estado esté vacío: lo que cuenta es lo que viaja.
     await completarYRegistrar()
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
-    expect(apiPostMock).toHaveBeenLastCalledWith('/gastos/administracion', expect.objectContaining({ idArea: 10 }))
+    expect(apiPostMock).toHaveBeenLastCalledWith('/pagos/administracion', expect.objectContaining({ idArea: 10 }))
   })
 
   it('si las áreas llegan con el formulario ya abierto, el default se completa cuando aterrizan', async () => {
@@ -615,7 +702,7 @@ describe('Pagos (administración) — área del alta', () => {
     expect(select).toHaveValue('')
 
     await completarYRegistrar()
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ idArea: null })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ idArea: null })))
   })
 })
 
@@ -682,7 +769,7 @@ describe('Pagos (administración) — vincular a una compra existente', () => {
       if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo, medioCuentaCorriente])
       if (ruta === '/catalogos/areas') return Promise.resolve([areaFixture()])
       if (ruta === '/proveedores/opciones') return Promise.resolve([proveedorFixture()])
-      if (ruta.startsWith('/gastos/administracion')) return Promise.resolve(opciones.pagina ?? paginaFixture())
+      if (ruta.startsWith('/pagos/administracion')) return Promise.resolve(opciones.pagina ?? paginaFixture())
       if (ruta.startsWith('/compras')) {
         const items = opciones.compras ?? [compraListadaFixture()]
         return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 25 })
@@ -744,7 +831,7 @@ describe('Pagos (administración) — vincular a una compra existente', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/3/vincular-compra', { idComprobanteCompra: 9 }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/3/vincular-compra', { idComprobanteCompra: 9 }))
     expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
     // El picker se cierra tras el éxito.
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
@@ -825,7 +912,7 @@ describe('Pagos (administración) — edición y baja', () => {
   }
 
   function llamadasAlListado() {
-    return apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/gastos/administracion')).length
+    return apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/pagos/administracion')).length
   }
 
   it('editar abre el modal precargado y guarda con PUT /pagos/administracion/{id}, refrescando el listado', async () => {
@@ -836,22 +923,60 @@ describe('Pagos (administración) — edición y baja', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
     const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
     expect(d.getByLabelText('Concepto')).toHaveValue('Alquiler')
-    expect(d.getByLabelText('Importe')).toHaveValue('1.000,00')
+    expect(d.getByLabelText('Importe de la línea 1')).toHaveValue('1.000,00')
+    await d.findByRole('option', { name: 'Efectivo' })
+    expect(d.getByLabelText('Medio de la línea 1')).toHaveValue('1')
 
-    await userEvent.clear(d.getByLabelText('Importe'))
-    await userEvent.type(d.getByLabelText('Importe'), '1200')
+    await userEvent.clear(d.getByLabelText('Importe de la línea 1'))
+    await userEvent.type(d.getByLabelText('Importe de la línea 1'), '1200')
     const antes = llamadasAlListado()
     await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
 
     await waitFor(() =>
       expect(apiPutMock).toHaveBeenCalledWith(
-        '/gastos/administracion/31',
-        expect.objectContaining({ importe: 1200, concepto: 'Alquiler', idMedioPago: 1, categoria: 'Otros' }),
+        '/pagos/administracion/31',
+        expect.objectContaining({
+          concepto: 'Alquiler',
+          categoria: 'Otros',
+          lineas: [{ idMedioPago: 1, importe: 1200, referencia: null }],
+        }),
       ),
     )
     await screen.findByText('Pago actualizado.')
     expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+  })
+
+  it('editar un pago con varios medios precarga una línea por medio y manda el reparto completo', async () => {
+    const repartido = pagoFixture({
+      id: 32,
+      concepto: 'Flete',
+      importe: 1000,
+      lineas: [
+        { idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: 600, referencia: null },
+        { idItem: 2, idMedioPago: 4, nombreMedioPago: 'Transferencia', importe: 400, referencia: 'Op 5' },
+      ],
+    })
+    mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente, medioTransferencia], pagina: paginaFixture([repartido]) })
+    apiPutMock.mockResolvedValueOnce({ id: 32 })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await d.findAllByRole('option', { name: 'Transferencia' })
+    expect(d.getByLabelText('Importe de la línea 1')).toHaveValue('600,00')
+    expect(d.getByLabelText('Medio de la línea 2')).toHaveValue('4')
+    expect(d.getByLabelText('Referencia de la línea 2')).toHaveValue('Op 5')
+
+    await userEvent.click(d.getByRole('button', { name: 'Quitar línea 2' }))
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/pagos/administracion/32',
+        expect.objectContaining({ lineas: [{ idMedioPago: 1, importe: 600, referencia: null }] }),
+      ),
+    )
   })
 
   it('editar un pago de caja de un turno cerrado muestra el aviso de recálculo del arqueo', async () => {
@@ -924,7 +1049,7 @@ describe('Pagos (administración) — edición y baja', () => {
     const antes = llamadasAlListado()
     await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
 
-    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/gastos/administracion/31'))
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/pagos/administracion/31'))
     await screen.findByText('Pago eliminado.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
