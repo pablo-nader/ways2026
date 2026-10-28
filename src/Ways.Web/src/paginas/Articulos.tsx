@@ -22,7 +22,7 @@ type Descarte =
   | { origen: 'cierre' }
   | { origen: 'url'; modo: ModoModalDeArticulo | null; idParam: string | null; tipoNavegacion: NavigationType }
 
-type BajaPendiente = { fila: FilaDeGrillaDeArticulos; disparador: HTMLElement | null }
+type BajaPendiente = { fila: FilaDeGrillaDeArticulos; disparador: HTMLElement }
 
 /** Identidad del modal actualmente comprometido en pantalla: `null` (cerrado), `'nuevo'` (alta) o
  * el id numérico de la edición en curso — nunca el `modo`/`idParam` crudos de la URL, que pueden
@@ -103,6 +103,8 @@ export function Articulos() {
   // rechazado volviendo a la entrada del modal (ver `historialObservado`).
   const historialRef = useRef(HISTORIAL_SIN_OBSERVAR)
   const refBotonNuevo = useRef<HTMLButtonElement>(null)
+  /** Diálogo del artículo, destino del foco al cancelar una salida por URL: el control que la disparó (Atrás) no es de la pantalla. */
+  const regresoAlModal = useRef<HTMLElement | null>(null)
   const ocupado = articulo.ocupado || eliminando
 
   // Vuelve al estado "sin modal": compromete el destino nulo (desmonta el modal) y limpia todo el
@@ -129,8 +131,8 @@ export function Articulos() {
   useEffect(() => {
     const destino = destinoDeRuta(modo, idParam)
 
-    // Ya estamos en este destino: tras cancelar un intento de salir (unas líneas más abajo se navegó
-    // de vuelta a esta misma URL), o tras un `cerrarModal` que ya comprometió el cierre antes de
+    // Ya estamos en este destino: tras cancelar un intento de salir (`deshacerSalida` navegó de
+    // vuelta a esta misma URL), o tras un `cerrarModal` que ya comprometió el cierre antes de
     // navegar. No hay nada que resetear ni que preguntar — evita reaplicar el bloque de abajo (que
     // en 'crear' pisaría el borrador con un formulario en blanco nuevo).
     if (destino === destinoModalRef.current) {
@@ -147,6 +149,13 @@ export function Articulos() {
     // siguen vivas (formulario e hijos intactos); si acepta, `confirmarDescarte` compromete el
     // destino nuevo.
     if (destinoModalRef.current !== null && articulo.haySinGuardar()) {
+      // Con una escritura en vuelo no se pregunta: la respuesta puede reemplazar la URL (el alta pasa a
+      // /edit/{id}) y dejar la pregunta apuntando a una navegación que ya no existe. Se deshace la salida.
+      if (articulo.ocupado) {
+        deshacerSalida(navigationType)
+        return
+      }
+      regresoAlModal.current = document.querySelector<HTMLElement>('[role="dialog"]')
       setDescarte({ origen: 'url', modo, idParam, tipoNavegacion: navigationType })
       return
     }
@@ -203,10 +212,8 @@ export function Articulos() {
     navigate('/articulos', { replace: true })
   }
 
-  function cancelarDescarte() {
-    const pendiente = descarte
-    setDescarte(null)
-    if (pendiente?.origen !== 'url' || destinoModalRef.current === null) return
+  function deshacerSalida(tipoNavegacion: NavigationType) {
+    if (destinoModalRef.current === null) return
 
     // Un POP se deshace MOVIÉNDOSE a la entrada anterior, la del modal: un `replace` pisaría la
     // entrada a la que llegó el POP (p. ej. la de la grilla) y Atrás ya no la encontraría. Si
@@ -214,9 +221,15 @@ export function Articulos() {
     // posición conocida y se reemplaza igual. Un PUSH/REPLACE sí se deshace con `replace`:
     // reescribe solo la entrada que esa misma navegación acaba de crear o de pisar.
     const desplazamiento =
-      pendiente.tipoNavegacion === NavigationType.Pop ? desplazamientoHaciaLaAnterior(historialRef.current) : null
+      tipoNavegacion === NavigationType.Pop ? desplazamientoHaciaLaAnterior(historialRef.current) : null
     if (desplazamiento === null) navigate(rutaDeDestino(destinoModalRef.current), { replace: true })
     else navigate(desplazamiento)
+  }
+
+  function cancelarDescarte() {
+    const pendiente = descarte
+    setDescarte(null)
+    if (pendiente?.origen === 'url') deshacerSalida(pendiente.tipoNavegacion)
   }
 
   function confirmarDescarte() {
@@ -236,11 +249,11 @@ export function Articulos() {
     navigate('/articulos/create')
   }
 
-  // La grilla invoca esto desde el `onClick` del botón: `document.activeElement` todavía es ese botón
-  // (react-async-state regla 12), que recupera el foco al cerrarse la confirmación si sigue ahí.
-  function pedirBaja(fila: FilaDeGrillaDeArticulos) {
+  // El disparador llega capturado por el `onClick` de la grilla (react-async-state regla 12) y recupera
+  // el foco al cerrarse la confirmación si sigue ahí.
+  function pedirBaja(fila: FilaDeGrillaDeArticulos, disparador: HTMLElement) {
     setErrorDeBaja('')
-    setBajaPendiente({ fila, disparador: document.activeElement as HTMLElement | null })
+    setBajaPendiente({ fila, disparador })
   }
 
   function cancelarBaja() {
@@ -329,6 +342,7 @@ export function Articulos() {
           etiquetaConfirmar="Descartar cambios"
           etiquetaEnCurso="Descartando…"
           ocupado={false}
+          regreso={descarte.origen === 'url' ? regresoAlModal : null}
           onConfirmar={confirmarDescarte}
           onCancelar={cancelarDescarte}
         />

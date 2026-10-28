@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { FamiliaDetalle, ListaPrecioListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
+import { Modal } from '../../componentes/Modal'
 import { VistaDePrevisualizacion } from '../familias/VistaDePrevisualizacion'
 import type { NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaFamilia } from './AltaRapidaFamilia'
@@ -44,6 +45,8 @@ type Props = {
   /** La salida de la familia espera confirmación. Lo decide `FormularioArticulo`, que es quien deja inerte
    * el resto del formulario mientras la confirmación está abierta. */
   confirmandoSalida: boolean
+  /** Motivo con el que el servidor rechazó la salida: se muestra dentro de la confirmación, que sigue abierta. */
+  errorDeSalida: string
   onPedirSalida: (disparador: HTMLElement) => void
   onCancelarSalida: () => void
   onConfirmarSalida: () => void
@@ -73,6 +76,7 @@ export function SeccionDeFamilia({
   nombresDeCatalogo,
   nombresDeListas,
   confirmandoSalida,
+  errorDeSalida,
   onPedirSalida,
   onCancelarSalida,
   onConfirmarSalida,
@@ -106,6 +110,7 @@ export function SeccionDeFamilia({
       ocupado={ocupado}
       familia={familia}
       confirmandoSalida={confirmandoSalida}
+      errorDeSalida={errorDeSalida}
       onPedirSalida={onPedirSalida}
       onCancelarSalida={onCancelarSalida}
       onConfirmarSalida={onConfirmarSalida}
@@ -232,7 +237,7 @@ function EleccionDeFamilia({
         </div>
       )}
 
-      {!esNuevo && union.error && (
+      {!esNuevo && union.error && !hayConfirmacionDeUnion(familia, union, union.idElegida) && (
         <div className="alert alert-danger py-2 px-2 small mt-2" role="alert">
           {union.error}
         </div>
@@ -264,6 +269,19 @@ function EleccionDeFamilia({
         />
       )}
     </div>
+  )
+}
+
+/** La confirmación de la unión (el modal de `PropuestaDeUnion`) está abierta: ya hay una previsualización de la familia elegida. */
+function hayConfirmacionDeUnion(familia: EstadoDeFamiliaDelFormulario, union: EstadoDeUnionAFamilia, idElegida: number | ''): boolean {
+  return (
+    idElegida !== '' &&
+    !familia.cargando &&
+    !familia.error &&
+    familia.detalle?.id === idElegida &&
+    !union.previsualizando &&
+    !union.errorDePrevisualizacion &&
+    union.previsualizacion !== null
   )
 }
 
@@ -327,24 +345,37 @@ function PropuestaDeUnion({
   const articulos = new Map([[idDelArticulo, { id: idDelArticulo, codigoInterno, nombre: nombreDelArticulo }]])
 
   return (
-    <div className="mt-2" role="group" aria-label="Unir el artículo a la familia">
+    <Modal
+      titulo="Unir el artículo a la familia"
+      tamano="lg"
+      desplazable
+      ocupado={ocupado}
+      onCerrar={() => acciones.elegir('')}
+      pie={
+        <>
+          <button
+            type="button"
+            className="btn btn-success"
+            disabled={ocupado || conProblemas || !vigente || sinGuardar}
+            onClick={() => void acciones.confirmarUnion()}
+          >
+            {union.escribiendo ? 'Uniendo…' : 'Confirmar y unir a la familia'}
+          </button>
+          <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={() => acciones.elegir('')}>
+            Cancelar
+          </button>
+        </>
+      }
+    >
       <p className="small mb-2">{advertenciaDeUnion(detalle.nombre)}</p>
       <VistaDePrevisualizacion previsualizacion={previsualizacion} articulos={articulos} nombres={nombresDeCatalogo} listas={nombresDeListas} />
       {!vigente && <div className="alert alert-warning py-1 px-2 small">{AVISO_DE_UNION_DESACTUALIZADA}</div>}
-      <div className="d-flex gap-2">
-        <button
-          type="button"
-          className="btn btn-success"
-          disabled={ocupado || conProblemas || !vigente || sinGuardar}
-          onClick={() => void acciones.confirmarUnion()}
-        >
-          {union.escribiendo ? 'Uniendo…' : 'Confirmar y unir a la familia'}
-        </button>
-        <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={() => acciones.elegir('')}>
-          Cancelar
-        </button>
-      </div>
-    </div>
+      {union.error && (
+        <div className="alert alert-danger py-2 px-2 small mt-2 mb-0" role="alert">
+          {union.error}
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -428,10 +459,14 @@ function PertenenciaAFamilia({
   ocupado,
   familia,
   confirmandoSalida,
+  errorDeSalida,
   onPedirSalida,
   onCancelarSalida,
   onConfirmarSalida,
-}: Pick<Props, 'nombreDelArticulo' | 'ocupado' | 'familia' | 'confirmandoSalida' | 'onPedirSalida' | 'onCancelarSalida' | 'onConfirmarSalida'> & {
+}: Pick<
+  Props,
+  'nombreDelArticulo' | 'ocupado' | 'familia' | 'confirmandoSalida' | 'errorDeSalida' | 'onPedirSalida' | 'onCancelarSalida' | 'onConfirmarSalida'
+> & {
   idFamilia: number
 }) {
   const pertenencia = familiaDelArticulo(idFamilia, familia.detalle)
@@ -466,6 +501,7 @@ function PertenenciaAFamilia({
           etiquetaConfirmar="Confirmar salida"
           etiquetaEnCurso="Sacando…"
           ocupado={ocupado}
+          error={errorDeSalida || null}
           onConfirmar={onConfirmarSalida}
           onCancelar={onCancelarSalida}
         />

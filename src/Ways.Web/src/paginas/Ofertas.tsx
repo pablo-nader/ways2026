@@ -278,6 +278,8 @@ export function Ofertas() {
   }
 
   function pedirBaja(o: OfertaListado, disparador: HTMLElement) {
+    // Una apertura de edición todavía en vuelo no puede montar su modal encima de la confirmación.
+    invalidarEdicionEnCurso()
     setErrorDeBaja('')
     setBaja({ oferta: o, disparador })
   }

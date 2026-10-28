@@ -6,6 +6,7 @@ import type { AlcanceDeFamilia, HistorialDePrecio, ListaPrecioListado, PrecioVig
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
+import { Modal } from '../../componentes/Modal'
 import { formatearImporte } from '../../formato/importes'
 import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
 import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type FamiliaDelArticulo } from './familia'
@@ -526,7 +527,7 @@ function PanelDeLista({
       )}
 
       {estado.preguntaDeAlcance && (
-        <div className="alert alert-warning py-2 px-2 small" role="group" aria-label="Alcance del precio">
+        <Modal titulo="Alcance del precio" ocupado={enVuelo} onCerrar={() => onCambio({ preguntaDeAlcance: null })}>
           <PreguntaDeAlcance
             contexto={estado.preguntaDeAlcance.contexto}
             ocupado={enVuelo}
@@ -534,7 +535,7 @@ function PanelDeLista({
             onElegir={onElegirAlcance}
             onCancelar={() => onCambio({ preguntaDeAlcance: null })}
           />
-        </div>
+        </Modal>
       )}
 
       <div className="row g-2 align-items-end">

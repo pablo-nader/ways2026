@@ -551,6 +551,28 @@ describe('Ofertas — la baja se confirma en un modal', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
+  /** Cláusula bajo prueba: `invalidarEdicionEnCurso()` de `pedirBaja`. Sin él, la edición que llega tarde monta su modal encima de la confirmación. */
+  it('abrir la baja descarta una apertura de edición todavía en vuelo: su modal no se monta encima de la confirmación', async () => {
+    let resolverDetalle: (o: OfertaListado) => void = () => {}
+    const existente = ofertaFixture({ id: 2, nombre: 'Oferta existente' })
+    mockearApiGet({ ofertas: [existente] })
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/2' ? new Promise<OfertaListado>((r) => (resolverDetalle = r)) : base(ruta),
+    )
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/ofertas/2'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await screen.findByRole('alertdialog')
+    await act(async () => resolverDetalle(existente))
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('una baja rechazada muestra el motivo dentro de la confirmación, que sigue abierta, sin aviso de éxito', async () => {
     const { confirmacion } = await pedirLaBaja()
     apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'oferta_en_uso', 'La oferta está en uso.'))

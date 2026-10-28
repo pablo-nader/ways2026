@@ -1651,6 +1651,23 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
   })
 
   /**
+   * Cláusula bajo prueba: el disparador que `GrillaDeArticulos` captura en el `onClick` y `pedirBaja` guarda. Con
+   * `fireEvent.click` el botón no recibe foco: leer `document.activeElement` daría `<body>` y el foco no volvería.
+   */
+  it('el foco vuelve al botón pulsado al cancelar la confirmación aunque ese botón no hubiera recibido el foco', async () => {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    const eliminar = within(filaUno).getByRole('button', { name: 'Eliminar' })
+
+    fireEvent.click(eliminar)
+    expect(eliminar).not.toHaveFocus()
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(eliminar).toHaveFocus()
+  })
+
+  /**
    * Cláusula bajo prueba: `eliminandoRef` de `confirmarBaja()`. La guarda de `ConfirmacionDeBaja` frena el segundo
    * clic en el mismo tick por su cuenta; este test prueba el conjunto, no el ref solo.
    */
@@ -2086,6 +2103,39 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
     expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Código de barras')).toHaveValue('7790001')
     expect(llamadasA('/articulos/1/codigos-barra')).toBe(llamadasAntes)
+  })
+
+  /**
+   * Cláusula bajo prueba: `if (articulo.ocupado) { deshacerSalida(...) }` del efecto de apertura. Mutation-proof-tests:
+   * sacarla abre la pregunta de descarte con el alta guardándose; la respuesta reemplaza la URL a /edit/{id} y la
+   * pregunta queda colgada (el `expect` de `alertdialog` de abajo falla).
+   */
+  it('Atrás con el alta guardándose no abre ninguna pregunta: deshace la salida y la respuesta deja el modal en /articulos/edit/{id}', async () => {
+    let resolver: () => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/articulos') return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+      return new Promise((resolve) => {
+        resolver = () => resolve(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo Art' }))
+      })
+    })
+    renderConHistorial({ entradas: ['/articulos', '/articulos/create'] })
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Nuevo Art')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Ubicación: /articulos/create')).toBeInTheDocument()
+
+    await act(async () => resolver())
+
+    expect(await screen.findByText('Ubicación: /articulos/edit/5')).toBeInTheDocument()
+    await act(async () => {})
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0005' })).toBe(dialogo)
   })
 
   it('alta → guardar pasa a /articulos/edit/{id} sin preguntar ni remontar el modal, y luego Atrás tampoco pregunta', async () => {

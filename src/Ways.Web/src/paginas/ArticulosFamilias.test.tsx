@@ -1801,15 +1801,16 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
    * dos pruebas de foco de la confirmación ejercitan la restauración explícita, no el comportamiento de un navegador
    * real. Cláusula bajo prueba: `focoDeSalidaRef.current = disparador` de `confirmarSalida`. Evidencia de mutación
    * (mutation-proof-tests): sacarla hace fallar las dos (el foco queda en `<body>`); revertido, vuelven a verde. */
-  it('si la salida falla, el foco vuelve al botón "Sacar de la familia", que sigue ahí', async () => {
+  it('si la salida falla y se cancela la confirmación, el foco vuelve al botón "Sacar de la familia", que sigue ahí', async () => {
     apiDeleteMock.mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó el servidor.'))
     await abrirEdicion()
     const disparador = screen.getByRole('button', { name: 'Sacar de la familia' })
     await userEvent.click(disparador)
 
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
+    await within(confirmacionDeSalida()).findByText('Se cayó el servidor.')
+    await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Cancelar' }))
 
-    await screen.findByText('Se cayó el servidor.')
     await waitFor(() => expect(disparador).toHaveFocus())
   })
 
@@ -1826,17 +1827,39 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await waitFor(() => expect(screen.getByLabelText('Nombre')).toHaveFocus())
   })
 
-  it('cualquier otro rechazo se muestra en el formulario, cierra la confirmación y el artículo sigue en su familia', async () => {
+  /** Cláusula bajo prueba: el motivo del rechazo vuelve de `sacarDeLaFamilia` y `confirmarSalida` lo muestra dentro
+   * de la confirmación sin cerrarla. Mutation-proof-tests: devolver `''` en el rechazo cierra la confirmación y este
+   * test falla. */
+  it('un rechazo cualquiera se muestra dentro de la confirmación, que sigue abierta, y reintentar saca al artículo', async () => {
     apiDeleteMock.mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó el servidor.'))
     await abrirEdicion()
     await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
 
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
 
-    expect(await screen.findByText('Se cayó el servidor.')).toBeInTheDocument()
-    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
+    expect(await within(confirmacionDeSalida()).findByRole('alert')).toHaveTextContent('Se cayó el servidor.')
+    expect(screen.getAllByText('Se cayó el servidor.')).toHaveLength(1)
+    expect(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' })).toBeEnabled()
     expect(screen.getByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Sacar de la familia' })).toBeEnabled()
+
+    await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
+
+    await screen.findByText(/salió de la familia "Sabores"/)
+    expect(apiDeleteMock).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Se cayó el servidor.')).not.toBeInTheDocument()
+  })
+
+  it('cancelar la confirmación tras un rechazo borra el motivo y no deja nada en el formulario', async () => {
+    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó el servidor.'))
+    await abrirEdicion()
+    await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
+    await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
+    await within(confirmacionDeSalida()).findByRole('alert')
+
+    await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText('Se cayó el servidor.')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 })
@@ -2792,13 +2815,13 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
   }
 
   function propuesta() {
-    return screen.getByRole('group', { name: 'Unir el artículo a la familia' })
+    return screen.getByRole('dialog', { name: 'Unir el artículo a la familia' })
   }
 
   async function proponerLaFamilia(valor = '7') {
     await abrirEdicion(1, 'A0001')
     await elegirFamiliaEnElSelector(valor)
-    return await screen.findByRole('group', { name: 'Unir el artículo a la familia' })
+    return await screen.findByRole('dialog', { name: 'Unir el artículo a la familia' })
   }
 
   async function confirmarLaUnion() {
@@ -2819,6 +2842,24 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     expect(within(grupo).getByRole('row', { name: /Categoría.*Sin asignar.*Bebidas/ })).toBeInTheDocument()
     expect(within(grupo).getByRole('row', { name: /General/ })).toBeInTheDocument()
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('7')
+  })
+
+  it('la propuesta de unión es un modal apilado: Cancelar y Escape la cierran sin escribir y el selector vuelve a "Sin familia"', async () => {
+    escenarioDeUnion()
+    await proponerLaFamilia()
+
+    await userEvent.click(within(propuesta()).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+
+    await elegirFamiliaEnElSelector('7')
+    await screen.findByRole('dialog', { name: 'Unir el artículo a la familia' })
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+    expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
   })
 
   it('dice con claridad que confirmar reemplaza los valores y los precios del artículo con los de la familia', async () => {
@@ -2844,7 +2885,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
     expect(lecturasDelArticulo(1)).toBe(2)
     expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAGrilla()).toBe(2))
     await waitFor(() => expect(lecturasDeFamilias()).toBe(2))
   })
@@ -2875,7 +2916,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
 
     await userEvent.click(within(grupo).getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
     expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
   })
@@ -2886,7 +2927,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
 
     await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '')
 
-    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
     expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
   })
 
@@ -2913,7 +2954,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     await act(async () => {
       deLaSegunda.resolver(fotoDeUnion({ idArticuloReferencia: 51, idFamilia: 8 }))
     })
-    await screen.findByRole('group', { name: 'Unir el artículo a la familia' })
+    await screen.findByRole('dialog', { name: 'Unir el artículo a la familia' })
     await act(async () => {
       deLaPrimera.resolver(fotoDeUnion({ idArticuloReferencia: 31, idFamilia: 7 }))
     })
@@ -2940,7 +2981,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     })
 
     expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
-    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: el ref de reentrancia de `confirmarUnion` (react-async-state regla 11).
@@ -2989,7 +3030,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       await guardar()
       await screen.findByText('Artículo "Articulo UnoX" actualizado.')
 
-      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
       expect(selectorDeFamilia()).toHaveValue('')
       expect(selectorDeFamilia()).toBeEnabled()
@@ -3014,7 +3055,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
 
       await waitFor(() => expect(pedidosA('/articulos/1/precios')).toHaveLength(1))
-      await waitFor(() => expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument())
       expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
       expect(selectorDeFamilia()).toHaveValue('')
       expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
@@ -3047,11 +3088,11 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledExactlyOnceWith('/familias/50/articulos/1'))
       await screen.findByLabelText('Familia (opcional)')
       expect(selectorDeFamilia()).toHaveValue('')
-      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
 
       await elegirFamiliaEnElSelector('7')
 
-      expect(await screen.findByRole('group', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
       expect(selectorDeFamilia()).toHaveValue('7')
     })
 
@@ -3075,7 +3116,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       })
 
       expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
-      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(selectorDeFamilia()).toHaveValue('')
     })
 
@@ -3100,7 +3141,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
         fotoTardia.resolver(fotoDeUnion())
       })
 
-      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(selectorDeFamilia()).toHaveValue('')
       expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
     })
@@ -3156,7 +3197,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
         await screen.findByText('Calculando qué cambia…')
 
         expect(seMostroLaFotoVieja).toBe(false)
-        expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
         expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
 
         await act(async () => {
@@ -3187,7 +3228,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
 
       expect(await screen.findByRole('alert')).toHaveTextContent(mensaje)
       expect(screen.getByRole('alert')).toHaveTextContent(ayuda)
-      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
       expect(screen.getByLabelText('Familia (opcional)')).toBeEnabled()
       expect(lecturasDelArticulo(1)).toBe(1)
@@ -3274,7 +3315,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
 
       await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
 
-      expect(await screen.findByRole('group', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
       expect(screen.queryByText('Se cayó la familia.')).not.toBeInTheDocument()
     })
 
@@ -3323,7 +3364,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       await abrirAltaEnLaFamilia()
 
       expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
-      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(screen.getAllByText('(de la familia)').length).toBeGreaterThan(0)
       expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
     })
