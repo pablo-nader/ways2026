@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
 import { copiaDeFalloDeBaja } from '../api/bajas'
 import type { CategoriaAlta, CategoriaListado } from '../api/tipos'
@@ -7,14 +7,24 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
+import type { EstadoDeOrden } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { Modal } from '../componentes/Modal'
 import { atributosDeCampoEntero, parsearNumeroDecimal } from '../formato/numeros'
+import { aplanar, armarArbol, filtrarArbol, idsDeSubarbol, ordenarArbol, type Nodo } from './categorias/arbolDeCategorias'
 
 const PROFUNDIDAD_MAXIMA = 3
 const ID_FORMULARIO_CATEGORIA = 'formulario-categoria'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+
+const DESCRIPCION_DE_ORDEN = {
+  original: 'orden original',
+  ascendente: 'ascendente',
+  descendente: 'descendente',
+} as const
+const INDICADOR_DE_ORDEN = { ascendente: '▲', descendente: '▼' } as const
 
 type Formulario = {
   id: number | null
@@ -33,64 +43,6 @@ const FORMULARIO_VACIO: Formulario = {
   idCategoriaPadre: null,
   activo: true,
   idEmpresa: null,
-}
-
-type Nodo = CategoriaListado & { hijos: Nodo[]; nivel: number }
-
-/** Arma el árbol client-side a partir del listado plano (`idCategoriaPadre`). El backend ya
- * valida profundidad/ciclos (ADR-12); acá solo se arma la vista — una categoría cuyo padre no
- * está en el listado visible (dado de baja, filtrado) queda como raíz huérfana en vez de
- * desaparecer, para no esconder datos reales. */
-function armarArbol(items: CategoriaListado[]): Nodo[] {
-  const porId = new Map(items.map((c) => [c.id, c]))
-  const hijosDe = new Map<number | null, CategoriaListado[]>()
-
-  for (const item of items) {
-    const padre = item.idCategoriaPadre !== null && porId.has(item.idCategoriaPadre) ? item.idCategoriaPadre : null
-    const lista = hijosDe.get(padre) ?? []
-    lista.push(item)
-    hijosDe.set(padre, lista)
-  }
-
-  function construir(padre: number | null, nivel: number): Nodo[] {
-    return (hijosDe.get(padre) ?? [])
-      .sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre))
-      .map((item) => ({ ...item, nivel, hijos: construir(item.id, nivel + 1) }))
-  }
-
-  return construir(null, 1)
-}
-
-/** IDs de los descendientes (hijos, nietos, etc.) de un nodo dentro del árbol, para excluirlos
- * de las opciones de "categoría padre" — reasignar una categoría a su propio subárbol formaría
- * un ciclo, y el backend lo rechaza igual, pero no tiene sentido ofrecerlo en el select. */
-function idsDeSubarbol(arbol: Nodo[], id: number): Set<number> {
-  const ids = new Set<number>()
-
-  function recorrer(nodo: Nodo) {
-    for (const hijo of nodo.hijos) {
-      ids.add(hijo.id)
-      recorrer(hijo)
-    }
-  }
-
-  function buscar(nodos: Nodo[]): Nodo | undefined {
-    for (const nodo of nodos) {
-      if (nodo.id === id) return nodo
-      const encontrado = buscar(nodo.hijos)
-      if (encontrado) return encontrado
-    }
-    return undefined
-  }
-
-  const objetivo = buscar(arbol)
-  if (objetivo) recorrer(objetivo)
-
-  return ids
-}
-
-function aplanar(arbol: Nodo[]): Nodo[] {
-  return arbol.flatMap((nodo) => [nodo, ...aplanar(nodo.hijos)])
 }
 
 /**
@@ -117,6 +69,9 @@ export function Categorias() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [filtroNombre, setFiltroNombre] = useState('')
+  /** Orden de las hermanas por nombre: `null` es el orden del servidor (`orden` y luego nombre). */
+  const [orden, setOrden] = useState<EstadoDeOrden>(null)
   /** Baja pendiente de confirmación: ver `Empresas.tsx`. */
   const [baja, setBaja] = useState<CategoriaListado | null>(null)
   /** Id de la categoría cuya baja está en vuelo (distinto de `guardando`, que cubre alta/edición). */
@@ -269,7 +224,13 @@ export function Categorias() {
    * `Empresas.tsx`. */
   const bloqueado = guardando || ocupadoBaja !== null || baja !== null
 
-  const arbol = armarArbol(items)
+  /** El árbol completo alimenta el selector de padre del formulario; la vista aplica filtro y orden aparte. */
+  const arbol = useMemo(() => armarArbol(items), [items])
+  const hayFiltro = filtroNombre.trim() !== ''
+  const arbolVisible = useMemo(
+    () => ordenarArbol(filtrarArbol(arbol, filtroNombre), orden),
+    [arbol, filtroNombre, orden],
+  )
 
   function abrirNueva(idCategoriaPadre: number | null) {
     if (ocupadoRef.current) return
@@ -369,18 +330,49 @@ export function Categorias() {
         ) : arbol.length === 0 ? (
           <p className="text-muted text-center py-4">No hay categorías cargadas.</p>
         ) : (
-          <ul className="list-unstyled mb-0">
-            {arbol.map((nodo) => (
-              <NodoCategoria
-                key={nodo.id}
-                nodo={nodo}
-                bloqueado={bloqueado}
-                onNueva={abrirNueva}
-                onEditar={abrirEdicion}
-                onEliminar={pedirBaja}
+          <>
+            <div className="d-flex align-items-center gap-2 mb-3">
+              <input
+                type="search"
+                className="form-control form-control-sm"
+                style={{ maxWidth: '20rem' }}
+                aria-label="Filtrar por nombre"
+                placeholder="Filtrar por nombre…"
+                value={filtroNombre}
+                onChange={(e) => setFiltroNombre(e.target.value)}
+                disabled={bloqueado}
               />
-            ))}
-          </ul>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-secondary text-nowrap"
+                aria-label={`Ordenar por nombre: ${DESCRIPCION_DE_ORDEN[orden?.direccion ?? 'original']}`}
+                onClick={() => setOrden((actual) => siguienteOrden(actual, 'nombre'))}
+              >
+                Nombre{' '}
+                <span aria-hidden="true" className={orden ? '' : 'opacity-25'}>
+                  {orden ? INDICADOR_DE_ORDEN[orden.direccion] : '↕'}
+                </span>
+              </button>
+              <BotonIcono icono="limpiar" onClick={() => setFiltroNombre('')} disabled={bloqueado || !hayFiltro} />
+            </div>
+
+            {arbolVisible.length === 0 ? (
+              <p className="text-muted text-center py-4">Ningún registro coincide con los filtros.</p>
+            ) : (
+              <ul className="list-unstyled mb-0">
+                {arbolVisible.map((nodo) => (
+                  <NodoCategoria
+                    key={nodo.id}
+                    nodo={nodo}
+                    bloqueado={bloqueado}
+                    onNueva={abrirNueva}
+                    onEditar={abrirEdicion}
+                    onEliminar={pedirBaja}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </Box>
     </div>

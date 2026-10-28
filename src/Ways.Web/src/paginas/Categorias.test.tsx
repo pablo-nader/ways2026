@@ -607,3 +607,115 @@ describe('Categorias — empresa de la fila al guardar', () => {
     expect(apiPostMock.mock.calls[0][1]).toMatchObject({ nombre: 'Limpieza', idEmpresa: null })
   })
 })
+
+describe('Categorias — filtro por nombre y orden de hermanas', () => {
+  const ARBOL = [
+    categoriaFixture({ id: 1, nombre: 'Bebidas', orden: 1 }),
+    categoriaFixture({ id: 2, nombre: 'Gaseosas', orden: 1, idCategoriaPadre: 1 }),
+    categoriaFixture({ id: 3, nombre: 'Cola', orden: 1, idCategoriaPadre: 2 }),
+    categoriaFixture({ id: 4, nombre: 'Jugos', orden: 2, idCategoriaPadre: 1 }),
+    categoriaFixture({ id: 5, nombre: 'Almacén', orden: 2 }),
+  ]
+
+  function nombresEnPantalla() {
+    return screen
+      .getAllByRole('listitem')
+      .map((li) => li.querySelector(':scope > div > span:nth-of-type(2)')?.textContent)
+  }
+
+  it('filtrar por nombre conserva la coincidencia y sus ancestros, y oculta el resto', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'cola')
+
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola'])
+    expect(screen.queryByText('Jugos')).not.toBeInTheDocument()
+    expect(screen.queryByText('Almacén')).not.toBeInTheDocument()
+  })
+
+  it('el filtro ignora acentos y mayúsculas', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALMACEN')
+
+    expect(nombresEnPantalla()).toEqual(['Almacén'])
+  })
+
+  it('sin coincidencias muestra el mensaje de filtros, y limpiar los filtros devuelve el árbol', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'zzz')
+
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(screen.queryByText('Ningún registro coincide con los filtros.')).not.toBeInTheDocument()
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola', 'Jugos', 'Almacén'])
+  })
+
+  it('el botón de orden recorre ascendente, descendente y orden original dentro de cada nivel', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    expect(screen.getByRole('button', { name: 'Ordenar por nombre: orden original' })).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Ordenar por nombre: orden original' }))
+    expect(nombresEnPantalla()).toEqual(['Almacén', 'Bebidas', 'Gaseosas', 'Cola', 'Jugos'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Ordenar por nombre: ascendente' }))
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Jugos', 'Gaseosas', 'Cola', 'Almacén'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Ordenar por nombre: descendente' }))
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola', 'Jugos', 'Almacén'])
+  })
+
+  it('el filtro y el orden se combinan', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'o')
+    await usuario.click(screen.getByRole('button', { name: 'Ordenar por nombre: orden original' }))
+
+    expect(nombresEnPantalla()).toEqual(['Bebidas', 'Gaseosas', 'Cola', 'Jugos'])
+  })
+
+  it('con el árbol filtrado, el selector de padre del formulario sigue ofreciendo todas las categorías', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'almacen')
+    await usuario.click(within(screen.getByText('Almacén').closest('li') as HTMLElement).getByRole('button', { name: 'Editar' }))
+
+    const padre = within(screen.getByRole('dialog', { name: 'Editar categoría' })).getByLabelText('Categoría padre')
+    expect(within(padre).getAllByRole('option').map((o) => o.textContent?.replace(/^[—\s]+/, ''))).toEqual([
+      'Ninguna (raíz) —',
+      'Bebidas',
+      'Gaseosas',
+      'Jugos',
+    ])
+  })
+
+  it('el filtro queda inerte con la puerta de baja abierta', async () => {
+    apiGetMock.mockResolvedValue(ARBOL)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.setup().click(bajaDe('Almacén'))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeDisabled()  })
+})
