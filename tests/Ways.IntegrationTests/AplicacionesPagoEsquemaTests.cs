@@ -394,18 +394,16 @@ public class AplicacionesPagoEsquemaTests(WaysApiFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task UnPagoDeOtroProveedorUnPagoQueNoEsDeProveedorOUnPagoDeOtraEmpresaFallanAlComitear()
+    public async Task UnPagoDeOtroProveedorOUnPagoQueNoEsDeProveedorFallanAlComitear()
     {
-        var p = await SembrarPrerequisitosAsync(
-            nameof(UnPagoDeOtroProveedorUnPagoQueNoEsDeProveedorOUnPagoDeOtraEmpresaFallanAlComitear));
+        var p = await SembrarPrerequisitosAsync(nameof(UnPagoDeOtroProveedorOUnPagoQueNoEsDeProveedorFallanAlComitear));
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         var idCompra = await InsertarCompraAsync(cruda, p, 100m);
 
         var deOtroProveedor = await InsertarPagoAsync(cruda, p, 50m, idProveedor: p.IdProveedorOtro);
         var noEsDeProveedor = await InsertarPagoAsync(cruda, p, 50m, categoria: "otros");
-        var deOtraEmpresa = await InsertarPagoAsync(cruda, p, 50m, idEmpresa: p.IdEmpresaOtra);
 
-        foreach (var idPago in new[] { deOtroProveedor, noEsDeProveedor, deOtraEmpresa })
+        foreach (var idPago in new[] { deOtroProveedor, noEsDeProveedor })
         {
             var excepcion = await LaTransaccionFallaAlComitearAsync(
                 cruda, tx => InsertarAplicacionAsync(cruda, tx, p, idPago, idCompra, 50m));
@@ -413,6 +411,19 @@ public class AplicacionesPagoEsquemaTests(WaysApiFixture fixture) : IClassFixtur
             Assert.Equal("23514", excepcion.SqlState);
             Assert.Equal(TriggerCompra, excepcion.ConstraintName);
         }
+    }
+
+    /// <summary>Desde la migración AplicacionesEntreEmpresas el trigger ya no exige la misma empresa: los vínculos
+    /// heredados entre empresas siguen contando. Los vínculos nuevos los rechaza el servicio.</summary>
+    [Fact]
+    public async Task UnPagoDeOtraEmpresaDelMismoProveedorComitea()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnPagoDeOtraEmpresaDelMismoProveedorComitea));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idCompra = await InsertarCompraAsync(cruda, p, 100m);
+        var deOtraEmpresa = await InsertarPagoAsync(cruda, p, 50m, idEmpresa: p.IdEmpresaOtra);
+
+        await LaTransaccionComiteaAsync(cruda, tx => InsertarAplicacionAsync(cruda, tx, p, deOtraEmpresa, idCompra, 50m));
     }
 
     [Fact]

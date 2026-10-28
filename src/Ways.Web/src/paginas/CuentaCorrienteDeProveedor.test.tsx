@@ -194,6 +194,35 @@ describe('CuentaCorrienteDeProveedor — header y ledger', () => {
     expect(screen.getByText('-$ 200,00 (saldo a favor)')).toBeInTheDocument()
   })
 
+  it('el header muestra lo disponible en pagos sin aplicar solo cuando es mayor a cero', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(
+          paginaFixture({ header: { idProveedor: 1, saldo: 500, saldoAFavor: 0, disponibleEnPagos: 120 } }),
+        )
+      }
+      return undefined
+    })
+    renderPantalla(1, { proveedor: proveedorFixture() })
+
+    expect(await screen.findByText('Disponible en pagos sin aplicar: $ 120,00')).toBeInTheDocument()
+  })
+
+  it('un header sin crédito en pagos no muestra la línea de disponible', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(
+          paginaFixture({ header: { idProveedor: 1, saldo: 500, saldoAFavor: 0, disponibleEnPagos: 0 } }),
+        )
+      }
+      return undefined
+    })
+    renderPantalla(1, { proveedor: proveedorFixture() })
+
+    expect(await screen.findByText('$ 500,00')).toBeInTheDocument()
+    expect(screen.queryByText(/Disponible en pagos sin aplicar/)).not.toBeInTheDocument()
+  })
+
   it('un período sin movimientos muestra el estado vacío', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.includes('/cuenta-corriente')) {

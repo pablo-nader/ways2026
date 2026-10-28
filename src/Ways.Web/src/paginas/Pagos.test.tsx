@@ -219,6 +219,21 @@ describe('Pagos (administración) — columna de medios', () => {
   })
 })
 
+describe('Pagos (administración) — disponible', () => {
+  it('muestra lo disponible de un pago de proveedor y un guion cuando no aplica', async () => {
+    const conCredito = pagoFixture({ id: 50, concepto: 'Pago con crédito', importe: 900, aplicado: 600, disponible: 300 })
+    const sinCredito = pagoFixture({ id: 51, concepto: 'Pago de caja', disponible: null })
+    mockearRutas({ pagina: paginaFixture([conCredito, sinCredito]) })
+    renderPagos()
+
+    expect(await screen.findByRole('columnheader', { name: 'Disponible' })).toBeInTheDocument()
+    const filaConCredito = screen.getByText('Pago con crédito').closest('tr')!
+    expect(within(filaConCredito).getByText('$ 300,00')).toBeInTheDocument()
+    const filaSinCredito = screen.getByText('Pago de caja').closest('tr')!
+    expect(within(filaSinCredito).getByText('—', { selector: 'td.text-end' })).toBeInTheDocument()
+  })
+})
+
 describe('Pagos (administración) — medio de pago', () => {
   it('excluye del selector del formulario los medios de comportamiento CuentaCorriente', async () => {
     mockearRutas({})

@@ -160,7 +160,15 @@ public sealed record PagoDeAdministracionListado(
     int? IdComprobanteCompra,
     bool TurnoAbierto,
     int? IdMovimientoPersonal,
-    IReadOnlyList<LineaDePagoListada> Lineas);
+    IReadOnlyList<LineaDePagoListada> Lineas,
+    decimal Aplicado = 0m,
+    decimal? Disponible = null,
+    IReadOnlyList<AplicacionDePagoListada>? Aplicaciones = null);
+
+/// <summary>Una aplicación viva de un pago a una compra, tal como la ve el historial de administración. El número es el
+/// externo de la compra (<c>null</c> si no lo tiene).</summary>
+public sealed record AplicacionDePagoListada(
+    int IdAplicacion, int IdComprobanteCompra, string? NumeroCompra, decimal Importe, DateTimeOffset Fecha);
 
 /// <summary>Página de resultados de <c>GET /api/gastos/administracion</c> — mismo shape que
 /// <see cref="PaginaDePagos"/>.</summary>
