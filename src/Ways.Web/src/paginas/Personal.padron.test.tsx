@@ -228,6 +228,19 @@ describe('Personal — filtros por columna en el servidor', () => {
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?valorHoraHasta=250.5&saldoDesde=10'))
   })
 
+  it('el saldo desde admite un negativo (adelantos) y lo manda con su signo; el valor hora no', async () => {
+    const usuario = userEvent.setup()
+    responder()
+    renderPersonal()
+    await screen.findByText('Ana Gómez')
+
+    await usuario.type(screen.getByLabelText('Saldo desde'), '-500')
+    await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?saldoDesde=-500'))
+
+    await usuario.type(screen.getByLabelText('Valor hora desde'), '-7')
+    await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?valorHoraDesde=7&saldoDesde=-500'))
+  })
+
   it('cambiar un filtro vuelve a la página 1 y conserva el orden', async () => {
     const usuario = userEvent.setup()
     responder(60)

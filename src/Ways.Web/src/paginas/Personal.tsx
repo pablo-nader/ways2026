@@ -47,7 +47,7 @@ const ID_FORMULARIO_PERSONAL = 'formulario-personal'
 const CELDAS_DE_FILTRO: readonly CeldaDeFiltroDePadron<FiltrosDePersonal>[] = [
   { tipo: 'texto', clave: 'nombre', etiqueta: 'nombre' },
   { tipo: 'rango', claveDesde: 'valorHoraDesde', claveHasta: 'valorHoraHasta', etiqueta: 'Valor hora' },
-  { tipo: 'rango', claveDesde: 'saldoDesde', claveHasta: 'saldoHasta', etiqueta: 'Saldo' },
+  { tipo: 'rango', claveDesde: 'saldoDesde', claveHasta: 'saldoHasta', etiqueta: 'Saldo', admiteNegativos: true },
   { tipo: 'texto', clave: 'usuario', etiqueta: 'usuario' },
   { tipo: 'texto', clave: 'cliente', etiqueta: 'cliente' },
   { tipo: 'acciones' },
