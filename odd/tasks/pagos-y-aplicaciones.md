@@ -126,7 +126,9 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   compra saldo; anulación of the compra and baja of the pago release their applications; editing a linked pago resyncs
   its application against the compra saldo (unrestricted edits).
 - [ ] E3-S2 (written; CI pending) — Readers switch to the applications (pagado / disponible per compra, supplier credit, CC).
-- [ ] E3-S3 — Endpoints: aplicar, desaplicar, and adoption of a supplierless pago (takes the compra's supplier).
+- [ ] E3-S3 (written; CI pending) — Endpoints: aplicar, desaplicar, and adoption of a supplierless pago (takes the compra's
+  supplier); `vincular-compra` applies `min(disponible, saldo)` and adds `pago_sin_disponible`; two read endpoints of
+  aplicable pagos.
 - [ ] E3-S4 — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
 - [ ] E4-S1 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter.
 - [ ] E3-W1 — Web: apply existing pagos when loading/paying a compra, credit per supplier.
@@ -220,6 +222,20 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   `AplicacionesDePagoMigracionTests` pins its own migration instead of HEAD (the new backfill would add a row);
   new CI tests in `AplicacionesDePagoEscritoresTests` (reapply on baja / edit down / order and cap / anulada, new alta
   rejected, legacy cross-empresa link counts and edit adjusts) and `AplicacionesEntreEmpresasMigracionTests`.
+
+- 2026-10-28 E3-S3 (branch `pnader/pagos-e3-s3-aplicar`, stacked on E3-S2): `ServicioDePagos` became `partial`; new
+  `ServicioDePagos.Aplicaciones.cs` holds `AplicarAsync` / `DesaplicarAsync` (both on `FabricaDeEstrategiaSinReintento`,
+  registered in the structural map) and the two readers of aplicable pagos. Lock order: compras `FOR UPDATE` ascending id ->
+  pago `FOR UPDATE` -> proveedor row (adoption only); treasury untouched. Adoption writes the supplier-CC `pago` movement for
+  the full importe, sets `id_comprobante_compra` to the first compra if null. Desaplicar clears the pago link when it was
+  that compra's and the pago has its own punto de venta, then reapplies the freed room to the other linked pagos.
+  `vincular-compra` now caps at `min(disponible, saldo)`, grows an existing pair and answers `409 pago_sin_disponible`;
+  the edit resync also discounts what the pago has applied to other compras. Audit codes `pago.aplicacion` /
+  `pago.desaplicacion` (catalogue 23 -> 25). Doc 10 §5 updated. Routes: `POST /api/pagos/{id}/aplicaciones`,
+  `DELETE /api/pagos/{id}/aplicaciones/{idAplicacion}`, `GET /api/compras/{id}/pagos-aplicables`,
+  `GET /api/proveedores/{id}/pagos-disponibles`, all `GestionDeCatalogo` (no allowlist entry needed: they stack it).
+  `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1080 passed. Integration tests
+  (`AplicacionesDePagoEndpointsTests`, 21 tests) NOT run locally (Docker down): CI is the proof, pending. Route: delegated writer.
 
 ## Next step
 
