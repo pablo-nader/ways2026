@@ -257,7 +257,7 @@ export function Empresas() {
             disparoDeError={disparoDeError}
             focoDeReserva={zonaDeAvisosRef}
             onCambio={setFormulario}
-            onGuardar={guardar}
+            onGuardar={() => void guardar()}
             onCancelar={() => setFormulario(null)}
           />
         )}

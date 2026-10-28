@@ -19,11 +19,12 @@ type Props = {
   esPlataforma: boolean
   /** Hay una escritura en vuelo: cambia el rótulo del botón. */
   guardando: boolean
-  /** Todo el modal queda inerte: la escritura en vuelo o una confirmación de baja abierta encima. */
+  /** Deshabilita los campos, los botones del pie y el cierre del modal; el estado lo decide la pantalla. */
   bloqueado: boolean
   error: string
   /** Cambia en cada rechazo local, para anunciar de nuevo un mensaje idéntico al anterior. */
   disparoDeError: number
+  focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: FormularioDeAltaDePuntoVenta) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -39,6 +40,7 @@ export function ModalDeAltaDePuntoVenta({
   bloqueado,
   error,
   disparoDeError,
+  focoDeReserva,
   onCambio,
   onGuardar,
   onCancelar,
@@ -60,7 +62,7 @@ export function ModalDeAltaDePuntoVenta({
   )
 
   return (
-    <Modal titulo="Nuevo punto de venta" tamano="lg" desplazable ocupado={bloqueado} pie={pie} onCerrar={onCancelar}>
+    <Modal titulo="Nuevo punto de venta" tamano="lg" desplazable ocupado={bloqueado} focoDeReserva={focoDeReserva} pie={pie} onCerrar={onCancelar}>
       <ErrorDeFormulario mensaje={error} disparo={disparoDeError} />
       <form
         id={ID_FORMULARIO_ALTA}

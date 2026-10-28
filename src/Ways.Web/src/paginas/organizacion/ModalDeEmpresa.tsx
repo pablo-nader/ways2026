@@ -9,7 +9,7 @@ type Props = {
   valor: FormularioDeEmpresa
   /** Hay una escritura en vuelo: cambia el rótulo del botón. */
   guardando: boolean
-  /** Todo el modal queda inerte: la escritura en vuelo o una confirmación de baja abierta encima. */
+  /** Deshabilita los campos, los botones del pie y el cierre del modal; el estado lo decide la pantalla. */
   bloqueado: boolean
   error: string
   /** Cambia en cada rechazo local, para anunciar de nuevo un mensaje idéntico al anterior. */

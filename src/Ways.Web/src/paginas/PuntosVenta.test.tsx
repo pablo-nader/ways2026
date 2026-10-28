@@ -1234,8 +1234,10 @@ describe('PuntosVenta — lectura en vuelo al crear', () => {
     return pedidos
   }
 
-  /** Cláusula bajo prueba: `conservarError` de la relectura; reabrir el formulario mientras relee no deja el rechazo viejo. */
-  it('reabrir el formulario mientras la relectura está en vuelo no resucita el rechazo anterior', async () => {
+  /** Cláusula bajo prueba: el `setErrorFormulario('')` de `abrirAlta`. El rechazo vive en `errorFormulario`, aparte del `error` de la
+   * pantalla que recibe los fallos de la relectura; reabrir el formulario con la relectura en vuelo arranca sin ese rechazo y la relectura
+   * que aterriza después no lo trae de vuelta. */
+  it('reabrir el formulario con la relectura en vuelo arranca sin el rechazo anterior y la relectura no lo resucita', async () => {
     const usuario = userEvent.setup()
     const inicial = diferido<PuntoVentaListado[]>()
     const relectura = diferido<PuntoVentaListado[]>()
@@ -1258,12 +1260,16 @@ describe('PuntosVenta — lectura en vuelo al crear', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
     await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    const reabierto = await screen.findByRole('dialog', { name: 'Nuevo punto de venta' })
+    expect(within(reabierto).queryByRole('alert')).toBeNull()
+    expect(screen.queryByText('Ya existe un punto de venta con ese nombre.')).not.toBeInTheDocument()
     await act(async () => {
       relectura.resolver([pvSurCentro])
       await relectura.promesa
     })
 
     expect(await screen.findByText('PV Centro')).toBeInTheDocument()
+    expect(within(reabierto).queryByRole('alert')).toBeNull()
     expect(screen.queryByText('Ya existe un punto de venta con ese nombre.')).not.toBeInTheDocument()
   })
 

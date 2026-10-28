@@ -443,6 +443,7 @@ export function PuntosVenta() {
               bloqueado={bloqueado}
               error={errorFormulario}
               disparoDeError={disparoDeError}
+              focoDeReserva={nuevoRef}
               onCambio={setAlta}
               onGuardar={() => void guardarAlta()}
               onCancelar={cerrarAlta}
