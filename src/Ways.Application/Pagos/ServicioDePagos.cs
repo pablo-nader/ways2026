@@ -44,13 +44,19 @@ public class ServicioDePagos(
     /// Requires An Open Turno) — mismo orden que <c>ServicioDeVentas.EmitirAsync</c> (design
     /// decisión 11): un punto de venta apócrifo tiene que dar 404, nunca el 409 de "sin turno
     /// abierto" de un punto de venta que ni siquiera existe.</summary>
-    public async Task<PagoRegistrado> RegistrarAsync(SolicitudDePago solicitud, CancellationToken ct = default)
+    public Task<PagoRegistrado> RegistrarAsync(SolicitudDePago solicitud, CancellationToken ct = default) =>
+        ConImporteDeUnSoloMedioAsync(solicitud.Importe, () => RegistrarAsync(ComandoDePago.Desde(solicitud), ct));
+
+    /// <summary>Alta del POS con líneas por medio: el importe del pago es la suma de las líneas y la cabecera repite el
+    /// medio de la primera. El POS no valida el medio contra el servidor (lo filtra el cliente): una referencia
+    /// inexistente la rechaza la FK.</summary>
+    public async Task<PagoRegistrado> RegistrarAsync(ComandoDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        ExigirImporteValido(solicitud.Importe);
+        var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
         // spec: pagos / A Comprobante Compra Link Requires Categoria Proveedor — "rejected
         // before reaching the database": chequeo de dominio puro, ANTES de cualquier consulta.
@@ -74,7 +80,7 @@ public class ServicioDePagos(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var pago = await estrategia.ExecuteAsync(async () =>
             await InsertarPagoAsync(
-                idTenant, puntoVenta.IdEmpresa, turno.Id, solicitud, idEmpleado, momento, ct));
+                idTenant, puntoVenta.IdEmpresa, turno.Id, solicitud, plan, idEmpleado, momento, ct));
 
         return Proyectar(pago);
     }
@@ -88,14 +94,20 @@ public class ServicioDePagos(
     /// cuenta corriente, mismo criterio que el POS) → fecha (nunca futura, resuelta en la zona
     /// horaria de la empresa/punto de venta) — recién ahí se abre la transacción de
     /// escritura.</summary>
+    public Task<PagoRegistrado> RegistrarDeAdministracionAsync(
+        SolicitudDePagoDeAdministracion solicitud, CancellationToken ct = default) =>
+        ConImporteDeUnSoloMedioAsync(
+            solicitud.Importe, () => RegistrarDeAdministracionAsync(ComandoDePagoDeAdministracion.Desde(solicitud), ct));
+
+    /// <summary>Alta administrativa con líneas por medio. Cada medio DISTINTO se valida en orden ascendente de id.</summary>
     public async Task<PagoRegistrado> RegistrarDeAdministracionAsync(
-        SolicitudDePagoDeAdministracion solicitud, CancellationToken ct = default)
+        ComandoDePagoDeAdministracion solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        ExigirImporteValido(solicitud.Importe);
+        var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
         ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
         ExigirPuntoVentaParaElPagoAProveedor(solicitud.Categoria, solicitud.IdPuntoVenta);
@@ -113,7 +125,7 @@ public class ServicioDePagos(
             await ExigirPuntoVentaDeLaEmpresaAsync(idPuntoVenta, empresa.Id, ct);
         }
 
-        await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
+        await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
 
         var zona = await ResolverZonaAsync(empresa.Id, solicitud.IdPuntoVenta, ct);
         ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
@@ -122,7 +134,7 @@ public class ServicioDePagos(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var pago = await estrategia.ExecuteAsync(async () =>
             await InsertarPagoDeAdministracionAsync(
-                idTenant, empresa.Id, fechaDeNegocio, solicitud, idEmpleado, momento, ct));
+                idTenant, empresa.Id, fechaDeNegocio, solicitud, plan, idEmpleado, momento, ct));
 
         return Proyectar(pago);
     }
@@ -146,24 +158,30 @@ public class ServicioDePagos(
     /// familias compartido, que este método no pide; y los demás escritores que tocan la compra (alta
     /// ligada, vinculación) la toman <c>FOR SHARE</c>, así que todos se serializan contra el paso 1 y
     /// ninguno retiene algo que este método necesite antes de ese lock.</summary>
+    public Task<ResultadoDePagoDeCompra> PagarCompraAsync(
+        int idComprobanteCompra, SolicitudDePagoDeCompra solicitud, CancellationToken ct = default) =>
+        ConImporteDeUnSoloMedioAsync(
+            solicitud.Importe, () => PagarCompraAsync(idComprobanteCompra, ComandoDePagoDeCompra.Desde(solicitud), ct));
+
+    /// <summary>Paga una compra con líneas por medio: el saldo pendiente se compara contra la SUMA de las líneas.</summary>
     public async Task<ResultadoDePagoDeCompra> PagarCompraAsync(
-        int idComprobanteCompra, SolicitudDePagoDeCompra solicitud, CancellationToken ct = default)
+        int idComprobanteCompra, ComandoDePagoDeCompra solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        ExigirImporteValido(solicitud.Importe);
+        var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         var concepto = string.IsNullOrWhiteSpace(solicitud.Concepto) ? null : solicitud.Concepto.Trim();
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
-            await EjecutarPagoDeCompraAsync(idTenant, idComprobanteCompra, solicitud, concepto, idEmpleado, momento, ct));
+            await EjecutarPagoDeCompraAsync(idTenant, idComprobanteCompra, solicitud, plan, concepto, idEmpleado, momento, ct));
     }
 
     private async Task<ResultadoDePagoDeCompra> EjecutarPagoDeCompraAsync(
-        int idTenant, int idComprobanteCompra, SolicitudDePagoDeCompra solicitud, string? concepto, int idEmpleado,
-        DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idComprobanteCompra, ComandoDePagoDeCompra solicitud, PlanDeLineasDePago plan, string? concepto,
+        int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -172,10 +190,10 @@ public class ServicioDePagos(
         var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [idComprobanteCompra], ct))
             .GetValueOrDefault(idComprobanteCompra, 0m);
         var saldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(EstadoCompra.Confirmada, compra.Total, pagado);
-        ReglaDePagoDeCompra.ExigirPagoValido(solicitud.Importe, saldoPendiente);
+        ReglaDePagoDeCompra.ExigirPagoValido(plan.Total, saldoPendiente);
 
         var puntoVenta = await ResolverPuntoVentaAsync(compra.IdPuntoVenta, ct);
-        await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
+        await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
 
         var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
         ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
@@ -185,16 +203,15 @@ public class ServicioDePagos(
 
         var pago = await PersistirPagoDeAdministracionAsync(
             idTenant, puntoVenta.IdEmpresa, fechaDeNegocio,
-            new SolicitudDePagoDeAdministracion(
+            new ComandoDePagoDeAdministracion(
                 solicitud.Fecha, puntoVenta.IdEmpresa, puntoVenta.Id, CategoriaPago.Proveedor, compra.IdProveedor,
-                IdArea: null, concepto, Detalle: null, solicitud.IdMedioPago, NumeroFactura: null, solicitud.Importe,
-                idComprobanteCompra),
-            compra.IdProveedor, idEmpleado, momento, ct);
+                IdArea: null, concepto, Detalle: null, plan.Lineas, NumeroFactura: null, idComprobanteCompra),
+            plan, compra.IdProveedor, idEmpleado, momento, ct);
 
         await transaccion.CommitAsync(ct);
 
         return new ResultadoDePagoDeCompra(
-            Proyectar(pago), pagado + solicitud.Importe, saldoPendiente - solicitud.Importe);
+            Proyectar(pago), pagado + plan.Total, saldoPendiente - plan.Total);
     }
 
     private async Task<string> ConceptoPorDefectoDelPagoAsync(int idComprobanteCompra, CancellationToken ct)
@@ -417,14 +434,20 @@ public class ServicioDePagos(
     /// el lock del turno (un pago sin turno, o con el turno ya cerrado, es <c>409
     /// gasto_turno_cerrado</c>). Ver <see cref="EjecutarEscrituraAsync"/> para el orden de locks y
     /// el análisis de ciclo.</summary>
+    public Task<PagoRegistrado> EditarAsync(
+        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default) =>
+        ConImporteDeUnSoloMedioAsync(
+            solicitud.Importe, () => EditarAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct));
+
+    /// <summary>Edición del POS con líneas por medio (reemplaza el conjunto de líneas del pago).</summary>
     public async Task<PagoRegistrado> EditarAsync(
-        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default)
+        int idPago, ComandoDeEdicionDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        ExigirImporteValido(solicitud.Importe);
+        var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
@@ -437,21 +460,27 @@ public class ServicioDePagos(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var pago = await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
-                idTenant, idPago, inmutables, solicitud, ModoDeEscritura.Pos, idEmpleado, momento, ct));
+                idTenant, idPago, inmutables, solicitud, plan, ModoDeEscritura.Pos, idEmpleado, momento, ct));
 
         return Proyectar(pago);
     }
 
     /// <summary>Edición administrativa de cualquier pago: con turno abierto, cerrado (recalcula el
     /// arqueo si cambia algo que el arqueo cuenta) o sin turno.</summary>
+    public Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
+        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default) =>
+        ConImporteDeUnSoloMedioAsync(
+            solicitud.Importe, () => EditarDeAdministracionAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct));
+
+    /// <summary>Edición administrativa con líneas por medio (reemplaza el conjunto de líneas del pago).</summary>
     public async Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
-        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default)
+        int idPago, ComandoDeEdicionDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        ExigirImporteValido(solicitud.Importe);
+        var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
 
         var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
@@ -459,7 +488,7 @@ public class ServicioDePagos(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
-                idTenant, idPago, inmutables, solicitud, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
+                idTenant, idPago, inmutables, solicitud, plan, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
 
         return await ObtenerDeAdministracionAsync(idPago, ct);
     }
@@ -479,7 +508,7 @@ public class ServicioDePagos(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
-                idTenant, idPago, inmutables, solicitud: null, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
+                idTenant, idPago, inmutables, solicitud: null, plan: null, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
     }
 
     private enum ModoDeEscritura
@@ -509,12 +538,12 @@ public class ServicioDePagos(
     /// contra el pago leído bajo el lock. El área sigue el criterio del alta: sin pre-chequeo, la FK
     /// compuesta es el respaldo.</summary>
     private async Task ExigirReferenciasNuevasDeLaEdicionAsync(
-        Pago pago, SolicitudDeEdicionDePago solicitud, CancellationToken ct)
+        Pago pago, ComandoDeEdicionDePago solicitud, PlanDeLineasDePago plan, IReadOnlyList<ItemPago> itemsVivos,
+        CancellationToken ct)
     {
-        if (solicitud.IdMedioPago != pago.IdMedioPago)
-        {
-            await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
-        }
+        var mediosQueYaTenia = itemsVivos.Select(i => i.IdMedioPago).Append(pago.IdMedioPago).ToHashSet();
+        await ExigirMediosDeLasLineasValidosAsync(
+            plan.Lineas.Select(l => l.IdMedioPago).Where(id => !mediosQueYaTenia.Contains(id)), ct);
 
         if (solicitud.IdProveedor is { } idProveedor && idProveedor != pago.IdProveedor)
         {
@@ -568,8 +597,8 @@ public class ServicioDePagos(
     /// En ningún orden queda un arqueo persistido que no refleje el pago comiteado.
     /// </summary>
     private async Task<Pago> EjecutarEscrituraAsync(
-        int idTenant, int idPago, DatosInmutablesDePago inmutables, SolicitudDeEdicionDePago? solicitud,
-        ModoDeEscritura modo, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idPago, DatosInmutablesDePago inmutables, ComandoDeEdicionDePago? solicitud,
+        PlanDeLineasDePago? plan, ModoDeEscritura modo, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -592,12 +621,25 @@ public class ServicioDePagos(
         var pago = await db.Pagos.FirstOrDefaultAsync(g => g.Id == idPago, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
 
+        // Los ítems vivos se leen UNA vez, después del lock del pago (single-read-under-lock): la edición los reutiliza
+        // y la baja los da de baja.
+        var itemsVivos = await db.ItemsPago
+            .Where(i => i.IdPago == pago.Id && i.DeletedAt == null)
+            .OrderBy(i => i.Id)
+            .ToListAsync(ct);
+
+        if (solicitud is { DeUnSoloMedio: true } && itemsVivos.Count > 1)
+        {
+            throw new ErrorDominio(
+                "gasto_con_varios_medios", "El pago tiene varios medios; editalo desde la pantalla nueva.", 409);
+        }
+
         var anterior = await EstadoContableAsync(pago, ct);
         var valorAnterior = PayloadDeEdicion(pago, anterior.ImportePorMedio);
 
-        if (solicitud is not null)
+        if (solicitud is not null && plan is not null)
         {
-            await ExigirReferenciasNuevasDeLaEdicionAsync(pago, solicitud, ct);
+            await ExigirReferenciasNuevasDeLaEdicionAsync(pago, solicitud, plan, itemsVivos, ct);
             ExigirEdicionCoherenteConLaCompra(pago, solicitud);
 
             if (pago.IdComprobanteCompra is null)
@@ -610,16 +652,15 @@ public class ServicioDePagos(
             pago.IdArea = solicitud.IdArea;
             pago.Concepto = solicitud.Concepto;
             pago.Detalle = solicitud.Detalle;
-            pago.IdMedioPago = solicitud.IdMedioPago;
+            pago.IdMedioPago = plan.IdMedioPagoDeLaCabecera;
             pago.NumeroFactura = solicitud.NumeroFactura;
-            pago.Importe = solicitud.Importe;
-            await SincronizarItemDelPagoAsync(pago, momento, ct);
+            pago.Importe = plan.Total;
+            ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, conservarReferencias: solicitud.DeUnSoloMedio, momento);
         }
         else
         {
             pago.DeletedAt = momento;
 
-            var itemsVivos = await db.ItemsPago.Where(i => i.IdPago == pago.Id && i.DeletedAt == null).ToListAsync(ct);
             foreach (var item in itemsVivos)
             {
                 item.DeletedAt = momento;
@@ -704,7 +745,7 @@ public class ServicioDePagos(
 
     /// <summary>Mismos códigos que el alta para un pago ligado a una compra: sigue siendo de
     /// categoría proveedor y con el proveedor de la compra.</summary>
-    private static void ExigirEdicionCoherenteConLaCompra(Pago pago, SolicitudDeEdicionDePago solicitud)
+    private static void ExigirEdicionCoherenteConLaCompra(Pago pago, ComandoDeEdicionDePago solicitud)
     {
         ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, pago.IdComprobanteCompra);
 
@@ -833,28 +874,53 @@ public class ServicioDePagos(
         return items;
     }
 
-    /// <summary>La edición del medio o del importe del pago lleva su único ítem consigo, en el mismo
-    /// <c>SaveChanges</c> que la cabecera. Un pago sin ítem (no debería existir tras el backfill) recibe el suyo.</summary>
-    private async Task SincronizarItemDelPagoAsync(Pago pago, DateTimeOffset momento, CancellationToken ct)
+    /// <summary>Un ítem por línea, en el orden de las líneas (el primero es el de la cabecera).</summary>
+    private async Task EscribirItemsDelPagoAsync(
+        Pago pago, IReadOnlyList<LineaDePago> lineas, DateTimeOffset momento, CancellationToken ct)
     {
-        var item = await db.ItemsPago.SingleOrDefaultAsync(i => i.IdPago == pago.Id && i.DeletedAt == null, ct);
-        if (item is null)
+        db.ItemsPago.AddRange(lineas.Select(linea => NuevoItem(pago, linea, momento)));
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static ItemPago NuevoItem(Pago pago, LineaDePago linea, DateTimeOffset momento) => new()
+    {
+        IdTenant = pago.IdTenant,
+        IdPago = pago.Id,
+        IdMedioPago = linea.IdMedioPago,
+        Importe = linea.Importe,
+        Referencia = linea.Referencia,
+        CreatedAt = momento,
+        UpdatedAt = momento
+    };
+
+    /// <summary>Reemplaza el conjunto de líneas del pago en el mismo <c>SaveChanges</c> que la cabecera. Los ítems
+    /// vivos (ya leídos bajo el lock del pago, por id) se reutilizan por posición; los sobrantes se dan de baja
+    /// lógica y las líneas nuevas se agregan. La baja lógica conserva el historial y no necesita una excepción en
+    /// la guarda de borrados físicos; el constraint trigger diferido suma solo los ítems vivos.</summary>
+    private void ReemplazarItemsDelPago(
+        Pago pago, IReadOnlyList<ItemPago> itemsVivos, IReadOnlyList<LineaDePago> lineas, bool conservarReferencias,
+        DateTimeOffset momento)
+    {
+        for (var i = 0; i < lineas.Count; i++)
         {
-            db.ItemsPago.Add(new ItemPago
+            if (i >= itemsVivos.Count)
             {
-                IdTenant = pago.IdTenant,
-                IdPago = pago.Id,
-                IdMedioPago = pago.IdMedioPago,
-                Importe = pago.Importe,
-                CreatedAt = momento,
-                UpdatedAt = momento
-            });
-            return;
+                db.ItemsPago.Add(NuevoItem(pago, lineas[i], momento));
+                continue;
+            }
+
+            var item = itemsVivos[i];
+            item.IdMedioPago = lineas[i].IdMedioPago;
+            item.Importe = lineas[i].Importe;
+            item.Referencia = conservarReferencias ? item.Referencia : lineas[i].Referencia;
+            item.UpdatedAt = momento;
         }
 
-        item.IdMedioPago = pago.IdMedioPago;
-        item.Importe = pago.Importe;
-        item.UpdatedAt = momento;
+        for (var i = lineas.Count; i < itemsVivos.Count; i++)
+        {
+            itemsVivos[i].DeletedAt = momento;
+            itemsVivos[i].UpdatedAt = momento;
+        }
     }
 
     /// <summary>Estado contable del pago con el reparto por medio leído de sus ítems vivos. Se llama dos veces por
@@ -1022,6 +1088,14 @@ public class ServicioDePagos(
 
     // ---- validación de dominio -------------------------------------------------------------
 
+    /// <summary>Adaptador de las rutas actuales (un solo medio): conserva el código <c>gasto_importe_invalido</c> de su
+    /// contrato antes de pasar a la regla de líneas, y falla dentro de la tarea como cualquier método asíncrono.</summary>
+    private static async Task<T> ConImporteDeUnSoloMedioAsync<T>(decimal importe, Func<Task<T>> siguiente)
+    {
+        ExigirImporteValido(importe);
+        return await siguiente();
+    }
+
     /// <summary>Mismo código que la CHECK de esquema <c>ck_pagos_importe_positivo</c> (design:
     /// Backstop Map, Slice 1 task 1.7): esta validación de servicio es la UX rápida, la CHECK es
     /// el contrato real (db-error-backstops — nunca tratar el pre-check como la protección).
@@ -1143,6 +1217,16 @@ public class ServicioDePagos(
         return medioPago;
     }
 
+    /// <summary>Valida cada medio DISTINTO una sola vez, en orden ascendente de id, con la misma regla que el alta
+    /// administrativa (existe, visible y no es cuenta corriente).</summary>
+    private async Task ExigirMediosDeLasLineasValidosAsync(IEnumerable<int> idsMedioPago, CancellationToken ct)
+    {
+        foreach (var idMedioPago in idsMedioPago.Distinct().Order())
+        {
+            await ExigirMedioPagoValidoAsync(idMedioPago, ct);
+        }
+    }
+
     private async Task<Empresa> ResolverEmpresaAsync(int idEmpresa, CancellationToken ct) =>
         await db.Empresas.FirstOrDefaultAsync(e => e.Id == idEmpresa, ct)
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant" — mismo criterio que
@@ -1186,7 +1270,7 @@ public class ServicioDePagos(
     /// <see cref="EscriturasDeTesoreria"/> para el análisis completo de por qué esto no puede
     /// formar un ciclo con el cierre.</summary>
     private async Task<Pago> InsertarPagoAsync(
-        int idTenant, int idEmpresa, int idTurnoCaja, SolicitudDePago solicitud, int idEmpleado,
+        int idTenant, int idEmpresa, int idTurnoCaja, ComandoDePago solicitud, PlanDeLineasDePago plan, int idEmpleado,
         DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
@@ -1213,9 +1297,9 @@ public class ServicioDePagos(
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
             Detalle = solicitud.Detalle,
-            IdMedioPago = solicitud.IdMedioPago,
+            IdMedioPago = plan.IdMedioPagoDeLaCabecera,
             NumeroFactura = solicitud.NumeroFactura,
-            Importe = solicitud.Importe,
+            Importe = plan.Total,
             IdComprobanteCompra = solicitud.IdComprobanteCompra,
             CreatedAt = momento,
             UpdatedAt = momento
@@ -1223,7 +1307,7 @@ public class ServicioDePagos(
 
         db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
-        await EscribirItemsDeLosPagosAsync([pago], momento, ct);
+        await EscribirItemsDelPagoAsync(pago, plan.Lineas, momento, ct);
 
         // stage-15-cc-proveedores-ledger, Slice 3 (design decisión 7, tasks.md task 3.1): el
         // movimiento `pago` va DESPUÉS de SaveChangesAsync — id_pago es identity, recién existe
@@ -1235,7 +1319,7 @@ public class ServicioDePagos(
         if (solicitud.Categoria == CategoriaPago.Proveedor && idProveedor is { } idProveedorDelPago)
         {
             await EscribirPagoAProveedorAsync(
-                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, solicitud.Importe, pago, idEmpleado, momento, ct);
+                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, plan.Total, pago, idEmpleado, momento, ct);
         }
 
         if (solicitud.OrigenFondos == OrigenFondosPago.Tesoreria)
@@ -1270,8 +1354,8 @@ public class ServicioDePagos(
     /// <c>Pago.Fecha</c> no tiene ese problema (no es un ledger acumulado, es un documento de
     /// autoría) y por eso sí lleva la fecha real elegida por el admin.</summary>
     private async Task<Pago> InsertarPagoDeAdministracionAsync(
-        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDePagoDeAdministracion solicitud,
-        int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, ComandoDePagoDeAdministracion solicitud,
+        PlanDeLineasDePago plan, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -1282,7 +1366,7 @@ public class ServicioDePagos(
         }
 
         var pago = await PersistirPagoDeAdministracionAsync(
-            idTenant, idEmpresa, fechaDeNegocio, solicitud, idProveedor, idEmpleado, momento, ct);
+            idTenant, idEmpresa, fechaDeNegocio, solicitud, plan, idProveedor, idEmpleado, momento, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -1295,8 +1379,8 @@ public class ServicioDePagos(
     /// del egreso de tesorería. <paramref name="idProveedor"/> ya viene resuelto contra la
     /// compra.</summary>
     private async Task<Pago> PersistirPagoDeAdministracionAsync(
-        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDePagoDeAdministracion solicitud,
-        int? idProveedor, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, ComandoDePagoDeAdministracion solicitud,
+        PlanDeLineasDePago plan, int? idProveedor, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         var pago = new Pago
         {
@@ -1312,9 +1396,9 @@ public class ServicioDePagos(
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
             Detalle = solicitud.Detalle,
-            IdMedioPago = solicitud.IdMedioPago,
+            IdMedioPago = plan.IdMedioPagoDeLaCabecera,
             NumeroFactura = solicitud.NumeroFactura,
-            Importe = solicitud.Importe,
+            Importe = plan.Total,
             IdComprobanteCompra = solicitud.IdComprobanteCompra,
             CreatedAt = momento,
             UpdatedAt = momento
@@ -1322,12 +1406,12 @@ public class ServicioDePagos(
 
         db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
-        await EscribirItemsDeLosPagosAsync([pago], momento, ct);
+        await EscribirItemsDelPagoAsync(pago, plan.Lineas, momento, ct);
 
         if (solicitud.Categoria == CategoriaPago.Proveedor && idProveedor is { } idProveedorDelPago)
         {
             await EscribirPagoAProveedorAsync(
-                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, solicitud.Importe, pago, idEmpleado, momento, ct);
+                idTenant, idProveedorDelPago, solicitud.IdPuntoVenta, plan.Total, pago, idEmpleado, momento, ct);
         }
 
         // ÚLTIMO lock de esta transacción (mismo criterio que InsertarPagoAsync) — acá no hay

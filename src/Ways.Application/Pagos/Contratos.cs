@@ -201,3 +201,70 @@ public sealed record ResultadoDePagoDeCompra([property: JsonPropertyName("gasto"
 /// <summary>Un pago de sueldo recién persistido junto con su único ítem (E2-S1): el desglose del libro de personal
 /// lista una línea por ítem.</summary>
 public sealed record PagoDeSueldoPersistido(Pago Pago, ItemPago Item);
+
+// ---- Comandos del servicio con líneas por medio (E2-S3a) ---------------------------------------
+// Forma interna del servicio: el importe del pago es la suma de sus líneas. Las solicitudes HTTP de arriba
+// conservan su forma `{idMedioPago, importe}` y se adaptan a UNA línea con `Desde`.
+
+/// <summary>Alta del POS con líneas por medio. Equivale a <see cref="SolicitudDePago"/> con <c>Lineas</c> en lugar
+/// de medio e importe.</summary>
+public sealed record ComandoDePago(
+    int IdPuntoVenta,
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    IReadOnlyList<LineaDePago> Lineas,
+    string? NumeroFactura,
+    int? IdComprobanteCompra = null,
+    OrigenFondosPago OrigenFondos = OrigenFondosPago.CajaTurno)
+{
+    public static ComandoDePago Desde(SolicitudDePago s) => new(
+        s.IdPuntoVenta, s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
+        [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.NumeroFactura, s.IdComprobanteCompra, s.OrigenFondos);
+}
+
+/// <summary>Alta administrativa con líneas por medio. Equivale a <see cref="SolicitudDePagoDeAdministracion"/>.</summary>
+public sealed record ComandoDePagoDeAdministracion(
+    DateOnly Fecha,
+    int IdEmpresa,
+    int? IdPuntoVenta,
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    IReadOnlyList<LineaDePago> Lineas,
+    string? NumeroFactura,
+    int? IdComprobanteCompra = null)
+{
+    public static ComandoDePagoDeAdministracion Desde(SolicitudDePagoDeAdministracion s) => new(
+        s.Fecha, s.IdEmpresa, s.IdPuntoVenta, s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
+        [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.NumeroFactura, s.IdComprobanteCompra);
+}
+
+/// <summary>Edición con líneas por medio: reemplaza el conjunto de líneas del pago. <see cref="DeUnSoloMedio"/> marca
+/// el camino de las rutas actuales, que solo conocen un medio: sobre un pago con varios ítems vivos responde
+/// <c>409 gasto_con_varios_medios</c> en vez de colapsarlos, y conserva la referencia del único ítem.</summary>
+public sealed record ComandoDeEdicionDePago(
+    CategoriaPago Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    IReadOnlyList<LineaDePago> Lineas,
+    string? NumeroFactura,
+    bool DeUnSoloMedio = false)
+{
+    public static ComandoDeEdicionDePago Desde(SolicitudDeEdicionDePago s) => new(
+        s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
+        [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.NumeroFactura, DeUnSoloMedio: true);
+}
+
+/// <summary>Pago de una compra con líneas por medio. Equivale a <see cref="SolicitudDePagoDeCompra"/>.</summary>
+public sealed record ComandoDePagoDeCompra(DateOnly Fecha, IReadOnlyList<LineaDePago> Lineas, string? Concepto)
+{
+    public static ComandoDePagoDeCompra Desde(SolicitudDePagoDeCompra s) =>
+        new(s.Fecha, [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.Concepto);
+}

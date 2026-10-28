@@ -413,6 +413,18 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > mismo guardado. La migración `ItemsDePago` hizo el backfill de un ítem por pago existente, también
 > los dados de baja (copian su `deleted_at`). Los dos `CHECK` y las FK son backstop: el servicio
 > nunca los dispara.
+>
+> **Líneas (E2-S3a).** Desde esta rebanada el servicio recibe de 1 a 20 líneas `(medio, importe,
+> referencia)` por pago (`ReglaDeLineasDePago`; un medio puede repetirse) y escribe un ítem por línea, en
+> orden. La cabecera sigue completa hasta que se elimine `pagos.id_medio_pago`: `importe` es la suma de
+> las líneas e `id_medio_pago` es el medio de la PRIMERA línea. La tesorería sigue teniendo un único
+> movimiento por pago, por el total. Editar reemplaza el conjunto de líneas: los ítems vivos se reutilizan
+> por posición (orden de id), los sobrantes se dan de baja lógica y las líneas nuevas se agregan, todo en
+> el mismo guardado que la cabecera y bajo el lock `FOR UPDATE` del pago.
+>
+> **Compatibilidad de las rutas actuales.** `/api/gastos*` y `POST /api/compras/{id}/pagos` conservan su
+> forma `{idMedioPago, importe}` y la mapean a UNA línea. Editar por ellas un pago con más de un ítem vivo
+> responde `409 gasto_con_varios_medios` y no cambia nada; con un solo ítem conserva su `referencia`.
 
 ### Órdenes de compra (Etapa 16)
 

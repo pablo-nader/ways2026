@@ -139,5 +139,5 @@ public static class ReglaDePagoDePersonal
     }
 
     private static bool EsImporteValido(decimal importe) =>
-        importe > 0 && importe <= ReglaDeMovimientoDePersonal.ImporteMaximo && decimal.Round(importe, 2) == importe;
+        importe <= ReglaDeMovimientoDePersonal.ImporteMaximo && ReglaDeLineasDePago.EsImporteValido(importe);
 }
