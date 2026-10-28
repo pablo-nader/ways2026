@@ -88,8 +88,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   soft-deleted, no physical delete); the old PUT routes answer `409 gasto_con_varios_medios` on a multi-item pago.
   Plantel keeps its own wire codes and shares only the amount arithmetic. The POS alta still does not validate
   the medio server-side (unchanged). Integration tests (`PagosConLineasTests`) need CI.
-- [ ] E2-S3b — (service-side edit with N lines landed in S3a; what remains here: drop `pagos.id_medio_pago` readers, compensating entries per medio) Edición de pagos con N líneas: replaces `SincronizarItemDelPagoAsync` (it assumes one live item and
-  throws on two) with a diff of the lines; the closed-turno arqueo recalculation already re-derives from the items,
+- [ ] E2-S3b — (service-side edit with N lines landed in S3a; what remains here: drop `pagos.id_medio_pago` readers, compensating entries per medio) Edición de pagos con N líneas: (`SincronizarItemDelPagoAsync` was already replaced in S3a by
+  `ReemplazarItemsDelPago`, a positional reuse of the live items); the closed-turno arqueo recalculation already re-derives from the items,
   so only the before/after `EstadoContableDePago` maps need the new lines; compensating entries per medio.
 - [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.

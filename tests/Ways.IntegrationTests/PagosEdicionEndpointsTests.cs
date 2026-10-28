@@ -342,6 +342,47 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(50m, await db.Pagos.Where(g => g.Id == ajeno.Id).Select(g => g.Importe).SingleAsync());
     }
 
+    /// <summary>update-404-first: un id inexistente responde 404 aunque el cuerpo sea inválido, en las dos rutas.</summary>
+    [Fact]
+    public async Task UnPagoInexistenteConCuerpoInvalidoEs404()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoInexistenteConCuerpoInvalidoEs404));
+
+        foreach (var invalida in new[]
+                 {
+                     Edicion(0m, ctx.IdMedioEfectivo),
+                     Edicion(-5m, ctx.IdMedioEfectivo),
+                     Edicion(10m, ctx.IdMedioEfectivo, concepto: "  ")
+                 })
+        {
+            Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(ctx.Admin, int.MaxValue, invalida)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await EditarAdminAsync(ctx.Admin, int.MaxValue, invalida)).StatusCode);
+        }
+    }
+
+    /// <summary>Las rutas actuales redondean el importe a 2 decimales como lo hacía numeric(14,2): 10.005 se guarda
+    /// como 10.01 en el alta y en la edición, sin 400 <c>pago_linea_importe_invalido</c>.</summary>
+    [Fact]
+    public async Task LasRutasActualesRedondeanElImporteComoAntes()
+    {
+        var ctx = await PrepararAsync(nameof(LasRutasActualesRedondeanElImporteComoAntes));
+        await AbrirTurnoAsync(ctx, 0m);
+
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 10.005m, ctx.IdMedioEfectivo);
+
+        await using (var db = Db(ctx))
+        {
+            Assert.Equal(10.01m, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Importe).SingleAsync());
+            Assert.Equal(10.01m, await db.ItemsPago.Where(i => i.IdPago == pago.Id).Select(i => i.Importe).SingleAsync());
+        }
+
+        var edicion = await EditarPosAsync(ctx.Admin, pago.Id, Edicion(20.005m, ctx.IdMedioEfectivo));
+        Assert.Equal(HttpStatusCode.OK, edicion.StatusCode);
+
+        await using var dbEditado = Db(ctx);
+        Assert.Equal(20.01m, await dbEditado.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Importe).SingleAsync());
+    }
+
     [Fact]
     public async Task LaEdicionReusaLasValidacionesDelAlta()
     {

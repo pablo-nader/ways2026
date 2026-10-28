@@ -407,10 +407,10 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > marca el mismo `deleted_at` en la cabecera y en sus ítems vivos, en un solo guardado); el backfill copia
 > el `deleted_at` del pago al ítem.
 >
-> **Escritura doble.** `ServicioDePagos` escribe un único ítem (medio e importe de la cabecera) en
-> la misma transacción que cada pago nuevo (alta del POS, alta administrativa, pagar una compra y
-> pago de personal por línea), y la edición del medio o del importe lleva el ítem consigo en el
-> mismo guardado. La migración `ItemsDePago` hizo el backfill de un ítem por pago existente, también
+> **Escritura doble.** `ServicioDePagos` escribe los ítems del pago (uno por línea; el pago de
+> personal por línea escribe uno solo) en la misma transacción que la cabecera de cada pago nuevo
+> (alta del POS, alta administrativa, pagar una compra y pago de personal), y la edición lleva los
+> ítems consigo en el mismo guardado. La migración `ItemsDePago` hizo el backfill de un ítem por pago existente, también
 > los dados de baja (copian su `deleted_at`). Los dos `CHECK` y las FK son backstop: el servicio
 > nunca los dispara.
 >
@@ -424,7 +424,13 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 >
 > **Compatibilidad de las rutas actuales.** `/api/gastos*` y `POST /api/compras/{id}/pagos` conservan su
 > forma `{idMedioPago, importe}` y la mapean a UNA línea. Editar por ellas un pago con más de un ítem vivo
-> responde `409 gasto_con_varios_medios` y no cambia nada; con un solo ítem conserva su `referencia`.
+> responde `409 gasto_con_varios_medios` y no cambia nada; con un solo ítem conserva su `referencia` (salvo que la edición cambie el medio: entonces la
+> referencia se limpia). Estas rutas redondean el importe a 2 decimales con el mismo criterio que
+> aplicaba Postgres al persistir (`numeric(14,2)`, mitad lejos de cero): `10.005` se guarda como
+> `10.01` y no responde `pago_linea_importe_invalido`, que es solo del contrato con líneas. Un importe
+> que redondea a 0 o menos responde `400 gasto_importe_invalido`, y uno mayor que `999999999999.99`
+> responde `400 valor_fuera_de_rango` (la traducción de `22003`), como antes. Un id inexistente
+> responde `404` antes de validar el cuerpo.
 
 ### Órdenes de compra (Etapa 16)
 

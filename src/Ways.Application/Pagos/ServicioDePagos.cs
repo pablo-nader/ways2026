@@ -437,7 +437,18 @@ public class ServicioDePagos(
     public Task<PagoRegistrado> EditarAsync(
         int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default) =>
         ConImporteDeUnSoloMedioAsync(
-            solicitud.Importe, () => EditarAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct));
+            solicitud.Importe,
+            () => EditarAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct),
+            () => ExigirPagoExistenteAsync(idPago, ct));
+
+    /// <summary>update-404-first: un id inexistente (o de otro tenant o dado de baja) responde 404 antes de validar el cuerpo.</summary>
+    private async Task ExigirPagoExistenteAsync(int idPago, CancellationToken ct)
+    {
+        if (!await db.Pagos.AnyAsync(g => g.Id == idPago, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
+        }
+    }
 
     /// <summary>Edición del POS con líneas por medio (reemplaza el conjunto de líneas del pago).</summary>
     public async Task<PagoRegistrado> EditarAsync(
@@ -447,10 +458,10 @@ public class ServicioDePagos(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
+        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
 
-        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
         ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         if (inmutables.IdTurnoCaja is null)
         {
@@ -470,7 +481,9 @@ public class ServicioDePagos(
     public Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
         int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default) =>
         ConImporteDeUnSoloMedioAsync(
-            solicitud.Importe, () => EditarDeAdministracionAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct));
+            solicitud.Importe,
+            () => EditarDeAdministracionAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct),
+            () => ExigirPagoExistenteAsync(idPago, ct));
 
     /// <summary>Edición administrativa con líneas por medio (reemplaza el conjunto de líneas del pago).</summary>
     public async Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
@@ -480,10 +493,10 @@ public class ServicioDePagos(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
+        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
         var plan = ReglaDeLineasDePago.Planificar(solicitud.Lineas);
         ExigirConceptoValido(solicitud.Concepto);
 
-        var inmutables = await LeerDatosInmutablesAsync(idPago, ct);
         ExigirPagoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
@@ -910,9 +923,12 @@ public class ServicioDePagos(
             }
 
             var item = itemsVivos[i];
+            var cambiaElMedio = item.IdMedioPago != lineas[i].IdMedioPago;
             item.IdMedioPago = lineas[i].IdMedioPago;
             item.Importe = lineas[i].Importe;
-            item.Referencia = conservarReferencias ? item.Referencia : lineas[i].Referencia;
+            item.Referencia = conservarReferencias
+                ? (cambiaElMedio ? null : item.Referencia)
+                : lineas[i].Referencia;
             item.UpdatedAt = momento;
         }
 
@@ -1090,9 +1106,22 @@ public class ServicioDePagos(
 
     /// <summary>Adaptador de las rutas actuales (un solo medio): conserva el código <c>gasto_importe_invalido</c> de su
     /// contrato antes de pasar a la regla de líneas, y falla dentro de la tarea como cualquier método asíncrono.</summary>
-    private static async Task<T> ConImporteDeUnSoloMedioAsync<T>(decimal importe, Func<Task<T>> siguiente)
+    private static async Task<T> ConImporteDeUnSoloMedioAsync<T>(
+        decimal importe, Func<Task<T>> siguiente, Func<Task>? existencia = null)
     {
+        if (existencia is not null)
+        {
+            await existencia();
+        }
+
         ExigirImporteValido(importe);
+        var redondeado = ImporteDeUnSoloMedio.Redondear(importe);
+        ExigirImporteValido(redondeado);
+        if (redondeado > ReglaDeLineasDePago.ImporteMaximo)
+        {
+            throw new ErrorDominio("valor_fuera_de_rango", "El valor numérico está fuera de rango.", 400);
+        }
+
         return await siguiente();
     }
 

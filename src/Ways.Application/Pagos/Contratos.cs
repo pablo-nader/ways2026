@@ -202,6 +202,13 @@ public sealed record ResultadoDePagoDeCompra([property: JsonPropertyName("gasto"
 /// lista una línea por ítem.</summary>
 public sealed record PagoDeSueldoPersistido(Pago Pago, ItemPago Item);
 
+/// <summary>Redondeo del importe de las rutas actuales (un solo medio): el mismo que aplicaba Postgres al persistir en
+/// <c>numeric(14,2)</c> (mitad lejos de cero), para que un importe con más de dos decimales se comporte como antes.</summary>
+internal static class ImporteDeUnSoloMedio
+{
+    public static decimal Redondear(decimal importe) => Math.Round(importe, 2, MidpointRounding.AwayFromZero);
+}
+
 // ---- Comandos del servicio con líneas por medio (E2-S3a) ---------------------------------------
 // Forma interna del servicio: el importe del pago es la suma de sus líneas. Las solicitudes HTTP de arriba
 // conservan su forma `{idMedioPago, importe}` y se adaptan a UNA línea con `Desde`.
@@ -222,7 +229,8 @@ public sealed record ComandoDePago(
 {
     public static ComandoDePago Desde(SolicitudDePago s) => new(
         s.IdPuntoVenta, s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
-        [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.NumeroFactura, s.IdComprobanteCompra, s.OrigenFondos);
+        [new LineaDePago(s.IdMedioPago, ImporteDeUnSoloMedio.Redondear(s.Importe), null)],
+        s.NumeroFactura, s.IdComprobanteCompra, s.OrigenFondos);
 }
 
 /// <summary>Alta administrativa con líneas por medio. Equivale a <see cref="SolicitudDePagoDeAdministracion"/>.</summary>
@@ -241,7 +249,8 @@ public sealed record ComandoDePagoDeAdministracion(
 {
     public static ComandoDePagoDeAdministracion Desde(SolicitudDePagoDeAdministracion s) => new(
         s.Fecha, s.IdEmpresa, s.IdPuntoVenta, s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
-        [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.NumeroFactura, s.IdComprobanteCompra);
+        [new LineaDePago(s.IdMedioPago, ImporteDeUnSoloMedio.Redondear(s.Importe), null)],
+        s.NumeroFactura, s.IdComprobanteCompra);
 }
 
 /// <summary>Edición con líneas por medio: reemplaza el conjunto de líneas del pago. <see cref="DeUnSoloMedio"/> marca
@@ -259,12 +268,13 @@ public sealed record ComandoDeEdicionDePago(
 {
     public static ComandoDeEdicionDePago Desde(SolicitudDeEdicionDePago s) => new(
         s.Categoria, s.IdProveedor, s.IdArea, s.Concepto, s.Detalle,
-        [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.NumeroFactura, DeUnSoloMedio: true);
+        [new LineaDePago(s.IdMedioPago, ImporteDeUnSoloMedio.Redondear(s.Importe), null)],
+        s.NumeroFactura, DeUnSoloMedio: true);
 }
 
 /// <summary>Pago de una compra con líneas por medio. Equivale a <see cref="SolicitudDePagoDeCompra"/>.</summary>
 public sealed record ComandoDePagoDeCompra(DateOnly Fecha, IReadOnlyList<LineaDePago> Lineas, string? Concepto)
 {
     public static ComandoDePagoDeCompra Desde(SolicitudDePagoDeCompra s) =>
-        new(s.Fecha, [new LineaDePago(s.IdMedioPago, s.Importe, null)], s.Concepto);
+        new(s.Fecha, [new LineaDePago(s.IdMedioPago, ImporteDeUnSoloMedio.Redondear(s.Importe), null)], s.Concepto);
 }
