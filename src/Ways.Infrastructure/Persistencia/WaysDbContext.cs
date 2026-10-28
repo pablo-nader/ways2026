@@ -135,6 +135,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<CuentaTesoreria> CuentasTesoreria => Set<CuentaTesoreria>();
     public DbSet<MovimientoCuenta> MovimientosCuenta => Set<MovimientoCuenta>();
     public DbSet<Pago> Pagos => Set<Pago>();
+    public DbSet<ItemPago> ItemsPago => Set<ItemPago>();
 
     // stage-8-compras-transferencias-inventario, Slice 1 (schema + seed gate, DB CHANGE GATE
     // exercised in autonomous mode): modelo adelantado a la migración, mismo trámite que

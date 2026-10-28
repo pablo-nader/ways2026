@@ -613,6 +613,7 @@ public class ServicioDePagos(
             pago.IdMedioPago = solicitud.IdMedioPago;
             pago.NumeroFactura = solicitud.NumeroFactura;
             pago.Importe = solicitud.Importe;
+            await SincronizarItemDelPagoAsync(pago, momento, ct);
         }
         else
         {
@@ -802,6 +803,47 @@ public class ServicioDePagos(
         ParametrosDeComando.Agregar(comando, turno.Id);
         ParametrosDeComando.Agregar(comando, idTenant);
         await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Escritura doble de E2-S1: cada pago nace con exactamente un ítem que repite el medio y el importe de su
+    /// cabecera. Va en la transacción del llamador, después de que el pago tiene su id; el constraint trigger de la base
+    /// es diferido, así que el orden dentro de la transacción no importa.</summary>
+    private async Task EscribirItemsDeLosPagosAsync(IEnumerable<Pago> pagos, DateTimeOffset momento, CancellationToken ct)
+    {
+        db.ItemsPago.AddRange(pagos.Select(pago => new ItemPago
+        {
+            IdTenant = pago.IdTenant,
+            IdPago = pago.Id,
+            IdMedioPago = pago.IdMedioPago,
+            Importe = pago.Importe,
+            CreatedAt = momento,
+            UpdatedAt = momento
+        }));
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>La edición del medio o del importe del pago lleva su único ítem consigo, en el mismo
+    /// <c>SaveChanges</c> que la cabecera. Un pago sin ítem (no debería existir tras el backfill) recibe el suyo.</summary>
+    private async Task SincronizarItemDelPagoAsync(Pago pago, DateTimeOffset momento, CancellationToken ct)
+    {
+        var item = await db.ItemsPago.SingleOrDefaultAsync(i => i.IdPago == pago.Id && i.DeletedAt == null, ct);
+        if (item is null)
+        {
+            db.ItemsPago.Add(new ItemPago
+            {
+                IdTenant = pago.IdTenant,
+                IdPago = pago.Id,
+                IdMedioPago = pago.IdMedioPago,
+                Importe = pago.Importe,
+                CreatedAt = momento,
+                UpdatedAt = momento
+            });
+            return;
+        }
+
+        item.IdMedioPago = pago.IdMedioPago;
+        item.Importe = pago.Importe;
+        item.UpdatedAt = momento;
     }
 
     private static EstadoContableDePago EstadoContable(Pago pago) =>
@@ -1154,6 +1196,7 @@ public class ServicioDePagos(
 
         db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
+        await EscribirItemsDeLosPagosAsync([pago], momento, ct);
 
         // stage-15-cc-proveedores-ledger, Slice 3 (design decisión 7, tasks.md task 3.1): el
         // movimiento `pago` va DESPUÉS de SaveChangesAsync — id_pago es identity, recién existe
@@ -1252,6 +1295,7 @@ public class ServicioDePagos(
 
         db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
+        await EscribirItemsDeLosPagosAsync([pago], momento, ct);
 
         if (solicitud.Categoria == CategoriaPago.Proveedor && idProveedor is { } idProveedorDelPago)
         {
@@ -1473,6 +1517,7 @@ public class ServicioDePagos(
 
         db.Pagos.AddRange(pagos);
         await db.SaveChangesAsync(ct);
+        await EscribirItemsDeLosPagosAsync(pagos, momento, ct);
 
         if (origenFondos == OrigenFondosPago.Tesoreria)
         {

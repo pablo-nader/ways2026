@@ -109,6 +109,12 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         // spec: Pago succeeds with an open turno — id_turno_caja resuelto server-side, nunca
         // client-supplied (SolicitudDePago no tiene ese campo).
         Assert.Equal(turno.Id, pago.IdTurnoCaja);
+
+        // E2-S1: escritura doble, exactamente un ítem con el medio y el importe de la cabecera.
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
+        Assert.Equal((ctx.IdMedioPago, 300m), (item.IdMedioPago, item.Importe));
+        Assert.Null(item.Referencia);
     }
 
     [Fact]

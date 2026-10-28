@@ -264,6 +264,13 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal((ctx.IdMedioEfectivo, 2000m, (string?)null), (pagos[0].IdMedioPago, pagos[0].Importe, pagos[0].Detalle));
         Assert.Equal((ctx.IdMedioTarjeta, 500m, "cup-77"), (pagos[1].IdMedioPago, pagos[1].Importe, pagos[1].Detalle));
 
+        // E2-S1: cada línea de dinero es un pago con exactamente un ítem igual a su cabecera.
+        var idsDePagos = pagos.Select(g => g.Id).ToList();
+        var itemsDeSueldo = await db.ItemsPago.Where(i => idsDePagos.Contains(i.IdPago)).OrderBy(i => i.IdPago).ToListAsync();
+        Assert.Equal(
+            pagos.Select(g => (g.Id, g.IdMedioPago, g.Importe)),
+            itemsDeSueldo.Select(i => (i.IdPago, i.IdMedioPago, i.Importe)));
+
         var egresos = await db.MovimientosTesoreria.Where(m => m.IdEmpresa == ctx.IdEmpresa).OrderBy(m => m.Id).ToListAsync();
         Assert.Equal(2, egresos.Count);
         Assert.Equal([pagos[0].Id, pagos[1].Id], egresos.Select(e => e.IdPago));

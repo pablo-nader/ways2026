@@ -121,6 +121,7 @@ public interface IWaysDbContext
     // stage-6-turnos-caja, Slice 3: ServicioDePagos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).
     DbSet<Pago> Pagos { get; }
+    DbSet<ItemPago> ItemsPago { get; }
 
     // stage-8-compras-transferencias-inventario, Slice 2: ServicioDeCompras es el primer
     // consumidor de Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración

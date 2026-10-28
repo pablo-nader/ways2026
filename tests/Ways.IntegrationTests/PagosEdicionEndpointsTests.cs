@@ -235,6 +235,10 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(OrigenFondosPago.CajaTurno, fila.OrigenFondos);
         Assert.Equal(idTurno, fila.IdTurnoCaja);
 
+        // E2-S1: el único ítem sigue a la cabecera en el mismo guardado.
+        var itemEditado = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
+        Assert.Equal((ctx.IdMedioElectronico, 120m), (itemEditado.IdMedioPago, itemEditado.Importe));
+
         Assert.Equal(-1120m, await db.Proveedores.Where(p => p.Id == ctx.IdProveedor).Select(p => p.Saldo).SingleAsync());
         var ajuste = await db.MovimientosCuentaCorrienteProveedor
             .SingleAsync(m => m.IdProveedor == ctx.IdProveedor && m.Tipo == TipoMovimientoCcProveedor.Ajuste);
@@ -371,6 +375,9 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var fila = await db.Pagos.SingleAsync(g => g.Id == pago.Id);
         Assert.Equal(70m, fila.Importe);
         Assert.Equal(idMedioBaja, fila.IdMedioPago);
+
+        var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
+        Assert.Equal((idMedioBaja, 70m), (item.IdMedioPago, item.Importe));
     }
 
     [Fact]
