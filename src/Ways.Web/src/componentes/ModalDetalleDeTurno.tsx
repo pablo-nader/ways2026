@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
@@ -14,6 +14,7 @@ import { Cargando } from './Cargando'
 import { fechaHoraATexto } from '../formato/fechas'
 import { DetalleDeTurnoListas } from './DetalleDeTurnoListas'
 import { InsigniaDeRecalculo } from './InsigniaDeRecalculo'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import { Modal } from './Modal'
 import { VentasPorMedioDeCierre } from './VentasPorMedioDeCierre'
 
@@ -105,6 +106,16 @@ export function ModalDetalleDeTurno({ idTurno, onCerrar }: Props) {
 }
 
 function ContenidoDelCierre({ detalle, turno, cierre, medios }: DatosDelCierre) {
+  const columnas = useMemo<ColumnasOrdenables<TurnoConArqueos['arqueos'][number]>>(
+    () => ({
+      medio: { valor: (a) => nombreDeMedio(a.idMedioPago, medios) },
+      esperado: { valor: (a) => a.importeEsperado },
+      declarado: { valor: (a) => a.importeDeclarado },
+      diferencia: { valor: (a) => a.diferencia },
+    }),
+    [medios],
+  )
+  const { filas: arqueos, orden, alternar } = useOrdenamiento(turno.arqueos, columnas)
   const totalEsperado = redondearImporte(turno.arqueos.reduce((suma, a) => suma + a.importeEsperado, 0))
   const totalDeclarado = redondearImporte(turno.arqueos.reduce((suma, a) => suma + a.importeDeclarado, 0))
   const totalDiferencia = redondearImporte(turno.arqueos.reduce((suma, a) => suma + a.diferencia, 0))
@@ -134,14 +145,22 @@ function ContenidoDelCierre({ detalle, turno, cierre, medios }: DatosDelCierre) 
         <table className="table table-sm table-striped table-bordered align-middle">
           <thead>
             <tr>
-              <th>Medio</th>
-              <th className="text-end">Esperado</th>
-              <th className="text-end">Declarado</th>
-              <th className="text-end">Diferencia</th>
+              <EncabezadoOrdenable columna="medio" orden={orden} onAlternar={alternar}>
+                Medio
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="esperado" orden={orden} onAlternar={alternar} className="text-end">
+                Esperado
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="declarado" orden={orden} onAlternar={alternar} className="text-end">
+                Declarado
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="diferencia" orden={orden} onAlternar={alternar} className="text-end">
+                Diferencia
+              </EncabezadoOrdenable>
             </tr>
           </thead>
           <tbody>
-            {turno.arqueos.map((a) => (
+            {arqueos.map((a) => (
               <tr key={a.idMedioPago}>
                 <td>{nombreDeMedio(a.idMedioPago, medios)}</td>
                 <td className="text-end">

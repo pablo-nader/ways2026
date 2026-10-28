@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
-import type { EstadoDeVencimiento, PuntoVentaListado, Vencimientos as VencimientosRespuesta } from '../api/tipos'
+import type { EstadoDeVencimiento, FilaDeVencimiento, PuntoVentaListado, Vencimientos as VencimientosRespuesta } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { atributosDeCampoEntero, parsearEnteroTipeado } from '../formato/numeros'
 
 function formatearCantidad(valor: number): string {
@@ -20,6 +21,14 @@ const BADGE_POR_ESTADO: Record<EstadoDeVencimiento, { etiqueta: string; clase: s
   PorVencer: { etiqueta: 'Por vencer', clase: 'text-bg-warning' },
   Vigente: { etiqueta: 'Vigente', clase: 'text-bg-success' },
   SinFecha: { etiqueta: 'Sin fecha', clase: 'text-bg-secondary' },
+}
+
+const COLUMNAS: ColumnasOrdenables<FilaDeVencimiento> = {
+  articulo: { valor: (f) => f.articulo },
+  lote: { valor: (f) => f.codigoLote },
+  vencimiento: { valor: (f) => (f.fechaVencimiento === null ? null : new Date(f.fechaVencimiento)) },
+  cantidad: { valor: (f) => f.cantidad },
+  estado: { valor: (f) => BADGE_POR_ESTADO[f.estado].etiqueta },
 }
 
 function BadgeDeEstado({ estado }: { estado: EstadoDeVencimiento }) {
@@ -101,6 +110,9 @@ export function Vencimientos() {
     cargar()
   }, [cargar])
 
+  const filasDelReporte = useMemo(() => vencimientos?.filas ?? [], [vencimientos])
+  const { filas, orden, alternar } = useOrdenamiento(filasDelReporte, COLUMNAS)
+
   return (
     <div className="container-fluid py-4">
       <Box titulo="Vencimientos" variante="inverse">
@@ -177,15 +189,25 @@ export function Vencimientos() {
                   <table className="table table-sm table-striped table-bordered align-middle">
                     <thead>
                       <tr>
-                        <th>Artículo</th>
-                        <th>Lote</th>
-                        <th>Vencimiento</th>
-                        <th className="text-end">Cantidad</th>
-                        <th>Estado</th>
+                        <EncabezadoOrdenable columna="articulo" orden={orden} onAlternar={alternar}>
+                          Artículo
+                        </EncabezadoOrdenable>
+                        <EncabezadoOrdenable columna="lote" orden={orden} onAlternar={alternar}>
+                          Lote
+                        </EncabezadoOrdenable>
+                        <EncabezadoOrdenable columna="vencimiento" orden={orden} onAlternar={alternar}>
+                          Vencimiento
+                        </EncabezadoOrdenable>
+                        <EncabezadoOrdenable columna="cantidad" orden={orden} onAlternar={alternar} className="text-end">
+                          Cantidad
+                        </EncabezadoOrdenable>
+                        <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                          Estado
+                        </EncabezadoOrdenable>
                       </tr>
                     </thead>
                     <tbody>
-                      {vencimientos.filas.map((fila) => (
+                      {filas.map((fila) => (
                         <tr key={fila.idLote}>
                           <td>{fila.articulo}</td>
                           <td>{fila.codigoLote}</td>

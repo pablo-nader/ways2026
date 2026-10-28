@@ -369,6 +369,8 @@ export function FormularioArticulo({
   // del formulario queda inerte, así que nada puede cambiar lo que se está por confirmar.
   const [salida, setSalida] = useState<{ disparador: HTMLElement } | null>(null)
   const focoDeSalidaRef = useRef<HTMLElement | null>(null)
+  /** Motivo del rechazo de la salida; se muestra dentro de su confirmación, que sigue abierta. */
+  const [errorDeSalida, setErrorDeSalida] = useState('')
   const refNombre = useRef<HTMLInputElement>(null)
   const nombresDeCatalogo = useMemo<NombresDeCatalogo>(
     () => ({
@@ -415,16 +417,23 @@ export function FormularioArticulo({
 
   function cancelarSalida() {
     focoDeSalidaRef.current = salida?.disparador ?? null
+    setErrorDeSalida('')
     setSalida(null)
   }
 
   async function confirmarSalida() {
     const disparador = salida?.disparador ?? null
-    // Si la escritura no llegó a empezar (otra ya estaba en curso), la confirmación sigue abierta.
-    if (await accionesDeFamilia.sacar()) {
-      focoDeSalidaRef.current = disparador
-      setSalida(null)
+    setErrorDeSalida('')
+    const rechazo = await accionesDeFamilia.sacar()
+    // Si la escritura no llegó a empezar (otra ya estaba en curso), la confirmación sigue abierta; si el servidor la
+    // rechazó, sigue abierta con el motivo adentro.
+    if (rechazo === null) return
+    if (rechazo !== '') {
+      setErrorDeSalida(rechazo)
+      return
     }
+    focoDeSalidaRef.current = disparador
+    setSalida(null)
   }
 
   // Alta rápida de padrones (Categoría/Marca/Grupo/Proveedor habitual): un solo estado porque solo
@@ -492,6 +501,7 @@ export function FormularioArticulo({
         nombresDeCatalogo={nombresDeCatalogo}
         nombresDeListas={nombresDeListas}
         confirmandoSalida={confirmandoSalida}
+        errorDeSalida={errorDeSalida}
         onPedirSalida={(disparador) => setSalida({ disparador })}
         onCancelarSalida={cancelarSalida}
         onConfirmarSalida={() => void confirmarSalida()}

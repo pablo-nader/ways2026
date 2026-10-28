@@ -14,6 +14,7 @@ import { ultimaPaginaDePadron } from '../api/padron'
 import type { ClienteListado, CondicionFiscalListado, ListaPrecioAsignable, PaginaDe } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { EncabezadoOrdenable } from '../componentes/grilla'
 import { FilaDeFiltrosDePadron, type CeldaDeFiltroDePadron } from '../componentes/padron/FilaDeFiltrosDePadron'
@@ -60,10 +61,18 @@ export function Clientes() {
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [errorFormulario, setErrorFormulario] = useState('')
   const [guardando, setGuardando] = useState(false)
+  /** Baja pendiente de confirmación, con el botón que la pidió (capturado en su `onClick`). */
+  const [baja, setBaja] = useState<{ cliente: ClienteListado; disparador: HTMLElement } | null>(null)
+  const [errorDeBaja, setErrorDeBaja] = useState('')
   const [eliminando, setEliminando] = useState(false)
+  /** Espejo síncrono de "hay una baja en vuelo": dos clics en el mismo tick no emiten dos DELETE. */
+  const eliminandoRef = useRef(false)
   /** Espejo síncrono de "hay una escritura en vuelo" (guardado o baja): un doble clic en el mismo tick no emite dos
-   * escrituras, y un filtro tipeado antes de que empezara espera a que termine. */
+   * escrituras. */
   const guardandoRef = useRef(false)
+  /** Espejo de `bloqueado` (escritura en vuelo o puerta de baja abierta) para el temporizador de los filtros: un filtro
+   * tipeado antes espera a que termine. */
+  const bloqueadoRef = useRef(false)
   /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la fila de "Editar" se
    * reemplaza por "Cargando…" durante el refresco): el botón de alta, que es estable. */
   const agregarRef = useRef<HTMLButtonElement>(null)
@@ -72,7 +81,7 @@ export function Clientes() {
 
   const padron = usePadronEnServidor<FiltrosDeClientes, ColumnaOrdenableDeClientes>(FILTROS_DE_CLIENTES_VACIOS, {
     esColumnaOrdenable: esColumnaOrdenableDeClientes,
-    ocupado: () => guardandoRef.current,
+    ocupado: () => guardandoRef.current || bloqueadoRef.current,
   })
   const { irAPagina } = padron
 
@@ -159,28 +168,50 @@ export function Clientes() {
     setErrorFormulario('')
   }
 
-  async function eliminar(c: ClienteListado) {
-    if (c.esConsumidorFinal) return
-    if (!confirm(`¿Dar de baja al cliente "${c.nombre}"?`)) return
+  function pedirBaja(c: ClienteListado, disparador: HTMLElement) {
+    setErrorDeBaja('')
+    setBaja({ cliente: c, disparador })
+  }
+
+  function cancelarBaja() {
+    setErrorDeBaja('')
+    setBaja(null)
+  }
+
+  async function confirmarBaja() {
+    if (baja === null || eliminandoRef.current) return
+    eliminandoRef.current = true
+    const c = baja.cliente
 
     guardandoRef.current = true
-    setEliminando(true)
     setError('')
     setAviso('')
+    setErrorDeBaja('')
+    setEliminando(true)
     try {
-      await clienteDeClientes.eliminar(c.id)
+      try {
+        await clienteDeClientes.eliminar(c.id)
+      } catch (e) {
+        setErrorDeBaja(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
+        return
+      }
+
       setAviso(`Cliente "${c.nombre}" dado de baja.`)
+      setBaja(null)
+      // `cargar` reporta su propio fallo en `error`: la baja ya se confirmó y no se informa como rechazada.
       await cargar(++generacion.current, padron.consultaRef.current)
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
     } finally {
       guardandoRef.current = false
+      eliminandoRef.current = false
       setEliminando(false)
     }
   }
 
-  /** Los filtros, el orden y el pager quedan inertes mientras hay una escritura en vuelo. */
-  const bloqueado = guardando || eliminando
+  /** Los filtros, el orden y el pager quedan inertes mientras hay una escritura en vuelo o la confirmación de baja abierta. */
+  const bloqueado = guardando || eliminando || baja !== null
+  useEffect(() => {
+    bloqueadoRef.current = bloqueado
+  })
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -228,6 +259,17 @@ export function Clientes() {
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => setFormulario(null)}
+          />
+        )}
+
+        {baja && (
+          <ConfirmacionDeBaja
+            titulo={`al cliente "${baja.cliente.nombre}"`}
+            ocupado={eliminando}
+            disparador={baja.disparador}
+            error={errorDeBaja || null}
+            onConfirmar={() => void confirmarBaja()}
+            onCancelar={cancelarBaja}
           />
         )}
 
@@ -316,7 +358,7 @@ export function Clientes() {
                         icono="eliminar"
                         disabled={c.esConsumidorFinal || bloqueado}
                         title={c.esConsumidorFinal ? 'El Consumidor Final no se puede eliminar.' : undefined}
-                        onClick={() => eliminar(c)}
+                        onClick={(evento) => pedirBaja(c, evento.currentTarget)}
                       />
                     </td>
                   </tr>

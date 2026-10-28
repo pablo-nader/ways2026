@@ -1,4 +1,5 @@
 import { CampoImporte } from '../componentes/CampoImporte'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { formatearImporte } from '../formato/importes'
 
 export type FilaDeDesgloseDeIva = {
@@ -9,6 +10,12 @@ export type FilaDeDesgloseDeIva = {
   /** Solo en el editor: lo que sale del neto, para mostrar contra lo impreso. */
   ivaCalculado?: number
   fueraDeTolerancia?: boolean
+}
+
+const COLUMNAS: ColumnasOrdenables<FilaDeDesgloseDeIva> = {
+  alicuota: { valor: (f) => f.porcentaje },
+  neto: { valor: (f) => f.neto },
+  iva: { valor: (f) => f.iva },
 }
 
 type Props = {
@@ -28,6 +35,10 @@ function moneda(valor: number | null): string {
  * se puede corregir para que coincida con el impreso en el comprobante del proveedor cuando el
  * redondeo difiere; el servidor acepta una diferencia de hasta un peso. */
 export function DesgloseDeIvaDeCompra({ filas, nombrePorAlicuota, onCambiarIva, disabled = false }: Props) {
+  const { filas: ordenadas, orden, alternar } = useOrdenamiento(filas, COLUMNAS)
+  // En el editor las filas se editan: conservan el orden de carga y los encabezados no ordenan.
+  const ordenable = onCambiarIva === undefined
+
   if (filas.length === 0) return null
 
   return (
@@ -35,13 +46,29 @@ export function DesgloseDeIvaDeCompra({ filas, nombrePorAlicuota, onCambiarIva, 
       <table className="table table-sm table-bordered align-middle w-auto mb-1" aria-label="Desglose de IVA">
         <thead>
           <tr>
-            <th>Alícuota</th>
-            <th className="text-end">Neto</th>
-            <th className="text-end">IVA</th>
+            {ordenable ? (
+              <>
+                <EncabezadoOrdenable columna="alicuota" orden={orden} onAlternar={alternar}>
+                  Alícuota
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="neto" orden={orden} onAlternar={alternar} className="text-end">
+                  Neto
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="iva" orden={orden} onAlternar={alternar} className="text-end">
+                  IVA
+                </EncabezadoOrdenable>
+              </>
+            ) : (
+              <>
+                <th>Alícuota</th>
+                <th className="text-end">Neto</th>
+                <th className="text-end">IVA</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
-          {filas.map((fila) => {
+          {(ordenable ? ordenadas : filas).map((fila) => {
             const nombre = nombrePorAlicuota[fila.idAlicuotaIva] ?? `${fila.porcentaje}%`
             return (
               <tr key={fila.idAlicuotaIva}>
