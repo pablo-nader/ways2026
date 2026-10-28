@@ -758,9 +758,9 @@ export type ArticuloListado = {
   /** `true`: `costoLista` ya trae el IVA; `false`: es el costo sin IVA. `null` sin visibilidad de costos. */
   costoListaIncluyeIva: boolean | null
   descuentoProveedor: number | null
-  /** Porcentaje de impuestos internos sobre el costo neto (campo compartido de la familia). `null` sin visibilidad de costos;
-   * ausente en un payload viejo se trata como 0. */
-  porcentajeImpuestoInterno?: number | null
+  /** Importe de impuestos internos sin IVA, en la misma base que el costo de lista (unidad o bulto); campo compartido de la familia.
+   * `null` sin visibilidad de costos; ausente en un payload viejo se trata como 0. */
+  impuestoInterno?: number | null
   /** Costo por unidad con IVA e impuestos internos y neto de descuento: lo calcula el servidor al guardar y una compra
    * confirmada lo pisa con el costo efectivo. */
   costoNominal: number | null
@@ -815,8 +815,8 @@ export type AltaArticulo = {
   /** `true`: `costoLista` ya trae el IVA. El servidor calcula el costo nominal con estos dos campos. */
   costoListaIncluyeIva: boolean
   descuentoProveedor: number | null
-  /** Hasta 4 decimales; el alta lo asume 0 si falta y la edición conserva el guardado con `null`. Campo compartido de la familia. */
-  porcentajeImpuestoInterno?: number | null
+  /** Importe sin IVA en la base del costo de lista, hasta 2 decimales; el alta lo asume 0 si falta y la edición conserva el guardado con `null`. Campo compartido de la familia. */
+  impuestoInterno?: number | null
   disponibleParaTodas: boolean
   idsEmpresas: number[] | null
   activo: boolean
@@ -963,7 +963,7 @@ export type ValoresCompartidosDeLaFamilia = {
   costoListaPor: CostoListaPor | null
   costoListaIncluyeIva: boolean | null
   descuentoProveedor: number | null
-  porcentajeImpuestoInterno: number
+  impuestoInterno: number
   costoNominal: number | null
 }
 

@@ -8,6 +8,7 @@ import {
   completarConArticulo,
   costoDeArticuloParaCompra,
   impuestoInternoDeLinea,
+  impuestoInternoPorUnidadDelArticulo,
   impuestoInternoSugerido,
   itemAFormulario,
   lineaDeCompraVacia,
@@ -30,7 +31,7 @@ function linea(sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeComp
     cantidad: '10',
     importe: 100,
     idAlicuotaIva: 3,
-    porcentajeImpuestoInterno: 8,
+    impuestoInternoPorUnidad: 8,
     ...sobrescribir,
   }
 }
@@ -56,6 +57,7 @@ function articulo(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado 
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: false,
     descuentoProveedor: 0,
+    impuestoInterno: 8,
     costoNominal: 129,
     disponibleParaTodas: true,
     idsEmpresas: [],
@@ -71,22 +73,42 @@ function articulo(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado 
 }
 
 describe('impuestoInternoSugerido', () => {
-  it('es el porcentaje del artículo sobre el neto de la línea (cantidad × importe − descuento), a 2 decimales', () => {
-    expect(impuestoInternoSugerido(linea(), PORCENTAJES, NETO)).toBe(80)
-    expect(impuestoInternoSugerido(linea({ descuentoPorcentaje: 10 }), PORCENTAJES, NETO)).toBe(72)
+  it('es el importe por unidad del artículo por las unidades de la línea, sin depender del costo ni del descuento', () => {
+    expect(impuestoInternoSugerido(linea())).toBe(80)
+    expect(impuestoInternoSugerido(linea({ descuentoPorcentaje: 10, importe: 1 }))).toBe(80)
   })
 
   it('redondea la mitad lejos de cero', () => {
-    expect(impuestoInternoSugerido(linea({ cantidad: '1', importe: 1.25, porcentajeImpuestoInterno: 10 }), PORCENTAJES, NETO)).toBe(0.13)
-    expect(impuestoInternoSugerido(linea({ cantidad: '1', importe: 0.05, porcentajeImpuestoInterno: 10 }), PORCENTAJES, NETO)).toBe(0.01)
+    expect(impuestoInternoSugerido(linea({ cantidad: '1', impuestoInternoPorUnidad: 0.125 }))).toBe(0.13)
+    expect(impuestoInternoSugerido(linea({ cantidad: '1', impuestoInternoPorUnidad: 0.005 }))).toBe(0.01)
   })
 
-  it('con precios con IVA incluido parte del neto: extrae el IVA del total de la línea', () => {
-    expect(impuestoInternoSugerido(linea({ cantidad: '1', importe: 121 }), PORCENTAJES, FINAL)).toBe(8)
+  it('en una línea por bulto multiplica por las unidades del bulto', () => {
+    // 50 por bulto de 12 unidades = 4,1666... por unidad; 2 bultos = 24 unidades = 100
+    const porBulto = { unidadDeMedida: 'Bulto' as const, unidadesPorBulto: 12, cantidad: '2', impuestoInternoPorUnidad: 50 / 12 }
+    expect(impuestoInternoSugerido(linea(porBulto))).toBe(100)
   })
 
-  it('es cero sin porcentaje en el artículo', () => {
-    expect(impuestoInternoSugerido(linea({ porcentajeImpuestoInterno: 0 }), PORCENTAJES, NETO)).toBe(0)
+  it('es cero sin importe en el artículo', () => {
+    expect(impuestoInternoSugerido(linea({ impuestoInternoPorUnidad: 0 }))).toBe(0)
+  })
+})
+
+describe('impuestoInternoPorUnidadDelArticulo', () => {
+  it('por unidad es el importe del artículo', () => {
+    expect(impuestoInternoPorUnidadDelArticulo({ impuestoInterno: 8, costoListaPor: 'Unidad' })).toBe(8)
+    expect(impuestoInternoPorUnidadDelArticulo({ impuestoInterno: 8 })).toBe(8)
+  })
+
+  it('por bulto se divide entre las unidades por bulto', () => {
+    expect(impuestoInternoPorUnidadDelArticulo({ impuestoInterno: 96, costoListaPor: 'Bulto', unidadesPorBulto: 12 })).toBe(8)
+  })
+
+  it('sin importe, sin visibilidad de costos o por bulto sin unidades es cero', () => {
+    expect(impuestoInternoPorUnidadDelArticulo({ impuestoInterno: 0 })).toBe(0)
+    expect(impuestoInternoPorUnidadDelArticulo({ impuestoInterno: null })).toBe(0)
+    expect(impuestoInternoPorUnidadDelArticulo({})).toBe(0)
+    expect(impuestoInternoPorUnidadDelArticulo({ impuestoInterno: 96, costoListaPor: 'Bulto', unidadesPorBulto: null })).toBe(0)
   })
 })
 
@@ -97,25 +119,25 @@ describe('admiteImpuestoInterno / impuestoInternoDeLinea', () => {
     expect(admiteImpuestoInterno(linea(), SIN_DISCRIMINAR)).toBe(false)
   })
 
-  it('mientras no se tipeó nada rige el sugerido y sigue a la cantidad y al costo', () => {
-    expect(impuestoInternoDeLinea(linea(), PORCENTAJES, NETO)).toBe(80)
-    expect(impuestoInternoDeLinea(linea({ cantidad: '20' }), PORCENTAJES, NETO)).toBe(160)
-    expect(impuestoInternoDeLinea(linea({ importe: 50 }), PORCENTAJES, NETO)).toBe(40)
+  it('mientras no se tipeó nada rige el sugerido y sigue a la cantidad', () => {
+    expect(impuestoInternoDeLinea(linea(), NETO)).toBe(80)
+    expect(impuestoInternoDeLinea(linea({ cantidad: '20' }), NETO)).toBe(160)
+    expect(impuestoInternoDeLinea(linea({ importe: 50 }), NETO)).toBe(80)
   })
 
   it('el importe tipeado a mano gana y no lo pisa un cambio de cantidad o de costo', () => {
     const manual = linea({ impuestoInterno: 75.5 })
-    expect(impuestoInternoDeLinea(manual, PORCENTAJES, NETO)).toBe(75.5)
-    expect(impuestoInternoDeLinea({ ...manual, cantidad: '99', importe: 1 }, PORCENTAJES, NETO)).toBe(75.5)
+    expect(impuestoInternoDeLinea(manual, NETO)).toBe(75.5)
+    expect(impuestoInternoDeLinea({ ...manual, cantidad: '99', importe: 1 }, NETO)).toBe(75.5)
   })
 
   it('un cero tipeado a mano también gana sobre el sugerido', () => {
-    expect(impuestoInternoDeLinea(linea({ impuestoInterno: 0 }), PORCENTAJES, NETO)).toBe(0)
+    expect(impuestoInternoDeLinea(linea({ impuestoInterno: 0 }), NETO)).toBe(0)
   })
 
   it('es cero (aunque haya un importe tipeado) en un concepto o sin discriminar IVA', () => {
-    expect(impuestoInternoDeLinea(linea({ impuestoInterno: 10 }), PORCENTAJES, SIN_DISCRIMINAR)).toBe(0)
-    expect(impuestoInternoDeLinea(linea({ idArticulo: '', impuestoInterno: 10 }), PORCENTAJES, NETO)).toBe(0)
+    expect(impuestoInternoDeLinea(linea({ impuestoInterno: 10 }), SIN_DISCRIMINAR)).toBe(0)
+    expect(impuestoInternoDeLinea(linea({ idArticulo: '', impuestoInterno: 10 }), NETO)).toBe(0)
   })
 })
 
@@ -145,27 +167,38 @@ describe('lineaFormularioACalculo — impuestoInterno', () => {
   })
 })
 
-describe('cambiosAlElegirArticulo — porcentaje de impuestos internos', () => {
-  it('toma el porcentaje del artículo y vuelve al cálculo automático', () => {
+describe('cambiosAlElegirArticulo — impuestos internos del artículo', () => {
+  it('toma el importe por unidad del artículo y vuelve al cálculo automático', () => {
     const cambios = cambiosAlElegirArticulo(
-      linea({ idArticulo: '', impuestoInterno: 5, porcentajeImpuestoInterno: 0 }),
-      articulo({ porcentajeImpuestoInterno: 12 }),
+      linea({ idArticulo: '', impuestoInterno: 5, impuestoInternoPorUnidad: 0 }),
+      articulo({ impuestoInterno: 12 }),
       alicuotas,
       'busqueda',
       NETO,
     )
 
-    expect(cambios.porcentajeImpuestoInterno).toBe(12)
+    expect(cambios.impuestoInternoPorUnidad).toBe(12)
     expect(cambios.impuestoInterno).toBeNull()
   })
 
-  it('un artículo sin porcentaje (o que no lo informa) deja 0', () => {
-    expect(cambiosAlElegirArticulo(linea(), articulo({ porcentajeImpuestoInterno: null }), alicuotas, 'busqueda').porcentajeImpuestoInterno).toBe(0)
-    expect(cambiosAlElegirArticulo(linea(), articulo(), alicuotas, 'busqueda').porcentajeImpuestoInterno).toBe(0)
+  it('con un costo de lista por bulto lo divide entre las unidades por bulto', () => {
+    const cambios = cambiosAlElegirArticulo(
+      linea({ idArticulo: '' }),
+      articulo({ impuestoInterno: 96, costoListaPor: 'Bulto', unidadesPorBulto: 12 }),
+      alicuotas,
+      'busqueda',
+    )
+
+    expect(cambios.impuestoInternoPorUnidad).toBe(8)
+  })
+
+  it('un artículo sin importe (o que no lo informa) deja 0', () => {
+    expect(cambiosAlElegirArticulo(linea(), articulo({ impuestoInterno: null }), alicuotas, 'busqueda').impuestoInternoPorUnidad).toBe(0)
+    expect(cambiosAlElegirArticulo(linea(), articulo({ impuestoInterno: 0 }), alicuotas, 'busqueda').impuestoInternoPorUnidad).toBe(0)
   })
 
   it('volver a elegir el mismo artículo conserva el importe tipeado', () => {
-    const cambios = cambiosAlElegirArticulo(linea({ impuestoInterno: 33 }), articulo({ porcentajeImpuestoInterno: 8 }), alicuotas, 'busqueda')
+    const cambios = cambiosAlElegirArticulo(linea({ impuestoInterno: 33 }), articulo({ impuestoInterno: 8 }), alicuotas, 'busqueda')
 
     expect('impuestoInterno' in cambios).toBe(false)
   })
@@ -176,14 +209,14 @@ describe('una línea que pasa a ser concepto pierde el impuesto interno', () => 
     const cambios = cambiosAlEscribirDetalle(linea({ impuestoInterno: 5 }), 'Flete')
 
     expect(cambios.impuestoInterno).toBeNull()
-    expect(cambios.porcentajeImpuestoInterno).toBe(0)
+    expect(cambios.impuestoInternoPorUnidad).toBe(0)
   })
 
   it('al desresolver el código', () => {
     const cambios = cambiosAlDesresolver()
 
     expect(cambios.impuestoInterno).toBeNull()
-    expect(cambios.porcentajeImpuestoInterno).toBe(0)
+    expect(cambios.impuestoInternoPorUnidad).toBe(0)
   })
 })
 
@@ -221,37 +254,36 @@ describe('itemAFormulario / completarConArticulo — impuesto interno', () => {
     expect(itemAFormulario(1, item({ impuestoInterno: null })).impuestoInterno).toBeNull()
   })
 
-  it('completa el porcentaje del artículo sin pisar uno ya conocido', () => {
-    expect(completarConArticulo(linea({ porcentajeImpuestoInterno: 0 }), articulo({ porcentajeImpuestoInterno: 8 })).porcentajeImpuestoInterno).toBe(8)
-    expect(completarConArticulo(linea({ porcentajeImpuestoInterno: 5 }), articulo({ porcentajeImpuestoInterno: 8 })).porcentajeImpuestoInterno).toBe(5)
+  it('completa el importe por unidad del artículo sin pisar uno ya conocido', () => {
+    expect(completarConArticulo(linea({ impuestoInternoPorUnidad: 0 }), articulo({ impuestoInterno: 8 })).impuestoInternoPorUnidad).toBe(8)
+    expect(completarConArticulo(linea({ impuestoInternoPorUnidad: 5 }), articulo({ impuestoInterno: 8 })).impuestoInternoPorUnidad).toBe(5)
   })
 })
 
 describe('costoDeArticuloParaCompra — el costo nominal de respaldo sale sin el impuesto interno', () => {
   const sinLista = { costoLista: null, descuentoProveedor: null, costoNominal: 129 }
 
-  it('en modo neto: costoNominal × 100 / (100 + IVA + II)', () => {
-    // 129 = 100 × (1 + 8 % + 21 %) -> neto 100
-    const costo = costoDeArticuloParaCompra({ ...sinLista, porcentajeImpuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, NETO)
+  it('en modo neto: (nominal − impuesto por unidad) / (1 + IVA)', () => {
+    // 129 = 100 × 1,21 + 8 -> neto 100
+    const costo = costoDeArticuloParaCompra({ ...sinLista, impuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, NETO)
 
     expect(costo?.importe).toBe(100)
   })
 
-  it('con precios con IVA incluido: costoNominal × (100 + IVA) / (100 + IVA + II)', () => {
-    // 129 -> 100 neto -> 121 con IVA
-    const costo = costoDeArticuloParaCompra({ ...sinLista, porcentajeImpuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, FINAL)
+  it('con precios con IVA incluido: nominal − impuesto por unidad', () => {
+    // 129 -> 121 con IVA y sin el excise
+    const costo = costoDeArticuloParaCompra({ ...sinLista, impuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, FINAL)
 
     expect(costo?.importe).toBe(121)
   })
 
-  it('sin porcentaje del artículo el comportamiento no cambia', () => {
+  it('sin importe del artículo el comportamiento no cambia', () => {
     expect(costoDeArticuloParaCompra({ ...sinLista, costoNominal: 121 }, { delArticulo: 21, deLaFila: 21 }, NETO)?.importe).toBe(100)
-    expect(costoDeArticuloParaCompra({ ...sinLista, costoNominal: 121, porcentajeImpuestoInterno: null }, { delArticulo: 21, deLaFila: 21 }, FINAL)?.importe).toBe(121)
+    expect(costoDeArticuloParaCompra({ ...sinLista, costoNominal: 121, impuestoInterno: null }, { delArticulo: 21, deLaFila: 21 }, FINAL)?.importe).toBe(121)
   })
 
   it('en un comprobante que no discrimina IVA el excise va dentro del costo: el nominal se usa tal cual', () => {
-    // sin discriminar la línea fuerza el excise a 0, así que el costo todo incluido conserva el excise
-    const costo = costoDeArticuloParaCompra({ ...sinLista, porcentajeImpuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, SIN_DISCRIMINAR)
+    const costo = costoDeArticuloParaCompra({ ...sinLista, impuestoInterno: 8 }, { delArticulo: 21, deLaFila: 21 }, SIN_DISCRIMINAR)
 
     expect(costo?.importe).toBe(129)
   })
@@ -259,30 +291,43 @@ describe('costoDeArticuloParaCompra — el costo nominal de respaldo sale sin el
 
 describe('costoDeArticuloParaCompra — impuesto interno por origen del costo y modo del comprobante', () => {
   const alicuotasDe21 = { delArticulo: 21, deLaFila: 21 }
-  // Neto 100 con IVA 21 % e impuesto interno 8 %: sin IVA 100, con IVA 121, todo incluido 129.
-  const listaSinIva = { costoLista: 100, costoListaIncluyeIva: false, descuentoProveedor: null, costoNominal: 129, porcentajeImpuestoInterno: 8 }
-  const listaConIva = { costoLista: 129, costoListaIncluyeIva: true, descuentoProveedor: null, costoNominal: 129, porcentajeImpuestoInterno: 8 }
-  const soloNominal = { costoLista: null, descuentoProveedor: null, costoNominal: 129, porcentajeImpuestoInterno: 8 }
+  // Neto 100 con IVA 21 % e impuesto interno de 8 por unidad: sin IVA 100, con IVA 121, todo incluido 129.
+  const listaSinIva = { costoLista: 100, costoListaIncluyeIva: false, descuentoProveedor: null, costoNominal: 129, impuestoInterno: 8 }
+  const listaConIva = { costoLista: 129, costoListaIncluyeIva: true, descuentoProveedor: null, costoNominal: 129, impuestoInterno: 8 }
+  const soloNominal = { costoLista: null, descuentoProveedor: null, costoNominal: 129, impuestoInterno: 8 }
+  // El mismo artículo con el costo de lista y el impuesto por bulto de 12 unidades.
+  const bulto = { costoListaPor: 'Bulto' as const, unidadesPorBulto: 12 }
+  const listaSinIvaPorBulto = { ...listaSinIva, ...bulto, costoLista: 1200, impuestoInterno: 96 }
+  const listaConIvaPorBulto = { ...listaConIva, ...bulto, costoLista: 1548, impuestoInterno: 96 }
+  const soloNominalPorBulto = { ...soloNominal, ...bulto, impuestoInterno: 96 }
 
-  it.each([
-    ['lista sin IVA', listaSinIva, NETO, 100],
-    ['lista sin IVA', listaSinIva, FINAL, 121],
-    ['lista sin IVA', listaSinIva, SIN_DISCRIMINAR, 129],
-    ['lista con IVA', listaConIva, NETO, 100],
-    ['lista con IVA', listaConIva, FINAL, 121],
-    ['lista con IVA', listaConIva, SIN_DISCRIMINAR, 129],
-    ['nominal de respaldo', soloNominal, NETO, 100],
-    ['nominal de respaldo', soloNominal, FINAL, 121],
-    ['nominal de respaldo', soloNominal, SIN_DISCRIMINAR, 129],
-  ])('%s, %j: el importe precargado no cuenta el excise dos veces', (_origen, datos, modo, esperado) => {
-    expect(costoDeArticuloParaCompra(datos, alicuotasDe21, modo)?.importe).toBe(esperado)
+  const casos = [
+    ['lista sin IVA', listaSinIva],
+    ['lista con IVA', listaConIva],
+    ['nominal de respaldo', soloNominal],
+    ['lista sin IVA por bulto', listaSinIvaPorBulto],
+    ['lista con IVA por bulto', listaConIvaPorBulto],
+    ['nominal de respaldo con la base por bulto', soloNominalPorBulto],
+  ] as const
+
+  it.each(casos)('%s, comprobante neto: el importe es el neto y el excise va aparte', (_origen, datos) => {
+    expect(costoDeArticuloParaCompra(datos, alicuotasDe21, NETO)?.importe).toBe(100)
   })
 
-  it('el importe precargado más el excise automático de la línea es el costo todo incluido del servidor', () => {
-    const importe = costoDeArticuloParaCompra(listaConIva, alicuotasDe21, NETO)?.importe ?? 0
-    const sugerido = impuestoInternoSugerido(linea({ importe, cantidad: '1' }), PORCENTAJES, NETO)
+  it.each(casos)('%s, precios finales: el importe es el costo con IVA sin el excise', (_origen, datos) => {
+    expect(costoDeArticuloParaCompra(datos, alicuotasDe21, FINAL)?.importe).toBe(121)
+  })
 
-    // 100 neto + 21 de IVA + 8 de excise = 129
-    expect(importe * 1.21 + sugerido).toBeCloseTo(129, 2)
+  it.each(casos)('%s, sin discriminar IVA: el costo todo incluido conserva el excise', (_origen, datos) => {
+    expect(costoDeArticuloParaCompra(datos, alicuotasDe21, SIN_DISCRIMINAR)?.importe).toBe(129)
+  })
+
+  it.each(casos)('%s: el importe precargado más el excise automático reproduce el costo nominal del servidor', (_origen, datos) => {
+    const importe = costoDeArticuloParaCompra(datos, alicuotasDe21, NETO)?.importe ?? 0
+    const cambios = cambiosAlElegirArticulo(linea({ idArticulo: '' }), articulo({ ...datos, idAlicuotaIva: 3 }), alicuotas, 'busqueda', NETO)
+    const sugerido = impuestoInternoSugerido(linea({ importe, cantidad: '6', impuestoInternoPorUnidad: cambios.impuestoInternoPorUnidad }))
+
+    // (100 neto × 1,21 × 6 unidades + excise de la línea) / 6 unidades = 129
+    expect((importe * 1.21 * 6 + sugerido) / 6).toBeCloseTo(129, 2)
   })
 })

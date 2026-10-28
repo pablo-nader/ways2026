@@ -2306,20 +2306,20 @@ describe('GrillaDeItemsDeCompra — costo de lista cargado por bulto y sin IVA',
 })
 
 describe('GrillaDeItemsDeCompra — impuestos internos', () => {
-  const conPorcentaje = (sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeCompraFormulario => ({
+  const conImporteDelArticulo = (sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeCompraFormulario => ({
     ...lineaDeCompraVacia(1),
     idArticulo: 20,
     descripcion: 'Gaseosa 2L',
     cantidad: '10',
     importe: 100,
     idAlicuotaIva: 3,
-    porcentajeImpuestoInterno: 8,
+    impuestoInternoPorUnidad: 8,
     ...sobrescribir,
   })
 
-  it('precarga el importe con el porcentaje del artículo sobre el neto de la línea y lo sigue mientras no se tipea', async () => {
+  it('precarga el importe del artículo por las unidades de la línea y lo sigue mientras no se tipea', async () => {
     const usuario = userEvent.setup()
-    montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+    montar({ discriminaIva: true, inicial: [conImporteDelArticulo()] })
 
     expect(campo(0, 'Imp. internos')).toHaveValue('80,00')
 
@@ -2331,7 +2331,7 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
 
   it('el importe tipeado a mano (con coma o con punto) es el impreso y un cambio de cantidad no lo pisa', async () => {
     const usuario = userEvent.setup()
-    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+    const { captura } = montar({ discriminaIva: true, inicial: [conImporteDelArticulo()] })
 
     await usuario.clear(campo(0, 'Imp. internos'))
     await usuario.type(campo(0, 'Imp. internos'), '75.5')
@@ -2346,7 +2346,7 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
 
   it('el campo admite hasta dos decimales', async () => {
     const usuario = userEvent.setup()
-    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+    const { captura } = montar({ discriminaIva: true, inicial: [conImporteDelArticulo()] })
 
     await usuario.clear(campo(0, 'Imp. internos'))
     await usuario.type(campo(0, 'Imp. internos'), '12,345')
@@ -2356,7 +2356,7 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
 
   it('vaciar el campo devuelve la línea al cálculo automático', async () => {
     const usuario = userEvent.setup()
-    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje({ impuestoInterno: 5 })] })
+    const { captura } = montar({ discriminaIva: true, inicial: [conImporteDelArticulo({ impuestoInterno: 5 })] })
 
     await usuario.clear(campo(0, 'Imp. internos'))
 
@@ -2365,7 +2365,7 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
 
   it('pasar por la celda sin tocarla (foco y Tab) deja la línea en automático y un cambio de cantidad la recalcula', async () => {
     const usuario = userEvent.setup()
-    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+    const { captura } = montar({ discriminaIva: true, inicial: [conImporteDelArticulo()] })
 
     await usuario.click(campo(0, 'Imp. internos'))
     await usuario.tab()
@@ -2381,7 +2381,7 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
 
   it('tipear un importe distinto del sugerido sí la pasa a manual', async () => {
     const usuario = userEvent.setup()
-    const { captura } = montar({ discriminaIva: true, inicial: [conPorcentaje()] })
+    const { captura } = montar({ discriminaIva: true, inicial: [conImporteDelArticulo()] })
 
     await usuario.click(campo(0, 'Imp. internos'))
     await usuario.type(campo(0, 'Imp. internos'), '1')
@@ -2391,19 +2391,19 @@ describe('GrillaDeItemsDeCompra — impuestos internos', () => {
   })
 
   it('un comprobante que no discrimina IVA no ofrece el campo', () => {
-    montar({ discriminaIva: false, inicial: [conPorcentaje({ impuestoInterno: 5 })] })
+    montar({ discriminaIva: false, inicial: [conImporteDelArticulo({ impuestoInterno: 5 })] })
 
     expect(within(filaDeItems(0)).queryByLabelText(/^Imp\. internos, línea \d+$/)).not.toBeInTheDocument()
   })
 
   it('una línea por concepto no ofrece el campo', () => {
-    montar({ discriminaIva: true, inicial: [conPorcentaje({ idArticulo: '', porcentajeImpuestoInterno: 0 })] })
+    montar({ discriminaIva: true, inicial: [conImporteDelArticulo({ idArticulo: '', impuestoInternoPorUnidad: 0 })] })
 
     expect(within(filaDeItems(0)).queryByLabelText(/^Imp\. internos, línea \d+$/)).not.toBeInTheDocument()
   })
 
-  it('con precios con IVA incluido sugiere sobre el neto sin IVA', () => {
-    montar({ discriminaIva: true, preciosFinales: true, inicial: [conPorcentaje({ cantidad: '1', importe: 121 })] })
+  it('con precios con IVA incluido el sugerido es el mismo importe del artículo', () => {
+    montar({ discriminaIva: true, preciosFinales: true, inicial: [conImporteDelArticulo({ cantidad: '1', importe: 121 })] })
 
     expect(campo(0, 'Imp. internos')).toHaveValue('8,00')
   })

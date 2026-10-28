@@ -45,7 +45,7 @@ function valoresFixture(sobrescribir: Partial<ValoresCompartidosDeLaFamilia> = {
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: 10,
-    porcentajeImpuestoInterno: 8.5,
+    impuestoInterno: 8.5,
     costoNominal: 90,
     ...sobrescribir,
   }
@@ -92,7 +92,7 @@ describe('CAMPOS_COMPARTIDOS', () => {
       'costo_lista_por',
       'costo_lista_incluye_iva',
       'descuento_proveedor',
-      'porcentaje_impuesto_interno',
+      'impuesto_interno',
       'costo_nominal',
     ])
   })
@@ -125,7 +125,7 @@ describe('valoresDeFamiliaAFormulario', () => {
       costoListaPor: 'Unidad',
       costoListaIncluyeIva: true,
       descuentoProveedor: '10',
-      porcentajeImpuestoInterno: '8.5',
+      impuestoInterno: '8.5',
       costoNominal: '90',
     })
   })
@@ -205,7 +205,7 @@ describe('camposCompartidosModificados', () => {
     ['costoListaPor', { costoListaPor: 'Bulto' }],
     ['costoListaIncluyeIva', { costoListaIncluyeIva: false }],
     ['descuentoProveedor', { descuentoProveedor: '15' }],
-    ['porcentajeImpuestoInterno', { porcentajeImpuestoInterno: '9' }],
+    ['impuestoInterno', { impuestoInterno: '9' }],
     ['costoNominal', { costoNominal: '95' }],
   ]
 
