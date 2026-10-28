@@ -8327,6 +8327,25 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(await screen.findByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
     })
 
+    it('si la venta sale de "necesita atención" con la confirmación abierta, el modal se cierra y el foco vuelve al código', async () => {
+      await prepararVentaRechazada()
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      // Otro camino la saca de la lista mientras el modal está abierto (aquí, "Reintentar" desde detrás).
+      fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+      await waitFor(() => expect(screen.queryByText('1 venta necesita atención')).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toHaveFocus())
+    })
+
     it('"Confirmar descarte" la saca de "necesita atención" para siempre y deja cerrar la caja', async () => {
       await prepararVentaRechazada()
       renderPos()
@@ -10404,6 +10423,39 @@ describe('Pos — artículos por importe', () => {
       await montarConInstantanea([fiambreriaDeInstantanea({ teclaAtajo: null })])
 
       expect(screen.queryByRole('button', { name: /^Fiambrería/ })).not.toBeInTheDocument()
+    })
+
+    it('con la confirmación de descarte abierta, F5 no agrega la línea por detrás (y sin ella sí)', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), fiambreriaDeInstantanea()] }),
+        bloque: { desde: 600, hasta: 699, proximo: 600 },
+      })
+      await agregarARechazada(almacen, {
+        idLocal: 'rechazada-1',
+        numeroPreasignado: 500,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+        mensaje: 'La venta 0007-00000500 no se pudo sincronizar: rechazo del servidor.',
+      })
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+      await screen.findByText('1 venta necesita atención')
+      await userEvent.type(campoDeCodigo(), '150')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(lineasDeFiambreria()).toHaveLength(0)
+      expect(campoDeCodigo()).toHaveValue('150')
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F5' })
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(campoDeCodigo()).toHaveValue('')
     })
 
     it('F5 con el importe en el campo agrega la línea del artículo asignado y limpia el campo', async () => {

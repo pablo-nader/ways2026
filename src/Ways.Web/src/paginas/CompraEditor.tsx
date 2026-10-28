@@ -1040,7 +1040,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   async function anular() {
     // regla 9: guard de reentrancia de primera línea.
-    if (anulandoRef.current || idCompra === null) return
+    if (ocupado || anulandoRef.current || idCompra === null) return
 
     anulandoRef.current = true
     setAnulando(true)

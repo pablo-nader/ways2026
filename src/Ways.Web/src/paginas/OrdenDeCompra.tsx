@@ -481,7 +481,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
   }
 
   async function anular() {
-    if (anulandoRef.current || idOrden === null) return
+    if (ocupado || anulandoRef.current || idOrden === null) return
 
     anulandoRef.current = true
     setAnulando(true)

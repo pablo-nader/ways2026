@@ -1295,6 +1295,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const ventaPorDescartar = sincronizacionOffline.ventasConError.find((v) => v.idLocal === idLocalConfirmandoDescarte) ?? null
   const descartandoVenta = ventaPorDescartar !== null
 
+  // Si la venta deja de estar en "necesita atención" con la confirmación abierta (la reintentó o la
+  // sacó un ciclo de sincronización), el pedido queda vencido: no puede reabrirse solo si reaparece.
+  useEffect(() => {
+    if (idLocalConfirmandoDescarte !== null && ventaPorDescartar === null) {
+      setIdLocalConfirmandoDescarte(null)
+      setErrorDescarte('')
+      pedirFocoEnElCodigo()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idLocalConfirmandoDescarte, ventaPorDescartar])
+
   async function onReintentarVentaConError(idLocal: string) {
     if (idLocalesEnAccionRef.current.has(idLocal)) return
     idLocalesEnAccionRef.current.add(idLocal)
@@ -2603,7 +2614,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   function agregarPorAtajo(tecla: TeclaAtajo) {
     // Mismas compuertas que F2 y F4: nada se agrega detrás de un modal ni durante un cobro o una lectura en vuelo.
     if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || bloqueadoPorTurno) return
-    if (buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada !== null || confirmandoCobro || cajaDeEscritorioOcupada) return
+    if (buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada !== null || confirmandoCobro || descartandoVenta || cajaDeEscritorioOcupada) return
 
     const texto = entradaEscaneo.trim()
     if (!instantaneaDelPuntoVenta) {

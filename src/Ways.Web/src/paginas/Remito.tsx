@@ -423,7 +423,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
   }
 
   async function anular() {
-    if (anulandoRef.current || idRemito === null) return
+    if (ocupado || anulandoRef.current || idRemito === null) return
 
     anulandoRef.current = true
     setAnulando(true)

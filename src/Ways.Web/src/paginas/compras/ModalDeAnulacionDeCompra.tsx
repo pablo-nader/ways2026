@@ -10,6 +10,7 @@ type Props = {
   bloqueado: boolean
   /** Motivo del rechazo; se muestra dentro del modal, que sigue abierto. */
   error: string
+  /** Solo se invoca con la casilla tildada: el botón que la dispara está deshabilitado sin ella. */
   onConfirmar: () => void
   onCancelar: () => void
 }

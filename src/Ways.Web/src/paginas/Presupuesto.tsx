@@ -379,7 +379,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
   }
 
   async function anular() {
-    if (anulandoRef.current || idPresupuesto === null) return
+    if (ocupado || anulandoRef.current || idPresupuesto === null) return
 
     anulandoRef.current = true
     setAnulando(true)
