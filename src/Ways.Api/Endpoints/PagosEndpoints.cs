@@ -107,6 +107,117 @@ public static class PagosEndpoints
                 pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Historial de gestión de gastos, con filtros amplios y nombres resueltos.");
 
+        MapearPagosConLineas(app);
+
         return app;
+    }
+
+    /// <summary>E2-S4: contrato nuevo con líneas por medio, a la par de "/api/gastos" (que sigue igual para el POS
+    /// instalado). Mismas políticas que su gemelo de gastos. Los listados reutilizan <see cref="PagoListado"/> y
+    /// <see cref="PagoDeAdministracionListado"/>, que ya traen <c>lineas</c> y conservan además el <c>idMedioPago</c> de
+    /// compatibilidad del primer ítem; depurar ese campo queda para la etapa de limpieza.</summary>
+    private static void MapearPagosConLineas(IEndpointRouteBuilder app)
+    {
+        var grupo = app.MapGroup("/api/pagos")
+            .WithTags("Pagos")
+            .RequireAuthorization(Politicas.OperacionDePos);
+
+        grupo.MapPost("/", async (ServicioDePagos servicio, SolicitudDePagoConLineas solicitud, CancellationToken ct) =>
+        {
+            var pago = await servicio.RegistrarAsync(solicitud.AComando(), ct);
+            return Results.Created($"/api/pagos/{pago.Id}", await servicio.ConLineasAsync(pago, ct));
+        })
+        .WithSummary("Registra un pago con líneas por medio contra el turno abierto del punto de venta.");
+
+        grupo.MapGet("/", (
+            ServicioDePagos servicio,
+            int? idPuntoVenta,
+            DateTimeOffset? desde,
+            DateTimeOffset? hasta,
+            int? pagina,
+            int? tamanio,
+            CancellationToken ct) =>
+            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary("Historial de pagos con sus líneas por medio, paginado.");
+
+        grupo.MapGet("/{id:int}", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerAsync(id, ct))
+        .WithSummary("Detalle de un pago con sus líneas por medio (el Location del alta).");
+
+        grupo.MapPut("/{id:int}", async (
+            ServicioDePagos servicio, int id, SolicitudDeEdicionDePagoConLineas solicitud, CancellationToken ct) =>
+        {
+            var pago = await servicio.EditarAsync(id, solicitud.AComando(), ct);
+            return Results.Ok(await servicio.ConLineasAsync(pago, ct));
+        })
+        .WithSummary("Edita un pago de un turno que sigue abierto, reemplazando sus líneas por medio.");
+
+        grupo.MapPost("/{id:int}/vincular-compra", async (
+            ServicioDePagos servicio, int id, SolicitudDeVincularCompra solicitud, CancellationToken ct) =>
+        {
+            var pago = await servicio.VincularCompraAsync(id, solicitud, ct);
+            return Results.Ok(await servicio.ConLineasAsync(pago, ct));
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Vincula (o convierte a proveedor) un pago existente a una compra confirmada.");
+
+        grupo.MapPost("/de-compra/{idCompra:int}", async (
+            ServicioDePagos servicio, int idCompra, SolicitudDePagoDeCompraConLineas solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.PagarCompraAsync(idCompra, solicitud.AComando(), ct);
+            return Results.Created(
+                $"/api/pagos/administracion/{resultado.Pago.Id}",
+                new ResultadoDePagoDeCompraConLineas(
+                    await servicio.ConLineasAsync(resultado.Pago, ct), resultado.Pagado, resultado.SaldoPendiente));
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Paga una compra confirmada con líneas por medio: crea el pago de tesorería imputado a la compra. " +
+            "El total de las líneas no puede superar el saldo pendiente.");
+
+        var administracion = app.MapGroup("/api/pagos/administracion")
+            .WithTags("Pagos")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        administracion.MapPost("/", async (
+            ServicioDePagos servicio, SolicitudDePagoDeAdministracionConLineas solicitud, CancellationToken ct) =>
+        {
+            var pago = await servicio.RegistrarDeAdministracionAsync(solicitud.AComando(), ct);
+            return Results.Created($"/api/pagos/administracion/{pago.Id}", await servicio.ConLineasAsync(pago, ct));
+        })
+        .WithSummary("Registra un pago administrativo con líneas por medio, sin turno, pagado de la tesorería.");
+
+        administracion.MapPut("/{id:int}", async (
+            ServicioDePagos servicio, int id, SolicitudDeEdicionDePagoConLineas solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.EditarDeAdministracionAsync(id, solicitud.AComando(), ct)))
+        .WithSummary("Edita cualquier pago reemplazando sus líneas; recalcula el arqueo si es de un turno cerrado.");
+
+        administracion.MapDelete("/{id:int}", async (ServicioDePagos servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarDeAdministracionAsync(id, ct);
+            return Results.NoContent();
+        })
+        .WithSummary("Da de baja cualquier pago, revirtiendo sus efectos; recalcula el arqueo si es de un turno cerrado.");
+
+        administracion.MapGet("/{id:int}", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerDeAdministracionAsync(id, ct))
+        .WithSummary("Detalle de un pago de gestión con sus líneas.");
+
+        administracion.MapGet("/", (
+            ServicioDePagos servicio,
+            int? idEmpresa,
+            int? idPuntoVenta,
+            DateTimeOffset? desde,
+            DateTimeOffset? hasta,
+            CategoriaPago? categoria,
+            OrigenFondosPago? origenFondos,
+            int? idProveedor,
+            int? pagina,
+            int? tamanio,
+            CancellationToken ct) =>
+            servicio.ListarDeAdministracionAsync(
+                idEmpresa, idPuntoVenta, desde, hasta, categoria, origenFondos, idProveedor,
+                pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary("Historial de gestión de pagos, con filtros amplios, nombres resueltos y líneas por medio.");
     }
 }

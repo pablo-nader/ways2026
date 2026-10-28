@@ -48,8 +48,9 @@ public class ServicioDePagos(
         ConImporteDeUnSoloMedioAsync(solicitud.Importe, () => RegistrarAsync(ComandoDePago.Desde(solicitud), ct));
 
     /// <summary>Alta del POS con líneas por medio: el importe del pago es la suma de las líneas y el medio
-    /// de compatibilidad es el de la primera. El POS no valida el medio contra el servidor (lo filtra el cliente): una referencia
-    /// inexistente la rechaza la FK.</summary>
+    /// de compatibilidad es el de la primera. Las rutas /api/gastos no validan el medio contra el servidor (lo filtra el
+    /// cliente): una referencia inexistente la rechaza la FK. Con <see cref="ComandoDePago.ValidarMedios"/> (ruta
+    /// /api/pagos) cada medio se valida como en el alta administrativa.</summary>
     public async Task<PagoRegistrado> RegistrarAsync(ComandoDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -64,6 +65,11 @@ public class ServicioDePagos(
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(solicitud.IdPuntoVenta, ct);
+
+        if (solicitud.ValidarMedios)
+        {
+            await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
+        }
 
         // judgment-day PR3 follow-up: sin compra ligada, id_proveedor es un input crudo que
         // ActualizarSaldoProveedorAsync solo descubre inválido con un InvalidOperationException
@@ -995,6 +1001,17 @@ public class ServicioDePagos(
         return new PaginaDePagos(await ProyeccionesDePago.ConLineasAsync(db, items, ct), total, pagina, tamanio);
     }
 
+    /// <summary>Detalle de un pago del POS con sus líneas: misma proyección y mismo alcance que <see cref="ListarAsync"/>
+    /// (el tenant de la sesión, sin más filtro), para que el <c>Location</c> de <c>POST /api/pagos</c> resuelva.</summary>
+    public async Task<PagoListado> ObtenerAsync(int id, CancellationToken ct = default)
+    {
+        var fila = await db.Pagos.Where(g => g.Id == id).Select(ProyeccionesDePago.Listado(db)).FirstOrDefaultAsync(ct)
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
+
+        return (await ProyeccionesDePago.ConLineasAsync(db, [fila], ct))[0];
+    }
+
     /// <summary>Historial de gestión (design: API Surface, <c>GET /api/gastos/administracion</c>)
     /// — filtros amplios (empresa, punto de venta, categoría, origen de fondos, proveedor) y
     /// proyección con nombres resueltos. <c>desde</c>/<c>hasta</c> viajan como <see
@@ -1064,6 +1081,23 @@ public class ServicioDePagos(
             ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
 
         return (await ProyeccionesDePago.ConLineasAsync(db, [fila], ct))[0];
+    }
+
+    /// <summary>Respuesta del contrato nuevo: el pago ya persistido con sus líneas vivas leídas de los ítems.</summary>
+    public async Task<PagoConLineas> ConLineasAsync(PagoRegistrado pago, CancellationToken ct = default)
+    {
+        var lineas = await db.ItemsPago
+            .Where(i => i.IdPago == pago.Id && i.DeletedAt == null)
+            .OrderBy(i => i.Id)
+            .Select(i => new LineaDePagoListada(
+                i.Id,
+                i.IdMedioPago,
+                db.MediosPago.Where(m => m.Id == i.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
+                i.Importe,
+                i.Referencia))
+            .ToListAsync(ct);
+
+        return PagoConLineas.Desde(pago, lineas);
     }
 
     private Expression<Func<Pago, PagoDeAdministracionListado>> ProyeccionDeAdministracion() => g =>
