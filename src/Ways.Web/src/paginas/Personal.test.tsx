@@ -150,6 +150,10 @@ function mockearRutas(listar: (ruta: string) => Promise<PaginaDe<PersonalListado
   })
 }
 
+function rutasDePersonal() {
+  return apiGetMock.mock.calls.map(([ruta]) => String(ruta)).filter((r) => r.startsWith('/personal'))
+}
+
 type Usuario = ReturnType<typeof userEvent.setup>
 
 /** Abre el formulario de alta. */
@@ -216,18 +220,14 @@ describe('Personal — listado', () => {
     filas = []
     renderPersonal()
 
-    expect(await screen.findByText('No hay personal que coincida con la búsqueda.')).toBeInTheDocument()
+    expect(await screen.findByText('No hay personal que coincida con los filtros.')).toBeInTheDocument()
   })
 
-  it('avisa cuando la página no trae todo el resultado', async () => {
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta.startsWith('/personal')
-        ? Promise.resolve({ items: filas, total: 250, pagina: 1, tamanio: 200 })
-        : Promise.resolve(pagina([])),
-    )
+  it('el listado ya no pide la página más grande: la grilla pide la primera con el tamaño del servidor', async () => {
     renderPersonal()
+    await screen.findByText('Ana Gómez')
 
-    expect(await screen.findByText('Se muestran 1 de 250. Refiná la búsqueda para ver el resto.')).toBeInTheDocument()
+    expect(rutasDePersonal()).toEqual(['/personal'])
   })
 
   it('buscar manda el término al servidor', async () => {
@@ -238,7 +238,7 @@ describe('Personal — listado', () => {
     await usuarioEvento.type(screen.getByLabelText('Buscar personal'), 'ana')
     await usuarioEvento.click(screen.getByRole('button', { name: 'Buscar' }))
 
-    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/personal?busqueda=ana&tamanio=200'))
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/personal?busqueda=ana'))
   })
 })
 
@@ -603,9 +603,10 @@ describe('Personal — esqueleto asíncrono', () => {
     })
 
     expect(await screen.findByText('Personal "Ana Gómez" dado de baja.')).toBeInTheDocument()
-    expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Editar Beto Ruiz' })).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
 
     await act(async () => {
       refresco.resolver(pagina([beto]))
@@ -840,8 +841,10 @@ describe('Personal — respuestas tardías del listado', () => {
   }
 
   async function buscarConLaInicialEnVuelo() {
+    const usuarioEvento = userEvent.setup()
     renderPersonal()
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Buscar' }))
+    await usuarioEvento.type(screen.getByLabelText('Buscar personal'), 'ana')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Buscar' }))
     expect(apiGetMock.mock.calls.filter((c) => String(c[0]).startsWith('/personal'))).toHaveLength(2)
   }
 
@@ -940,8 +943,8 @@ describe('Personal — lectura en vuelo al guardar y término aplicado', () => {
   /** Cláusula bajo prueba: `terminoVigente` en el refresco posterior a la escritura. El texto tipeado
    * y todavía no enviado no viaja; el último término enviado, sí. */
   it.each([
-    { enviado: '', tipeado: 'zzz', esperada: '/personal?tamanio=200' },
-    { enviado: 'luis', tipeado: 'luis zzz', esperada: '/personal?busqueda=luis&tamanio=200' },
+    { enviado: '', tipeado: 'zzz', esperada: '/personal' },
+    { enviado: 'luis', tipeado: 'luis zzz', esperada: '/personal?busqueda=luis' },
   ])('el refresco tras guardar recarga con el término aplicado "$enviado", no con "$tipeado"', async ({ enviado, tipeado, esperada }) => {
     apiPostMock.mockResolvedValue(personal({ id: 2 }))
     const usuarioEvento = userEvent.setup()
