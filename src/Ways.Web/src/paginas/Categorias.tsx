@@ -336,7 +336,7 @@ export function Categorias() {
           rechaza cualquier alta o movimiento que supere ese límite o que forme un ciclo.
         </p>
 
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
@@ -344,6 +344,7 @@ export function Categorias() {
             titulo={`la categoría "${baja.nombre}"`}
             ocupado={ocupadoBaja !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

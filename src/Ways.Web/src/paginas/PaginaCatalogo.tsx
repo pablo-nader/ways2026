@@ -280,7 +280,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
       try {
         await api.delete(`/catalogos/${recurso}/${item.id}`)
       } catch (e) {
-        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo.
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta y el motivo adentro de ella.
         setError(copiaDeFalloDeBaja(e, sujetoDeBaja))
 
         return
@@ -331,7 +331,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   return (
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo={titulo} variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
@@ -339,6 +339,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
             titulo={`${sujetoDeBaja} "${baja.nombre}"`}
             ocupado={ocupadoBaja !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

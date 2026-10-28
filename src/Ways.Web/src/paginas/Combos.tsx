@@ -287,7 +287,7 @@ export function Combos() {
         </p>
 
         {errorDeCarga && <div className="alert alert-danger">{errorDeCarga}</div>}
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !bajaPendiente && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {avisosCatalogos.length > 0 && <div className="alert alert-warning">{avisosCatalogos.join(' ')}</div>}
 
@@ -296,6 +296,7 @@ export function Combos() {
             titulo={`el combo "${bajaPendiente.nombre}"`}
             ocupado={eliminando}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

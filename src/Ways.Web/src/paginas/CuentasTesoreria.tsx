@@ -263,7 +263,7 @@ export function CuentasTesoreria() {
   return (
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Cuentas de tesorería" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && !baja && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorEmpresas && <div className="alert alert-warning">{errorEmpresas}</div>}
 
@@ -272,6 +272,7 @@ export function CuentasTesoreria() {
             titulo={`la cuenta "${baja.nombre}"`}
             ocupado={ocupadoBaja !== null}
             disparador={disparadorDeLaPuerta}
+            error={error}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />

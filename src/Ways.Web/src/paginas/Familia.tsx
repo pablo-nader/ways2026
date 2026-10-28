@@ -135,7 +135,7 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
 
         // La pertenencia ya no es la que la pantalla muestra (`familia_cambio`) o la familia ya no existe: se la
         // vuelve a leer para no seguir mostrando lo que dejó de ser cierto. El rechazo de la salida se muestra siempre,
-        // salvo cuando la lectura dice que la familia ya no existe: ese mensaje ya lo cubre y no se repite al lado.
+        // salvo cuando la lectura dice que la familia ya no existe: ese mensaje ya lo cubre y no se repite.
         if (e instanceof ErrorApi && (e.codigo === 'familia_cambio' || e.estado === 404)) {
           setSalida(null)
           if ((await cargar(++generacion.current)) !== 'inexistente') setErrorDeEscritura(rechazo)
@@ -187,7 +187,7 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
     <div className="container-fluid py-4">
       <Box titulo={detalle ? `Familia "${detalle.nombre}"` : 'Familia'} variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
-        {errorDeEscritura && <div className="alert alert-danger">{errorDeEscritura}</div>}
+        {errorDeEscritura && !salida && <div className="alert alert-danger">{errorDeEscritura}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {catalogos.aviso && <div className="alert alert-warning">{catalogos.aviso}</div>}
 
@@ -200,6 +200,7 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
             etiquetaEnCurso="Sacando…"
             ocupado={saliendo !== null}
             disparador={disparadorDeLaPuerta}
+            error={errorDeEscritura}
             onConfirmar={confirmarSalida}
             onCancelar={cancelarSalida}
           />
