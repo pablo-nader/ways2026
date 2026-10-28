@@ -102,7 +102,7 @@ function montar(items: EmpresaListado[] = [empresaSur, empresaAnexo, empresaEste
 function razonesSocialesVisibles() {
   return screen
     .getAllByRole('row')
-    .slice(1)
+    .slice(2)
     .map((f) => within(f).getAllByRole('cell')[2]?.textContent ?? '')
 }
 
@@ -131,7 +131,7 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
     montar()
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
 
-    for (const fila of screen.getAllByRole('row').slice(1)) {
+    for (const fila of screen.getAllByRole('row').slice(2)) {
       expect(within(fila).getAllByRole('cell')[1]).not.toHaveTextContent(/^\d+$/)
     }
 
@@ -178,8 +178,8 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
    * Cláusula bajo prueba: la ventana inerte cubre TODA la escritura y su refresco
    * (`react-async-state` reglas 5 y 9), no solo el botón de Guardar. Mientras el PUT está en
    * vuelo, abrir OTRA fila supersedería una escritura a medio terminar, así que "Editar" también
-   * tiene que estar inerte; y mientras el refresco posterior está en vuelo no hay tabla en
-   * pantalla, así que no queda ninguna acción alcanzable.
+   * tiene que estar inerte; y mientras el refresco posterior está en vuelo las filas se
+   * reemplazan por "Cargando…", así que no queda ninguna acción de fila alcanzable.
    */
   it('durante el guardado y su refresco no queda ninguna acción alcanzable', async () => {
     const usuario = userEvent.setup()
@@ -222,7 +222,7 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
       await Promise.resolve()
     })
 
-    // Refresco en vuelo: el aviso de éxito ya está, la tabla no, y el modal sigue abierto e inerte.
+    // Refresco en vuelo: el aviso de éxito ya está, las filas no (solo "Cargando…"), y el modal sigue abierto e inerte.
     await waitFor(() => expect(screen.getByText('Se actualizó "Sur SRL".')).toBeInTheDocument())
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.queryAllByRole('button', { name: 'Editar' })).toHaveLength(0)
@@ -822,5 +822,251 @@ describe('Empresas — edición en un modal', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const aviso = await screen.findByText('Se actualizó "Sur SRL".')
     expect(aviso.closest('[tabindex="-1"]')).toHaveFocus()
+  })
+})
+
+// Filtros por columna y orden por encabezado (grillas, slice S5b2).
+
+const zeta: EmpresaListado = { ...empresaSur, id: 20, razonSocial: 'Zeta SA', nombreFantasia: 'Alfa', cuit: '30-1', nombreTenant: 'Comercio Sur' }
+const beta: EmpresaListado = {
+  ...empresaEste,
+  id: 100,
+  idTenant: 3,
+  razonSocial: 'Beta SRL',
+  nombreFantasia: null,
+  cuit: null,
+  nombreTenant: 'Almacén Este',
+}
+const alfa: EmpresaListado = { ...empresaSur, id: 9, razonSocial: 'Alpha SA', nombreFantasia: 'Omega', cuit: '20-9', nombreTenant: 'Comercio Sur' }
+/** El orden del servidor (Zeta, Beta, Alpha) no coincide con ningún orden por columna. */
+const ENTREGADAS = [zeta, beta, alfa]
+
+function columnaVisible(indice: number) {
+  return screen
+    .getAllByRole('row')
+    .slice(2)
+    .map((f) => within(f).getAllByRole('cell')[indice]?.textContent ?? '')
+}
+
+async function esperarFilas() {
+  await waitFor(() => expect(screen.getByText('Zeta SA')).toBeInTheDocument())
+}
+
+describe('Empresas — filtros por columna y orden', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  /** Mutación registrada: reemplazar `useOrdenamiento(filtradas, …)` por las filas sin ordenar deja el orden del servidor y rompe las aserciones. */
+  it('ordena por cada encabezado: el id como número, los vacíos al final y el tercer clic vuelve al orden original', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADAS)
+    await esperarFilas()
+
+    expect(columnaVisible(2)).toEqual(['Zeta SA', 'Beta SRL', 'Alpha SA'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Razón social' }))
+    expect(columnaVisible(2)).toEqual(['Alpha SA', 'Beta SRL', 'Zeta SA'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Razón social' }))
+    expect(columnaVisible(2)).toEqual(['Zeta SA', 'Beta SRL', 'Alpha SA'])
+    await usuario.click(screen.getByRole('button', { name: 'Razón social' }))
+    expect(columnaVisible(2)).toEqual(['Zeta SA', 'Beta SRL', 'Alpha SA'])
+
+    // Como texto "100" < "20" < "9"; como número, 9 < 20 < 100.
+    await usuario.click(screen.getByRole('button', { name: 'ID' }))
+    expect(columnaVisible(0)).toEqual(['0009', '0020', '0100'])
+
+    await usuario.click(screen.getByRole('button', { name: 'CUIT' }))
+    expect(columnaVisible(4)).toEqual(['20-9', '30-1', '—'])
+    await usuario.click(screen.getByRole('button', { name: 'CUIT' }))
+    expect(columnaVisible(4)).toEqual(['30-1', '20-9', '—'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Tenant' }))
+    expect(columnaVisible(1)).toEqual(['Almacén Este', 'Comercio Sur', 'Comercio Sur'])
+  })
+
+  /** Mutación registrada: pasar `items` en vez de `alcanzadas` al hook de filtros deja todas las filas con el filtro puesto. */
+  it('filtra por cada columna de datos, sin acentos ni mayúsculas, y combina los filtros con Y', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADAS)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'ALP')
+    expect(columnaVisible(2)).toEqual(['Alpha SA'])
+
+    await usuario.clear(screen.getByLabelText('Filtrar por razón social'))
+    await usuario.type(screen.getByLabelText('Filtrar por tenant'), 'almacen')
+    expect(columnaVisible(2)).toEqual(['Beta SRL'])
+
+    await usuario.clear(screen.getByLabelText('Filtrar por tenant'))
+    await usuario.type(screen.getByLabelText('Filtrar por nombre de fantasía'), 'omega')
+    expect(columnaVisible(2)).toEqual(['Alpha SA'])
+
+    await usuario.clear(screen.getByLabelText('Filtrar por nombre de fantasía'))
+    await usuario.type(screen.getByLabelText('Filtrar por cuit'), '30-')
+    expect(columnaVisible(2)).toEqual(['Zeta SA'])
+
+    await usuario.clear(screen.getByLabelText('Filtrar por cuit'))
+    await usuario.type(screen.getByLabelText('Filtrar por id'), '0100')
+    expect(columnaVisible(2)).toEqual(['Beta SRL'])
+
+    await usuario.clear(screen.getByLabelText('Filtrar por id'))
+    await usuario.type(screen.getByLabelText('Filtrar por tenant'), 'sur')
+    await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'zeta')
+    expect(columnaVisible(2)).toEqual(['Zeta SA'])
+  })
+
+  it('el filtro por columna se combina con el selector de tenant y sin resultados lo dice', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADAS)
+    await esperarFilas()
+
+    await usuario.selectOptions(screen.getByLabelText('Tenant'), '2')
+    await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'beta')
+
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay empresas cargadas.')).not.toBeInTheDocument()
+  })
+
+  it('"Limpiar filtros" restaura todas las filas y queda deshabilitado sin filtros', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADAS)
+    await esperarFilas()
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'beta')
+    expect(columnaVisible(2)).toEqual(['Beta SRL'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(columnaVisible(2)).toEqual(['Zeta SA', 'Beta SRL', 'Alpha SA'])
+    expect(screen.getByLabelText('Filtrar por razón social')).toHaveValue('')
+  })
+
+  it('la fila de filtros tiene una celda por encabezado para plataforma', async () => {
+    montar(ENTREGADAS)
+    await esperarFilas()
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(6)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(6)
+  })
+
+  it('un admin de tenant filtra y ordena sin la columna de tenant, con una celda de filtro por encabezado', async () => {
+    const usuario = userEvent.setup()
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([zeta, alfa])
+    await esperarFilas()
+
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(5)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(5)
+    expect(screen.queryByLabelText('Filtrar por tenant')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Razón social' }))
+    expect(columnaVisible(1)).toEqual(['Alpha SA', 'Zeta SA'])
+
+    await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'zeta')
+    expect(columnaVisible(1)).toEqual(['Zeta SA'])
+  })
+
+  it('un tenant dado de baja se rotula "—" y en el orden cuenta como vacío (va al final)', async () => {
+    const usuario = userEvent.setup()
+    montar([{ ...zeta, nombreTenant: null }, beta, alfa])
+    await esperarFilas()
+
+    await usuario.click(screen.getByRole('button', { name: 'Tenant' }))
+    expect(columnaVisible(1)).toEqual(['Almacén Este', 'Comercio Sur', ETIQUETA_SIN_DUENIO])
+    await usuario.click(screen.getByRole('button', { name: 'Tenant' }))
+    expect(columnaVisible(1)).toEqual(['Comercio Sur', 'Almacén Este', ETIQUETA_SIN_DUENIO])
+  })
+
+  /** Mutación registrada: devolver la marca "—" como valor de filtro del tenant hace que escribir "—" encuentre al huérfano. */
+  it('escribir "—" en el filtro de tenant no encuentra a la empresa huérfana: para filtrar cuenta como vacío', async () => {
+    const usuario = userEvent.setup()
+    montar([{ ...zeta, nombreTenant: null }, beta, alfa])
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por tenant'), ETIQUETA_SIN_DUENIO)
+
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('Zeta SA')).not.toBeInTheDocument()
+  })
+
+  /** Mutación registrada: reemplazar `!cargada ?` por `cargando ?` desmonta la tabla (y su fila de filtros) durante el refresco; el test falla. */
+  it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    let resolverRefresco!: (items: EmpresaListado[]) => void
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/empresas') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(ENTREGADAS)
+
+      return new Promise<EmpresaListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    apiPutMock.mockResolvedValue(alfa)
+    render(<Empresas />)
+    await esperarFilas()
+
+    const filtro = screen.getByLabelText('Filtrar por razón social')
+    await usuario.type(filtro, 'alp')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: /Guardar/ }))
+
+    await waitFor(() => expect(screen.getByText('Se actualizó "Alpha SA".')).toBeInTheDocument())
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por razón social')).toBe(filtro)
+    expect(filtro.isConnected).toBe(true)
+    expect(filtro).toHaveValue('alp')
+    expect(filtro).toBeDisabled()
+
+    await act(async () => {
+      resolverRefresco(ENTREGADAS)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByLabelText('Filtrar por razón social')).toBe(filtro)
+    expect(filtro).toBeEnabled()
+    expect(columnaVisible(2)).toEqual(['Alpha SA'])
+  })
+
+  it('los filtros quedan inertes mientras el guardado está en vuelo y con la puerta de baja abierta', async () => {
+    const usuario = userEvent.setup()
+    let resolverPut!: (empresa: EmpresaListado) => void
+    apiGetMock.mockResolvedValue(ENTREGADAS)
+    apiPutMock.mockImplementation(
+      () =>
+        new Promise<EmpresaListado>((resolver) => {
+          resolverPut = resolver
+        }),
+    )
+    render(<Empresas />)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por razón social'), 'alp')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: /Guardar/ }))
+
+    expect(screen.getByLabelText('Filtrar por razón social')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por tenant')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+
+    await act(async () => {
+      resolverPut(alfa)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByLabelText('Filtrar por razón social')).toBeEnabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por razón social')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por cuit')).toBeDisabled()
   })
 })
