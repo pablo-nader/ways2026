@@ -609,6 +609,10 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             // — target #7). Mismo patrón de reintento que ComprasTipoSeedTests/
             // CuentaCorrienteEtapa7BackstopTests, pero con la fuente de verdad correcta.
             var (statement1, statement2) = LeerStatementsDelBackfillDesdeElArchivoDeLaMigracion();
+            // La migración escribió su SQL contra el esquema de entonces; la base ya está en el actual,
+            // donde la tabla y la columna del vínculo se llaman pagos/id_pago.
+            statement1 = statement1.Replace("FROM gastos", "FROM pagos", StringComparison.Ordinal)
+                .Replace("id_gasto", "id_pago", StringComparison.Ordinal);
 
             await using (var comando = verificacion.CreateCommand())
             {

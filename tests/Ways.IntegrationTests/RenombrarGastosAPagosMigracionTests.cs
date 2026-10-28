@@ -6,6 +6,16 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Domain.Caja;
+using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
+using Ways.Domain.Compras;
+using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Fiscal;
+using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
+using Ways.Domain.Stock;
+using Ways.Domain.Ventas;
 using Ways.Domain.Pagos;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -380,9 +390,34 @@ public class RenombrarGastosAPagosMigracionTests(WaysApiFixture fixture) : IClas
             new DbContextOptionsBuilder<WaysDbContext>()
                 .UseNpgsql(cadena, npgsql =>
                 {
-                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
-                    npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
+                    npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                    npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                    npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                    npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                    npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                    npgsql.MapEnum<ModoLista>("modo_lista");
+                    npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                    npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                    npgsql.MapEnum<MotivoStock>("motivo_stock");
+                    npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
+                    npgsql.MapEnum<EstadoTurno>("estado_turno");
+                    npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
+                    npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<OrigenCompra>("origen_compra");
+                    npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                    npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
+                    npgsql.MapEnum<TipoMovimientoCuenta>("tipo_movimiento_cuenta");
+                    npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
+                    npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                    npgsql.MapEnum<EstadoRemito>("estado_remito");
+                    npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
+                    npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                    npgsql.MapEnum<MotivoDeFacturacion>("motivo_facturacion");
+                    npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
+                    npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
+                    npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
                 })
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
                 .Options;
