@@ -157,6 +157,10 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         // La fecha de negocio elegida (retroactiva) es exactamente la que persiste en `Fecha` —
         // convertida a UTC desde la medianoche local de esa fecha (zona por defecto del tenant).
         Assert.Equal(fechaRetroactiva, DateOnly.FromDateTime(fila.Fecha.UtcDateTime));
+
+        // E2-S1: escritura doble, exactamente un ítem con el medio y el importe de la cabecera.
+        var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
+        Assert.Equal((fila.IdMedioPago, 500m), (item.IdMedioPago, item.Importe));
     }
 
     // ---- el movimiento de tesorería que escribe el pago lleva `momento`, no la fecha retroactiva --

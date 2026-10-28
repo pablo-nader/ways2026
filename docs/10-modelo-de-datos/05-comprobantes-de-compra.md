@@ -375,6 +375,45 @@ van a `movimientos_caja` (§7).
 > orden de locks que el alta (compra `FOR SHARE` primero — nunca abre un ciclo contra la anulación,
 > que toma el header EXCLUSIVO como su único lock) seguido del pago `FOR UPDATE`.
 
+### Líneas por medio de pago: `items_pago` (E2-S1)
+
+Un pago se puede cancelar con más de un medio (efectivo + transferencia). La hija `items_pago` lleva una
+fila por medio; hoy cada pago tiene exactamente una que repite el medio y el importe de la cabecera
+(`pagos.id_medio_pago` e `importe` siguen siendo la fuente de lo que lee el resto del sistema).
+
+```sql
+items_pago (                 -- [operativa, hija de pagos: scope id_tenant únicamente]
+    id_item_pago, id_tenant,
+    id_pago integer NOT NULL,                -- FK compuesta (id_pago, id_tenant) → pagos (ak_pagos_id_pago_id_tenant), RESTRICT
+    id_medio_pago integer NOT NULL,          -- FK compuesta (id_medio_pago, id_tenant) → medios_pago, RESTRICT
+    importe numeric(14,2) NOT NULL,
+    referencia text NULL,                    -- cupón / número de operación
+    created_at, updated_at, deleted_at,
+
+    CONSTRAINT ck_items_pago_importe_positivo CHECK (importe > 0),
+    CONSTRAINT ck_items_pago_referencia_longitud
+        CHECK (referencia IS NULL OR char_length(referencia) <= 100)
+);
+-- índices: ix_items_pago_tenant, ix_items_pago_pago (id_pago, id_tenant), ix_items_pago_medio_pago
+```
+
+> **Invariante de cabecera.** Si un pago tiene al menos un ítem vivo (`deleted_at IS NULL`), la suma
+> de esos ítems es igual a `pagos.importe`. Lo sostiene el constraint trigger
+> `tg_items_pago_suma_igual_importe` (`DEFERRABLE INITIALLY DEFERRED`, sobre `items_pago` por
+> insert/update/delete) y `tg_pagos_importe_igual_suma_items` (sobre `pagos` cuando cambia
+> `importe`). Es diferido para que la cabecera y sus ítems se escriban en cualquier orden dentro de
+> una transacción; al comitear, una suma distinta sale como `23514` con el nombre del trigger como
+> constraint. Un pago sin ítems vivos no se controla. La baja lógica de un pago da de baja sus ítems (el servicio
+> marca el mismo `deleted_at` en la cabecera y en sus ítems vivos, en un solo guardado); el backfill copia
+> el `deleted_at` del pago al ítem.
+>
+> **Escritura doble.** `ServicioDePagos` escribe un único ítem (medio e importe de la cabecera) en
+> la misma transacción que cada pago nuevo (alta del POS, alta administrativa, pagar una compra y
+> pago de personal por línea), y la edición del medio o del importe lleva el ítem consigo en el
+> mismo guardado. La migración `ItemsDePago` hizo el backfill de un ítem por pago existente, también
+> los dados de baja (copian su `deleted_at`). Los dos `CHECK` y las FK son backstop: el servicio
+> nunca los dispara.
+
 ### Órdenes de compra (Etapa 16)
 
 La intención colocada sobre un proveedor ANTES de que exista un `comprobantes_compra`

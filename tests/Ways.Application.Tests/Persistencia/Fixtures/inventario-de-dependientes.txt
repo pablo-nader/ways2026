@@ -60,6 +60,7 @@ ListaPrecio | vitrinas | id_lista_precio,id_tenant | marcado
 Marca | articulos | id_marca,id_tenant | marcado
 MedioPago | acumulados_de_facturacion | id_medio_pago,id_tenant | sinmarca
 MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
+MedioPago | items_pago | id_medio_pago,id_tenant | marcado
 MedioPago | movimientos_cuenta | id_medio_pago,id_tenant | sinmarca
 MedioPago | pagos | id_medio_pago,id_tenant | marcado
 MedioPago | pagos_comprobante | id_medio_pago,id_tenant | marcado
@@ -118,6 +119,7 @@ Tenant | imagenes_articulo | id_tenant | marcado
 Tenant | items_comprobante_compra | id_tenant | marcado
 Tenant | items_comprobante_venta | id_tenant | marcado
 Tenant | items_orden_compra | id_tenant | marcado
+Tenant | items_pago | id_tenant | marcado
 Tenant | items_presupuesto | id_tenant | marcado
 Tenant | items_remito | id_tenant | marcado
 Tenant | listas_precio | id_tenant | marcado

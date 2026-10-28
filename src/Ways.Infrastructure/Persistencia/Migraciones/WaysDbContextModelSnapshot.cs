@@ -3961,6 +3961,67 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         });
                 });
 
+            modelBuilder.Entity("Ways.Domain.Pagos.ItemPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_item_pago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int>("IdMedioPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago");
+
+                    b.Property<int>("IdPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_pago");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("Importe")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("importe");
+
+                    b.Property<string>("Referencia")
+                        .HasColumnType("text")
+                        .HasColumnName("referencia");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_items_pago");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_items_pago_tenant");
+
+                    b.HasIndex("IdMedioPago", "IdTenant")
+                        .HasDatabaseName("ix_items_pago_medio_pago");
+
+                    b.HasIndex("IdPago", "IdTenant")
+                        .HasDatabaseName("ix_items_pago_pago");
+
+                    b.ToTable("items_pago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_items_pago_importe_positivo", "importe > 0");
+
+                            t.HasCheckConstraint("ck_items_pago_referencia_longitud", "referencia IS NULL OR char_length(referencia) <= 100");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Pagos.Pago", b =>
                 {
                     b.Property<int>("Id")
@@ -7104,6 +7165,32 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_vitrinas_lista_precio");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Pagos.ItemPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_items_pago_tenant");
+
+                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdMedioPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_items_pago_medio_pago");
+
+                    b.HasOne("Ways.Domain.Pagos.Pago", null)
+                        .WithMany()
+                        .HasForeignKey("IdPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_items_pago_pago");
                 });
 
             modelBuilder.Entity("Ways.Domain.Pagos.Pago", b =>

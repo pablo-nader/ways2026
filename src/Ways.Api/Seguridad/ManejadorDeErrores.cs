@@ -1236,6 +1236,26 @@ public class ManejadorDeErrores(
                     "Un gasto de caja de turno tiene que tener un turno.",
                     "gasto_caja_turno_requiere_turno"),
 
+            // E2-S1 (líneas por medio de pago): ServicioDePagos escribe siempre un único ítem con el medio y el
+            // importe validados de la cabecera, así que ninguna de las tres ramas es alcanzable por operación
+            // normal. Son backstops de una escritura cruda/fuera de banda; las FKs fk_items_pago_* salen como
+            // referencia_invalida por el backstop genérico de las fk_*.
+            "ck_items_pago_importe_positivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe de una línea de pago tiene que ser positivo.",
+                    "item_de_pago_importe_invalido"),
+
+            "ck_items_pago_referencia_longitud" =>
+                (StatusCodes.Status400BadRequest,
+                    "La referencia de una línea de pago no puede superar los 100 caracteres.",
+                    "item_de_pago_referencia_invalida"),
+
+            // Constraint trigger diferido: falla al comitear, no al insertar la línea.
+            "tg_items_pago_suma_igual_importe" =>
+                (StatusCodes.Status400BadRequest,
+                    "La suma de las líneas del pago no coincide con su importe.",
+                    "pago_suma_de_items_invalida"),
+
             "ck_movimientos_tesoreria_cadena" =>
                 (StatusCodes.Status400BadRequest,
                     "La cadena de tesorería es inconsistente (final tiene que ser inicio + ingreso − egreso).",
