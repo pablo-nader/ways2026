@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConfirmacionDeBaja } from './ConfirmacionDeBaja'
+import { Modal } from './Modal'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1 y C5). La puerta es
 // COMPARTIDA por las cuatro pantallas raíz, así que su disciplina modal se prueba UNA vez acá y
@@ -216,26 +217,41 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
   })
 
   /**
-   * Cláusula bajo prueba: la captura + el corte de propagación del listener de `Escape`. La puerta puede
-   * vivir dentro de un `Modal`, cuyo listener de burbujeo cerraría el editor con la misma tecla: ningún
-   * listener de burbujeo de `document` debe ver el Escape que la puerta atendió. El Escape sale desde un
-   * elemento (como el de un teclado real); disparado sobre `document` no habría fase de captura previa.
+   * Cláusula bajo prueba: el apilado. La puerta puede montarse DENTRO de otro `Modal` (la sección
+   * de tienda del artículo): Escape cierra solo la puerta, que es el tope de la pila, y el editor
+   * de abajo sigue abierto.
    */
-  it('el Escape que atiende no llega a los listeners de burbujeo de document', async () => {
+  it('dentro de otro Modal, Escape cierra solo la confirmación', async () => {
     const usuario = userEvent.setup()
-    const deBurbujeo = vi.fn()
-    render(<Anfitrion />)
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
-    document.addEventListener('keydown', deBurbujeo)
+    const alCerrarEditor = vi.fn()
+    function EditorConPuerta() {
+      const [abierta, setAbierta] = useState(false)
 
-    try {
-      fireEvent.keyDown(screen.getByRole('button', { name: 'Cancelar' }), { key: 'Escape' })
-    } finally {
-      document.removeEventListener('keydown', deBurbujeo)
+      return (
+        <Modal titulo="Editor" onCerrar={alCerrarEditor}>
+          <button type="button" onClick={() => setAbierta(true)}>
+            Baja
+          </button>
+          {abierta && (
+            <ConfirmacionDeBaja
+              titulo="la fila"
+              ocupado={false}
+              onConfirmar={() => {}}
+              onCancelar={() => setAbierta(false)}
+            />
+          )}
+        </Modal>
+      )
     }
+    render(<EditorConPuerta />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cancelar' }), { key: 'Escape' })
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(deBurbujeo).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Editor' })).toBeInTheDocument()
+    expect(alCerrarEditor).not.toHaveBeenCalled()
   })
 
   /**
@@ -251,6 +267,63 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: que la puerta viva en el `Modal` (portal en `document.body`) y no
+   * incrustada en la pantalla anfitriona.
+   */
+  it('se rinde en un portal fuera del contenedor del anfitrión', async () => {
+    const usuario = userEvent.setup()
+    const { container } = render(<Anfitrion />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    expect(document.body).toContainElement(puerta)
+    expect(container).not.toContainElement(puerta)
+    expect(puerta).toHaveAttribute('aria-modal', 'true')
+  })
+
+  /** Cláusula bajo prueba: la × del encabezado del `Modal` cancela igual que el botón. */
+  it('la cruz del encabezado cancela', async () => {
+    const usuario = userEvent.setup()
+    const alConfirmar = vi.fn()
+    render(<Anfitrion alConfirmar={alConfirmar} />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(alConfirmar).not.toHaveBeenCalled()
+  })
+
+  /** Cláusula bajo prueba: la guarda de reentrancia síncrona (dos clics en el mismo tick). */
+  it('un doble clic síncrono en Confirmar llama a la acción una sola vez', async () => {
+    const usuario = userEvent.setup()
+    const alConfirmar = vi.fn()
+    render(<Anfitrion alConfirmar={alConfirmar} />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    const confirmar = screen.getByRole('button', { name: 'Confirmar baja' })
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(alConfirmar).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: con la escritura en vuelo ni la cruz ni Cancelar cierran. */
+  it('con la escritura en vuelo, la cruz y Cancelar están inertes', async () => {
+    const usuario = userEvent.setup()
+    render(<Anfitrion ocupado />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
   })
 
   /**

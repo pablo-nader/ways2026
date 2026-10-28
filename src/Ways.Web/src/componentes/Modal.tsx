@@ -101,6 +101,8 @@ type PropsModalBase = {
   /** Nombre accesible del botón de cerrar del header — distinto de "Cerrar" cuando el pie ya tiene
    * un botón con ese nombre. */
   etiquetaCerrar?: string
+  /** `alertdialog` para las confirmaciones que exigen una respuesta; por defecto, `dialog`. */
+  rol?: 'dialog' | 'alertdialog'
 }
 
 /** Un modal descartable exige `onCerrar`; uno `noDescartable` no tiene × y ignora Escape y el
@@ -129,6 +131,7 @@ export function Modal({
   focoDeReserva = null,
   restaurarFoco = true,
   etiquetaCerrar = 'Cerrar',
+  rol = 'dialog',
   noDescartable = false,
   onCerrar,
 }: PropsModal) {
@@ -261,7 +264,7 @@ export function Modal({
         className="modal d-block"
         style={{ zIndex: Z_INDEX_BASE_MODAL + nivel * Z_INDEX_PASO }}
         tabIndex={-1}
-        role="dialog"
+        role={rol}
         aria-modal="true"
         aria-labelledby={idTitulo}
         onKeyDown={atraparTab}
