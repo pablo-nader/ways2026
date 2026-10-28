@@ -17,7 +17,7 @@ using Ways.Domain.Common;
 using Ways.Domain.Compras;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Combos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
@@ -134,11 +134,12 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<MovimientoTesoreria> MovimientosTesoreria => Set<MovimientoTesoreria>();
     public DbSet<CuentaTesoreria> CuentasTesoreria => Set<CuentaTesoreria>();
     public DbSet<MovimientoCuenta> MovimientosCuenta => Set<MovimientoCuenta>();
-    public DbSet<Gasto> Gastos => Set<Gasto>();
+    public DbSet<Pago> Pagos => Set<Pago>();
+    public DbSet<ItemPago> ItemsPago => Set<ItemPago>();
 
     // stage-8-compras-transferencias-inventario, Slice 1 (schema + seed gate, DB CHANGE GATE
     // exercised in autonomous mode): modelo adelantado a la migración, mismo trámite que
-    // TurnoCaja/Gasto en stage-6 Slice 1 — sin exponer en IWaysDbContext todavía, Slice 2
+    // TurnoCaja/Pago en stage-6 Slice 1 — sin exponer en IWaysDbContext todavía, Slice 2
     // (ServicioDeCompras) es el primer consumidor de Application.
     public DbSet<ComprobanteCompra> ComprobantesCompra => Set<ComprobanteCompra>();
     public DbSet<ItemComprobanteCompra> ItemsComprobanteCompra => Set<ItemComprobanteCompra>();

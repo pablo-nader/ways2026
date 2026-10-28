@@ -1,6 +1,6 @@
 /**
  * Cliente HTTP de `GET /api/reportes/*` (stage-10-agregacion-dashboard, Slice 7 — G1 parity;
- * Slice 8 — desglose por dimensión): ventas/resumen, gastos/resumen y los tres breakdowns de
+ * Slice 8 — desglose por dimensión): ventas/resumen, pagos/resumen y los tres breakdowns de
  * ventas. `desde`/`hasta` son `DateOnly` del lado del servidor, así que viajan como `YYYY-MM-DD`
  * sin ningún offset horario — a diferencia del filtro de `compras.ts`, que filtra contra un
  * `timestamptz` y sí necesita ese offset.
@@ -19,7 +19,7 @@ import type {
   PaginaDeMovimientosTesoreria,
   Rentabilidad,
   Reposicion,
-  ResumenDeGastos,
+  ResumenDePagos,
   ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
@@ -122,8 +122,8 @@ export function construirQueryDeLibroIva(filtros: FiltrosDeLibroIva): string {
 export const clienteDeReportes = {
   ventasResumen: (filtros: FiltrosDeReporte) =>
     api.get<ResumenDeVentas>(`/reportes/ventas/resumen${construirQueryDeReporte(filtros)}`),
-  gastosResumen: (filtros: FiltrosDeReporte) =>
-    api.get<ResumenDeGastos>(`/reportes/gastos/resumen${construirQueryDeReporte(filtros)}`),
+  pagosResumen: (filtros: FiltrosDeReporte) =>
+    api.get<ResumenDePagos>(`/reportes/gastos/resumen${construirQueryDeReporte(filtros)}`),
   ventasPorPuntoVenta: (filtros: FiltrosDeBreakdown) =>
     api.get<VentasPorPuntoVenta>(`/reportes/ventas/por-punto-venta${construirQueryDeBreakdown(filtros)}`),
   ventasPorVendedor: (filtros: FiltrosDeBreakdownConPv) =>
@@ -315,13 +315,13 @@ export function construirQueryDeLibroDeCuenta(filtros: FiltrosDeLibroDeCuenta): 
 }
 
 /** Rutas de descarga (`/export`, stage-11 slice 4) de los tres paneles de `Tablero` que ya tienen
- * su ruta `/export` mergeada: ventas resumen y gastos resumen (card G1) y rentabilidad. Reutilizan
+ * su ruta `/export` mergeada: ventas resumen y pagos resumen (card G1) y rentabilidad. Reutilizan
  * el mismo query string que su ruta JSON hermana — `formato=xlsx` es el único parámetro propio de
  * la descarga (spec exportación-de-reportes: `formato` es requerido, único valor legal `xlsx`). */
 export const rutasDeExportacion = {
   ventasResumen: (filtros: FiltrosDeReporte) =>
     `/reportes/ventas/resumen/export${construirQueryDeReporte(filtros)}&formato=xlsx`,
-  gastosResumen: (filtros: FiltrosDeReporte) =>
+  pagosResumen: (filtros: FiltrosDeReporte) =>
     `/reportes/gastos/resumen/export${construirQueryDeReporte(filtros)}&formato=xlsx`,
   rentabilidad: (filtros: FiltrosDeRentabilidad) => {
     const query = construirQueryDeBreakdownConPv(filtros)

@@ -16,7 +16,7 @@ namespace Ways.IntegrationTests;
 /// JD-A1 (judgment-day): <c>GET /api/proveedores/opciones</c> punta a punta — la proyección
 /// MÍNIMA (<see cref="OpcionDeProveedor"/>) que reemplaza el uso indebido del listado completo
 /// (<c>ProveedorListado</c>, con margen/cuit/contacto) como fuente del selector opcional de
-/// proveedor del formulario de gastos del turno. <c>Politicas.OperacionDePos</c> (un Vendedor
+/// proveedor del formulario de pagos del turno. <c>Politicas.OperacionDePos</c> (un Vendedor
 /// tiene que poder leerla, mismo criterio que el saldo derivado), activos/no-eliminados
 /// únicamente, y sin fuga de otro tenant.
 /// </summary>

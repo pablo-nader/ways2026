@@ -1,6 +1,6 @@
 using Ways.Application.Auditoria;
 using Ways.Application.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 namespace Ways.Application.Tests.Listados;
 
@@ -37,8 +37,8 @@ public class EtiquetasDeAccionTests
     }
 }
 
-/// <summary>Espejo de este test: el de <c>CATEGORIAS_GASTO</c> en <c>Ways.Web/src/api/tipos.test.ts</c>.</summary>
-public class EtiquetasDeCategoriaDeGastoTests
+/// <summary>Espejo de este test: el de <c>CATEGORIAS_PAGO</c> en <c>Ways.Web/src/api/tipos.test.ts</c>.</summary>
+public class EtiquetasDeCategoriaDePagoTests
 {
     [Fact]
     public void LasEtiquetasDelServidorSonExactamenteLaListaFijada()
@@ -55,15 +55,15 @@ public class EtiquetasDeCategoriaDeGastoTests
 
         Assert.Equal(
             esperadas.ToList(),
-            EtiquetasDeCategoriaDeGasto.Todas.Select(p => (p.Key.ToString(), p.Value)).ToList());
+            EtiquetasDeCategoriaDePago.Todas.Select(p => (p.Key.ToString(), p.Value)).ToList());
     }
 
     [Fact]
     public void TodoValorDelEnumTieneEtiqueta()
     {
-        foreach (var categoria in Enum.GetValues<CategoriaGasto>())
+        foreach (var categoria in Enum.GetValues<CategoriaPago>())
         {
-            Assert.True(EtiquetasDeCategoriaDeGasto.Todas.ContainsKey(categoria), $"Falta la etiqueta de {categoria}.");
+            Assert.True(EtiquetasDeCategoriaDePago.Todas.ContainsKey(categoria), $"Falta la etiqueta de {categoria}.");
         }
     }
 }

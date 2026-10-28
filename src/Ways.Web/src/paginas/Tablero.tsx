@@ -18,7 +18,7 @@ import type {
   MedioPagoListado,
   PuntoVentaListado,
   Rentabilidad,
-  ResumenDeGastos,
+  ResumenDePagos,
   ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
@@ -688,11 +688,11 @@ function PanelDeComisiones({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
 
 /**
  * Tablero (stage-10-agregacion-dashboard, Slice 7 — G1 parity; Slice 8 — filtro compartido +
- * paneles de desglose): serie de ventas, serie de gastos, netos y ticket promedio de los últimos
+ * paneles de desglose): serie de ventas, serie de pagos, netos y ticket promedio de los últimos
  * 7 días por defecto, con `desde`/`hasta`/`granularidad`/punto de venta editables — el mismo
  * filtro alimenta la card G1 y los cuatro paneles de desglose — por punto de venta, por vendedor,
  * por medio de pago, top artículos (spec tablero: Breakdown Panels Share Range And Granularity
- * Controls). `granularidad` solo la lee `ventas/resumen`/`gastos/resumen`: ninguno de los cuatro
+ * Controls). `granularidad` solo la lee `ventas/resumen`/`pagos/resumen`: ninguno de los cuatro
  * breakdowns bucketea por tiempo, cada fila ya es su propio subtotal del período completo.
  * `idPuntoVenta` viaja a todos salvo `ventas/por-punto-venta` (sería agrupar y filtrar por el
  * mismo campo — design: Endpoints); `articulos/top` sí lo acepta, igual que por-vendedor/
@@ -702,7 +702,7 @@ function PanelDeComisiones({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
  * fetch (disparado por cambio de empresa/rango/granularidad/PV), cada setter posterior a un
  * `await` y el `finally` que apaga `cargando` están gateados contra esa generación — una
  * respuesta desactualizada nunca pisa un filtro que el usuario ya cambió. `cargando` cubre la
- * ventana completa de la card G1 (ventas + gastos se piden y aplican como una sola unidad,
+ * ventana completa de la card G1 (ventas + pagos se piden y aplican como una sola unidad,
  * siempre disparados por el mismo evento de filtro — no son entidades operables
  * independientemente, a diferencia del listado + saldo de `Compras.tsx`). Cada panel de
  * desglose (Slice 8) es una entidad operable independiente y trae su PROPIA generación/`cargando`
@@ -729,10 +729,10 @@ export function Tablero() {
   const [idPuntoVenta, setIdPuntoVenta] = useState<number | null>(null)
 
   const [ventas, setVentas] = useState<ResumenDeVentas | null>(null)
-  const [gastos, setGastos] = useState<ResumenDeGastos | null>(null)
+  const [pagos, setPagos] = useState<ResumenDePagos | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
-  /** Error de descarga (stage-11 slice 4) — separado de `error` (carga de ventas/gastos) para no
+  /** Error de descarga (stage-11 slice 4) — separado de `error` (carga de ventas/pagos) para no
    * ofrecer un botón "Reintentar" que en realidad reintenta la carga, no la descarga. */
   const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
@@ -766,16 +766,16 @@ export function Tablero() {
 
     const filtros = { idEmpresa, idPuntoVenta, desde, hasta, granularidad }
 
-    Promise.all([clienteDeReportes.ventasResumen(filtros), clienteDeReportes.gastosResumen(filtros)])
-      .then(([resumenVentas, resumenGastos]) => {
+    Promise.all([clienteDeReportes.ventasResumen(filtros), clienteDeReportes.pagosResumen(filtros)])
+      .then(([resumenVentas, resumenPagos]) => {
         if (generacionRef.current !== miGeneracion) return
         setVentas(resumenVentas)
-        setGastos(resumenGastos)
+        setPagos(resumenPagos)
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
         setVentas(null)
-        setGastos(null)
+        setPagos(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el tablero.')
       })
       .finally(() => {
@@ -898,9 +898,9 @@ export function Tablero() {
               </div>
             )}
 
-            {cargando && !ventas && !gastos && <Cargando />}
+            {cargando && !ventas && !pagos && <Cargando />}
 
-            {ventas && gastos && idEmpresa !== null && (
+            {ventas && pagos && idEmpresa !== null && (
               <>
                 {errorDescarga && <div className="alert alert-danger py-1 px-2 small">{errorDescarga}</div>}
                 <div className="d-flex gap-2 mb-2">
@@ -910,8 +910,8 @@ export function Tablero() {
                     onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
                   />
                   <BotonDeDescarga
-                    ruta={rutasDeExportacion.gastosResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
-                    etiqueta="Descargar gastos"
+                    ruta={rutasDeExportacion.pagosResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
+                    etiqueta="Descargar pagos"
                     onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
                   />
                 </div>
@@ -924,8 +924,8 @@ export function Tablero() {
                   </div>
                   <div className="col-md-3">
                     <div className="border p-3 bg-body text-center">
-                      <div className="text-muted small">Gastos</div>
-                      <div className="fs-4">{formatearMoneda(gastos.importeTotal)}</div>
+                      <div className="text-muted small">Pagos</div>
+                      <div className="fs-4">{formatearMoneda(pagos.importeTotal)}</div>
                     </div>
                   </div>
                   <div className="col-md-3">
@@ -951,8 +951,8 @@ export function Tablero() {
                   </div>
                   <div className="col-md-6">
                     <div className="border p-3 bg-body">
-                      <h6>Serie de gastos</h6>
-                      <GraficoDeLineas data={aSerieDeGrafico(gastos.serie.map((b) => ({ etiqueta: b.etiqueta, valor: b.importe })))} alto={240} titulo="Serie de gastos por período" />
+                      <h6>Serie de pagos</h6>
+                      <GraficoDeLineas data={aSerieDeGrafico(pagos.serie.map((b) => ({ etiqueta: b.etiqueta, valor: b.importe })))} alto={240} titulo="Serie de pagos por período" />
                     </div>
                   </div>
                 </div>

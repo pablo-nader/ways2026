@@ -9,7 +9,7 @@ namespace Ways.Application.Reportes;
 /// <summary>
 /// La ÚNICA superficie de SQL crudo de stage-10-agregacion-dashboard (design decisión 2: "one
 /// file is one review target and one grep target for the invariant checklist"). Dos cuerpos SQL
-/// constantes (ventas, gastos) y un ejecutor genérico compartido — mismo patrón que
+/// constantes (ventas, pagos) y un ejecutor genérico compartido — mismo patrón que
 /// <c>ServicioDeCategorias</c>: la conexión se abre con <c>Db.Database.OpenConnectionAsync()</c>,
 /// NUNCA <c>GetDbConnection().OpenAsync()</c> crudo, porque solo el primero corre el pipeline de
 /// interceptores de EF que setea los GUCs de RLS (<c>InterceptorDeContextoDeTenant</c>) — saltarlo
@@ -44,13 +44,13 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
         ORDER BY 1
         """;
 
-    /// <summary>Sin columna <c>estado</c> — <c>gastos</c> no tiene máquina de estados. Reusada tal
-    /// cual por <c>gastos/resumen</c> (stage-10 slice 5, design: Raw-SQL Invariant Checklist).</summary>
-    private const string SqlGastos =
+    /// <summary>Sin columna <c>estado</c> — <c>pagos</c> no tiene máquina de estados. Reusada tal
+    /// cual por <c>pagos/resumen</c> (stage-10 slice 5, design: Raw-SQL Invariant Checklist).</summary>
+    private const string SqlPagos =
         """
         SELECT date_trunc('{0}', timezone($1, g.fecha))::date AS bucket,
                SUM(g.importe) AS importe
-        FROM gastos g
+        FROM pagos g
         WHERE g.deleted_at IS NULL
           AND g.id_tenant = $2
           AND g.id_punto_venta = ANY($3)
@@ -68,14 +68,14 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
             ProyectarFilaDeVentas, ct);
 
     /// <summary>Sin consumidor todavía en esta slice — stage-10 slice 5
-    /// (<c>ServicioDeReportesDeEgresos.ObtenerGastosResumenAsync</c>) es el primero. Declarado acá
+    /// (<c>ServicioDeReportesDeEgresos.ObtenerPagosResumenAsync</c>) es el primero. Declarado acá
     /// porque design decisión 2 asigna TODO el raw-SQL de la etapa a este único archivo.</summary>
-    public Task<IReadOnlyList<FilaSerieDeGastos>> EjecutarGastosAsync(
+    public Task<IReadOnlyList<FilaSerieDePagos>> EjecutarPagosAsync(
         Granularidad granularidad, string zona, int idTenant, IReadOnlyCollection<int> idsPuntoVenta,
         DateTimeOffset desdeUtc, DateTimeOffset hastaUtcExclusivo, CancellationToken ct = default) =>
         EjecutarAsync(
-            SqlGastos, granularidad, zona, idTenant, idsPuntoVenta, desdeUtc, hastaUtcExclusivo,
-            ProyectarFilaDeGastos, ct);
+            SqlPagos, granularidad, zona, idTenant, idsPuntoVenta, desdeUtc, hastaUtcExclusivo,
+            ProyectarFilaDePagos, ct);
 
     private async Task<IReadOnlyList<T>> EjecutarAsync<T>(
         string sqlTemplate, Granularidad granularidad, string zona, int idTenant,
@@ -118,7 +118,7 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
         lector.GetFieldValue<DateOnly>(0), lector.GetDecimal(1), Convert.ToInt32(lector.GetInt64(2)),
         lector.GetDecimal(3), Convert.ToInt32(lector.GetInt64(4)), lector.GetDecimal(5));
 
-    private static FilaSerieDeGastos ProyectarFilaDeGastos(DbDataReader lector) => new(
+    private static FilaSerieDePagos ProyectarFilaDePagos(DbDataReader lector) => new(
         lector.GetFieldValue<DateOnly>(0), lector.GetDecimal(1));
 
     private static string LiteralDeGranularidad(Granularidad granularidad) => granularidad switch
@@ -154,6 +154,6 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
 public sealed record FilaSerieDeVentas(
     DateOnly Bucket, decimal Neto, int CantidadTx, decimal NetoTx, int CantidadNcx, decimal NetoNcx);
 
-/// <summary>Una fila de la serie de gastos — sin discriminador de signo, <c>gastos</c> no tiene
+/// <summary>Una fila de la serie de pagos — sin discriminador de signo, <c>pagos</c> no tiene
 /// noción de nota de crédito.</summary>
-public sealed record FilaSerieDeGastos(DateOnly Bucket, decimal Importe);
+public sealed record FilaSerieDePagos(DateOnly Bucket, decimal Importe);

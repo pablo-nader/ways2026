@@ -237,7 +237,7 @@ public class ManejadorDeErroresComprasTests
     [InlineData("fk_items_comprobante_compra_articulo")]
     [InlineData("fk_items_comprobante_compra_alicuota_iva")]
     [InlineData("fk_movimientos_stock_comprobante_compra")]
-    [InlineData("fk_gastos_comprobante_compra")]
+    [InlineData("fk_pagos_comprobante_compra")]
     public async Task CadaFkNuevaSeTraduceA400ReferenciaInvalida(string nombreDeFk)
     {
         var postgres = CrearExcepcion("23503", nombreDeFk);

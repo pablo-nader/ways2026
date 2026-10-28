@@ -10,7 +10,7 @@
 | 3 | Artículos + códigos de barra + listas de precio + precios con historia | POS |
 | 4 | Ofertas | POS completo |
 | 5 | Comprobantes de venta + pagos + stock + movimientos | **Vender** (paridad núcleo) |
-| 6 | Turnos de caja + arqueos + tesorería + gastos | Cerrar caja |
+| 6 | Turnos de caja + arqueos + tesorería + pagos | Cerrar caja |
 | 7 | Cuenta corriente + reliquidación a precio del día | Paridad total con el legacy |
 | 8 | Comprobantes de compra + transferencias de stock (implementada — stage-8-compras-transferencias-inventario) | Superar al legacy |
 
@@ -31,7 +31,7 @@ etapa; los datos del legacy entran en la etapa 5 (ventas históricas → `items_
 > documentan en este documento al implementarse.
 >
 > **Retirado (Etapa 15, stage-15-cc-proveedores-ledger):** el saldo de proveedor "derivado (§5,
-> `Σ compras confirmadas − Σ gastos ligados`, sin tabla ni ledger extra — deliberadamente más
+> `Σ compras confirmadas − Σ pagos ligados`, sin tabla ni ledger extra — deliberadamente más
 > simple que la cuenta corriente de clientes de la etapa 7)" que este párrafo describía queda
 > retirado — reemplazado por `movimientos_cuenta_corriente_proveedor` (§8b), un ledger completo
 > con la misma forma que el de clientes. El backfill de la migración de Etapa 15 reproduce esta

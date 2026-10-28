@@ -7,6 +7,7 @@
  * `costoUnitario`/`descuento`/`idAlicuotaIva`).
  */
 import { api } from './cliente'
+import { aLineasDeSolicitud, errorDeLineasDePago, totalDeLineasDePago, type LineaDePagoEditable } from './lineasDePago'
 import {
   brutoDeLinea,
   cantidadDeLinea,
@@ -68,8 +69,8 @@ export type FiltrosDeCompras = {
   desde: string
   hasta: string
   /** stage-tesoreria-por-empresa (PR5): filtro opcional por la empresa del punto de venta de la
-   * compra — usado por el picker "Vincular a compra" de Gastos para no ofrecer compras de otra
-   * empresa que la del gasto. */
+   * compra — usado por el picker "Vincular a compra" de Pagos para no ofrecer compras de otra
+   * empresa que la del pago. */
   idEmpresa: number | null
   pagina: number
   tamanio: number
@@ -127,10 +128,10 @@ export const clienteDeCompras = {
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>
     api.post<ResultadoAplicarPrecio[]>(`/compras/${id}/precios`, solicitud),
-  /** `POST /api/compras/{id}/pagos` — `GestionDeCatalogo` del lado del servidor: crea el gasto de
-   * tesorería y el pago de cuenta corriente imputado a la compra en una transacción. */
+  /** `POST /api/pagos/de-compra/{idCompra}` — `GestionDeCatalogo` del lado del servidor: crea el pago de
+   * tesorería con sus líneas por medio y el pago de cuenta corriente imputado a la compra en una transacción. */
   pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
-    api.post<ResultadoDePagoDeCompra>(`/compras/${id}/pagos`, solicitud),
+    api.post<ResultadoDePagoDeCompra>(`/pagos/de-compra/${id}`, solicitud),
   /** `GET /api/proveedores/{id}/saldo` — top-level, no dentro de `/api/proveedores` (design: API
    * Surface). Usado acá solo para la columna de estado de pago cuando el listado está filtrado
    * por un proveedor puntual; el panel completo lo construye `Proveedores.tsx` en la Slice 6. */
@@ -495,7 +496,7 @@ function desglosarIva(
 // ---- Pago de una compra confirmada -----------------------------------------------------------
 
 /** Hoy como `YYYY-MM-DD` en la zona del navegador, la misma con la que el resto de la web decide la
- * fecha de negocio por defecto (`Gastos.tsx`). */
+ * fecha de negocio por defecto (`Pagos.tsx`). */
 export function fechaDeHoyParaPago(ahora: Date = new Date()): string {
   const mes = String(ahora.getMonth() + 1).padStart(2, '0')
   const dia = String(ahora.getDate()).padStart(2, '0')
@@ -508,14 +509,13 @@ export function sePuedePagarLaCompra(compra: Pick<CompraDetalle, 'estado' | 'sal
 }
 
 export type PagoDeCompraFormulario = {
-  importe: number | null
+  lineas: LineaDePagoEditable[]
   fecha: string
-  idMedioPago: number | null
   concepto: string
 }
 
-/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir (importe positivo y
- * hasta el saldo pendiente, fecha no futura, medio de pago elegido) y, si pasa, arma la
+/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir (cada línea con medio e
+ * importe positivo, total hasta el saldo pendiente, fecha no futura) y, si pasa, arma la
  * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Un concepto en blanco viaja
  * como `null` y el servidor arma `Pago <tipo> <número>`. */
 export function prepararPagoDeCompra(
@@ -523,15 +523,16 @@ export function prepararPagoDeCompra(
   saldoPendiente: number,
   hoy: string,
 ): { solicitud: SolicitudDePagoDeCompra } | { error: string } {
-  const { importe, idMedioPago } = formulario
-  if (importe === null || !(importe > 0)) return { error: 'Ingresá un importe mayor a 0.' }
-  if (importe > saldoPendiente) return { error: 'El importe no puede superar el saldo pendiente de la compra.' }
+  const errorDeLineas = errorDeLineasDePago(formulario.lineas)
+  if (errorDeLineas !== null) return { error: errorDeLineas }
+  if (totalDeLineasDePago(formulario.lineas) > saldoPendiente) {
+    return { error: 'El total no puede superar el saldo pendiente de la compra.' }
+  }
   if (!formulario.fecha) return { error: 'Elegí la fecha del pago.' }
   if (formulario.fecha > hoy) return { error: 'La fecha del pago no puede ser futura.' }
-  if (idMedioPago === null) return { error: 'Elegí el medio de pago.' }
 
   const concepto = formulario.concepto.trim()
   return {
-    solicitud: { fecha: formulario.fecha, importe, idMedioPago, concepto: concepto === '' ? null : concepto },
+    solicitud: { fecha: formulario.fecha, lineas: aLineasDeSolicitud(formulario.lineas), concepto: concepto === '' ? null : concepto },
   }
 }

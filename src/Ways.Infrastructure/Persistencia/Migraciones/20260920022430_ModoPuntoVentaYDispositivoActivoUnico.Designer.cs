@@ -12,7 +12,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -2398,7 +2398,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<CategoriaGasto>("Categoria")
+                    b.Property<CategoriaPago>("Categoria")
                         .HasColumnType("categoria_gasto")
                         .HasColumnName("categoria");
 

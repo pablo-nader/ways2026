@@ -106,7 +106,12 @@ describe('Familias — listado', () => {
     await montarYEsperar()
 
     expect(apiGetMock).toHaveBeenCalledWith('/familias')
-    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).toEqual(['Nombre', 'Artículos', 'Estado', 'Acciones'])
+    expect(
+      screen
+        .getAllByRole('columnheader')
+        .slice(0, 4)
+        .map((c) => c.textContent?.replace('↕', '')),
+    ).toEqual(['Nombre', 'Artículos', 'Estado', 'Acciones'])
     expect(celdas('Sabores').slice(0, 3)).toEqual(['Sabores', '3', 'Activa'])
     expect(celdas('Talles').slice(0, 3)).toEqual(['Talles', '1', 'Inactiva'])
   })
@@ -1016,5 +1021,151 @@ describe('Familias — disolver', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     await waitFor(() => expect(disparador).toHaveFocus())
+  })
+})
+
+// Filtros por columna y orden por encabezado (grillas, slice S5b2).
+
+const zapatos: FamiliaListado = { id: 1, nombre: 'Zapatos', activo: true, cantidadArticulos: 1500 }
+const abrigos: FamiliaListado = { id: 2, nombre: 'Abrigos', activo: false, cantidadArticulos: 900 }
+const medias: FamiliaListado = { id: 3, nombre: 'Medias', activo: true, cantidadArticulos: 20 }
+/** El orden del servidor (Zapatos, Abrigos, Medias) no coincide con ningún orden por columna. */
+const ENTREGADAS = [zapatos, abrigos, medias]
+
+function columnaVisible(indice: number) {
+  return screen
+    .getAllByRole('row')
+    .slice(2)
+    .map((f) => within(f).getAllByRole('cell')[indice]?.textContent ?? '')
+}
+
+describe('Familias — filtros por columna y orden', () => {
+  /** Mutación registrada: pasar `filtradas` sin ordenar a la tabla deja el orden del servidor y rompe las aserciones. */
+  it('ordena por cada encabezado: 900 antes que 1500 y el tercer clic vuelve al orden original', async () => {
+    const usuario = userEvent.setup()
+    await montarYEsperar(ENTREGADAS)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(0)).toEqual(['Abrigos', 'Medias', 'Zapatos'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(0)).toEqual(['Zapatos', 'Medias', 'Abrigos'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(0)).toEqual(['Zapatos', 'Abrigos', 'Medias'])
+
+    // Como texto "1500" < "20" < "900"; como número, 20 < 900 < 1500.
+    await usuario.click(screen.getByRole('button', { name: 'Artículos' }))
+    expect(columnaVisible(1)).toEqual(['20', '900', '1500'])
+    await usuario.click(screen.getByRole('button', { name: 'Artículos' }))
+    expect(columnaVisible(1)).toEqual(['1500', '900', '20'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Estado' }))
+    expect(columnaVisible(2)).toEqual(['Activa', 'Activa', 'Inactiva'])
+    expect(columnaVisible(0)).toEqual(['Zapatos', 'Medias', 'Abrigos'])
+  })
+
+  /** Mutación registrada: pasar `items` en vez de `filtradas` a `useOrdenamiento` deja todas las filas con un filtro puesto. */
+  it('filtra con un campo por nombre y por artículos y un selector por estado, y los combina con Y', async () => {
+    const usuario = userEvent.setup()
+    await montarYEsperar(ENTREGADAS)
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'MED')
+    expect(columnaVisible(0)).toEqual(['Medias'])
+    await usuario.clear(screen.getByLabelText('Filtrar por nombre'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por artículos'), '900')
+    expect(columnaVisible(0)).toEqual(['Abrigos'])
+    await usuario.clear(screen.getByLabelText('Filtrar por artículos'))
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activa')
+    expect(columnaVisible(0)).toEqual(['Zapatos', 'Medias'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Inactiva')
+    expect(columnaVisible(0)).toEqual(['Abrigos'])
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activa')
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zap')
+    expect(columnaVisible(0)).toEqual(['Zapatos'])
+  })
+
+  it('"Limpiar filtros" restaura las filas; sin coincidencias el estado vacío lo dice y sin familias dice otra cosa', async () => {
+    const usuario = userEvent.setup()
+    await montarYEsperar(ENTREGADAS)
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'no existe')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('Todavía no hay familias.')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(columnaVisible(0)).toEqual(['Zapatos', 'Abrigos', 'Medias'])
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+  })
+
+  it('la fila de filtros tiene una celda por encabezado', async () => {
+    await montarYEsperar(ENTREGADAS)
+
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(4)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(4)
+  })
+
+  /** Mutación registrada: volver a `cargando ? <Cargando /> : <table>` desmonta la fila de filtros durante el refresco. */
+  it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    const refresco = diferida<FamiliaListado[]>()
+    apiGetMock.mockResolvedValueOnce(ENTREGADAS).mockReturnValueOnce(refresco.promesa)
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Zapatos')
+
+    const filtro = screen.getByLabelText('Filtrar por nombre')
+    await usuario.type(filtro, 'zap')
+    await usuario.click(screen.getByRole('button', { name: 'Editar Zapatos' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se actualizó la familia "Zapatos".')
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro.isConnected).toBe(true)
+    expect(filtro).toHaveValue('zap')
+    expect(filtro).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
+
+    await act(async () => {
+      refresco.resolver(ENTREGADAS)
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro).toBeEnabled()
+    expect(columnaVisible(0)).toEqual(['Zapatos'])
+  })
+
+  it('los filtros quedan inertes mientras el guardado está en vuelo y con la puerta de disolución abierta', async () => {
+    const usuario = userEvent.setup()
+    const guardado = diferida<FamiliaListado>()
+    apiPutMock.mockReturnValue(guardado.promesa)
+    await montarYEsperar(ENTREGADAS)
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zap')
+    await usuario.click(screen.getByRole('button', { name: 'Editar Zapatos' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por artículos')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+
+    await act(async () => {
+      guardado.resolver(zapatos)
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Disolver Zapatos' }))
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
   })
 })

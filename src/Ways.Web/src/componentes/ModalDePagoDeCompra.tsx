@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeCompras, fechaDeHoyParaPago, prepararPagoDeCompra } from '../api/compras'
+import { lineaDePagoVacia, type LineaDePagoEditable } from '../api/lineasDePago'
 import type { MedioPagoAlta, MedioPagoListado, ResultadoDePagoDeCompra } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
-import { CampoImporte } from './CampoImporte'
+import { EditorDeLineasDePago } from './EditorDeLineasDePago'
 import { Modal } from './Modal'
 import { CampoFecha } from './CampoFecha'
 
@@ -36,9 +37,8 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
 
-  const [importe, setImporte] = useState<number | null>(saldoPendiente)
+  const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => [lineaDePagoVacia(1, saldoPendiente)])
   const [fecha, setFecha] = useState(hoy)
-  const [idMedioPago, setIdMedioPago] = useState<number | null>(null)
   const [concepto, setConcepto] = useState('')
 
   const [pagando, setPagando] = useState(false)
@@ -77,7 +77,7 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
   async function pagar() {
     if (pagandoRef.current) return
 
-    const preparado = prepararPagoDeCompra({ importe, fecha, idMedioPago, concepto }, saldoPendiente, hoy)
+    const preparado = prepararPagoDeCompra({ lineas, fecha, concepto }, saldoPendiente, hoy)
     if ('error' in preparado) {
       setError(preparado.error)
       return
@@ -120,13 +120,6 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
 
       <fieldset disabled={pagando} className="row g-2 border-0 p-0 m-0">
         <div className="col-md-6">
-          <label className="form-label" htmlFor="pago-compra-importe">
-            Importe
-          </label>
-          <CampoImporte id="pago-compra-importe" className="form-control" valor={importe} onChange={setImporte} />
-        </div>
-
-        <div className="col-md-6">
           <label className="form-label" htmlFor="pago-compra-fecha">
             Fecha
           </label>
@@ -137,25 +130,6 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
             max={hoy}
             onChange={(valor) => setFecha(valor)}
           />
-        </div>
-
-        <div className="col-md-6">
-          <label className="form-label" htmlFor="pago-compra-medio-pago">
-            Medio de pago
-          </label>
-          <select
-            id="pago-compra-medio-pago"
-            className="form-select"
-            value={idMedioPago ?? ''}
-            onChange={(e) => setIdMedioPago(e.target.value === '' ? null : Number(e.target.value))}
-          >
-            <option value="">{mediosCargando ? 'Cargando…' : 'Elegir…'}</option>
-            {(medios ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.nombre}
-              </option>
-            ))}
-          </select>
         </div>
 
         <div className="col-md-6">
@@ -170,6 +144,10 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
             onChange={(e) => setConcepto(e.target.value)}
           />
           <div className="form-text">Si queda vacío se registra como «Pago &lt;tipo&gt; &lt;número&gt;».</div>
+        </div>
+
+        <div className="col-12">
+          <EditorDeLineasDePago lineas={lineas} medios={medios ?? []} onCambio={setLineas} objetivo={saldoPendiente} />
         </div>
       </fieldset>
     </Modal>

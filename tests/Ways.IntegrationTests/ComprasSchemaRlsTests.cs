@@ -14,7 +14,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// stage-8-compras-transferencias-inventario, Slice 1 (task 1.12, design: Table Shapes — F):
-/// mismo patrón que <c>TurnosCajaYGastosRlsTests</c> — SQL crudo, independiente de EF, 0 filas
+/// mismo patrón que <c>TurnosCajaYPagosRlsTests</c> — SQL crudo, independiente de EF, 0 filas
 /// para SELECT/UPDATE cross-tenant, 42501 para el INSERT que viola <c>WITH CHECK</c>, más un
 /// proof a nivel EF (LINQ) por tabla. Cubre las dos tablas nuevas de esta slice
 /// (<c>comprobantes_compra</c>/<c>items_comprobante_compra</c>).

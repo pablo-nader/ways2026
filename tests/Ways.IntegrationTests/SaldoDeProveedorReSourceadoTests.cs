@@ -5,13 +5,13 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Compras;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Infrastructure.Multitenancy;
@@ -20,7 +20,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// stage-15-cc-proveedores-ledger, Slice 4 (task 4.5, tasks.md decisión 4 / `state.yaml` OD7): la
-/// fórmula VINCULANTE del estado de pago por-compra, re-sourceada sobre <c>gastos</c> +
+/// fórmula VINCULANTE del estado de pago por-compra, re-sourceada sobre <c>pagos</c> +
 /// <c>movimientos_cuenta_corriente_proveedor.tipo = 'ajuste'</c> — NI la del proposal
 /// (<c>SUM(importe) ... &lt;= 0 ⇒ pagada</c>) NI la del design (<c>−Σ importe WHERE tipo &lt;&gt;
 /// 'compra'</c>), ambas RECHAZADAS. Los casos 4.12/4.13 seedean directo por EF una compra
@@ -164,19 +164,19 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         return compra.Id;
     }
 
-    /// <summary>Seedea directo por EF un gasto de categoría proveedor, ligado, SIN pasar por
-    /// <c>ServicioDeGastos.InsertarGastoAsync</c> — nunca se escribe su movimiento `pago` en el
+    /// <summary>Seedea directo por EF un pago de categoría proveedor, ligado, SIN pasar por
+    /// <c>ServicioDePagos.InsertarPagoAsync</c> — nunca se escribe su movimiento `pago` en el
     /// ledger. Simula un pago registrado por el mecanismo RETIRADO, de antes de que este ledger
     /// tuviera capacidad de escribir pagos (design.md: "the design's formula loses a pre-cutover
-    /// partial payment because it never queries gastos at all").</summary>
-    private async Task SembrarGastoLigadoSinMovimientoDeLedgerAsync(
+    /// partial payment because it never queries pagos at all").</summary>
+    private async Task SembrarPagoLigadoSinMovimientoDeLedgerAsync(
         Contexto ctx, int idTurno, int idComprobanteCompra, decimal importe)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
         var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
-        db.Gastos.Add(new Gasto
+        var pago = new Pago
         {
             IdTenant = ctx.IdTenant,
             Fecha = ahora,
@@ -184,15 +184,20 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdTurnoCaja = idTurno,
             IdEmpleado = ctx.IdEmpleadoAdmin,
-            Categoria = CategoriaGasto.Proveedor,
-            OrigenFondos = OrigenFondosGasto.CajaTurno,
+            Categoria = CategoriaPago.Proveedor,
+            OrigenFondos = OrigenFondosPago.CajaTurno,
             IdProveedor = ctx.IdProveedor,
             Concepto = "Pago pre-cutover (mecanismo retirado)",
-            IdMedioPago = ctx.IdMedioEfectivo,
             Importe = importe,
             IdComprobanteCompra = idComprobanteCompra,
             CreatedAt = ahora,
             UpdatedAt = ahora
+        };
+        db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = ctx.IdMedioEfectivo, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora
         });
         await db.SaveChangesAsync();
     }
@@ -219,20 +224,20 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         // Bajo la fórmula del proposal (SUM(importe) sobre movimientos del ledger, incluido el
         // propio `compra`) esta compra NO TIENE movimiento propio ⇒ suma 0 ⇒ "<= 0 ⇒ pagada"
         // (RECHAZADO — evidencia de mutación abajo). OD7 nunca lee el ledger para este término:
-        // pagado = 0 (sin gastos ligados) ⇒ Impaga, correcto.
+        // pagado = 0 (sin pagos ligados) ⇒ Impaga, correcto.
         Assert.Equal(0m, linea.Pagado);
         Assert.Equal(EstadoPago.Impaga, linea.EstadoPago);
     }
 
-    // ---- task 4.13: compra pre-cutover PARCIALMENTE pagada por un gasto sin movimiento de ledger --
+    // ---- task 4.13: compra pre-cutover PARCIALMENTE pagada por un pago sin movimiento de ledger --
 
     [Fact]
-    public async Task UnaCompraPreCutoverPagadaParcialmentePorUnGastoSinMovimientoDeLedgerLeeParcial()
+    public async Task UnaCompraPreCutoverPagadaParcialmentePorUnPagoSinMovimientoDeLedgerLeeParcial()
     {
-        var ctx = await PrepararAsync(nameof(UnaCompraPreCutoverPagadaParcialmentePorUnGastoSinMovimientoDeLedgerLeeParcial));
+        var ctx = await PrepararAsync(nameof(UnaCompraPreCutoverPagadaParcialmentePorUnPagoSinMovimientoDeLedgerLeeParcial));
         var idTurno = await AbrirTurnoAsync(ctx);
         var idCompra = await SembrarCompraPreCutoverConfirmadaAsync(ctx, total: 1000m, "pre-cutover-parcial");
-        await SembrarGastoLigadoSinMovimientoDeLedgerAsync(ctx, idTurno, idCompra, importe: 400m);
+        await SembrarPagoLigadoSinMovimientoDeLedgerAsync(ctx, idTurno, idCompra, importe: 400m);
 
         var saldo = await ObtenerSaldoAsync(ctx);
 
@@ -240,8 +245,8 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         // Bajo la fórmula del design (−Σ importe WHERE tipo <> 'compra', solo el ledger): NO hay
         // NINGÚN movimiento en el ledger para esta compra (ni compra, ni pago) ⇒ suma 0 ⇒ pagado
         // = 0 ⇒ Impaga (RECHAZADO — el pago pre-cutover queda perdido, exactamente lo que
-        // tasks.md decisión 4 / state.yaml OD7 documentan). OD7 SÍ consulta `gastos`
-        // directamente: pagado = 400 (el gasto ligado) + 0 (sin ajustes) = 400 ⇒ Parcial.
+        // tasks.md decisión 4 / state.yaml OD7 documentan). OD7 SÍ consulta `pagos`
+        // directamente: pagado = 400 (el pago ligado) + 0 (sin ajustes) = 400 ⇒ Parcial.
         Assert.Equal(400m, linea.Pagado);
         Assert.Equal(EstadoPago.Parcial, linea.EstadoPago);
         Assert.Equal(1000m, linea.Total);
@@ -263,15 +268,15 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
 
         var pagoPagada = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, ctx.IdProveedor, null, "Pago total", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago total", null,
                 ctx.IdMedioEfectivo, null, 1111m, pagada.Id));
         Assert.Equal(HttpStatusCode.Created, pagoPagada.StatusCode);
 
         var pagoParcial = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, ctx.IdProveedor, null, "Pago parcial", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago parcial", null,
                 ctx.IdMedioEfectivo, null, 777m, parcial.Id));
         Assert.Equal(HttpStatusCode.Created, pagoParcial.StatusCode);
 
@@ -321,8 +326,8 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         var idTurno = await AbrirTurnoAsync(ctx);
         var pagoPagada = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, ctx.IdProveedor, null, "Pago total", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago total", null,
                 ctx.IdMedioEfectivo, null, 1111m, pagada.Id));
         Assert.Equal(HttpStatusCode.Created, pagoPagada.StatusCode);
 

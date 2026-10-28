@@ -73,7 +73,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
             await using var insertar = cruda.CreateCommand();
             insertar.CommandText =
                 "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-                "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+                "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
                 "VALUES ($1, $2, now(), NULL, NULL, 'apertura', NULL, NULL, 500, 500, 'seed de prueba')";
             insertar.Parameters.Add(new NpgsqlParameter { Value = a.IdTenant });
             insertar.Parameters.Add(new NpgsqlParameter { Value = a.IdProveedor });
@@ -101,7 +101,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
         await using var comando = comoA.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, now(), NULL, NULL, 'apertura', NULL, NULL, 1, 1, 'intruso')";
         comando.Parameters.Add(new NpgsqlParameter { Value = b.IdTenant }); // ajeno a la sesión (tenant A)
         comando.Parameters.Add(new NpgsqlParameter { Value = a.IdProveedor });
@@ -124,7 +124,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, now(), $3, NULL, 'apertura', NULL, NULL, 1, 1, 'invalido')";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdProveedor });
@@ -146,7 +146,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, now(), NULL, NULL, 'compra', NULL, NULL, 1, 1, NULL)";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdProveedor });
@@ -179,7 +179,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
         await using var comando = comoPlataforma.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, now(), NULL, NULL, 'apertura', NULL, NULL, 1, 1, NULL)";
         comando.Parameters.Add(new NpgsqlParameter { Value = 999_999_999 }); // id_tenant inexistente
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdProveedor });
@@ -201,7 +201,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, now(), $3, $4, 'ajuste', NULL, NULL, 1, 1, 'ajuste de prueba')";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdProveedor });
@@ -213,27 +213,27 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
         Assert.Equal("fk_movimientos_cuenta_corriente_proveedor_empleado", excepcion.ConstraintName);
     }
 
-    /// <summary>Exención documentada: <c>fk_..._gasto</c> (el id del gasto que la misma
+    /// <summary>Exención documentada: <c>fk_..._pago</c> (el id del pago que la misma
     /// transacción acaba de insertar, todavía sin call site hasta slice 2/3) — raw insert contra
-    /// un <c>id_gasto</c> inexistente, SQLSTATE <c>23503</c>.</summary>
+    /// un <c>id_pago</c> inexistente, SQLSTATE <c>23503</c>.</summary>
     [Fact]
-    public async Task UnIdGastoInexistenteViolaLaFkGenerica23503()
+    public async Task UnIdPagoInexistenteViolaLaFkGenerica23503()
     {
-        var e = await SembrarEscenarioAsync(nameof(UnIdGastoInexistenteViolaLaFkGenerica23503));
+        var e = await SembrarEscenarioAsync(nameof(UnIdPagoInexistenteViolaLaFkGenerica23503));
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente_proveedor " +
-            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle) " +
+            "(id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_compra, id_pago, importe, saldo_resultante, detalle) " +
             "VALUES ($1, $2, now(), NULL, NULL, 'apertura', NULL, $3, 1, 1, NULL)";
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = e.IdProveedor });
-        comando.Parameters.Add(new NpgsqlParameter { Value = 999_999_999 }); // id_gasto inexistente
+        comando.Parameters.Add(new NpgsqlParameter { Value = 999_999_999 }); // id_pago inexistente
 
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23503", excepcion.SqlState);
-        Assert.Equal("fk_movimientos_cuenta_corriente_proveedor_gasto", excepcion.ConstraintName);
+        Assert.Equal("fk_movimientos_cuenta_corriente_proveedor_pago", excepcion.ConstraintName);
     }
 
     /// <summary><c>ManejadorDeErrores.cs</c> stays unmodified (tasks.md decisión 9): el mapping
@@ -250,7 +250,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
             "fk_movimientos_cuenta_corriente_proveedor_punto_venta",
             "fk_movimientos_cuenta_corriente_proveedor_empleado",
             "fk_movimientos_cuenta_corriente_proveedor_comprobante_compra",
-            "fk_movimientos_cuenta_corriente_proveedor_gasto"
+            "fk_movimientos_cuenta_corriente_proveedor_pago"
         ];
 
         Assert.All(nombres, n => Assert.StartsWith("fk_", n));
@@ -258,7 +258,7 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
 
     /// <summary>Gate guard VINCULANTE (task 1.36, state.yaml db_gate_approval): el conteo total
     /// de índices nuevos tiene que ser EXACTAMENTE 7 — 6 nombrados a mano sobre la tabla nueva
-    /// (gate §B) + 1 implícito de la clave alterna nueva de <c>gastos</c> (gate §D). Cualquier
+    /// (gate §B) + 1 implícito de la clave alterna nueva de <c>pagos</c> (gate §D). Cualquier
     /// índice extra que <c>ForeignKeyIndexConvention</c> agregue sin que este contrato lo
     /// nombre reabre el gate (precedente: enmienda 1 de la etapa 14).</summary>
     [Fact]
@@ -291,20 +291,20 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
             {
                 "ix_movimientos_cuenta_corriente_proveedor_comprobante_compra",
                 "ix_movimientos_cuenta_corriente_proveedor_empleado",
-                "ix_movimientos_cuenta_corriente_proveedor_gasto",
+                "ix_movimientos_cuenta_corriente_proveedor_pago",
                 "ix_movimientos_cuenta_corriente_proveedor_proveedor_fecha",
                 "ix_movimientos_cuenta_corriente_proveedor_punto_venta",
                 "ix_movimientos_cuenta_corriente_proveedor_tenant"
             },
             indicesDeSoporte.OrderBy(n => n));
 
-        await using var comandoGastos = cruda.CreateCommand();
-        comandoGastos.CommandText =
-            "SELECT indexname FROM pg_indexes WHERE tablename = 'gastos' AND indexname LIKE '%id_gasto_id_tenant%'";
-        var indiceImplicitoGastos = (string?)await comandoGastos.ExecuteScalarAsync();
-        Assert.NotNull(indiceImplicitoGastos);
+        await using var comandoPagos = cruda.CreateCommand();
+        comandoPagos.CommandText =
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'pagos' AND indexname LIKE '%id_pago_id_tenant%'";
+        var indiceImplicitoPagos = (string?)await comandoPagos.ExecuteScalarAsync();
+        Assert.NotNull(indiceImplicitoPagos);
 
-        // El total del gate: 6 (tabla nueva) + 1 (implícito de gastos) = 7.
+        // El total del gate: 6 (tabla nueva) + 1 (implícito de pagos) = 7.
         Assert.Equal(7, indicesDeSoporte.Count + 1);
     }
 }

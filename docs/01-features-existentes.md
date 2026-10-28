@@ -210,6 +210,9 @@ calculado, la diferencia se guarda en `ventas.saldo` (positiva = sobrante, negat
 
 ## C. Facturación → Compras / Pagos (Gastos)
 
+> En Ways el *gasto* del sistema legacy se llama **pago** (ver doc 10, §5 y §7); acá se conserva el vocabulario legacy
+> porque este documento audita el comportamiento del código PHP.
+
 **Ruta:** `index.php?menu=facturacion&opc=gastos`
 
 ### C1. Alta rápida de gasto (la que se usa)

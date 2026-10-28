@@ -9,7 +9,7 @@ import {
   type FiltrosDeTesoreria,
   type OrdenDeTesoreria,
 } from '../api/reportes'
-import { CATEGORIAS_GASTO } from '../api/tipos'
+import { CATEGORIAS_PAGO } from '../api/tipos'
 import type { EmpresaListado, MovimientoTesoreriaListado, PaginaDeMovimientosTesoreria, PuntoVentaListado, TipoMovimientoTesoreria } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
@@ -30,8 +30,8 @@ function formatearFechaHora(iso: string): string {
 }
 
 /** Etiqueta en español de `TipoMovimientoTesoreria` — stage-gastos-origen-fondos-pos (PR2):
- * `Gasto` empieza a aparecer en este libro (un gasto de origen Tesoreria escribe su propia fila,
- * `ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync`) y necesitaba una columna propia; antes de
+ * `Pago` empieza a aparecer en este libro (un pago de origen Tesoreria escribe su propia fila,
+ * `ServicioDePagos.EscribirMovimientoDeTesoreriaAsync`) y necesitaba una columna propia; antes de
  * este PR la columna `tipo` se traía pero nunca se mostraba. */
 function etiquetaDeTipoMovimiento(tipo: TipoMovimientoTesoreria): string {
   switch (tipo) {
@@ -40,19 +40,19 @@ function etiquetaDeTipoMovimiento(tipo: TipoMovimientoTesoreria): string {
     case 'Deposito':
       return 'Depósito'
     case 'Gasto':
-      return 'Gasto'
+      return 'Pago'
     case 'Ajuste':
       return 'Ajuste'
   }
 }
 
 /** stage-tesoreria-por-empresa (PR5): mismo criterio de "concepto efectivo" que
- * `ExportacionDeCaja.ConceptoEfectivo` (C#) — una fila `Gasto` muestra la categoría/concepto del
- * gasto de origen (más legible que el `concepto` genérico del movimiento); cualquier otra fila
+ * `ExportacionDeCaja.ConceptoEfectivo` (C#) — una fila `Pago` muestra la categoría/concepto del
+ * pago de origen (más legible que el `concepto` genérico del movimiento); cualquier otra fila
  * muestra su propio `concepto`. */
 function conceptoEfectivo(m: MovimientoTesoreriaListado): string {
   if (m.gastoConcepto === null) return m.concepto
-  const etiquetaCategoria = CATEGORIAS_GASTO.find((c) => c.valor === m.gastoCategoria)?.etiqueta ?? m.gastoCategoria
+  const etiquetaCategoria = CATEGORIAS_PAGO.find((c) => c.valor === m.gastoCategoria)?.etiqueta ?? m.gastoCategoria
   return `${etiquetaCategoria} — ${m.gastoConcepto}`
 }
 
@@ -64,7 +64,7 @@ function conceptoEfectivo(m: MovimientoTesoreriaListado): string {
  *
  * stage-tesoreria-por-empresa (PR5): la cadena es por EMPRESA (doc 10 §7) — el filtro ancla pasa
  * a ser `idEmpresa` (preseleccionada cuando el tenant tiene una sola, mismo criterio que
- * `Gastos.tsx`), con `idPuntoVenta` como filtro OPCIONAL ("Todos" por defecto) sobre esa misma
+ * `Pagos.tsx`), con `idPuntoVenta` como filtro OPCIONAL ("Todos" por defecto) sobre esa misma
  * cadena: un filtro puntual muestra un SUBCONJUNTO cuyos saldos (inicio/final) no se encadenan
  * entre sí — la pantalla muestra una nota cuando ese filtro está activo, en vez de dejar que el
  * lector asuma que la cadena visible es completa.
@@ -97,7 +97,7 @@ export function Tesoreria() {
         if (!vigente) return
         setEmpresas(empresasCargadas)
         setPuntosVenta(puntosVentaCargados)
-        // Empresa única: se preselecciona el filtro, mismo criterio que Gastos.tsx.
+        // Empresa única: se preselecciona el filtro, mismo criterio que Pagos.tsx.
         if (empresasCargadas.length === 1) {
           const rango = rangoUltimosSieteDias()
           setFiltros({

@@ -14,7 +14,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
@@ -144,7 +144,7 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         var movimiento = Assert.Single(movimientos);
         Assert.Equal(TipoMovimientoCcProveedor.Compra, movimiento.Tipo);
         Assert.Equal(5000m, movimiento.Importe);
-        Assert.Null(movimiento.IdGasto);
+        Assert.Null(movimiento.IdPago);
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
         Assert.Equal(5000m, proveedor.Saldo);
@@ -274,10 +274,10 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
     // ---- task 2.13: anulando una compra totalmente pagada deja saldo a favor ----------------------
 
     /// <summary>Simula el pago llamando DIRECTO a la clase escritora del slice 2 (decisión 7 de
-    /// tasks.md: el call site real de <c>ServicioDeGastos</c> recién existe en slice 3) — necesita
-    /// un <c>gastos</c> row solo para satisfacer la FK de <c>id_gasto</c>, sin pasar por
-    /// <c>InsertarGastoAsync</c>.</summary>
-    private async Task<int> SembrarGastoParaFkAsync(Contexto ctx, int idComprobanteCompra, decimal importe)
+    /// tasks.md: el call site real de <c>ServicioDePagos</c> recién existe en slice 3) — necesita
+    /// un <c>pagos</c> row solo para satisfacer la FK de <c>id_pago</c>, sin pasar por
+    /// <c>InsertarPagoAsync</c>.</summary>
+    private async Task<int> SembrarPagoParaFkAsync(Contexto ctx, int idComprobanteCompra, decimal importe)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -293,21 +293,26 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         db.TurnosCaja.Add(turno);
         await db.SaveChangesAsync();
 
-        var gasto = new Gasto
+        var pago = new Pago
         {
             IdTenant = ctx.IdTenant, Fecha = ahora, IdEmpresa = idEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
-            IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaGasto.Proveedor,
-            OrigenFondos = OrigenFondosGasto.CajaTurno, IdProveedor = ctx.IdProveedor,
-            Concepto = "Pago simulado (slice 2)", IdMedioPago = idMedioPago, Importe = importe,
+            IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaPago.Proveedor,
+            OrigenFondos = OrigenFondosPago.CajaTurno, IdProveedor = ctx.IdProveedor,
+            Concepto = "Pago simulado (slice 2)", Importe = importe,
             IdComprobanteCompra = idComprobanteCompra, CreatedAt = ahora, UpdatedAt = ahora
         };
-        db.Gastos.Add(gasto);
+        db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = idMedioPago, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora
+        });
         await db.SaveChangesAsync();
 
-        return gasto.Id;
+        return pago.Id;
     }
 
-    private async Task<int> SimularPagoDirectoAsync(Contexto ctx, int idComprobanteCompra, int idGasto, decimal importe)
+    private async Task<int> SimularPagoDirectoAsync(Contexto ctx, int idComprobanteCompra, int idPago, decimal importe)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
@@ -319,10 +324,10 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
 
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, null, ctx.IdTenant, ctx.IdProveedor, DateTimeOffset.UtcNow, ctx.IdPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Pago, idComprobanteCompra, idGasto, -importe, nuevoSaldo, detalle: null,
+            TipoMovimientoCcProveedor.Pago, idComprobanteCompra, idPago, -importe, nuevoSaldo, detalle: null,
             CancellationToken.None);
 
-        return idGasto;
+        return idPago;
     }
 
     [Fact]
@@ -332,8 +337,8 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m));
         await ConfirmarViaApiAsync(ctx, creada.Id);
 
-        var idGasto = await SembrarGastoParaFkAsync(ctx, creada.Id, 1000m);
-        await SimularPagoDirectoAsync(ctx, creada.Id, idGasto, 1000m);
+        var idPago = await SembrarPagoParaFkAsync(ctx, creada.Id, 1000m);
+        await SimularPagoDirectoAsync(ctx, creada.Id, idPago, 1000m);
 
         var respuesta = await ctx.Admin.PostAsync($"/api/compras/{creada.Id}/anular", null);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -345,12 +350,12 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
             .SingleAsync(m => m.IdComprobanteCompra == creada.Id && m.Tipo == TipoMovimientoCcProveedor.Ajuste);
         Assert.Equal(-1000m, ajuste.Importe);
 
-        // El pago y su gasto ligado NUNCA se tocan — "sin motor de reversión de gastos" (design
+        // El pago y su pago ligado NUNCA se tocan — "sin motor de reversión de gastos" (design
         // decisión 5).
         var pago = await db.MovimientosCuentaCorrienteProveedor
             .SingleAsync(m => m.IdComprobanteCompra == creada.Id && m.Tipo == TipoMovimientoCcProveedor.Pago);
         Assert.Equal(-1000m, pago.Importe);
-        Assert.True(await db.Gastos.AnyAsync(g => g.Id == idGasto));
+        Assert.True(await db.Pagos.AnyAsync(g => g.Id == idPago));
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
         Assert.Equal(-1000m, proveedor.Saldo);
@@ -503,10 +508,10 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 5m, costoUnitario: 300m));
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m));
         await ConfirmarViaApiAsync(ctx, otraCompra.Id);
-        var idGasto = await SembrarGastoParaFkAsync(ctx, otraCompra.Id, 400m);
+        var idPago = await SembrarPagoParaFkAsync(ctx, otraCompra.Id, 400m);
 
         var tareaConfirmar = ctx.Admin.PostAsync($"/api/compras/{creada.Id}/confirmar", null);
-        var tareaPago = SimularPagoDirectoAsync(ctx, otraCompra.Id, idGasto, 400m);
+        var tareaPago = SimularPagoDirectoAsync(ctx, otraCompra.Id, idPago, 400m);
 
         await Task.WhenAll(tareaConfirmar, tareaPago);
 

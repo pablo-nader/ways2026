@@ -17,11 +17,11 @@ namespace Ways.Application.Caja;
 /// <summary>
 /// Turno de caja: apertura, movimientos físicos fuera de la venta (retiro/refuerzo/apertura de
 /// cajón), cierre (design: The Cierre Transaction) y lectura (design: API Surface). <see
-/// cref="ResolverTurnoAbiertoAsync"/> es el resolver compartido que Slice 3 (gastos) y Slice 5
+/// cref="ResolverTurnoAbiertoAsync"/> es el resolver compartido que Slice 3 (pagos) y Slice 5
 /// (checkout) reutilizan (tasks.md, Orchestrator Decision 3), evitando tres copias del mismo
 /// <c>409 turno_no_abierto</c>; <see cref="ExigirTurnoAbiertoBajoLockAsync"/> (Slice 4, task
 /// 4.17) es el mismo tipo de pieza compartida para el guard <c>FOR SHARE</c> — reusado por
-/// <c>ServicioDeGastos.RegistrarAsync</c>. <see cref="CerrarPorRetiroAsync"/> (etapa 5, "cierre por
+/// <c>ServicioDePagos.RegistrarAsync</c>. <see cref="CerrarPorRetiroAsync"/> (etapa 5, "cierre por
 /// retiro") es el segundo modo de cierre — práctica del dueño: el cajero retira el efectivo
 /// contado y DEJA el fondo inicial en el cajón, nada se cuenta — y reusa
 /// <see cref="InsertarArqueosYTesoreriaAsync"/>, el mismo statement 5/6 que <see
@@ -84,7 +84,7 @@ public class ServicioDeTurnos(
     /// <summary>Resolver compartido (spec: Turno Is Always Server-Resolved, Never
     /// Client-Supplied): el turno abierto de un punto de venta se resuelve SIEMPRE desde
     /// <paramref name="idPuntoVenta"/>, nunca desde un id de turno que mande el cliente.
-    /// Reutilizado por <c>ServicioDeGastos.RegistrarAsync</c> (Slice 3) y
+    /// Reutilizado por <c>ServicioDePagos.RegistrarAsync</c> (Slice 3) y
     /// <c>ServicioDeVentas.EmitirAsync</c> (Slice 5, design decisión 11).</summary>
     public async Task<TurnoCaja> ResolverTurnoAbiertoAsync(int idPuntoVenta, CancellationToken ct = default) =>
         await db.TurnosCaja
@@ -159,7 +159,7 @@ public class ServicioDeTurnos(
     }
 
     /// <summary>Guard compartido (task 4.17) — reusado tal cual por
-    /// <c>ServicioDeGastos.RegistrarAsync</c> (mismo criterio de reuso que <see
+    /// <c>ServicioDePagos.RegistrarAsync</c> (mismo criterio de reuso que <see
     /// cref="ResolverTurnoAbiertoAsync"/>, tasks.md Orchestrator Decision 3). DEBE llamarse como
     /// el PRIMER statement de una transacción YA abierta por el llamador — no abre ninguna
     /// transacción propia. <c>estado::text</c> en vez de leer el enum nativo directo: evita
@@ -221,7 +221,7 @@ public class ServicioDeTurnos(
     /// declarada: el UPDATE guardado va PRIMERO, no derive-then-close). Irreversible: no existe
     /// reapertura ni edición directa del arqueo (spec: Cierre Is One Atomic, Irreversible
     /// Transaction). La única excepción es el recálculo administrativo del esperado cuando un admin
-    /// edita o da de baja un gasto de caja del turno ya cerrado (<c>ServicioDeGastos</c>), que
+    /// edita o da de baja un pago de caja del turno ya cerrado (<c>ServicioDePagos</c>), que
     /// reusa esta misma derivación con el ancla pineada y deja marcado el turno.
     /// <see cref="FabricaDeEstrategiaSinReintento"/>: manual, raro, sin clave de idempotencia —
     /// un commit ambiguo tiene que llegar al operador como una falla que re-chequea, nunca como
@@ -418,12 +418,12 @@ public class ServicioDeTurnos(
     /// movimiento tipo <c>retiro_caja</c>, inicio = final de la última fila de la misma empresa).
     ///
     /// stage-gastos-origen-fondos-pos (PR2): <c>Egreso</c> pasa a ser SIEMPRE <c>0</c> acá — antes
-    /// (PR1) restaba la Σ de TODOS los gastos del turno (paridad legacy, design decisión 9); ahora
-    /// un gasto de origen <see cref="Ways.Domain.Gastos.OrigenFondosGasto.CajaTurno"/> ya salió del
-    /// EFECTIVO DEL CAJÓN (reduce lo que el cajero cuenta, nunca la tesorería) y un gasto de origen
-    /// <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/> ya escribió SU PROPIO movimiento
-    /// de tesorería en el momento en que se registró (<c>ServicioDeGastos</c>) — restarlo de nuevo
-    /// acá sería descontarlo DOS veces. <paramref name="insumos"/>.Actividad[].Gastos ya viene
+    /// (PR1) restaba la Σ de TODOS los pagos del turno (paridad legacy, design decisión 9); ahora
+    /// un pago de origen <see cref="Ways.Domain.Pagos.OrigenFondosPago.CajaTurno"/> ya salió del
+    /// EFECTIVO DEL CAJÓN (reduce lo que el cajero cuenta, nunca la tesorería) y un pago de origen
+    /// <see cref="Ways.Domain.Pagos.OrigenFondosPago.Tesoreria"/> ya escribió SU PROPIO movimiento
+    /// de tesorería en el momento en que se registró (<c>ServicioDePagos</c>) — restarlo de nuevo
+    /// acá sería descontarlo DOS veces. <paramref name="insumos"/>.Actividad[].Pagos ya viene
     /// filtrado a solo <c>CajaTurno</c> (<see cref="LectorDeMovimientosDelTurno"/>), así que ni
     /// siquiera se lee para la tesorería — solo alimenta <see cref="CalculadorDeArqueo"/>.
     ///
@@ -461,8 +461,8 @@ public class ServicioDeTurnos(
         // La cadena inicio→final es por (id_tenant, id_empresa) — varios puntos de venta de la
         // misma empresa comparten un solo fondo de tesorería, así que dos cierres concurrentes de
         // PVs DISTINTOS de la MISMA empresa tienen que serializarse ANTES de leer el `inicio`
-        // compartido (single-read-under-lock regla 1). Mismo lock que un gasto de origen Tesoreria
-        // toma en `ServicioDeGastos` — ver el doc-comment de clase de `EscriturasDeTesoreria` para
+        // compartido (single-read-under-lock regla 1). Mismo lock que un pago de origen Tesoreria
+        // toma en `ServicioDePagos` — ver el doc-comment de clase de `EscriturasDeTesoreria` para
         // el análisis de orden que evita el ciclo entre los dos escritores.
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
@@ -470,7 +470,7 @@ public class ServicioDeTurnos(
 
         await EscriturasDeTesoreria.ApendearAsync(
             db, idTenant, idEmpresa, idPuntoVenta, momento, TipoMovimientoTesoreria.RetiroCaja, idTurnoCaja,
-            idGasto: null, concepto: "Cierre de turno", ingreso: insumos.Retiros, egreso: 0m, idEmpleado, ct);
+            idPago: null, concepto: "Cierre de turno", ingreso: insumos.Retiros, egreso: 0m, idEmpleado, ct);
 
         // Lo cobrado con cada medio electrónico entra a su cuenta de tesorería, neto de comisión y retenciones: después de la
         // tesorería de efectivo para que el orden de locks sea turno → empresa → medios → cuentas (EscriturasDeCuentaDeTesoreria).

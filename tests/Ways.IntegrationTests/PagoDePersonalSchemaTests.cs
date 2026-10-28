@@ -17,7 +17,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// Esquema del pago de personal con SQL crudo sobre la conexión <c>ways_app</c> (NOBYPASSRLS): el valor nuevo
 /// del enum de cuenta corriente, cada cláusula de los CHECK del descuento (una fila que viola solo esa
-/// cláusula), el vínculo de gastos y movimientos con el asiento del personal (FK compuesta, índice único de un
+/// cláusula), el vínculo de pagos y movimientos con el asiento del personal (FK compuesta, índice único de un
 /// descuento por pago). Cada violación se aserta por SQLSTATE y por nombre de constraint. Postgres evalúa los CHECK
 /// antes de las claves foráneas, así que una fila con ids inexistentes llega al CHECK que la viola.
 /// </summary>
@@ -123,14 +123,14 @@ public class PagoDePersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<W
             $"VALUES ($1, $2, now(), $3, $4, '{tipo}', {idComprobanteVenta}, {idPagoComprobante}, {importe}, 0, {idMovimientoPersonal})",
             idTenant ?? s.IdTenant, s.IdCliente, s.IdPuntoVenta, s.IdUsuario);
 
-    private Task<int> InsertarGastoAsync(Siembra s, string categoria, string idMovimientoPersonal, int? idTenant = null) =>
+    private Task<int> InsertarPagoAsync(Siembra s, string categoria, string idMovimientoPersonal, int? idTenant = null) =>
         EjecutarAsync(
             idTenant ?? s.IdTenant,
-            "INSERT INTO gastos " +
-            "(id_tenant, fecha, id_empresa, id_empleado, categoria, origen_fondos, concepto, id_medio_pago, importe, " +
+            "INSERT INTO pagos " +
+            "(id_tenant, fecha, id_empresa, id_empleado, categoria, origen_fondos, concepto, importe, " +
             " id_movimiento_personal, created_at, updated_at) " +
-            $"VALUES ($1, now(), $2, $3, '{categoria}', 'tesoreria', 'Gasto de prueba', $4, 10, {idMovimientoPersonal}, now(), now())",
-            idTenant ?? s.IdTenant, s.IdEmpresa, s.IdUsuario, s.IdMedioPago);
+            $"VALUES ($1, now(), $2, $3, '{categoria}', 'tesoreria', 'Pago de prueba', 10, {idMovimientoPersonal}, now(), now())",
+            idTenant ?? s.IdTenant, s.IdEmpresa, s.IdUsuario);
 
     private static async Task<PostgresException> ViolacionAsync(Task<int> escritura) =>
         await Assert.ThrowsAsync<PostgresException>(() => escritura);
@@ -200,28 +200,28 @@ public class PagoDePersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     [Fact]
-    public async Task UnGastoDeSueldosConAsientoSeInsertaYUnoDeOtraCategoriaViolaElCheck()
+    public async Task UnPagoDeSueldosConAsientoSeInsertaYUnoDeOtraCategoriaViolaElCheck()
     {
-        var s = await SembrarAsync(nameof(UnGastoDeSueldosConAsientoSeInsertaYUnoDeOtraCategoriaViolaElCheck));
+        var s = await SembrarAsync(nameof(UnPagoDeSueldosConAsientoSeInsertaYUnoDeOtraCategoriaViolaElCheck));
 
-        Assert.Equal(1, await InsertarGastoAsync(s, "sueldos", s.IdMovimientoPersonal.ToString()));
-        Assert.Equal(1, await InsertarGastoAsync(s, "otros", "NULL"));
+        Assert.Equal(1, await InsertarPagoAsync(s, "sueldos", s.IdMovimientoPersonal.ToString()));
+        Assert.Equal(1, await InsertarPagoAsync(s, "otros", "NULL"));
 
-        var excepcion = await ViolacionAsync(InsertarGastoAsync(s, "otros", s.IdMovimientoPersonal.ToString()));
+        var excepcion = await ViolacionAsync(InsertarPagoAsync(s, "otros", s.IdMovimientoPersonal.ToString()));
 
         Assert.Equal("23514", excepcion.SqlState);
-        Assert.Equal("ck_gastos_movimiento_personal_es_sueldo", excepcion.ConstraintName);
+        Assert.Equal("ck_pagos_movimiento_personal_es_sueldo", excepcion.ConstraintName);
     }
 
     [Fact]
-    public async Task UnGastoSobreUnAsientoInexistenteViolaLaClaveForanea()
+    public async Task UnPagoSobreUnAsientoInexistenteViolaLaClaveForanea()
     {
-        var s = await SembrarAsync(nameof(UnGastoSobreUnAsientoInexistenteViolaLaClaveForanea));
+        var s = await SembrarAsync(nameof(UnPagoSobreUnAsientoInexistenteViolaLaClaveForanea));
 
-        var excepcion = await ViolacionAsync(InsertarGastoAsync(s, "sueldos", "999999"));
+        var excepcion = await ViolacionAsync(InsertarPagoAsync(s, "sueldos", "999999"));
 
         Assert.Equal("23503", excepcion.SqlState);
-        Assert.Equal("fk_gastos_movimiento_personal", excepcion.ConstraintName);
+        Assert.Equal("fk_pagos_movimiento_personal", excepcion.ConstraintName);
     }
 
     /// <summary>Sesión y <c>id_tenant</c> del tenant B apuntando al asiento del tenant A: pasa la política de
@@ -232,11 +232,11 @@ public class PagoDePersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<W
         var a = await SembrarAsync(nameof(LasClavesForaneasCompuestasRechazanUnAsientoDeOtroTenant) + "A");
         var b = await SembrarAsync(nameof(LasClavesForaneasCompuestasRechazanUnAsientoDeOtroTenant) + "B");
 
-        var delGasto = await ViolacionAsync(InsertarGastoAsync(b, "sueldos", a.IdMovimientoPersonal.ToString()));
+        var delPago = await ViolacionAsync(InsertarPagoAsync(b, "sueldos", a.IdMovimientoPersonal.ToString()));
         var delDescuento = await ViolacionAsync(
             InsertarMovimientoCcAsync(b, "descuento_personal", "-50", a.IdMovimientoPersonal.ToString()));
 
-        Assert.Equal(("23503", "fk_gastos_movimiento_personal"), (delGasto.SqlState, delGasto.ConstraintName));
+        Assert.Equal(("23503", "fk_pagos_movimiento_personal"), (delPago.SqlState, delPago.ConstraintName));
         Assert.Equal(
             ("23503", "fk_movimientos_cuenta_corriente_movimiento_personal"),
             (delDescuento.SqlState, delDescuento.ConstraintName));

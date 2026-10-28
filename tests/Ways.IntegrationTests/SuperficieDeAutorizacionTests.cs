@@ -84,13 +84,17 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // efectivo contado y cierra, así que exigirle GestionDeCatalogo le sacaría a Vendedor la
         // operación que este modo existe para modelar.
         ("POST", "/api/caja/turnos/{id:int}/cierre-por-retiro"),
-        // stage-6-turnos-caja (Slice 3, task 3.2): captura de gasto — sin GestionDeCatalogo
-        // apilado, mismo criterio que las rutas de caja de arriba (spec: gastos / Gasto
-        // Authorization, un Vendedor tiene que poder registrar un gasto).
+        // stage-6-turnos-caja (Slice 3, task 3.2): captura de pago — sin GestionDeCatalogo
+        // apilado, mismo criterio que las rutas de caja de arriba (spec: pagos / Pago
+        // Authorization, un Vendedor tiene que poder registrar un pago).
         ("POST", "/api/gastos/"),
-        // Edición de un gasto del turno abierto desde el POS: mismo criterio que el alta. Su prueba
-        // positiva por rol es GastosEdicionEndpointsTests.UnVendedorEditaUnGastoDeSuTurnoAbierto.
+        // Edición de un pago del turno abierto desde el POS: mismo criterio que el alta. Su prueba
+        // positiva por rol es PagosEdicionEndpointsTests.UnVendedorEditaUnPagoDeSuTurnoAbierto.
         ("PUT", "/api/gastos/{id:int}"),
+        // E2-S4: contrato nuevo con líneas por medio, mismas políticas que su gemelo de gastos (alta y edición del POS sin
+        // GestionDeCatalogo apilado). Positivos por rol: PagosApiConLineasTests.
+        ("POST", "/api/pagos/"),
+        ("PUT", "/api/pagos/{id:int}"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan
         // GestionDeCatalogo (design: API Surface) — no van en este allowlist. Nada nuevo acá.
@@ -405,6 +409,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-6-turnos-caja (Slice 3, task 3.5): GET /api/gastos (historial) — mismo criterio
         // que "/api/caja/turnos".
         "/api/gastos",
+        // E2-S4: GET /api/pagos (historial con líneas) — mismo criterio que "/api/gastos".
+        "/api/pagos",
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): GET /api/compras
         // (listado) y GET /api/compras/{id} (detalle) — mismo criterio que "/api/gastos".
         "/api/compras",
@@ -510,7 +516,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("/api/familias", Politicas.GestionDeCatalogo),
         // Todo lo que cuelga de /api/plataforma es de root, también las lecturas (listar tenants y
         // sus dominios). Por prefijo de grupo, para que un GET nuevo caiga bajo el guard sin edición.
-        ("/api/plataforma", Politicas.SoloPlataforma)
+        ("/api/plataforma", Politicas.SoloPlataforma),
+        // Historial de gestión de pagos: solo Admin también en las lecturas (mueve dinero de la tesorería sin turno).
+        ("/api/pagos/administracion", Politicas.GestionDeCatalogo),
+        ("/api/gastos/administracion", Politicas.GestionDeCatalogo)
     ];
 
     [Fact]

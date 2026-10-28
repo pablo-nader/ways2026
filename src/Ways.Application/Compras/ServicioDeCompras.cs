@@ -477,8 +477,8 @@ public class ServicioDeCompras(
     /// auditoría <c>compra.descarte</c> en la misma transacción. Solo un borrador puede descartarse: una
     /// confirmada o anulada ya movió stock y cuenta corriente, y su historia no se borra.
     ///
-    /// <para>Ninguna otra tabla puede referenciar un borrador: los gastos se ligan únicamente a una compra
-    /// confirmada (<c>ServicioDeGastos.ExigirCompraLigableAsync</c>, bajo <c>FOR SHARE</c> sobre este mismo
+    /// <para>Ninguna otra tabla puede referenciar un borrador: los pagos se ligan únicamente a una compra
+    /// confirmada (<c>ServicioDePagos.ExigirCompraLigableAsync</c>, bajo <c>FOR SHARE</c> sobre este mismo
     /// encabezado), y los movimientos de stock y de cuenta corriente nacen en <c>EjecutarConfirmarAsync</c>,
     /// después de pasar el estado a confirmada, que nunca vuelve a borrador. Por eso no hay un rechazo
     /// previo por referencias y la baja no necesita un código propio para la FK.</para></summary>
@@ -843,7 +843,7 @@ public class ServicioDeCompras(
         // se invirtiera, saldo_resultante dejaría de coincidir con el saldo post-UPDATE).
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, encabezado.IdProveedor, momento, encabezado.IdPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Compra, id, idGasto: null, encabezado.Total, nuevoSaldoProveedor, detalle: null, ct);
+            TipoMovimientoCcProveedor.Compra, id, idPago: null, encabezado.Total, nuevoSaldoProveedor, detalle: null, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -987,7 +987,7 @@ public class ServicioDeCompras(
         }
 
         // 4. Informativo — la regla invertida (design decisión 6): NUNCA bloquea.
-        var gastosLigados = await db.Gastos.CountAsync(g => g.IdComprobanteCompra == id, ct);
+        var pagosLigados = await db.Pagos.CountAsync(g => g.IdComprobanteCompra == id, ct);
 
         // 5. El ledger ES la autoridad del importe a revertir (stage-15-cc-proveedores-ledger,
         // design decisión 6) — nunca recalculado desde items/total salvo el fallback explícito de
@@ -1013,16 +1013,16 @@ public class ServicioDeCompras(
             conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, -importeOriginal, ct);
 
         // 7. El ÚNICO movimiento `ajuste` reversor de esta anulación — solo la deuda se revierte,
-        // los pagos (`gastos`/movimientos `pago`) NUNCA se tocan ("sin motor de reversión de
-        // gastos" sobrevive verbatim, design decisión 5).
+        // los pagos (`pagos`/movimientos `pago`) NUNCA se tocan ("sin motor de reversión de
+        // pagos" sobrevive verbatim, design decisión 5).
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Ajuste, id, idGasto: null, -importeOriginal, nuevoSaldoProveedor, detalleAjuste, ct);
+            TipoMovimientoCcProveedor.Ajuste, id, idPago: null, -importeOriginal, nuevoSaldoProveedor, detalleAjuste, ct);
 
         await transaccion.CommitAsync(ct);
 
         var detalle = await ObtenerAsync(id, ct);
-        return new ResultadoAnulacion(detalle, gastosLigados);
+        return new ResultadoAnulacion(detalle, pagosLigados);
     }
 
     // ---- aplicar precio sugerido (design decisión 8) -----------------------------------------------
@@ -1229,7 +1229,7 @@ public class ServicioDeCompras(
     /// <summary>stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
     /// "Ligadura Invariant"; spec comprobantes-compra: "A Comprobante Compra MAY Carry A Linked
     /// Orden De Compra") — <c>SELECT ... FOR SHARE</c> crudo, MISMO shape que
-    /// <c>ServicioDeGastos.ExigirCompraLigableAsync</c> (<c>:224-267</c>): bajo la transacción de
+    /// <c>ServicioDePagos.ExigirCompraLigableAsync</c> (<c>:224-267</c>): bajo la transacción de
     /// <see cref="EjecutarActualizacionAsync"/> y de <see cref="EjecutarAltaDeBorradorAsync"/>
     /// es un guard TOCTOU real contra una anulación concurrente de la MISMA OC (la anulación toma su
     /// propio lock EXCLUSIVO como primer statement, slice 4): el <c>FOR SHARE</c> se sostiene hasta el

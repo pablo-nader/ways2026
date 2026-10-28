@@ -160,7 +160,7 @@ export type SnapshotDeSesionOffline = {
  * `dispositivo` deep-validado solo en los campos que el shell offline de verdad dereferencia —
  * `ShellPos.tsx` (header + `ContextoDeImpresion`): `empresa.nombre`, `puntoVenta.numero`,
  * `puntoVenta.nombre`. Nunca `id`/`idPuntoVenta`/`nombre` de nivel superior: nada bajo el shell
- * offline (`ShellPos`/`Pos`/`CajaZ`/`VentasDelTurno`/`GastosDelTurno`) los lee. Antes de este fix
+ * offline (`ShellPos`/`Pos`/`CajaZ`/`VentasDelTurno`/`PagosDelTurno`) los lee. Antes de este fix
  * (judgment-day ronda 2, FIX SUGGESTION, ambos jueces) un `dispositivo` truthy con, por ejemplo,
  * `empresa: {}` pasaba el guard entero y `ShellPos.tsx` reventaba al desreferenciar
  * `dispositivo.empresa.nombre` sin optional chaining — justo en el camino offline, donde el
@@ -179,7 +179,7 @@ function esDispositivoUsablePorElShellOffline(valor: unknown): valor is Disposit
 /**
  * `puntoVenta` (el `PuntoVentaListado` completo que se persiste) deep-validado solo en `id` —el
  * único campo que el shell offline dereferencia (`Pos.tsx`, `VentasDelTurno.tsx`,
- * `GastosDelTurno.tsx`, todos vía `usePuntoVenta().puntoVenta.id`). Mismo criterio que
+ * `PagosDelTurno.tsx`, todos vía `usePuntoVenta().puntoVenta.id`). Mismo criterio que
  * `esDispositivoUsablePorElShellOffline`: validar lo que se usa, no la forma entera.
  */
 function esPuntoVentaUsablePorElShellOffline(valor: unknown): valor is PuntoVentaListado {

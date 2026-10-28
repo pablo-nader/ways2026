@@ -48,7 +48,7 @@ type Props = {
 
 /**
  * Detalle de un turno ya cerrado, para "Cierres de caja" del POS: cabecera del turno, arqueo por
- * medio de pago, y los tickets y gastos que trae `GET /api/caja/turnos/{id}/detalle`.
+ * medio de pago, y los tickets y pagos que trae `GET /api/caja/turnos/{id}/detalle`.
  *
  * El detalle no trae el cajero ni lo declarado, así que se lee junto a `GET /api/caja/turnos/{id}`
  * (que devuelve el turno con sus arqueos) y a `GET .../resumen-de-cierre` (nombres de cajero y punto
@@ -196,7 +196,7 @@ function ContenidoDelCierre({ detalle, turno, cierre, medios }: DatosDelCierre) 
 
       <VentasPorMedioDeCierre cierre={cierre} />
 
-      <DetalleDeTurnoListas tickets={detalle.tickets} gastos={detalle.gastos} />
+      <DetalleDeTurnoListas tickets={detalle.tickets} pagos={detalle.gastos} />
     </>
   )
 }

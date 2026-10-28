@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOGO_DE_ACCIONES_AUDITADAS, CATEGORIAS_GASTO } from './tipos'
+import { CATALOGO_DE_ACCIONES_AUDITADAS, CATEGORIAS_PAGO } from './tipos'
 
 // El servidor ordena por estas mismas etiquetas (lo que se ve es lo que se ordena). Cada lista literal de abajo
-// es idéntica a la de su test espejo del backend: `EtiquetasDeAccionTests` y `EtiquetasDeCategoriaDeGastoTests`
+// es idéntica a la de su test espejo del backend: `EtiquetasDeAccionTests` y `EtiquetasDeCategoriaDePagoTests`
 // (tests/Ways.Application.Tests/Listados/EtiquetasDeOrdenTests.cs). Si una cambia, las dos tienen que cambiar.
 
 describe('etiquetas que el servidor replica para ordenar', () => {
@@ -26,8 +26,8 @@ describe('etiquetas que el servidor replica para ordenar', () => {
     ])
   })
 
-  it('CATEGORIAS_GASTO es la lista que fija EtiquetasDeCategoriaDeGastoTests', () => {
-    expect(CATEGORIAS_GASTO.map((c) => [c.valor, c.etiqueta])).toEqual([
+  it('CATEGORIAS_PAGO es la lista que fija EtiquetasDeCategoriaDePagoTests', () => {
+    expect(CATEGORIAS_PAGO.map((c) => [c.valor, c.etiqueta])).toEqual([
       ['Proveedor', 'Proveedores'],
       ['Sueldos', 'Sueldos'],
       ['Viaticos', 'Viáticos'],

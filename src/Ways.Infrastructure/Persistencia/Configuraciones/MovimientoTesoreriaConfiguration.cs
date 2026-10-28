@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
@@ -10,7 +10,7 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// <summary>
 /// Mapea <see cref="MovimientoTesoreria"/> (design: Table Shapes — write path D).
 /// <c>ck_movimientos_tesoreria_cadena</c> es defensa en profundidad — los dos escritores de esta
-/// tabla (<c>ServicioDeTurnos</c> al cerrar y <c>ServicioDeGastos</c> para un gasto de origen
+/// tabla (<c>ServicioDeTurnos</c> al cerrar y <c>ServicioDePagos</c> para un pago de origen
 /// tesorería, ambos vía <c>EscriturasDeTesoreria.ApendearAsync</c>) ya calculan <c>Final</c> como
 /// <c>Inicio + Ingreso − Egreso</c> antes de insertar.
 /// </summary>
@@ -36,7 +36,7 @@ public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<Movimie
         builder.Property(m => m.IdEmpresa).HasColumnName("id_empresa").IsRequired();
 
         // Nullable en el esquema (design aprobado) aunque los dos escritores de hoy (cierre y
-        // gasto de origen tesorería) lo pueblan siempre.
+        // pago de origen tesorería) lo pueblan siempre.
         builder.Property(m => m.IdPuntoVenta).HasColumnName("id_punto_venta");
         builder.Property(m => m.Fecha).HasColumnName("fecha").IsRequired();
 
@@ -47,9 +47,9 @@ public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<Movimie
 
         builder.Property(m => m.IdTurnoCaja).HasColumnName("id_turno_caja");
 
-        // Nullable: solo un movimiento tipo Gasto (ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync,
+        // Nullable: solo un movimiento tipo Pago (ServicioDePagos.EscribirMovimientoDeTesoreriaAsync,
         // stage-gastos-origen-fondos-pos) lo puebla — null para cierre/ajuste/depósito.
-        builder.Property(m => m.IdGasto).HasColumnName("id_gasto");
+        builder.Property(m => m.IdPago).HasColumnName("id_pago");
 
         builder.Property(m => m.Concepto).HasColumnName("concepto").HasColumnType("text").IsRequired();
 
@@ -78,14 +78,14 @@ public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<Movimie
         builder.HasIndex(m => new { m.IdTurnoCaja, m.IdTenant }).HasDatabaseName("ix_movimientos_tesoreria_turno");
 
         // Índice de soporte de la FK compuesta (evita el implícito PascalCase de EF, mismo motivo
-        // que ix_gastos_comprobante_compra).
-        builder.HasIndex(m => new { m.IdGasto, m.IdTenant }).HasDatabaseName("ix_movimientos_tesoreria_gasto");
+        // que ix_pagos_comprobante_compra).
+        builder.HasIndex(m => new { m.IdPago, m.IdTenant }).HasDatabaseName("ix_movimientos_tesoreria_pago");
 
-        // ux_movimientos_tesoreria_id_gasto: parcial (solo cuando no es nulo) — un gasto nunca
+        // ux_movimientos_tesoreria_id_pago: parcial (solo cuando no es nulo) — un pago nunca
         // puede originar dos movimientos de tesorería.
-        builder.HasIndex(m => m.IdGasto)
-            .HasDatabaseName("ux_movimientos_tesoreria_id_gasto")
-            .HasFilter("id_gasto IS NOT NULL")
+        builder.HasIndex(m => m.IdPago)
+            .HasDatabaseName("ux_movimientos_tesoreria_id_pago")
+            .HasFilter("id_pago IS NOT NULL")
             .IsUnique();
 
         builder.HasOne<Tenant>()
@@ -108,15 +108,15 @@ public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<Movimie
             .HasConstraintName("fk_movimientos_tesoreria_punto_venta")
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Ways.Domain.Gastos.Gasto.ak_gastos_id_gasto_id_tenant habilita esta FK compuesta —
-        // mismo patrón que fk_movimientos_cuenta_corriente_proveedor_gasto
-        // (GastoConfiguration.cs). Restrict: un gasto con tesorería vinculada no se puede borrar
-        // por debajo (gastos no tiene baja física de todos modos).
-        builder.HasOne<Gasto>()
+        // Ways.Domain.Pagos.Pago.ak_pagos_id_pago_id_tenant habilita esta FK compuesta —
+        // mismo patrón que fk_movimientos_cuenta_corriente_proveedor_pago
+        // (PagoConfiguration.cs). Restrict: un pago con tesorería vinculada no se puede borrar
+        // por debajo (pagos no tiene baja física de todos modos).
+        builder.HasOne<Pago>()
             .WithMany()
-            .HasForeignKey(m => new { m.IdGasto, m.IdTenant })
+            .HasForeignKey(m => new { m.IdPago, m.IdTenant })
             .HasPrincipalKey(g => new { g.Id, g.IdTenant })
-            .HasConstraintName("fk_movimientos_tesoreria_gasto")
+            .HasConstraintName("fk_movimientos_tesoreria_pago")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<TurnoCaja>()
