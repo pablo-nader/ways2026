@@ -1911,3 +1911,83 @@ describe('VentasDelTurno — nota de crédito (T8c)', () => {
     await waitFor(() => expect(boton).toBeEnabled())
   })
 })
+
+describe('VentasDelTurno — orden por columna', () => {
+  const numeros = () =>
+    Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)
+
+  const VENTAS = [
+    ventaFixture({ id: 1, numeroVisible: '0007-00000001', total: 300, nombreCliente: 'Zulema', fecha: '2026-09-16T15:00:00Z' }),
+    ventaFixture({ id: 2, numeroVisible: '0007-00000002', total: 5000, nombreCliente: 'Ana', fecha: '2026-09-16T12:00:00Z' }),
+    ventaFixture({ id: 3, numeroVisible: '0007-00000003', total: 20, nombreCliente: 'Marta', fecha: '2026-09-16T09:00:00Z' }),
+  ]
+
+  it('el total ordena por su valor numérico y el pie de totales no se ve afectado', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: VENTAS })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+
+    const total = screen.getByRole('columnheader', { name: 'Total' })
+    await userEvent.click(within(total).getByRole('button'))
+
+    expect(total).toHaveAttribute('aria-sort', 'ascending')
+    expect(numeros()).toEqual(['0007-00000003', '0007-00000001', '0007-00000002'])
+    expect(screen.getByText('Total general: $ 5.320,00')).toBeInTheDocument()
+  })
+
+  it('la fecha ordena cronológicamente y el cliente alfabéticamente; el tercer clic vuelve al orden original', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: VENTAS })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+
+    await userEvent.click(within(screen.getByRole('columnheader', { name: 'Fecha' })).getByRole('button'))
+    expect(numeros()).toEqual(['0007-00000003', '0007-00000002', '0007-00000001'])
+
+    const cliente = screen.getByRole('columnheader', { name: 'Cliente' })
+    await userEvent.click(within(cliente).getByRole('button'))
+    expect(numeros()).toEqual(['0007-00000002', '0007-00000003', '0007-00000001'])
+    expect(screen.getByRole('columnheader', { name: 'Fecha' })).toHaveAttribute('aria-sort', 'none')
+
+    await userEvent.click(within(cliente).getByRole('button'))
+    await userEvent.click(within(cliente).getByRole('button'))
+    expect(numeros()).toEqual(['0007-00000001', '0007-00000002', '0007-00000003'])
+  })
+
+  it('ordenar por una columna no desactiva los filtros', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: VENTAS })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+
+    await userEvent.type(screen.getByLabelText('Filtrar por número'), '000000')
+    await userEvent.click(within(screen.getByRole('columnheader', { name: 'Total' })).getByRole('button'))
+    await userEvent.clear(screen.getByLabelText('Filtrar por número'))
+    await userEvent.type(screen.getByLabelText('Filtrar por número'), '00000002')
+
+    expect(numeros()).toEqual(['0007-00000002'])
+  })
+
+  it('en el detalle, las líneas ordenan por el total numérico', async () => {
+    const venta = ventaFixture({ id: 40, numeroVisible: '0007-00000040' })
+    const base = comprobanteFixture().items[0]
+    const comprobante = comprobanteFixture({
+      id: 40,
+      numeroVisible: '0007-00000040',
+      items: [
+        { ...base, orden: 1, descripcion: 'Maple', total: 1150 },
+        { ...base, orden: 2, descripcion: 'Agua', total: 90 },
+        { ...base, orden: 3, descripcion: 'Sal', total: 5 },
+      ],
+    })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 40: comprobante } })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000040')
+    await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
+
+    const dialog = within(await screen.findByRole('dialog', { name: /Detalle de la venta 0007-00000040/ }))
+    await dialog.findByText('Maple')
+    const [lineas] = dialog.getAllByRole('table')
+    await userEvent.click(within(within(lineas).getByRole('columnheader', { name: 'Total' })).getByRole('button'))
+
+    expect(Array.from(lineas.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)).toEqual(['Sal', 'Agua', 'Maple'])
+  })
+})
