@@ -100,7 +100,7 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `ways_app` vive ahora en `QuitarMedioDeLaCabeceraDelPagoMigracionTests` (base aislada migrada hasta `ItemsDePago`, donde
   la columna todavía existe). Integration tests (CI): `PagoDePersonalTests`, `PagosConLineasTests`,
   `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
-- [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
+- [x] E2-S4 — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
 - [ ] E2-W2 — Web: lines in the administration payment form and the history.
 - [ ] E2-W3 — Web: lines in pagar compra and personal payments.
@@ -144,6 +144,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 - 2026-10-28 E2-S3b judgment-day fix: personal payment back to one pago per line (E2-P deferred); administration
   history gains `lineas` (test in `PagosEdicionEndpointsTests`); ItemsDePago backfill `ways_app` test restored.
 
+- 2026-10-28 E2-S4 (branch `pnader/pagos-e2-s4-api`): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed. Integration tests NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
+
 ## Next step
 
-S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); next is E2-S4 (wire contract `/api/pagos`).
+S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); E2-S4 is written (branch `pnader/pagos-e2-s4-api`); next is E2-W1 (web lines editor).
