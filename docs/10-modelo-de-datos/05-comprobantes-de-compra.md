@@ -647,6 +647,42 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   solo concepto, categoría o medios sin cambiar el importe no revierte nada. Aplicar o vincular sobre una compra con redondeo
 >   vigente no tiene lugar (su saldo es 0), y crecer una aplicación por edición descuenta lo perdonado.
 
+### Edición de una compra confirmada (E6)
+
+> **Sin cambio de esquema.** `PUT /api/compras/{id}` (`GestionDeCatalogo`) despacha por estado: `borrador` reemplaza su set completo (sin
+> cambios); `confirmada` se edita por DIFERENCIA (`ServicioDeCompras.ActualizarConfirmadaAsync`, `FabricaDeEstrategiaSinReintento`);
+> `anulada` es `409 compra_no_editable`; inexistente `404`, antes de validar el cuerpo. El cuerpo es el mismo de siempre; encabezado,
+> líneas, alícuotas y percepciones se reemplazan por EF (`RemoveRange`/`AddRange`, como el borrador) y `fecha_recepcion`, `id_empleado`
+> y `origen` conservan su valor. Una confirmada exige número y fecha de comprobante y al menos una línea (`400
+> compra_numero_externo_requerido` / `compra_incompleta_para_confirmar` / `compra_sin_items`). La unicidad del número sigue siendo
+> `ux_comprobantes_compra_numero_externo` (`409 compra_duplicada`).
+> - **Stock:** por clave `(artículo, punto de venta, lote)` se compara lo que el libro de la compra ya suma (confirmación y ediciones
+>   previas, neteado por clave) contra lo que la compra editada tendrá; cada clave con diferencia ≠ 0 escribe UN movimiento
+>   `motivo = compra` con la diferencia con signo (`observaciones = 'Edición de la compra #id'`) y el upsert de `stock` y `stock_lotes`.
+>   Cambiar el punto de venta saca del viejo y pone en el nuevo. Si una diferencia negativa deja un lote o el agregado en negativo:
+>   `409 compra_edicion_stock_negativo` (nombra artículo y lote) y la transacción entera se deshace.
+> - **Lotes:** la línea que conserva artículo, código de lote y vencimiento conserva su `id_lote` y no se vuelve a verificar contra «hoy»;
+>   las nuevas o cambiadas se resuelven con las exigencias de la confirmación (`lote_requerido`, `lote_vencido_en_recepcion`).
+> - **Cuenta del proveedor:** la diferencia contra la suma de los asientos `compra` de esa compra (por proveedor) escribe un asiento
+>   `compra` por la diferencia (`detalle = 'Edición de la compra #id: $A → $B'`) y actualiza `proveedores.saldo`. Si cambia el proveedor,
+>   el anterior recibe la reversa de lo suyo y el nuevo el total. La suma de los asientos `compra` de una compra sigue siendo su total,
+>   así que la anulación (que revierte esa suma) no cambia. Una compra anterior al libro de proveedores (sin asiento `compra`) no puede
+>   cambiar total ni proveedor: `409 compra_edicion_sin_asiento_de_cuenta`. El estado de cuenta muestra `saldoPendienteDeLaCompra` solo en
+>   el asiento `compra` más nuevo de cada compra.
+> - **Órdenes de compra:** se bloquean `FOR UPDATE`, ascendentes por id, la que la compra deja y la que toma, y las dos se re-proyectan con
+>   las líneas ya escritas. La ligadura de la orden nueva (existe, no anulada, mismo proveedor y punto de venta) solo se verifica si cambia
+>   la orden, el proveedor o el punto de venta.
+> - **Orden de locks:** membresía de familias (compartido) → encabezado `FOR UPDATE WHERE estado='confirmada'` (0 filas: `404` o `409
+>   compra_cambio_concurrente`) → órdenes → lotes → stock (agregado y después lotes) → escritura EF → re-proyección → proveedores (último).
+> - **Auditoría:** `compra.edicion` (entidad `comprobante_compra`, catálogo 27 → 28): antes y después del encabezado y las líneas, y en el
+>   valor nuevo las diferencias de stock y de cuenta asentadas.
+> - **Anulación:** revierte el stock NETO por `(artículo, punto de venta, lote)` (una clave que ya netea a cero no se revierte), porque
+>   revertir cada asiento de una compra editada rechazaría con un falso `compra_anulacion_stock_negativo`.
+> - **TEMPORAL (reemplazado por E6-S3):** una edición que baja el total por debajo de lo pagado, que cambia el total de una compra con
+>   redondeo perdonado o que cambia proveedor, punto de venta o empresa de una compra con pagos aplicados o redondeo responde `409
+>   compra_edicion_con_aplicaciones`. Los costos del artículo (`costo_nominal`) y los códigos de proveedor todavía NO se vuelven a escribir
+>   al editar (E6-S4).
+
 ### Órdenes de compra (Etapa 16)
 
 La intención colocada sobre un proveedor ANTES de que exista un `comprobantes_compra`

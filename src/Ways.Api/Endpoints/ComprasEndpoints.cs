@@ -98,11 +98,15 @@ public static class ComprasEndpoints
 
         grupo.MapPut("/{id:int}", async (ServicioDeCompras servicio, int id, SolicitudDeCompra solicitud, CancellationToken ct) =>
         {
-            var actualizada = await servicio.ActualizarBorradorAsync(id, solicitud, ct);
+            var actualizada = await servicio.ActualizarAsync(id, solicitud, ct);
             return Results.Ok(actualizada);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Reemplaza el header y el set completo de items de un borrador (borrador únicamente).");
+        .WithSummary(
+            "Reemplaza el header y el set completo de items de una compra. Un borrador se reemplaza tal cual; una " +
+            "confirmada se edita por diferencia (el stock y la cuenta del proveedor se corrigen con movimientos nuevos, " +
+            "409 compra_edicion_stock_negativo si el stock no alcanza y 409 compra_edicion_con_aplicaciones si toca lo " +
+            "que sus pagos suponen). Una anulada responde 409 compra_no_editable.");
 
         grupo.MapDelete("/{id:int}", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {

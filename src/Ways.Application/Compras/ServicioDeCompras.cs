@@ -51,7 +51,7 @@ namespace Ways.Application.Compras;
 /// los miembros vivos de la familia de su artículo; <see cref="AplicarPrecioSugeridoAsync"/> intenta aplicar, de
 /// las líneas de una misma familia, solo la de mayor orden.
 /// </summary>
-public class ServicioDeCompras(
+public partial class ServicioDeCompras(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios,
     ServicioDeParametros servicioDeParametros)
 {
@@ -943,15 +943,20 @@ public class ServicioDeCompras(
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
         // ServicioDeVentas.AnularAsync, mismo criterio acá). Orden ascendente (id_articulo,
         // id_lote) — etapa 12, slice 6, mismo criterio de lock que el confirmar (decisión 8/9).
-        var movimientosOriginales = await db.MovimientosStock
-            .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
-            .OrderBy(m => m.IdArticulo)
-            .ThenBy(m => m.IdLote)
-            .ToListAsync(ct);
+        var movimientosOriginales = (await db.MovimientosStock
+                .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
+                .Select(m => new { m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad })
+                .ToListAsync(ct))
+            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad))
+            .ToList();
 
-        foreach (var original in movimientosOriginales)
+        // E6: una compra editada tiene en su libro, además del movimiento de la confirmación, los de cada edición (con
+        // signo). La reversa es la NETA por (artículo, punto de venta, lote): revertir cada asiento por separado
+        // rechazaría con un falso stock negativo una compra cuyo libro tiene +10 y después −4 de la misma clave. La
+        // clave que ya netea a cero no se revierte. Orden ascendente, el de los locks de stock.
+        foreach (var original in CalculadorDeEdicionDeCompra.DiferenciasDeStock(movimientosOriginales, []))
         {
-            var inversa = -original.Cantidad;
+            var inversa = original.Delta;
 
             // Reversa EXACTA por lote (etapa 12, slice 6, reemplaza el guard interino de slice 5
             // FIX 4): el movimiento original ya trae su propio id_lote — la reversa lo copia
@@ -1347,17 +1352,26 @@ public class ServicioDeCompras(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
+    private static Task InsertarMovimientoStockAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
+        int? idLote, CancellationToken ct) =>
+        InsertarMovimientoStockAsync(
+            conexion, transaccion, idTenant, idArticulo, idPuntoVenta, cantidad, motivo, idComprobanteCompra, idEmpleado,
+            creadoEl, idLote, observaciones: null, ct);
+
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
-        int? idLote, CancellationToken ct)
+        int? idLote, string? observaciones, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
+            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote, " +
+            "observaciones) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
 
         ParametrosDeComando.Agregar(comando, idTenant);
         ParametrosDeComando.Agregar(comando, idArticulo);
@@ -1368,6 +1382,7 @@ public class ServicioDeCompras(
         ParametrosDeComando.Agregar(comando, idEmpleado);
         ParametrosDeComando.Agregar(comando, creadoEl);
         ParametrosDeComando.AgregarNulo(comando, idLote);
+        ParametrosDeComando.AgregarNulo(comando, observaciones);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -1776,7 +1791,8 @@ public class ServicioDeCompras(
     /// (<c>lote_input_incompleto</c>) que el backstop de esquema
     /// <c>ck_items_comprobante_compra_lote_input</c> traduce en <c>ManejadorDeErrores</c> por si
     /// algún camino futuro esquiva este guard.</summary>
-    private static void ValidarVencimientosDeRecepcion(IReadOnlyList<LineaDeCompraSolicitada> items, DateOnly hoy)
+    private static void ValidarVencimientosDeRecepcion(
+        IReadOnlyList<LineaDeCompraSolicitada> items, DateOnly hoy, Func<LineaDeCompraSolicitada, bool>? sinVerificarVencimiento = null)
     {
         foreach (var item in items)
         {
@@ -1789,7 +1805,11 @@ public class ServicioDeCompras(
                     400);
             }
 
-            if (item.FechaVencimiento is { } fecha && ReglaDeLotes.EstaVencido(fecha, hoy))
+            // E6: en la edición de una compra confirmada, la línea que conserva su lote ya entró al stock y no se
+            // vuelve a verificar contra "hoy" (puede haber vencido desde entonces); solo el código sin fecha de arriba
+            // sigue rechazándose en toda línea.
+            if (item.FechaVencimiento is { } fecha && ReglaDeLotes.EstaVencido(fecha, hoy)
+                && sinVerificarVencimiento?.Invoke(item) != true)
             {
                 throw new ErrorDominio(
                     "lote_vencido_en_recepcion",

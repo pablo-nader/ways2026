@@ -66,6 +66,15 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
                 .ToList(),
             ct);
 
+        // E6: una compra editada tiene varios asientos `compra` (el de la confirmación y uno por cada edición que cambió
+        // su total). El saldo pendiente es de la compra, no de cada asiento: se muestra solo en el más nuevo de cada una.
+        var idsDeLosAsientosMasNuevos = await LeerAsientosMasNuevosDeComprasAsync(
+            filas.Where(f => f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra != null)
+                .Select(f => f.IdComprobanteCompra!.Value)
+                .Distinct()
+                .ToList(),
+            ct);
+
         var disponiblePorPago = await LectorDeDisponiblePorPago.LeerDisponibleAsync(
             db,
             filas.Where(f => f.Tipo == TipoMovimientoCcProveedor.Pago && f.IdPago != null)
@@ -81,6 +90,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
                     ? CalculadorDeEstadoDeCuentaDeProveedor.EtiquetarAjuste(f.IdComprobanteCompra)
                     : null,
                 f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra is { } idCompra
+                    && idsDeLosAsientosMasNuevos.Contains(f.Id)
                     ? saldosPendientes.GetValueOrDefault(idCompra)
                     : null,
                 f.Tipo == TipoMovimientoCcProveedor.Pago && f.IdPago is { } idPago && disponiblePorPago.TryGetValue(idPago, out var disponible)
@@ -92,6 +102,26 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         var header = new EstadoDeCuentaDeProveedorHeader(idProveedor, saldo, Math.Max(0m, -saldo), disponibleEnPagos);
         return new PaginaDeEstadoDeCuentaDeProveedor(
             header, items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);
+    }
+
+    /// <summary>El id del asiento <c>compra</c> más nuevo de cada compra de <paramref name="idsCompras"/>, sin importar si
+    /// cae dentro de la página que se está leyendo: el saldo pendiente se muestra en ese y no en los anteriores.</summary>
+    private async Task<HashSet<int>> LeerAsientosMasNuevosDeComprasAsync(
+        IReadOnlyCollection<int> idsCompras, CancellationToken ct)
+    {
+        if (idsCompras.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = await db.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Compra && m.IdComprobanteCompra != null
+                && idsCompras.Contains(m.IdComprobanteCompra.Value))
+            .GroupBy(m => m.IdComprobanteCompra!.Value)
+            .Select(grupo => grupo.Max(m => m.Id))
+            .ToListAsync(ct);
+
+        return [.. ids];
     }
 
     /// <summary>Saldo pendiente de las compras de una página, con UNA consulta de total/estado y una

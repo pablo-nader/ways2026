@@ -189,6 +189,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // Descartar un borrador: toma el lock FOR UPDATE y borra el encabezado con sus hijos; un reintento tras un commit
         // ambiguo respondería 404 a un descarte que sí tuvo éxito.
         { "Ways.Application/Compras/ServicioDeCompras.cs", "DescartarBorradorAsync" },
+
+        // Editar una compra confirmada: asienta diferencias de stock y de cuenta corriente del proveedor y su auditoría sin
+        // clave de idempotencia; un reintento tras un commit ambiguo las asentaría dos veces (o respondería 409 a una
+        // edición que sí tuvo éxito).
+        { "Ways.Application/Compras/ServicioDeCompras.Edicion.cs", "ActualizarConfirmadaAsync" },
     };
 
     /// <summary>
