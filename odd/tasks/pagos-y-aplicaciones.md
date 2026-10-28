@@ -121,8 +121,8 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   `pago_de_compra|aplicacion|migracion`), migration `AplicacionesDePago`: RLS, partial unique per live pair, deferred
   constraint triggers (an application never exceeds its pago or its compra; only on `confirmada` compras; pago must be
   `proveedor`, same supplier and empresa), backfill from `pagos.id_comprobante_compra` capped at the compra total (the
-  excess and pagos of anuladas compras stay unapplied = credit). Schema + backfill only: no writer, readers unchanged.
-- [ ] E3-S1b — Dual write: every writer that sets `pagos.id_comprobante_compra` also writes the application, capped at the
+  excess and pagos of anuladas compras stay unapplied = credit). Schema + backfill only: no writer, readers unchanged (writers arrive in S1b).
+- [x] E3-S1b (written; CI pending) — Dual write: every writer that sets `pagos.id_comprobante_compra` also writes the application, capped at the
   compra saldo; anulación of the compra and baja of the pago release their applications; edit guard (a pago with
   applications cannot drop below what it applied).
 - [ ] E3-S2 — Readers switch to the applications (pagado / disponible per compra, supplier credit, CC).
@@ -172,6 +172,16 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   Application.Tests 1076 passed (golden `inventario-de-dependientes` gains `Tenant | aplicaciones_pago` and
   `Usuario | aplicaciones_pago`); `dotnet ef migrations has-pending-model-changes` clean. Integration tests NOT run locally
   (Docker down): `AplicacionesPagoEsquemaTests` and `AplicacionesDePagoMigracionTests` (backfill under `ways_app`) need CI.
+  Route: delegated writer.
+
+- 2026-10-28 E3-S1b (same branch, ships in ONE PR with S1a): `ServicioDePagos` (POS alta, admin alta, `PagarCompraAsync`,
+  `VincularCompraAsync`) writes the application capped at the compra saldo from live applications, under the compra lock now
+  `FOR UPDATE` everywhere (`BloquearCompraAsync`, also behind `ExigirCompraLigableAsync`); anulación
+  (`ServicioDeCompras.LiberarAplicacionesDeLaCompraAsync`) and pago baja release them; edit below the applied sum is
+  `409 pago_importe_menor_que_aplicado`. A cross-empresa pago keeps the legacy link without application. No audit codes
+  added (sub-effect of already audited operations); no new execution strategies, so the structural maps are unchanged.
+  `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed. Integration tests
+  (`AplicacionesDePagoEscritoresTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
   Route: delegated writer.
 
 ## Next step
