@@ -2,13 +2,43 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
-import { clienteDeClientes } from '../api/clientes'
+import {
+  clienteDeClientes,
+  esColumnaOrdenableDeClientes,
+  FILTROS_DE_CLIENTES_VACIOS,
+  type ColumnaOrdenableDeClientes,
+  type ConsultaDeClientes,
+  type FiltrosDeClientes,
+} from '../api/clientes'
+import { ultimaPaginaDePadron } from '../api/padron'
 import type { ClienteListado, CondicionFiscalListado, ListaPrecioAsignable, PaginaDe } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { FilaDeFiltrosDePadron, type CeldaDeFiltroDePadron } from '../componentes/padron/FilaDeFiltrosDePadron'
+import { PaginadorDePadron } from '../componentes/padron/PaginadorDePadron'
+import { usePadronEnServidor } from '../componentes/padron/usePadronEnServidor'
 import { aAlta, aFormulario, formularioVacio, type Formulario } from './clientes/clienteFormulario'
 import { ModalDeCliente } from './clientes/ModalDeCliente'
+
+const CELDAS_DE_FILTRO: readonly CeldaDeFiltroDePadron<FiltrosDeClientes>[] = [
+  { tipo: 'entero', clave: 'numero', etiqueta: 'N°' },
+  { tipo: 'texto', clave: 'nombre', etiqueta: 'nombre' },
+  { tipo: 'texto', clave: 'documento', etiqueta: 'documento' },
+  { tipo: 'texto', clave: 'telefono', etiqueta: 'teléfono' },
+  { tipo: 'texto', clave: 'email', etiqueta: 'email' },
+  {
+    tipo: 'opciones',
+    clave: 'activo',
+    etiqueta: 'estado',
+    opciones: [
+      { valor: 'true', etiqueta: 'Activo' },
+      { valor: 'false', etiqueta: 'Inactivo' },
+    ],
+  },
+  { tipo: 'acciones' },
+]
 
 /**
  * ABM dedicado de clientes (design decision 1: no la máquina genérica de catálogos). La fila
@@ -20,39 +50,73 @@ export function Clientes() {
   const [pagina, setPagina] = useState<PaginaDe<ClienteListado> | null>(null)
   const [condiciones, setCondiciones] = useState<CondicionFiscalListado[]>([])
   const [listas, setListas] = useState<ListaPrecioAsignable[]>([])
-  const [busqueda, setBusqueda] = useState('')
+  /** Texto de la caja de búsqueda general, que se aplica con Enter o con Buscar. */
+  const [textoDeBusqueda, setTextoDeBusqueda] = useState('')
   const [cargando, setCargando] = useState(true)
+  /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
+  const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [errorFormulario, setErrorFormulario] = useState('')
   const [guardando, setGuardando] = useState(false)
-  /** Espejo síncrono de "hay un guardado en vuelo": un doble clic en el mismo tick no emite dos escrituras. */
+  const [eliminando, setEliminando] = useState(false)
+  /** Espejo síncrono de "hay una escritura en vuelo" (guardado o baja): un doble clic en el mismo tick no emite dos
+   * escrituras, y un filtro tipeado antes de que empezara espera a que termine. */
   const guardandoRef = useRef(false)
   /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la fila de "Editar" se
    * reemplaza por "Cargando…" durante el refresco): el botón de alta, que es estable. */
   const agregarRef = useRef<HTMLButtonElement>(null)
-  // Último término pedido: el refresco posterior a una escritura recarga con ese, no con el texto de la caja sin enviar.
-  const terminoVigente = useRef('')
+  /** Cada lectura del listado acuña una generación: una respuesta tardía de una consulta que el operador ya cambió se descarta. */
+  const generacion = useRef(0)
 
-  const cargar = useCallback(async (termino: string) => {
-    terminoVigente.current = termino
-    setCargando(true)
-    setError('')
-    try {
-      setPagina(await clienteDeClientes.listar(termino, false))
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los clientes.')
-    } finally {
-      setCargando(false)
-    }
-  }, [])
+  const padron = usePadronEnServidor<FiltrosDeClientes, ColumnaOrdenableDeClientes>(FILTROS_DE_CLIENTES_VACIOS, {
+    esColumnaOrdenable: esColumnaOrdenableDeClientes,
+    ocupado: () => guardandoRef.current,
+  })
+  const { irAPagina } = padron
+
+  const cargar = useCallback(
+    async (token: number, consulta: ConsultaDeClientes) => {
+      setCargando(true)
+      setError('')
+      try {
+        const resultado = await clienteDeClientes.listarGrilla(consulta)
+        if (generacion.current !== token) return
+
+        // Una baja puede vaciar la última página: se pide la última válida en vez de mostrar "Página 3 de 2".
+        const ultima = ultimaPaginaDePadron(resultado.total, resultado.tamanio)
+        if (resultado.pagina > ultima) {
+          irAPagina(ultima)
+
+          return
+        }
+
+        setPagina(resultado)
+      } catch (e) {
+        if (generacion.current !== token) return
+        // Sin filas: el encabezado ya declara el orden pedido y no puede quedar sobre las del orden anterior.
+        setPagina(null)
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los clientes.')
+      } finally {
+        if (generacion.current === token) {
+          setCargando(false)
+          setIniciando(false)
+        }
+      }
+    },
+    [irAPagina],
+  )
+
+  // Se vuelve a pedir el listado cada vez que cambia la consulta aplicada (filtros, orden, página o tamaño).
+  useEffect(() => {
+    void cargar(++generacion.current, padron.consulta)
+  }, [cargar, padron.consulta])
 
   useEffect(() => {
-    void cargar('')
     clienteDeCatalogosFiscales.condicionesFiscales().then(setCondiciones).catch(() => setCondiciones([]))
     clienteDeClientes.listasDePrecioAsignables().then(setListas).catch(() => setListas([]))
-  }, [cargar])
+  }, [])
 
   const idListaPorDefecto = listas.find((l) => l.esDefault)?.id ?? listas[0]?.id ?? ''
 
@@ -78,7 +142,7 @@ export function Clientes() {
 
       // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `guardando`:
       // así el disparador ya está habilitado cuando el modal restaura el foco.
-      await cargar(terminoVigente.current)
+      await cargar(++generacion.current, padron.consultaRef.current)
       setFormulario(null)
     } catch (e) {
       setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
@@ -99,16 +163,24 @@ export function Clientes() {
     if (c.esConsumidorFinal) return
     if (!confirm(`¿Dar de baja al cliente "${c.nombre}"?`)) return
 
+    guardandoRef.current = true
+    setEliminando(true)
     setError('')
     setAviso('')
     try {
       await clienteDeClientes.eliminar(c.id)
       setAviso(`Cliente "${c.nombre}" dado de baja.`)
-      await cargar(terminoVigente.current)
+      await cargar(++generacion.current, padron.consultaRef.current)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
+    } finally {
+      guardandoRef.current = false
+      setEliminando(false)
     }
   }
+
+  /** Los filtros, el orden y el pager quedan inertes mientras hay una escritura en vuelo. */
+  const bloqueado = guardando || eliminando
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -116,14 +188,16 @@ export function Clientes() {
         type="search"
         className="form-control form-control-sm"
         placeholder="Buscar por nombre, apellido, razón social o documento…"
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && cargar(busqueda)}
+        value={textoDeBusqueda}
+        disabled={bloqueado}
+        onChange={(e) => setTextoDeBusqueda(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && padron.cambiarFiltros({ busqueda: textoDeBusqueda }, true)}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-secondary"
-        onClick={() => cargar(busqueda)}
+        disabled={bloqueado}
+        onClick={() => padron.cambiarFiltros({ busqueda: textoDeBusqueda }, true)}
       >
         Buscar
       </button>
@@ -131,7 +205,7 @@ export function Clientes() {
         ref={agregarRef}
         icono="agregar"
         className="text-nowrap"
-        disabled={guardando}
+        disabled={bloqueado}
         onClick={() => abrirFormulario(formularioVacio(idListaPorDefecto))}
       />
     </nav>
@@ -157,23 +231,49 @@ export function Clientes() {
           />
         )}
 
-        {cargando ? (
+        {iniciando ? (
           <Cargando />
         ) : (
+          <>
           <div className="table-responsive">
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>N°</th>
-                  <th>Nombre</th>
-                  <th>Documento</th>
-                  <th>Teléfono</th>
-                  <th>Email</th>
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="numero" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    N°
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="nombre" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="documento" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Documento
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="telefono" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Teléfono
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="email" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Email
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltrosDePadron
+                  celdas={CELDAS_DE_FILTRO}
+                  valores={padron.borrador}
+                  onCambio={padron.cambiarFiltros}
+                  onLimpiar={() => {
+                    setTextoDeBusqueda('')
+                    padron.limpiar()
+                  }}
+                  hayFiltros={padron.hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
-              <tbody>
+              <tbody style={cargando ? { opacity: 0.6 } : undefined}>
                 {pagina?.items.map((c) => (
                   <tr key={c.id}>
                     <td>{String(c.numero).padStart(4, '0')}</td>
@@ -208,13 +308,13 @@ export function Clientes() {
                       <BotonIcono
                         icono="editar"
                         className="me-1"
-                        disabled={c.esConsumidorFinal || guardando}
+                        disabled={c.esConsumidorFinal || bloqueado}
                         title={c.esConsumidorFinal ? 'El Consumidor Final no se puede editar.' : undefined}
                         onClick={() => abrirFormulario(aFormulario(c))}
                       />
                       <BotonIcono
                         icono="eliminar"
-                        disabled={c.esConsumidorFinal}
+                        disabled={c.esConsumidorFinal || bloqueado}
                         title={c.esConsumidorFinal ? 'El Consumidor Final no se puede eliminar.' : undefined}
                         onClick={() => eliminar(c)}
                       />
@@ -224,13 +324,25 @@ export function Clientes() {
                 {pagina?.items.length === 0 && (
                   <tr>
                     <td colSpan={7} className="text-center text-muted py-4">
-                      No hay clientes que coincidan con la búsqueda.
+                      No hay clientes que coincidan con los filtros.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          {pagina && (
+            <PaginadorDePadron
+              pagina={pagina.pagina}
+              tamanio={pagina.tamanio}
+              total={pagina.total}
+              unidad="cliente(s)"
+              deshabilitado={cargando || bloqueado}
+              onCambiarPagina={padron.cambiarPagina}
+              onCambiarTamanio={padron.cambiarTamanio}
+            />
+          )}
+          </>
         )}
       </Box>
     </div>
