@@ -125,7 +125,7 @@ export function Usuarios() {
   const { irAPagina } = padron
 
   const cargar = useCallback(
-    async (token: number, consulta: ConsultaDeUsuarios, propagar = false) => {
+    async (token: number, consulta: ConsultaDeUsuarios, propagar = false, conservarError = false) => {
       setCargando(true)
       try {
         const respuesta = await clienteDeUsuarios.listarGrilla(consulta)
@@ -140,7 +140,8 @@ export function Usuarios() {
         }
 
         setPagina(respuesta)
-        setError('')
+        // La relectura que repone una escritura rechazada no puede borrar el motivo del rechazo.
+        if (!conservarError) setError('')
       } catch (e) {
         if (generacion.current !== token) return
         if (propagar) throw e
@@ -346,7 +347,7 @@ export function Usuarios() {
       } catch (e) {
         if (generacion.current === token) {
           setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current)
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current, false, true)
         }
 
         return
@@ -418,7 +419,7 @@ export function Usuarios() {
         // cuenta.
         setError(copiaDeFalloDeBaja(e, 'el usuario'))
         if (habiaLecturaEnVuelo && generacion.current === token) {
-          void cargar(++generacion.current, padron.consultaRef.current)
+          void cargar(++generacion.current, padron.consultaRef.current, false, true)
         }
 
         return

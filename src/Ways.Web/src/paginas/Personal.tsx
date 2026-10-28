@@ -121,7 +121,7 @@ export function Personal() {
   const { irAPagina } = padron
 
   const cargar = useCallback(
-    async (token: number, consulta: ConsultaDePersonal, propagar = false) => {
+    async (token: number, consulta: ConsultaDePersonal, propagar = false, conservarError = false) => {
       setCargando(true)
       try {
         const resultado = await clienteDePersonal.listarGrilla(consulta)
@@ -136,7 +136,8 @@ export function Personal() {
         }
 
         setPagina(resultado)
-        setError('')
+        // La relectura que repone una escritura rechazada no puede borrar el motivo del rechazo.
+        if (!conservarError) setError('')
       } catch (e) {
         if (generacion.current !== token) return
         if (propagar) throw e
@@ -333,7 +334,7 @@ export function Personal() {
       } catch (e) {
         setError(copiaDeBajaDePersonal(e, p.nombre))
         if (habiaLecturaEnVuelo && generacion.current === token) {
-          void cargar(++generacion.current, padron.consultaRef.current)
+          void cargar(++generacion.current, padron.consultaRef.current, false, true)
         }
 
         return

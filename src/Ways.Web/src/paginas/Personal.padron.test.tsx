@@ -529,5 +529,6 @@ describe('Personal — una baja fallida con una lectura en vuelo', () => {
     await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [personalFixture()], 1)))
 
     expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
+    expect(screen.getByText(/No se pudo dar de baja a "Ana Gómez"/)).toBeInTheDocument()
   })
 })

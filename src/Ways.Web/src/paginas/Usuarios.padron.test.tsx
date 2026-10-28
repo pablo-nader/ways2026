@@ -608,6 +608,7 @@ describe('Usuarios — una escritura fallida con una lectura en vuelo', () => {
     await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [usuarioFixture()], 1)))
 
     expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
+    expect(screen.getByText(/No se pudo dar de baja el usuario/)).toBeInTheDocument()
   })
 
   it('una acción rechazada (Desbloquear) repone la lectura que su token invalidó', async () => {
@@ -622,6 +623,7 @@ describe('Usuarios — una escritura fallida con una lectura en vuelo', () => {
     await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [bloqueado], 1)))
 
     expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
+    expect(screen.getByText('No se pudo completar la acción.')).toBeInTheDocument()
   })
 })
 
