@@ -206,6 +206,22 @@ export function opcionesDeTenantAsignable(tenants: readonly TenantListado[]): Op
   return ordenarPorEtiqueta(desempatarHomonimos(opciones, 'tenant'))
 }
 
+/**
+ * Opciones del filtro por tenant de un listado que filtra en el servidor: la ausencia de tenant (`VALOR_SIN_TENANT`)
+ * primero y después el universo completo de tenants, no los de las filas cargadas. El desempate corre sobre el conjunto
+ * entero, plataforma incluida, por si un tenant se llama como su etiqueta.
+ */
+export function opcionesDeFiltroPorTenant(tenants: readonly TenantListado[]): OpcionDeFiltro[] {
+  const plataforma = { valor: VALOR_SIN_TENANT, etiqueta: ETIQUETA_OPCION_PLATAFORMA }
+  const asignables = tenants.map((t) => ({ valor: String(t.id), etiqueta: etiquetaDeTenantAsignable(t.nombre, t.estado) }))
+  const desempatadas = desempatarHomonimos([plataforma, ...asignables], 'tenant', VALOR_SIN_TENANT)
+
+  return [
+    desempatadas.find((o) => o.valor === VALOR_SIN_TENANT) ?? plataforma,
+    ...ordenarPorEtiqueta(desempatadas.filter((o) => o.valor !== VALOR_SIN_TENANT)),
+  ]
+}
+
 /** La marca que llega por la API hoy es `(suspendido)`: un tenant en `Baja` está borrado
  * lógicamente y `GET /plataforma/tenants` no lo lista, así que la rama `(baja)` es defensa en
  * profundidad, no un camino vivo. Se conserva por si el listado dejara de filtrarlos. */

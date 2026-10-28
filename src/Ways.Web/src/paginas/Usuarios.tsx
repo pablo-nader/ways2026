@@ -4,13 +4,19 @@ import { copiaDeFalloDeBaja } from '../api/bajas'
 import {
   clienteDeOrganizacion,
   etiquetaDeTenant,
-  filtrarPorTenant,
-  opcionesDeTenant,
+  opcionesDeFiltroPorTenant,
   opcionesDeTenantAsignable,
-  seleccionVigente,
-  SIN_FILTRO,
 } from '../api/organizacion'
-import { ROL } from '../api/tipos'
+import { ultimaPaginaDePadron } from '../api/padron'
+import {
+  clienteDeUsuarios,
+  esColumnaOrdenableDeUsuarios,
+  FILTROS_DE_USUARIOS_VACIOS,
+  type ColumnaOrdenableDeUsuarios,
+  type ConsultaDeUsuarios,
+  type FiltrosDeUsuarios,
+} from '../api/usuarios'
+import { ROL, ESTADOS_USUARIO } from '../api/tipos'
 import type {
   ActualizarUsuario,
   CrearUsuario,
@@ -23,6 +29,10 @@ import type {
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { FilaDeFiltrosDePadron, type CeldaDeFiltroDePadron } from '../componentes/padron/FilaDeFiltrosDePadron'
+import { PaginadorDePadron } from '../componentes/padron/PaginadorDePadron'
+import { usePadronEnServidor } from '../componentes/padron/usePadronEnServidor'
 import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -52,11 +62,11 @@ export function Usuarios() {
 
   const [pagina, setPagina] = useState<PaginaDe<UsuarioListado> | null>(null)
   const [roles, setRoles] = useState<RolListado[]>([])
-  const [busqueda, setBusqueda] = useState('')
-  /** Término REALMENTE aplicado a la tabla: lo escribe `buscar()`, nunca el tipeo. El refresco
-   * post-escritura usa este y no el borrador del input, que puede tener texto sin buscar. */
-  const [busquedaAplicada, setBusquedaAplicada] = useState('')
+  /** Texto de la caja de búsqueda general, que se aplica con Enter o con Buscar. */
+  const [textoDeBusqueda, setTextoDeBusqueda] = useState('')
   const [cargando, setCargando] = useState(true)
+  /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
+  const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
   /** Slot PROPIO del fallo de la segunda escritura del alta/edición (el POST de contraseña). No
    * puede viajar en `aviso` —el PUT sí commiteó, pero esto es un fallo y va en rojo— ni en `error`
@@ -72,7 +82,6 @@ export function Usuarios() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
-  const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
    * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
    * escritura, al confirmar. */
@@ -98,24 +107,53 @@ export function Usuarios() {
   /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la tabla se reemplaza por
    * "Cargando…" durante el refresco): el botón de alta, que es estable. */
   const agregarRef = useRef<HTMLButtonElement>(null)
+  /** Espejo de `bloqueado` (una escritura en vuelo o la puerta de baja abierta) para el temporizador de los filtros, que no lee el render: un filtro tipeado antes espera a que termine. */
+  const bloqueadoRef = useRef(false)
 
-  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
-    setCargando(true)
-    try {
-      const parametros = termino ? `?busqueda=${encodeURIComponent(termino)}` : ''
-      const respuesta = await api.get<PaginaDe<UsuarioListado>>(`/usuarios${parametros}`)
-      if (generacion.current !== token) return
-      setPagina(respuesta)
-      setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(respuesta.items), prev))
-      setError('')
-    } catch (e) {
-      if (generacion.current !== token) return
-      if (propagar) throw e
-      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los usuarios.')
-    } finally {
-      if (generacion.current === token) setCargando(false)
-    }
-  }, [])
+  const esPlataforma = actual?.rolId === ROL.Root
+
+  /** La consulta aplicada (filtros, orden, página y tamaño) vive en el hook: el refresco posterior a una escritura
+   * recarga `consultaRef`, nunca el texto tipeado en un filtro y todavía no aplicado. El orden y el filtro por tenant son
+   * solo del actor de plataforma (para otro el servidor responde 400): su encabezado y su filtro solo se rinden para él,
+   * así que un actor de tenant no tiene cómo pedirlos. */
+  const padron = usePadronEnServidor<FiltrosDeUsuarios, ColumnaOrdenableDeUsuarios>(FILTROS_DE_USUARIOS_VACIOS, {
+    esColumnaOrdenable: esColumnaOrdenableDeUsuarios,
+    ocupado: () => ocupadoRef.current || bloqueadoRef.current,
+  })
+  const { irAPagina } = padron
+
+  const cargar = useCallback(
+    async (token: number, consulta: ConsultaDeUsuarios, propagar = false) => {
+      setCargando(true)
+      try {
+        const respuesta = await clienteDeUsuarios.listarGrilla(consulta)
+        if (generacion.current !== token) return
+
+        // Una baja puede vaciar la última página: se pide la última válida en vez de mostrar "Página 3 de 2".
+        const ultima = ultimaPaginaDePadron(respuesta.total, respuesta.tamanio)
+        if (respuesta.pagina > ultima) {
+          irAPagina(ultima)
+
+          return
+        }
+
+        setPagina(respuesta)
+        setError('')
+      } catch (e) {
+        if (generacion.current !== token) return
+        if (propagar) throw e
+        // Sin filas: el encabezado ya declara el orden pedido y no puede quedar sobre las del orden anterior.
+        setPagina(null)
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los usuarios.')
+      } finally {
+        if (generacion.current === token) {
+          setCargando(false)
+          setIniciando(false)
+        }
+      }
+    },
+    [irAPagina],
+  )
 
   function buscar(termino: string) {
     if (ocupadoRef.current) return
@@ -124,16 +162,17 @@ export function Usuarios() {
     // acá a propósito — reporta una precondición VIVA del formulario abierto (falta el universo de
     // tenants), que la búsqueda no cambia; apagarlo escondería algo que sigue siendo cierto.
     setErrorPassword('')
-    setBusquedaAplicada(termino)
-    void cargar(++generacion.current, termino)
+    padron.cambiarFiltros({ busqueda: termino }, true)
   }
 
+  // Se vuelve a pedir el listado cada vez que cambia la consulta aplicada (filtros, orden, página o tamaño).
   useEffect(() => {
-    void cargar(++generacion.current, '')
-    api.get<RolListado[]>('/roles').then(setRoles).catch(() => setRoles([]))
-  }, [cargar])
+    void cargar(++generacion.current, padron.consulta)
+  }, [cargar, padron.consulta])
 
-  const esPlataforma = actual?.rolId === ROL.Root
+  useEffect(() => {
+    api.get<RolListado[]>('/roles').then(setRoles).catch(() => setRoles([]))
+  }, [])
 
   /** Universo COMPLETO de tenants para el selector del ALTA (tarea 2.17, gap del tamaño de
    * página): `opcionesDeTenant(filas)` solo ve tenants con un usuario en la página actual
@@ -232,7 +271,7 @@ export function Usuarios() {
       } catch (e) {
         if (generacion.current === token) {
           setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, busquedaAplicada)
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current)
         }
 
         return
@@ -276,7 +315,7 @@ export function Usuarios() {
 
     setAviso(mensajeOk)
     try {
-      await cargar(token, busquedaAplicada, true)
+      await cargar(token, padron.consultaRef.current, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
     }
@@ -392,21 +431,57 @@ export function Usuarios() {
    * Es lo que hace que la búsqueda —el único bumper de generación que quedaba alcanzable con la
    * puerta abierta— no pueda dispararse mientras el operador decide. */
   const bloqueado = ocupado || baja !== null
+  useEffect(() => {
+    bloqueadoRef.current = bloqueado
+  })
 
   // El backend valida igual; esto solo evita mostrar botones que van a fallar.
   const puedeEditar = (u: UsuarioListado) =>
     u.rolId !== ROL.Root || actual?.rolId === ROL.Root
 
-  // Derivación pura sobre la página YA CARGADA: sin fetch nuevo y sin parámetro de consulta. Esto
-  // sigue rigiendo el FILTRO de la tabla (design D15) — solo el selector del ALTA cambia de fuente.
   const filas = pagina?.items ?? []
-  const opcionesTenant = opcionesDeTenant(filas)
-  const tenantVigente = seleccionVigente(opcionesTenant, filtroTenant)
-  const visibles = filtrarPorTenant(filas, tenantVigente)
 
-  // El selector del alta solo se rinde para un actor de plataforma (`ofreceTenant`), así que su
-  // única fuente es el universo pedido arriba.
+  // El selector del alta y el filtro por tenant solo se rinden para un actor de plataforma
+  // (`ofreceTenant`), así que su única fuente es el universo pedido arriba.
   const tenantsAsignables = opcionesDeTenantAsignable(tenantsDePlataforma)
+
+  const celdasDeFiltro: readonly CeldaDeFiltroDePadron<FiltrosDeUsuarios>[] = [
+    { tipo: 'entero', clave: 'id', etiqueta: 'ID' },
+    { tipo: 'texto', clave: 'usuario', etiqueta: 'usuario' },
+    { tipo: 'texto', clave: 'mail', etiqueta: 'mail' },
+    ...(esPlataforma
+      ? [
+          {
+            tipo: 'opciones',
+            clave: 'tenant',
+            etiqueta: 'tenant',
+            opciones: opcionesDeFiltroPorTenant(tenantsDePlataforma),
+          } satisfies CeldaDeFiltroDePadron<FiltrosDeUsuarios>,
+        ]
+      : []),
+    {
+      tipo: 'opciones',
+      clave: 'rolId',
+      etiqueta: 'rol',
+      opciones: roles.map((r) => ({ valor: String(r.id), etiqueta: r.nombre })),
+    },
+    {
+      tipo: 'opciones',
+      clave: 'estado',
+      etiqueta: 'estado',
+      opciones: ESTADOS_USUARIO.map((e) => ({ valor: e, etiqueta: e })),
+    },
+    {
+      tipo: 'opciones',
+      clave: 'conectado',
+      etiqueta: 'conexión',
+      opciones: [
+        { valor: 'true', etiqueta: 'Con conexión' },
+        { valor: 'false', etiqueta: 'Sin conexión' },
+      ],
+    },
+    { tipo: 'acciones' },
+  ]
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -414,15 +489,15 @@ export function Usuarios() {
         type="search"
         className="form-control form-control-sm"
         placeholder="Buscar usuario o mail…"
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && buscar(busqueda)}
+        value={textoDeBusqueda}
+        onChange={(e) => setTextoDeBusqueda(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && buscar(textoDeBusqueda)}
         disabled={bloqueado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-secondary"
-        onClick={() => buscar(busqueda)}
+        onClick={() => buscar(textoDeBusqueda)}
         disabled={bloqueado}
       >
         Buscar
@@ -498,54 +573,59 @@ export function Usuarios() {
           />
         )}
 
-        {cargando ? (
+        {iniciando ? (
           <Cargando />
         ) : (
           <>
-            {/* El filtro por tenant se rinde con el mismo criterio que la COLUMNA de tenant: solo
-                para un actor de plataforma. Para un admin de tenant TODAS las filas son de su
-                propio tenant, así que la columna repite el mismo nombre y el filtro no angosta
-                nada — misma paridad que `Empresas.tsx` y `PuntosVenta.tsx`. */}
-            {esPlataforma && (
-              <div className="row g-2 mb-3">
-                <div className="col-md-4">
-                  <label className="form-label" htmlFor="u-filtro-tenant">
-                    Tenant
-                  </label>
-                  <select
-                    id="u-filtro-tenant"
-                    className="form-select"
-                    value={tenantVigente}
-                    onChange={(e) => setFiltroTenant(e.target.value)}
-                    disabled={bloqueado}
-                  >
-                    <option value={SIN_FILTRO}>Todos</option>
-                    {opcionesTenant.map((o) => (
-                      <option key={o.valor} value={o.valor}>
-                        {o.etiqueta}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
             <div className="table-responsive">
               <table className="table table-striped table-hover table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Usuario</th>
-                    <th>Mail</th>
-                    {esPlataforma && <th>Tenant</th>}
-                    <th>Rol</th>
-                    <th>Estado</th>
-                    <th>Última conexión</th>
-                    <th className="text-end">Acciones</th>
+                    <EncabezadoOrdenable columna="id" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      ID
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="usuario" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Usuario
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="mail" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Mail
+                    </EncabezadoOrdenable>
+                    {esPlataforma && (
+                      <EncabezadoOrdenable columna="tenant" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                        Tenant
+                      </EncabezadoOrdenable>
+                    )}
+                    <EncabezadoOrdenable columna="rol" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Rol
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="estado" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Estado
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable
+                      columna="ultimaConexion"
+                      orden={padron.consulta.orden}
+                      onAlternar={padron.alternarOrden}
+                    >
+                      Última conexión
+                    </EncabezadoOrdenable>
+                    <th scope="col" className="text-end">
+                      Acciones
+                    </th>
                   </tr>
+                  <FilaDeFiltrosDePadron
+                    celdas={celdasDeFiltro}
+                    valores={padron.borrador}
+                    onCambio={padron.cambiarFiltros}
+                    onLimpiar={() => {
+                      setTextoDeBusqueda('')
+                      padron.limpiar()
+                    }}
+                    hayFiltros={padron.hayFiltros}
+                    deshabilitado={bloqueado}
+                  />
                 </thead>
-                <tbody>
-                  {visibles.map((u) => (
+                <tbody style={cargando ? { opacity: 0.6 } : undefined}>
+                  {filas.map((u) => (
                     <tr key={u.id}>
                       <td>{String(u.id).padStart(4, '0')}</td>
                       <td>{u.usuario}</td>
@@ -609,16 +689,27 @@ export function Usuarios() {
                       </td>
                     </tr>
                   ))}
-                  {visibles.length === 0 && (
+                  {pagina?.items.length === 0 && (
                     <tr>
                       <td colSpan={esPlataforma ? 8 : 7} className="text-center text-muted py-4">
-                        No hay usuarios que coincidan con la búsqueda.
+                        No hay usuarios que coincidan con los filtros.
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+            {pagina && (
+              <PaginadorDePadron
+                pagina={pagina.pagina}
+                tamanio={pagina.tamanio}
+                total={pagina.total}
+                unidad="usuario(s)"
+                deshabilitado={cargando || bloqueado}
+                onCambiarPagina={padron.cambiarPagina}
+                onCambiarTamanio={padron.cambiarTamanio}
+              />
+            )}
           </>
         )}
       </Box>
