@@ -8,12 +8,51 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { ModalDeNuevoTenant } from './tenants/ModalDeNuevoTenant'
 import { ModalDeTenant, type FormularioDeTenant } from './tenants/ModalDeTenant'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
   'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+
+const OPCIONES_DE_ESTADO = [
+  { valor: 'Activo', etiqueta: 'Activo' },
+  { valor: 'Suspendido', etiqueta: 'Suspendido' },
+]
+
+const textoDeId = (tenant: TenantListado) => String(tenant.id).padStart(4, '0')
+const textoDeCreado = (tenant: TenantListado) => new Date(tenant.createdAt).toLocaleDateString('es-AR')
+
+const ORDENABLES: ColumnasOrdenables<TenantListado> = {
+  id: { valor: (tenant) => tenant.id },
+  nombre: { valor: (tenant) => tenant.nombre },
+  estado: { valor: (tenant) => tenant.estado },
+  empresas: { valor: (tenant) => tenant.cantidadEmpresas },
+  puntosVenta: { valor: (tenant) => tenant.cantidadPuntosVenta },
+  usuarios: { valor: (tenant) => tenant.cantidadUsuarios },
+  creado: { valor: (tenant) => new Date(tenant.createdAt) },
+}
+
+const FILTRABLES: ColumnasFiltrables<TenantListado> = {
+  id: { etiqueta: 'ID', valor: textoDeId },
+  nombre: { etiqueta: 'Nombre', valor: (tenant) => tenant.nombre },
+  estado: { etiqueta: 'Estado', valor: (tenant) => tenant.estado, opciones: OPCIONES_DE_ESTADO },
+  empresas: { etiqueta: 'Empresas', valor: (tenant) => tenant.cantidadEmpresas },
+  puntosVenta: { etiqueta: 'Puntos de venta', valor: (tenant) => tenant.cantidadPuntosVenta },
+  usuarios: { etiqueta: 'Usuarios', valor: (tenant) => tenant.cantidadUsuarios },
+  creado: { etiqueta: 'Creado', valor: textoDeCreado },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['id', 'nombre', 'estado', 'empresas', 'puntosVenta', 'usuarios', 'creado', null]
 
 type AccionDeEstado = 'suspenderTenant' | 'reactivarTenant'
 
@@ -50,6 +89,8 @@ const COPIA_DE_ESTADO: Readonly<
  */
 export function Tenants() {
   const [items, setItems] = useState<TenantListado[]>([])
+  /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
+  const [cargada, setCargada] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
@@ -115,7 +156,10 @@ export function Tenants() {
       if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los tenants.')
     } finally {
-      if (generacion.current === token) setCargando(false)
+      if (generacion.current === token) {
+        setCargando(false)
+        setCargada(true)
+      }
     }
   }, [])
 
@@ -291,6 +335,9 @@ export function Tenants() {
    * que nada pueda acuñar una generación nueva mientras el operador decide (regla 9). */
   const bloqueado = ocupado !== null || confirmacion !== null
 
+  const { filas: filtrados, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(items, FILTRABLES)
+  const { filas: visibles, orden, alternar } = useOrdenamiento(filtrados, ORDENABLES)
+
   function abrirEdicion(tenant: TenantListado) {
     setEdicion({ id: tenant.id, nombre: tenant.nombre })
     setError('')
@@ -360,27 +407,59 @@ export function Tenants() {
           />
         )}
 
-        {cargando ? (
+        {!cargada ? (
           <Cargando />
         ) : (
           <div className="table-responsive">
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Nombre</th>
-                  <th>Estado</th>
-                  <th className="text-end">Empresas</th>
-                  <th className="text-end">Puntos de venta</th>
-                  <th className="text-end">Usuarios</th>
-                  <th>Creado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="id" orden={orden} onAlternar={alternar}>
+                    ID
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="empresas" orden={orden} onAlternar={alternar} className="text-end">
+                    Empresas
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="puntosVenta" orden={orden} onAlternar={alternar} className="text-end">
+                    Puntos de venta
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="usuarios" orden={orden} onAlternar={alternar} className="text-end">
+                    Usuarios
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="creado" orden={orden} onAlternar={alternar}>
+                    Creado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={CELDAS_DE_FILTROS}
+                  columnas={FILTRABLES}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {items.map((t) => (
+                {cargando && (
+                  <tr>
+                    <td colSpan={8}>
+                      <Cargando />
+                    </td>
+                  </tr>
+                )}
+                {!cargando && visibles.map((t) => (
                   <tr key={t.id}>
-                    <td>{String(t.id).padStart(4, '0')}</td>
+                    <td>{textoDeId(t)}</td>
                     <td>{t.nombre}</td>
                     <td>
                       <EtiquetaEstado estado={t.estado} />
@@ -388,7 +467,7 @@ export function Tenants() {
                     <td className="text-end">{t.cantidadEmpresas}</td>
                     <td className="text-end">{t.cantidadPuntosVenta}</td>
                     <td className="text-end">{t.cantidadUsuarios}</td>
-                    <td>{new Date(t.createdAt).toLocaleDateString('es-AR')}</td>
+                    <td>{textoDeCreado(t)}</td>
                     <td className="text-end text-nowrap">
                       <BotonIcono
                         icono="editar"
@@ -424,10 +503,10 @@ export function Tenants() {
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && (
+                {!cargando && visibles.length === 0 && (
                   <tr>
                     <td colSpan={8} className="text-center text-muted py-4">
-                      No hay tenants cargados.
+                      {items.length === 0 ? 'No hay tenants cargados.' : 'Ningún registro coincide con los filtros.'}
                     </td>
                   </tr>
                 )}

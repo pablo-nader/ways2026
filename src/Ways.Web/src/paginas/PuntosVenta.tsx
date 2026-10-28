@@ -20,6 +20,14 @@ import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { ROL } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { ModalDeAltaDePuntoVenta } from './organizacion/ModalDeAltaDePuntoVenta'
 import { ModalDeModoDePuntoVenta } from './organizacion/ModalDeModoDePuntoVenta'
 import { ModalDePuntoVenta } from './organizacion/ModalDePuntoVenta'
@@ -34,6 +42,46 @@ import {
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
   'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+
+const OPCIONES_DE_MODO = [
+  { valor: 'Escritorio', etiqueta: 'Escritorio' },
+  { valor: 'Web', etiqueta: 'Web' },
+]
+
+const textoDeId = (puntoVenta: PuntoVentaListado) => String(puntoVenta.id).padStart(4, '0')
+const textoDeEmpresa = (puntoVenta: PuntoVentaListado) => puntoVenta.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO
+const textoDeDomicilio = (puntoVenta: PuntoVentaListado) => puntoVenta.domicilio ?? '—'
+const nombreDeTenant = (puntoVenta: PuntoVentaListado) => etiquetaDeTenant(puntoVenta)
+/** Un dueño dado de baja se rotula "—" en la celda, pero para ordenar cuenta como vacío. */
+const sinMarcaDeDuenio = (texto: string) => (texto === ETIQUETA_SIN_DUENIO ? null : texto)
+
+const ORDENABLES_BASE: ColumnasOrdenables<PuntoVentaListado> = {
+  id: { valor: (puntoVenta) => puntoVenta.id },
+  empresa: { valor: (puntoVenta) => sinMarcaDeDuenio(textoDeEmpresa(puntoVenta)) },
+  nombre: { valor: (puntoVenta) => puntoVenta.nombre },
+  domicilio: { valor: (puntoVenta) => puntoVenta.domicilio },
+  modo: { valor: (puntoVenta) => puntoVenta.modo },
+}
+const FILTRABLES_BASE: ColumnasFiltrables<PuntoVentaListado> = {
+  id: { etiqueta: 'ID', valor: textoDeId },
+  empresa: { etiqueta: 'Empresa', valor: textoDeEmpresa },
+  nombre: { etiqueta: 'Nombre', valor: (puntoVenta) => puntoVenta.nombre },
+  domicilio: { etiqueta: 'Domicilio', valor: textoDeDomicilio },
+  modo: { etiqueta: 'Modo', valor: (puntoVenta) => puntoVenta.modo, opciones: OPCIONES_DE_MODO },
+}
+/** La columna de tenant solo existe para plataforma: sus definiciones son otro mapa estable, no una condición dentro del hook. */
+const ORDENABLES_PLATAFORMA: ColumnasOrdenables<PuntoVentaListado> = {
+  ...ORDENABLES_BASE,
+  tenant: { valor: (puntoVenta) => sinMarcaDeDuenio(nombreDeTenant(puntoVenta)) },
+}
+const FILTRABLES_PLATAFORMA: ColumnasFiltrables<PuntoVentaListado> = {
+  ...FILTRABLES_BASE,
+  tenant: { etiqueta: 'Tenant', valor: nombreDeTenant },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_BASE = ['id', 'empresa', 'nombre', 'domicilio', 'modo', null]
+const CELDAS_PLATAFORMA = ['id', 'tenant', 'empresa', 'nombre', 'domicilio', 'modo', null]
 
 /**
  * Lectura/alta/edición/baja de puntos de venta — mismo patrón que <c>Empresas.tsx</c>. El alta
@@ -55,6 +103,8 @@ export function PuntosVenta() {
 
   const [items, setItems] = useState<PuntoVentaListado[]>([])
   const [cargando, setCargando] = useState(true)
+  /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
+  const [cargada, setCargada] = useState(false)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<FormularioDePuntoVenta | null>(null)
@@ -124,7 +174,10 @@ export function PuntosVenta() {
       if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los puntos de venta.')
     } finally {
-      if (generacion.current === token) setCargando(false)
+      if (generacion.current === token) {
+        setCargando(false)
+        setCargada(true)
+      }
     }
   }, [])
 
@@ -265,6 +318,7 @@ export function PuntosVenta() {
       filtroTenantVigente.current = SIN_FILTRO
       setFiltroTenant(SIN_FILTRO)
       setFiltroEmpresa(SIN_FILTRO)
+      limpiarFiltros()
       await refrescarTrasEscribir(token, `Se creó el punto de venta "${nombre}".`, AVISO_REFRESCO_FALLIDO)
       cerrarAlta()
     } finally {
@@ -383,7 +437,17 @@ export function PuntosVenta() {
   const tenantVigente = seleccionVigente(opcionesTenant, filtroTenant)
   const opcionesEmpresa = opcionesDeEmpresa(items, tenantVigente)
   const empresaVigente = seleccionVigente(opcionesEmpresa, filtroEmpresa)
-  const visibles = filtrarPorEmpresa(filtrarPorTenant(items, tenantVigente), empresaVigente)
+  const alcanzados = filtrarPorEmpresa(filtrarPorTenant(items, tenantVigente), empresaVigente)
+  const columnasFiltrables = esPlataforma ? FILTRABLES_PLATAFORMA : FILTRABLES_BASE
+  const celdasDeFiltros = esPlataforma ? CELDAS_PLATAFORMA : CELDAS_BASE
+  const { filas: filtrados, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(
+    alcanzados,
+    columnasFiltrables,
+  )
+  const { filas: visibles, orden, alternar } = useOrdenamiento(
+    filtrados,
+    esPlataforma ? ORDENABLES_PLATAFORMA : ORDENABLES_BASE,
+  )
 
   /** Elegir un tenant LIMPIA la empresa seleccionada cuando esa empresa ya no le pertenece
    * (design D15) — si le sigue perteneciendo, la selección se respeta. El updater se arma desde
@@ -477,7 +541,7 @@ export function PuntosVenta() {
           )}
         </div>
 
-        {cargando ? (
+        {!cargada ? (
           <Cargando />
         ) : (
           <>
@@ -531,23 +595,55 @@ export function PuntosVenta() {
               <table className="table table-striped table-hover table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    {esPlataforma && <th>Tenant</th>}
-                    <th>Empresa</th>
-                    <th>Nombre</th>
-                    <th>Domicilio</th>
-                    <th>Modo</th>
-                    <th className="text-end">Acciones</th>
+                    <EncabezadoOrdenable columna="id" orden={orden} onAlternar={alternar}>
+                      ID
+                    </EncabezadoOrdenable>
+                    {esPlataforma && (
+                      <EncabezadoOrdenable columna="tenant" orden={orden} onAlternar={alternar}>
+                        Tenant
+                      </EncabezadoOrdenable>
+                    )}
+                    <EncabezadoOrdenable columna="empresa" orden={orden} onAlternar={alternar}>
+                      Empresa
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                      Nombre
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="domicilio" orden={orden} onAlternar={alternar}>
+                      Domicilio
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="modo" orden={orden} onAlternar={alternar}>
+                      Modo
+                    </EncabezadoOrdenable>
+                    <th scope="col" className="text-end">
+                      Acciones
+                    </th>
                   </tr>
+                  <FilaDeFiltros
+                    celdas={celdasDeFiltros}
+                    columnas={columnasFiltrables}
+                    filtros={filtros}
+                    onCambio={cambiarFiltro}
+                    onLimpiar={limpiarFiltros}
+                    hayFiltros={hayFiltros}
+                    deshabilitado={bloqueado}
+                  />
                 </thead>
                 <tbody>
-                  {visibles.map((p) => (
+                  {cargando && (
+                  <tr>
+                    <td colSpan={esPlataforma ? 7 : 6}>
+                      <Cargando />
+                    </td>
+                  </tr>
+                )}
+                {!cargando && visibles.map((p) => (
                     <tr key={p.id}>
-                      <td>{String(p.id).padStart(4, '0')}</td>
-                      {esPlataforma && <td>{etiquetaDeTenant(p)}</td>}
-                      <td>{p.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO}</td>
+                      <td>{textoDeId(p)}</td>
+                      {esPlataforma && <td>{nombreDeTenant(p)}</td>}
+                      <td>{textoDeEmpresa(p)}</td>
                       <td>{p.nombre}</td>
-                      <td>{p.domicilio ?? '—'}</td>
+                      <td>{textoDeDomicilio(p)}</td>
                       <td>{p.modo}</td>
                       <td className="text-end text-nowrap">
                         <button
@@ -572,10 +668,10 @@ export function PuntosVenta() {
                       </td>
                     </tr>
                   ))}
-                  {visibles.length === 0 && (
+                  {!cargando && visibles.length === 0 && (
                     <tr>
                       <td colSpan={esPlataforma ? 7 : 6} className="text-center text-muted py-4">
-                        No hay puntos de venta cargados.
+                        {items.length === 0 ? 'No hay puntos de venta cargados.' : 'Ningún registro coincide con los filtros.'}
                       </td>
                     </tr>
                   )}

@@ -115,7 +115,10 @@ describe('Tenants (stage-20, slice 2 — contadores de hijos)', () => {
     montar()
 
     return waitFor(() => {
-      const encabezados = screen.getAllByRole('columnheader').map((h) => h.textContent)
+      const encabezados = screen
+        .getAllByRole('columnheader')
+        .slice(0, 8)
+        .map((h) => h.textContent?.replace('↕', ''))
       expect(encabezados).toEqual([
         'ID',
         'Nombre',
@@ -976,5 +979,230 @@ describe('Tenants — el alta es un modal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
 
     expect(screen.queryByText(/Se actualizó el tenant/)).not.toBeInTheDocument()
+  })
+})
+
+// Filtros por columna y orden por encabezado (grillas, slice S5b2).
+
+const tenantZeta: TenantListado = {
+  id: 9,
+  nombre: 'Zeta',
+  estado: 'Activo',
+  createdAt: '2026-12-01T10:00:00-03:00',
+  cantidadEmpresas: 1500,
+  cantidadPuntosVenta: 20,
+  cantidadUsuarios: 3,
+}
+const tenantAlfa: TenantListado = {
+  id: 100,
+  nombre: 'Alfa',
+  estado: 'Suspendido',
+  createdAt: '2026-03-05T10:00:00-03:00',
+  cantidadEmpresas: 900,
+  cantidadPuntosVenta: 7,
+  cantidadUsuarios: 30,
+}
+const tenantMedio: TenantListado = {
+  id: 20,
+  nombre: 'Medio',
+  estado: 'Activo',
+  createdAt: '2026-11-20T10:00:00-03:00',
+  cantidadEmpresas: 20,
+  cantidadPuntosVenta: 100,
+  cantidadUsuarios: 4,
+}
+/** El orden del servidor (Zeta, Alfa, Medio) no coincide con ningún orden por columna. */
+const ENTREGADOS = [tenantZeta, tenantAlfa, tenantMedio]
+
+function columnaVisible(indice: number) {
+  return screen
+    .getAllByRole('row')
+    .slice(2)
+    .map((f) => within(f).getAllByRole('cell')[indice]?.textContent ?? '')
+}
+
+function esperarFilas() {
+  return waitFor(() => expect(screen.getByText('Zeta')).toBeInTheDocument())
+}
+
+describe('Tenants — filtros por columna y orden', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiDeleteMock.mockResolvedValue(undefined)
+  })
+
+  /** Mutación registrada: pasar `filtrados` sin ordenar a la tabla deja el orden del servidor y rompe las aserciones. */
+  it('ordena cada columna por su valor: números como números, la fecha cronológica y el tercer clic vuelve al orden original', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(1)).toEqual(['Alfa', 'Medio', 'Zeta'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio', 'Alfa'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio'])
+
+    // Como texto "100" < "20" < "9"; como número, 9 < 20 < 100.
+    await usuario.click(screen.getByRole('button', { name: 'ID' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio', 'Alfa'])
+
+    // 20 < 900 < 1500 (como texto: "1500" < "20" < "900").
+    await usuario.click(screen.getByRole('button', { name: 'Empresas' }))
+    expect(columnaVisible(3)).toEqual(['20', '900', '1500'])
+    await usuario.click(screen.getByRole('button', { name: 'Empresas' }))
+    expect(columnaVisible(3)).toEqual(['1500', '900', '20'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Puntos de venta' }))
+    expect(columnaVisible(4)).toEqual(['7', '20', '100'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Usuarios' }))
+    expect(columnaVisible(5)).toEqual(['3', '4', '30'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Estado' }))
+    expect(columnaVisible(2)).toEqual(['Activo', 'Activo', 'Suspendido'])
+
+    // "1/12/2026" < "20/11/2026" < "5/3/2026" como texto; cronológicamente: marzo, noviembre, diciembre.
+    await usuario.click(screen.getByRole('button', { name: 'Creado' }))
+    expect(columnaVisible(1)).toEqual(['Alfa', 'Medio', 'Zeta'])
+    await usuario.click(screen.getByRole('button', { name: 'Creado' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio', 'Alfa'])
+  })
+
+  /** Mutación registrada: pasar `items` en vez de `filtrados` a `useOrdenamiento` deja todas las filas con un filtro puesto. */
+  it('filtra cada columna de datos, con selector para el estado, y combina los filtros con Y', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'MED')
+    expect(columnaVisible(1)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por nombre'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por id'), '0100')
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+    await usuario.clear(screen.getByLabelText('Filtrar por id'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por empresas'), '1500')
+    expect(columnaVisible(1)).toEqual(['Zeta'])
+    await usuario.clear(screen.getByLabelText('Filtrar por empresas'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por puntos de venta'), '100')
+    expect(columnaVisible(1)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por puntos de venta'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por usuarios'), '30')
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+    await usuario.clear(screen.getByLabelText('Filtrar por usuarios'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por creado'), new Date(tenantAlfa.createdAt).toLocaleDateString('es-AR'))
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+    await usuario.clear(screen.getByLabelText('Filtrar por creado'))
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activo')
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Suspendido')
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activo')
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    expect(columnaVisible(1)).toEqual(['Zeta'])
+  })
+
+  it('"Limpiar filtros" restaura las filas; sin coincidencias el estado vacío lo dice y sin tenants dice otra cosa', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'no existe')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay tenants cargados.')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio'])
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+  })
+
+  it('sin tenants dice que no hay', async () => {
+    montar([])
+
+    expect(await screen.findByText('No hay tenants cargados.')).toBeInTheDocument()
+  })
+
+  it('la fila de filtros tiene una celda por encabezado', async () => {
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(8)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(8)
+  })
+
+  /** Mutación registrada: volver a `cargando ? <Cargando /> : <table>` desmonta la fila de filtros durante el refresco. */
+  it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    let resolverRefresco!: (items: TenantListado[]) => void
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/plataforma/tenants') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(ENTREGADOS)
+
+      return new Promise<TenantListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    render(
+      <MemoryRouter>
+        <Tenants />
+      </MemoryRouter>,
+    )
+    await esperarFilas()
+
+    const filtro = screen.getByLabelText('Filtrar por nombre')
+    await usuario.type(filtro, 'zet')
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Se dio de baja el tenant "Zeta".')
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro.isConnected).toBe(true)
+    expect(filtro).toHaveValue('zet')
+    expect(filtro).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
+
+    await act(async () => {
+      resolverRefresco(ENTREGADOS)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(columnaVisible(1)).toEqual(['Zeta'])
+  })
+
+  it('los filtros quedan inertes mientras la baja está en vuelo y con la puerta de suspensión abierta', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    await usuario.click(screen.getByRole('button', { name: 'Suspender' }))
+
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar suspensión' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por usuarios')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled()
   })
 })

@@ -33,6 +33,14 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+/** El encabezado de la columna también es un botón "Modo": el de la fila es el que vive en el cuerpo de la tabla. */
+function botonDeModo() {
+  const boton = screen.getAllByRole('button', { name: 'Modo' }).find((b) => b.closest('tbody'))
+  if (!boton) throw new Error('No hay botón Modo en el cuerpo de la tabla')
+
+  return boton
+}
+
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
     id: 9,
@@ -119,7 +127,7 @@ function montar(items: PuntoVentaListado[] = [pvSurCentro, pvSurAnexo, pvEste]) 
 function nombresVisibles() {
   return screen
     .getAllByRole('row')
-    .slice(1)
+    .slice(2)
     .map((f) => within(f).getAllByRole('cell')[3]?.textContent ?? '')
 }
 
@@ -154,7 +162,7 @@ describe('PuntosVenta (stage-20, slice 2 — nombres de dueño y dos filtros)', 
     montar()
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
-    for (const fila of screen.getAllByRole('row').slice(1)) {
+    for (const fila of screen.getAllByRole('row').slice(2)) {
       const celdas = within(fila).getAllByRole('cell')
       expect(celdas[1]).not.toHaveTextContent(/^\d+$/)
       expect(celdas[2]).not.toHaveTextContent(/^\d+$/)
@@ -756,7 +764,7 @@ describe('PuntosVenta — flip de modo', () => {
     montar([pvFixture({ modo: 'Web' })])
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
-    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.click(botonDeModo())
     await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
@@ -778,7 +786,7 @@ describe('PuntosVenta — flip de modo', () => {
     montar([pvFixture({ modo: 'Web' })])
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
-    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.click(botonDeModo())
     await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
 
     const guardar = screen.getByRole('button', { name: 'Guardar' })
@@ -803,7 +811,7 @@ describe('PuntosVenta — flip de modo', () => {
     montar([pvFixture({ modo: 'Web' })])
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
-    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.click(botonDeModo())
     await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
@@ -820,7 +828,7 @@ describe('PuntosVenta — flip de modo', () => {
     montar([pvFixture({ modo: 'Web' })])
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
-    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.click(botonDeModo())
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByLabelText('Modo')).not.toBeInTheDocument()
@@ -1621,7 +1629,7 @@ describe('PuntosVenta — formularios en modal', () => {
 
     async function abrirModo(usuario: ReturnType<typeof userEvent.setup>) {
       await montarYEsperar()
-      await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+      await usuario.click(botonDeModo())
 
       return screen.findByRole('dialog', { name: 'Modo de PV Centro' })
     }
@@ -1631,7 +1639,7 @@ describe('PuntosVenta — formularios en modal', () => {
       await montarYEsperar()
       expect(screen.queryByRole('dialog')).toBeNull()
 
-      await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+      await usuario.click(botonDeModo())
 
       const dialogo = await screen.findByRole('dialog', { name: 'Modo de PV Centro' })
       expect(within(dialogo).getByLabelText('Modo')).toHaveValue('Web')
@@ -1673,7 +1681,7 @@ describe('PuntosVenta — formularios en modal', () => {
 
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(apiPostMock).not.toHaveBeenCalled()
-      await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+      await usuario.click(botonDeModo())
       expect(await screen.findByLabelText('Modo')).toHaveValue('Web')
     })
 
@@ -1707,7 +1715,7 @@ describe('PuntosVenta — formularios en modal', () => {
 
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(apiPostMock).not.toHaveBeenCalled()
-      expect(screen.getByRole('button', { name: 'Modo' })).toHaveFocus()
+      expect(botonDeModo()).toHaveFocus()
     })
 
     it('tras guardar el foco cae en el botón de alta, porque la fila se reemplaza durante el refresco', async () => {
@@ -1721,5 +1729,262 @@ describe('PuntosVenta — formularios en modal', () => {
       await screen.findByText('Se cambió el modo de "PV Centro" a Escritorio.')
       expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toHaveFocus()
     })
+  })
+})
+
+// Filtros por columna y orden por encabezado (grillas, slice S5b2).
+
+const pvNorte = pvFixture({ id: 9, idEmpresa: 20, nombre: 'Zona Norte', domicilio: 'Calle 1500', modo: 'Escritorio' })
+const pvAnexoEste = pvFixture({
+  id: 100,
+  idTenant: 3,
+  idEmpresa: 30,
+  nombre: 'Anexo',
+  domicilio: null,
+  modo: 'Web',
+  nombreTenant: 'Almacén Este',
+  razonSocialEmpresa: 'Beta SA',
+})
+const pvMedio = pvFixture({ id: 20, idEmpresa: 21, nombre: 'Medio', domicilio: 'Calle 900', modo: 'Web', razonSocialEmpresa: 'Alpha SA' })
+/** El orden del servidor (Zona Norte, Anexo, Medio) no coincide con ningún orden por columna. */
+const ENTREGADOS = [pvNorte, pvAnexoEste, pvMedio]
+
+function columnaVisible(indice: number) {
+  return screen
+    .getAllByRole('row')
+    .slice(2)
+    .map((f) => within(f).getAllByRole('cell')[indice]?.textContent ?? '')
+}
+
+async function esperarFilas() {
+  await waitFor(() => expect(screen.getByText('Zona Norte')).toBeInTheDocument())
+}
+
+describe('PuntosVenta — filtros por columna y orden', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  /** Mutación registrada: pasar `filtrados` sin ordenar a la tabla deja el orden del servidor y rompe las aserciones. */
+  it('ordena por cada encabezado: el id como número, "Calle 900" antes que "Calle 1500" y los vacíos al final', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    expect(columnaVisible(3)).toEqual(['Zona Norte', 'Anexo', 'Medio'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(3)).toEqual(['Anexo', 'Medio', 'Zona Norte'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(3)).toEqual(['Zona Norte', 'Medio', 'Anexo'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(3)).toEqual(['Zona Norte', 'Anexo', 'Medio'])
+
+    // Como texto "100" < "20" < "9"; como número, 9 < 20 < 100.
+    await usuario.click(screen.getByRole('button', { name: 'ID' }))
+    expect(columnaVisible(0)).toEqual(['0009', '0020', '0100'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Domicilio' }))
+    expect(columnaVisible(4)).toEqual(['Calle 900', 'Calle 1500', '—'])
+    await usuario.click(screen.getByRole('button', { name: 'Domicilio' }))
+    expect(columnaVisible(4)).toEqual(['Calle 1500', 'Calle 900', '—'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Empresa' }))
+    expect(columnaVisible(2)).toEqual(['Alpha SA', 'Beta SA', 'Sur SRL'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Tenant' }))
+    expect(columnaVisible(1)).toEqual(['Almacén Este', 'Comercio Sur', 'Comercio Sur'])
+
+    // El primer botón "Modo" es el del encabezado; los siguientes son los de cada fila.
+    await usuario.click(screen.getAllByRole('button', { name: 'Modo' })[0])
+    expect(columnaVisible(5)).toEqual(['Escritorio', 'Web', 'Web'])
+  })
+
+  /** Mutación registrada: pasar `alcanzados` sin filtrar a `useOrdenamiento` deja todas las filas con un filtro puesto. */
+  it('filtra con un campo por columna de texto y un selector por modo, y combina los filtros con Y', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'MED')
+    expect(columnaVisible(3)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por nombre'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por tenant'), 'almacen')
+    expect(columnaVisible(3)).toEqual(['Anexo'])
+    await usuario.clear(screen.getByLabelText('Filtrar por tenant'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por empresa'), 'alpha')
+    expect(columnaVisible(3)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por empresa'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por domicilio'), 'calle 1500')
+    expect(columnaVisible(3)).toEqual(['Zona Norte'])
+    await usuario.clear(screen.getByLabelText('Filtrar por domicilio'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por id'), '0020')
+    expect(columnaVisible(3)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por id'))
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por modo'), 'Web')
+    expect(columnaVisible(3)).toEqual(['Anexo', 'Medio'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por modo'), 'Escritorio')
+    expect(columnaVisible(3)).toEqual(['Zona Norte'])
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por modo'), 'Web')
+    await usuario.type(screen.getByLabelText('Filtrar por empresa'), 'beta')
+    expect(columnaVisible(3)).toEqual(['Anexo'])
+  })
+
+  it('"Limpiar filtros" restaura las filas; sin coincidencias el estado vacío lo dice', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'no existe')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay puntos de venta cargados.')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(columnaVisible(3)).toEqual(['Zona Norte', 'Anexo', 'Medio'])
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+  })
+
+  it('sin puntos de venta dice que no hay, no que los filtros no coinciden', async () => {
+    montar([])
+
+    expect(await screen.findByText('No hay puntos de venta cargados.')).toBeInTheDocument()
+  })
+
+  it('el filtro por columna se combina con los selectores de tenant y de empresa', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    await usuario.selectOptions(screen.getByLabelText('Tenant'), '2')
+    expect(columnaVisible(3)).toEqual(['Zona Norte', 'Medio'])
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zona')
+    expect(columnaVisible(3)).toEqual(['Zona Norte'])
+    await usuario.selectOptions(screen.getByLabelText('Empresa'), '21')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+  })
+
+  it('la fila de filtros tiene una celda por encabezado para plataforma', async () => {
+    montar(ENTREGADOS)
+    await esperarFilas()
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(7)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(7)
+  })
+
+  it('un admin de tenant tiene los filtros por columna, sin el de tenant, y su estado vacío usa el span correcto', async () => {
+    const usuario = userEvent.setup()
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([pvNorte, pvMedio])
+    await esperarFilas()
+
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(6)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(6)
+    expect(screen.queryByLabelText('Filtrar por tenant')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(2)).toEqual(['Medio', 'Zona Norte'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por modo'), 'Escritorio')
+    expect(columnaVisible(2)).toEqual(['Zona Norte'])
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zzz')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toHaveAttribute('colspan', '6')
+  })
+
+  it('un punto de venta huérfano se rotula "—" y en el orden por empresa va al final', async () => {
+    const usuario = userEvent.setup()
+    montar([pvFixture({ ...pvNorte, nombreTenant: null, razonSocialEmpresa: null }), pvAnexoEste, pvMedio])
+    await esperarFilas()
+
+    await usuario.click(screen.getByRole('button', { name: 'Empresa' }))
+    expect(columnaVisible(2)).toEqual(['Alpha SA', 'Beta SA', ETIQUETA_SIN_DUENIO])
+    await usuario.click(screen.getByRole('button', { name: 'Empresa' }))
+    expect(columnaVisible(2)).toEqual(['Beta SA', 'Alpha SA', ETIQUETA_SIN_DUENIO])
+  })
+
+  /** Mutación registrada: volver a `cargando ? <Cargando /> : <table>` desmonta la fila de filtros durante el refresco. */
+  it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    let resolverRefresco!: (items: PuntoVentaListado[]) => void
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(ENTREGADOS)
+
+      return new Promise<PuntoVentaListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    apiPutMock.mockResolvedValue(pvNorte)
+    render(<PuntosVenta />)
+    await esperarFilas()
+
+    const filtro = screen.getByLabelText('Filtrar por nombre')
+    await usuario.type(filtro, 'zon')
+    await usuario.click(within(screen.getByRole('row', { name: /Zona Norte/ })).getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: /Guardar/ }))
+
+    await waitFor(() => expect(screen.getByText('Se actualizó "Zona Norte".')).toBeInTheDocument())
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro.isConnected).toBe(true)
+    expect(filtro).toHaveValue('zon')
+    expect(filtro).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por modo')).toBeDisabled()
+
+    await act(async () => {
+      resolverRefresco(ENTREGADOS)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro).toBeEnabled()
+    expect(columnaVisible(3)).toEqual(['Zona Norte'])
+  })
+
+  it('los filtros quedan inertes mientras el guardado está en vuelo y con la puerta de baja abierta', async () => {
+    const usuario = userEvent.setup()
+    let resolverPut!: (pv: PuntoVentaListado) => void
+    apiGetMock.mockResolvedValue(ENTREGADOS)
+    apiPutMock.mockImplementation(
+      () =>
+        new Promise<PuntoVentaListado>((resolver) => {
+          resolverPut = resolver
+        }),
+    )
+    render(<PuntosVenta />)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zon')
+    await usuario.click(within(screen.getByRole('row', { name: /Zona Norte/ })).getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: /Guardar/ }))
+
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por modo')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+
+    await act(async () => {
+      resolverPut(pvNorte)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por domicilio')).toBeDisabled()
   })
 })
