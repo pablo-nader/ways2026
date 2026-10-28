@@ -122,6 +122,7 @@ public interface IWaysDbContext
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).
     DbSet<Pago> Pagos { get; }
     DbSet<ItemPago> ItemsPago { get; }
+    DbSet<AplicacionPago> AplicacionesPago { get; }
 
     // stage-8-compras-transferencias-inventario, Slice 2: ServicioDeCompras es el primer
     // consumidor de Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración

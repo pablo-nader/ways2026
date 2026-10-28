@@ -445,6 +445,79 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > El desglose lista una línea por ítem, con `idGasto` por pago e `idItem` por ítem. El historial de administración
 > (`/api/gastos/administracion` y `/{id}`) agrega `lineas` con la misma forma que `PagoListado`.
 
+### Aplicaciones de pagos a compras: `aplicaciones_pago` (E3-S1a)
+
+Un pago se aplica por partes a una o más compras, y una compra recibe partes de varios pagos; la parte de un pago
+que no está aplicada es un crédito a favor del proveedor. La hija `aplicaciones_pago` lleva una fila por par
+pago-compra. S1a trajo el esquema y el backfill; desde S1b los escritores de vínculos la escriben (ver «Doble escritura
+y liberación») y los lectores siguen derivando lo pagado de `pagos.id_comprobante_compra`.
+
+```sql
+aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únicamente]
+    id_aplicacion_pago, id_tenant,
+    id_pago integer NOT NULL,                -- FK compuesta (id_pago, id_tenant) → pagos (ak_pagos_id_pago_id_tenant), RESTRICT
+    id_comprobante_compra integer NOT NULL,  -- FK compuesta (id_comprobante_compra, id_tenant) → comprobantes_compra, RESTRICT
+    importe numeric(14,2) NOT NULL,
+    origen origen_aplicacion_pago NOT NULL,  -- enum: pago_de_compra | aplicacion | migracion
+    id_empleado integer NOT NULL,            -- FK simple a usuarios (quién aplicó), igual que pagos.id_empleado
+    fecha timestamptz NOT NULL,
+    created_at, updated_at, deleted_at,
+
+    CONSTRAINT ck_aplicaciones_pago_importe_positivo CHECK (importe > 0)
+);
+-- único parcial: ux_aplicaciones_pago_pago_compra (id_pago, id_comprobante_compra, id_tenant) WHERE deleted_at IS NULL
+-- índices: ix_aplicaciones_pago_tenant, ix_aplicaciones_pago_pago (id_pago, id_tenant),
+--          ix_aplicaciones_pago_compra (id_comprobante_compra, id_tenant), ix_aplicaciones_pago_empleado
+```
+
+> **Invariantes** (constraint triggers `DEFERRABLE INITIALLY DEFERRED`; fallan al comitear como `23514` con el nombre
+> del trigger como constraint, que `ManejadorDeErrores` traduce a `409`). Solo cuentan las aplicaciones vivas:
+>
+> - `tg_aplicaciones_pago_no_excede_pago` (`409 aplicacion_excede_pago`): la suma de las aplicaciones de un pago no
+>   supera `pagos.importe`, y un pago dado de baja no tiene aplicaciones vivas. Dispara en insert/update/delete de
+>   `aplicaciones_pago` y en el update de `importe`/`deleted_at` de `pagos` (`tg_pagos_cubren_aplicaciones`).
+> - `tg_aplicaciones_pago_no_excede_compra` (`409 aplicacion_excede_compra`): la suma de las aplicaciones de una compra
+>   no supera `comprobantes_compra.total`, la compra está `confirmada`, y cada pago aplicado es de categoría `proveedor`,
+>   del proveedor de la compra y de su empresa (`puntos_venta.id_empresa` de la compra = `pagos.id_empresa`). Dispara
+>   además en el update de `total`/`estado` de la compra (`tg_comprobantes_compra_admiten_aplicaciones`) y en el de
+>   `id_proveedor`/`categoria`/`id_empresa` del pago (`tg_pagos_coherentes_con_aplicaciones`).
+> - El `23505` de `ux_aplicaciones_pago_pago_compra` sale como `409 aplicacion_duplicada` y el `23514` de la CHECK como
+>   `400 aplicacion_importe_invalido`.
+>
+> Los triggers leen el estado de la transacción que comitea: no serializan dos transacciones concurrentes. Los escritores
+> de S1b tienen que tomar los locks de la compra y del pago antes de aplicar; el trigger es solo el backstop.
+>
+> **Backfill** (migración `AplicacionesDePago`, bajo `SET LOCAL app.acceso = 'plataforma'`). Para los pagos vivos de
+> categoría `proveedor` con `id_comprobante_compra`, a una compra `confirmada` del mismo proveedor y la misma empresa:
+> por compra, en orden `(pagos.fecha, id_pago)`, cada pago aplica `greatest(0, least(importe, total - suma de los importes
+> anteriores))`; las filas con cero no se crean, el `origen` es `migracion`, y `fecha` e `id_empleado` son los del pago.
+> Lo que excede el total de la compra, los pagos ligados a compras anuladas y los pagos que no cumplen las condiciones
+> de arriba quedan sin aplicar (crédito). Es idempotente y los triggers se crean después.
+>
+> **Doble escritura y liberación (E3-S1b).** Los lectores siguen derivando lo pagado de `pagos.id_comprobante_compra`
+> hasta S2, así que cada escritor que fija ese vínculo escribe además la aplicación, y la anulación y la baja la liberan:
+>
+> - Alta del POS, alta administrativa y pagar compra (origen `pago_de_compra`), y vincular (origen `aplicacion`): el
+>   `importe` es `min(pagos.importe, comprobantes_compra.total - suma de las aplicaciones vivas de la compra)`, leído bajo
+>   el lock `FOR UPDATE` de la compra (antes `FOR SHARE` en el alta y en vincular). Si el tope es 0 no se escribe nada:
+>   el vínculo queda como siempre y el excedente del pago queda sin aplicar.
+> - Un pago no elegible para el trigger de la compra (otro proveedor, otra empresa o no `proveedor`) conserva el vínculo
+>   heredado sin aplicación; hoy solo ocurre en el alta de un pago de otra empresa ligado a una compra.
+> - Orden de locks de los escritores de pagos: turno → compra `FOR UPDATE` → pago → proveedor → tesorería.
+> - La anulación de la compra da de baja (`deleted_at`) todas sus aplicaciones vivas en la misma transacción, bajo el
+>   header exclusivo; la baja del pago hace lo mismo con las suyas, bajo el lock del pago. Soltar no necesita lock de las
+>   compras: los triggers solo exigen que lo aplicado no supere al total, y soltar nunca lo sube. El pago y sus
+>   movimientos no se tocan: lo liberado queda como crédito.
+> - Editar un pago ligado a una compra confirmada no se restringe: reajusta su aplicación al vínculo a
+>   `min(nuevo importe, comprobantes_compra.total - suma de las aplicaciones vivas de los otros pagos de la compra)`.
+>   Si eso da 0 la aplicación se da de baja; si no había aplicación y ahora hay saldo (y el pago es elegible) se crea, con
+>   origen `pago_de_compra`. La edición toma la compra `FOR UPDATE` antes que el pago (el vínculo se pre-lee sin lock y se
+>   revalida bajo el lock del pago: si cambió, `409 pago_cambio_concurrente`, sin reintento). Si la compra está anulada la
+>   edición sigue siendo válida y no toca aplicaciones. Cambiar el proveedor o la categoría de un pago ligado sigue siendo
+>   `proveedor_no_coincide_con_la_compra` / `gasto_de_compra_debe_ser_de_proveedor`; la empresa no es editable.
+> - No hay códigos de auditoría nuevos: el alta, la edición y la baja del pago ya se auditan y la aplicación es un efecto
+>   interno de esas operaciones.
+
 ### Órdenes de compra (Etapa 16)
 
 La intención colocada sobre un proveedor ANTES de que exista un `comprobantes_compra`

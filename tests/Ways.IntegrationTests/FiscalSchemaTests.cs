@@ -923,6 +923,7 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
                 // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
                 npgsql.MapEnum<Ways.Domain.Pagos.OrigenFondosPago>("origen_fondos_pago");
+                npgsql.MapEnum<Ways.Domain.Pagos.OrigenAplicacionPago>("origen_aplicacion_pago");
             })
             .Options;
 

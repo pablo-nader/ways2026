@@ -478,7 +478,7 @@ public class ServicioDeCompras(
     /// confirmada o anulada ya movió stock y cuenta corriente, y su historia no se borra.
     ///
     /// <para>Ninguna otra tabla puede referenciar un borrador: los pagos se ligan únicamente a una compra
-    /// confirmada (<c>ServicioDePagos.ExigirCompraLigableAsync</c>, bajo <c>FOR SHARE</c> sobre este mismo
+    /// confirmada (<c>ServicioDePagos.ExigirCompraLigableAsync</c>, bajo <c>FOR UPDATE</c> sobre este mismo
     /// encabezado), y los movimientos de stock y de cuenta corriente nacen en <c>EjecutarConfirmarAsync</c>,
     /// después de pasar el estado a confirmada, que nunca vuelve a borrador. Por eso no hay un rechazo
     /// previo por referencias y la baja no necesita un código propio para la FK.</para></summary>
@@ -905,6 +905,12 @@ public class ServicioDeCompras(
 
         var idPuntoVenta = encabezadoAnulado.Value.IdPuntoVenta;
 
+        // 1.4. E3-S1b: las aplicaciones vivas de los pagos a esta compra se liberan en la misma transacción. El
+        // trigger diferido de aplicaciones_pago exige que una compra no confirmada no tenga ninguna viva y se evalúa
+        // en el commit. El header exclusivo de arriba ya serializa contra cualquier escritor de aplicaciones de la
+        // compra. Los pagos y sus movimientos no se tocan: lo liberado queda como crédito a favor.
+        await LiberarAplicacionesDeLaCompraAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
+
         // 1.5. Auditoría (stage-14-auditoria-trazabilidad, Slice 3; spec auditoria-de-operaciones;
         // design call site 8) — MISMA transacción cruda; id_punto_venta sale del RETURNING que
         // MarcarAnuladaAsync YA devuelve (sin cambios en ese método), nunca de una lectura extra.
@@ -1023,6 +1029,21 @@ public class ServicioDeCompras(
 
         var detalle = await ObtenerAsync(id, ct);
         return new ResultadoAnulacion(detalle, pagosLigados);
+    }
+
+    private static async Task LiberarAplicacionesDeLaCompraAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idCompra, int idTenant, DateTimeOffset momento,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE aplicaciones_pago SET deleted_at = $1, updated_at = $1 " +
+            "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL";
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     // ---- aplicar precio sugerido (design decisión 8) -----------------------------------------------

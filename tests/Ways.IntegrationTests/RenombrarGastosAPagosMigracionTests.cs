@@ -418,6 +418,7 @@ public class RenombrarGastosAPagosMigracionTests(WaysApiFixture fixture) : IClas
                     npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
                     npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
+                    npgsql.MapEnum<OrigenAplicacionPago>("origen_aplicacion_pago");
                 })
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
                 .Options;
