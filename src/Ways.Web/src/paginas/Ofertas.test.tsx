@@ -985,6 +985,8 @@ describe('Ofertas — filtros por columna y orden', () => {
     const usuario = userEvent.setup()
     render(<Ofertas />)
     await screen.findByText('Zeta oferta')
+    // El alcance se rotula con el catálogo: se espera al dato (el grupo) y no a la fila, que se rinde antes.
+    await screen.findByText('Grupo: Bebidas')
 
     expect(columnaVisible(0)).toEqual(['Medio oferta', 'Zeta oferta', 'Alfa oferta'])
 
@@ -1146,6 +1148,39 @@ describe('Ofertas — filtros por columna y orden', () => {
     await waitFor(() => expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled())
     expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
     expect(columnaVisible(0)).toEqual(['Zeta oferta'])
+  })
+
+  /** Mutación registrada: quitar `limpiarFiltros()` tras `crear` deja el filtro por nombre puesto y la oferta nueva oculta; falla. */
+  it('tras crear una oferta se limpian los filtros por columna para que la fila nueva se vea', async () => {
+    const nueva = ofertaFixture({ id: 9, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 })
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const respuestaBase = apiGetMock.getMockImplementation()!
+    let cargasDeOfertas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/ofertas') return respuestaBase(ruta)
+      cargasDeOfertas += 1
+
+      return Promise.resolve(cargasDeOfertas === 1 ? ENTREGADAS : [...ENTREGADAS, nueva])
+    })
+    apiPostMock.mockResolvedValue(nueva)
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    expect(screen.queryByText('Alfa oferta')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await usuario.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await usuario.click(screen.getByRole('radio', { name: 'Grupo' }))
+    await screen.findByRole('option', { name: 'Bebidas' })
+    await usuario.selectOptions(screen.getByLabelText('Grupo objetivo'), 'Bebidas')
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta nueva" creada.')
+    await waitFor(() => expect(columnaVisible(0)).toEqual(['Medio oferta', 'Zeta oferta', 'Alfa oferta', 'Oferta nueva']))
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
   })
 
   it('los filtros quedan inertes mientras la baja está en vuelo y con la puerta de baja abierta', async () => {

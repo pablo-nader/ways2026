@@ -1189,7 +1189,43 @@ describe('Tenants — filtros por columna y orden', () => {
     expect(columnaVisible(1)).toEqual(['Zeta'])
   })
 
-  it('los filtros quedan inertes mientras la baja está en vuelo y con la puerta de suspensión abierta', async () => {
+  /** Mutación registrada: quitar `limpiarFiltros()` de `onCreado` deja el filtro por nombre puesto y el tenant nuevo oculto; falla. */
+  it('tras aprovisionar un tenant se limpian los filtros por columna para que la fila nueva se vea', async () => {
+    const usuario = userEvent.setup()
+    const nuevo: TenantListado = { ...tenantMedio, id: 300, nombre: 'Kiosco Oeste' }
+    let lecturas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/plataforma/tenants') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      lecturas += 1
+
+      return Promise.resolve(lecturas === 1 ? ENTREGADOS : [...ENTREGADOS, nuevo])
+    })
+    apiPostMock.mockResolvedValue({ idTenant: 300, idEmpresa: 1, idPuntoVenta: 2, idUsuarioAdmin: 3, passwordTemporal: 'Temp-1234' })
+    render(
+      <MemoryRouter>
+        <Tenants />
+      </MemoryRouter>,
+    )
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    expect(screen.queryByText('Alfa')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
+    await usuario.type(await screen.findByLabelText('Nombre del tenant'), 'Kiosco Oeste')
+    await usuario.type(screen.getByLabelText('Razón social de la empresa'), 'Kiosco Oeste SRL')
+    await usuario.type(screen.getByLabelText('Nombre del punto de venta'), 'Caja 1')
+    await usuario.type(screen.getByLabelText('Mail del admin del tenant'), 'admin@kiosco.com')
+    await usuario.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    await screen.findByText('Temp-1234')
+    await usuario.click(screen.getByRole('button', { name: 'Cerrar' }))
+    await waitFor(() => expect(screen.getByText('Kiosco Oeste')).toBeInTheDocument())
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio', 'Kiosco Oeste'])
+  })
+
+  it('los filtros quedan inertes con la puerta de suspensión abierta y vuelven a habilitarse al cancelar', async () => {
     const usuario = userEvent.setup()
     montar(ENTREGADOS)
     await esperarFilas()

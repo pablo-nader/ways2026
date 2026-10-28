@@ -178,8 +178,8 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
    * Cláusula bajo prueba: la ventana inerte cubre TODA la escritura y su refresco
    * (`react-async-state` reglas 5 y 9), no solo el botón de Guardar. Mientras el PUT está en
    * vuelo, abrir OTRA fila supersedería una escritura a medio terminar, así que "Editar" también
-   * tiene que estar inerte; y mientras el refresco posterior está en vuelo no hay tabla en
-   * pantalla, así que no queda ninguna acción alcanzable.
+   * tiene que estar inerte; y mientras el refresco posterior está en vuelo las filas se
+   * reemplazan por "Cargando…", así que no queda ninguna acción de fila alcanzable.
    */
   it('durante el guardado y su refresco no queda ninguna acción alcanzable', async () => {
     const usuario = userEvent.setup()
@@ -222,7 +222,7 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
       await Promise.resolve()
     })
 
-    // Refresco en vuelo: el aviso de éxito ya está, la tabla no, y el modal sigue abierto e inerte.
+    // Refresco en vuelo: el aviso de éxito ya está, las filas no (solo "Cargando…"), y el modal sigue abierto e inerte.
     await waitFor(() => expect(screen.getByText('Se actualizó "Sur SRL".')).toBeInTheDocument())
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
     expect(screen.queryAllByRole('button', { name: 'Editar' })).toHaveLength(0)
@@ -984,7 +984,19 @@ describe('Empresas — filtros por columna y orden', () => {
     expect(columnaVisible(1)).toEqual(['Comercio Sur', 'Almacén Este', ETIQUETA_SIN_DUENIO])
   })
 
-  /** Mutación registrada: volver a `cargada ? … : <Cargando />` por `cargando` desmonta la fila de filtros durante el refresco. */
+  /** Mutación registrada: devolver la marca "—" como valor de filtro del tenant hace que escribir "—" encuentre al huérfano. */
+  it('escribir "—" en el filtro de tenant no encuentra a la empresa huérfana: para filtrar cuenta como vacío', async () => {
+    const usuario = userEvent.setup()
+    montar([{ ...zeta, nombreTenant: null }, beta, alfa])
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por tenant'), ETIQUETA_SIN_DUENIO)
+
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('Zeta SA')).not.toBeInTheDocument()
+  })
+
+  /** Mutación registrada: reemplazar `!cargada ?` por `cargando ?` desmonta la tabla (y su fila de filtros) durante el refresco; el test falla. */
   it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
     const usuario = userEvent.setup()
     let resolverRefresco!: (items: EmpresaListado[]) => void

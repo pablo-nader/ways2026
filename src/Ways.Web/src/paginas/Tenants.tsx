@@ -140,8 +140,8 @@ export function Tenants() {
    * escribe antes del primer `await` y se apaga en el mismo `finally` ungated.
    */
   const ocupadoRef = useRef(false)
-  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (la tabla se reemplaza por "Cargando…"
-   * durante el refresco): el botón de alta, que es estable. */
+  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): el botón de alta, que es estable. */
   const nuevoRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
@@ -402,7 +402,11 @@ export function Tenants() {
         {creando && (
           <ModalDeNuevoTenant
             focoDeReserva={nuevoRef}
-            onCreado={() => void cargar(++generacion.current)}
+            onCreado={() => {
+              // El tenant nuevo puede caer fuera de los filtros vigentes: se limpian para que la fila creada se vea.
+              limpiarFiltros()
+              void cargar(++generacion.current)
+            }}
             onCancelar={() => setCreando(false)}
           />
         )}

@@ -993,6 +993,35 @@ describe('PuntosVenta — alta', () => {
     expect(screen.getByText('PV Centro')).toBeInTheDocument()
   })
 
+  /** Cláusula bajo prueba: `limpiarFiltros()` tras crear. Mutación registrada: quitarla deja el filtro por nombre puesto
+   * y la fila nueva oculta, y esta prueba falla. */
+  it('tras crear se limpian también los filtros por columna para que la fila nueva se vea', async () => {
+    const usuario = userEvent.setup()
+    const creado = pvFixture({ id: 200, nombre: 'PV Norte', modo: 'Web' })
+    apiPostMock.mockResolvedValue(creado)
+    let listados = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur, empresaEste])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      listados += 1
+
+      return Promise.resolve(listados === 1 ? [pvSurCentro, pvEste] : [pvSurCentro, pvEste, creado])
+    })
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Este')).toBeInTheDocument())
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'Centro')
+    expect(screen.queryByText('PV Este')).not.toBeInTheDocument()
+
+    await abrirAlta(usuario)
+    await completarAlta(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() => expect(screen.getByText('PV Norte')).toBeInTheDocument())
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+    expect(screen.getByText('PV Este')).toBeInTheDocument()
+  })
+
   it('con el modo sin elegir no llama a la API y lo dice', async () => {
     const usuario = userEvent.setup()
     montarConEmpresas()
@@ -1911,6 +1940,21 @@ describe('PuntosVenta — filtros por columna y orden', () => {
     expect(columnaVisible(2)).toEqual(['Alpha SA', 'Beta SA', ETIQUETA_SIN_DUENIO])
     await usuario.click(screen.getByRole('button', { name: 'Empresa' }))
     expect(columnaVisible(2)).toEqual(['Beta SA', 'Alpha SA', ETIQUETA_SIN_DUENIO])
+  })
+
+  /** Mutación registrada: devolver la marca "—" como valor de filtro de empresa o tenant hace que escribir "—" encuentre al huérfano. */
+  it('escribir "—" en los filtros de empresa y de tenant no encuentra al huérfano: para filtrar cuenta como vacío', async () => {
+    const usuario = userEvent.setup()
+    montar([pvFixture({ ...pvNorte, nombreTenant: null, razonSocialEmpresa: null }), pvAnexoEste, pvMedio])
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por empresa'), ETIQUETA_SIN_DUENIO)
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('Zona Norte')).not.toBeInTheDocument()
+    await usuario.clear(screen.getByLabelText('Filtrar por empresa'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por tenant'), ETIQUETA_SIN_DUENIO)
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
   })
 
   /** Mutación registrada: volver a `cargando ? <Cargando /> : <table>` desmonta la fila de filtros durante el refresco. */

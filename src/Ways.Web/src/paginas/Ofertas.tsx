@@ -319,6 +319,8 @@ export function Ofertas() {
     try {
       if (formulario.id === null) {
         await clienteDeOfertas.crear(aAltaOferta(formulario))
+        // La oferta nueva puede caer fuera de los filtros vigentes: se limpian para que la fila creada se vea.
+        limpiarFiltros()
         if (tokenEdicionRef.current === token) {
           setAviso(`Oferta "${formulario.nombre}" creada.`)
           setFormulario(null)

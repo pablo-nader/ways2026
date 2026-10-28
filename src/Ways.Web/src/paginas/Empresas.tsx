@@ -47,6 +47,12 @@ const textoDeId = (empresa: EmpresaListado) => String(empresa.id).padStart(4, '0
 const textoDeFantasia = (empresa: EmpresaListado) => empresa.nombreFantasia ?? '—'
 const textoDeCuit = (empresa: EmpresaListado) => empresa.cuit ?? '—'
 const nombreDeTenant = (empresa: EmpresaListado) => etiquetaDeTenant(empresa)
+/** Un dueño dado de baja se rotula "—" en la celda, pero para filtrar y ordenar cuenta como vacío. */
+const tenantParaFiltrarYOrdenar = (empresa: EmpresaListado) => {
+  const etiqueta = nombreDeTenant(empresa)
+
+  return etiqueta === ETIQUETA_SIN_DUENIO ? '' : etiqueta
+}
 
 const ORDENABLES_BASE: ColumnasOrdenables<EmpresaListado> = {
   id: { valor: (empresa) => empresa.id },
@@ -63,11 +69,11 @@ const FILTRABLES_BASE: ColumnasFiltrables<EmpresaListado> = {
 /** La columna de tenant solo existe para plataforma: sus definiciones son otro mapa estable, no una condición dentro del hook. */
 const ORDENABLES_PLATAFORMA: ColumnasOrdenables<EmpresaListado> = {
   ...ORDENABLES_BASE,
-  tenant: { valor: (empresa) => (nombreDeTenant(empresa) === ETIQUETA_SIN_DUENIO ? null : nombreDeTenant(empresa)) },
+  tenant: { valor: tenantParaFiltrarYOrdenar },
 }
 const FILTRABLES_PLATAFORMA: ColumnasFiltrables<EmpresaListado> = {
   ...FILTRABLES_BASE,
-  tenant: { etiqueta: 'Tenant', valor: nombreDeTenant },
+  tenant: { etiqueta: 'Tenant', valor: tenantParaFiltrarYOrdenar },
 }
 
 /** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
@@ -117,8 +123,8 @@ export function Empresas() {
    * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
    */
   const ocupadoRef = useRef(false)
-  /** Destino de foco al cerrar el modal cuando el "Editar" que lo abrió ya no existe (la tabla se
-   * reemplaza por "Cargando…" durante el refresco): esta pantalla no tiene botón de alta, así que
+  /** Destino de foco al cerrar el modal cuando el "Editar" que lo abrió ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): esta pantalla no tiene botón de alta, así que
    * el punto estable es la zona de avisos, donde queda el aviso de éxito. */
   const zonaDeAvisosRef = useRef<HTMLDivElement>(null)
 
@@ -385,13 +391,13 @@ export function Empresas() {
                 </thead>
                 <tbody>
                   {cargando && (
-                  <tr>
-                    <td colSpan={esPlataforma ? 6 : 5}>
-                      <Cargando />
-                    </td>
-                  </tr>
-                )}
-                {!cargando && visibles.map((e) => (
+                    <tr>
+                      <td colSpan={esPlataforma ? 6 : 5}>
+                        <Cargando />
+                      </td>
+                    </tr>
+                  )}
+                  {!cargando && visibles.map((e) => (
                     <tr key={e.id}>
                       <td>{textoDeId(e)}</td>
                       {esPlataforma && <td>{nombreDeTenant(e)}</td>}

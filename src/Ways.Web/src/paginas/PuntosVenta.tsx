@@ -52,8 +52,8 @@ const textoDeId = (puntoVenta: PuntoVentaListado) => String(puntoVenta.id).padSt
 const textoDeEmpresa = (puntoVenta: PuntoVentaListado) => puntoVenta.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO
 const textoDeDomicilio = (puntoVenta: PuntoVentaListado) => puntoVenta.domicilio ?? '—'
 const nombreDeTenant = (puntoVenta: PuntoVentaListado) => etiquetaDeTenant(puntoVenta)
-/** Un dueño dado de baja se rotula "—" en la celda, pero para ordenar cuenta como vacío. */
-const sinMarcaDeDuenio = (texto: string) => (texto === ETIQUETA_SIN_DUENIO ? null : texto)
+/** Un dueño dado de baja se rotula "—" en la celda, pero para filtrar y ordenar cuenta como vacío. */
+const sinMarcaDeDuenio = (texto: string) => (texto === ETIQUETA_SIN_DUENIO ? '' : texto)
 
 const ORDENABLES_BASE: ColumnasOrdenables<PuntoVentaListado> = {
   id: { valor: (puntoVenta) => puntoVenta.id },
@@ -64,7 +64,7 @@ const ORDENABLES_BASE: ColumnasOrdenables<PuntoVentaListado> = {
 }
 const FILTRABLES_BASE: ColumnasFiltrables<PuntoVentaListado> = {
   id: { etiqueta: 'ID', valor: textoDeId },
-  empresa: { etiqueta: 'Empresa', valor: textoDeEmpresa },
+  empresa: { etiqueta: 'Empresa', valor: (puntoVenta) => sinMarcaDeDuenio(textoDeEmpresa(puntoVenta)) },
   nombre: { etiqueta: 'Nombre', valor: (puntoVenta) => puntoVenta.nombre },
   domicilio: { etiqueta: 'Domicilio', valor: textoDeDomicilio },
   modo: { etiqueta: 'Modo', valor: (puntoVenta) => puntoVenta.modo, opciones: OPCIONES_DE_MODO },
@@ -76,7 +76,7 @@ const ORDENABLES_PLATAFORMA: ColumnasOrdenables<PuntoVentaListado> = {
 }
 const FILTRABLES_PLATAFORMA: ColumnasFiltrables<PuntoVentaListado> = {
   ...FILTRABLES_BASE,
-  tenant: { etiqueta: 'Tenant', valor: nombreDeTenant },
+  tenant: { etiqueta: 'Tenant', valor: (puntoVenta) => sinMarcaDeDuenio(nombreDeTenant(puntoVenta)) },
 }
 
 /** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
@@ -149,8 +149,8 @@ export function PuntosVenta() {
    * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
   const filtroTenantVigente = useRef(SIN_FILTRO)
-  /** Destino de foco al cerrar un modal de edición cuando su "Editar" o "Modo" ya no existe (la tabla se
-   * reemplaza por "Cargando…" durante el refresco): el botón de alta, que es estable. */
+  /** Destino de foco al cerrar un modal de edición cuando su "Editar" o "Modo" ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): el botón de alta, que es estable. */
   const nuevoRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
@@ -631,13 +631,13 @@ export function PuntosVenta() {
                 </thead>
                 <tbody>
                   {cargando && (
-                  <tr>
-                    <td colSpan={esPlataforma ? 7 : 6}>
-                      <Cargando />
-                    </td>
-                  </tr>
-                )}
-                {!cargando && visibles.map((p) => (
+                    <tr>
+                      <td colSpan={esPlataforma ? 7 : 6}>
+                        <Cargando />
+                      </td>
+                    </tr>
+                  )}
+                  {!cargando && visibles.map((p) => (
                     <tr key={p.id}>
                       <td>{textoDeId(p)}</td>
                       {esPlataforma && <td>{nombreDeTenant(p)}</td>}

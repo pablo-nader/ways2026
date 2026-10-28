@@ -93,8 +93,8 @@ export function Familias() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo": dos clics en el mismo tick pasan la guarda de estado. */
   const ocupadoRef = useRef(false)
-  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (la tabla se reemplaza por "Cargando…"
-   * durante el refresco): el botón de alta, que es estable. */
+  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): el botón de alta, que es estable. */
   const nuevaRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
