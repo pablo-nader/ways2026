@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -266,26 +266,59 @@ describe('Presupuesto — doble click en "Enviar" (react-async-state regla 9, ta
   })
 })
 
-describe('Presupuesto — doble click en "Anular"', () => {
-  it('dispara exactamente un POST', async () => {
-    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(detalleFixture()) : undefined))
+describe('Presupuesto — Anular pide confirmación en un modal', () => {
+  const RUTA_ANULAR = '/presupuestos/30/anular'
 
+  function mockearDetalle() {
+    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(detalleFixture()) : undefined))
+  }
+
+  async function abrirConfirmacion() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Anular' }))
+    return screen.findByRole('alertdialog', { name: 'Confirmar anulación' })
+  }
+
+  it('abre un diálogo que nombra el presupuesto y no llama a la API hasta confirmar', async () => {
+    mockearDetalle()
+    renderPantalla()
+
+    const dialogo = await abrirConfirmacion()
+
+    expect(within(dialogo).getByText(/¿Anular el presupuesto 0009-00000012\?/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('Cancelar cierra el diálogo y no llama a la API', async () => {
+    mockearDetalle()
+    renderPantalla()
+
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('doble click en confirmar dispara exactamente un POST y deja la pantalla inerte mientras está en vuelo', async () => {
+    mockearDetalle()
     let resolverAnular: (v: PresupuestoDetalle) => void = () => {}
     const anularPendiente = new Promise<PresupuestoDetalle>((resolve) => {
       resolverAnular = resolve
     })
-    apiPostMock.mockImplementation((ruta: string) => (ruta === '/presupuestos/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+    apiPostMock.mockImplementation((ruta: string) => (ruta === RUTA_ANULAR ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
 
     renderPantalla()
-    const boton = await screen.findByRole('button', { name: 'Anular' })
+    const dialogo = await abrirConfirmacion()
+    const confirmar = within(dialogo).getByRole('button', { name: 'Confirmar anulación' })
 
     act(() => {
-      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
 
-    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/presupuestos/30/anular')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_ANULAR)).toHaveLength(1)
+    expect(within(dialogo).getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Convertir en venta' })).toBeDisabled()
 
     await act(async () => {
       resolverAnular(detalleFixture({ estado: 'Anulado', convertible: false }))
@@ -293,29 +326,34 @@ describe('Presupuesto — doble click en "Anular"', () => {
     })
   })
 
-  it('mientras "Anular" está en vuelo, "Convertir en venta" también queda deshabilitado (misma ventana de ocupado, judgment-day slice-7 ronda 2)', async () => {
-    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(detalleFixture()) : undefined))
-
-    let resolverAnular: (v: PresupuestoDetalle) => void = () => {}
-    const anularPendiente = new Promise<PresupuestoDetalle>((resolve) => {
-      resolverAnular = resolve
-    })
-    apiPostMock.mockImplementation((ruta: string) => (ruta === '/presupuestos/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+  it('un rechazo muestra el motivo dentro del diálogo, que sigue abierto', async () => {
+    mockearDetalle()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'presupuesto_convertido', 'El presupuesto ya fue convertido.'))
 
     renderPantalla()
-    const botonAnular = await screen.findByRole('button', { name: 'Anular' })
-    const botonConvertir = screen.getByRole('button', { name: 'Convertir en venta' })
-    expect(botonConvertir).not.toBeDisabled()
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
 
-    await userEvent.click(botonAnular)
+    expect(await within(dialogo).findByText('El presupuesto ya fue convertido.')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
 
-    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
-    expect(botonConvertir).toBeDisabled()
-
-    await act(async () => {
-      resolverAnular(detalleFixture({ estado: 'Anulado', convertible: false }))
-      await anularPendiente
+  it('al salir bien cierra el diálogo, avisa y relee el detalle', async () => {
+    let anulado = false
+    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(anulado ? detalleFixture({ estado: 'Anulado', convertible: false }) : detalleFixture()) : undefined))
+    apiPostMock.mockImplementation(async () => {
+      anulado = true
+      return detalleFixture({ estado: 'Anulado', convertible: false })
     })
+
+    renderPantalla()
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
+
+    expect(await screen.findByText('Presupuesto anulado.')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(await screen.findByText('Anulado')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument()
   })
 })
 
