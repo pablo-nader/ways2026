@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
 using Ways.Application.Precios;
+using Ways.Domain.Articulos;
 using Ways.Domain.Common;
+using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
@@ -45,7 +47,9 @@ public class ServicioDeGrillaDeArticulos(
         bool? activo = null,
         int pagina = 1,
         int tamanio = 25,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? orden = null,
+        string? direccion = null)
     {
         if (idProveedor is not null && sinProveedor)
         {
@@ -53,16 +57,20 @@ public class ServicioDeGrillaDeArticulos(
                 "filtro_proveedor_ambiguo", "No se puede combinar idProveedor con sinProveedor.", 400);
         }
 
+        var ordenPedido = OrdenDeGrillaDeArticulos.Interpretar(orden, direccion, PuedeVerCostos);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, ServicioDeArticulos.TamanioMaximoDePagina);
 
         var listaDefault = await BuscarListaDefaultAsync(ct);
-        var query = ConstruirQuery(codigo, nombre, idProveedor, sinProveedor, activo);
+        var query = ConstruirQuery(codigo, nombre, idProveedor, sinProveedor, activo, ordenPedido);
 
         var hayFiltroDePrecio = precioDesde is not null || precioHasta is not null;
+        var ordenaPorPrecio = ordenPedido is { Columna: ColumnaDeOrdenDeGrilla.Precio };
 
-        return hayFiltroDePrecio
-            ? await ListarConFiltroDePrecioAsync(query, listaDefault, precioDesde, precioHasta, pagina, tamanio, ct)
+        return hayFiltroDePrecio || ordenaPorPrecio
+            ? await ListarEnMemoriaAsync(
+                query, listaDefault, precioDesde, precioHasta, hayFiltroDePrecio, ordenPedido, pagina, tamanio, ct)
             : await ListarSinFiltroDePrecioAsync(query, listaDefault, pagina, tamanio, ct);
     }
 
@@ -99,20 +107,30 @@ public class ServicioDeGrillaDeArticulos(
         return new PaginaDeArticulosGrilla(items, total, pagina, tamanio, listaDefault?.Nombre);
     }
 
-    private async Task<PaginaDeArticulosGrilla> ListarConFiltroDePrecioAsync(
+    /// <summary>Camino en memoria: el precio no es expresable en SQL, así que tanto filtrar como
+    /// ORDENAR por precio exigen resolverlo para todos los candidatos. El orden por precio se aplica
+    /// acá, antes de paginar; cualquier otra columna ya viene ordenada desde SQL y el filtro
+    /// (<c>Where</c>) conserva esa secuencia.</summary>
+    private async Task<PaginaDeArticulosGrilla> ListarEnMemoriaAsync(
         IQueryable<FilaCandidata> query, ListaDefault? listaDefault, decimal? precioDesde, decimal? precioHasta,
-        int pagina, int tamanio, CancellationToken ct)
+        bool hayFiltroDePrecio, OrdenDeGrillaDeArticulos? orden, int pagina, int tamanio, CancellationToken ct)
     {
         var totalCandidatos = await query.CountAsync(ct);
         var tope = opciones.Value.TopeDeCandidatosPorFiltroDePrecio;
 
         if (totalCandidatos > tope)
         {
-            throw new ErrorDominio(
-                "filtro_precio_excede_tope",
-                $"El filtro de precio no puede evaluar más de {tope} artículos candidatos; "
-                    + "refiná codigo/nombre/idProveedor/sinProveedor/activo antes de acotar por precio.",
-                400);
+            throw hayFiltroDePrecio
+                ? new ErrorDominio(
+                    "filtro_precio_excede_tope",
+                    $"El filtro de precio no puede evaluar más de {tope} artículos candidatos; "
+                        + "refiná codigo/nombre/idProveedor/sinProveedor/activo antes de acotar por precio.",
+                    400)
+                : new ErrorDominio(
+                    "orden_precio_excede_tope",
+                    $"El orden por precio no puede evaluar más de {tope} artículos; "
+                        + "refiná codigo/nombre/idProveedor/sinProveedor/activo antes de ordenar por precio.",
+                    400);
         }
 
         var candidatos = await query.ToListAsync(ct);
@@ -122,6 +140,16 @@ public class ServicioDeGrillaDeArticulos(
             .Select(c => (Candidato: c, Precio: PrecioDe(c.Id, precios, listaDefault)))
             .Where(x => CumpleFiltroDePrecio(x.Precio, precioDesde, precioHasta))
             .ToList();
+
+        if (orden is { Columna: ColumnaDeOrdenDeGrilla.Precio } porPrecio)
+        {
+            var sinPrecioAlFinal = filtrados.OrderBy(x => x.Precio is null);
+            filtrados = (porPrecio.Descendente
+                    ? sinPrecioAlFinal.ThenByDescending(x => x.Precio)
+                    : sinPrecioAlFinal.ThenBy(x => x.Precio))
+                .ThenBy(x => x.Candidato.Id)
+                .ToList();
+        }
 
         var items = filtrados
             .Skip((pagina - 1) * tamanio)
@@ -197,7 +225,8 @@ public class ServicioDeGrillaDeArticulos(
     /// estable (Nombre, luego Id) aplicado acá para que ambos caminos de <see cref="ListarAsync"/>
     /// paginen sobre la misma secuencia.</summary>
     private IQueryable<FilaCandidata> ConstruirQuery(
-        string? codigo, string? nombre, int? idProveedor, bool sinProveedor, bool? activo)
+        string? codigo, string? nombre, int? idProveedor, bool sinProveedor, bool? activo,
+        OrdenDeGrillaDeArticulos? orden)
     {
         var query = db.Articulos.AsQueryable();
 
@@ -232,23 +261,77 @@ public class ServicioDeGrillaDeArticulos(
             query = query.Where(a => a.Activo == activoValor);
         }
 
-        // El orden va DENTRO de la query de LINQ (orderby ... select), no encadenado DESPUÉS de
-        // proyectar a FilaCandidata: EF Core no logra traducir un `.OrderBy(f => f.Nombre)`
-        // aplicado sobre un `IQueryable<FilaCandidata>` ya proyectado (el record positional
-        // termina adentro del key selector entero, "InvalidOperationException: could not be
-        // translated") — ordenar sobre las columnas crudas de `a`/`proveedor` ANTES del `select`
-        // es la forma que EF sí traduce a SQL.
-        return
+        // El orden va ANTES de proyectar a FilaCandidata: EF Core no logra traducir un
+        // `.OrderBy(f => f.Nombre)` aplicado sobre un `IQueryable<FilaCandidata>` ya proyectado (el
+        // record positional termina adentro del key selector entero, "InvalidOperationException:
+        // could not be translated"). Se ordena sobre `Unido` (artículo + proveedor visible), una
+        // clase con inicializador de miembros que EF sí traduce, y recién después se proyecta.
+        var unido =
             from a in query
             join p in db.Proveedores on a.IdProveedorHabitual equals p.Id into proveedores
             from proveedor in proveedores.DefaultIfEmpty()
-            orderby a.Nombre, a.Id
-            select new FilaCandidata(
-                a.Id, a.CodigoInterno, a.Nombre, proveedor != null ? a.IdProveedorHabitual : null,
-                proveedor != null ? proveedor.NombreFantasia : null,
-                proveedor != null ? proveedor.RazonSocial : null,
-                a.Activo, a.CostoNominal, a.DisponibleOnline, a.DisponibleVenta,
-                db.ImagenesArticulo.Any(i => i.IdArticulo == a.Id));
+            select new Unido { A = a, P = proveedor };
+
+        return Ordenar(unido, orden).Select(x => new FilaCandidata(
+            x.A.Id, x.A.CodigoInterno, x.A.Nombre, x.P != null ? x.A.IdProveedorHabitual : null,
+            x.P != null ? x.P.NombreFantasia : null,
+            x.P != null ? x.P.RazonSocial : null,
+            x.A.Activo, x.A.CostoNominal, x.A.DisponibleOnline, x.A.DisponibleVenta,
+            db.ImagenesArticulo.Any(i => i.IdArticulo == x.A.Id)));
+    }
+
+    /// <summary>Orden de SQL, aplicado antes de paginar. Sin orden pedido: Nombre, luego Id (el orden de
+    /// siempre). Con orden: la columna pedida y SIEMPRE Id ascendente como desempate, para que
+    /// dos páginas consecutivas nunca repitan ni salteen una fila. Los vacíos van al final en las dos
+    /// direcciones; un proveedor dado de baja o con FK colgante llega como <c>P == null</c> (el join va
+    /// contra <c>db.Proveedores</c>, que ya excluye las bajas) y se ordena igual que "sin proveedor". Los
+    /// textos usan la colación de la base, igual que el orden por nombre de siempre. El precio no se
+    /// ordena acá: no es expresable en SQL y lo ordena <see cref="ListarEnMemoriaAsync"/>.</summary>
+    private IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeGrillaDeArticulos? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderBy(x => x.A.Nombre).ThenBy(x => x.A.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<Unido> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeGrilla.Codigo => desc
+                ? query.OrderByDescending(x => x.A.CodigoInterno)
+                : query.OrderBy(x => x.A.CodigoInterno),
+            ColumnaDeOrdenDeGrilla.Costo => desc
+                ? query.OrderBy(x => x.A.CostoNominal == null).ThenByDescending(x => x.A.CostoNominal)
+                : query.OrderBy(x => x.A.CostoNominal == null).ThenBy(x => x.A.CostoNominal),
+            ColumnaDeOrdenDeGrilla.Proveedor => desc
+                ? query.OrderBy(x => x.P == null).ThenByDescending(x =>
+                    x.P == null ? null : string.IsNullOrWhiteSpace(x.P.NombreFantasia) ? x.P.RazonSocial : x.P.NombreFantasia)
+                : query.OrderBy(x => x.P == null).ThenBy(x =>
+                    x.P == null ? null : string.IsNullOrWhiteSpace(x.P.NombreFantasia) ? x.P.RazonSocial : x.P.NombreFantasia),
+            ColumnaDeOrdenDeGrilla.Disponibilidad => desc
+                ? query.OrderByDescending(x => x.A.DisponibleVenta)
+                    .ThenByDescending(x => x.A.DisponibleOnline && x.A.DisponibleVenta && x.A.Activo)
+                    .ThenByDescending(x => db.ImagenesArticulo.Any(i => i.IdArticulo == x.A.Id))
+                : query.OrderBy(x => x.A.DisponibleVenta)
+                    .ThenBy(x => x.A.DisponibleOnline && x.A.DisponibleVenta && x.A.Activo)
+                    .ThenBy(x => db.ImagenesArticulo.Any(i => i.IdArticulo == x.A.Id)),
+            ColumnaDeOrdenDeGrilla.Estado => desc
+                ? query.OrderByDescending(x => x.A.Activo)
+                : query.OrderBy(x => x.A.Activo),
+            ColumnaDeOrdenDeGrilla.Nombre => desc
+                ? query.OrderByDescending(x => x.A.Nombre)
+                : query.OrderBy(x => x.A.Nombre),
+            _ => query.OrderBy(x => x.A.Nombre),
+        };
+
+        return ordenado.ThenBy(x => x.A.Id);
+    }
+
+    private sealed class Unido
+    {
+        public Articulo A { get; init; } = null!;
+
+        public Proveedor? P { get; init; }
     }
 
     private readonly record struct ListaDefault(int Id, string Nombre);
@@ -265,4 +348,74 @@ public class ServicioDeGrillaDeArticulos(
         bool DisponibleOnline,
         bool DisponibleVenta,
         bool TieneImagen);
+}
+
+public enum ColumnaDeOrdenDeGrilla
+{
+    Codigo,
+    Nombre,
+    Costo,
+    Precio,
+    Proveedor,
+    Disponibilidad,
+    Estado,
+}
+
+/// <summary>Orden pedido a <c>GET /api/articulos/grilla</c> (<c>orden</c> + <c>direccion</c>). Lista
+/// cerrada: una clave o dirección desconocida se RECHAZA con 400, nunca se ignora. <c>costo</c> solo lo
+/// puede pedir quien ve costos (admin y supervisor): ordenar por una columna que el rol no ve filtraría
+/// su orden relativo.</summary>
+public readonly record struct OrdenDeGrillaDeArticulos(ColumnaDeOrdenDeGrilla Columna, bool Descendente)
+{
+    public const string ValorAscendente = "ascendente";
+    public const string ValorDescendente = "descendente";
+
+    private static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeGrilla> Claves =
+        new Dictionary<string, ColumnaDeOrdenDeGrilla>(StringComparer.Ordinal)
+        {
+            ["codigo"] = ColumnaDeOrdenDeGrilla.Codigo,
+            ["nombre"] = ColumnaDeOrdenDeGrilla.Nombre,
+            ["costo"] = ColumnaDeOrdenDeGrilla.Costo,
+            ["precio"] = ColumnaDeOrdenDeGrilla.Precio,
+            ["proveedor"] = ColumnaDeOrdenDeGrilla.Proveedor,
+            ["disponibilidad"] = ColumnaDeOrdenDeGrilla.Disponibilidad,
+            ["estado"] = ColumnaDeOrdenDeGrilla.Estado,
+        };
+
+    /// <summary>Sin <paramref name="orden"/> ni <paramref name="direccion"/> devuelve <c>null</c> (orden de
+    /// siempre). <paramref name="direccion"/> omitida con <paramref name="orden"/> presente es ascendente.</summary>
+    public static OrdenDeGrillaDeArticulos? Interpretar(string? orden, string? direccion, bool puedeVerCostos)
+    {
+        if (orden is null)
+        {
+            return direccion is null
+                ? null
+                : throw new ErrorDominio("direccion_sin_orden", "direccion exige indicar también orden.", 400);
+        }
+
+        if (!Claves.TryGetValue(orden, out var columna))
+        {
+            throw new ErrorDominio(
+                "orden_invalido",
+                $"orden '{orden}' no es válido; valores posibles: {string.Join(", ", Claves.Keys)}.",
+                400);
+        }
+
+        if (columna == ColumnaDeOrdenDeGrilla.Costo && !puedeVerCostos)
+        {
+            throw new ErrorDominio("orden_no_permitido", "El rol actual no puede ordenar por costo.", 400);
+        }
+
+        var descendente = direccion switch
+        {
+            null or ValorAscendente => false,
+            ValorDescendente => true,
+            _ => throw new ErrorDominio(
+                "direccion_invalida",
+                $"direccion '{direccion}' no es válida; valores posibles: {ValorAscendente}, {ValorDescendente}.",
+                400),
+        };
+
+        return new OrdenDeGrillaDeArticulos(columna, descendente);
+    }
 }

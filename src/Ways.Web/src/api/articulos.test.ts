@@ -12,7 +12,13 @@ vi.mock('./cliente', () => ({
   },
 }))
 
-import { clienteDeArticulos, construirQueryDeGrillaDeArticulos, filtrosDeGrillaDeArticulosVacios } from './articulos'
+import {
+  clienteDeArticulos,
+  COLUMNAS_ORDENABLES_DE_ARTICULOS,
+  construirQueryDeGrillaDeArticulos,
+  esColumnaOrdenableDeArticulos,
+  filtrosDeGrillaDeArticulosVacios,
+} from './articulos'
 import type { AltaArticulo, FiltrosDeGrillaDeArticulos } from './tipos'
 
 function filtros(sobrescribir: Partial<FiltrosDeGrillaDeArticulos> = {}): FiltrosDeGrillaDeArticulos {
@@ -81,6 +87,45 @@ describe('construirQueryDeGrillaDeArticulos', () => {
     const cadena = construirQueryDeGrillaDeArticulos(filtros({ pagina: 3, tamanio: 100 }))
     expect(cadena).toContain('pagina=3')
     expect(cadena).toContain('tamanio=100')
+  })
+})
+
+describe('construirQueryDeGrillaDeArticulos — orden', () => {
+  it('sin orden no manda orden ni direccion', () => {
+    expect(construirQueryDeGrillaDeArticulos(filtros(), null)).toBe('?pagina=1&tamanio=25')
+  })
+
+  it('con orden manda columna y direccion tal cual las espera el servidor, junto a los filtros y la página', () => {
+    const parametros = new URLSearchParams(
+      construirQueryDeGrillaDeArticulos(filtros({ activo: true, pagina: 2 }), { columna: 'precio', direccion: 'descendente' }),
+    )
+    expect(parametros.get('orden')).toBe('precio')
+    expect(parametros.get('direccion')).toBe('descendente')
+    expect(parametros.get('activo')).toBe('true')
+    expect(parametros.get('pagina')).toBe('2')
+  })
+
+  it('la lista cerrada coincide con las columnas de datos de la grilla y rechaza claves ajenas', () => {
+    expect([...COLUMNAS_ORDENABLES_DE_ARTICULOS]).toEqual([
+      'codigo',
+      'nombre',
+      'costo',
+      'precio',
+      'proveedor',
+      'disponibilidad',
+      'estado',
+    ])
+    expect(esColumnaOrdenableDeArticulos('estado')).toBe(true)
+    expect(esColumnaOrdenableDeArticulos('acciones')).toBe(false)
+  })
+
+  it('clienteDeArticulos.grilla pide /articulos/grilla con el orden en la query', () => {
+    apiGetMock.mockReset()
+    apiGetMock.mockResolvedValue({})
+
+    clienteDeArticulos.grilla(filtros(), { columna: 'nombre', direccion: 'ascendente' })
+
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos/grilla?orden=nombre&direccion=ascendente&pagina=1&tamanio=25')
   })
 })
 

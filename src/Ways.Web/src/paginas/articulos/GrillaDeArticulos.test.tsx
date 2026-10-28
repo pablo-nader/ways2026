@@ -196,7 +196,8 @@ describe('GrillaDeArticulos — columnas', () => {
 
     await screen.findByText('En la tienda')
     const columnas = screen.getAllByRole('columnheader').map((c) => c.textContent)
-    const posicion = columnas.indexOf('Disponibilidad')
+    // El texto del encabezado ordenable lleva el indicador de orden pegado al título.
+    const posicion = columnas.findIndex((texto) => texto?.startsWith('Disponibilidad'))
     expect(posicion).toBeGreaterThan(-1)
 
     const celdaDe = (nombre: string) => {
@@ -1015,5 +1016,165 @@ describe('GrillaDeArticulos — accesibilidad de headers (GW16)', () => {
     const headers = container.querySelectorAll('thead th')
     expect(headers.length).toBe(16)
     headers.forEach((th) => expect(th).toHaveAttribute('scope', 'col'))
+  })
+})
+
+describe('GrillaDeArticulos — orden en el servidor', () => {
+  function parametrosDeLaUltimaQuery(): URLSearchParams {
+    return new URLSearchParams(ultimaQuery().split('?')[1])
+  }
+
+  /**
+   * Cláusula bajo prueba: cada encabezado de dato manda su propia clave en `orden`. Mutation-proof-
+   * tests: cruzar dos claves (por ejemplo `costo` en la columna de precio) rompe el caso de esa columna.
+   */
+  it.each([
+    ['Código', 'codigo'],
+    ['Nombre', 'nombre'],
+    ['Costo', 'costo'],
+    ['Precio \\(General\\)', 'precio'],
+    ['Proveedor', 'proveedor'],
+    ['Disponibilidad', 'disponibilidad'],
+    ['Estado', 'estado'],
+  ])('el encabezado "%s" pide orden=%s ascendente', async (titulo, clave) => {
+    mockearRutas(paginaFixture([filaFixture()]))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('orden')).toBe(clave))
+    expect(parametrosDeLaUltimaQuery().get('direccion')).toBe('ascendente')
+  })
+
+  it('la columna de acciones no es ordenable', async () => {
+    mockearRutas(paginaFixture([filaFixture()]))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    expect(screen.queryByRole('button', { name: /^Acciones/ })).not.toBeInTheDocument()
+  })
+
+  it('el clic recorre ascendente, descendente y sin orden, con aria-sort en cada paso', async () => {
+    mockearRutas(paginaFixture([filaFixture()]))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    const encabezado = screen.getByRole('columnheader', { name: /^Nombre/ })
+    const boton = within(encabezado).getByRole('button')
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+
+    await userEvent.click(boton)
+    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'ascending'))
+    expect(parametrosDeLaUltimaQuery().get('direccion')).toBe('ascendente')
+
+    await userEvent.click(boton)
+    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'descending'))
+    expect(parametrosDeLaUltimaQuery().get('direccion')).toBe('descendente')
+
+    await userEvent.click(boton)
+    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'none'))
+    expect(parametrosDeLaUltimaQuery().has('orden')).toBe(false)
+    expect(parametrosDeLaUltimaQuery().has('direccion')).toBe(false)
+  })
+
+  /**
+   * Cláusula bajo prueba: `pagina: 1` al cambiar el orden y los filtros conservados. Mutation-proof-
+   * tests: quitar el reseteo deja `pagina=2` en la consulta; reiniciar los filtros pierde `activo=true`.
+   */
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
+    mockearRutas(paginaFixture([filaFixture()], { total: 60, tamanio: 25 }))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'true')
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('pagina')).toBe('2'))
+
+    await userEvent.click(screen.getByRole('button', { name: /^Nombre/ }))
+
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('orden')).toBe('nombre'))
+    expect(parametrosDeLaUltimaQuery().get('pagina')).toBe('1')
+    expect(parametrosDeLaUltimaQuery().get('activo')).toBe('true')
+  })
+
+  it('un cambio de orden dispara una sola consulta', async () => {
+    mockearRutas(paginaFixture([filaFixture()], { total: 60, tamanio: 25 }))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('pagina')).toBe('2'))
+    const antes = apiGetMock.mock.calls.length
+
+    await userEvent.click(screen.getByRole('button', { name: /^Nombre/ }))
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('orden')).toBe('nombre'))
+
+    expect(apiGetMock.mock.calls.length - antes).toBe(1)
+  })
+
+  it('el orden se conserva al cambiar un filtro y al limpiarlos', async () => {
+    mockearRutas(paginaFixture([filaFixture()]))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    await userEvent.click(screen.getByRole('button', { name: /^Código/ }))
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('orden')).toBe('codigo'))
+
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'false')
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().get('activo')).toBe('false'))
+    expect(parametrosDeLaUltimaQuery().get('orden')).toBe('codigo')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Limpiar' }))
+    await waitFor(() => expect(parametrosDeLaUltimaQuery().has('activo')).toBe(false))
+    expect(parametrosDeLaUltimaQuery().get('orden')).toBe('codigo')
+  })
+
+  /**
+   * Cláusula bajo prueba: el gateo de generación frente a un cambio de orden. Mutation-proof-tests:
+   * sacar el `if (generacionRef.current !== generacion) return` del `.then` deja que la respuesta
+   * del orden viejo, que llega tarde, pise las filas del orden vigente.
+   */
+  it('la respuesta de un orden viejo que llega tarde nunca pisa a la del orden vigente', async () => {
+    let resolverPrimera: (valor: PaginaDeGrillaDeArticulos) => void = () => {}
+    const primera = new Promise<PaginaDeGrillaDeArticulos>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      llamadas += 1
+      if (llamadas === 1) return Promise.resolve(paginaFixture([filaFixture({ nombre: 'Carga inicial' })]))
+      if (llamadas === 2) return primera
+      return Promise.resolve(paginaFixture([filaFixture({ id: 2, nombre: 'Orden vigente' })]))
+    })
+
+    renderGrilla()
+    await screen.findByText('Carga inicial')
+
+    await userEvent.click(screen.getByRole('button', { name: /^Nombre/ }))
+    await userEvent.click(screen.getByRole('button', { name: /^Nombre/ }))
+    await screen.findByText('Orden vigente')
+
+    await act(async () => {
+      resolverPrimera(paginaFixture([filaFixture({ id: 3, nombre: 'Orden viejo' })]))
+      await primera
+    })
+
+    expect(screen.queryByText('Orden viejo')).not.toBeInTheDocument()
+    expect(screen.getByText('Orden vigente')).toBeInTheDocument()
+  })
+
+  it('un 400 del servidor al ordenar se muestra con su mensaje', async () => {
+    let llamadas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      llamadas += 1
+      return llamadas === 1
+        ? Promise.resolve(paginaFixture([filaFixture()]))
+        : Promise.reject(new ErrorApi(400, 'orden_no_permitido', 'El rol actual no puede ordenar por costo.'))
+    })
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    await userEvent.click(screen.getByRole('button', { name: /^Costo/ }))
+
+    expect(await screen.findByText('El rol actual no puede ordenar por costo.')).toBeInTheDocument()
   })
 })

@@ -34,12 +34,39 @@ export function filtrosDeGrillaDeArticulosVacios(): FiltrosDeGrillaDeArticulos {
   }
 }
 
+/** Claves de `orden` que acepta `GET /api/articulos/grilla`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_ARTICULOS = [
+  'codigo',
+  'nombre',
+  'costo',
+  'precio',
+  'proveedor',
+  'disponibilidad',
+  'estado',
+] as const
+
+export type ColumnaOrdenableDeArticulos = (typeof COLUMNAS_ORDENABLES_DE_ARTICULOS)[number]
+
+/** `null` = orden de siempre del servidor (nombre y luego id). Las direcciones son las del servidor. */
+export type OrdenDeGrillaDeArticulos = {
+  columna: ColumnaOrdenableDeArticulos
+  direccion: 'ascendente' | 'descendente'
+} | null
+
+export function esColumnaOrdenableDeArticulos(columna: string): columna is ColumnaOrdenableDeArticulos {
+  return (COLUMNAS_ORDENABLES_DE_ARTICULOS as readonly string[]).includes(columna)
+}
+
 /** Query de `GET /api/articulos/grilla` (feat: articulos-grilla-web): omite cada filtro vacío/no
  * aplicado — nunca manda `codigo`/`nombre` en blanco ni un precio `null`. `idProveedor` y
  * `sinProveedor` son mutuamente excluyentes en el servidor (400 `filtro_proveedor_ambiguo` si
  * viajan los dos): acá `sinProveedor` gana cuando el llamador seteó ambos, para que esta capa
- * nunca sea la que dispare esa ambigüedad. */
-export function construirQueryDeGrillaDeArticulos(filtros: FiltrosDeGrillaDeArticulos): string {
+ * nunca sea la que dispare esa ambigüedad. `orden` viaja como `orden` + `direccion` y se omite
+ * por completo sin orden: el servidor ordena todo el conjunto filtrado antes de paginar. */
+export function construirQueryDeGrillaDeArticulos(
+  filtros: FiltrosDeGrillaDeArticulos,
+  orden: OrdenDeGrillaDeArticulos = null,
+): string {
   const parametros = new URLSearchParams()
   if (filtros.codigo.trim()) parametros.set('codigo', filtros.codigo.trim())
   if (filtros.nombre.trim()) parametros.set('nombre', filtros.nombre.trim())
@@ -51,6 +78,10 @@ export function construirQueryDeGrillaDeArticulos(filtros: FiltrosDeGrillaDeArti
     parametros.set('idProveedor', String(filtros.idProveedor))
   }
   if (filtros.activo !== null) parametros.set('activo', String(filtros.activo))
+  if (orden !== null) {
+    parametros.set('orden', orden.columna)
+    parametros.set('direccion', orden.direccion)
+  }
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
@@ -76,8 +107,8 @@ export const clienteDeArticulos = {
   /** Grilla con filtro multi-columna y paginación real (feat: articulos-grilla-web) — reemplaza
    * `listar` como fuente de `GrillaDeArticulos.tsx`; `listar` sigue viva para otras pantallas
    * (buscador del POS, alta rápida). */
-  grilla: (filtros: FiltrosDeGrillaDeArticulos) =>
-    api.get<PaginaDeGrillaDeArticulos>(`/articulos/grilla${construirQueryDeGrillaDeArticulos(filtros)}`),
+  grilla: (filtros: FiltrosDeGrillaDeArticulos, orden: OrdenDeGrillaDeArticulos = null) =>
+    api.get<PaginaDeGrillaDeArticulos>(`/articulos/grilla${construirQueryDeGrillaDeArticulos(filtros, orden)}`),
   /** Con `idFamilia` el artículo nace como miembro de esa familia: 409 `familia_valores_distintos`,
    * `familia_inactiva` o `familia_sin_articulos` si no puede entrar, 404 si la familia no existe. */
   crear: (datos: AltaArticulo) => api.post<ArticuloListado>('/articulos', datos),
