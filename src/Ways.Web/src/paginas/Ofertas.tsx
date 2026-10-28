@@ -30,6 +30,7 @@ import type {
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
@@ -87,6 +88,11 @@ export function Ofertas() {
   const [formulario, setFormulario] = useState<FormularioOferta | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [eliminando, setEliminando] = useState(false)
+  /** Baja pendiente de confirmación, con el botón que la pidió (capturado en su `onClick`). */
+  const [baja, setBaja] = useState<{ oferta: OfertaListado; disparador: HTMLElement } | null>(null)
+  const [errorDeBaja, setErrorDeBaja] = useState('')
+  /** Espejo síncrono de "hay una baja en vuelo": dos clics en el mismo tick no emiten dos DELETE. */
+  const eliminandoRef = useRef(false)
   const tokenEdicionRef = useRef(0)
   /** Destino de foco cuando el modal se cierra con la pantalla inerte (guardado en vuelo): ningún
    * botón es alcanzable en ese momento. */
@@ -271,26 +277,46 @@ export function Ofertas() {
     }
   }
 
-  async function eliminar(o: OfertaListado) {
-    if (ocupado) return
-    if (!confirm(`¿Dar de baja la oferta "${o.nombre}"?`)) return
+  function pedirBaja(o: OfertaListado, disparador: HTMLElement) {
+    // Una apertura de edición todavía en vuelo no puede montar su modal encima de la confirmación.
+    invalidarEdicionEnCurso()
+    setErrorDeBaja('')
+    setBaja({ oferta: o, disparador })
+  }
+
+  function cancelarBaja() {
+    setErrorDeBaja('')
+    setBaja(null)
+  }
+
+  async function confirmarBaja() {
+    if (baja === null || eliminandoRef.current) return
+    eliminandoRef.current = true
+    const o = baja.oferta
 
     invalidarEdicionEnCurso()
     setError('')
     setAviso('')
+    setErrorDeBaja('')
     setEliminando(true)
     try {
-      await clienteDeOfertas.eliminar(o.id)
+      try {
+        await clienteDeOfertas.eliminar(o.id)
+      } catch (e) {
+        setErrorDeBaja(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja la oferta.')
+        return
+      }
+
       setAviso(`Oferta "${o.nombre}" dada de baja.`)
+      setBaja(null)
       if (formulario?.id === o.id) setFormulario(null)
       try {
         await cargar({ relanzarError: true })
       } catch {
         setError('La oferta se dio de baja, pero no se pudo actualizar el listado. Volvé a entrar para verla.')
       }
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja la oferta.')
     } finally {
+      eliminandoRef.current = false
       setEliminando(false)
     }
   }
@@ -351,7 +377,7 @@ export function Ofertas() {
                       <BotonIcono
                         icono="eliminar"
                         disabled={ocupado}
-                        onClick={() => eliminar(o)}
+                        onClick={(evento) => pedirBaja(o, evento.currentTarget)}
                       />
                     </td>
                   </tr>
@@ -386,6 +412,18 @@ export function Ofertas() {
           onCambio={setFormulario}
           onGuardar={guardar}
           onCancelar={cancelarEdicion}
+        />
+      )}
+
+      {baja && (
+        <ConfirmacionDeBaja
+          titulo={`la oferta "${baja.oferta.nombre}"`}
+          ocupado={eliminando}
+          disparador={baja.disparador}
+          regreso={contenedorRef}
+          error={errorDeBaja || null}
+          onConfirmar={() => void confirmarBaja()}
+          onCancelar={cancelarBaja}
         />
       )}
     </div>
