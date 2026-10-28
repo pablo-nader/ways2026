@@ -308,6 +308,53 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             desgloseDeLaRespuesta.GetProperty("lineas").EnumerateArray().Select(l => l.GetProperty("idItem").GetInt32()));
     }
 
+    /// <summary>Un pago de personal repartido en dos ítems se lista en el desglose como dos líneas, una por ítem, con
+    /// el mismo idGasto.</summary>
+    [Fact]
+    public async Task UnPagoPartidoEnDosItemsSeListaEnElDesglosePorItemConElMismoIdGasto()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoPartidoEnDosItemsSeListaEnElDesglosePorItemConElMismoIdGasto));
+        var idPersonal = await CrearPersonalAsync(ctx.Admin, saldoInicial: 1000m);
+        var pago = await CuerpoAsync(
+            await PagarAsync(ctx.Admin, idPersonal, Cuerpo(
+                Dia(), idEmpresa: ctx.IdEmpresa, origen: "Tesoreria", lineas: [Linea(ctx.IdMedioEfectivo, 100m)])),
+            HttpStatusCode.Created);
+        var idMovimiento = pago.GetProperty("idMovimiento").GetInt32();
+
+        int idPago;
+        await using (var db = Abrir(ctx))
+        {
+            var cabecera = await db.Pagos.SingleAsync(g => g.IdMovimientoPersonal == idMovimiento);
+            idPago = cabecera.Id;
+            var primero = await db.ItemsPago.SingleAsync(i => i.IdPago == idPago);
+            primero.Importe = 60m;
+            var ahora = DateTimeOffset.UtcNow;
+            db.ItemsPago.Add(new ItemPago
+            {
+                IdTenant = ctx.IdTenant, IdPago = idPago, IdMedioPago = ctx.IdMedioTarjeta, Importe = 40m,
+                CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        List<int> idsDeItems;
+        await using (var db = Abrir(ctx))
+        {
+            idsDeItems = await db.ItemsPago.Where(i => i.IdPago == idPago).OrderBy(i => i.Id).Select(i => i.Id).ToListAsync();
+        }
+
+        var cuenta = await CuentaAsync(ctx.Admin, idPersonal);
+        var item = cuenta.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("idMovimiento").GetInt32() == idMovimiento);
+        var lineas = item.GetProperty("desglose").GetProperty("lineas").EnumerateArray().ToList();
+
+        Assert.Equal(2, lineas.Count);
+        Assert.Equal(idsDeItems, lineas.Select(l => l.GetProperty("idItem").GetInt32()));
+        Assert.Equal(2, lineas.Select(l => l.GetProperty("idItem").GetInt32()).Distinct().Count());
+        Assert.Equal([ctx.IdMedioEfectivo, ctx.IdMedioTarjeta], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
+        Assert.Equal([60m, 40m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
+        Assert.All(lineas, l => Assert.Equal(idPago, l.GetProperty("idGasto").GetInt32()));
+    }
+
     [Fact]
     public async Task UnPagoSoloDeDescuentoBajaLaDeudaSinPagosNiTesoreriaNiOrigen()
     {

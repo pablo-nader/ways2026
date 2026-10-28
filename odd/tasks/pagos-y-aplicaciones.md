@@ -77,7 +77,9 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   (`LectorDeMovimientosDelTurno`), the personal desglose (one line per item, `idItem` added, `idGasto` kept), and
   `CalculadorDeAjustesDePago` (`EstadoContableDePago.ImportePorMedio`, `AfectaElArqueo` compares per-medio maps).
   The audit payload of edit/baja gains `lineas: [{id_medio_pago, importe}]` (header `id_medio_pago` kept).
-  Treasury, supplier-CC adjustments, listings and exports keep the header (they need category/total only).
+  Treasury, supplier-CC adjustments and exports keep the header (category/total only). The turno listing
+  (`/api/gastos`, `LectorDeLineasDelTurno` via `ProyeccionesDePago`) still shows the header medio until S4 adds
+  `lineas`, so a pago split across two medios appears there under the header medio only.
 - [ ] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
   movements stay one per pago on the header total.
 - [ ] E2-S3b — Edición de pagos con N líneas: replaces `SincronizarItemDelPagoAsync` (it assumes one live item and
@@ -108,10 +110,12 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 - 2026-10-28 E2-S2 (branch `pnader/pagos-e2-s2-lectores`, commit f0bbe4c3): readers derive per-medio from
   `items_pago`; `RecalcularArqueoAsync` needed no change (it re-derives the whole arqueo through the shared reader,
   so it follows the items). Evidence: `dotnet build Ways.slnx` 0 errors; Domain.Tests 1892 passed; Application.Tests
-  1076 passed; web `tsc -b` clean, vitest on the two touched files 190 passed; mutation check on the map comparison
-  killed by 2-3 domain tests. Integration tests added (three arqueo/cierre tests with two-item pagos, audit `lineas`,
+  1076 passed; web `tsc -b` clean, vitest on the two touched files 190 passed; mutation check on `MismoReparto`: removing
+  the value comparison is killed by the per-medio domain tests; removing the `a.Count == b.Count` clause survived
+  until the judgment-day fix added `UnMapaQueEsSubconjuntoEstrictoDelOtro_AfectaElArqueoEnAmbosSentidos`, which then
+  failed under that mutation (1 failed of 1893) and passed after restoring the line. Integration tests added (three arqueo/cierre tests with two-item pagos, audit `lineas`,
   `idItem` in the personal desglose) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
 
 ## Next step
 
-E1a PR + CI; then E1b.
+S1 PR #504 is in CI; next is E2-S3a.

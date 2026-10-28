@@ -147,7 +147,16 @@ public class CalculadorDeAjustesDePagoTests
     }
 
     [Fact]
-    public void LosAjustesDeProveedorYTesoreriaUsanElTotalDeLaCabecera_AunConVariosMedios()
+    public void UnMapaQueEsSubconjuntoEstrictoDelOtro_AfectaElArqueoEnAmbosSentidos()
+    {
+        var caja = OrigenFondosPago.CajaTurno;
+
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m)), ConMedios((1, 60m), (2, 40m))));
+        Assert.True(CalculadorDeAjustesDePago.AfectaElArqueo(caja, ConMedios((1, 60m), (2, 40m)), ConMedios((1, 60m))));
+    }
+
+    [Fact]
+    public void LosAjustesDeProveedorUsanElTotalDeLaCabecera_AunConVariosMedios()
     {
         var anterior = new EstadoContableDePago(
             CategoriaPago.Proveedor, 5, new Dictionary<int, decimal> { [1] = 60m, [2] = 40m }, 100m);
