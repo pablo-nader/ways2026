@@ -59,7 +59,7 @@ one PR per stage slice, judgment-day before each PR, auto-merge + Auto-fix.
 - [ ] E3 — Applications pago ↔ compra (N:M), paid amount derived from applications, apply
   existing pagos when loading a compra, overpayment stays in favor, one pago over several
   compras, supplierless pago adopts the compra's supplier. Route: delegated.
-- [ ] E4 — Rounding write-off with `tolerancia_redondeo_pago_proveedor` (default 500).
+- [x] E4 (written; CI pending) — Rounding write-off with `tolerancia_redondeo_pago_proveedor` (default 500); see the E4 progress entry.
 - [ ] E5 — Pago editing with lines and applications, compensating entries.
 - [ ] E6 — Confirmed compra editing (items, total, stock and CC by difference; excess applied
   amount goes back to credit).
@@ -130,7 +130,7 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   supplier); `vincular-compra` applies `min(disponible, saldo)` and adds `pago_sin_disponible`; two read endpoints of
   aplicable pagos.
 - [x] E3-S4 (written; CI pending) — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
-- [ ] E4-S1 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter.
+- [x] E4 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter (backend + web, branch `pnader/pagos-e4-redondeo`).
 - [ ] E3-W1 — Web: apply existing pagos when loading/paying a compra, credit per supplier.
 - [ ] E3-W2 — Web: apply/unapply screen and adoption of cashier pagos.
 
@@ -269,6 +269,29 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   each idPago comes before body validation; exact fill + lineas is `409 compra_sin_saldo_pendiente`. The modal never drops typed
   money (line with importe and no medio is an error) and its prefilled line follows the remaining amount until the user edits it.
 
+- 2026-10-28 E4 (branch `pnader/pagos-e4-redondeo`, stacked on E3-S4): new supplier-CC movement `redondeo` (enum value in its own
+  migration `RedondeoEnCuentaCorrienteDeProveedor`, CHECK `ck_movimientos_cuenta_corriente_proveedor_redondeo_un_destino` in
+  `RedondeoUnDestino`; no model change besides the enum and the CHECK). Compra side: importe NEGATIVE with `id_comprobante_compra`
+  (pagado = Σ aplicaciones − Σ redondeo importes); pago side: importe POSITIVE with `id_pago` (disponible = importe − aplicado −
+  Σ redondeo importes); both leave the supplier saldo net zero. All writes go through `RedondeoDeProveedor` (Application) which
+  reuses `EscriturasDeCuentaCorrienteProveedor` (movement needs punto de venta + empleado). Parameter
+  `tolerancia_redondeo_pago_proveedor` (decimal, default 500, PV -> empresa -> default; `400 parametro_tolerancia_redondeo_invalida`).
+  Triggers: `cerrarEnCero` on `POST /api/pagos/de-compra/{id}` (response gains `redondeo` = signed difference), `POST
+  /api/compras/{id}/ajuste-de-redondeo`, `POST /api/pagos/{id}/ajuste-de-redondeo` (all `GestionDeCatalogo`, no-retry strategy
+  registered in the structural map, audit `compra.redondeo` / `pago.redondeo`, catalogue 25 -> 27); `pagos-aplicables` gains
+  `toleranciaRedondeo`. 409 `redondeo_excede_tolerancia`, `pago_sin_proveedor`, `pago_sin_disponible`, `compra_sin_saldo_pendiente`.
+  Compensations (a revert is a `redondeo` movement of opposite sign): compra anulation reverts the compra redondeo (before the
+  counter-movement); desaplicar, pago baja and an edit that lowers an application revert the redondeo of each compra that gets less
+  applied; pago baja or an importe change reverts the pago-side redondeo (concept-only edits do not). `AplicarPagoALaCompraAsync` and
+  `AjustarAplicacionesAlNuevoImporteAsync` count the redondeo when computing room. Readers: `LectorDePagadoPorCompra`,
+  `LectorDeDisponiblePorPago` (all eight callers pass the redondeo, including the SQL filter of aplicables and the supplier credit).
+  Web: `ModalDePagoDeCompra` "Cerrar en cero" (enabled only when 0 < |saldo - aplicado - lineas| <= tolerancia), `CompraEditor`
+  "Ajustar redondeo", CC row label "Redondeo", parameter catalogue entry. Docs: doc 10 parts 05, 08, 09.
+  `dotnet build Ways.slnx` 0 errors; Domain.Tests 1926 passed; Application.Tests 1091 passed; `dotnet ef migrations
+  has-pending-model-changes` clean; web `tsc -b` clean, lint 0 errors, full vitest 260 files / 8161 tests passed. Integration tests
+  (`RedondeoDePagosTests`, `RedondeoEsquemaTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
+  Route: delegated writer.
+
 ## Next step
 
-S1 PR #504 is in CI; E2-S3b is written (branch `pnader/pagos-e2-s3b-plantel`); E2-S4 is written (branch `pnader/pagos-e2-s4-api`); E2-W1 + E2-W3 are written (branch `pnader/pagos-e2-w1-w3-web`); next is E2-W2 (POS payment form with lines).
+E4 is written (branch `pnader/pagos-e4-redondeo`, judgment-day pending); next are E3-W1/E3-W2 (apply/unapply screens) and E5 (pago editing with lines and applications); E2-W2 (POS payment form with lines) is still open.
