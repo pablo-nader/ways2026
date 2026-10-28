@@ -7,13 +7,15 @@ import type { PaginaDe, RolListado, TenantListado, UsuarioAutenticado, UsuarioLi
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
-    put: vi.fn(),
-    delete: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {},
 }))
@@ -133,6 +135,8 @@ function renderUsuarios() {
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
   usuarioActual = autenticado()
 })
 
@@ -576,5 +580,69 @@ describe('Usuarios — los controles del padrón durante una escritura', () => {
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/usuarios?usuario=zz'))
+  })
+})
+
+describe('Usuarios — una escritura fallida con una lectura en vuelo', () => {
+  async function conLecturaEnVuelo(usuario: ReturnType<typeof userEvent.setup>, filas: UsuarioListado[]) {
+    usuarioActual = autenticado({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    const pendientes = responderADemanda(filas)
+    renderUsuarios()
+    await screen.findByText(filas[0].usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Mail' }))
+    const cuerpo = screen.getAllByRole('rowgroup')[1]
+    expect(cuerpo).toHaveStyle({ opacity: '0.6' })
+
+    return { pendientes, cuerpo }
+  }
+
+  it('una baja rechazada repone la lectura que su token invalidó', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(new Error('rechazada'))
+    const { pendientes, cuerpo } = await conLecturaEnVuelo(usuario, [usuarioFixture()])
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(pendientes).toHaveLength(2))
+    await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [usuarioFixture()], 1)))
+
+    expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
+  })
+
+  it('una acción rechazada (Desbloquear) repone la lectura que su token invalidó', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(new Error('rechazada'))
+    const bloqueado = usuarioFixture({ estado: 'Bloqueado' })
+    const { pendientes, cuerpo } = await conLecturaEnVuelo(usuario, [bloqueado])
+
+    await usuario.click(screen.getByRole('button', { name: 'Desbloquear' }))
+
+    await waitFor(() => expect(pendientes).toHaveLength(2))
+    await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [bloqueado], 1)))
+
+    expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
+  })
+})
+
+describe('Usuarios — el aviso del cambio de contraseña fallido', () => {
+  it('se apaga cuando cambia la consulta (un filtro, no solo Buscar)', async () => {
+    const usuario = userEvent.setup()
+    usuarioActual = autenticado({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    apiPutMock.mockResolvedValue(undefined)
+    apiPostMock.mockRejectedValue(new Error('clave débil'))
+    responder()
+    renderUsuarios()
+    await screen.findByText('vendedor.sur')
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando usuario 50' })
+    await usuario.type(within(dialogo).getByLabelText('Contraseña'), 'unaClaveLarga')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+    expect(await screen.findByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument()
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activo')
+
+    await waitFor(() => expect(screen.queryByText(/no se pudo cambiar la contraseña/)).toBeNull())
   })
 })

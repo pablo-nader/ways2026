@@ -60,8 +60,11 @@ export const clienteDeOrganizacion = {
 
 // --- Filtros por dueño y etiquetas (stage-20, slice 2 · design D14, D15) ---
 //
-// Helpers PUROS: sin React y sin fetch. Las opciones de cada filtro se derivan de las filas YA
-// CARGADAS, nunca de una segunda consulta (D15): `GET /api/plataforma/tenants` es
+// Helpers PUROS: sin React y sin fetch. Las opciones de los filtros de Empresas y Puntos de venta
+// se derivan de las filas YA CARGADAS, nunca de una segunda consulta (D15). La excepción es el
+// filtro por tenant de Usuarios (`opcionesDeFiltroPorTenant`), solo del actor de plataforma, que
+// ofrece el universo completo porque el servidor filtra y la página cargada no lo representa.
+// Motivo de la regla: `GET /api/plataforma/tenants` es
 // `Politicas.SoloPlataforma` mientras que `Empresas.tsx` y `PuntosVenta.tsx` los abre también un
 // admin de tenant bajo `GestionDeOrganizacion` — pedir la lista de tenants daría 403 justo para
 // los usuarios para los que se hizo la pantalla. Derivar de las filas además hace imposible por

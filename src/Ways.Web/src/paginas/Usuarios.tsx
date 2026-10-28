@@ -54,8 +54,10 @@ const ERROR_ALTA_SIN_TENANTS = 'No se puede crear el usuario: todavía falta la 
  * (design D14), y el discriminador es `idTenant`, no el nombre: un `nombreTenant` nulo con
  * `idTenant` presente es un huérfano (tenant dado de baja), no personal de plataforma
  * (Reconciliación 9). La columna y el filtro por tenant se rinden con el MISMO criterio que en
- * `Empresas`/`PuntosVenta`: solo para un actor de plataforma. Un admin de tenant ve una sola
- * opción —la suya— y filtrar por ella no angosta nada (spec S5).
+ * `Empresas`/`PuntosVenta`: solo para un actor de plataforma. Un admin de tenant no tiene
+ * columna, filtro ni orden por tenant: todas sus filas son de su tenant, no le serviría de nada y el servidor
+ * rechaza el parámetro con 400 (spec S5). El filtro lo resuelve el servidor, con las opciones del universo completo
+ * de tenants.
  */
 export function Usuarios() {
   const { usuario: actual } = useAuth()
@@ -166,7 +168,9 @@ export function Usuarios() {
   }
 
   // Se vuelve a pedir el listado cada vez que cambia la consulta aplicada (filtros, orden, página o tamaño).
+  // `errorPassword` es de una escritura ya terminada: otra consulta (filtro, orden, página o tamaño) es una tabla nueva.
   useEffect(() => {
+    setErrorPassword('')
     void cargar(++generacion.current, padron.consulta)
   }, [cargar, padron.consulta])
 
@@ -174,12 +178,12 @@ export function Usuarios() {
     api.get<RolListado[]>('/roles').then(setRoles).catch(() => setRoles([]))
   }, [])
 
-  /** Universo COMPLETO de tenants para el selector del ALTA (tarea 2.17, gap del tamaño de
-   * página): `opcionesDeTenant(filas)` solo ve tenants con un usuario en la página actual
-   * (`tamanio` 25), así que un tenant sin usuario ahí quedaba imposible de asignar. Se pide
-   * SOLO para un actor de plataforma — `GET /plataforma/tenants` es `SoloPlataforma` y jamás
-   * 403 para este actor, pero un admin de tenant no debe enumerar tenants (spec S5) — y el
-   * filtro de la tabla sigue sin tocar (design D15, sin segunda consulta ahí).
+  /** Universo COMPLETO de tenants para el selector del ALTA y para el filtro por tenant de la
+   * tabla: derivarlo de las filas solo vería los tenants con un usuario en la página actual, así
+   * que un tenant sin usuario ahí quedaba imposible de asignar o de filtrar. Se pide SOLO para
+   * un actor de plataforma — `GET /plataforma/tenants` es `SoloPlataforma` y jamás 403 para este
+   * actor, pero un admin de tenant no debe enumerar tenants (spec S5). Es la excepción a la
+   * regla D15 de `Empresas`/`PuntosVenta`, que derivan sus opciones de las filas cargadas.
    *
    * El fallo NO se traga (`react-async-state` regla 7): sin universo el `<select>` requerido
    * quedaría vacío y el alta sería imposible sin decir por qué. Se rinde el error y abrir "Nuevo"
@@ -326,6 +330,9 @@ export function Usuarios() {
   async function accion(construirPromesa: () => Promise<unknown>, mensajeOk: string) {
     if (ocupadoRef.current) return
 
+    // Una lectura en vuelo queda invalidada por el token de esta escritura y su `finally` no baja `cargando`: si la
+    // acción falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(true)
@@ -339,6 +346,7 @@ export function Usuarios() {
       } catch (e) {
         if (generacion.current === token) {
           setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current)
         }
 
         return
@@ -391,6 +399,8 @@ export function Usuarios() {
     // El token se acuña ACÁ, primera sentencia síncrona de la escritura (`react-async-state`
     // regla 2): ver `Tenants.tsx`.
     const fila = baja
+    // Igual que en `guardar`: la lectura en vuelo que este token invalida se repone si la baja falla.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(true)
@@ -407,6 +417,9 @@ export function Usuarios() {
         // el `mensaje` — que igual se rinde porque es lo único que nombra QUÉ hay a nombre de la
         // cuenta.
         setError(copiaDeFalloDeBaja(e, 'el usuario'))
+        if (habiaLecturaEnVuelo && generacion.current === token) {
+          void cargar(++generacion.current, padron.consultaRef.current)
+        }
 
         return
       }

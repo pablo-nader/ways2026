@@ -509,3 +509,25 @@ describe('Personal — los controles del padrón durante una escritura', () => {
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?nombre=zz'))
   })
 })
+
+describe('Personal — una baja fallida con una lectura en vuelo', () => {
+  it('repone la lectura que su token invalidó: la tabla no queda atenuada para siempre', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(new Error('rechazada'))
+    const pendientes = responderADemanda([personalFixture()])
+    renderPersonal()
+    await screen.findByText('Ana Gómez')
+
+    await usuario.click(screen.getByRole('button', { name: 'Saldo' }))
+    const cuerpo = screen.getAllByRole('rowgroup')[1]
+    expect(cuerpo).toHaveStyle({ opacity: '0.6' })
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar Ana Gómez' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(pendientes).toHaveLength(2))
+    expect(pendientes[1].ruta).toBe(pendientes[0].ruta)
+    await act(async () => pendientes[1].resolver(paginaDeLaRuta(pendientes[1].ruta, [personalFixture()], 1)))
+
+    expect(cuerpo).not.toHaveStyle({ opacity: '0.6' })
+  })
+})
