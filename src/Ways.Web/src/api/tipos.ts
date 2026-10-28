@@ -2587,6 +2587,8 @@ export type CompraListada = {
   total: number
   saldoPendiente: number
   origen: OrigenCompra
+  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
+  nombreProveedor?: string | null
 }
 
 /** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo
@@ -3345,6 +3347,8 @@ export type OrdenDeCompraListada = {
   fechaEmision: string
   fechaEsperada: string | null
   estado: EstadoOrdenCompra
+  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
+  nombreProveedor?: string | null
 }
 
 /** Página de `GET /api/ordenes-compra` (espejo de `PaginaDeOrdenesDeCompra`). */
@@ -3451,6 +3455,9 @@ export type PresupuestoListado = {
   convertible: boolean
   total: number
   estado: EstadoPresupuesto
+  /** Número y nombre que resuelve el servidor; `null` si el cliente fue dado de baja. */
+  numeroCliente?: number | null
+  nombreCliente?: string | null
 }
 
 /** Página de `GET /api/presupuestos` (espejo de `PaginaDePresupuestos`). */
@@ -3531,6 +3538,9 @@ export type RemitoListado = {
   total: number
   estado: EstadoRemito
   idComprobanteVenta: number | null
+  /** Número y nombre que resuelve el servidor; `null` si el cliente fue dado de baja. */
+  numeroCliente?: number | null
+  nombreCliente?: string | null
 }
 
 /** Página de `GET /api/remitos` (espejo de `PaginaDeRemitos`). */

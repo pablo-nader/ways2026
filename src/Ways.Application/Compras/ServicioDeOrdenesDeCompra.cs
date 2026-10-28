@@ -71,7 +71,12 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
                 o.Id, o.IdProveedor, o.IdPuntoVenta, o.Numero, o.FechaEmision, o.FechaEsperada, o.Estado))
             .ToListAsync(ct);
 
-        return new PaginaDeOrdenesDeCompra(items, total, pagina, tamanio);
+        var proveedores = await ReferenciasDeListado.ProveedoresAsync(db, items.Select(o => o.IdProveedor).ToList(), ct);
+        var conProveedor = items
+            .Select(o => o with { NombreProveedor = proveedores.GetValueOrDefault(o.IdProveedor) })
+            .ToList();
+
+        return new PaginaDeOrdenesDeCompra(conProveedor, total, pagina, tamanio);
     }
 
     /// <summary>Sin orden pedido: <c>FechaEmision</c> e <c>Id</c> descendentes (el orden de siempre). Con orden: la

@@ -100,6 +100,7 @@ function compraListadaFixture(sobrescribir: Partial<CompraListada> = {}): Compra
     total: 1149.5,
     saldoPendiente: 0,
     origen: 'Manual',
+    nombreProveedor: 'Proveedor Uno SA',
     ...sobrescribir,
   }
 }
@@ -170,6 +171,25 @@ describe('Compras — listado', () => {
     expect(within(fila).getByText('Proveedor Uno SA')).toBeInTheDocument()
     expect(within(fila).getByText('C-FA')).toBeInTheDocument()
     expect(within(fila).getByText('Confirmada')).toBeInTheDocument()
+  })
+
+  it('un proveedor fuera de la lista de referencia igual muestra el nombre que manda el servidor', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/compras?')) {
+        return Promise.resolve(
+          paginaFixture([
+            compraListadaFixture({ id: 2, idProveedor: 777, numeroExterno: 'R-1', nombreProveedor: 'Proveedor Remoto SRL' }),
+            compraListadaFixture({ id: 3, idProveedor: 778, numeroExterno: 'R-2', nombreProveedor: null }),
+          ]),
+        )
+      }
+      return undefined
+    })
+    renderCompras()
+
+    await screen.findByText('R-1')
+    expect(within(screen.getByRole('row', { name: /R-1/ })).getByText('Proveedor Remoto SRL')).toBeInTheDocument()
+    expect(within(screen.getByRole('row', { name: /R-2/ })).getByText('Proveedor #778')).toBeInTheDocument()
   })
 
   it('Admin ve el botón "Nueva compra"; Vendedor no', async () => {

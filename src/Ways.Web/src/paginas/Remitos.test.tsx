@@ -76,6 +76,8 @@ function remitoFixture(sobrescribir: Partial<RemitoListado> = {}): RemitoListado
     id: 1,
     idPuntoVenta: 7,
     idCliente: 1,
+    numeroCliente: 1,
+    nombreCliente: 'Consumidor Final',
     numero: 12,
     numeroFormateado: '0007-00000012',
     fechaEmision: '2026-08-01T12:00:00Z',
@@ -119,6 +121,27 @@ describe('Remitos — listado', () => {
     expect(within(fila).getByText(/Consumidor Final/)).toBeInTheDocument()
     expect(within(fila).getByText('Local Centro')).toBeInTheDocument()
     expect(within(fila).getByText('Emitido')).toBeInTheDocument()
+  })
+
+  it('un cliente fuera de la lista de referencia igual muestra su número y nombre, y uno dado de baja se rotula por su id', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/remitos?')
+        ? Promise.resolve(
+            paginaFixture({
+              items: [
+                remitoFixture({ id: 2, idCliente: 777, numeroFormateado: '0007-00000031', numeroCliente: 777, nombreCliente: 'Cliente Remoto SA' }),
+                remitoFixture({ id: 3, idCliente: 778, numeroFormateado: '0007-00000032', numeroCliente: null, nombreCliente: null }),
+              ],
+              total: 2,
+            }),
+          )
+        : undefined,
+    )
+    renderPantalla()
+
+    await screen.findByText('0007-00000031')
+    expect(within(screen.getByText('0007-00000031').closest('tr')!).getByText('#777 — Cliente Remoto SA')).toBeInTheDocument()
+    expect(within(screen.getByText('0007-00000032').closest('tr')!).getByText('Cliente #778')).toBeInTheDocument()
   })
 
   it('un remito sin número muestra #id', async () => {

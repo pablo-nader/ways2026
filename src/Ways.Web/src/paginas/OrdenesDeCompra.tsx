@@ -129,9 +129,6 @@ export function OrdenesDeCompra() {
     setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
   }
 
-  const proveedorPorId: Record<number, ProveedorListado> = {}
-  for (const p of proveedores ?? []) proveedorPorId[p.id] = p
-
   const puntoVentaPorId: Record<number, PuntoVentaListado> = {}
   for (const pv of puntosVenta ?? []) puntoVentaPorId[pv.id] = pv
 
@@ -277,7 +274,7 @@ export function OrdenesDeCompra() {
                           {o.numero ?? `#${o.id}`}
                         </Link>
                       </td>
-                      <td>{proveedorPorId[o.idProveedor]?.razonSocial ?? `Proveedor #${o.idProveedor}`}</td>
+                      <td>{o.nombreProveedor ?? `Proveedor #${o.idProveedor}`}</td>
                       <td>{puntoVentaPorId[o.idPuntoVenta]?.nombre ?? `PV #${o.idPuntoVenta}`}</td>
                       <td>
                         <span className={`badge ${claseDeBadgeDeEstadoOrdenCompra(o.estado)}`}>

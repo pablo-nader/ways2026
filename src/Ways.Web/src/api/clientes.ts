@@ -6,6 +6,17 @@
 import { api } from './cliente'
 import type { AltaCliente, ClienteListado, EdicionCliente, ListaPrecioAsignable, PaginaDe } from './tipos'
 
+/** Texto de la celda "Cliente" de un listado de documentos: lo que resolvió el servidor para esa fila, nunca
+ * una lista de referencia acotada. Un cliente dado de baja llega sin número ni nombre y se rotula por su id. */
+export function etiquetaDeClienteDeFila(fila: {
+  idCliente: number
+  numeroCliente?: number | null
+  nombreCliente?: string | null
+}): string {
+  if (fila.numeroCliente == null || fila.nombreCliente == null) return `Cliente #${fila.idCliente}`
+  return `#${fila.numeroCliente} — ${fila.nombreCliente}`
+}
+
 export const clienteDeClientes = {
   listar: (busqueda: string, incluirEliminados: boolean) => {
     const parametros = new URLSearchParams()
