@@ -495,7 +495,7 @@ vi.mock('../pos/facturacionAlCobrar', async (importarOriginal) => {
   }
 })
 
-const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false }))
+const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false, fallarQuitarDeRechazada: false }))
 vi.mock('../pos/outboxOffline', async (importarOriginal) => {
   const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
   return {
@@ -506,6 +506,8 @@ vi.mock('../pos/outboxOffline', async (importarOriginal) => {
         : controlDeOutbox.fallarLectura
           ? Promise.reject(new Error('almacén caído'))
           : real.leerOutbox(almacen),
+    quitarDeRechazada: (almacen: Parameters<typeof real.quitarDeRechazada>[0], idLocal: string) =>
+      controlDeOutbox.fallarQuitarDeRechazada ? Promise.reject(new Error('almacén caído')) : real.quitarDeRechazada(almacen, idLocal),
   }
 })
 
@@ -606,6 +608,7 @@ beforeEach(async () => {
   establecerTokenDeSesionBearer(null)
   controlDeOutbox.fallarLectura = false
   controlDeOutbox.colgarLectura = false
+  controlDeOutbox.fallarQuitarDeRechazada = false
   controlDeFactura.esperaMs = 60_000
 })
 
@@ -8249,19 +8252,79 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('Sin sincronizar: 1')
     })
 
-    it('"Descartar" exige confirmación explícita que nombra la venta — "Cancelar" no cambia nada', async () => {
+    it('"Descartar" abre un modal de confirmación que nombra la venta y deja el foco en Cancelar — "Cancelar" no cambia nada', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      const disparador = screen.getByRole('button', { name: 'Descartar' })
+      await userEvent.click(disparador)
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      expect(within(dialogo).getByText(/¿Descartar la venta 0007-00000500\?/)).toBeInTheDocument()
+      // La opción segura es la que tiene el foco: un Enter de más nunca descarta una venta real.
+      expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+
+      await userEvent.keyboard('{Enter}')
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      // Nunca se descartó en silencio: sigue "necesitando atención" y bloqueando el cierre.
+      expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
+      expect(disparador).toHaveFocus()
+    })
+
+    it('Escape cierra la confirmación sin descartar', async () => {
       await prepararVentaRechazada()
       renderPos()
       await esperarAlConsumidorFinal()
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
-      expect(await screen.findByText(/¿Descartar la venta 0007-00000500\?/)).toBeInTheDocument()
+      await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      await userEvent.keyboard('{Escape}')
 
-      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
-      expect(screen.queryByText(/¿Descartar la venta 0007-00000500\?/)).not.toBeInTheDocument()
-      // Nunca se descartó en silencio: sigue "necesitando atención" y bloqueando el cierre.
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
       expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F9 no abre el cobro por detrás (y sin ella sí lo abre)', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      fireEvent.keyDown(document, { key: 'F9' })
+      expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F9' })
+      expect(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })).toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F2 y F4 no abren los buscadores por detrás (y sin ella sí)', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      fireEvent.keyDown(document, { key: 'F2' })
+      fireEvent.keyDown(document, { key: 'F4' })
+      expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F2' })
+      expect(await screen.findByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
     })
 
     it('"Confirmar descarte" la saca de "necesita atención" para siempre y deja cerrar la caja', async () => {
@@ -8271,13 +8334,30 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
-      await screen.findByText(/¿Descartar la venta 0007-00000500\?/)
+      await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
       await userEvent.click(screen.getByRole('button', { name: 'Confirmar descarte' }))
 
       await waitFor(() => expect(screen.queryByText('1 venta necesita atención')).not.toBeInTheDocument())
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
       expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+    })
+
+    it('si el almacén falla al descartar, el error se ve dentro del modal, que sigue abierto, y la venta sigue pendiente', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      controlDeOutbox.fallarQuitarDeRechazada = true
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar descarte' }))
+
+      expect(await within(dialogo).findByText(/No se pudo descartar la venta/)).toBeInTheDocument()
+      expect(screen.getByRole('alertdialog', { name: 'Confirmar descarte' })).toBeInTheDocument()
+      expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
     })
   })
 

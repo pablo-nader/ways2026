@@ -102,6 +102,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { conTiempoLimite } from '../pos/tiempoLimite'
 import { Cargando } from '../componentes/Cargando'
 import { ChipDeSaldo } from '../componentes/ChipDeSaldo'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
@@ -1289,6 +1290,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const idLocalesEnAccionRef = useRef<Set<string>>(new Set())
   const [idLocalEnAccion, setIdLocalEnAccion] = useState<string | null>(null)
   const [idLocalConfirmandoDescarte, setIdLocalConfirmandoDescarte] = useState<string | null>(null)
+  const [disparadorDeDescarte, setDisparadorDeDescarte] = useState<HTMLElement | null>(null)
+  const [errorDescarte, setErrorDescarte] = useState('')
+  const ventaPorDescartar = sincronizacionOffline.ventasConError.find((v) => v.idLocal === idLocalConfirmandoDescarte) ?? null
+  const descartandoVenta = ventaPorDescartar !== null
 
   async function onReintentarVentaConError(idLocal: string) {
     if (idLocalesEnAccionRef.current.has(idLocal)) return
@@ -1302,20 +1307,34 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
+  function onPedirDescarteDeVenta(idLocal: string, evento: React.MouseEvent<HTMLButtonElement>) {
+    setDisparadorDeDescarte(evento.currentTarget)
+    setErrorDescarte('')
+    setIdLocalConfirmandoDescarte(idLocal)
+  }
+
   function onCancelarDescarteDeVenta() {
     setIdLocalConfirmandoDescarte(null)
+    setErrorDescarte('')
   }
 
   async function onConfirmarDescarteDeVenta(idLocal: string) {
     if (idLocalesEnAccionRef.current.has(idLocal)) return
     idLocalesEnAccionRef.current.add(idLocal)
     setIdLocalEnAccion(idLocal)
+    setErrorDescarte('')
+    let descartada = false
     try {
-      await sincronizacionOffline.descartarVentaConError(idLocal)
+      descartada = await sincronizacionOffline.descartarVentaConError(idLocal)
     } finally {
       idLocalesEnAccionRef.current.delete(idLocal)
       setIdLocalEnAccion(null)
+    }
+    if (descartada) {
       setIdLocalConfirmandoDescarte(null)
+      pedirFocoEnElCodigo()
+    } else {
+      setErrorDescarte('No se pudo descartar la venta. La venta sigue en "necesita atención".')
     }
   }
 
@@ -2859,7 +2878,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito || descartandoVenta) return
       // stage-pos-retiros-y-cierre-por-retiro (etapa 5): tampoco con un modal de "Retirar"/"Cerrar
       // caja" por retiro abierto.
       if (cajaDeEscritorioOcupada) return
@@ -2868,7 +2887,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, descartandoVenta, cajaDeEscritorioOcupada])
 
   // F4 abre el buscador de combos, con las mismas compuertas que el botón (que se deshabilita con un escaneo en vuelo) y que
   // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
@@ -2879,12 +2898,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
       evento.preventDefault()
       if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
-      if (gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito || cajaDeEscritorioOcupada) return
+      if (gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito || descartandoVenta || cajaDeEscritorioOcupada) return
       setBuscadorDeCombosAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, descartandoVenta, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -3174,7 +3193,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             <div className="d-flex flex-column gap-1">
               <span className="badge bg-danger">{fraseVentasNecesitanAtencion(sincronizacionOffline.ventasConError.length)}</span>
               {sincronizacionOffline.ventasConError.map((venta) => {
-                const numeroVisible = construirNumeroVisible(venta.idPuntoVenta, venta.numeroPreasignado)
                 const enAccion = idLocalEnAccion === venta.idLocal
                 return (
                   <span
@@ -3183,46 +3201,22 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     role="alert"
                   >
                     <span>{venta.mensaje}</span>
-                    {idLocalConfirmandoDescarte === venta.idLocal ? (
-                      <>
-                        <span>¿Descartar la venta {numeroVisible}? Nunca se va a sincronizar con el servidor.</span>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-danger"
-                          disabled={enAccion}
-                          onClick={() => onConfirmarDescarteDeVenta(venta.idLocal)}
-                        >
-                          {enAccion ? 'Descartando…' : 'Confirmar descarte'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary"
-                          disabled={enAccion}
-                          onClick={onCancelarDescarteDeVenta}
-                        >
-                          Cancelar
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-danger"
-                          disabled={enAccion}
-                          onClick={() => onReintentarVentaConError(venta.idLocal)}
-                        >
-                          {enAccion ? 'Reintentando…' : 'Reintentar'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary"
-                          disabled={enAccion}
-                          onClick={() => setIdLocalConfirmandoDescarte(venta.idLocal)}
-                        >
-                          Descartar
-                        </button>
-                      </>
-                    )}
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-danger"
+                      disabled={enAccion}
+                      onClick={() => onReintentarVentaConError(venta.idLocal)}
+                    >
+                      {enAccion ? 'Reintentando…' : 'Reintentar'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      disabled={enAccion}
+                      onClick={(evento) => onPedirDescarteDeVenta(venta.idLocal, evento)}
+                    >
+                      Descartar
+                    </button>
                   </span>
                 )
               })}
@@ -3773,6 +3767,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     pagosCubrenElTotal: boolean
     puedeCobrar: boolean
     vaciandoCarrito: boolean
+    descartandoVenta: boolean
     puedeVaciar: boolean
     pedirConfirmacionDeVaciado: () => void
     cancelarVaciado: () => void
@@ -3795,6 +3790,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       pagosCubrenElTotal,
       puedeCobrar,
       vaciandoCarrito,
+      descartandoVenta,
       puedeVaciar,
       pedirConfirmacionDeVaciado,
       cancelarVaciado,
@@ -3869,7 +3865,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       if (evento.key !== 'F9') return
       if (evento.repeat) return
-      if (m.buscadorAbierto || m.gateTurno || m.cajaDeEscritorioOcupada) return
+      if (m.buscadorAbierto || m.gateTurno || m.cajaDeEscritorioOcupada || m.descartandoVenta) return
       if (m.modoPresupuesto && !m.presupuestoCargado) return
       if (cobrandoRef.current) return
       evento.preventDefault()
@@ -4544,6 +4540,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         >
           <p className="mb-0">¿Está seguro que quiere vaciar el carrito?</p>
         </Modal>
+      )}
+
+      {ventaPorDescartar && (
+        <ConfirmacionDeBaja
+          titulo={`la venta ${construirNumeroVisible(ventaPorDescartar.idPuntoVenta, ventaPorDescartar.numeroPreasignado)}`}
+          pregunta="Descartar"
+          nota="Nunca se va a sincronizar con el servidor."
+          etiquetaConfirmar="Confirmar descarte"
+          etiquetaEnCurso="Descartando…"
+          ocupado={idLocalEnAccion === ventaPorDescartar.idLocal}
+          disparador={disparadorDeDescarte}
+          error={errorDescarte}
+          onConfirmar={() => void onConfirmarDescarteDeVenta(ventaPorDescartar.idLocal)}
+          onCancelar={onCancelarDescarteDeVenta}
+        />
       )}
 
       {ventaFinalizada && (
