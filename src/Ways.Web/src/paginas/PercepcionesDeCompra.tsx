@@ -37,6 +37,8 @@ function moneda(valor: number | null): string {
 export function PercepcionesDeCompra({ filas, onCambiar, onQuitar, agregables = [], onAgregar, disabled = false }: Props) {
   const { filas: ordenadas, orden, alternar } = useOrdenamiento(filas, COLUMNAS)
   const editable = onCambiar !== undefined
+  // En el editor las filas se editan: conservan el orden de carga y los encabezados no ordenan.
+  const ordenable = !editable
   if (filas.length === 0 && (!editable || agregables.length === 0)) return null
 
   return (
@@ -46,23 +48,34 @@ export function PercepcionesDeCompra({ filas, onCambiar, onQuitar, agregables = 
           <table className="table table-sm table-bordered align-middle w-auto mb-1" aria-label="Percepciones">
             <thead>
               <tr>
-                <EncabezadoOrdenable columna="percepcion" orden={orden} onAlternar={alternar}>
-                  Percepción
-                </EncabezadoOrdenable>
-                <EncabezadoOrdenable columna="base" orden={orden} onAlternar={alternar} className="text-end">
-                  Base imponible
-                </EncabezadoOrdenable>
-                <EncabezadoOrdenable columna="alicuota" orden={orden} onAlternar={alternar} className="text-end">
-                  Alícuota %
-                </EncabezadoOrdenable>
-                <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternar} className="text-end">
-                  Importe
-                </EncabezadoOrdenable>
+                {ordenable ? (
+                  <>
+                    <EncabezadoOrdenable columna="percepcion" orden={orden} onAlternar={alternar}>
+                      Percepción
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="base" orden={orden} onAlternar={alternar} className="text-end">
+                      Base imponible
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="alicuota" orden={orden} onAlternar={alternar} className="text-end">
+                      Alícuota %
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="importe" orden={orden} onAlternar={alternar} className="text-end">
+                      Importe
+                    </EncabezadoOrdenable>
+                  </>
+                ) : (
+                  <>
+                    <th>Percepción</th>
+                    <th className="text-end">Base imponible</th>
+                    <th className="text-end">Alícuota %</th>
+                    <th className="text-end">Importe</th>
+                  </>
+                )}
                 {editable && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {ordenadas.map((fila) => {
+              {(ordenable ? ordenadas : filas).map((fila) => {
                 const etiqueta = ETIQUETA_DE_PERCEPCION[fila.tipo]
                 return (
                   <tr key={fila.tipo}>

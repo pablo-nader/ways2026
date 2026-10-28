@@ -142,15 +142,26 @@ function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsu
  * es el mismo JSON auditable de la reliquidación, nunca un texto libre: se parsea de forma
  * defensiva y se muestra un resumen legible; un JSON malformado cae al texto crudo, nunca rompe la
  * fila. */
+function resumenDeConsumos(cantidad: number): string {
+  return `${cantidad} consumo${cantidad === 1 ? '' : 's'} re-preciado${cantidad === 1 ? '' : 's'}`
+}
+
+/** El texto que la celda "Detalle" muestra para un movimiento (sin el desplegable); `null` si la celda muestra "—". */
+function textoDelDetalle(m: MovimientoDeCuentaCorriente): string | null {
+  if (m.tipo !== 'ActualizacionPrecios') return m.detalle
+  const consumos = parsearDetalleDeActualizacionPrecios(m.detalle)
+  if (consumos === null) return m.detalle
+  if (consumos.length === 0) return 'Sin consumos re-preciados.'
+  return resumenDeConsumos(consumos.length)
+}
+
 function DetalleDeMovimientoDeActualizacionPrecios({ detalle }: { detalle: string | null }) {
   const consumos = parsearDetalleDeActualizacionPrecios(detalle)
   if (consumos === null) return <>{detalle ?? '—'}</>
   if (consumos.length === 0) return <>Sin consumos re-preciados.</>
   return (
     <details>
-      <summary>
-        {consumos.length} consumo{consumos.length === 1 ? '' : 's'} re-preciado{consumos.length === 1 ? '' : 's'}
-      </summary>
+      <summary>{resumenDeConsumos(consumos.length)}</summary>
       <ul className="mb-0 ps-3 small">
         {consumos.map((consumo) => (
           <li key={consumo.idMovimiento}>
@@ -548,7 +559,7 @@ type PropsPantalla = {
 const COLUMNAS_DEL_LIBRO: ColumnasOrdenables<MovimientoDeCuentaCorriente> = {
   fecha: { valor: (m) => new Date(m.fecha) },
   tipo: { valor: (m) => etiquetaDeMovimiento(m) },
-  detalle: { valor: (m) => m.detalle },
+  detalle: { valor: textoDelDetalle },
   importe: { valor: (m) => m.importe },
   saldo: { valor: (m) => m.saldoResultante },
 }

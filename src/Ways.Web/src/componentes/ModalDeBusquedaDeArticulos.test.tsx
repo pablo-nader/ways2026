@@ -257,10 +257,10 @@ describe('ModalDeBusquedaDeArticulos — foco al abrir (stage-pos-turno-y-foco)'
 describe('ModalDeBusquedaDeArticulos — trampa de foco (sobre Modal)', () => {
   it('Tab en el último control vuelve al primero ("Cerrar") en vez de escapar a la pantalla de atrás', () => {
     render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
-    const ultimo = screen.getByRole('button', { name: 'Precio' })
+    const buscar = screen.getByRole('button', { name: 'Buscar' })
 
-    ultimo.focus()
-    fireEvent.keyDown(ultimo, { key: 'Tab' })
+    buscar.focus()
+    fireEvent.keyDown(buscar, { key: 'Tab' })
 
     expect(screen.getByRole('button', { name: 'Cerrar' })).toHaveFocus()
   })
@@ -385,66 +385,17 @@ describe('ModalDeBusquedaDeArticulos — columna de costo (solo back-office)', (
   })
 })
 
-describe('ModalDeBusquedaDeArticulos — orden de los resultados', () => {
-  function resultado(idArticulo: number, precioFinal: number): ResultadoDeResolucion {
-    return { idArticulo, idListaPrecio: 1, precioOriginal: precioFinal, precioFinal, descuentoUnitario: 0, aplicadas: [] }
-  }
+describe('ModalDeBusquedaDeArticulos — resultados paginados por el servidor', () => {
+  /** La búsqueda trae una sola página (25 por defecto): reordenar en el cliente ordenaría solo esa página, así que las
+   * columnas no ofrecen orden. */
+  it('los encabezados no son ordenables', () => {
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ mostrarCosto: true })} />)
 
-  function codigosEnPantalla(): string[] {
-    return screen
-      .getAllByRole('row')
-      .slice(1)
-      .map((fila) => fila.querySelector('td')?.textContent ?? '')
-  }
-
-  const dosArticulos = () =>
-    paginaDe([
-      articuloListadoFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Zeta' }),
-      articuloListadoFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Alfa' }),
-    ])
-
-  it('el precio ordena por su valor numérico y no por el texto, y el tercer clic vuelve al orden de la búsqueda', async () => {
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(dosArticulos()) : Promise.reject(new Error(ruta)),
-    )
-    apiPostMock.mockResolvedValue([resultado(1, 1000), resultado(2, 90)])
-
-    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
-    const input = screen.getByLabelText('Buscar artículo por nombre')
-    fireEvent.change(input, { target: { value: 'fa' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    await screen.findByText('$ 1.000,00')
-
-    const encabezado = screen.getByRole('columnheader', { name: /Precio/ })
-    fireEvent.click(within(encabezado).getByRole('button'))
-    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
-    expect(codigosEnPantalla()).toEqual(['A0002', 'A0001'])
-
-    fireEvent.click(within(encabezado).getByRole('button'))
-    expect(codigosEnPantalla()).toEqual(['A0001', 'A0002'])
-
-    fireEvent.click(within(encabezado).getByRole('button'))
-    expect(encabezado).toHaveAttribute('aria-sort', 'none')
-    expect(codigosEnPantalla()).toEqual(['A0001', 'A0002'])
-  })
-
-  it('"Agregar" de una fila agrega el artículo de esa fila aunque el orden haya cambiado', async () => {
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(dosArticulos()) : Promise.reject(new Error(ruta)),
-    )
-    apiPostMock.mockResolvedValue([])
-    const onAgregar = vi.fn()
-
-    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar })} />)
-    const input = screen.getByLabelText('Buscar artículo por nombre')
-    fireEvent.change(input, { target: { value: 'fa' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    await screen.findByText('Zeta')
-
-    fireEvent.click(within(screen.getByRole('columnheader', { name: /Nombre/ })).getByRole('button'))
-    expect(codigosEnPantalla()).toEqual(['A0002', 'A0001'])
-    fireEvent.click(within(screen.getAllByRole('row')[1]).getByRole('button', { name: 'Agregar' }))
-
-    expect(onAgregar).toHaveBeenCalledWith(expect.objectContaining({ idArticulo: 2, nombre: 'Alfa' }), 1)
+    const encabezados = screen.getAllByRole('columnheader')
+    expect(encabezados.map((th) => th.textContent)).toEqual(['Código', 'Nombre', 'Costo', 'Precio', 'Acciones'])
+    for (const th of encabezados) {
+      expect(within(th).queryByRole('button')).not.toBeInTheDocument()
+      expect(th).not.toHaveAttribute('aria-sort')
+    }
   })
 })

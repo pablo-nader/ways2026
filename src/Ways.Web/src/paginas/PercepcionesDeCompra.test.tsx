@@ -33,21 +33,10 @@ describe('PercepcionesDeCompra — orden por columna', () => {
     expect(percepcionesEnPantalla()).toEqual(['Percepción IVA', 'Percepción IIBB'])
   })
 
-  it('en el editor reordenar no cambia a qué fila corresponde cada importe editado', () => {
-    const onCambiar = vi.fn()
-    render(<PercepcionesDeCompra filas={filas} onCambiar={onCambiar} onQuitar={vi.fn()} />)
-
-    fireEvent.click(within(screen.getByRole('columnheader', { name: /Percepción/ })).getByRole('button'))
-    expect(percepcionesEnPantalla().map((t) => t.replace('Sugerida', ''))).toEqual(['Percepción IIBB', 'Percepción IVA'])
-
-    fireEvent.change(screen.getByLabelText('Importe Percepción IVA'), { target: { value: '700' } })
-
-    expect(onCambiar).toHaveBeenCalledWith('iva', { importe: 700 })
-  })
-
-  it('el botón de quitar no es una columna ordenable', () => {
+  it('en el editor (editable) los encabezados no ordenan y las filas conservan el orden de carga', () => {
     render(<PercepcionesDeCompra filas={filas} onCambiar={vi.fn()} onQuitar={vi.fn()} />)
 
-    expect(screen.getAllByRole('columnheader').filter((th) => within(th).queryByRole('button'))).toHaveLength(4)
+    expect(screen.getAllByRole('columnheader').filter((th) => within(th).queryByRole('button'))).toHaveLength(0)
+    expect(percepcionesEnPantalla().map((t) => t.replace('Sugerida', ''))).toEqual(['Percepción IVA', 'Percepción IIBB'])
   })
 })

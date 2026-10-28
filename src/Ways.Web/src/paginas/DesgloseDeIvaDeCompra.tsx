@@ -36,6 +36,8 @@ function moneda(valor: number | null): string {
  * redondeo difiere; el servidor acepta una diferencia de hasta un peso. */
 export function DesgloseDeIvaDeCompra({ filas, nombrePorAlicuota, onCambiarIva, disabled = false }: Props) {
   const { filas: ordenadas, orden, alternar } = useOrdenamiento(filas, COLUMNAS)
+  // En el editor las filas se editan: conservan el orden de carga y los encabezados no ordenan.
+  const ordenable = onCambiarIva === undefined
 
   if (filas.length === 0) return null
 
@@ -44,19 +46,29 @@ export function DesgloseDeIvaDeCompra({ filas, nombrePorAlicuota, onCambiarIva, 
       <table className="table table-sm table-bordered align-middle w-auto mb-1" aria-label="Desglose de IVA">
         <thead>
           <tr>
-            <EncabezadoOrdenable columna="alicuota" orden={orden} onAlternar={alternar}>
-              Alícuota
-            </EncabezadoOrdenable>
-            <EncabezadoOrdenable columna="neto" orden={orden} onAlternar={alternar} className="text-end">
-              Neto
-            </EncabezadoOrdenable>
-            <EncabezadoOrdenable columna="iva" orden={orden} onAlternar={alternar} className="text-end">
-              IVA
-            </EncabezadoOrdenable>
+            {ordenable ? (
+              <>
+                <EncabezadoOrdenable columna="alicuota" orden={orden} onAlternar={alternar}>
+                  Alícuota
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="neto" orden={orden} onAlternar={alternar} className="text-end">
+                  Neto
+                </EncabezadoOrdenable>
+                <EncabezadoOrdenable columna="iva" orden={orden} onAlternar={alternar} className="text-end">
+                  IVA
+                </EncabezadoOrdenable>
+              </>
+            ) : (
+              <>
+                <th>Alícuota</th>
+                <th className="text-end">Neto</th>
+                <th className="text-end">IVA</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
-          {ordenadas.map((fila) => {
+          {(ordenable ? ordenadas : filas).map((fila) => {
             const nombre = nombrePorAlicuota[fila.idAlicuotaIva] ?? `${fila.porcentaje}%`
             return (
               <tr key={fila.idAlicuotaIva}>

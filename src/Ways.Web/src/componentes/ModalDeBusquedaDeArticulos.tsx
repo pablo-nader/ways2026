@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOfertas } from '../api/ofertas'
 import type { ArticuloParaCarrito } from '../api/carrito'
 import type { ArticuloListado, LineaDeResolucion, ResultadoDeResolucion } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
-import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import { Modal } from './Modal'
 
 /** Spec: "minimum 2 characters" — por debajo de este largo ni se debounce ni se dispara Enter. */
@@ -69,17 +68,6 @@ export function ModalDeBusquedaDeArticulos({
   const [resultados, setResultados] = useState<ArticuloListado[] | null>(null)
   const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
   const [error, setError] = useState('')
-
-  const columnasOrdenables = useMemo<ColumnasOrdenables<ArticuloListado>>(
-    () => ({
-      codigo: { valor: (a) => a.codigoInterno },
-      nombre: { valor: (a) => a.nombre },
-      costo: { valor: (a) => a.costoNominal },
-      precio: { valor: (a) => precios[a.id]?.precioFinal },
-    }),
-    [precios],
-  )
-  const ordenamiento = useOrdenamiento(resultados ?? [], columnasOrdenables)
 
   // react-async-state regla 2/3: una búsqueda nueva (debounce o Enter) invalida cualquier
   // resolución en vuelo de la anterior — nunca pisa un resultado más nuevo con uno viejo.
@@ -206,20 +194,10 @@ export function ModalDeBusquedaDeArticulos({
         <table className="table table-striped table-hover table-bordered align-middle">
           <thead>
             <tr>
-              <EncabezadoOrdenable columna="codigo" orden={ordenamiento.orden} onAlternar={ordenamiento.alternar}>
-                Código
-              </EncabezadoOrdenable>
-              <EncabezadoOrdenable columna="nombre" orden={ordenamiento.orden} onAlternar={ordenamiento.alternar}>
-                Nombre
-              </EncabezadoOrdenable>
-              {mostrarCosto && (
-                <EncabezadoOrdenable columna="costo" orden={ordenamiento.orden} onAlternar={ordenamiento.alternar} className="text-end">
-                  Costo
-                </EncabezadoOrdenable>
-              )}
-              <EncabezadoOrdenable columna="precio" orden={ordenamiento.orden} onAlternar={ordenamiento.alternar} className="text-end">
-                Precio
-              </EncabezadoOrdenable>
+              <th>Código</th>
+              <th>Nombre</th>
+              {mostrarCosto && <th className="text-end">Costo</th>}
+              <th className="text-end">Precio</th>
               <th className="text-end">Acciones</th>
             </tr>
           </thead>
@@ -239,8 +217,7 @@ export function ModalDeBusquedaDeArticulos({
               </tr>
             )}
             {!buscando &&
-              resultados !== null &&
-              ordenamiento.filas.map((a) => {
+              resultados?.map((a) => {
                 const resultado = precios[a.id]
                 const precioTexto = resultado?.precioFinal != null ? formatearMoneda(resultado.precioFinal) : '—'
                 return (

@@ -1173,4 +1173,30 @@ describe('CuentaCorriente — orden del ledger y del detalle por consumo', () =>
 
     expect(Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => fila.querySelector('td')?.textContent)).toEqual(['802', '803', '801'])
   })
+
+  it('la columna Detalle ordena por el texto que muestra la celda, no por el JSON crudo de la actualización de precios', async () => {
+    const detalleCrudo = JSON.stringify([{ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55, Lineas: [] }])
+    mockearRutasBase((ruta) =>
+      ruta.includes('/cuenta-corriente') && !ruta.includes('/reliquidacion')
+        ? Promise.resolve<EstadoDeCuenta>(
+            estadoFixture({
+              movimientos: [
+                movimientoFixture({ id: 1, detalle: 'Zeta' }),
+                movimientoFixture({ id: 2, tipo: 'ActualizacionPrecios', detalle: detalleCrudo, importe: 55 }),
+                movimientoFixture({ id: 3, detalle: '0 cosa' }),
+              ],
+            }),
+          )
+        : undefined,
+    )
+    renderPantalla()
+    await screen.findByText('1 consumo re-preciado')
+
+    await userEvent.click(within(screen.getByRole('columnheader', { name: 'Detalle' })).getByRole('button'))
+
+    const detalles = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[2]?.textContent)
+    expect(detalles[0]).toBe('0 cosa')
+    expect(detalles[1]).toMatch(/^1 consumo re-preciado/)
+    expect(detalles[2]).toBe('Zeta')
+  })
 })

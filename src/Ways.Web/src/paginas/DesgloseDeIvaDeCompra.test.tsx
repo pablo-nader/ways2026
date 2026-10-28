@@ -81,4 +81,20 @@ describe('DesgloseDeIvaDeCompra — orden por columna', () => {
 
     expect(alicuotasEnPantalla()).toEqual(['Exento', 'IVA 10,5%', 'IVA 21%'])
   })
+
+  it('en el editor (con onCambiarIva) los encabezados no ordenan y las filas conservan el orden de carga', () => {
+    render(
+      <DesgloseDeIvaDeCompra
+        filas={[
+          { idAlicuotaIva: 1, porcentaje: 21, neto: 1000, iva: 210 },
+          { idAlicuotaIva: 3, porcentaje: 10.5, neto: 20000, iva: 2100 },
+        ]}
+        nombrePorAlicuota={{ 1: '21%', 3: '10,5%' }}
+        onCambiarIva={vi.fn()}
+      />,
+    )
+
+    expect(screen.getAllByRole('columnheader').filter((th) => within(th).queryByRole('button'))).toHaveLength(0)
+    expect(alicuotasEnPantalla()).toEqual(['21%', '10,5%'])
+  })
 })
