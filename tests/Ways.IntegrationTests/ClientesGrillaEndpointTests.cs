@@ -124,6 +124,31 @@ public class ClientesGrillaEndpointTests(WaysApiFixture fixture) : IClassFixture
     }
 
     [Fact]
+    public async Task ElFiltroDeDocumentoNoCoincideConUnNumeroSinTipoPorqueLaCeldaMuestraGuion()
+    {
+        var e = await AprovisionarAsync(nameof(ElFiltroDeDocumentoNoCoincideConUnNumeroSinTipoPorqueLaCeldaMuestraGuion), fixture);
+        using var admin = await ClienteAsync(e.MailAdmin, e.PasswordAdmin, fixture);
+        var ids = await SembrarAsync(e);
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            db.Clientes.Add(new Cliente
+            {
+                IdTenant = e.IdTenant, Numero = 60, Nombre = "Sintipo", NumeroDocumento = "777", TipoDocumento = null,
+                IdCondicionFiscal = e.IdCondicionFiscalCf, IdListaPrecio = e.IdListaGeneral, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sinTipo = await PedirAsync(admin, Ruta, "documento=777");
+        var conTipo = await PedirAsync(admin, Ruta, "documento=300");
+
+        Assert.Empty(IdsDe(sinTipo));
+        Assert.Equal(0, sinTipo.GetProperty("total").GetInt32());
+        Assert.Equal(PorIndice(ids, "1"), IdsDe(conTipo));
+    }
+
+    [Fact]
     public async Task ElFiltroConviveConElOrdenYSePaginaSobreElConjuntoFiltrado()
     {
         var e = await AprovisionarAsync(nameof(ElFiltroConviveConElOrdenYSePaginaSobreElConjuntoFiltrado), fixture);

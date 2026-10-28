@@ -77,8 +77,9 @@ export function FilaDeFiltrosDePadron<F extends FiltrosDePadron>({
                   value={comoTexto(valores[celda.clave])}
                   disabled={deshabilitado}
                   onChange={(e) => {
-                    // Un texto que no es un entero no se acepta: el campo conserva lo anterior.
-                    if (/^\d*$/.test(e.target.value)) cambiar(celda.clave, e.target.value, false)
+                    // Un texto que no es un entero, o que pasa de nueve dígitos (más de eso puede salirse del rango
+                    // de un int y el servidor lo rechazaría con 400), no se acepta: el campo conserva lo anterior.
+                    if (/^\d{0,9}$/.test(e.target.value)) cambiar(celda.clave, e.target.value, false)
                   }}
                 />
               </th>

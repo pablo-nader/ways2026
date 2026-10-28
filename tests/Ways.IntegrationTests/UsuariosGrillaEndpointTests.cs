@@ -250,6 +250,33 @@ public class UsuariosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixture
         return (alfa.IdTenant, zeta.IdTenant, [.. cuentas.Select(c => c.Id)], marca);
     }
 
+    /// <summary><c>usuario</c> es único por tenant, no global: dos admins llamados igual en tenants distintos empatan en
+    /// el orden de siempre (rol y usuario) y solo el id los separa. Con páginas de una fila, sin el desempate el
+    /// empate puede repetir o saltear filas.</summary>
+    [Fact]
+    public async Task ElOrdenDeSiempreDesempataPorIdEntreCuentasDeTenantsDistintosConElMismoUsuario()
+    {
+        var alfa = await AprovisionarAsync($"{nameof(ElOrdenDeSiempreDesempataPorIdEntreCuentasDeTenantsDistintosConElMismoUsuario)}A", fixture);
+        var beta = await AprovisionarAsync($"{nameof(ElOrdenDeSiempreDesempataPorIdEntreCuentasDeTenantsDistintosConElMismoUsuario)}B", fixture);
+        using var root = await ClienteRootAsync(fixture);
+
+        // Los dos admins (mismo rol) pasan a llamarse igual; el nombre único aísla estas filas del resto de la base.
+        const string Nombre = "gemelo-desempate";
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            foreach (var u in await db.Usuarios.Where(u => u.Id == alfa.IdAdmin || u.Id == beta.IdAdmin).ToListAsync())
+            {
+                u.NombreUsuario = Nombre;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var recorrido = await RecorrerAsync(root, Ruta, $"usuario={Nombre}", tamanio: 1);
+
+        Assert.Equal(new[] { alfa.IdAdmin, beta.IdAdmin }.Order().ToList(), recorrido);
+    }
+
     [Theory]
     [InlineData("ascendente", "2,3,1,0")]
     [InlineData("descendente", "0,1,2,3")]

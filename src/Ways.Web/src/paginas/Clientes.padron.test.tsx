@@ -164,6 +164,18 @@ describe('Clientes — orden en el servidor', () => {
     ])
   })
 
+  it('el filtro de número no pasa de nueve dígitos y no manda un valor que el servidor rechazaría', async () => {
+    const usuario = userEvent.setup()
+    responder()
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+
+    await usuario.type(screen.getByLabelText('Filtrar por N°'), '1234567890')
+
+    await waitFor(() => expect(rutasDeClientes().at(-1)).toBe('/clientes?numero=123456789'))
+    expect(screen.getByLabelText('Filtrar por N°')).toHaveValue('123456789')
+  })
+
   it('Acciones no ordena: no es una columna de datos', async () => {
     responder()
     renderClientes()
@@ -232,7 +244,7 @@ describe('Clientes — filtros por columna en el servidor', () => {
 
   it.each([
     ['nombre', 'ana', 'nombre=ana'],
-    ['documento', '30', 'documento=30'],
+    ['número de documento', '30', 'documento=30'],
     ['teléfono', '11', 'telefono=11'],
     ['email', '@x', 'email=%40x'],
   ])('el filtro de %s manda su parámetro', async (columna, texto, esperado) => {

@@ -45,6 +45,29 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
             query = query.Where(p => Coincide(p.Nombre, patron) || Coincide(p.Documento, patron));
         }
 
+        var necesitaLosVinculos =
+            FiltrosDeListado.PatronONulo(filtros?.Usuario) is not null ||
+            FiltrosDeListado.PatronONulo(filtros?.Cliente) is not null ||
+            ordenPedido is { Columna: ColumnaDeOrdenDePersonal.Usuario or ColumnaDeOrdenDePersonal.Cliente };
+
+        if (!necesitaLosVinculos)
+        {
+            // Filtros y orden de columnas propias: el total y el orden no tocan los vínculos, que se unen recién
+            // para las filas de la página (el orden previo al join se conserva).
+            if (filtros is not null)
+            {
+                query = FiltrarPropias(query, filtros);
+            }
+
+            var totalPropio = await query.CountAsync(ct);
+            var filasPropias = await Proyectar(OrdenarPropias(query, ordenPedido))
+                .Skip((pagina - 1) * tamanio)
+                .Take(tamanio)
+                .ToListAsync(ct);
+
+            return new PaginaDe<PersonalListado>(filasPropias.Select(Armar).ToList(), totalPropio, pagina, tamanio);
+        }
+
         // Un solo LEFT JOIN alimenta filtros, total y orden: usuario y cliente se filtran y ordenan por el nombre
         // que la celda muestra, y un vínculo dado de baja llega como null (no coincide ni se ordena antes que nada).
         var unidas = Proyectar(query);
@@ -61,6 +84,54 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
             .ToListAsync(ct);
 
         return new PaginaDe<PersonalListado>(filas.Select(Armar).ToList(), total, pagina, tamanio);
+    }
+
+    private static IQueryable<Personal> FiltrarPropias(IQueryable<Personal> personal, FiltrosDePersonal filtros)
+    {
+        if (FiltrosDeListado.PatronONulo(filtros.Nombre) is { } nombre)
+        {
+            personal = personal.Where(p => Coincide(p.Nombre, nombre) || Coincide(p.Documento, nombre));
+        }
+
+        if (filtros.ValorHoraDesde is decimal valorDesde)
+        {
+            personal = personal.Where(p => p.ValorHora >= valorDesde);
+        }
+
+        if (filtros.ValorHoraHasta is decimal valorHasta)
+        {
+            personal = personal.Where(p => p.ValorHora <= valorHasta);
+        }
+
+        if (filtros.SaldoDesde is decimal saldoDesde)
+        {
+            personal = personal.Where(p => p.Saldo >= saldoDesde);
+        }
+
+        if (filtros.SaldoHasta is decimal saldoHasta)
+        {
+            personal = personal.Where(p => p.Saldo <= saldoHasta);
+        }
+
+        return personal;
+    }
+
+    private static IOrderedQueryable<Personal> OrdenarPropias(
+        IQueryable<Personal> personal, OrdenDeListado<ColumnaDeOrdenDePersonal>? orden)
+    {
+        var desc = orden is { Descendente: true };
+        var ordenadas = orden?.Columna switch
+        {
+            ColumnaDeOrdenDePersonal.ValorHora => desc
+                ? personal.OrderByDescending(p => p.ValorHora)
+                : personal.OrderBy(p => p.ValorHora),
+            ColumnaDeOrdenDePersonal.Saldo => desc
+                ? personal.OrderByDescending(p => p.Saldo)
+                : personal.OrderBy(p => p.Saldo),
+            _ => desc ? personal.OrderByDescending(p => p.Nombre) : personal.OrderBy(p => p.Nombre),
+        };
+
+        return ordenadas.ThenBy(p => p.Id);
     }
 
     private static IQueryable<FilaDePersonal> Filtrar(IQueryable<FilaDePersonal> filas, FiltrosDePersonal filtros)

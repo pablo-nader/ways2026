@@ -62,7 +62,9 @@ public static class OrdenDeClientes
 
         if (FiltrosDeListado.PatronONulo(filtros.Documento) is { } documento)
         {
-            query = query.Where(c => BusquedaSinAcentos.Coincide(c.NumeroDocumento, documento));
+            // La celda muestra "—" cuando falta el tipo o el número: sin tipo no hay documento que coincida, igual que
+            // en el orden.
+            query = query.Where(c => c.TipoDocumento != null && BusquedaSinAcentos.Coincide(c.NumeroDocumento, documento));
         }
 
         if (FiltrosDeListado.PatronONulo(filtros.Telefono) is { } telefono)

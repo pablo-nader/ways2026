@@ -224,7 +224,9 @@ public class ServicioDeUsuarios(
     {
         if (orden is null)
         {
-            return query.OrderBy(u => u.RolId).ThenBy(u => u.NombreUsuario);
+            // `usuario` es único por tenant y no global: sin el id, dos cuentas de tenants distintos empatan y la
+            // paginación puede repetir o saltear filas.
+            return query.OrderBy(u => u.RolId).ThenBy(u => u.NombreUsuario).ThenBy(u => u.Id);
         }
 
         var desc = orden.Value.Descendente;

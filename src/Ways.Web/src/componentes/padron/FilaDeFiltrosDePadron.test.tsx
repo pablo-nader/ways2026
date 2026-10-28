@@ -63,6 +63,17 @@ describe('FilaDeFiltrosDePadron', () => {
     expect(onCambio.mock.calls).toEqual([[{ entero: '1' }, false]])
   })
 
+  it('un entero no pasa de nueve dígitos, para no salirse del rango de un int', async () => {
+    const usuario = userEvent.setup()
+    const { onCambio } = montar({ valores: { ...VACIOS, entero: '123456789' } })
+
+    await usuario.type(screen.getByLabelText('Filtrar por N°'), '0')
+    expect(onCambio).not.toHaveBeenCalled()
+
+    await usuario.type(screen.getByLabelText('Filtrar por N°'), '{Backspace}')
+    expect(onCambio).toHaveBeenCalledWith({ entero: '12345678' }, false)
+  })
+
   it('un selector ofrece Todos y las opciones, y se aplica en el acto', async () => {
     const usuario = userEvent.setup()
     const { onCambio } = montar()

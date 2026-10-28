@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   TAMANIO_DE_PAGINA_POR_DEFECTO,
+  construirQueryDePadron,
   hayFiltrosEnPadron,
   type ConsultaDePadron,
   type FiltrosDePadron,
@@ -66,6 +67,11 @@ export function usePadronEnServidor<F extends FiltrosDePadron, C extends string>
 
   const aplicarBorrador = useCallback(() => {
     cancelarTemporizador()
+    // Si los filtros efectivos (con los textos recortados, como viajan) no cambiaron, no hay nada que pedir: ni una
+    // consulta repetida ni volver a la página 1.
+    if (construirQueryDePadron({ ...consultaRef.current, filtros: borradorRef.current }) ===
+        construirQueryDePadron({ ...consultaRef.current, filtros: consultaRef.current.filtros })) return
+
     aplicar({ ...consultaRef.current, filtros: borradorRef.current, pagina: 1 })
   }, [aplicar, cancelarTemporizador])
 

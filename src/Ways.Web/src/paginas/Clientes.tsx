@@ -26,7 +26,7 @@ import { ModalDeCliente } from './clientes/ModalDeCliente'
 const CELDAS_DE_FILTRO: readonly CeldaDeFiltroDePadron<FiltrosDeClientes>[] = [
   { tipo: 'entero', clave: 'numero', etiqueta: 'N°' },
   { tipo: 'texto', clave: 'nombre', etiqueta: 'nombre' },
-  { tipo: 'texto', clave: 'documento', etiqueta: 'documento' },
+  { tipo: 'texto', clave: 'documento', etiqueta: 'número de documento' },
   { tipo: 'texto', clave: 'telefono', etiqueta: 'teléfono' },
   { tipo: 'texto', clave: 'email', etiqueta: 'email' },
   {

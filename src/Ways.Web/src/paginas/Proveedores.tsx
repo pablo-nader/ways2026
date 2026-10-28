@@ -205,7 +205,7 @@ export function Proveedores() {
    * recarga `consultaRef`, nunca el texto tipeado en un filtro y todavía no aplicado. */
   const padron = usePadronEnServidor<FiltrosDeProveedores, ColumnaOrdenableDeProveedores>(
     FILTROS_DE_PROVEEDORES_VACIOS,
-    { esColumnaOrdenable: esColumnaOrdenableDeProveedores, ocupado: () => bloqueadoRef.current },
+    { esColumnaOrdenable: esColumnaOrdenableDeProveedores, ocupado: () => ocupadoRef.current || bloqueadoRef.current },
   )
   const { irAPagina } = padron
 

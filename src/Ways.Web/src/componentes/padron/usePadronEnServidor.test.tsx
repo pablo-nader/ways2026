@@ -59,6 +59,19 @@ describe('usePadronEnServidor', () => {
     expect(result.current.consulta.filtros.texto).toBe('ab')
   })
 
+  it('si los filtros efectivos no cambian no hay consulta nueva ni vuelve a la página 1', () => {
+    const { result } = montar()
+    act(() => result.current.cambiarFiltros({ texto: 'ab' }, true))
+    act(() => result.current.irAPagina(3))
+    const antes = result.current.consulta
+
+    act(() => result.current.cambiarFiltros({ texto: 'ab ' }, true))
+    act(() => result.current.cambiarFiltros({ texto: 'ab' }, true))
+
+    expect(result.current.consulta).toBe(antes)
+    expect(result.current.consulta.pagina).toBe(3)
+  })
+
   it('cambiar un filtro, el orden o el tamaño vuelve a la página 1', () => {
     const { result } = montar()
     act(() => result.current.irAPagina(4))

@@ -37,11 +37,12 @@ public static class OrdenDeUsuarios
     public const string ValorSinTenant = "sin-tenant";
 
     /// <summary>Copia que la pantalla muestra en la columna Tenant de una cuenta sin tenant. Vive en la web
-    /// (<c>ETIQUETA_PLATAFORMA</c>): el servidor la repite solo para ordenar por el texto que se ve, y un test de cada
-    /// lado la ata a la del otro.</summary>
+    /// (<c>ETIQUETA_PLATAFORMA</c>): el servidor la repite solo para ordenar por el texto que se ve. Dos tests la atan:
+    /// <c>LasEtiquetasDeEstadoSonLosNombresDelEnumQueLaWebMuestra</c> fija el literal de este lado y
+    /// <c>organizacion.test.ts</c> ("las etiquetas de tenant que el servidor repite para ordenar") fija el de la web.</summary>
     public const string EtiquetaPlataforma = "Plataforma";
 
-    /// <summary>Copia de una cuenta cuyo tenant fue dado de baja (<c>ETIQUETA_SIN_DUENIO</c> en la web).</summary>
+    /// <summary>Copia de una cuenta cuyo tenant fue dado de baja (<c>ETIQUETA_SIN_DUENIO</c> en la web), atada por los mismos dos tests que <see cref="EtiquetaPlataforma"/>.</summary>
     public const string EtiquetaSinDuenio = "—";
 
     /// <summary>Lista cerrada de claves de <c>orden</c>: cada una ordena por lo que la columna muestra.</summary>
