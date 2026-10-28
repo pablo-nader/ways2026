@@ -592,8 +592,8 @@ public class ServicioDePagos(
         var pago = await db.Pagos.FirstOrDefaultAsync(g => g.Id == idPago, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idPago}.");
 
-        var anterior = EstadoContable(pago);
-        var valorAnterior = PayloadDeEdicion(pago);
+        var anterior = await EstadoContableAsync(pago, ct);
+        var valorAnterior = PayloadDeEdicion(pago, anterior.ImportePorMedio);
 
         if (solicitud is not null)
         {
@@ -630,7 +630,7 @@ public class ServicioDePagos(
         pago.UpdatedAt = momento;
         await db.SaveChangesAsync(ct);
 
-        var nuevo = solicitud is null ? null : EstadoContable(pago);
+        var nuevo = solicitud is null ? null : await EstadoContableAsync(pago, ct);
         var detalle = solicitud is null ? $"Baja del gasto #{pago.Id}" : $"Edición del gasto #{pago.Id}";
 
         await EscribirAjustesDeProveedorAsync(
@@ -655,7 +655,7 @@ public class ServicioDePagos(
                 idEmpleado, ct);
         }
 
-        var valorNuevo = PayloadDeEdicion(pago);
+        var valorNuevo = PayloadDeEdicion(pago, nuevo?.ImportePorMedio ?? anterior.ImportePorMedio);
         if (solicitud is null)
         {
             valorNuevo["deleted_at"] = pago.DeletedAt;
@@ -815,9 +815,10 @@ public class ServicioDePagos(
     /// <summary>Escritura doble de E2-S1: cada pago nace con exactamente un ítem que repite el medio y el importe de su
     /// cabecera. Va en la transacción del llamador, después de que el pago tiene su id; el constraint trigger de la base
     /// es diferido, así que el orden dentro de la transacción no importa.</summary>
-    private async Task EscribirItemsDeLosPagosAsync(IEnumerable<Pago> pagos, DateTimeOffset momento, CancellationToken ct)
+    private async Task<IReadOnlyList<ItemPago>> EscribirItemsDeLosPagosAsync(
+        IEnumerable<Pago> pagos, DateTimeOffset momento, CancellationToken ct)
     {
-        db.ItemsPago.AddRange(pagos.Select(pago => new ItemPago
+        var items = pagos.Select(pago => new ItemPago
         {
             IdTenant = pago.IdTenant,
             IdPago = pago.Id,
@@ -825,8 +826,11 @@ public class ServicioDePagos(
             Importe = pago.Importe,
             CreatedAt = momento,
             UpdatedAt = momento
-        }));
+        }).ToList();
+
+        db.ItemsPago.AddRange(items);
         await db.SaveChangesAsync(ct);
+        return items;
     }
 
     /// <summary>La edición del medio o del importe del pago lleva su único ítem consigo, en el mismo
@@ -853,10 +857,22 @@ public class ServicioDePagos(
         item.UpdatedAt = momento;
     }
 
-    private static EstadoContableDePago EstadoContable(Pago pago) =>
-        new(pago.Categoria, pago.IdProveedor, pago.IdMedioPago, pago.Importe);
+    /// <summary>Estado contable del pago con el reparto por medio leído de sus ítems vivos. Se llama dos veces por
+    /// escritura: antes de mutar (bajo el lock del pago) y después del <c>SaveChanges</c> que sincroniza el ítem, así que
+    /// la lectura va sin seguimiento y refleja lo persistido en cada momento.</summary>
+    private async Task<EstadoContableDePago> EstadoContableAsync(Pago pago, CancellationToken ct)
+    {
+        var porMedio = await db.ItemsPago
+            .AsNoTracking()
+            .Where(i => i.IdPago == pago.Id)
+            .GroupBy(i => i.IdMedioPago)
+            .Select(g => new { IdMedioPago = g.Key, Importe = g.Sum(i => i.Importe) })
+            .ToDictionaryAsync(x => x.IdMedioPago, x => x.Importe, ct);
 
-    private static Dictionary<string, object?> PayloadDeEdicion(Pago pago) => new()
+        return new EstadoContableDePago(pago.Categoria, pago.IdProveedor, porMedio, pago.Importe);
+    }
+
+    private static Dictionary<string, object?> PayloadDeEdicion(Pago pago, IReadOnlyDictionary<int, decimal> importePorMedio) => new()
     {
         ["categoria"] = pago.Categoria,
         ["id_proveedor"] = pago.IdProveedor,
@@ -864,6 +880,10 @@ public class ServicioDePagos(
         ["concepto"] = pago.Concepto,
         ["detalle"] = pago.Detalle,
         ["id_medio_pago"] = pago.IdMedioPago,
+        ["lineas"] = importePorMedio
+            .OrderBy(par => par.Key)
+            .Select(par => new Dictionary<string, object?> { ["id_medio_pago"] = par.Key, ["importe"] = par.Value })
+            .ToList(),
         ["numero_factura"] = pago.NumeroFactura,
         ["importe"] = pago.Importe
     };
@@ -1498,7 +1518,7 @@ public class ServicioDePagos(
     /// <see cref="EscribirMovimientoDeTesoreriaAsync"/>, cuyo advisory de la empresa es el ÚLTIMO lock de la
     /// transacción. El pago de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería,
     /// la fecha de negocio elegida. Cada pago apunta al movimiento <c>pago</c> del libro de personal.</summary>
-    public async Task<IReadOnlyList<Pago>> PersistirPagosDeSueldoAsync(
+    public async Task<IReadOnlyList<PagoDeSueldoPersistido>> PersistirPagosDeSueldoAsync(
         int idTenant, EntornoDePagoDeSueldo entorno, OrigenFondosPago origenFondos, string nombreDelPersonal,
         int idMovimientoPersonal, IReadOnlyList<LineaDePagoDePersonal> lineas, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct = default)
@@ -1524,7 +1544,7 @@ public class ServicioDePagos(
 
         db.Pagos.AddRange(pagos);
         await db.SaveChangesAsync(ct);
-        await EscribirItemsDeLosPagosAsync(pagos, momento, ct);
+        var items = await EscribirItemsDeLosPagosAsync(pagos, momento, ct);
 
         if (origenFondos == OrigenFondosPago.Tesoreria)
         {
@@ -1534,7 +1554,7 @@ public class ServicioDePagos(
             }
         }
 
-        return pagos;
+        return pagos.Select((pago, i) => new PagoDeSueldoPersistido(pago, items[i])).ToList();
     }
 
     // ---- resolución interna ---------------------------------------------------------------

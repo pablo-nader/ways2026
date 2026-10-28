@@ -48,12 +48,13 @@ public record SolicitudDePagoDePersonal(
 /// <summary><see cref="Referencia"/> (cupón u operación) queda en el detalle del pago de la línea.</summary>
 public record LineaDeSolicitudDePago(int IdMedioPago, decimal Importe, string? Referencia);
 
-/// <summary>Composición de un pago: el descuento de cuenta corriente (si hubo) y una línea por cada pago
-/// generado. <see cref="LineaDeDesglose.NombreMedioPago"/> sale en <c>null</c> si el medio se dio de baja.</summary>
+/// <summary>Composición de un pago: el descuento de cuenta corriente (si hubo) y una línea por cada ítem de
+/// cada pago generado. <see cref="LineaDeDesglose.NombreMedioPago"/> sale en <c>null</c> si el medio se dio de baja.</summary>
 public record DesgloseDePago(decimal? DescuentoDeCuentaCorriente, IReadOnlyList<LineaDeDesglose> Lineas);
 
 public record LineaDeDesglose(
     [property: JsonPropertyName("idGasto")] int IdPago,
+    int IdItem,
     int IdMedioPago,
     string? NombreMedioPago,
     decimal Importe,

@@ -532,7 +532,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
                               <li>Descuento de cuenta corriente: {moneda(m.desglose.descuentoDeCuentaCorriente)}</li>
                             )}
                             {m.desglose.lineas.map((l) => (
-                              <li key={l.idGasto}>{textoDeLineaDeDesglose(l)}</li>
+                              <li key={l.idItem}>{textoDeLineaDeDesglose(l)}</li>
                             ))}
                           </ul>
                         )}

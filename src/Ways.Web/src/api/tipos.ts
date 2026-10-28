@@ -3619,10 +3619,12 @@ export type PersonalListado = {
 /** Espejo del enum `TipoMovimientoPersonal`: viaja como texto PascalCase. */
 export type TipoMovimientoPersonal = 'Horas' | 'Pago' | 'Ajuste'
 
-/** Espejo de `LineaDeDesglose`: una entrega de dinero de un pago. `nombreMedioPago` llega en `null`
- * si el medio se dio de baja; `referencia` es la que se cargó en la línea. */
+/** Espejo de `LineaDeDesglose`: una entrega de dinero de un pago (un ítem por medio). `idGasto` es el id del
+ * pago e `idItem` el de su ítem. `nombreMedioPago` llega en `null` si el medio se dio de baja; `referencia` es
+ * la que se cargó en la línea. */
 export type LineaDeDesgloseDePago = {
   idGasto: number
+  idItem: number
   idMedioPago: number
   nombreMedioPago: string | null
   importe: number

@@ -145,8 +145,8 @@ public sealed class ServicioDePagoDePersonal(
                 idTenant, entorno, origenFondos, nombre, idMovimiento, plan.Lineas, idEmpleado, momento, ct);
 
             lineas.AddRange(pagos.Select(g => new LineaDeDesglose(
-                g.Id, g.IdMedioPago, entorno.NombresDeMedios.GetValueOrDefault(g.IdMedioPago), g.Importe,
-                g.OrigenFondos, g.Detalle)));
+                g.Pago.Id, g.Item.Id, g.Item.IdMedioPago, entorno.NombresDeMedios.GetValueOrDefault(g.Item.IdMedioPago),
+                g.Item.Importe, g.Pago.OrigenFondos, g.Pago.Detalle)));
         }
 
         await transaccion.CommitAsync(ct);

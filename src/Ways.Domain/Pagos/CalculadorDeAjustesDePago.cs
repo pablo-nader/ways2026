@@ -1,8 +1,10 @@
 namespace Ways.Domain.Pagos;
 
 /// <summary>Los campos de un pago que deciden sus efectos sobre los ledgers (cuenta corriente de
-/// proveedor, tesorería y arqueo del turno).</summary>
-public sealed record EstadoContableDePago(CategoriaPago Categoria, int? IdProveedor, int IdMedioPago, decimal Importe);
+/// proveedor, tesorería y arqueo del turno). <see cref="Importe"/> es el total de la cabecera;
+/// <see cref="ImportePorMedio"/> lo reparte por medio de pago, sumando los ítems vivos del mismo medio.</summary>
+public sealed record EstadoContableDePago(
+    CategoriaPago Categoria, int? IdProveedor, IReadOnlyDictionary<int, decimal> ImportePorMedio, decimal Importe);
 
 /// <summary>Importe que se suma a <c>proveedores.saldo</c> (y que lleva el movimiento de ajuste).</summary>
 public sealed record AjusteDeSaldoDeProveedor(int IdProveedor, decimal Importe);
@@ -61,11 +63,15 @@ public static class CalculadorDeAjustesDePago
         };
     }
 
-    /// <summary>El arqueo solo descuenta pagos de caja, por su medio de pago y su importe.</summary>
+    /// <summary>El arqueo solo descuenta pagos de caja, por el importe de cada medio de pago: hay
+    /// efecto si el reparto por medio cambió (o si es una baja).</summary>
     public static bool AfectaElArqueo(
         OrigenFondosPago origen, EstadoContableDePago anterior, EstadoContableDePago? nuevo) =>
         origen == OrigenFondosPago.CajaTurno
-        && (nuevo is null || nuevo.Importe != anterior.Importe || nuevo.IdMedioPago != anterior.IdMedioPago);
+        && (nuevo is null || !MismoReparto(anterior.ImportePorMedio, nuevo.ImportePorMedio));
+
+    private static bool MismoReparto(IReadOnlyDictionary<int, decimal> a, IReadOnlyDictionary<int, decimal> b) =>
+        a.Count == b.Count && a.All(par => b.TryGetValue(par.Key, out var importe) && importe == par.Value);
 
     private static int? ProveedorPagado(EstadoContableDePago estado) =>
         estado.Categoria == CategoriaPago.Proveedor ? estado.IdProveedor : null;

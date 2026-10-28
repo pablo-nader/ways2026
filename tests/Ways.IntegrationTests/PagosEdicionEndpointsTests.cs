@@ -261,6 +261,13 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(120m, nuevo.GetProperty("importe").GetDecimal());
         Assert.Equal("Flete corregido", nuevo.GetProperty("concepto").GetString());
         Assert.Equal(ctx.IdMedioElectronico, nuevo.GetProperty("id_medio_pago").GetInt32());
+
+        // E2-S2: el payload suma el reparto por medio leído de los ítems.
+        var lineaAnterior = Assert.Single(anterior.GetProperty("lineas").EnumerateArray());
+        Assert.Equal(300m, lineaAnterior.GetProperty("importe").GetDecimal());
+        var lineaNueva = Assert.Single(nuevo.GetProperty("lineas").EnumerateArray());
+        Assert.Equal(ctx.IdMedioElectronico, lineaNueva.GetProperty("id_medio_pago").GetInt32());
+        Assert.Equal(120m, lineaNueva.GetProperty("importe").GetDecimal());
     }
 
     [Fact]
@@ -610,6 +617,100 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(80m, JsonDocument.Parse(auditoria.ValorAnterior!).RootElement.GetProperty("importe").GetDecimal());
         Assert.NotEqual(JsonValueKind.Null, JsonDocument.Parse(auditoria.ValorNuevo).RootElement.GetProperty("deleted_at").ValueKind);
         Assert.Equal(45m, await db.Pagos.Where(g => g.Id == deEfectivo.Id).Select(g => g.Importe).SingleAsync());
+    }
+
+    // ---- E2-S2: el arqueo lee los importes por medio desde los ítems ------------------------
+
+    /// <summary>Reparte el pago en dos ítems dentro de una misma transacción (el constraint trigger de suma es diferido):
+    /// el primero conserva su medio con <paramref name="importeDelPrimero"/> y el segundo lleva el resto en
+    /// <paramref name="idMedioSegundo"/>. El servicio todavía escribe un ítem por pago, así que el estado se arma a mano.</summary>
+    private async Task PartirEnDosItemsAsync(Contexto ctx, int idPago, decimal importeDelPrimero, int idMedioSegundo)
+    {
+        await using var db = Db(ctx);
+        var primero = await db.ItemsPago.SingleAsync(i => i.IdPago == idPago);
+        var resto = primero.Importe - importeDelPrimero;
+        primero.Importe = importeDelPrimero;
+        var ahora = DateTimeOffset.UtcNow;
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = idPago, IdMedioPago = idMedioSegundo, Importe = resto,
+            CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Un pago de caja repartido en dos medios resta de cada fila del arqueo el importe de SU ítem, no el de
+    /// la cabecera.</summary>
+    [Fact]
+    public async Task ElCierreRestaDeCadaMedioElImporteDeSuItem()
+    {
+        var ctx = await PrepararAsync(nameof(ElCierreRestaDeCadaMedioElImporteDeSuItem));
+        var idTurno = await AbrirTurnoAsync(ctx, 1000m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo);
+        await PartirEnDosItemsAsync(ctx, pago.Id, 60m, ctx.IdMedioElectronico);
+
+        await CerrarTurnoAsync(
+            ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 940m), new ConteoDeclarado(ctx.IdMedioElectronico, 0m));
+
+        await using var db = Db(ctx);
+        var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).ToListAsync();
+        Assert.Equal(940m, filas.Single(a => a.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado);
+        Assert.Equal(-40m, filas.Single(a => a.IdMedioPago == ctx.IdMedioElectronico).ImporteEsperado);
+    }
+
+    /// <summary>Un ítem dado de baja no resta, aunque su pago siga vivo.</summary>
+    [Fact]
+    public async Task UnItemDadoDeBajaNoRestaDelArqueo()
+    {
+        var ctx = await PrepararAsync(nameof(UnItemDadoDeBajaNoRestaDelArqueo));
+        var idTurno = await AbrirTurnoAsync(ctx, 1000m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo);
+        await PartirEnDosItemsAsync(ctx, pago.Id, 60m, ctx.IdMedioElectronico);
+
+        await using (var db = Db(ctx))
+        {
+            var segundo = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id && i.IdMedioPago == ctx.IdMedioElectronico);
+            segundo.DeletedAt = DateTimeOffset.UtcNow;
+            var primero = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id && i.IdMedioPago == ctx.IdMedioEfectivo);
+            primero.Importe = 100m;
+            await db.SaveChangesAsync();
+        }
+
+        await CerrarTurnoAsync(ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 900m));
+
+        await using var lectura = Db(ctx);
+        var filas = await lectura.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).ToListAsync();
+        Assert.Equal(900m, filas.Single(a => a.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado);
+        Assert.DoesNotContain(filas, a => a.IdMedioPago == ctx.IdMedioElectronico && a.ImporteEsperado != 0m);
+    }
+
+    /// <summary>La baja administrativa de un pago de dos ítems en un turno cerrado devuelve a cada medio su parte.</summary>
+    [Fact]
+    public async Task LaBajaDeUnPagoDeDosItemsRecalculaElArqueoPorMedio()
+    {
+        var ctx = await PrepararAsync(nameof(LaBajaDeUnPagoDeDosItemsRecalculaElArqueoPorMedio));
+        var idTurno = await AbrirTurnoAsync(ctx, 1000m);
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo);
+        await PartirEnDosItemsAsync(ctx, pago.Id, 60m, ctx.IdMedioElectronico);
+        await CerrarTurnoAsync(
+            ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 940m), new ConteoDeclarado(ctx.IdMedioElectronico, 0m));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{pago.Id}")).StatusCode);
+
+        await using var db = Db(ctx);
+        var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).ToListAsync();
+        var efectivo = filas.Single(a => a.IdMedioPago == ctx.IdMedioEfectivo);
+        Assert.Equal(1000m, efectivo.ImporteEsperado);
+        Assert.Equal(940m, efectivo.ImporteEsperadoOriginal);
+        var electronico = filas.Single(a => a.IdMedioPago == ctx.IdMedioElectronico);
+        Assert.Equal(0m, electronico.ImporteEsperado);
+        Assert.Equal(-40m, electronico.ImporteEsperadoOriginal);
+
+        var auditoria = await db.Auditoria.SingleAsync(a => a.Accion == "pago.baja" && a.IdEntidad == pago.Id);
+        var lineas = JsonDocument.Parse(auditoria.ValorAnterior!).RootElement.GetProperty("lineas").EnumerateArray().ToList();
+        Assert.Equal(
+            new[] { (ctx.IdMedioEfectivo, 60m), (ctx.IdMedioElectronico, 40m) }.OrderBy(l => l.Item1),
+            lineas.Select(l => (l.GetProperty("id_medio_pago").GetInt32(), l.GetProperty("importe").GetDecimal())));
     }
 
     // ---- administración: sin turno ------------------------------------------------------------

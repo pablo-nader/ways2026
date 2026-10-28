@@ -292,6 +292,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var lineas = desglose.GetProperty("lineas").EnumerateArray().ToList();
         Assert.Equal(2, lineas.Count);
         Assert.Equal([pagos[0].Id, pagos[1].Id], lineas.Select(l => l.GetProperty("idGasto").GetInt32()));
+        Assert.Equal(itemsDeSueldo.Select(i => i.Id), lineas.Select(l => l.GetProperty("idItem").GetInt32()));
         Assert.Equal([ctx.IdMedioEfectivo, ctx.IdMedioTarjeta], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
         Assert.Equal([2000m, 500m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
         Assert.All(lineas, l => Assert.Equal("tesoreria", l.GetProperty("origenFondos").GetString(), ignoreCase: true));
@@ -302,6 +303,9 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var desgloseDeLaRespuesta = pago.GetProperty("desglose");
         Assert.Equal(1500m, desgloseDeLaRespuesta.GetProperty("descuentoDeCuentaCorriente").GetDecimal());
         Assert.Equal(2, desgloseDeLaRespuesta.GetProperty("lineas").GetArrayLength());
+        Assert.Equal(
+            itemsDeSueldo.Select(i => i.Id),
+            desgloseDeLaRespuesta.GetProperty("lineas").EnumerateArray().Select(l => l.GetProperty("idItem").GetInt32()));
     }
 
     [Fact]
