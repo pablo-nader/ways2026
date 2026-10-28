@@ -979,6 +979,52 @@ describe('Pagos (administración) — edición y baja', () => {
     )
   })
 
+  it('un pago de caja se edita con un solo medio: sin "Agregar medio"', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByLabelText('Importe de la línea 1')).toBeInTheDocument()
+    expect(d.queryByRole('button', { name: 'Agregar medio' })).not.toBeInTheDocument()
+    expect(d.getByRole('button', { name: 'Guardar cambios' })).toBeEnabled()
+  })
+
+  it('un pago de tesorería se edita con varios medios: ofrece "Agregar medio"', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler', origenFondos: 'Tesoreria' })]) })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Alquiler' }))
+
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByRole('button', { name: 'Agregar medio' })).toBeEnabled()
+  })
+
+  it('un pago de caja con varios medios se ve de solo lectura y no se puede guardar', async () => {
+    const repartido = pagoFixture({
+      id: 33,
+      concepto: 'Flete',
+      importe: 1000,
+      origenFondos: 'CajaTurno',
+      idTurnoCaja: 9,
+      lineas: [
+        { idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: 600, referencia: null },
+        { idItem: 2, idMedioPago: 4, nombreMedioPago: 'Transferencia', importe: 400, referencia: null },
+      ],
+    })
+    mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente, medioTransferencia], pagina: paginaFixture([repartido]) })
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByText('Este pago de caja tiene varios medios; se edita desde el POS nuevo.')).toBeInTheDocument()
+    expect(d.getByLabelText('Importe de la línea 2')).toBeDisabled()
+    expect(d.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
+    expect(d.queryByRole('button', { name: 'Agregar medio' })).not.toBeInTheDocument()
+  })
+
   it('editar un pago de caja de un turno cerrado muestra el aviso de recálculo del arqueo', async () => {
     mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
     renderPagos()

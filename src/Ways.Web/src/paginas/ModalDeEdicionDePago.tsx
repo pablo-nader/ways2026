@@ -15,6 +15,7 @@ import type {
   LineaDePagoListada,
   MedioPagoListado,
   OpcionDeProveedor,
+  OrigenFondosPago,
   SolicitudDeEdicionDePago,
   SolicitudDeEdicionDePagoConLineas,
 } from '../api/tipos'
@@ -36,6 +37,8 @@ type Props = Salida & {
   areas: AreaListado[]
   /** Con una compra ligada el servidor exige categoría proveedor y el mismo proveedor (400). */
   ligadoACompra?: boolean
+  /** Un pago de caja (`CajaTurno`) se edita con un solo medio hasta el release del POS que lee varios. */
+  origenFondos?: OrigenFondosPago
   /** Avisos de efectos (arqueo recalculado, ajuste compensatorio) mostrados sobre el formulario. */
   advertencias?: readonly string[]
   /** `true` mientras la escritura (y su refresco) están en vuelo: todo el diálogo queda inerte. */
@@ -57,6 +60,7 @@ export function ModalDeEdicionDePago({
   proveedores,
   areas,
   ligadoACompra = false,
+  origenFondos,
   advertencias = [],
   guardando,
   error,
@@ -68,6 +72,9 @@ export function ModalDeEdicionDePago({
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
   const [errorLocal, setErrorLocal] = useState('')
   const conLineas = onGuardarConLineas !== undefined
+  const pagoDeCaja = conLineas && origenFondos === 'CajaTurno'
+  // Un pago de caja con varios medios solo se ve: el POS instalado no los edita.
+  const soloLectura = pagoDeCaja && lineas.length > 1
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
   // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del pago en silencio: la
@@ -86,7 +93,7 @@ export function ModalDeEdicionDePago({
   }
 
   function guardar() {
-    if (guardando) return
+    if (guardando || soloLectura) return
 
     if (onGuardarConLineas !== undefined) {
       const errorDeLineas = errorDeLineasDePago(lineas)
@@ -116,7 +123,7 @@ export function ModalDeEdicionDePago({
       <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={guardando}>
         Cancelar
       </button>
-      <button type="button" className="btn btn-primary" onClick={guardar} disabled={guardando}>
+      <button type="button" className="btn btn-primary" onClick={guardar} disabled={guardando || soloLectura}>
         {guardando ? 'Guardando…' : 'Guardar cambios'}
       </button>
     </>
@@ -139,7 +146,18 @@ export function ModalDeEdicionDePago({
       <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
         {conLineas ? (
           <div className="col-12">
-            <EditorDeLineasDePago lineas={lineas} medios={medios} onCambio={setLineas} />
+            {soloLectura && (
+              <div className="alert alert-info py-2 px-3 small">
+                Este pago de caja tiene varios medios; se edita desde el POS nuevo.
+              </div>
+            )}
+            <EditorDeLineasDePago
+              lineas={lineas}
+              medios={medios}
+              onCambio={setLineas}
+              deshabilitado={soloLectura}
+              maximoDeLineas={pagoDeCaja ? 1 : undefined}
+            />
           </div>
         ) : (
           <>

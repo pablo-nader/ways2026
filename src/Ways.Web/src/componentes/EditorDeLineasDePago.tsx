@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import {
   agregarLineaDePago,
   cambiarLineaDePago,
@@ -22,6 +23,8 @@ type Props = {
    * nueva arranca con lo que falta. */
   objetivo?: number | null
   deshabilitado?: boolean
+  /** Tope de líneas de este editor (1 = un solo medio, sin "Agregar medio"). */
+  maximoDeLineas?: number
 }
 
 function textoDeDiferencia(diferencia: number): string {
@@ -34,14 +37,41 @@ function textoDeDiferencia(diferencia: number): string {
  * Reparto de un pago entre medios: una fila por línea (medio, importe y referencia opcional), total y, si hay un
  * objetivo, lo que falta o sobra. Presentacional y controlado: el estado vive en quien lo monta.
  */
-export function EditorDeLineasDePago({ lineas, medios, onCambio, objetivo = null, deshabilitado = false }: Props) {
+export function EditorDeLineasDePago({
+  lineas,
+  medios,
+  onCambio,
+  objetivo = null,
+  deshabilitado = false,
+  maximoDeLineas = MAXIMO_DE_LINEAS_DE_PAGO,
+}: Props) {
   const total = totalDeLineasDePago(lineas)
   const diferencia = objetivo === null ? null : diferenciaContraObjetivo(objetivo, lineas)
-  const alTope = lineas.length >= MAXIMO_DE_LINEAS_DE_PAGO
+  const alTope = lineas.length >= maximoDeLineas
+  const admiteAgregar = maximoDeLineas > 1
+  const importesRef = useRef(new Map<number, HTMLInputElement>())
+  const agregarRef = useRef<HTMLButtonElement>(null)
+  // Destino del foco tras quitar una línea: la fila anterior (su clave) o el botón de agregar.
+  const focoPendiente = useRef<number | 'agregar' | null>(null)
+
+  useEffect(() => {
+    const destino = focoPendiente.current
+    if (destino === null) return
+    focoPendiente.current = null
+    if (destino === 'agregar') agregarRef.current?.focus()
+    else importesRef.current.get(destino)?.focus()
+  }, [lineas])
 
   function agregar() {
-    const faltante = diferencia !== null && diferencia > 0 ? diferencia : null
-    onCambio((prev) => agregarLineaDePago(prev, faltante))
+    onCambio((prev) => {
+      const faltante = objetivo === null ? null : diferenciaContraObjetivo(objetivo, prev)
+      return agregarLineaDePago(prev, faltante !== null && faltante > 0 ? faltante : null).slice(0, maximoDeLineas)
+    })
+  }
+
+  function quitar(indice: number, clave: number) {
+    focoPendiente.current = indice > 0 ? lineas[indice - 1].clave : 'agregar'
+    onCambio((prev) => quitarLineaDePago(prev, clave))
   }
 
   return (
@@ -66,7 +96,11 @@ export function EditorDeLineasDePago({ lineas, medios, onCambio, objetivo = null
                   }
                 >
                   <option value="">Elegir…</option>
-                  {medioFaltante && <option value={linea.idMedioPago}>Medio #{linea.idMedioPago} (no disponible)</option>}
+                  {medioFaltante && (
+                    <option value={linea.idMedioPago}>
+                      {linea.nombreMedioPago ? linea.nombreMedioPago : `Medio #${linea.idMedioPago}`} (no disponible)
+                    </option>
+                  )}
                   {medios.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.nombre}
@@ -78,6 +112,10 @@ export function EditorDeLineasDePago({ lineas, medios, onCambio, objetivo = null
               <div className="col-md-3">
                 {indice === 0 && <div className="form-label small mb-1">Importe</div>}
                 <CampoImporte
+                  ref={(el) => {
+                    if (el) importesRef.current.set(linea.clave, el)
+                    else importesRef.current.delete(linea.clave)
+                  }}
                   aria-label={`Importe de la línea ${numero}`}
                   className="form-control"
                   valor={linea.importe}
@@ -104,7 +142,7 @@ export function EditorDeLineasDePago({ lineas, medios, onCambio, objetivo = null
                   aria-label={`Quitar línea ${numero}`}
                   title="Quitar línea"
                   disabled={lineas.length <= 1}
-                  onClick={() => onCambio((prev) => quitarLineaDePago(prev, linea.clave))}
+                  onClick={() => quitar(indice, linea.clave)}
                 >
                   ×
                 </button>
@@ -115,9 +153,13 @@ export function EditorDeLineasDePago({ lineas, medios, onCambio, objetivo = null
       </div>
 
       <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
-        <button type="button" className="btn btn-sm btn-outline-primary" disabled={alTope} onClick={agregar}>
-          Agregar medio
-        </button>
+        {admiteAgregar ? (
+          <button ref={agregarRef} type="button" className="btn btn-sm btn-outline-primary" disabled={alTope} onClick={agregar}>
+            Agregar medio
+          </button>
+        ) : (
+          <span />
+        )}
         <div className="text-end" aria-live="polite">
           <span className="fw-semibold">Total: {formatearImporte(total, { simbolo: true })}</span>
           {diferencia !== null && (
@@ -127,7 +169,7 @@ export function EditorDeLineasDePago({ lineas, medios, onCambio, objetivo = null
           )}
         </div>
       </div>
-      {alTope && <div className="form-text">Un pago admite hasta {MAXIMO_DE_LINEAS_DE_PAGO} líneas.</div>}
+      {alTope && admiteAgregar && <div className="form-text">Un pago admite hasta {maximoDeLineas} líneas.</div>}
     </fieldset>
   )
 }

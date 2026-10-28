@@ -123,6 +123,13 @@ describe('errorDeLineasDePago', () => {
     expect(lineasDePagoValidas(demasiadas.slice(1))).toBe(true)
   })
 
+  it('rechaza un total fuera del rango soportado aunque cada línea lo esté', () => {
+    const casiElLimite = 9e13
+    const lineas = [linea({ clave: 1, importe: casiElLimite }), linea({ clave: 2, importe: casiElLimite })]
+    expect(errorDeLineaDePago(lineas[0])).toBeNull()
+    expect(errorDeLineasDePago(lineas)).toBe('El total del pago es demasiado grande.')
+  })
+
   it('un mismo medio repetido en varias líneas es válido', () => {
     expect(lineasDePagoValidas([linea({ clave: 1 }), linea({ clave: 2 })])).toBe(true)
   })
@@ -143,8 +150,8 @@ describe('aLineasDeSolicitud / lineasEditablesDesdeListado', () => {
         { idItem: 11, idMedioPago: 4, nombreMedioPago: null, importe: 6, referencia: 'X' },
       ]),
     ).toEqual([
-      { clave: 1, idMedioPago: 3, importe: 5, referencia: '' },
-      { clave: 2, idMedioPago: 4, importe: 6, referencia: 'X' },
+      { clave: 1, idMedioPago: 3, importe: 5, referencia: '', nombreMedioPago: 'Efectivo' },
+      { clave: 2, idMedioPago: 4, importe: 6, referencia: 'X', nombreMedioPago: null },
     ])
   })
 })

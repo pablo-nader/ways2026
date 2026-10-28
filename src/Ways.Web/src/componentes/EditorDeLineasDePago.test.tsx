@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { MAXIMO_DE_LINEAS_DE_PAGO, type LineaDePagoEditable } from '../api/lineasDePago'
@@ -33,15 +33,26 @@ function Controlado({
   objetivo,
   deshabilitado,
   alCambiar,
+  maximoDeLineas,
 }: {
   inicial: LineaDePagoEditable[]
   objetivo?: number | null
   deshabilitado?: boolean
   alCambiar?: (lineas: LineaDePagoEditable[]) => void
+  maximoDeLineas?: number
 }) {
   const [lineas, setLineas] = useState(inicial)
   alCambiar?.(lineas)
-  return <EditorDeLineasDePago lineas={lineas} medios={medios} onCambio={setLineas} objetivo={objetivo} deshabilitado={deshabilitado} />
+  return (
+    <EditorDeLineasDePago
+      lineas={lineas}
+      medios={medios}
+      onCambio={setLineas}
+      objetivo={objetivo}
+      deshabilitado={deshabilitado}
+      maximoDeLineas={maximoDeLineas}
+    />
+  )
 }
 
 describe('EditorDeLineasDePago', () => {
@@ -133,5 +144,57 @@ describe('EditorDeLineasDePago', () => {
 
     expect(screen.getByRole('option', { name: 'Medio #99 (no disponible)' })).toBeInTheDocument()
     expect(screen.getByLabelText('Medio de la línea 1')).toHaveValue('99')
+  })
+
+  it('rotula el medio fuera del catálogo con el nombre que trajo el listado', () => {
+    render(<Controlado inicial={[linea({ clave: 1, idMedioPago: 99, importe: 5, nombreMedioPago: 'Vale' })]} />)
+
+    expect(screen.getByRole('option', { name: 'Vale (no disponible)' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Medio #99/ })).not.toBeInTheDocument()
+  })
+
+  it('con maximoDeLineas en 1 no ofrece "Agregar medio"', () => {
+    render(<Controlado inicial={[linea()]} maximoDeLineas={1} />)
+
+    expect(screen.queryByRole('button', { name: 'Agregar medio' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Medio de la línea 1')).toBeInTheDocument()
+  })
+
+  it('con maximoDeLineas el botón se deshabilita al alcanzarlo', () => {
+    render(<Controlado inicial={[linea({ clave: 1 }), linea({ clave: 2 })]} maximoDeLineas={2} />)
+
+    expect(screen.getByRole('button', { name: 'Agregar medio' })).toBeDisabled()
+    expect(screen.getByText('Un pago admite hasta 2 líneas.')).toBeInTheDocument()
+  })
+
+  it('dos "Agregar medio" seguidos no repiten el mismo faltante', () => {
+    render(<Controlado inicial={[linea({ clave: 1, idMedioPago: 1, importe: 600 })]} objetivo={1000} />)
+
+    const agregar = screen.getByRole('button', { name: 'Agregar medio' })
+    act(() => {
+      agregar.click()
+      agregar.click()
+    })
+
+    expect(screen.getByLabelText('Importe de la línea 2')).toHaveValue('400,00')
+    expect(screen.getByLabelText('Importe de la línea 3')).toHaveValue('')
+  })
+
+  it('al quitar una línea el foco pasa al importe de la fila anterior', async () => {
+    const usuario = userEvent.setup()
+    render(<Controlado inicial={[linea({ clave: 1 }), linea({ clave: 2 }), linea({ clave: 3 })]} />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Quitar línea 3' }))
+
+    expect(screen.getByLabelText('Importe de la línea 2')).toHaveFocus()
+  })
+
+  it('al quitar la primera línea el foco pasa a "Agregar medio"', async () => {
+    const usuario = userEvent.setup()
+    render(<Controlado inicial={[linea({ clave: 1 }), linea({ clave: 2 })]} />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Quitar línea 1' }))
+
+    expect(screen.getByRole('button', { name: 'Agregar medio' })).toHaveFocus()
   })
 })

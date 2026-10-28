@@ -187,8 +187,8 @@ describe('lineasIniciales', () => {
     })
 
     expect(lineas).toEqual([
-      { clave: 1, idMedioPago: 4, importe: 600, referencia: '' },
-      { clave: 2, idMedioPago: 5, importe: 400, referencia: 'Op 9' },
+      expect.objectContaining({ clave: 1, idMedioPago: 4, importe: 600, referencia: '' }),
+      expect.objectContaining({ clave: 2, idMedioPago: 5, importe: 400, referencia: 'Op 9', nombreMedioPago: 'Transferencia' }),
     ])
   })
 

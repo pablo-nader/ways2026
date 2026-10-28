@@ -10,6 +10,8 @@ export type LineaDePagoEditable = {
   idMedioPago: number | ''
   importe: number | null
   referencia: string
+  /** Nombre que el listado trajo para el medio: rotula la opción cuando el medio ya no está en el catálogo. */
+  nombreMedioPago?: string | null
 }
 
 export function lineaDePagoVacia(clave = 1, importe: number | null = null): LineaDePagoEditable {
@@ -74,6 +76,7 @@ export function errorDeLineasDePago(lineas: readonly LineaDePagoEditable[]): str
     const motivo = errorDeLineaDePago(linea)
     if (motivo !== null) return `Línea ${indice + 1}: ${motivo}`
   }
+  if (!estaEnRangoSoportado(totalDeLineasDePago(lineas))) return 'El total del pago es demasiado grande.'
   return null
 }
 
@@ -96,6 +99,7 @@ export function lineasEditablesDesdeListado(lineas: readonly LineaDePagoListada[
     idMedioPago: l.idMedioPago,
     importe: l.importe,
     referencia: l.referencia ?? '',
+    nombreMedioPago: l.nombreMedioPago ?? null,
   }))
 }
 
