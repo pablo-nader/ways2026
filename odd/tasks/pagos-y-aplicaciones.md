@@ -113,6 +113,25 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `idMedioPago`/`importe` from the turno detail `gastos` and `/api/gastos`, so the merge would show 6000 efectivo + 500
   transferencia as one 6500 row under efectivo.
 
+### E3 slices
+
+Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR through judgment-day.
+
+- [ ] E3-S1a (written; CI pending) — `aplicaciones_pago` (N:M pago ↔ compra, `importe`, `origen` enum
+  `pago_de_compra|aplicacion|migracion`), migration `AplicacionesDePago`: RLS, partial unique per live pair, deferred
+  constraint triggers (an application never exceeds its pago or its compra; only on `confirmada` compras; pago must be
+  `proveedor`, same supplier and empresa), backfill from `pagos.id_comprobante_compra` capped at the compra total (the
+  excess and pagos of anuladas compras stay unapplied = credit). Schema + backfill only: no writer, readers unchanged.
+- [ ] E3-S1b — Dual write: every writer that sets `pagos.id_comprobante_compra` also writes the application, capped at the
+  compra saldo; anulación of the compra and baja of the pago release their applications; edit guard (a pago with
+  applications cannot drop below what it applied).
+- [ ] E3-S2 — Readers switch to the applications (pagado / disponible per compra, supplier credit, CC).
+- [ ] E3-S3 — Endpoints: aplicar, desaplicar, and adoption of a supplierless pago (takes the compra's supplier).
+- [ ] E3-S4 — Pagar compra (`de-compra`) with `aplicaciones[]` and overpayment staying as credit.
+- [ ] E4-S1 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter.
+- [ ] E3-W1 — Web: apply existing pagos when loading/paying a compra, credit per supplier.
+- [ ] E3-W2 — Web: apply/unapply screen and adoption of cashier pagos.
+
 ## Progress
 
 - 2026-10-28: planning closed with the owner; worktree `pnader/pagos-e1-renombre`.
@@ -148,6 +167,12 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 - 2026-10-28 E2-S4 (branch `pnader/pagos-e2-s4-api`): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed; Application.Tests 1076 passed. Integration tests NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
 
 - 2026-10-28 E2-W1 + E2-W3 (branch `pnader/pagos-e2-w1-w3-web`): web `tsc -b` clean; `npm run lint` 0 errors; full `vitest run` 260 files / 8111 tests passed. Route: delegated writer (2+ non-trivial files).
+
+- 2026-10-28 E3-S1a (branch `pnader/pagos-e3-s1a-aplicaciones`): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1910 passed;
+  Application.Tests 1076 passed (golden `inventario-de-dependientes` gains `Tenant | aplicaciones_pago` and
+  `Usuario | aplicaciones_pago`); `dotnet ef migrations has-pending-model-changes` clean. Integration tests NOT run locally
+  (Docker down): `AplicacionesPagoEsquemaTests` and `AplicacionesDePagoMigracionTests` (backfill under `ways_app`) need CI.
+  Route: delegated writer.
 
 ## Next step
 
