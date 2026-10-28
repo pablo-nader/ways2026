@@ -64,6 +64,16 @@ would let a web save of an MCP draft drop its excise, so T1 and T2 ship together
   Route: delegated (2+ non-trivial files).
 - [x] T2 — Web: purchase line, totals, article form, Libro IVA column + tests.
   Route: delegated (2+ non-trivial files).
+- [x] T3 — Article excise as an AMOUNT, not a percentage (owner, 2026-10-28: excises never come as a
+  percentage, they come as a price). Replace `articulos.porcentaje_impuesto_interno` with
+  `articulos.impuesto_interno numeric(14,2) NOT NULL DEFAULT 0`: amount per the same base as the list
+  cost (`costo_lista_por`: unidad or bulto), net of IVA, family-shared. The migration converts existing
+  rates where possible (`round(costo_lista × pct / 100, 2)` when the list cost is without IVA, else 0).
+  Nominal cost from a list cost without IVA = (lista + II) + lista × %IVA, then the supplier discount as
+  today; a list cost with IVA stays final. Purchase line prefill = II per unit × units. Web: article
+  field "Impuestos internos ($)"; line auto amount, prefill strip and family field follow the amount.
+  Route: delegated (2+ non-trivial files). Separate PR (#487 already merged). Branch
+  `pnader/impuestos-internos-importe`.
 
 ## Progress
 
@@ -109,6 +119,17 @@ would let a web save of an MCP draft drop its excise, so T1 and T2 ship together
   emits the displayed suggestion keeps `impuestoInterno` null); the cost prefill no longer counts the excise twice (a list cost with
   IVA strips it when the invoice discriminates IVA) and keeps it when the invoice does not discriminate (nominal and list-without-IVA
   paths); stale "quince" shared-field comments now say "dieciséis". Tests: grid focus/Tab and typed-value cases, mode x origin matrix.
+
+- 2026-10-28: T3 done by a delegated writer (commits a7c12140 backend, 132cd22a web). Evidence: `dotnet build` 0 errors; Domain.Tests 1910 ok;
+  Application.Tests 1113 ok; `npx tsc -b` 0 errors; `oxlint` 0 errors; full `npx vitest run` 261 files / 8273 tests ok (after fixing one
+  stale family-detail assertion). Mutation: dropping the excise from the server nominal fails 3 domain tests; removing the bulto division
+  fails 1; the line auto amount without the quantity fails 11 web tests; the web nominal without the bulto division fails 2. NOT RUN:
+  `Ways.IntegrationTests` (Docker engine unavailable on the host), including the new `ImpuestoInternoDelArticuloMigracionTests`
+  (conversion + ways_app backfill, reads `SqlDelBackfill` from the migration) and the adapted `ArticulosImpuestoInternoTests`.
+  Decisions: error code `impuesto_interno_articulo_invalido` (the line keeps `impuesto_interno_invalido`); the line carries
+  `impuestoInternoPorUnidad` (article amount / unidades_por_bulto when the list cost is por bulto); the suggestion is
+  `round(porUnidad x units, 2)` and no longer depends on cost, discount or price mode; prefill = list/nominal minus the per-unit excise
+  (discriminating) and untouched (non-discriminating).
 
 ## Next step
 
