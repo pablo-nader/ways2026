@@ -185,7 +185,7 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         from m in query
         let pago = m.IdPago == null
             ? null
-            : db.Pagos.Where(g => g.Id == m.IdPago).Select(ProyeccionDePago).FirstOrDefault()
+            : db.Pagos.Where(g => g.Id == m.IdPago).Select(g => new { g.Categoria, g.Concepto }).FirstOrDefault()
         select new Unido
         {
             M = m,
@@ -194,7 +194,9 @@ public class ServicioDeTesoreria(IWaysDbContext db)
                 : db.PuntosVenta.Where(pv => pv.Id == m.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
             PagoCategoria = pago == null ? null : (CategoriaPago?)pago.Categoria,
             PagoConcepto = pago == null ? null : pago.Concepto,
-            PagoEtiqueta = pago == null ? null : pago.Etiqueta,
+            PagoTextoVisible = m.IdPago == null
+                ? null
+                : db.Pagos.Where(g => g.Id == m.IdPago).Select(TextoVisibleDePago).FirstOrDefault(),
         };
 
     private static IQueryable<MovimientoTesoreriaListado> AListado(IQueryable<Unido> query) =>
@@ -272,25 +274,23 @@ public class ServicioDeTesoreria(IWaysDbContext db)
     /// origen, el concepto del movimiento en cualquier otro caso (mismo criterio que <c>conceptoEfectivo</c>
     /// de <c>Tesoreria.tsx</c> y <c>ExportacionDeCaja.ConceptoEfectivo</c>).</summary>
     private static readonly Expression<Func<Unido, string>> ConceptoVisible =
-        x => x.PagoConcepto != null ? x.PagoEtiqueta + " — " + x.PagoConcepto : x.M.Concepto;
+        x => x.PagoTextoVisible ?? x.M.Concepto;
 
-    /// <summary>Lo que se lee del pago de origen. La etiqueta sale de <see cref="EtiquetasDeCategoriaDePago"/>,
-    /// armada como <c>CASE</c> sobre la columna del propio pago: el enum se compara dentro de la subconsulta,
-    /// donde la columna conserva su tipo de Postgres, y no contra el valor ya proyectado a nullable.</summary>
-    private static readonly Expression<Func<Pago, PagoDeOrigen>> ProyeccionDePago = ConstruirProyeccionDePago();
+    /// <summary>"Etiqueta de categoría — concepto" del pago de origen como una sola columna de texto. Va en
+    /// una subconsulta escalar propia porque EF no traduce un <c>ORDER BY</c> sobre miembros de un objeto
+    /// proyectado con <c>FirstOrDefault</c>. La etiqueta sale de <see cref="EtiquetasDeCategoriaDePago"/>
+    /// como <c>CASE</c> sobre la columna del pago.</summary>
+    private static readonly Expression<Func<Pago, string>> TextoVisibleDePago = ConstruirTextoVisibleDePago();
 
-    private static Expression<Func<Pago, PagoDeOrigen>> ConstruirProyeccionDePago()
+    private static Expression<Func<Pago, string>> ConstruirTextoVisibleDePago()
     {
         var g = Expression.Parameter(typeof(Pago), "g");
-        var categoria = Expression.Property(g, nameof(Pago.Categoria));
-        var etiqueta = EtiquetaPorCaso.De(categoria, EtiquetasDeCategoriaDePago.Todas, Expression.Constant(string.Empty));
+        var etiqueta = EtiquetaPorCaso.De(
+            Expression.Property(g, nameof(Pago.Categoria)), EtiquetasDeCategoriaDePago.Todas, Expression.Constant(string.Empty));
+        var concatenar = typeof(string).GetMethod(nameof(string.Concat), [typeof(string), typeof(string), typeof(string)])!;
 
-        return Expression.Lambda<Func<Pago, PagoDeOrigen>>(
-            Expression.MemberInit(
-                Expression.New(typeof(PagoDeOrigen)),
-                Expression.Bind(typeof(PagoDeOrigen).GetProperty(nameof(PagoDeOrigen.Categoria))!, categoria),
-                Expression.Bind(typeof(PagoDeOrigen).GetProperty(nameof(PagoDeOrigen.Concepto))!, Expression.Property(g, nameof(Pago.Concepto))),
-                Expression.Bind(typeof(PagoDeOrigen).GetProperty(nameof(PagoDeOrigen.Etiqueta))!, etiqueta)),
+        return Expression.Lambda<Func<Pago, string>>(
+            Expression.Call(concatenar, etiqueta, Expression.Constant(" — "), Expression.Property(g, nameof(Pago.Concepto))),
             g);
     }
 
@@ -318,16 +318,7 @@ public class ServicioDeTesoreria(IWaysDbContext db)
 
         public string? PagoConcepto { get; init; }
 
-        public string? PagoEtiqueta { get; init; }
-    }
-
-    private sealed class PagoDeOrigen
-    {
-        public CategoriaPago Categoria { get; init; }
-
-        public string Concepto { get; init; } = null!;
-
-        public string Etiqueta { get; init; } = null!;
+        public string? PagoTextoVisible { get; init; }
     }
 }
 
