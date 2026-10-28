@@ -733,7 +733,7 @@ public partial class ServicioDePagos(
             ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, conservarReferencias: solicitud.DeUnSoloMedio, momento);
 
             await AjustarAplicacionesAlNuevoImporteAsync(
-                idTenant, pago, anterior.Importe, aplicaciones, comprasBloqueadas, idEmpleado, momento, ct);
+                pago, anterior.Importe, aplicaciones, comprasBloqueadas, momento, ct);
         }
         else
         {
@@ -1730,9 +1730,8 @@ public partial class ServicioDePagos(
     /// rehacer sin querer una desaplicación hecha a propósito. Lo que se libera vuelve al saldo de la compra y no se
     /// reaplica a otros pagos.</summary>
     private async Task AjustarAplicacionesAlNuevoImporteAsync(
-        int idTenant, Pago pago, decimal importeAnterior, IReadOnlyList<AplicacionPago> aplicaciones,
-        IReadOnlyDictionary<int, CompraBloqueada> comprasBloqueadas, int idEmpleado, DateTimeOffset momento,
-        CancellationToken ct)
+        Pago pago, decimal importeAnterior, IReadOnlyList<AplicacionPago> aplicaciones,
+        IReadOnlyDictionary<int, CompraBloqueada> comprasBloqueadas, DateTimeOffset momento, CancellationToken ct)
     {
         var aplicado = aplicaciones.Sum(a => a.Importe);
         var exceso = aplicado - pago.Importe;
