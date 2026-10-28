@@ -141,12 +141,12 @@ public sealed class ServicioDePagoDePersonal(
         var lineas = new List<LineaDeDesglose>();
         if (plan.OrigenFondos is { } origenFondos)
         {
-            var persistido = await servicioDePagos.PersistirPagoDeSueldoAsync(
+            var pagos = await servicioDePagos.PersistirPagosDeSueldoAsync(
                 idTenant, entorno, origenFondos, nombre, idMovimiento, plan.Lineas, idEmpleado, momento, ct);
 
-            lineas.AddRange(persistido.Items.Select(item => new LineaDeDesglose(
-                persistido.Pago.Id, item.Id, item.IdMedioPago, entorno.NombresDeMedios.GetValueOrDefault(item.IdMedioPago),
-                item.Importe, persistido.Pago.OrigenFondos, item.Referencia)));
+            lineas.AddRange(pagos.Select(g => new LineaDeDesglose(
+                g.Pago.Id, g.Item.Id, g.Item.IdMedioPago, entorno.NombresDeMedios.GetValueOrDefault(g.Item.IdMedioPago),
+                g.Item.Importe, g.Pago.OrigenFondos, g.Pago.Detalle)));
         }
 
         await transaccion.CommitAsync(ct);

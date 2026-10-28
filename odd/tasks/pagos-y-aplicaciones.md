@@ -78,8 +78,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `CalculadorDeAjustesDePago` (`EstadoContableDePago.ImportePorMedio`, `AfectaElArqueo` compares per-medio maps).
   The audit payload of edit/baja gains `lineas: [{id_medio_pago, importe}]` (header `id_medio_pago` kept).
   Treasury, supplier-CC adjustments and exports keep the header (category/total only). The turno listing
-  (`/api/gastos`, `LectorDeLineasDelTurno` via `ProyeccionesDePago`) still shows the header medio until S4 adds
-  `lineas`, so a pago split across two medios appears there under the header medio only.
+  (`/api/gastos`, `LectorDeLineasDelTurno` via `ProyeccionesDePago`) showed the header medio only; S3b added
+  `lineas` (additive) to the turno/`/api/gastos` listings and to the administration history.
 - [x] E2-S3a — Alta de pagos con N líneas por medio (POS and administración), new service contract. Treasury
   movements stay one per pago on the header total. Done together with the edit/replace-set and pagar compra:
   `ReglaDeLineasDePago` (1..20 lines, codes `pago_sin_lineas`, `pago_demasiadas_lineas`,
@@ -88,22 +88,29 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   soft-deleted, no physical delete); the old PUT routes answer `409 gasto_con_varios_medios` on a multi-item pago.
   Plantel keeps its own wire codes and shares only the amount arithmetic. The POS alta still does not validate
   the medio server-side (unchanged). Integration tests (`PagosConLineasTests`) need CI.
-- [x] E2-S3b — Plantel y baja de `pagos.id_medio_pago`. (1) El pago de personal con N líneas es UN pago con N ítems
-  (la `referencia` de cada línea vive en su ítem, `pagos.detalle` queda vacío) y UN movimiento de tesorería por el
-  total; el desglose comparte `idGasto` y trae un `idItem` por línea (el lector cae a `pagos.detalle` para los pagos
-  históricos, que no se fusionan). (2) Migración `QuitarMedioDeLaCabeceraDelPago`: elimina la columna, `fk_pagos_medio_pago`
+- [x] E2-S3b — Plantel y baja de `pagos.id_medio_pago`. (1) El pago de personal con N líneas SIGUE siendo un pago por
+  línea, cada uno con un único ítem (referencia en `pagos.detalle` y en el ítem) y un movimiento de tesorería por pago:
+  el POS instalado ignora `lineas` y mostraría la fusión como una sola fila; se difiere a E2-P. El desglose trae una
+  línea por ítem (`idGasto` por pago, `idItem` por ítem). (2) Migración `QuitarMedioDeLaCabeceraDelPago`: elimina la columna, `fk_pagos_medio_pago`
   e `ix_pagos_medio_pago`; `Down` los recrea y rellena con el ítem vivo de menor id (backfill con `SET LOCAL`, probado bajo
   `ways_app`). Todo lector del medio de la cabecera deriva el «medio de compatibilidad» del ítem vivo de menor id
   (`ProyeccionesDePago`, historial de administración, respuestas de alta, payload de auditoría `id_medio_pago`), y
-  `PagoListado` gana `lineas` (aditivo). Compensaciones por medio: ya resueltas en S2/S3a (el recálculo del arqueo y los
-  `EstadoContableDePago` leen los ítems). Se retiró el test del backfill de `ItemsDePago` bajo `ways_app`: leía la columna
-  eliminada y ya no puede correr contra el esquema actual. Integration tests (CI): `PagoDePersonalTests`,
-  `PagosConLineasTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
+  `PagoListado` y `PagoDeAdministracionListado` ganan `lineas` (aditivo). Compensaciones por medio: ya resueltas en
+  S2/S3a (el recálculo del arqueo y los `EstadoContableDePago` leen los ítems). El test del backfill de `ItemsDePago` bajo
+  `ways_app` vive ahora en `QuitarMedioDeLaCabeceraDelPagoMigracionTests` (base aislada migrada hasta `ItemsDePago`, donde
+  la columna todavía existe). Integration tests (CI): `PagoDePersonalTests`, `PagosConLineasTests`,
+  `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
 - [ ] E2-S4 — Wire contract `/api/pagos` with `/api/gastos` as compatibility adapter.
 - [ ] E2-W1 — Web: payment-method lines editor in the POS payment form.
 - [ ] E2-W2 — Web: lines in the administration payment form and the history.
 - [ ] E2-W3 — Web: lines in pagar compra and personal payments.
-- [ ] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items.
+- [x] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items. Done by S3b (column, FK and index
+  dropped).
+- [ ] E2-P — Pago de sueldo en un solo pago, después del release del POS (and after E2-W2): the personal payment with N
+  lines becomes ONE pago with N items and one treasury movement for the total (`referencia` only in the items; the
+  desglose already reads `item.referencia ?? pago.detalle`). Deferred because the installed POS bundle reads only
+  `idMedioPago`/`importe` from the turno detail `gastos` and `/api/gastos`, so the merge would show 6000 efectivo + 500
+  transferencia as one 6500 row under efectivo.
 
 ## Progress
 
@@ -134,6 +141,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   Application.Tests 1076 passed (golden `inventario-de-dependientes` sin `MedioPago | pagos`); web `tsc -b` clean;
   `dotnet ef migrations has-pending-model-changes` clean. Integration tests NOT run locally (Docker down): CI
   `backend-integration` is the proof, pending.
+- 2026-10-28 E2-S3b judgment-day fix: personal payment back to one pago per line (E2-P deferred); administration
+  history gains `lineas` (test in `PagosEdicionEndpointsTests`); ItemsDePago backfill `ways_app` test restored.
 
 ## Next step
 

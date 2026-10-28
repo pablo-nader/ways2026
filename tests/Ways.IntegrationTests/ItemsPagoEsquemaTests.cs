@@ -11,7 +11,8 @@ namespace Ways.IntegrationTests;
 /// <c>items_pago</c> probado con SQL crudo, sin pasar por <c>ServicioDePagos</c>. Cubre las dos CHECKs, las FKs
 /// compuestas y el constraint trigger diferido de la suma contra la cabecera. El backfill de la migración
 /// <c>ItemsDePago</c> leía <c>pagos.id_medio_pago</c>, columna que <c>QuitarMedioDeLaCabeceraDelPago</c> eliminó: ya no puede
-/// correr contra el esquema actual y su prueba bajo <c>ways_app</c> se retiró con la columna.
+/// correr contra el esquema actual, así que su prueba bajo <c>ways_app</c> vive en
+/// <see cref="QuitarMedioDeLaCabeceraDelPagoMigracionTests"/>, sobre una base aislada migrada hasta <c>ItemsDePago</c>.
 ///
 /// Honesto sobre alcanzabilidad: el servicio escribe siempre ítems cuya suma es el importe de la cabecera, así que ninguna
 /// de estas ramas es alcanzable por un cliente HTTP; prueban el backstop de esquema.

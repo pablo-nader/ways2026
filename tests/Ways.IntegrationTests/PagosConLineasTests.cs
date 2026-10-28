@@ -433,6 +433,43 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
     }
 
+    /// <summary>El historial de administración (lista y detalle por id) también agrega <c>lineas</c> con el reparto completo y
+    /// sigue exponiendo el medio de la primera línea.</summary>
+    [Fact]
+    public async Task ElHistorialDeAdministracionDeUnPagoDeDosLineasTraeLasDosLineas()
+    {
+        var ctx = await PrepararAsync(nameof(ElHistorialDeAdministracionDeUnPagoDeDosLineasTraeLasDosLineas));
+
+        int idPago;
+        await using (var db = Db(ctx))
+        {
+            var pago = await ConServicioAsync(ctx, db, s => s.RegistrarDeAdministracionAsync(ComandoAdmin(
+                ctx, CategoriaPago.Otros, null,
+                new LineaDePago(ctx.IdElectronico, 40m, "cupón 9"), new LineaDePago(ctx.IdEfectivo, 60m, null))));
+            idPago = pago.Id;
+        }
+
+        var listado = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}");
+        var enLaLista = listado.GetProperty("items").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
+        var porId = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos/administracion/{idPago}");
+
+        await using var lectura = Db(ctx);
+        var idsDeItems = (await ItemsVivosAsync(lectura, idPago)).Select(i => i.Id).ToList();
+
+        foreach (var fila in new[] { enLaLista, porId })
+        {
+            Assert.Equal(ctx.IdElectronico, fila.GetProperty("idMedioPago").GetInt32());
+            Assert.Equal(100m, fila.GetProperty("importe").GetDecimal());
+
+            var lineas = fila.GetProperty("lineas").EnumerateArray().ToList();
+            Assert.Equal(idsDeItems, lineas.Select(l => l.GetProperty("idItem").GetInt32()));
+            Assert.Equal([ctx.IdElectronico, ctx.IdEfectivo], lineas.Select(l => l.GetProperty("idMedioPago").GetInt32()));
+            Assert.Equal([40m, 60m], lineas.Select(l => l.GetProperty("importe").GetDecimal()));
+            Assert.Equal("cupón 9", lineas[0].GetProperty("referencia").GetString());
+            Assert.Equal(JsonValueKind.Null, lineas[1].GetProperty("referencia").ValueKind);
+        }
+    }
+
     /// <summary>Un medio usado solo por una línea de pago (la cabecera ya no guarda el medio) sigue bloqueando su baja con
     /// el rótulo "gastos" de <c>items_pago</c>.</summary>
     [Fact]

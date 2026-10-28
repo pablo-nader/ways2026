@@ -88,7 +88,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         // MedioPago y Cliente son tenant-scoped (CatalogoSimple/Cliente : EntidadTenant) — bajo
         // TenantActualFijo.Plataforma el filtro de EF no acota por tenant y .FirstAsync() puede
         // devolver una fila de OTRO tenant creado en paralelo por otra prueba de esta misma
-        // colección, violando fk_pagos_medio_pago/fk_comprobantes_venta_cliente más adelante.
+        // colección, violando fk_items_pago_medio_pago/fk_comprobantes_venta_cliente más adelante.
         // Contexto tenant-scoped propio, mismo criterio que
         // CajaCierreEndpointsTests/PagosEndpointsTests.PrepararAsync.
         await using var dbTenant = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));

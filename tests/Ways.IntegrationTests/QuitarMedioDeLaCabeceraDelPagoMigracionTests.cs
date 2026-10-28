@@ -147,6 +147,95 @@ public class QuitarMedioDeLaCabeceraDelPagoMigracionTests(WaysApiFixture fixture
         }
     }
 
+    /// <summary>El backfill de <c>ItemsDePago</c> (S1) leía <c>pagos.id_medio_pago</c>, columna que esta migración elimina: solo
+    /// puede correr sobre el esquema de ese momento. Se ejecuta la constante REAL (<see cref="ItemsDePago.SqlDelBackfill"/>)
+    /// bajo <c>ways_app</c> sobre la base aislada migrada hasta <c>ItemsDePago</c> (la tabla <c>items_pago</c> ya existe y el
+    /// backfill de la migración corrió sobre una base vacía): primero sin la línea del GUC (cero filas, RLS) y después tal cual
+    /// (un ítem por pago sin ítems, también el dado de baja, copiando su <c>deleted_at</c>; el pago con ítem no se toca).</summary>
+    [Fact]
+    public async Task ElBackfillDeLosItemsCreaUnItemPorPagoIncluidosLosDeBajaSoloBajoElSetLocalDePlataforma()
+    {
+        await using var entorno = await EntornoAislado.CrearAsync(fixture);
+
+        int vivo, dadoDeBaja, conItem;
+        await using (var owner = new NpgsqlConnection(entorno.CadenaOwner))
+        {
+            await owner.OpenAsync();
+            await SembrarAsync(owner);
+            var idTenant = await EscalarAsync<int>(owner, "SELECT min(id_tenant) FROM tenants");
+            var idEmpresa = await EscalarAsync<int>(owner, "SELECT min(id_empresa) FROM empresas");
+            var idUsuario = await EscalarAsync<int>(owner, "SELECT min(id_usuario) FROM usuarios");
+            var idMedio = await EscalarAsync<int>(owner, "SELECT min(id_medio_pago) FROM medios_pago");
+
+            vivo = await SembrarPagoAsync(owner, idTenant, idEmpresa, idUsuario, idMedio, 250m, baja: false);
+            dadoDeBaja = await SembrarPagoAsync(owner, idTenant, idEmpresa, idUsuario, idMedio, 80m, baja: true);
+            conItem = await SembrarPagoAsync(owner, idTenant, idEmpresa, idUsuario, idMedio, 100m, baja: false);
+            await SembrarItemsAsync(owner, idTenant, conItem, (idMedio, 100m, false));
+            await EscalarAsync<int>(owner, "UPDATE items_pago SET referencia = 'previo' WHERE id_pago = $1 RETURNING id_pago", conItem);
+
+            await using var preparacion = owner.CreateCommand();
+            preparacion.CommandText =
+                """
+                GRANT USAGE ON SCHEMA public TO ways_app;
+                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ways_app;
+                """;
+            await preparacion.ExecuteNonQueryAsync();
+        }
+
+        var sql = ItemsDePago.SqlDelBackfill;
+        Assert.Contains("SET LOCAL app.acceso = 'plataforma'", sql, StringComparison.Ordinal);
+        var sinElSetLocal = string.Join(
+            '\n', sql.Split('\n').Where(l => !l.TrimStart().StartsWith("SET LOCAL", StringComparison.Ordinal)));
+
+        // (a) ways_app sin GUC: RLS no le deja ver ningún pago, cero filas y ningún error.
+        await using (var app = new NpgsqlConnection(entorno.CadenaApp))
+        {
+            await app.OpenAsync();
+            await using var comando = app.CreateCommand();
+            comando.CommandText = sinElSetLocal;
+            Assert.Equal(0, await comando.ExecuteNonQueryAsync());
+        }
+
+        // (b) el bloque tal cual lo trae la migración: los dos pagos sin ítems.
+        await using (var app = new NpgsqlConnection(entorno.CadenaApp))
+        {
+            await app.OpenAsync();
+            await using var comando = app.CreateCommand();
+            comando.CommandText = sql;
+            Assert.Equal(2, await comando.ExecuteNonQueryAsync());
+        }
+
+        await using (var owner = new NpgsqlConnection(entorno.CadenaOwner))
+        {
+            await owner.OpenAsync();
+
+            Assert.Equal(1L, await EscalarAsync<long>(
+                owner,
+                "SELECT count(*) FROM items_pago i JOIN pagos g ON g.id_pago = i.id_pago AND g.id_tenant = i.id_tenant " +
+                "WHERE i.id_pago = $1 AND i.id_medio_pago = g.id_medio_pago AND i.importe = g.importe " +
+                "AND i.referencia IS NULL AND i.deleted_at IS NULL AND i.created_at = g.created_at AND i.updated_at = g.updated_at",
+                vivo));
+            Assert.Equal(1L, await EscalarAsync<long>(
+                owner,
+                "SELECT count(*) FROM items_pago i JOIN pagos g ON g.id_pago = i.id_pago AND g.id_tenant = i.id_tenant " +
+                "WHERE i.id_pago = $1 AND i.importe = 80 AND i.deleted_at = g.deleted_at AND i.deleted_at IS NOT NULL",
+                dadoDeBaja));
+
+            // El pago que ya tenía ítem no se duplica ni se pisa.
+            Assert.Equal("previo", await EscalarAsync<string>(owner, "SELECT referencia FROM items_pago WHERE id_pago = $1", conItem));
+            Assert.Equal(1L, await EscalarAsync<long>(owner, "SELECT count(*) FROM items_pago WHERE id_pago = $1", conItem));
+        }
+
+        // (c) idempotente: una segunda corrida no encuentra pagos sin ítems.
+        await using (var app = new NpgsqlConnection(entorno.CadenaApp))
+        {
+            await app.OpenAsync();
+            await using var comando = app.CreateCommand();
+            comando.CommandText = sql;
+            Assert.Equal(0, await comando.ExecuteNonQueryAsync());
+        }
+    }
+
     /// <summary>Un tenant con dos medios (X e Y) y dos pagos de tesorería con sus ítems. El primero tiene un ítem de menor id
     /// dado de baja (medio X) y dos vivos (Y primero, X después): el medio de compatibilidad es Y. El segundo, dado de baja,
     /// no tiene ítems vivos: queda el medio de su ítem de menor id, X.</summary>

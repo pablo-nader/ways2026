@@ -1871,6 +1871,9 @@ export type PagoDeAdministracionListado = {
   /** Movimiento de personal del que nació el pago; no `null` lo vuelve inmutable (el servidor responde 409
    * `gasto_de_pago_de_personal` a su edición, su baja y su vinculación a una compra). */
   idMovimientoPersonal: number | null
+  /** Reparto por medio del pago (uno por ítem, en orden de id). `idMedioPago` de arriba es el de la primera línea.
+   * Opcional por compatibilidad con respuestas anteriores a las líneas. */
+  lineas?: LineaDePagoListada[]
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de

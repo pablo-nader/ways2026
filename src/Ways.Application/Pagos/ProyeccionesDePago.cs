@@ -43,7 +43,27 @@ internal static class ProyeccionesDePago
             return pagos;
         }
 
-        var ids = pagos.Select(p => p.Id).ToList();
+        var porPago = await LineasPorPagoAsync(db, pagos.Select(p => p.Id).ToList(), ct);
+        return pagos.Select(p => p with { Lineas = porPago[p.Id].ToList() }).ToList();
+    }
+
+    /// <summary>Lo mismo que <see cref="ConLineasAsync(IWaysDbContext, IReadOnlyList{PagoListado}, CancellationToken)"/>
+    /// para el historial de administración: una sola lectura de los ítems vivos de toda la página.</summary>
+    public static async Task<IReadOnlyList<PagoDeAdministracionListado>> ConLineasAsync(
+        IWaysDbContext db, IReadOnlyList<PagoDeAdministracionListado> pagos, CancellationToken ct)
+    {
+        if (pagos.Count == 0)
+        {
+            return pagos;
+        }
+
+        var porPago = await LineasPorPagoAsync(db, pagos.Select(p => p.Id).ToList(), ct);
+        return pagos.Select(p => p with { Lineas = porPago[p.Id].ToList() }).ToList();
+    }
+
+    private static async Task<ILookup<int, LineaDePagoListada>> LineasPorPagoAsync(
+        IWaysDbContext db, List<int> ids, CancellationToken ct)
+    {
         var lineas = await db.ItemsPago
             .Where(i => ids.Contains(i.IdPago) && i.DeletedAt == null)
             .OrderBy(i => i.Id)
@@ -59,7 +79,6 @@ internal static class ProyeccionesDePago
             })
             .ToListAsync(ct);
 
-        var porPago = lineas.ToLookup(x => x.IdPago, x => x.Linea);
-        return pagos.Select(p => p with { Lineas = porPago[p.Id].ToList() }).ToList();
+        return lineas.ToLookup(x => x.IdPago, x => x.Linea);
     }
 }

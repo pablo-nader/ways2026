@@ -438,9 +438,12 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > `QuitarMedioDeLaCabeceraDelPago` eliminó `pagos.id_medio_pago`, `fk_pagos_medio_pago` e `ix_pagos_medio_pago`; su
 > `Down` los recrea y rellena la columna con ese mismo medio (o el del ítem de menor id si no quedan ítems vivos).
 > Dar de baja un medio usado por un pago sigue bloqueado, ahora solo por la FK `fk_items_pago_medio_pago`
-> (rótulo "gastos"). Los pagos de sueldo ya escritos (un pago por línea de dinero) no se fusionan: el pago de
-> personal nuevo es un solo pago con un ítem por línea, comparten `idGasto` en el desglose y tienen `idItem`
-> distinto.
+> (rótulo "gastos"). El pago de personal con varias líneas sigue siendo **un pago por línea de dinero**, cada uno con
+> su único ítem (la referencia se repite en `pagos.detalle` y en el ítem) y su propio movimiento de tesorería: el POS
+> instalado no lee `lineas`, y fusionarlas en un solo pago lo mostraría como una sola fila bajo el primer medio. La
+> fusión (un pago con un ítem por línea y un egreso por el total) queda para después del release del POS (E2-P).
+> El desglose lista una línea por ítem, con `idGasto` por pago e `idItem` por ítem. El historial de administración
+> (`/api/gastos/administracion` y `/{id}`) agrega `lineas` con la misma forma que `PagoListado`.
 
 ### Órdenes de compra (Etapa 16)
 

@@ -1047,7 +1047,7 @@ public class ServicioDePagos(
             .Select(ProyeccionDeAdministracion())
             .ToListAsync(ct);
 
-        return new PaginaDePagosDeAdministracion(items, total, pagina, tamanio);
+        return new PaginaDePagosDeAdministracion(await ProyeccionesDePago.ConLineasAsync(db, items, ct), total, pagina, tamanio);
     }
 
     /// <summary>stage-gasto-a-compra (PR4), judgment follow-up: <c>GET
@@ -1057,10 +1057,14 @@ public class ServicioDePagos(
     /// resuelve (antes apuntaba a <c>/api/gastos/{id}</c>, que exige <c>OperacionDePos</c> pero
     /// devuelve el shape reducido de <see cref="PagoListado"/> — un mismatch de contrato para un
     /// cliente que siguiera el header).</summary>
-    public async Task<PagoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default) =>
-        await db.Pagos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
+    public async Task<PagoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default)
+    {
+        var fila = await db.Pagos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
             ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
+
+        return (await ProyeccionesDePago.ConLineasAsync(db, [fila], ct))[0];
+    }
 
     private Expression<Func<Pago, PagoDeAdministracionListado>> ProyeccionDeAdministracion() => g =>
         new PagoDeAdministracionListado(
@@ -1086,7 +1090,8 @@ public class ServicioDePagos(
             g.OrigenFondos,
             g.IdComprobanteCompra,
             g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto),
-            g.IdMovimientoPersonal);
+            g.IdMovimientoPersonal,
+            null!);
 
     // ---- validación de dominio -------------------------------------------------------------
 
@@ -1608,20 +1613,21 @@ public class ServicioDePagos(
             idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona), nombresDeMedios);
     }
 
-    /// <summary>Un solo pago de categoría sueldos con un ítem por línea de dinero, dentro de la transacción del
-    /// llamador, que ya tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que
+    /// <summary>Un pago de categoría sueldos por línea de dinero, cada uno con su único ítem, dentro de la transacción
+    /// del llamador, que ya tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que
     /// el alta del POS y el alta administrativa: el pago del cajón entra al arqueo del turno por su origen
-    /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe UN egreso por el total, encadenado con
+    /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe su egreso encadenado con
     /// <see cref="EscribirMovimientoDeTesoreriaAsync"/>, cuyo advisory de la empresa es el ÚLTIMO lock de la
     /// transacción. El pago de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería, la
-    /// fecha de negocio elegida. El pago apunta al movimiento <c>pago</c> del libro de personal y la referencia de
-    /// cada línea vive en su ítem.</summary>
-    public async Task<PagoDeSueldoPersistido> PersistirPagoDeSueldoAsync(
+    /// fecha de negocio elegida. Cada pago apunta al movimiento <c>pago</c> del libro de personal y repite la
+    /// referencia de su línea en el detalle y en el ítem. Un solo pago con varios ítems queda para después del release
+    /// del POS instalado, que no lee las líneas.</summary>
+    public async Task<IReadOnlyList<PagoDeSueldoPersistido>> PersistirPagosDeSueldoAsync(
         int idTenant, EntornoDePagoDeSueldo entorno, OrigenFondosPago origenFondos, string nombreDelPersonal,
         int idMovimientoPersonal, IReadOnlyList<LineaDePagoDePersonal> lineas, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct = default)
     {
-        var pago = new Pago
+        var pagos = lineas.Select(linea => new Pago
         {
             IdTenant = idTenant,
             IdEmpresa = entorno.IdEmpresa,
@@ -1632,22 +1638,23 @@ public class ServicioDePagos(
             Categoria = CategoriaPago.Sueldos,
             OrigenFondos = origenFondos,
             Concepto = $"Pago de personal: {nombreDelPersonal}",
-            Importe = lineas.Sum(l => l.Importe),
+            Detalle = linea.Referencia,
+            Importe = linea.Importe,
             IdMovimientoPersonal = idMovimientoPersonal,
             CreatedAt = momento,
             UpdatedAt = momento
-        };
+        }).ToList();
 
-        db.Pagos.Add(pago);
+        db.Pagos.AddRange(pagos);
         await db.SaveChangesAsync(ct);
 
-        var items = lineas.Select(linea => new ItemPago
+        var items = pagos.Select((pago, i) => new ItemPago
         {
             IdTenant = idTenant,
             IdPago = pago.Id,
-            IdMedioPago = linea.IdMedioPago,
-            Importe = linea.Importe,
-            Referencia = linea.Referencia,
+            IdMedioPago = lineas[i].IdMedioPago,
+            Importe = lineas[i].Importe,
+            Referencia = lineas[i].Referencia,
             CreatedAt = momento,
             UpdatedAt = momento
         }).ToList();
@@ -1657,10 +1664,13 @@ public class ServicioDePagos(
 
         if (origenFondos == OrigenFondosPago.Tesoreria)
         {
-            await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
+            foreach (var pago in pagos)
+            {
+                await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
+            }
         }
 
-        return new PagoDeSueldoPersistido(pago, items);
+        return pagos.Select((pago, i) => new PagoDeSueldoPersistido(pago, items[i])).ToList();
     }
 
     // ---- resolución interna ---------------------------------------------------------------
