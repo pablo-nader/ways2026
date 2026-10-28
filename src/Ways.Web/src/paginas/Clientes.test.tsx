@@ -195,6 +195,34 @@ describe('Clientes — alta y edición en un modal', () => {
     expect(disparador).toHaveFocus()
   })
 
+  it('tras un alta exitosa el foco vuelve al botón de agregar', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await llenarAlta(usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Cliente "Ana" creado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
+  it('tras una edición exitosa el foco cae en el botón de agregar, porque la fila se reemplaza durante el refresco', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockResolvedValue(clienteFixture())
+    renderClientes()
+    await screen.findByText('Luis Pérez')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando cliente 7' })
+    await within(dialogo).findByRole('option', { name: 'Consumidor final' })
+    await within(dialogo).findByRole('option', { name: 'Minorista (default)' })
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Cliente "Luis" actualizado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
   it('un doble clic sincrónico en Guardar emite una sola escritura y el modal no se cierra mientras guarda', async () => {
     const usuario = userEvent.setup()
     let resolver: (valor: ClienteListado) => void = () => {}

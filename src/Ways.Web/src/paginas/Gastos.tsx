@@ -113,6 +113,8 @@ export function Gastos() {
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [errorGuardar, setErrorGuardar] = useState('')
+  /** Cambia en cada rechazo: el mismo mensaje repetido igual se vuelve a anunciar y a traer a la vista. */
+  const [disparoDeError, setDisparoDeError] = useState(0)
   const [aviso, setAviso] = useState('')
 
   const generacionRef = useRef(0)
@@ -296,6 +298,7 @@ export function Gastos() {
 
     if (!formularioDeGastoDeAdministracionCompleto(formulario)) {
       setErrorGuardar('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')
+      setDisparoDeError((n) => n + 1)
       return
     }
 
@@ -305,21 +308,23 @@ export function Gastos() {
 
     // regla 3: bumpea la generación ANTES de la escritura — un refresco del listado en vuelo
     // desde antes de este alta queda obsoleto aunque su respuesta llegue después.
-    const miGeneracion = (generacionRef.current += 1)
+    generacionRef.current += 1
 
+    // La respuesta de la escritura no se gatea por la generación del listado: el modal queda inerte
+    // mientras dura y nada puede reabrirlo ni reemplazarlo, así que siempre se aplica y siempre libera
+    // `guardando`. Gatearla dejaba el modal trabado si otra lectura acuñaba una generación en el medio.
     try {
       await clienteDeGastosDeAdministracion.registrar(aSolicitudDeGastoDeAdministracion(formulario))
-      if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
       setAviso('Gasto registrado.')
       setMostrarFormulario(false)
     } catch (e) {
-      if (generacionRef.current !== miGeneracion) return
       setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el gasto.')
+      setDisparoDeError((n) => n + 1)
       return
     } finally {
       guardandoRef.current = false
-      if (generacionRef.current === miGeneracion) setGuardando(false)
+      setGuardando(false)
     }
 
     cargar()
@@ -509,6 +514,7 @@ export function Gastos() {
             proveedores={proveedoresOrdenados}
             fechaMaxima={fechaDeHoy()}
             error={errorGuardar}
+            disparoDeError={disparoDeError}
             guardando={guardando}
             focoDeReserva={contenedorRef}
             onRegistrar={() => void registrarGasto()}

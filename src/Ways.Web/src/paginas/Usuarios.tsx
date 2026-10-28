@@ -95,8 +95,9 @@ export function Usuarios() {
    * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
    */
   const ocupadoRef = useRef(false)
-  /** Destino de foco cuando el disparador del modal ya no es alcanzable al cerrarlo. */
-  const contenedorRef = useRef<HTMLDivElement>(null)
+  /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la tabla se reemplaza por
+   * "Cargando…" durante el refresco): el botón de alta, que es estable. */
+  const agregarRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
     setCargando(true)
@@ -254,8 +255,10 @@ export function Usuarios() {
         }
       }
 
-      setFormulario(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`:
+      // así el disparador ya está habilitado cuando el modal restaura el foco.
       await refrescarTrasEscribir(token, mensajeOk, AVISO_REFRESCO_FALLIDO)
+      setFormulario(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -425,6 +428,7 @@ export function Usuarios() {
         Buscar
       </button>
       <BotonIcono
+        ref={agregarRef}
         icono="agregar"
         className="text-nowrap"
         onClick={() => {
@@ -447,7 +451,7 @@ export function Usuarios() {
   )
 
   return (
-    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
+    <div className="container-fluid py-4">
       <Box titulo="Usuarios" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
         {/* Gateado en `esPlataforma` como todo lo demás que depende del universo de tenants: para
@@ -481,7 +485,7 @@ export function Usuarios() {
             guardando={ocupado}
             bloqueado={bloqueado}
             error={errorAlta || errorFormulario}
-            focoDeReserva={contenedorRef}
+            focoDeReserva={agregarRef}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => {

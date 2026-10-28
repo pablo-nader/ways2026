@@ -1693,6 +1693,32 @@ describe('Usuarios — alta y edición en un modal', () => {
     expect(disparador).toHaveFocus()
   })
 
+  it('tras un alta exitosa el foco vuelve al botón de agregar', async () => {
+    const usuario = userEvent.setup()
+    const dialogo = await montarYAbrirAlta(usuario)
+    await completar(dialogo, usuario)
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Usuario "nuevo.admin" creado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
+  it('tras una edición exitosa el foco cae en el botón de agregar, porque la tabla se reemplaza durante el refresco', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await screen.findByText('vendedor.sur')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando usuario 50' })
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await screen.findByText('Usuario "vendedor.sur" actualizado.')
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+
   it('un doble clic sincrónico en Guardar emite una sola escritura y el modal no se cierra mientras guarda', async () => {
     const usuario = userEvent.setup()
     let resolver: () => void = () => {}

@@ -459,6 +459,52 @@ describe('Gastos (administración) — alta', () => {
     expect(disparador).toHaveFocus()
   })
 
+  it('si otra lectura acuña una generación durante el alta, el modal igual se libera y se cierra al responder', async () => {
+    mockearRutas({})
+    let resolverPost: (valor: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolverPost = resolve
+        }),
+    )
+    renderGastos()
+    await abrirYCompletarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled())
+
+    // El filtro de la pantalla recarga el listado y acuña una generación nueva en pleno alta.
+    fireEvent.change(screen.getAllByLabelText('Categoría')[0], { target: { value: 'Proveedor' } })
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('categoria=Proveedor')))
+    await act(async () => resolverPost({ id: 1 }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByText('Gasto registrado.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nuevo gasto' })).toBeEnabled()
+  })
+
+  it('un segundo rechazo local con el mismo mensaje vuelve a traer el error a la vista', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      mockearRutas({})
+      renderGastos()
+      await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo gasto' })
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
+      await within(dialogo).findByRole('alert')
+      expect(scrollIntoView).toHaveBeenCalledTimes(1)
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Registrar' }))
+
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2))
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
   it('mientras el alta está en vuelo el modal no se puede cerrar ni cancelar', async () => {
     mockearRutas({})
     let resolverPost: (valor: unknown) => void = () => undefined

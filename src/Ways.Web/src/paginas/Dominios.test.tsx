@@ -297,6 +297,22 @@ describe('Dominios — alta', () => {
     expect(within(reabierto).getByLabelText('Principal')).not.toBeChecked()
   })
 
+  it('tras un alta exitosa el foco vuelve al botón de agregar', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('tienda.sur.com')
+    apiPostMock.mockResolvedValue(dominio({ id: 13, idTenant: 1, host: 'nuevo.sur.com' }))
+    const dialogo = await abrirAlta(usuario)
+    await usuario.type(within(dialogo).getByLabelText('Host'), 'nuevo.sur.com')
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await screen.findByText(/Se agregó el dominio "nuevo\.sur\.com"/)
+    expect(screen.getByRole('button', { name: 'Agregar dominio' })).toHaveFocus()
+  })
+
   it('Escape cierra el modal sin guardar y devuelve el foco al disparador', async () => {
     const usuario = userEvent.setup()
     montar()

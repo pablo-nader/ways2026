@@ -66,8 +66,7 @@ export function Dominios() {
   /** Espejo SÍNCRONO de `ocupado` y única guarda de re-entrancia: dos clics del mismo tick leen el
    * mismo render. Se apaga en el `finally` de cada escritura, sin gate. */
   const ocupadoRef = useRef(false)
-  /** Destino de foco si el disparador ya no es alcanzable al cerrar el modal. */
-  const contenedorRef = useRef<HTMLDivElement>(null)
+  const agregarRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     const token = ++generacionTenants.current
@@ -158,11 +157,13 @@ export function Dominios() {
 
       setHost('')
       setEsPrincipal(false)
-      setAltaAbierta(false)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`:
+      // así el disparador ya está habilitado cuando el modal restaura el foco.
       await refrescarTrasEscribir(
         id,
         `Se agregó el dominio "${creado.host}". Cuando su DNS apunte al servidor, marcalo como verificado.`,
       )
+      setAltaAbierta(false)
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -254,12 +255,12 @@ export function Dominios() {
   const herramientas =
     idTenant !== '' ? (
       <nav className="p-2 d-flex gap-2">
-        <BotonIcono icono="agregar" etiqueta="Agregar dominio" className="text-nowrap" onClick={abrirAlta} disabled={inerte} />
+        <BotonIcono ref={agregarRef} icono="agregar" etiqueta="Agregar dominio" className="text-nowrap" onClick={abrirAlta} disabled={inerte} />
       </nav>
     ) : undefined
 
   return (
-    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
+    <div className="container-fluid py-4">
       <Box titulo="Dominios" variante="inverse" herramientas={herramientas}>
         {errorDeTenants && <div className="alert alert-danger">{errorDeTenants}</div>}
         {errorDeLectura && (
@@ -300,7 +301,7 @@ export function Dominios() {
             esPrincipal={esPrincipal}
             error={errorDeAlta}
             guardando={agregando}
-            focoDeReserva={contenedorRef}
+            focoDeReserva={agregarRef}
             onHostCambio={setHost}
             onPrincipalCambio={setEsPrincipal}
             onGuardar={agregar}

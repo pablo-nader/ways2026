@@ -29,8 +29,9 @@ export function Clientes() {
   const [guardando, setGuardando] = useState(false)
   /** Espejo síncrono de "hay un guardado en vuelo": un doble clic en el mismo tick no emite dos escrituras. */
   const guardandoRef = useRef(false)
-  /** Destino de foco si el disparador ya no es alcanzable al cerrar el modal. */
-  const contenedorRef = useRef<HTMLDivElement>(null)
+  /** Destino de foco al cerrar el modal cuando su disparador ya no existe (la fila de "Editar" se
+   * reemplaza por "Cargando…" durante el refresco): el botón de alta, que es estable. */
+  const agregarRef = useRef<HTMLButtonElement>(null)
   // Último término pedido: el refresco posterior a una escritura recarga con ese, no con el texto de la caja sin enviar.
   const terminoVigente = useRef('')
 
@@ -75,8 +76,10 @@ export function Clientes() {
         setAviso(`Cliente "${formulario.nombre}" actualizado.`)
       }
 
-      setFormulario(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `guardando`:
+      // así el disparador ya está habilitado cuando el modal restaura el foco.
       await cargar(terminoVigente.current)
+      setFormulario(null)
     } catch (e) {
       setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
     } finally {
@@ -125,6 +128,7 @@ export function Clientes() {
         Buscar
       </button>
       <BotonIcono
+        ref={agregarRef}
         icono="agregar"
         className="text-nowrap"
         disabled={guardando}
@@ -134,7 +138,7 @@ export function Clientes() {
   )
 
   return (
-    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
+    <div className="container-fluid py-4">
       <Box titulo="Clientes" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
@@ -146,7 +150,7 @@ export function Clientes() {
             listas={listas}
             guardando={guardando}
             error={errorFormulario}
-            focoDeReserva={contenedorRef}
+            focoDeReserva={agregarRef}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => setFormulario(null)}

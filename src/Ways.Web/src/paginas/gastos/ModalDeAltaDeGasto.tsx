@@ -30,6 +30,8 @@ type Props = {
   fechaMaxima: string
   /** Validación local o rechazo del servidor: se rinde dentro del modal. */
   error: string
+  /** Cambia en cada rechazo, para que un mismo mensaje repetido se vuelva a anunciar. */
+  disparoDeError: number
   /** Alta en vuelo: el modal queda inerte entero y no se puede cerrar. */
   guardando: boolean
   focoDeReserva: React.RefObject<HTMLElement | null>
@@ -49,6 +51,7 @@ export function ModalDeAltaDeGasto({
   proveedores,
   fechaMaxima,
   error,
+  disparoDeError,
   guardando,
   focoDeReserva,
   onRegistrar,
@@ -80,7 +83,7 @@ export function ModalDeAltaDeGasto({
       pie={pie}
       onCerrar={onCancelar}
     >
-      <ErrorDeFormulario mensaje={error} />
+      <ErrorDeFormulario mensaje={error} disparo={disparoDeError} />
       <form id={ID_FORMULARIO_GASTO} onSubmit={alEnviar}>
         <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
           <div className="col-md-4">
