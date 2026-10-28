@@ -151,8 +151,6 @@ export function Existencias() {
     }),
     [mapaSugeridos],
   )
-  const filasDeExistencias = useMemo(() => existencias?.filas ?? [], [existencias])
-  const { filas: filasOrdenadas, orden, alternar } = useOrdenamiento(filasDeExistencias, columnas)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
@@ -171,6 +169,16 @@ export function Existencias() {
   // es la única fuente de verdad para el render: "existe un fantasma sin guardar" (a diferencia de
   // `filaEnEdicion`, que solo dice cuál fila está abierta, no si quedó un fantasma benched).
   const [filaFantasma, setFilaFantasma] = useState<number | null>(null)
+  // La fila nueva sin guardar no participa del orden: queda al final, debajo de las filas guardadas ya ordenadas.
+  const filasGuardadas = useMemo(
+    () => (existencias?.filas ?? []).filter((f) => f.idArticulo !== filaFantasma),
+    [existencias, filaFantasma],
+  )
+  const { filas: filasGuardadasOrdenadas, orden, alternar } = useOrdenamiento(filasGuardadas, columnas)
+  const filasOrdenadas = useMemo(() => {
+    const fantasma = existencias?.filas.find((f) => f.idArticulo === filaFantasma)
+    return fantasma ? [...filasGuardadasOrdenadas, fantasma] : filasGuardadasOrdenadas
+  }, [existencias, filaFantasma, filasGuardadasOrdenadas])
   const [minimoTexto, setMinimoTexto] = useState('')
   const [reposicionTexto, setReposicionTexto] = useState('')
   const [guardando, setGuardando] = useState<number | null>(null) // idArticulo en vuelo — atributo `disabled`

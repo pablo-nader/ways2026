@@ -788,7 +788,10 @@ export function Tablero() {
     cargar()
   }, [cargar])
 
-  const puntosVentaDeLaEmpresa = puntosVenta.filter((pv) => pv.idEmpresa === idEmpresa)
+  const puntosVentaDeLaEmpresa = useMemo(
+    () => puntosVenta.filter((pv) => pv.idEmpresa === idEmpresa),
+    [puntosVenta, idEmpresa],
+  )
 
   return (
     <div className="container-fluid py-4">

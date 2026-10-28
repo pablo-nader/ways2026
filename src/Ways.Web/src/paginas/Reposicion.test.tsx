@@ -407,4 +407,27 @@ describe('Reposicion — "Generar OC" (stage-16-ordenes-de-compra, Slice 6)', ()
     expect(items).toHaveLength(1)
     expect(items[0].idArticulo).toBe(1)
   })
+
+  it('con un orden activo en el grupo, "Generar OC" manda los items en el orden original del grupo', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    const primera = filaFixture({ idArticulo: 1, articulo: 'Alfa', cantidad: 1500, idProveedor: 5, proveedor: 'Proveedor Cinco', sugerido: 10 })
+    const segunda = filaFixture({ idArticulo: 2, articulo: 'Zeta', cantidad: 900, idProveedor: 5, proveedor: 'Proveedor Cinco', sugerido: 20 })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([primera, segunda]))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReposicionConDestino()
+
+    await screen.findByText('Alfa')
+    await usuario.click(screen.getByRole('button', { name: /Cantidad/ }))
+    const articulos = screen.getAllByRole('row').slice(2).map((f) => within(f).getAllByRole('cell')[0].textContent)
+    expect(articulos).toEqual(['Zeta', 'Alfa'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Generar OC' }))
+
+    await screen.findByText('idProveedor=5')
+    const items = JSON.parse(screen.getByText(/^items=/).textContent!.replace('items=', ''))
+    expect(items.map((i: { idArticulo: number }) => i.idArticulo)).toEqual([1, 2])
+  })
 })

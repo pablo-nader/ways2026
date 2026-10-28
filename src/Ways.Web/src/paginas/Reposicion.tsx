@@ -24,7 +24,9 @@ function formatearCantidadNullable(valor: number | null): string {
   return valor === null ? '—' : formatearCantidad(valor)
 }
 
-const COLUMNAS: ColumnasOrdenables<FilaDeReposicion> = {
+const SIN_FILAS: readonly FilaDeReposicion[] = []
+
+const COLUMNAS:ColumnasOrdenables<FilaDeReposicion> = {
   articulo: { valor: (f) => f.articulo },
   cantidad: { valor: (f) => f.cantidad },
   minimo: { valor: (f) => f.minimo },
@@ -37,7 +39,8 @@ const COLUMNAS: ColumnasOrdenables<FilaDeReposicion> = {
  * proveedor (slice 6)"): artículos bajo su mínimo de un punto de venta, agrupados por proveedor
  * habitual — mismo shape que `Existencias.tsx` (selector de punto de venta + botón de descarga +
  * tabla, sin paginado). El agrupamiento es un FOLD puro sobre la lista ya ordenada que devuelve
- * el servidor (`agruparPorProveedor`, design decisión 4) — nunca un sort del lado del cliente.
+ * el servidor (`agruparPorProveedor`, design decisión 4): el orden de los grupos es el del servidor.
+ * El usuario puede ordenar las filas por columna, siempre dentro de cada grupo.
  * Misma política que `/tablero`/`/reportes/existencias` (`Politicas.LecturaDeReportes`:
  * Supervisor + Admin).
  *
@@ -115,7 +118,7 @@ export function Reposicion() {
 
   const grupos = reposicion ? agruparPorProveedor(reposicion.filas) : []
   // El orden se aplica dentro de cada grupo: los grupos conservan su posición y "Generar OC" sigue usando el orden original.
-  const { orden, alternar, ordenar } = useOrdenamiento<FilaDeReposicion>([], COLUMNAS)
+  const { orden, alternar, ordenar } = useOrdenamiento<FilaDeReposicion>(SIN_FILAS, COLUMNAS)
 
   // El "Sin proveedor" (idProveedor null) nunca llega acá: no hay a quién enviarle la OC
   // (ordenes-de-compra/spec.md: "The Sin proveedor bucket cannot produce an OC") — el botón ni se

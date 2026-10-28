@@ -683,6 +683,29 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
   })
 
+  it('con un orden activo, la fila agregada sin guardar queda al final y no salta a su posición ordenada', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/reportes/stock/existencias?')) {
+        return Promise.resolve(
+          existenciasFixture([filaFixture({ idArticulo: 1, nombre: 'Yerba mate 1kg' }), filaFixture({ idArticulo: 2, nombre: 'Zeta' })]),
+        )
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    await usuario.click(screen.getByRole('button', { name: /Nombre/ }))
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+
+    await screen.findByLabelText('Mínimo de Arroz largo fino 1kg')
+    const nombres = screen.getAllByRole('row').slice(1).map((f) => within(f).getAllByRole('cell')[1].textContent)
+    expect(nombres).toEqual(['Yerba mate 1kg', 'Zeta', 'Arroz largo fino 1kg'])
+  })
+
   it('agregar X por el picker sin guardar ni cancelar esconde el picker — no hay forma de agregar Z hasta cerrar la edición (judgment-day ronda final A, residual FINDING 1 CRITICAL)', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
