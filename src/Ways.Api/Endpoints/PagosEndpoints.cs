@@ -161,6 +161,41 @@ public static class PagosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Vincula (o convierte a proveedor) un pago existente a una compra confirmada.");
 
+        // E3-S3: aplicar lo disponible de un pago a compras, y desaplicar. Mueven la deuda con un proveedor: apilan
+        // GestionDeCatalogo igual que la vinculación.
+        grupo.MapPost("/{id:int}/aplicaciones", (
+            ServicioDePagos servicio, int id, SolicitudDeAplicarPago solicitud, CancellationToken ct) =>
+            servicio.AplicarAsync(id, solicitud, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Aplica el disponible de un pago a compras de un mismo proveedor. Un pago sin proveedor adopta el de las compras.");
+
+        grupo.MapDelete("/{id:int}/aplicaciones/{idAplicacion:int}", async (
+            ServicioDePagos servicio, int id, int idAplicacion, CancellationToken ct) =>
+        {
+            await servicio.DesaplicarAsync(id, idAplicacion, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Libera una aplicación de un pago a una compra; el proveedor adoptado se conserva.");
+
+        var comprasAplicables = app.MapGroup("/api/compras")
+            .WithTags("Pagos")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        comprasAplicables.MapGet("/{id:int}/pagos-aplicables", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.ListarPagosAplicablesDeLaCompraAsync(id, ct))
+        .WithSummary("Pagos con disponible que se pueden aplicar a la compra (de su proveedor, o sin proveedor).");
+
+        var proveedoresDisponibles = app.MapGroup("/api/proveedores")
+            .WithTags("Pagos")
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
+
+        proveedoresDisponibles.MapGet("/{id:int}/pagos-disponibles", (
+            ServicioDePagos servicio, int id, CancellationToken ct) =>
+            servicio.ListarPagosDisponiblesDelProveedorAsync(id, ct))
+        .WithSummary("Pagos de un proveedor con disponible, el crédito a favor aplicable a sus compras.");
+
         grupo.MapPost("/de-compra/{idCompra:int}", async (
             ServicioDePagos servicio, int idCompra, SolicitudDePagoDeCompraConLineas solicitud, CancellationToken ct) =>
         {

@@ -5,7 +5,7 @@ namespace Ways.Domain.Tests.Auditoria;
 
 /// <summary>
 /// stage-14-auditoria-trazabilidad, Slice 1 (task 1.13, design decisión 4): el catálogo genérico
-/// — 23 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
+/// — 25 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
 /// no vacía. Las tres de <c>pv.baja</c>/<c>tenant.baja</c>/<c>empresa.baja</c> las agregó la etapa
 /// 20 slice 4 (judgment-day ronda 1, hallazgo C1): las bajas de organización no dejaban rastro.
 /// <c>pv.modo</c> la agregó stage-desktop-pos (DB CHANGE GATE aprobado): el flip administrativo de
@@ -26,9 +26,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneVeintitresEntradas()
+    public void TieneVeinticincoEntradas()
     {
-        Assert.Equal(23, AccionAuditada.Todas.Count);
+        Assert.Equal(25, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -60,9 +60,9 @@ public partial class AccionAuditadaTests
     /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
     /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
     /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
-    /// 23 pares exactos que el resto del código asume.</summary>
+    /// 25 pares exactos que el resto del código asume.</summary>
     [Fact]
-    public void ElCatalogoTieneExactamenteLosVeintitresParesEsperados()
+    public void ElCatalogoTieneExactamenteLosVeinticincoParesEsperados()
     {
         (string Accion, string Entidad)[] esperado =
         [
@@ -88,6 +88,8 @@ public partial class AccionAuditadaTests
             ("venta.sobrelimite", "comprobante_venta"),
             ("pago.edicion", "pago"),
             ("pago.baja", "pago"),
+            ("pago.aplicacion", "pago"),
+            ("pago.desaplicacion", "pago"),
             ("pv.alta", "punto_venta")
         ];
 

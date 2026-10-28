@@ -1,0 +1,21 @@
+namespace Ways.Application.Pagos;
+
+/// <summary>Una parte del pago que se aplica a una compra.</summary>
+public sealed record AplicacionSolicitada(int IdComprobanteCompra, decimal Importe);
+
+/// <summary>Cuerpo de <c>POST /api/pagos/{id}/aplicaciones</c>: de 1 a 20 compras de UN mismo proveedor, cada una una vez.
+/// Todo campo se usa: <c>idComprobanteCompra</c> elige la compra y <c>importe</c> es lo que se aplica.</summary>
+public sealed record SolicitudDeAplicarPago(IReadOnlyList<AplicacionSolicitada>? Aplicaciones);
+
+/// <summary>Un pago con importe disponible que se puede aplicar. <c>idProveedor</c> es <c>null</c> en un pago sin
+/// proveedor (de caja, «en concepto de»), que adopta el proveedor de la compra la primera vez que se aplica.</summary>
+public sealed record PagoAplicable(
+    int IdPago,
+    DateTimeOffset Fecha,
+    string Concepto,
+    decimal Importe,
+    decimal Disponible,
+    int? IdProveedor);
+
+/// <summary>Respuesta de <c>GET /api/compras/{id}/pagos-aplicables</c> y <c>GET /api/proveedores/{id}/pagos-disponibles</c>.</summary>
+public sealed record PagosAplicables(IReadOnlyList<PagoAplicable> Pagos);
