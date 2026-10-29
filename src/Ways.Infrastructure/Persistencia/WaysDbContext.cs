@@ -76,6 +76,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Proveedor> Proveedores => Set<Proveedor>();
     public DbSet<Personal> Personal => Set<Personal>();
     public DbSet<MovimientoPersonal> MovimientosPersonal => Set<MovimientoPersonal>();
+    public DbSet<JornadaPersonal> JornadasPersonal => Set<JornadaPersonal>();
     public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
     public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
@@ -324,6 +325,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoPersonal(modelBuilder);
+        AplicarFiltroDeTenantEnJornadaPersonal(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
@@ -919,6 +921,21 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoPersonal), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoPersonal.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="JornadaPersonal"/> es mutable pero sin baja lógica, así que no hereda <see cref="EntidadTenant"/>:
+    /// necesita la variante escrita a mano, con <c>IdTenant</c> escrito explícito por <c>EscriturasDePersonal</c>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnJornadaPersonal(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(JornadaPersonal))!;
+
+        var parametro = Expression.Parameter(typeof(JornadaPersonal), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(JornadaPersonal.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

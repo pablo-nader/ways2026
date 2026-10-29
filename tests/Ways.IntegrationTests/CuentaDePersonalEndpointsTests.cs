@@ -373,11 +373,12 @@ public class CuentaDePersonalEndpointsTests(WaysApiFixture fixture) : IClassFixt
         var ctx = await PrepararAsync(nameof(CargasConcurrentesDejanElSaldoExactoYLaCadenaDeSaldosResultantesConsistente));
         var id = await CrearPersonalAsync(ctx.Admin, valorHora: 100m);
         const int cargas = 16;
+        // Un día distinto por carga: el total de un mismo día no puede superar las 24 horas.
 
         var respuestas = await Task.WhenAll(Enumerable.Range(1, cargas).Select(i =>
             i % 4 == 0
                 ? AjustarAsync(ctx.Admin, id, -10m)
-                : CargarAsync(ctx.Admin, id, "2026-10-01", i % 8 + 1)));
+                : CargarAsync(ctx.Admin, id, $"2026-10-{i:00}", i % 8 + 1)));
 
         foreach (var respuesta in respuestas)
         {
