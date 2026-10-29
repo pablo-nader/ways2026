@@ -197,7 +197,7 @@ describe('PagosDelTurno — sin turno abierto', () => {
     render(<PagosDelTurno />)
 
     await screen.findByText('No hay un turno abierto en este punto de venta.')
-    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Importe de la línea 1')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Registrar/ })).not.toBeInTheDocument()
   })
 })
@@ -224,7 +224,7 @@ describe('PagosDelTurno — medio de pago', () => {
     mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente] })
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     expect(screen.getByRole('option', { name: 'Efectivo' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Cuenta corriente' })).not.toBeInTheDocument()
   })
@@ -235,7 +235,7 @@ describe('PagosDelTurno — categoría auto-switch', () => {
     mockearRutas({})
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Otros')
 
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
@@ -247,7 +247,7 @@ describe('PagosDelTurno — categoría auto-switch', () => {
     mockearRutas({})
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Proveedor')
 
@@ -260,7 +260,7 @@ describe('PagosDelTurno — categoría auto-switch', () => {
     mockearRutas({})
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     await userEvent.selectOptions(screen.getByLabelText('Proveedor (opcional)'), 'Distribuidora Sur SRL')
     await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Servicios')
 
@@ -276,15 +276,15 @@ describe('PagosDelTurno — pagado desde (origenFondos)', () => {
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     expect(screen.getByLabelText('Pagado desde')).toHaveValue('CajaTurno')
 
-    await userEvent.type(screen.getByLabelText('Importe'), '500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ origenFondos: 'CajaTurno' })),
+      expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ origenFondos: 'CajaTurno' })),
     )
   })
 
@@ -293,14 +293,14 @@ describe('PagosDelTurno — pagado desde (origenFondos)', () => {
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
-    await userEvent.type(screen.getByLabelText('Importe'), '500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.selectOptions(screen.getByLabelText('Pagado desde'), 'Caja general')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ origenFondos: 'Tesoreria' })),
+      expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ origenFondos: 'Tesoreria' })),
     )
   })
 
@@ -315,9 +315,9 @@ describe('PagosDelTurno — pagado desde (origenFondos)', () => {
     )
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
-    await userEvent.type(screen.getByLabelText('Importe'), '500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() => expect(screen.getByLabelText('Pagado desde')).toBeDisabled())
@@ -327,9 +327,9 @@ describe('PagosDelTurno — pagado desde (origenFondos)', () => {
 
 describe('PagosDelTurno — alta', () => {
   async function completarFormulario() {
-    await screen.findByLabelText('Importe')
-    await userEvent.type(screen.getByLabelText('Importe'), '500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
   }
 
   it('arma el cuerpo del POST con el concepto de las observaciones recortadas', async () => {
@@ -343,11 +343,10 @@ describe('PagosDelTurno — alta', () => {
 
     await waitFor(() =>
       expect(apiPostMock).toHaveBeenCalledWith(
-        '/gastos',
+        '/pagos',
         expect.objectContaining({
           idPuntoVenta: 7,
-          importe: 500,
-          idMedioPago: 1,
+          lineas: [{ idMedioPago: 1, importe: 500, referencia: null }],
           categoria: 'Otros',
           idProveedor: null,
           concepto: 'Flete de mercadería',
@@ -370,7 +369,7 @@ describe('PagosDelTurno — alta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ concepto: 'Pago del turno' })),
+      expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ concepto: 'Pago del turno' })),
     )
   })
 
@@ -387,7 +386,7 @@ describe('PagosDelTurno — alta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await screen.findByText('Pago registrado.')
-    expect(screen.getByLabelText('Importe')).toHaveValue('')
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('')
     expect(screen.getByLabelText('Observaciones (opcional)')).toHaveValue('')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Otros')
     await screen.findByText('$ 500,00')
@@ -410,7 +409,7 @@ describe('PagosDelTurno — alta', () => {
     // client-side, sin llegar a pegarle al servidor.
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('El importe tiene que ser mayor a 0.')
+    await screen.findByText('Línea 1: elegí el medio de pago.')
     expect(screen.queryByText('Pago registrado.')).not.toBeInTheDocument()
   })
 
@@ -424,18 +423,18 @@ describe('PagosDelTurno — alta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await screen.findByText('El turno ya no está abierto.')
-    expect(screen.getByLabelText('Importe')).toHaveValue('500,00')
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('500,00')
   })
 
   it('un importe en blanco o en cero se rechaza sin llegar a pegarle al servidor', async () => {
     mockearRutas({})
     render(<PagosDelTurno />)
 
-    await screen.findByLabelText('Importe')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await screen.findByLabelText('Importe de la línea 1')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('El importe tiene que ser mayor a 0.')
+    await screen.findByText('Línea 1: ingresá un importe mayor a 0.')
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
@@ -483,7 +482,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
   }
 
   async function esperarDetalle() {
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     await screen.findByText('Este turno todavía no tiene pagos.')
   }
 
@@ -497,7 +496,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
       render(<PagosDelTurno />)
       await esperarDetalle()
 
-      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
 
       expect(screen.getByText('Disponible en caja: $ 400,00')).toBeInTheDocument()
     })
@@ -510,8 +509,8 @@ describe('PagosDelTurno — efectivo en caja', () => {
       render(<PagosDelTurno />)
       await esperarDetalle()
 
-      await userEvent.type(screen.getByLabelText('Importe'), '1000')
-      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio)
+      await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '1000')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), medio)
       await userEvent.selectOptions(screen.getByLabelText('Pagado desde'), origen)
 
       expect(screen.queryByText(/Disponible en caja/)).not.toBeInTheDocument()
@@ -532,15 +531,15 @@ describe('PagosDelTurno — efectivo en caja', () => {
       render(<PagosDelTurno />)
       await esperarDetalle()
 
-      await userEvent.type(screen.getByLabelText('Importe'), '1000')
-      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+      await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '1000')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
 
       expect(screen.getByRole('alert')).toHaveTextContent('Falta $ 600,00 en la caja para pagar este pago.')
       expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled()
 
       await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
       await waitFor(() =>
-        expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ importe: 1000, origenFondos: 'CajaTurno' })),
+        expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ lineas: [{ idMedioPago: 1, importe: 1000, referencia: null }], origenFondos: 'CajaTurno' })),
       )
     })
 
@@ -549,8 +548,8 @@ describe('PagosDelTurno — efectivo en caja', () => {
       render(<PagosDelTurno />)
       await esperarDetalle()
 
-      await userEvent.type(screen.getByLabelText('Importe'), '400')
-      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+      await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '400')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
 
       expect(screen.getByText('Disponible en caja: $ 400,00')).toBeInTheDocument()
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -560,8 +559,8 @@ describe('PagosDelTurno — efectivo en caja', () => {
   describe('apertura del cajón', () => {
     async function registrar(medio: string, origen?: string) {
       await esperarDetalle()
-      await userEvent.type(screen.getByLabelText('Importe'), '100')
-      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio)
+      await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '100')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), medio)
       if (origen) await userEvent.selectOptions(screen.getByLabelText('Pagado desde'), origen)
       await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
     }
@@ -593,7 +592,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
       await screen.findByText('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
       expect(screen.queryByText('No se pudo registrar el pago.')).not.toBeInTheDocument()
-      expect(screen.getByLabelText('Importe')).toHaveValue('')
+      expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('')
       expect(apiPostMock).toHaveBeenCalledTimes(1)
     })
 
@@ -661,13 +660,13 @@ describe('PagosDelTurno — área del alta', () => {
   const cocina = { id: 11, nombre: 'Cocina', activo: true, idEmpresa: null, orden: 2 }
 
   async function esperarAreas() {
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     await screen.findByRole('option', { name: 'General' })
   }
 
   async function completar() {
-    await userEvent.type(screen.getByLabelText('Importe'), '500')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
   }
 
   it('el select arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
@@ -683,7 +682,7 @@ describe('PagosDelTurno — área del alta', () => {
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ idArea: 10 })))
   })
 
   it('el área elegida a mano es la que viaja', async () => {
@@ -696,7 +695,7 @@ describe('PagosDelTurno — área del alta', () => {
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 11 })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ idArea: 11 })))
   })
 
   it('tras un alta exitoso el formulario vuelve a la primera área activa', async () => {
@@ -725,7 +724,7 @@ describe('PagosDelTurno — área del alta', () => {
         : baseline(ruta),
     )
     render(<PagosDelTurno />)
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     expect(screen.getByLabelText('Área')).toHaveValue('')
 
     await act(async () => entregarAreas([general, cocina]))
@@ -746,7 +745,7 @@ describe('PagosDelTurno — área del alta', () => {
     )
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<PagosDelTurno />)
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled()
 
     await act(async () => entregarAreas([general, cocina]))
@@ -754,7 +753,7 @@ describe('PagosDelTurno — área del alta', () => {
 
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ idArea: 10 })))
   })
 
   it('si las áreas no cargan avisa que el pago se registra sin área y deja registrar', async () => {
@@ -773,7 +772,7 @@ describe('PagosDelTurno — área del alta', () => {
     mockearRutas({ areas: [] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<PagosDelTurno />)
-    await screen.findByLabelText('Importe')
+    await screen.findByLabelText('Importe de la línea 1')
     await screen.findByText('Este turno todavía no tiene pagos.')
 
     const select = screen.getByLabelText('Área')
@@ -784,7 +783,7 @@ describe('PagosDelTurno — área del alta', () => {
 
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: null })))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos', expect.objectContaining({ idArea: null })))
   })
 })
 
@@ -813,7 +812,8 @@ describe('PagosDelTurno — listado', () => {
     render(<PagosDelTurno />)
 
     await screen.findByText('Este turno todavía no tiene pagos.')
-    expect(screen.getByText('Total: $ 0,00')).toBeInTheDocument()
+    // El editor de líneas muestra su propio total (el del pago por cargar) además del total del listado.
+    expect(screen.getAllByText('Total: $ 0,00')).toHaveLength(2)
   })
 
   it('un pago de origen Tesoreria se etiqueta "Caja general"; uno CajaTurno no lleva etiqueta', async () => {
@@ -883,8 +883,8 @@ describe('PagosDelTurno — edición', () => {
     await abrirEdicion()
     const d = within(dialogo())
     await waitFor(() => expect(d.getByLabelText('Área (opcional)')).toHaveValue('3'))
-    expect(d.getByLabelText('Importe')).toHaveValue('300,00')
-    expect(d.getByLabelText('Medio de pago')).toHaveValue('1')
+    expect(d.getByLabelText('Importe de la línea 1')).toHaveValue('300,00')
+    expect(d.getByLabelText('Medio de la línea 1')).toHaveValue('1')
     expect(d.getByLabelText('Categoría')).toHaveValue('Proveedor')
     expect(d.getByLabelText('Proveedor (opcional)')).toHaveValue('1')
     expect(d.getByLabelText('Concepto')).toHaveValue('Flete')
@@ -928,8 +928,14 @@ describe('PagosDelTurno — edición', () => {
 
     await waitFor(() =>
       expect(apiPutMock).toHaveBeenCalledWith(
-        '/gastos/12',
-        expect.objectContaining({ concepto: 'Flete corregido', idMedioPago: 1, importe: 300, categoria: 'Otros', idProveedor: null, idArea: null }),
+        '/pagos/12',
+        expect.objectContaining({
+          concepto: 'Flete corregido',
+          lineas: [{ idMedioPago: 1, importe: 300, referencia: null }],
+          categoria: 'Otros',
+          idProveedor: null,
+          idArea: null,
+        }),
       ),
     )
     await screen.findByText('Pago actualizado.')
@@ -961,10 +967,10 @@ describe('PagosDelTurno — edición', () => {
 
     await abrirEdicion()
     const d = within(dialogo())
-    await userEvent.clear(d.getByLabelText('Importe'))
+    await userEvent.clear(d.getByLabelText('Importe de la línea 1'))
     await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
 
-    await d.findByText('Completá el medio de pago, el concepto y un importe mayor a 0.')
+    await d.findByText('Línea 1: ingresá un importe mayor a 0.')
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 
@@ -1039,5 +1045,221 @@ describe('PagosDelTurno — orden del listado', () => {
     await userEvent.click(within(hora).getByRole('button'))
     expect(hora).toHaveAttribute('aria-sort', 'none')
     expect(categorias(tabla).map((c) => c?.trim())).toEqual(['Servicios', 'Viáticos', 'Otros'])
+  })
+})
+
+describe('PagosDelTurno — varios medios', () => {
+  const medioTransferencia: MedioPagoListado = {
+    ...medioEfectivo,
+    id: 3,
+    nombre: 'Transferencia',
+    orden: 3,
+    comportamiento: 'Electronico',
+    admiteVuelto: false,
+  }
+
+  function detalleConEfectivo(importeEsperado: number, pagos: PagoDeTurno[] = []): DetalleDeTurno {
+    const base = detalleFixture(pagos)
+    return { ...base, resumen: { ...base.resumen, idMedioAncla: 1, medios: [{ idMedioPago: 1, importeEsperado }] } }
+  }
+
+  function pagoConDosMedios(sobrescribir: Partial<PagoDeTurno> = {}): PagoDeTurno {
+    return pagoFixture({
+      importe: 1000,
+      lineas: [
+        { idItem: 1, idMedioPago: 1, nombreMedioPago: 'Efectivo', importe: 600, referencia: null },
+        { idItem: 2, idMedioPago: 3, nombreMedioPago: 'Transferencia', importe: 400, referencia: 'op 55' },
+      ],
+      ...sobrescribir,
+    })
+  }
+
+  function cajaDeEscritorioFixture(): CajaDeEscritorio {
+    return {
+      contexto: { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' },
+      encolarImpresion: vi.fn(),
+    }
+  }
+
+  async function cargarDosLineas(efectivo: string, transferencia: string) {
+    await screen.findByLabelText('Importe de la línea 1')
+    await screen.findByText('Este turno todavía no tiene pagos.')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), efectivo)
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar medio' }))
+    if (transferencia !== '') await userEvent.type(screen.getByLabelText('Importe de la línea 2'), transferencia)
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 2'), 'Transferencia')
+  }
+
+  it('el alta con dos líneas manda POST /pagos con una línea por medio y su referencia', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(5000) })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<PagosDelTurno />)
+
+    await cargarDosLineas('600', '400')
+    await userEvent.type(screen.getByLabelText('Referencia de la línea 2'), ' op 55 ')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith(
+        '/pagos',
+        expect.objectContaining({
+          lineas: [
+            { idMedioPago: 1, importe: 600, referencia: null },
+            { idMedioPago: 3, importe: 400, referencia: 'op 55' },
+          ],
+        }),
+      ),
+    )
+    await screen.findByText('Pago registrado.')
+    expect(screen.queryByLabelText('Importe de la línea 2')).not.toBeInTheDocument()
+  })
+
+  it('una línea incompleta se rechaza con su número, sin llegar al servidor', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(5000) })
+    render(<PagosDelTurno />)
+
+    await cargarDosLineas('600', '')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await screen.findByText('Línea 2: ingresá un importe mayor a 0.')
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('el editor no ofrece cuenta corriente y admite hasta 20 medios', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente, medioTransferencia] })
+    render(<PagosDelTurno />)
+
+    await screen.findByLabelText('Importe de la línea 1')
+    await screen.findByRole('option', { name: 'Transferencia' })
+    const select = screen.getByLabelText('Medio de la línea 1')
+    expect(within(select).queryByRole('option', { name: 'Cuenta corriente' })).not.toBeInTheDocument()
+    for (let i = 0; i < 19; i += 1) {
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar medio' }))
+    }
+    expect(screen.getAllByRole('group', { name: /^Línea \d+$/ })).toHaveLength(20)
+    expect(screen.getByRole('button', { name: 'Agregar medio' })).toBeDisabled()
+  })
+
+  it('el faltante del cajón cuenta solo las líneas en efectivo, no el total del pago', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(400) })
+    render(<PagosDelTurno />)
+
+    await cargarDosLineas('500', '700')
+
+    expect(screen.getByText('Disponible en caja: $ 400,00')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Falta $ 100,00 en la caja para pagar este pago.')
+  })
+
+  it('con el efectivo cubierto no hay faltante aunque el total del pago supere el disponible', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(400) })
+    render(<PagosDelTurno />)
+
+    await cargarDosLineas('300', '700')
+
+    expect(screen.getByText('Disponible en caja: $ 400,00')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('un pago solo con medios electrónicos no muestra el efectivo del cajón ni encola el pulso', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(400) })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    const cajaDeEscritorio = cajaDeEscritorioFixture()
+    render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+    await screen.findByText('Este turno todavía no tiene pagos.')
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '900')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Transferencia')
+    expect(screen.queryByText(/Disponible en caja/)).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await screen.findByText('Pago registrado.')
+    expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+  })
+
+  it('un pago con una línea en efectivo y otra electrónica encola el pulso del cajón', async () => {
+    mockearRutas({ medios: [medioEfectivo, medioTransferencia], detalle: detalleConEfectivo(5000) })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    const cajaDeEscritorio = cajaDeEscritorioFixture()
+    render(<PagosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+    await cargarDosLineas('600', '400')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await screen.findByText('Pago registrado.')
+    expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith('la apertura de cajón', pulsoDeCajon())
+  })
+
+  it('el listado muestra el reparto de un pago con varios medios y el medio de siempre en uno con uno solo', async () => {
+    mockearRutas({
+      medios: [medioEfectivo, medioTransferencia],
+      detalle: detalleFixture([pagoConDosMedios({ id: 1, concepto: 'Flete' }), pagoFixture({ id: 2, importe: 150, concepto: 'Luz' })]),
+    })
+    render(<PagosDelTurno />)
+
+    const tabla = await screen.findByRole('table')
+    expect(await within(tabla).findByText('Efectivo $ 600,00 · Transferencia $ 400,00')).toBeInTheDocument()
+    expect(within(tabla).getByRole('cell', { name: 'Efectivo' })).toBeInTheDocument()
+  })
+
+  it('edita un pago con varios medios: precarga las líneas y guarda con PUT /pagos/{id}', async () => {
+    mockearRutas({
+      medios: [medioEfectivo, medioTransferencia],
+      detalle: detalleFixture([pagoConDosMedios({ id: 12 })]),
+    })
+    apiPutMock.mockResolvedValueOnce({ id: 12 })
+    render(<PagosDelTurno />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    expect(d.getByLabelText('Importe de la línea 1')).toHaveValue('600,00')
+    expect(d.getByLabelText('Medio de la línea 2')).toHaveValue('3')
+    expect(d.getByLabelText('Referencia de la línea 2')).toHaveValue('op 55')
+    expect(d.queryByText(/se edita desde el POS nuevo/)).not.toBeInTheDocument()
+
+    await userEvent.clear(d.getByLabelText('Importe de la línea 2'))
+    await userEvent.type(d.getByLabelText('Importe de la línea 2'), '350')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/pagos/12',
+        expect.objectContaining({
+          lineas: [
+            { idMedioPago: 1, importe: 600, referencia: null },
+            { idMedioPago: 3, importe: 350, referencia: 'op 55' },
+          ],
+        }),
+      ),
+    )
+    await screen.findByText('Pago actualizado.')
+  })
+
+  it('en la edición se puede agregar un medio a un pago de un solo medio', async () => {
+    mockearRutas({
+      medios: [medioEfectivo, medioTransferencia],
+      detalle: detalleFixture([pagoFixture({ id: 12, importe: 300 })]),
+    })
+    apiPutMock.mockResolvedValueOnce({ id: 12 })
+    render(<PagosDelTurno />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
+    await userEvent.click(d.getByRole('button', { name: 'Agregar medio' }))
+    await userEvent.type(d.getByLabelText('Importe de la línea 2'), '100')
+    await userEvent.selectOptions(d.getByLabelText('Medio de la línea 2'), 'Transferencia')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/pagos/12',
+        expect.objectContaining({
+          lineas: [
+            { idMedioPago: 1, importe: 300, referencia: null },
+            { idMedioPago: 3, importe: 100, referencia: null },
+          ],
+        }),
+      ),
+    )
   })
 })

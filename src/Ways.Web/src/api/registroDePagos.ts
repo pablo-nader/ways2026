@@ -16,27 +16,26 @@ import type {
   LineaDePagoListada,
   PagoConLineas,
   PagoDeAdministracionListado,
-  PagoRegistrado,
   OrigenFondosPago,
   PaginaDePagosDeAdministracion,
   SolicitudDeEdicionDePago,
   SolicitudDeEdicionDePagoConLineas,
-  SolicitudDePago,
+  SolicitudDePagoConLineas,
   SolicitudDePagoDeAdministracion,
 } from './tipos'
 
 export const clienteDePagos = {
-  /** `POST /api/gastos` — 201 + pago registrado, o `409 turno_no_abierto` si el punto de venta
-   * no tiene un turno abierto. */
-  registrar: (solicitud: SolicitudDePago) => api.post<PagoRegistrado>('/gastos', solicitud),
+  /** `POST /api/pagos` — 201 + pago con sus líneas, o `409 turno_no_abierto` si el punto de venta no tiene un
+   * turno abierto. */
+  registrar: (solicitud: SolicitudDePagoConLineas) => api.post<PagoConLineas>('/pagos', solicitud),
   /** stage-gasto-a-compra (PR4): `POST /api/pagos/{id}/vincular-compra` — liga (o convierte a
    * proveedor) un pago YA existente a una compra confirmada; responde el pago con sus líneas.
    * `GestionDeCatalogo` del lado del servidor (mismo gate que toda escritura de `/api/compras`). */
   vincularCompra: (id: number, idComprobanteCompra: number) =>
     api.post<PagoConLineas>(`/pagos/${id}/vincular-compra`, { idComprobanteCompra }),
-  /** `PUT /api/gastos/{id}` — edición desde el POS, solo con el turno del pago abierto: si está
-   * cerrado (o el pago no tiene turno) el servidor responde `409 gasto_turno_cerrado`. */
-  actualizar: (id: number, solicitud: SolicitudDeEdicionDePago) => api.put<PagoRegistrado>(`/gastos/${id}`, solicitud),
+  /** `PUT /api/pagos/{id}` — edición desde el POS reemplazando las líneas, solo con el turno del pago abierto: si
+   * está cerrado (o el pago no tiene turno) el servidor responde `409 gasto_turno_cerrado`. */
+  actualizar: (id: number, solicitud: SolicitudDeEdicionDePagoConLineas) => api.put<PagoConLineas>(`/pagos/${id}`, solicitud),
 }
 
 // --- Pagos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de

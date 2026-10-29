@@ -1789,42 +1789,21 @@ export const ORIGENES_DE_FONDOS_PAGO: { valor: OrigenFondosPago; etiqueta: strin
   { valor: 'Tesoreria', etiqueta: 'Caja general' },
 ]
 
-/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Pagos.SolicitudDePago`. Sin
- * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Pago Requires An Open
- * Turno), nunca viaja en el cuerpo. `origenFondos` aterriza en stage-gastos-origen-fondos-pos
- * (PR2) — el POS siempre lo manda explícito (la UI no tiene default silencioso), aunque el
- * contrato de C# lo acepta opcional para retrocompatibilidad de otros clientes. */
-export type SolicitudDePago = {
+/** Una entrega de dinero de un pago, por un medio (espejo de `LineaDePago`). `referencia` nula si no se carga. */
+export type LineaDePagoSolicitud = { idMedioPago: number; importe: number; referencia: string | null }
+
+/** Cuerpo de `POST /api/pagos` — espejo de `Ways.Application.Pagos.SolicitudDePagoConLineas`. Sin `idTurnoCaja`: el
+ * servidor lo resuelve del `idPuntoVenta`, nunca viaja en el cuerpo. El importe del pago es la suma de las líneas y
+ * `origenFondos` se manda siempre explícito (la UI no tiene default silencioso). */
+export type SolicitudDePagoConLineas = {
   idPuntoVenta: number
   categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
   detalle: string | null
-  idMedioPago: number
   numeroFactura: string | null
-  importe: number
-  idComprobanteCompra: number | null
-  origenFondos: OrigenFondosPago
-}
-
-/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Pagos.PagoRegistrado`.
- * `idTurnoCaja`/`idPuntoVenta` son `number | null` porque el DTO de C# ya los declara `int?`
- * (stage-gastos-origen-fondos-pos, PR2: el mirror los tenía mal tipados desde antes de este PR). */
-export type PagoRegistrado = {
-  id: number
-  idTurnoCaja: number | null
-  idPuntoVenta: number | null
-  fecha: string
-  categoria: CategoriaPago
-  idProveedor: number | null
-  idArea: number | null
-  concepto: string
-  detalle: string | null
-  idMedioPago: number
-  numeroFactura: string | null
-  importe: number
-  idEmpleado: number
+  lineas: LineaDePagoSolicitud[]
   idComprobanteCompra: number | null
   origenFondos: OrigenFondosPago
 }
@@ -1832,9 +1811,6 @@ export type PagoRegistrado = {
 // --- Pagos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
 // la tesorería de la empresa, con fecha de negocio potencialmente retroactiva — espejo de los
 // pagos de administración de `Ways.Application.Pagos.Contratos`.
-
-/** Una entrega de dinero de un pago, por un medio (espejo de `LineaDePago`). `referencia` nula si no se carga. */
-export type LineaDePagoSolicitud = { idMedioPago: number; importe: number; referencia: string | null }
 
 /** Cuerpo de `POST /api/pagos/administracion` — espejo de `SolicitudDePagoDeAdministracionConLineas`. `fecha`
  * viaja como `YYYY-MM-DD` (mismo shape que `SolicitudDeCompra.fechaComprobante`) — nunca un ISO con hora: la hora
@@ -3332,11 +3308,12 @@ export type FilaDeAuditoria = {
 /** Página de `GET /api/auditoria` — espejo de `PaginaDeAuditoria` (Slice 5). */
 export type PaginaDeAuditoria = { items: FilaDeAuditoria[]; total: number; pagina: number; tamanio: number }
 
-/** Espejo del catálogo de 15 pares `(accion, entidad)` de `AccionAuditada`
- * (`Ways.Domain.Auditoria`, Slice 1 + las tres bajas de organización de la etapa 20 slice 4) —
- * alimenta el `<select>` de acción de `Auditoria.tsx`. El conteo lo congela
- * `Auditoria.test.tsx`, espejo de `AccionAuditadaTests.cs:21`: sin las tres últimas, la pantalla
- * renderizaba el código crudo (`tenant.baja`) y el filtro no las podía seleccionar.
+/** Subconjunto de los pares `(accion, entidad)` de `AccionAuditada` (`Ways.Domain.Auditoria`) que
+ * ofrece el `<select>` de acción de `Auditoria.tsx`: las 15 de la primera pasada más las cinco de
+ * pagos y compras de la etapa 6 (`compra.edicion`, `compra.redondeo`, `pago.aplicacion`,
+ * `pago.desaplicacion`, `pago.redondeo`). El catálogo del back tiene más entradas que esta lista;
+ * las que faltan se siguen leyendo con el código crudo. El conteo lo congela `Auditoria.test.tsx`:
+ * sin una entrada, la pantalla renderizaba el código crudo y el filtro no la podía seleccionar.
  * Etiquetas en español; el VALOR que viaja al backend es siempre el `accion` crudo
  * (`precio.cambio`, ...) — la base no valida `accion` contra este catálogo (design decisión 15),
  * así que una fila con una acción retirada de acá sigue siendo consultable filtrando por su texto
@@ -3346,6 +3323,11 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'precio.cambio', etiqueta: 'Cambio de precio' },
   { valor: 'venta.anulacion', etiqueta: 'Anulación de venta' },
   { valor: 'compra.anulacion', etiqueta: 'Anulación de compra' },
+  { valor: 'compra.edicion', etiqueta: 'Edición de compra' },
+  { valor: 'compra.redondeo', etiqueta: 'Ajuste de redondeo de compra' },
+  { valor: 'pago.aplicacion', etiqueta: 'Aplicación de pago a compras' },
+  { valor: 'pago.desaplicacion', etiqueta: 'Desaplicación de pago de una compra' },
+  { valor: 'pago.redondeo', etiqueta: 'Ajuste de redondeo de pago' },
   { valor: 'stock.ajuste', etiqueta: 'Ajuste de stock' },
   { valor: 'stock.decomiso', etiqueta: 'Decomiso de stock' },
   { valor: 'stock.conteo', etiqueta: 'Conteo de inventario' },

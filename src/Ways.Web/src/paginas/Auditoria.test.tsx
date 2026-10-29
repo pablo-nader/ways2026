@@ -92,19 +92,23 @@ describe('etiquetaDeAccion', () => {
     expect(etiquetaDeAccion('precio.cambio')).toBe('Cambio de precio')
   })
 
-  // judgment-day ronda 2 (etapa 20 slice 4, R2-3): el catálogo del front había quedado en 12
-  // mientras el del back tenía 15 — la pantalla renderizaba `tenant.baja` en crudo y el `<select>`
-  // no podía filtrar por ninguna de las tres bajas de organización. El conteo es el ESPEJO de
-  // `tests/Ways.Domain.Tests/Auditoria/AccionAuditadaTests.cs:21`
-  // (`TieneQuinceEntradas`): los dos catálogos se mueven juntos o esta prueba se pone en rojo.
-  // Mutation target: sacar cualquiera de las 15 entradas.
-  it('el catálogo del front espeja las 15 acciones del back, las tres bajas incluidas', () => {
-    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(15)
+  // judgment-day ronda 2 (etapa 20 slice 4, R2-3): el catálogo del front había quedado corto — la
+  // pantalla renderizaba `tenant.baja` en crudo y el `<select>` no podía filtrar por ninguna de
+  // las tres bajas de organización. El front lista un subconjunto del catálogo del back (que tiene
+  // más entradas): esta prueba congela el que se ofrece en el `<select>`.
+  // Mutation target: sacar cualquiera de las 20 entradas.
+  it('el catálogo del front ofrece las 20 acciones esperadas, las bajas y las de pagos incluidas', () => {
+    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(20)
 
     expect(CATALOGO_DE_ACCIONES_AUDITADAS.map((a) => a.valor)).toEqual([
       'precio.cambio',
       'venta.anulacion',
       'compra.anulacion',
+      'compra.edicion',
+      'compra.redondeo',
+      'pago.aplicacion',
+      'pago.desaplicacion',
+      'pago.redondeo',
       'stock.ajuste',
       'stock.decomiso',
       'stock.conteo',
@@ -122,6 +126,11 @@ describe('etiquetaDeAccion', () => {
     expect(etiquetaDeAccion('tenant.baja')).toBe('Baja de tenant')
     expect(etiquetaDeAccion('empresa.baja')).toBe('Baja de empresa')
     expect(etiquetaDeAccion('pv.baja')).toBe('Baja de punto de venta')
+    expect(etiquetaDeAccion('compra.edicion')).toBe('Edición de compra')
+    expect(etiquetaDeAccion('compra.redondeo')).toBe('Ajuste de redondeo de compra')
+    expect(etiquetaDeAccion('pago.aplicacion')).toBe('Aplicación de pago a compras')
+    expect(etiquetaDeAccion('pago.desaplicacion')).toBe('Desaplicación de pago de una compra')
+    expect(etiquetaDeAccion('pago.redondeo')).toBe('Ajuste de redondeo de pago')
   })
 
   // judgment-day ronda 2, juez A: el fallback `?? accion` (design decisión 15 — "una acción
