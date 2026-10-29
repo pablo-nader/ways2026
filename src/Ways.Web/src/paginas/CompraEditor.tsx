@@ -1125,7 +1125,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     generacionRef.current += 1
 
     try {
-      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, porcentajePorAlicuota)
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
       const guardada = await clienteDeCompras.actualizar(idCompra, solicitud)
       // La respuesta es el detalle ya recalculado (pagado y saldo incluidos): es el refresco, no hace falta pedirlo de nuevo.
       setCompra(guardada)
