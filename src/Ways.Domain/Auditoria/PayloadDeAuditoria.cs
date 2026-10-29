@@ -178,7 +178,12 @@ public static class PayloadDeAuditoria
         if (costos is not null)
         {
             valorNuevo["costos_actualizados"] = costos.Actualizados
-                .Select(c => (object?)new Dictionary<string, object?> { ["id_articulo"] = c.IdArticulo, ["costo"] = c.Costo })
+                .Select(c => (object?)new Dictionary<string, object?>
+                {
+                    ["id_articulo"] = c.IdArticulo,
+                    ["costo"] = c.Costo,
+                    ["costo_anterior"] = c.CostoAnterior
+                })
                 .ToList();
             valorNuevo["costos_omitidos_por_compra_mas_nueva"] = costos.OmitidosPorCompraMasNueva.Select(a => (object?)a).ToList();
         }

@@ -700,9 +700,11 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   - *Locks:* los pagos cuyas aplicaciones cambian o cuyo vínculo se corta se bloquean `FOR UPDATE`, ascendentes por id, después de las
 >     órdenes de compra y antes de lotes y stock. La reversa del redondeo toca la fila del proveedor, así que se escribe en el recorrido de
 >     proveedores del final (ascendente, con la diferencia de cuenta de cada uno).
->   - `pagos_desvinculados` lleva `{id_pago, id_punto_venta_heredado}`. Un pago sin punto de venta propio hereda el que la compra tenía SOLO si ese
->     punto de venta está vivo y es de la empresa del pago; si no, sigue sin punto de venta (`id_punto_venta_heredado` nulo) y su baja o
->     edición asienta el ajuste de cuenta en el primer punto de venta activo de su empresa (409 `pago_sin_punto_de_venta` si no tiene ninguno).
+>   - `pagos_desvinculados` lleva `{id_pago, id_punto_venta_heredado}`. Un pago sin punto de venta propio hereda el que la compra tenía si ese
+>     punto de venta está vivo y es de la empresa del pago; si no, toma el vivo de menor id de su empresa (así sigue siendo editable). El
+>     punto de venta elegido queda en `id_punto_venta_heredado`. Solo una empresa sin ningún punto de venta vivo lo deja nulo: entonces la
+>     baja o edición asienta el ajuste de cuenta en el primer punto de venta activo de su empresa (409 `pago_sin_punto_de_venta` si no tiene
+>     ninguno).
 > - **Costos y códigos de proveedor (E6-S4):** la edición vuelve a correr el paso 4 de la confirmación (mismo camino: familias bajo el lock de
 >   membresía compartido, filas de artículo `FOR NO KEY UPDATE` ascendentes, un solo `UPDATE`), pero solo para lo que cambió:
 >   - *Qué se reescribe:* de las líneas que pasan `ActualizaElCosto`, el ganador por artículo o por familia (mayor `orden`) cuyo costo efectivo
@@ -710,10 +712,16 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >     actualizar o desaparece no revierte el costo.
 >   - *Nunca pisa una factura más nueva:* se omite el artículo (o toda su familia) si otra compra CONFIRMADA con `fecha_recepcion` posterior
 >     (o igual y `id` mayor) tiene una línea que actualiza su costo. La búsqueda va DESPUÉS de bloquear las filas. El rastro `compra.edicion`
->     lleva `costos_actualizados` (`id_articulo`, `costo`) y `costos_omitidos_por_compra_mas_nueva`.
+>     lleva `costos_actualizados` (`id_articulo`, `costo`, `costo_anterior`: el `costo_nominal` que se pisó, leído de las filas ya
+>     bloqueadas) y `costos_omitidos_por_compra_mas_nueva`.
 >   - *Códigos de proveedor:* se asocian (idempotente, `ON CONFLICT DO NOTHING`) los pares artículo-código nuevos o cambiados, o todos si cambia
 >   el proveedor; nunca se quita un código ni se resucita uno dado de baja mientras su línea no cambie. Se escriben después del `SaveChanges`.
 >   - *Locks:* los artículos con costo a reescribir se bloquean después del stock y antes de la escritura por EF, antes de los proveedores.
+>   - *Limitaciones conocidas:*
+>     (a) la guarda de compra más nueva solo ve las líneas de costo VIGENTES de las compras posteriores sobre miembros VIVOS de la familia: una
+>     compra posterior cuya línea de costo fue editada o quitada, o sobre un artículo que salió de la familia, no se detecta.
+>     (b) el ajuste de cuenta de la baja o edición de un pago que quedó sin punto de venta (empresa sin ningún punto de venta vivo al
+>     desvincularlo) usa en tiempo de ejecución el vivo de menor id de la empresa del pago.
 
 ### Órdenes de compra (Etapa 16)
 

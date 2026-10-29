@@ -110,7 +110,7 @@ public class PayloadDeAuditoriaTests
             anterior, anterior with { IdProveedor = 9 }, [], [],
             new TratamientoDePagosDeLaEdicion(
                 [new AplicacionTratadaPorLaEdicion(11, 21, 40m, 0m)], 3m, [new PagoDesvinculadoPorLaEdicion(21, 2)]),
-            new CostosDeLaEdicion([new CostoActualizadoPorLaEdicion(5, 12.5m)], [8]));
+            new CostosDeLaEdicion([new CostoActualizadoPorLaEdicion(5, 12.5m, 10m)], [8]));
 
         AsumirConstruible(AccionAuditada.CompraEdicion, payload);
         var tratada = Assert.IsType<Dictionary<string, object?>>(Assert.Single((List<object?>)payload.Nuevo["aplicaciones_tratadas"]!));
@@ -125,6 +125,7 @@ public class PayloadDeAuditoriaTests
         var costo = Assert.IsType<Dictionary<string, object?>>(Assert.Single((List<object?>)payload.Nuevo["costos_actualizados"]!));
         Assert.Equal(5, costo["id_articulo"]);
         Assert.Equal(12.5m, costo["costo"]);
+        Assert.Equal(10m, costo["costo_anterior"]);
         Assert.Equal([8], ((List<object?>)payload.Nuevo["costos_omitidos_por_compra_mas_nueva"]!).Cast<int>());
         Assert.False(payload.Anterior!.ContainsKey("costos_actualizados"));
         Assert.False(payload.Anterior!.ContainsKey("aplicaciones_tratadas"));

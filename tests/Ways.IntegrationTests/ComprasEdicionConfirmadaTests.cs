@@ -929,6 +929,73 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         }
     }
 
+    /// <summary>Un pago sin punto de venta propio vinculado a una compra cuyo punto de venta pasa a OTRA empresa: el de la
+    /// compra no sirve (no es de la empresa del pago), así que al desvincularlo toma el vivo de menor id de su propia empresa
+    /// y sigue siendo editable y borrable, con el saldo del proveedor igual a la suma de su libro.</summary>
+    [Fact]
+    public async Task UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable));
+        int idPvOtraEmpresa;
+        await using (var db = Db(ctx))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var empresa = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Empresas.Add(empresa);
+            await db.SaveChangesAsync();
+            var puntoVenta = new PuntoVenta
+            {
+                IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = "Otra empresa - Local", CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.PuntosVenta.Add(puntoVenta);
+            await db.SaveChangesAsync();
+            idPvOtraEmpresa = puntoVenta.Id;
+        }
+
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+
+        var altaPago = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos/administracion",
+            new SolicitudDePagoDeAdministracion(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
+                "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
+        var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
+        Assert.True(altaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
+
+        var vincular = await ctx.Admin.PostAsJsonAsync(
+            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+        Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
+
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idPuntoVenta: idPvOtraEmpresa));
+
+        await using (var db = Db(ctx))
+        {
+            var pago = await db.Pagos.AsNoTracking().SingleAsync(p => p.Id == idPago);
+            Assert.Null(pago.IdComprobanteCompra);
+            Assert.Equal(ctx.IdPuntoVenta, pago.IdPuntoVenta);
+        }
+
+        var desvinculado = Assert.Single(
+            (await AuditoriaDeLaEdicionAsync(ctx, creada.Id)).GetProperty("pagos_desvinculados").EnumerateArray());
+        Assert.Equal(ctx.IdPuntoVenta, desvinculado.GetProperty("id_punto_venta_heredado").GetInt32());
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/gastos/administracion/{idPago}",
+            new SolicitudDeEdicionDePago(
+                CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 700m));
+        Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
+
+        await using var contexto = Db(ctx);
+        var enLibro = await contexto.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.IdProveedor == ctx.IdProveedor).SumAsync(m => (decimal?)m.Importe) ?? 0m;
+        Assert.Equal(enLibro, await SaldoAsync(ctx, ctx.IdProveedor));
+    }
+
     /// <summary>Un pago vinculado por <c>pagos.id_comprobante_compra</c> sin aplicación viva (se desaplicó) tampoco queda
     /// atado: cambiar el proveedor lo desvincula.</summary>
     [Fact]

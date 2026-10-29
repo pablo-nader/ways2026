@@ -350,6 +350,13 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   `ComprasEdicionCostosFamiliasTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending. Known limits: the later-compra
   read has no race test (needs a rendezvous); the "PV of another empresa" inheritance branch has no integration test (needs a second empresa).
   Route: delegated writer.
+  Judgment-day fix (same branch): the unlink CTE now does `COALESCE(pago PV, compra PV if live and same empresa, lowest-id live PV of the pago's
+  empresa)`, so an unlinked PV-less pago stays editable; only an empresa with no live PV leaves it NULL. Audit `costos_actualizados` now carries
+  `costo_anterior` (read from the locked rows before the UPDATE). New integration test
+  `UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable` (CI pending, Docker down).
+  Known limitations: (a) the later-compra cost guard only sees later compras' current cost lines on currently-live family members (a later compra
+  whose cost line was edited away, or on an article that left the family, is not detected); (b) the runtime CC ajuste fallback picks the lowest-id
+  live PV of the pago's empresa.
 
 ## Next step
 

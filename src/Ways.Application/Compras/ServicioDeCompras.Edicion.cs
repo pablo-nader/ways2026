@@ -557,9 +557,10 @@ public partial class ServicioDeCompras
     /// compra. El asiento <c>pago</c> de cuenta corriente de cada pago NO se toca (libro de solo agregado): conserva su
     /// referencia histórica a la compra (tras un cambio de proveedor queda en el libro del proveedor anterior) y su crédito
     /// con él. Un pago sin punto de venta propio tomaba el de la compra: al desvincularlo hereda el que la compra tenía
-    /// (<paramref name="idPuntoVentaAnterior"/>) SOLO si ese punto de venta está vivo y es de la empresa del pago; si no,
-    /// sigue sin punto de venta y sus ajustes de cuenta usan uno activo de su empresa
-    /// (<c>ServicioDePagos.EscribirAjustesDeProveedorAsync</c>). Devuelve cada pago desvinculado y el punto de venta que
+    /// (<paramref name="idPuntoVentaAnterior"/>) si ese punto de venta está vivo y es de la empresa del pago; si no, toma el
+    /// vivo de menor id de su empresa, para que el pago siga siendo editable. Solo una empresa sin ningún punto de venta
+    /// vivo lo deja en <c>NULL</c> (sus ajustes de cuenta usan entonces el camino de
+    /// <c>ServicioDePagos.EscribirAjustesDeProveedorAsync</c>). Devuelve cada pago desvinculado y el punto de venta que
     /// heredó (<c>null</c> si no heredó ninguno), ascendentes por id, para el rastro.</summary>
     private static async Task<IReadOnlyList<PagoDesvinculadoPorLaEdicion>> AplicarElTratamientoDePagosAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, PlanDePagosDeLaEdicion plan,
@@ -607,7 +608,9 @@ public partial class ServicioDeCompras
             "  WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL) " +
             "UPDATE pagos p SET id_comprobante_compra = NULL, updated_at = $1, " +
             "id_punto_venta = COALESCE(p.id_punto_venta, (SELECT pv.id_punto_venta FROM puntos_venta pv " +
-            "  WHERE pv.id_punto_venta = $4 AND pv.id_tenant = $3 AND pv.id_empresa = p.id_empresa AND pv.deleted_at IS NULL)) " +
+            "  WHERE pv.id_punto_venta = $4 AND pv.id_tenant = $3 AND pv.id_empresa = p.id_empresa AND pv.deleted_at IS NULL), " +
+            "  (SELECT MIN(pv.id_punto_venta) FROM puntos_venta pv " +
+            "  WHERE pv.id_tenant = $3 AND pv.id_empresa = p.id_empresa AND pv.deleted_at IS NULL)) " +
             "FROM antes a WHERE p.id_pago = a.id_pago " +
             "RETURNING p.id_pago, a.id_punto_venta_antes, p.id_punto_venta";
         ParametrosDeComando.Agregar(desvincular, momento);
@@ -774,8 +777,38 @@ public partial class ServicioDeCompras
         var (aplicables, omitidos) = CalculadorDeEdicionDeCompra.SinLosPisadosPorUnaCompraMasNueva(
             bloqueados, conLineaPosterior, familiasDeLasFilas);
 
+        var anterioresDelCosto = await LeerCostosNominalesAsync(conexion, transaccion, idTenant, [.. aplicables.Select(a => a.IdArticulo)], ct);
+
         await ActualizarCostosNominalesAsync(conexion, transaccion, idTenant, aplicables, momento, ct);
 
-        return new CostosDeLaEdicion([.. aplicables.Select(a => new CostoActualizadoPorLaEdicion(a.IdArticulo, a.Costo))], omitidos);
+        return new CostosDeLaEdicion(
+            [.. aplicables.Select(a => new CostoActualizadoPorLaEdicion(
+                a.IdArticulo, a.Costo, anterioresDelCosto.TryGetValue(a.IdArticulo, out var previo) ? previo : null))],
+            omitidos);
+    }
+
+    /// <summary>Costo nominal vigente de las filas de artículo ya bloqueadas, antes de que la edición lo reescriba.</summary>
+    private static async Task<Dictionary<int, decimal?>> LeerCostosNominalesAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int[] idsArticulo, CancellationToken ct)
+    {
+        var costos = new Dictionary<int, decimal?>();
+        if (idsArticulo.Length == 0)
+        {
+            return costos;
+        }
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = "SELECT id_articulo, costo_nominal FROM articulos WHERE id_tenant = $1 AND id_articulo = ANY($2)";
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idsArticulo);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        while (await lector.ReadAsync(ct))
+        {
+            costos[lector.GetInt32(0)] = await lector.IsDBNullAsync(1, ct) ? null : lector.GetDecimal(1);
+        }
+
+        return costos;
     }
 }

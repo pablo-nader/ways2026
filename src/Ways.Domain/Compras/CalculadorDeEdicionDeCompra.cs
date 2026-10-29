@@ -40,12 +40,14 @@ public sealed record TratamientoDePagosDeLaEdicion(
     IReadOnlyList<PagoDesvinculadoPorLaEdicion> PagosDesvinculados);
 
 /// <summary>Un pago que dejó de estar vinculado a la compra por <c>pagos.id_comprobante_compra</c>.
-/// <c>IdPuntoVentaHeredado</c> es el punto de venta de la compra que el pago tomó porque no tenía uno propio; <c>null</c> si
-/// ya tenía uno, o si el de la compra no es de la empresa del pago y el pago sigue sin punto de venta.</summary>
+/// <c>IdPuntoVentaHeredado</c> es el punto de venta que el pago tomó porque no tenía uno propio (el de la compra si es de su
+/// empresa y está vivo; si no, el vivo de menor id de su empresa); <c>null</c> si ya tenía uno, o si su empresa no tiene
+/// ningún punto de venta vivo.</summary>
 public sealed record PagoDesvinculadoPorLaEdicion(int IdPago, int? IdPuntoVentaHeredado);
 
-/// <summary>El costo nominal que la edición escribió en un artículo (o en cada miembro de su familia).</summary>
-public sealed record CostoActualizadoPorLaEdicion(int IdArticulo, decimal Costo);
+/// <summary>El costo nominal que la edición escribió en un artículo (o en cada miembro de su familia) y el que tenía antes
+/// (<c>null</c> si no tenía).</summary>
+public sealed record CostoActualizadoPorLaEdicion(int IdArticulo, decimal Costo, decimal? CostoAnterior = null);
 
 /// <summary>Lo que la edición hizo con los costos: los que escribió y los artículos cuyo costo NO tocó porque una compra
 /// confirmada más nueva ya tiene una línea que actualiza su costo (el de la más nueva se conserva).</summary>
