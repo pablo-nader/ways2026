@@ -103,6 +103,25 @@ public class PayloadDeAuditoriaTests
     }
 
     [Fact]
+    public void EdicionDeCompraConPagosLlevaLasAplicacionesTratadasElRedondeoYLosVinculosCortados()
+    {
+        var anterior = new ResumenDeCompraEditada(7, 2, "0001-00000001", null, 100m, [new LineaAuditadaDeCompra(5, 10m, 100m)]);
+        var payload = PayloadDeAuditoria.EdicionDeCompra(
+            anterior, anterior with { IdProveedor = 9 }, [], [],
+            new TratamientoDePagosDeLaEdicion(
+                [new AplicacionTratadaPorLaEdicion(11, 21, 40m, 0m)], 3m, [21]));
+
+        AsumirConstruible(AccionAuditada.CompraEdicion, payload);
+        var tratada = Assert.IsType<Dictionary<string, object?>>(Assert.Single((List<object?>)payload.Nuevo["aplicaciones_tratadas"]!));
+        Assert.Equal(11, tratada["id_aplicacion"]);
+        Assert.Equal(21, tratada["id_pago"]);
+        Assert.Equal(0m, tratada["importe_nuevo"]);
+        Assert.Equal(3m, payload.Nuevo["redondeo_revertido"]);
+        Assert.Equal([21], ((List<object?>)payload.Nuevo["pagos_desvinculados"]!).Cast<int>());
+        Assert.False(payload.Anterior!.ContainsKey("aplicaciones_tratadas"));
+    }
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,

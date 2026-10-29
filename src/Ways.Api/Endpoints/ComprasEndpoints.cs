@@ -105,8 +105,10 @@ public static class ComprasEndpoints
         .WithSummary(
             "Reemplaza el header y el set completo de items de una compra. Un borrador se reemplaza tal cual; una " +
             "confirmada se edita por diferencia (el stock y la cuenta del proveedor se corrigen con movimientos nuevos, " +
-            "409 compra_edicion_stock_negativo si el stock no alcanza y 409 compra_edicion_con_aplicaciones si toca lo " +
-            "que sus pagos suponen). Una anulada responde 409 compra_no_editable.");
+            "409 compra_edicion_stock_negativo si el stock no alcanza). Si el total baja por debajo de lo aplicado se " +
+            "recortan las aplicaciones, la más nueva primero, y si cambia el proveedor o el punto de venta se liberan " +
+            "todas y se cortan los vínculos de los pagos; el redondeo de la compra se revierte. Una anulada responde " +
+            "409 compra_no_editable.");
 
         grupo.MapDelete("/{id:int}", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {

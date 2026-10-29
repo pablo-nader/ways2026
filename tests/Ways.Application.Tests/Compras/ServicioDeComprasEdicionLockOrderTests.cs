@@ -76,6 +76,7 @@ public class ServicioDeComprasEdicionLockOrderTests
         var membresia = Indice(metodo, "LockDeMembresiaDeFamilias.TomarCompartidoAsync(");
         var encabezado = Indice(metodo, "BloquearConfirmadaAsync(");
         var ordenes = Indice(metodo, "EscriturasDeOrdenDeCompra.BloquearAsync(");
+        var pagos = Indice(metodo, "BloquearPagosDeLaEdicionAsync(");
         var lotes = Indice(metodo, "ServicioDeLotes.ResolverOCrearAsync(");
         var stock = Indice(metodo, "AsentarDiferenciasDeStockAsync(");
         var escritura = Indice(metodo, "await db.SaveChangesAsync(ct);");
@@ -87,7 +88,8 @@ public class ServicioDeComprasEdicionLockOrderTests
 
         Assert.True(membresia < encabezado, "membresía → encabezado");
         Assert.True(encabezado < ordenes, "encabezado → órdenes de compra");
-        Assert.True(ordenes < lotes, "órdenes → lotes");
+        Assert.True(ordenes < pagos, "órdenes → pagos (E6-S3)");
+        Assert.True(pagos < lotes, "pagos → lotes");
         Assert.True(lotes < stock, "lotes → stock (design decisión 3 de la etapa 12)");
         Assert.True(stock < escritura, "stock → escritura de encabezado y líneas");
         Assert.True(escritura < proyeccion, "la re-proyección de las órdenes lee las líneas ya escritas");
@@ -111,11 +113,27 @@ public class ServicioDeComprasEdicionLockOrderTests
         foreach (var marca in new[]
         {
             "BloquearConfirmadaAsync(", "EscriturasDeOrdenDeCompra.BloquearAsync(", "ProyectarEstadoAsync(",
+            "BloquearPagosDeLaEdicionAsync(", "AplicarElTratamientoDePagosAsync(", "PlanearElTratamientoDePagosAsync(",
             "ServicioDeLotes.ResolverOCrearAsync(", "AsentarDiferenciasDeStockAsync(", "LockDeMembresiaDeFamilias."
         })
         {
             Assert.DoesNotContain(marca, despues, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>La reversa del redondeo de la compra toma la fila del proveedor (es un movimiento de cuenta): se escribe en el
+    /// recorrido ascendente de proveedores del final, después de lotes, stock y escritura, nunca junto al plan de pagos.</summary>
+    [Fact]
+    public void LaReversaDelRedondeoSeEscribeEnElRecorridoAscendenteDeProveedoresDelFinal()
+    {
+        var metodo = Ejecucion();
+        var reversa = Indice(metodo, "RedondeoDeProveedor.RevertirDeLaCompraAsync(");
+        var recorrido = Indice(metodo, "foreach (var idProveedor in proveedoresATocar)");
+
+        Assert.True(Indice(metodo, "AsentarDiferenciasDeStockAsync(") < reversa);
+        Assert.True(Indice(metodo, "await db.SaveChangesAsync(ct);") < reversa);
+        Assert.True(recorrido < reversa);
+        Assert.Matches(@"\.Distinct\(\)\s*\.Order\(\)\s*\.ToList\(\);\s*foreach \(var idProveedor in proveedoresATocar\)", metodo);
     }
 
     /// <summary>single-read-under-lock: el encabezado se lee UNA vez, con la entidad rastreada, y después del lock. Una

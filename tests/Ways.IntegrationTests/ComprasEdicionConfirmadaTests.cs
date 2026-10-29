@@ -612,65 +612,318 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(0, await db.Auditoria.CountAsync(a => a.Accion == "compra.edicion" && a.IdEntidad == creada.Id));
     }
 
-    // ---- TEMPORAL (E6-S3): pagos aplicados ---------------------------------------------------------------------
+    // ---- pagos aplicados (E6-S3) -------------------------------------------------------------------------------
 
-    /// <summary>TEMPORAL — E6-S3 reemplaza este rechazo por el tratamiento de las aplicaciones. Con la compra pagada en
-    /// parte, bajar el total por debajo de lo pagado es 409 <c>compra_edicion_con_aplicaciones</c>; subirlo, o bajarlo sin
-    /// pasar de lo pagado, se acepta.</summary>
-    [Fact]
-    public async Task BajarElTotalPorDebajoDeLoPagadoEs409ConAplicacionesYSubirloSeAcepta()
+    private static (int? IdComprobanteCompra, int? IdProveedor) Vinculo(int? idCompra, int? idProveedor) => (idCompra, idProveedor);
+
+    /// <summary>Paga la compra con un pago nuevo y devuelve su id: el de la aplicación más reciente de la compra.</summary>
+    private async Task<int> PagarAsync(Contexto ctx, int idCompra, decimal importe)
     {
-        var ctx = await PrepararAsync(nameof(BajarElTotalPorDebajoDeLoPagadoEs409ConAplicacionesYSubirloSeAcepta));
-        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
-        var pago = await ctx.Admin.PostAsJsonAsync(
-            $"/api/pagos/de-compra/{creada.Id}",
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/pagos/de-compra/{idCompra}",
             new SolicitudDePagoDeCompraConLineas(
-                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), [new LineaDePago(ctx.IdEfectivo, 605m, null)], null));
-        Assert.True(pago.StatusCode == HttpStatusCode.Created, await pago.Content.ReadAsStringAsync());
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), [new LineaDePago(ctx.IdEfectivo, importe, null)], null));
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
 
-        var baja = await EditarAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 4m, creada.NumeroExterno));
-        Assert.Equal("compra_edicion_con_aplicaciones", await CodigoAsync(baja, HttpStatusCode.Conflict));
-        Assert.Single(await MovimientosAsync(ctx, creada.Id));
-        Assert.Equal(10m, await StockAsync(ctx, ctx.IdArticulo));
+        await using var db = Db(ctx);
+        return await db.AplicacionesPago
+            .Where(a => a.IdComprobanteCompra == idCompra)
+            .OrderByDescending(a => a.Id)
+            .Select(a => a.IdPago)
+            .FirstAsync();
+    }
+
+    private static async Task CerrarElSaldoConRedondeoAsync(Contexto ctx, int idCompra)
+    {
+        var respuesta = await ctx.Admin.PostAsync($"/api/compras/{idCompra}/ajuste-de-redondeo", null);
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>Aplicaciones vivas de la compra como (pago, importe), en el orden en que se hicieron.</summary>
+    private async Task<List<(int IdPago, decimal Importe)>> AplicacionesVivasAsync(Contexto ctx, int idCompra)
+    {
+        await using var db = Db(ctx);
+        return (await db.AplicacionesPago
+                .Where(a => a.IdComprobanteCompra == idCompra)
+                .OrderBy(a => a.Id)
+                .Select(a => new { a.IdPago, a.Importe })
+                .ToListAsync())
+            .Select(a => (a.IdPago, a.Importe))
+            .ToList();
+    }
+
+    /// <summary>Lo que le queda disponible al pago (importe − aplicado vivo): lo liberado vuelve acá.</summary>
+    private async Task<decimal> DisponibleAsync(Contexto ctx, int idPago)
+    {
+        await using var db = Db(ctx);
+        var importe = await db.Pagos.Where(p => p.Id == idPago).Select(p => p.Importe).SingleAsync();
+        var aplicado = await db.AplicacionesPago.Where(a => a.IdPago == idPago).SumAsync(a => (decimal?)a.Importe) ?? 0m;
+        return importe - aplicado;
+    }
+
+    private async Task<(int? IdComprobanteCompra, int? IdProveedor)> VinculoDelPagoAsync(Contexto ctx, int idPago)
+    {
+        await using var db = Db(ctx);
+        var pago = await db.Pagos.AsNoTracking().SingleAsync(p => p.Id == idPago);
+        return (pago.IdComprobanteCompra, pago.IdProveedor);
+    }
+
+    private async Task<JsonElement> AuditoriaDeLaEdicionAsync(Contexto ctx, int idCompra)
+    {
+        await using var db = Db(ctx);
+        var fila = await db.Auditoria
+            .Where(a => a.Accion == "compra.edicion" && a.IdEntidad == idCompra)
+            .OrderByDescending(a => a.Id)
+            .FirstAsync();
+        return JsonDocument.Parse(fila.ValorNuevo).RootElement.Clone();
+    }
+
+    /// <summary>Bajar el total por debajo de lo aplicado recorta la aplicación más NUEVA primero; lo recortado vuelve a ser
+    /// disponible de ese pago y nada se reaplica: subir el total después no devuelve la aplicación.</summary>
+    [Fact]
+    public async Task BajarElTotalPorDebajoDeLoAplicadoRecortaLaAplicacionMasNuevaYLoRecortadoVuelveAlPago()
+    {
+        var ctx = await PrepararAsync(nameof(BajarElTotalPorDebajoDeLoAplicadoRecortaLaAplicacionMasNuevaYLoRecortadoVuelveAlPago));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pagoViejo = await PagarAsync(ctx, creada.Id, 500m);
+        var pagoNuevo = await PagarAsync(ctx, creada.Id, 500m);
 
         var ajustada = await EditarConExitoAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 5m, creada.NumeroExterno));
+
         Assert.Equal(605m, ajustada.Total);
         Assert.Equal(605m, ajustada.Pagado);
+        Assert.Equal([(pagoViejo, 500m), (pagoNuevo, 105m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(0m, await DisponibleAsync(ctx, pagoViejo));
+        Assert.Equal(395m, await DisponibleAsync(ctx, pagoNuevo));
 
         var sube = await EditarConExitoAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 8m, creada.NumeroExterno));
         Assert.Equal(8m * 121m, sube.Total);
         Assert.Equal(605m, sube.Pagado);
+        Assert.Equal([(pagoViejo, 500m), (pagoNuevo, 105m)], await AplicacionesVivasAsync(ctx, creada.Id));
+
+        var auditoria = await AuditoriaDeLaEdicionAsync(ctx, creada.Id);
+        Assert.Empty(auditoria.GetProperty("aplicaciones_tratadas").EnumerateArray());
+        Assert.Equal(0m, auditoria.GetProperty("redondeo_revertido").GetDecimal());
     }
 
     [Fact]
-    public async Task CambiarElProveedorDeUnaCompraConPagosAplicadosEs409ConAplicaciones()
+    public async Task ElRecorteDaDeBajaLasAplicacionesQueEntranEnterasYAchicaLaUltima()
     {
-        var ctx = await PrepararAsync(nameof(CambiarElProveedorDeUnaCompraConPagosAplicadosEs409ConAplicaciones));
+        var ctx = await PrepararAsync(nameof(ElRecorteDaDeBajaLasAplicacionesQueEntranEnterasYAchicaLaUltima));
         var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
-        var pago = await ctx.Admin.PostAsJsonAsync(
-            $"/api/pagos/de-compra/{creada.Id}",
-            new SolicitudDePagoDeCompraConLineas(
-                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), [new LineaDePago(ctx.IdEfectivo, 100m, null)], null));
-        Assert.True(pago.StatusCode == HttpStatusCode.Created, await pago.Content.ReadAsStringAsync());
+        var pagoA = await PagarAsync(ctx, creada.Id, 300m);
+        var pagoB = await PagarAsync(ctx, creada.Id, 300m);
+        var pagoC = await PagarAsync(ctx, creada.Id, 300m);
 
-        var respuesta = await EditarAsync(
+        var ajustada = await EditarConExitoAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 4m, creada.NumeroExterno));
+
+        Assert.Equal(484m, ajustada.Pagado);
+        Assert.Equal([(pagoA, 300m), (pagoB, 184m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(300m, await DisponibleAsync(ctx, pagoC));
+        Assert.Equal(116m, await DisponibleAsync(ctx, pagoB));
+
+        var tratadas = (await AuditoriaDeLaEdicionAsync(ctx, creada.Id)).GetProperty("aplicaciones_tratadas")
+            .EnumerateArray().Select(a => (a.GetProperty("id_pago").GetInt32(), a.GetProperty("importe_nuevo").GetDecimal())).ToList();
+        Assert.Equal([(pagoC, 0m), (pagoB, 184m)], tratadas);
+    }
+
+    /// <summary>La compra con redondeo vigente que baja de total: el redondeo se revierte (el saldo del proveedor vuelve a
+    /// reflejar lo perdonado) y el cupo se calcula con lo perdonado en cero, así que el recorte llega hasta el total nuevo.</summary>
+    [Fact]
+    public async Task BajarElTotalDeUnaCompraConRedondeoRevierteElRedondeoYDespuesRecorta()
+    {
+        var ctx = await PrepararAsync(nameof(BajarElTotalDeUnaCompraConRedondeoRevierteElRedondeoYDespuesRecorta));
+        var deudaPrevia = await SembrarDeudaPreviaAsync(ctx);
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await PagarAsync(ctx, creada.Id, 1000m);
+        await CerrarElSaldoConRedondeoAsync(ctx, creada.Id);
+        Assert.Equal(deudaPrevia, await SaldoAsync(ctx, ctx.IdProveedor));
+
+        var ajustada = await EditarConExitoAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 5m, creada.NumeroExterno));
+
+        Assert.Equal(605m, ajustada.Total);
+        Assert.Equal(605m, ajustada.Pagado);
+        Assert.Equal([(pago, 605m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(395m, await DisponibleAsync(ctx, pago));
+        Assert.Equal(0m, (await AsientosAsync(ctx, creada.Id, TipoMovimientoCcProveedor.Redondeo)).Sum(a => a.Importe));
+        Assert.Equal(deudaPrevia - 395m, await SaldoAsync(ctx, ctx.IdProveedor));
+
+        var auditoria = await AuditoriaDeLaEdicionAsync(ctx, creada.Id);
+        Assert.Equal(210m, auditoria.GetProperty("redondeo_revertido").GetDecimal());
+        await using var db = Db(ctx);
+        // Una fila del ajuste que cerró el saldo y otra de la reversa de la edición.
+        Assert.Equal(2, await db.Auditoria.CountAsync(a => a.Accion == "compra.redondeo" && a.IdEntidad == creada.Id));
+    }
+
+    /// <summary>Subir el total no recorta nada, pero el redondeo (que cerraba el saldo con el total anterior) se revierte y
+    /// el saldo pendiente reaparece.</summary>
+    [Fact]
+    public async Task SubirElTotalDeUnaCompraConRedondeoRevierteElRedondeoYNoRecorta()
+    {
+        var ctx = await PrepararAsync(nameof(SubirElTotalDeUnaCompraConRedondeoRevierteElRedondeoYNoRecorta));
+        var deudaPrevia = await SembrarDeudaPreviaAsync(ctx);
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await PagarAsync(ctx, creada.Id, 1000m);
+        await CerrarElSaldoConRedondeoAsync(ctx, creada.Id);
+
+        var editada = await EditarConExitoAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 12m, creada.NumeroExterno));
+
+        Assert.Equal(1452m, editada.Total);
+        Assert.Equal(1000m, editada.Pagado);
+        Assert.Equal([(pago, 1000m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(0m, (await AsientosAsync(ctx, creada.Id, TipoMovimientoCcProveedor.Redondeo)).Sum(a => a.Importe));
+        Assert.Equal(deudaPrevia + 452m, await SaldoAsync(ctx, ctx.IdProveedor));
+    }
+
+    /// <summary>Cambiar el proveedor libera TODAS las aplicaciones, revierte el redondeo y corta el vínculo de los pagos:
+    /// cada pago conserva su proveedor y su crédito completo con él, y la deuda de la compra pasa al proveedor nuevo.</summary>
+    [Fact]
+    public async Task CambiarElProveedorLiberaLasAplicacionesRevierteElRedondeoYCortaElVinculoDeLosPagos()
+    {
+        var ctx = await PrepararAsync(nameof(CambiarElProveedorLiberaLasAplicacionesRevierteElRedondeoYCortaElVinculoDeLosPagos));
+        var deudaPrevia = await SembrarDeudaPreviaAsync(ctx);
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pagoA = await PagarAsync(ctx, creada.Id, 600m);
+        var pagoB = await PagarAsync(ctx, creada.Id, 400m);
+        await CerrarElSaldoConRedondeoAsync(ctx, creada.Id);
+
+        var editada = await EditarConExitoAsync(
             ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor2));
 
-        Assert.Equal("compra_edicion_con_aplicaciones", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
+        Assert.Equal(ctx.IdProveedor2, editada.IdProveedor);
+        Assert.Equal(0m, editada.Pagado);
+        Assert.Empty(await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(600m, await DisponibleAsync(ctx, pagoA));
+        Assert.Equal(400m, await DisponibleAsync(ctx, pagoB));
+        Assert.Equal(Vinculo(null, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pagoA));
+        Assert.Equal(Vinculo(null, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pagoB));
+        Assert.Equal(0m, (await AsientosAsync(ctx, creada.Id, TipoMovimientoCcProveedor.Redondeo)).Sum(a => a.Importe));
+
+        // El proveedor anterior queda con el crédito de lo que pagó; el nuevo, con la deuda entera de la compra.
+        Assert.Equal(deudaPrevia - 1000m, await SaldoAsync(ctx, ctx.IdProveedor));
+        Assert.Equal(1210m, await SaldoAsync(ctx, ctx.IdProveedor2));
+
+        var auditoria = await AuditoriaDeLaEdicionAsync(ctx, creada.Id);
+        Assert.Equal(2, auditoria.GetProperty("aplicaciones_tratadas").GetArrayLength());
+        Assert.Equal(210m, auditoria.GetProperty("redondeo_revertido").GetDecimal());
+        Assert.Equal(
+            [pagoA, pagoB], auditoria.GetProperty("pagos_desvinculados").EnumerateArray().Select(p => p.GetInt32()).Order());
     }
 
-    /// <summary>Un pago vivo vinculado a la compra por <c>pagos.id_comprobante_compra</c> sigue atándola a su proveedor
-    /// aunque ya no tenga ninguna aplicación viva.</summary>
+    /// <summary>Un cambio de punto de venta DENTRO de la misma empresa no cambia a quién pertenece la compra: las aplicaciones y
+    /// los vínculos de los pagos quedan como están.</summary>
     [Fact]
-    public async Task CambiarElProveedorDeUnaCompraConUnPagoVinculadoSinAplicacionVivaEs409()
+    public async Task CambiarElPuntoDeVentaDentroDeLaEmpresaConservaLasAplicacionesYElVinculoDeLosPagos()
     {
-        var ctx = await PrepararAsync(nameof(CambiarElProveedorDeUnaCompraConUnPagoVinculadoSinAplicacionVivaEs409));
+        var ctx = await PrepararAsync(nameof(CambiarElPuntoDeVentaDentroDeLaEmpresaConservaLasAplicacionesYElVinculoDeLosPagos));
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/puntos-venta", new PuntoVentaAlta(ctx.IdEmpresa, "PV2", ModoPuntoVenta.Web));
+        var cuerpoAlta = await alta.Content.ReadAsStringAsync();
+        Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
+        var idPv2 = JsonDocument.Parse(cuerpoAlta).RootElement.GetProperty("id").GetInt32();
         var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
-        var pago = await ctx.Admin.PostAsJsonAsync(
-            $"/api/pagos/de-compra/{creada.Id}",
-            new SolicitudDePagoDeCompraConLineas(
-                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), [new LineaDePago(ctx.IdEfectivo, 100m, null)], null));
-        Assert.True(pago.StatusCode == HttpStatusCode.Created, await pago.Content.ReadAsStringAsync());
+        var pago = await PagarAsync(ctx, creada.Id, 700m);
+
+        var editada = await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idPuntoVenta: idPv2));
+
+        Assert.Equal(idPv2, editada.IdPuntoVenta);
+        Assert.Equal(700m, editada.Pagado);
+        Assert.Equal([(pago, 700m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(Vinculo(creada.Id, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
+    }
+
+    /// <summary>Pasar la compra a un punto de venta de OTRA empresa libera las aplicaciones y corta los vínculos.</summary>
+    [Fact]
+    public async Task CambiarElPuntoDeVentaAOtraEmpresaLiberaLasAplicacionesYCortaElVinculoDeLosPagos()
+    {
+        var ctx = await PrepararAsync(nameof(CambiarElPuntoDeVentaAOtraEmpresaLiberaLasAplicacionesYCortaElVinculoDeLosPagos));
+        int idPvOtraEmpresa;
+        await using (var db = Db(ctx))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var empresa = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Empresas.Add(empresa);
+            await db.SaveChangesAsync();
+            var puntoVenta = new PuntoVenta
+            {
+                IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = "Otra empresa - Local", CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.PuntosVenta.Add(puntoVenta);
+            await db.SaveChangesAsync();
+            idPvOtraEmpresa = puntoVenta.Id;
+        }
+
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await PagarAsync(ctx, creada.Id, 700m);
+
+        var editada = await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idPuntoVenta: idPvOtraEmpresa));
+
+        Assert.Equal(idPvOtraEmpresa, editada.IdPuntoVenta);
+        Assert.Equal(0m, editada.Pagado);
+        Assert.Empty(await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(700m, await DisponibleAsync(ctx, pago));
+        Assert.Equal(Vinculo(null, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
+    }
+
+    /// <summary>Un pago administrativo sin punto de venta propio, convertido por <c>vincular-compra</c>, tomaba el punto de
+    /// venta de la compra: al desvincularlo se queda con el que la compra tenía y sigue siendo editable y borrable, con el
+    /// saldo de cada proveedor igual a la suma de su libro.</summary>
+    [Fact]
+    public async Task UnPagoSinPuntoDeVentaVinculadoPorConversionSigueEditableYBorrableTrasCambiarElProveedor()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoSinPuntoDeVentaVinculadoPorConversionSigueEditableYBorrableTrasCambiarElProveedor));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+
+        var altaPago = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos/administracion",
+            new SolicitudDePagoDeAdministracion(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
+                "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
+        var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
+        Assert.True(altaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
+
+        var vincular = await ctx.Admin.PostAsJsonAsync(
+            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+        Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
+
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor2));
+
+        await using (var db = Db(ctx))
+        {
+            var pago = await db.Pagos.AsNoTracking().SingleAsync(p => p.Id == idPago);
+            Assert.Null(pago.IdComprobanteCompra);
+            Assert.Equal(ctx.IdPuntoVenta, pago.IdPuntoVenta);
+        }
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/gastos/administracion/{idPago}",
+            new SolicitudDeEdicionDePago(
+                CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 500m));
+        Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
+
+        await using var contexto = Db(ctx);
+        foreach (var idProveedor in new[] { ctx.IdProveedor, ctx.IdProveedor2 })
+        {
+            var enLibro = await contexto.MovimientosCuentaCorrienteProveedor
+                .Where(m => m.IdProveedor == idProveedor).SumAsync(m => (decimal?)m.Importe) ?? 0m;
+            Assert.Equal(enLibro, await SaldoAsync(ctx, idProveedor));
+        }
+    }
+
+    /// <summary>Un pago vinculado por <c>pagos.id_comprobante_compra</c> sin aplicación viva (se desaplicó) tampoco queda
+    /// atado: cambiar el proveedor lo desvincula.</summary>
+    [Fact]
+    public async Task CambiarElProveedorDesvinculaUnPagoQueYaNoTeniaAplicacionViva()
+    {
+        var ctx = await PrepararAsync(nameof(CambiarElProveedorDesvinculaUnPagoQueYaNoTeniaAplicacionViva));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await PagarAsync(ctx, creada.Id, 100m);
 
         await using (var db = Db(ctx))
         {
@@ -679,10 +932,28 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
             Assert.Equal(HttpStatusCode.NoContent, desaplicar.StatusCode);
         }
 
-        var respuesta = await EditarAsync(
+        Assert.Equal(Vinculo(creada.Id, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
+
+        await EditarConExitoAsync(
             ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor2));
 
-        Assert.Equal("compra_edicion_con_aplicaciones", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
+        Assert.Equal(Vinculo(null, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
+        Assert.Equal(100m, await DisponibleAsync(ctx, pago));
+    }
+
+    /// <summary>Editar sin tocar el total, el proveedor ni el punto de venta deja las aplicaciones y los vínculos como están.</summary>
+    [Fact]
+    public async Task UnaEdicionQueNoTocaTotalProveedorNiPuntoDeVentaDejaLosPagosIntactos()
+    {
+        var ctx = await PrepararAsync(nameof(UnaEdicionQueNoTocaTotalProveedorNiPuntoDeVentaDejaLosPagosIntactos));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await PagarAsync(ctx, creada.Id, 500m);
+
+        var solicitud = Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno) with { Observaciones = "solo una nota" };
+        await EditarConExitoAsync(ctx, creada.Id, solicitud);
+
+        Assert.Equal([(pago, 500m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(Vinculo(creada.Id, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
     }
 
     // ---- auditoría y estado de cuenta --------------------------------------------------------------------------

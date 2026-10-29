@@ -176,63 +176,33 @@ public class CalculadorDeEdicionDeCompraTests
     // ---- los pagos de la compra --------------------------------------------------------------------------------
 
     [Fact]
-    public void UnaCompraSinPagosSeEditaSinRestriccion()
+    public void SinRedondeoVigenteNoHayNadaQueRevertirAunqueTodoCambie()
     {
-        Assert.False(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 0m, redondeoVigente: 0m, tieneAplicaciones: false, totalAnterior: 100m, totalNuevo: 10m,
-            cambiaProveedor: true, cambiaPuntoVenta: true, cambiaEmpresa: true));
-    }
-
-    [Fact]
-    public void BajarElTotalPorDebajoDeLoPagadoLoRequiere()
-    {
-        Assert.True(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 80m, redondeoVigente: 0m, tieneAplicaciones: true, totalAnterior: 100m, totalNuevo: 79.99m,
-            false, false, false));
-    }
-
-    [Fact]
-    public void BajarElTotalHastaExactamenteLoPagadoNoLoRequiere()
-    {
-        Assert.False(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 80m, redondeoVigente: 0m, tieneAplicaciones: true, totalAnterior: 100m, totalNuevo: 80m,
-            false, false, false));
+        Assert.False(CalculadorDeEdicionDeCompra.RevierteElRedondeo(
+            redondeoVigente: 0m, totalAnterior: 100m, totalNuevo: 10m, cambiaLaPertenencia: true));
     }
 
     [Theory]
-    [InlineData(true, false, false)]
-    [InlineData(false, true, false)]
-    [InlineData(false, false, true)]
-    public void CambiarProveedorPuntoDeVentaOEmpresaDeUnaCompraConAplicacionesLoRequiere(
-        bool proveedor, bool puntoVenta, bool empresa)
+    [InlineData(200)]
+    [InlineData(50)]
+    public void CambiarElTotalDeUnaCompraConRedondeoLoRevierteEnAmbosSentidos(double totalNuevo)
     {
-        Assert.True(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 10m, redondeoVigente: 0m, tieneAplicaciones: true, totalAnterior: 100m, totalNuevo: 100m,
-            proveedor, puntoVenta, empresa));
+        Assert.True(CalculadorDeEdicionDeCompra.RevierteElRedondeo(
+            redondeoVigente: -3m, totalAnterior: 100m, totalNuevo: (decimal)totalNuevo, cambiaLaPertenencia: false));
     }
 
     [Fact]
-    public void CambiarElProveedorDeUnaCompraSoloConRedondeoTambienLoRequiere()
+    public void CambiarLaPertenenciaDeUnaCompraConRedondeoLoRevierteConElMismoTotal()
     {
-        Assert.True(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 3m, redondeoVigente: -3m, tieneAplicaciones: false, totalAnterior: 100m, totalNuevo: 100m,
-            cambiaProveedor: true, false, false));
+        Assert.True(CalculadorDeEdicionDeCompra.RevierteElRedondeo(
+            redondeoVigente: -3m, totalAnterior: 100m, totalNuevo: 100m, cambiaLaPertenencia: true));
     }
 
     [Fact]
-    public void CambiarElTotalDeUnaCompraConRedondeoLoRequiereAunqueNoBajeDeLoPagado()
+    public void ElMismoTotalDeUnaCompraConRedondeoNoLoRevierte()
     {
-        Assert.True(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 3m, redondeoVigente: -3m, tieneAplicaciones: false, totalAnterior: 100m, totalNuevo: 200m,
-            false, false, false));
-    }
-
-    [Fact]
-    public void ElMismoTotalDeUnaCompraConRedondeoNoLoRequiere()
-    {
-        Assert.False(CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-            pagado: 3m, redondeoVigente: -3m, tieneAplicaciones: false, totalAnterior: 100m, totalNuevo: 100m,
-            false, false, false));
+        Assert.False(CalculadorDeEdicionDeCompra.RevierteElRedondeo(
+            redondeoVigente: -3m, totalAnterior: 100m, totalNuevo: 100m, cambiaLaPertenencia: false));
     }
 
     // ---- lotes ------------------------------------------------------------------------------------------------
