@@ -237,6 +237,56 @@ describe('CargaSemanalDeHoras — guardar', () => {
     expect(await screen.findByText(/Se guardó la semana, pero no se pudo actualizar la vista/)).toBeInTheDocument()
   })
 
+  describe('si la relectura posterior a guardar falla', () => {
+    async function afirmarBloqueada() {
+      expect(await screen.findByRole('button', { name: 'Reintentar' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Guardar semana' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Descartar cambios' })).toBeDisabled()
+      expect(celda('Ana Gómez', 'Lun 26/10')).toBeDisabled()
+      expect(celda('Beto Ruiz', 'Lun 26/10')).toBeDisabled()
+    }
+
+    async function afirmarRecuperada(usuario: ReturnType<typeof userEvent.setup>) {
+      apiGetMock.mockImplementation(() => Promise.resolve(semanaDe(SEMANA_ACTUAL)))
+      await usuario.click(screen.getByRole('button', { name: 'Reintentar' }))
+      await waitFor(() => expect(celda('Beto Ruiz', 'Lun 26/10')).toBeEnabled())
+      expect(celda('Beto Ruiz', 'Lun 26/10')).toHaveValue('')
+      expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+      await usuario.type(celda('Beto Ruiz', 'Lun 26/10'), '3')
+      expect(screen.getByRole('button', { name: 'Guardar semana' })).toBeEnabled()
+    }
+
+    it('un guardado incierto (500) deja la pantalla bloqueada hasta releer', async () => {
+      const usuario = userEvent.setup()
+      apiPostMock.mockRejectedValue(new ErrorApi(500, 'error', 'Cayó'))
+      renderizar()
+      await esperarSemana()
+      await usuario.type(celda('Beto Ruiz', 'Lun 26/10'), '5')
+      apiGetMock.mockRejectedValue(new ErrorApi(500, 'error', 'Cayó la lectura'))
+
+      await usuario.click(screen.getByRole('button', { name: 'Guardar semana' }))
+
+      expect(await screen.findByText(/tampoco se pudo actualizar la vista/)).toBeInTheDocument()
+      await afirmarBloqueada()
+      await afirmarRecuperada(usuario)
+    })
+
+    it('un éxito deja la pantalla bloqueada hasta releer', async () => {
+      const usuario = userEvent.setup()
+      apiPostMock.mockResolvedValue({ movimientosCreados: 1, jornadasConfirmadas: 1 })
+      renderizar()
+      await esperarSemana()
+      await usuario.type(celda('Beto Ruiz', 'Lun 26/10'), '5')
+      apiGetMock.mockRejectedValue(new ErrorApi(500, 'error', 'Cayó la lectura'))
+
+      await usuario.click(screen.getByRole('button', { name: 'Guardar semana' }))
+
+      expect(await screen.findByText(/Se guardó la semana, pero no se pudo actualizar la vista/)).toBeInTheDocument()
+      await afirmarBloqueada()
+      await afirmarRecuperada(usuario)
+    })
+  })
+
   it('dos clics sincrónicos guardan una sola vez', async () => {
     const usuario = userEvent.setup()
     const respuesta = diferido<{ movimientosCreados: number; jornadasConfirmadas: number }>()

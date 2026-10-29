@@ -71,6 +71,8 @@ export function CargaSemanalDeHoras() {
   const [ediciones, setEdiciones] = useState<Ediciones>(SIN_EDICIONES)
   const [guardando, setGuardando] = useState(false)
   const [puerta, setPuerta] = useState<Puerta | null>(null)
+  /** La relectura posterior a guardar falló: lo que se ve es anterior al guardado y no se puede editar ni guardar. */
+  const [vistaVieja, setVistaVieja] = useState(false)
 
   const generacion = useRef(0)
   /** Espejo síncrono de "hay un guardado en vuelo": la ÚNICA guarda de re-entrancia válida. */
@@ -89,6 +91,7 @@ export function CargaSemanalDeHoras() {
       desdeVigente.current = resultado.desde
       setSemana(resultado)
       setEdiciones(SIN_EDICIONES)
+      setVistaVieja(false)
 
       return true
     } catch (e) {
@@ -120,7 +123,8 @@ export function CargaSemanalDeHoras() {
   const solicitud = useMemo(() => (semana ? armarSolicitud(semana, ediciones) : { dias: [] }), [semana, ediciones])
 
   const bloqueado = guardando || cargando || puerta !== null
-  const puedeGuardar = !bloqueado && semana !== null && errores.size === 0 && solicitud.dias.length > 0
+  const edicionBloqueada = bloqueado || vistaVieja
+  const puedeGuardar = !edicionBloqueada && semana !== null && errores.size === 0 && solicitud.dias.length > 0
 
   /** Con horas editadas sin guardar, la salida pregunta antes; el disparador se captura en el evento. */
   function conConfirmacion(accion: () => void, evento: MouseEvent<HTMLElement>) {
@@ -188,24 +192,26 @@ export function CargaSemanalDeHoras() {
 
         // Sin confirmación del servidor: se relee la semana y quien lee decide, no se reintenta a ciegas.
         const vistaActualizada = await cargar(semana.desde)
+        if (!vistaActualizada) setVistaVieja(true)
         setAviso({
           tipo: 'atencion',
           texto: vistaActualizada
             ? 'No se pudo confirmar si se guardó la semana. Revisá las horas que se muestran antes de volver a guardar.'
-            : 'No se pudo confirmar si se guardó la semana y tampoco se pudo actualizar la vista: recargá la pantalla y revisá las horas antes de volver a guardar.',
+            : 'No se pudo confirmar si se guardó la semana y tampoco se pudo actualizar la vista: hasta que la semana se vuelva a cargar con Reintentar no se puede editar ni guardar.',
         })
 
         return
       }
 
       const vistaActualizada = await cargar(semana.desde)
+      if (!vistaActualizada) setVistaVieja(true)
       setAviso(
         vistaActualizada
           ? {
               tipo: 'exito',
               texto: `Se guardó la semana: ${plural(resultado.jornadasConfirmadas, 'jornada confirmada', 'jornadas confirmadas')} y ${plural(resultado.movimientosCreados, 'movimiento registrado', 'movimientos registrados')}.`,
             }
-          : { tipo: 'atencion', texto: 'Se guardó la semana, pero no se pudo actualizar la vista. Recargá la pantalla.' },
+          : { tipo: 'atencion', texto: 'Se guardó la semana, pero no se pudo actualizar la vista: hasta que la semana se vuelva a cargar con Reintentar no se puede editar ni guardar.' },
       )
     } finally {
       guardandoRef.current = false
@@ -374,7 +380,7 @@ export function CargaSemanalDeHoras() {
                                 title={mensaje ?? (precargada ? 'Precargado desde el horario habitual' : undefined)}
                                 value={d.futuro ? '' : textoDeCelda(f.idPersonal, d, ediciones)}
                                 onChange={(evento) => alEditar(f.idPersonal, d.fecha, evento.target.value)}
-                                disabled={bloqueado || d.futuro}
+                                disabled={edicionBloqueada || d.futuro}
                               />
                             </td>
                           )
@@ -422,7 +428,7 @@ export function CargaSemanalDeHoras() {
               <button type="button" className="btn btn-primary" onClick={() => void guardar()} disabled={!puedeGuardar}>
                 {guardando ? 'Guardando…' : 'Guardar semana'}
               </button>
-              <button type="button" className="btn btn-outline-secondary" onClick={descartar} disabled={!hayCambios || bloqueado}>
+              <button type="button" className="btn btn-outline-secondary" onClick={descartar} disabled={!hayCambios || edicionBloqueada}>
                 Descartar cambios
               </button>
             </div>
