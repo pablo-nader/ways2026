@@ -23,7 +23,7 @@ namespace Ways.Application.Compras;
 /// <para><b>Orden de locks</b> (el global del repo): membresía de familias COMPARTIDO (primera sentencia, aunque esta
 /// slice no toca costos; la slice de costos lo necesita y moverlo después reabriría el orden) → encabezado de la compra
 /// <c>FOR UPDATE … WHERE estado='confirmada'</c> → órdenes de compra afectadas, ascendentes por id, <c>FOR UPDATE</c> →
-/// lotes (ascendente por artículo y código) → stock (ascendente por artículo y punto de venta, agregado antes que lotes) →
+/// lotes (ascendente por artículo y código RESUELTO, ordinal: <see cref="ServicioDeLotes.CodigoResuelto"/>, igual que la confirmación) → stock (ascendente por artículo y punto de venta, agregado antes que lotes) →
 /// escritura de encabezado, líneas, alícuotas y percepciones por EF → re-proyección de las órdenes → proveedores,
 /// ascendentes por id, ÚLTIMO lock de fila, y su asiento de cuenta corriente.</para>
 /// </summary>
@@ -207,6 +207,27 @@ public partial class ServicioDeCompras
         var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, solicitud.Items, codigosDeProveedor, momento);
         var hoy = DateOnly.FromDateTime(momento.UtcDateTime);
 
+        // La línea que no cambia conserva el precio sugerido guardado: recalcularlo con los márgenes de hoy lo movería sin
+        // que nadie haya tocado la línea.
+        var sinUsar = itemsExistentes.Where(i => i.IdArticulo is not null && i.PrecioSugerido is not null).ToList();
+        if (comprobante.DiscriminaIva == discriminaIva && comprobante.PreciosIncluyenIva == solicitud.PreciosIncluyenIva)
+        {
+            foreach (var item in itemsNuevos.Where(i => i.IdArticulo is not null))
+            {
+                var previa = sinUsar.FirstOrDefault(e =>
+                    e.IdArticulo == item.IdArticulo && e.CostoUnitario == item.CostoUnitario && e.Cantidad == item.Cantidad
+                    && e.Descuento == item.Descuento && e.IdAlicuotaIva == item.IdAlicuotaIva
+                    && e.PorcentajeIva == item.PorcentajeIva && e.ImpuestoInterno == item.ImpuestoInterno
+                    && e.Total == item.Total && e.ActualizaCosto == item.ActualizaCosto);
+
+                if (previa is not null)
+                {
+                    item.PrecioSugerido = previa.PrecioSugerido;
+                    sinUsar.Remove(previa);
+                }
+            }
+        }
+
         var idsArticulo = itemsNuevos.Where(i => i.IdArticulo is not null).Select(i => i.IdArticulo!.Value).Distinct().ToList();
         var controlaLotePorArticulo = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
@@ -232,8 +253,26 @@ public partial class ServicioDeCompras
             return coincidente is not null && (coincidente.IdLote is not null || !efectivo) ? coincidente : null;
         }
 
+        // La excepción cubre solo lo YA recibido: si la suma de la clave (artículo, código, vencimiento) crece respecto de
+        // la guardada, el vencimiento se verifica como en la confirmación.
+        static (int, string?, DateOnly?) ClaveDeLote(int idArticulo, string? codigoLote, DateOnly? vencimiento) =>
+            (idArticulo, string.IsNullOrWhiteSpace(codigoLote) ? null : codigoLote.Trim(), vencimiento);
+
+        var recibidoPorLote = itemsExistentes
+            .Where(i => i.IdArticulo is not null)
+            .GroupBy(i => ClaveDeLote(i.IdArticulo!.Value, i.CodigoLote, i.FechaVencimiento))
+            .ToDictionary(g => g.Key, g => g.Sum(i => i.Cantidad));
+        var pedidoPorLote = itemsNuevos
+            .Where(i => i.IdArticulo is not null)
+            .GroupBy(i => ClaveDeLote(i.IdArticulo!.Value, i.CodigoLote, i.FechaVencimiento))
+            .ToDictionary(g => g.Key, g => g.Sum(i => i.Cantidad));
+
         ValidarVencimientosDeRecepcion(
-            solicitud.Items, hoy, linea => LoteQueSeConserva(linea.IdArticulo, linea.CodigoLote, linea.FechaVencimiento) is not null);
+            solicitud.Items, hoy,
+            linea => linea.IdArticulo is { } articulo
+                && LoteQueSeConserva(articulo, linea.CodigoLote, linea.FechaVencimiento) is not null
+                && pedidoPorLote.GetValueOrDefault(ClaveDeLote(articulo, linea.CodigoLote, linea.FechaVencimiento))
+                    <= recibidoPorLote.GetValueOrDefault(ClaveDeLote(articulo, linea.CodigoLote, linea.FechaVencimiento)));
 
         var itemsPorResolver = new List<ItemComprobanteCompra>();
         foreach (var item in itemsNuevos.Where(i => i.IdArticulo is not null))
@@ -248,7 +287,9 @@ public partial class ServicioDeCompras
             }
         }
 
-        foreach (var item in itemsPorResolver.OrderBy(i => i.IdArticulo).ThenBy(i => i.CodigoLote, StringComparer.Ordinal))
+        foreach (var item in itemsPorResolver
+                     .OrderBy(i => i.IdArticulo)
+                     .ThenBy(i => ServicioDeLotes.CodigoResuelto(i.CodigoLote, i.FechaVencimiento), StringComparer.Ordinal))
         {
             if (item.FechaVencimiento is null)
             {
@@ -383,6 +424,18 @@ public partial class ServicioDeCompras
         var perdonado = -(await db.MovimientosCuentaCorrienteProveedor
             .Where(m => m.IdComprobanteCompra == id && m.Tipo == TipoMovimientoCcProveedor.Redondeo)
             .SumAsync(m => (decimal?)m.Importe, ct) ?? 0m);
+
+        // Un pago vivo vinculado por pagos.id_comprobante_compra ata la compra a su proveedor y empresa aunque no tenga
+        // aplicación viva.
+        if ((cambiaProveedor || cambiaPuntoVenta || cambiaEmpresa)
+            && await db.Pagos.AnyAsync(p => p.IdComprobanteCompra == id, ct))
+        {
+            throw new ErrorDominio(
+                "compra_edicion_con_aplicaciones",
+                "La compra tiene pagos vinculados: no puede cambiar de proveedor, punto de venta ni empresa. Desvinculá o " +
+                "dá de baja los pagos antes de editarla.",
+                409);
+        }
 
         if (CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
                 aplicado + perdonado, perdonado, tieneAplicaciones, comprobante.Total, totalNuevo,

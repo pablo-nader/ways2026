@@ -104,7 +104,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
             header, items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);
     }
 
-    /// <summary>El id del asiento <c>compra</c> más nuevo de cada compra de <paramref name="idsCompras"/>, sin importar si
+    /// <summary>El id del asiento <c>compra</c> más nuevo, del proveedor actual de la compra, de cada compra de <paramref name="idsCompras"/>, sin importar si
     /// cae dentro de la página que se está leyendo: el saldo pendiente se muestra en ese y no en los anteriores.</summary>
     private async Task<HashSet<int>> LeerAsientosMasNuevosDeComprasAsync(
         IReadOnlyCollection<int> idsCompras, CancellationToken ct)
@@ -114,9 +114,12 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
             return [];
         }
 
+        // Solo los asientos del proveedor ACTUAL de la compra: tras un cambio de proveedor, la reversa del anterior puede
+        // ser la fila más nueva y no debe llevar el saldo pendiente.
         var ids = await db.MovimientosCuentaCorrienteProveedor
             .Where(m => m.Tipo == TipoMovimientoCcProveedor.Compra && m.IdComprobanteCompra != null
-                && idsCompras.Contains(m.IdComprobanteCompra.Value))
+                && idsCompras.Contains(m.IdComprobanteCompra.Value)
+                && db.ComprobantesCompra.Any(c => c.Id == m.IdComprobanteCompra.Value && c.IdProveedor == m.IdProveedor))
             .GroupBy(m => m.IdComprobanteCompra!.Value)
             .Select(grupo => grupo.Max(m => m.Id))
             .ToListAsync(ct);

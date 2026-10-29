@@ -661,14 +661,14 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   `motivo = compra` con la diferencia con signo (`observaciones = 'Edición de la compra #id'`) y el upsert de `stock` y `stock_lotes`.
 >   Cambiar el punto de venta saca del viejo y pone en el nuevo. Si una diferencia negativa deja un lote o el agregado en negativo:
 >   `409 compra_edicion_stock_negativo` (nombra artículo y lote) y la transacción entera se deshace.
-> - **Lotes:** la línea que conserva artículo, código de lote y vencimiento conserva su `id_lote` y no se vuelve a verificar contra «hoy»;
+> - **Lotes:** la línea que conserva artículo, código de lote y vencimiento conserva su `id_lote` y no se vuelve a verificar contra «hoy» SOLO por lo ya recibido (si la suma de cantidades de esa clave crece, el vencimiento se verifica como en la confirmación); la línea que no cambia conserva su `precio_sugerido` guardado; los lotes se bloquean ascendentes por (artículo, código resuelto, ordinal), igual que la confirmación;
 >   las nuevas o cambiadas se resuelven con las exigencias de la confirmación (`lote_requerido`, `lote_vencido_en_recepcion`).
 > - **Cuenta del proveedor:** la diferencia contra la suma de los asientos `compra` de esa compra (por proveedor) escribe un asiento
 >   `compra` por la diferencia (`detalle = 'Edición de la compra #id: $A → $B'`) y actualiza `proveedores.saldo`. Si cambia el proveedor,
 >   el anterior recibe la reversa de lo suyo y el nuevo el total. La suma de los asientos `compra` de una compra sigue siendo su total,
 >   así que la anulación (que revierte esa suma) no cambia. Una compra anterior al libro de proveedores (sin asiento `compra`) no puede
 >   cambiar total ni proveedor: `409 compra_edicion_sin_asiento_de_cuenta`. El estado de cuenta muestra `saldoPendienteDeLaCompra` solo en
->   el asiento `compra` más nuevo de cada compra.
+>   el asiento `compra` más nuevo de cada compra, del proveedor actual de la compra.
 > - **Órdenes de compra:** se bloquean `FOR UPDATE`, ascendentes por id, la que la compra deja y la que toma, y las dos se re-proyectan con
 >   las líneas ya escritas. La ligadura de la orden nueva (existe, no anulada, mismo proveedor y punto de venta) solo se verifica si cambia
 >   la orden, el proveedor o el punto de venta.
@@ -679,7 +679,7 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > - **Anulación:** revierte el stock NETO por `(artículo, punto de venta, lote)` (una clave que ya netea a cero no se revierte), porque
 >   revertir cada asiento de una compra editada rechazaría con un falso `compra_anulacion_stock_negativo`.
 > - **TEMPORAL (reemplazado por E6-S3):** una edición que baja el total por debajo de lo pagado, que cambia el total de una compra con
->   redondeo perdonado o que cambia proveedor, punto de venta o empresa de una compra con pagos aplicados o redondeo responde `409
+>   redondeo perdonado o que cambia proveedor, punto de venta o empresa de una compra con pagos aplicados, redondeo o algún pago vivo vinculado (`pagos.id_comprobante_compra`) responde `409
 >   compra_edicion_con_aplicaciones`. Los costos del artículo (`costo_nominal`) y los códigos de proveedor todavía NO se vuelven a escribir
 >   al editar (E6-S4).
 

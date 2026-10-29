@@ -347,7 +347,8 @@ public partial class ServicioDeCompras(
                 throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
             }
 
-            throw new ErrorDominio("compra_no_editable", "Solo una compra en borrador puede editarse.", 409);
+            throw new ErrorDominio(
+                "compra_cambio_concurrente", "La compra cambió de estado mientras se editaba. Recargala y volvé a intentar.", 409);
         }
 
         // El lock de fila crudo de arriba ya serializa cualquier escritor concurrente sobre este
@@ -703,8 +704,9 @@ public partial class ServicioDeCompras(
 
         // 2.b Resolución de lotes (etapa 12, slice 5; design decisión 3: lotes ANTES que stock) —
         // bajo el MISMO lock del header que el paso 1 ya tomó, antes del primer lock de stock del
-        // paso 3. Orden ascendente (id_articulo, codigo_lote) para que dos confirmaciones
-        // concurrentes que comparten códigos de lote tomen esas filas en el mismo orden.
+        // paso 3. Orden ascendente (id_articulo, código RESUELTO, ordinal) — el mismo código con el
+        // que ServicioDeLotes toma el lock, y el mismo orden de la edición — para que dos
+        // escritores concurrentes que comparten lotes tomen esas filas en el mismo orden.
         var idsArticulo = items.Select(i => i.IdArticulo!.Value).Distinct().ToList();
 
         // EsLoteEfectivo necesita controla_lote por artículo y lotes_habilitado de la empresa del
@@ -728,7 +730,7 @@ public partial class ServicioDeCompras(
         var itemsLoteEfectivos = items
             .Where(i => ReglaDeLotes.ControlEfectivo(controlaLotePorArticulo.GetValueOrDefault(i.IdArticulo!.Value), lotesHabilitado))
             .OrderBy(i => i.IdArticulo)
-            .ThenBy(i => i.CodigoLote);
+            .ThenBy(i => ServicioDeLotes.CodigoResuelto(i.CodigoLote, i.FechaVencimiento), StringComparer.Ordinal);
 
         foreach (var item in itemsLoteEfectivos)
         {

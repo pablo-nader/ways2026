@@ -359,16 +359,24 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
                 owner, "UPDATE items_comprobante_compra SET fecha_vencimiento = $1 WHERE id_comprobante_compra = $2", ayer, creada.Id);
         }
 
-        var editada = await EditarConExitoAsync(
+        // Subir la cantidad de un lote vencido mete unidades vencidas al stock: se rechaza como en la confirmación.
+        var sube = await EditarAsync(
             ctx, creada.Id, Solicitud(ctx, ctx.IdArticuloConLote, 12m, creada.NumeroExterno, lote: "L-VIEJO", vencimiento: ayer));
+        Assert.Equal("lote_vencido_en_recepcion", await CodigoAsync(sube, HttpStatusCode.Conflict));
+
+        // Bajarla, o dejarla igual, solo toca lo ya recibido.
+        var editada = await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticuloConLote, 8m, creada.NumeroExterno, lote: "L-VIEJO", vencimiento: ayer));
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticuloConLote, 8m, creada.NumeroExterno, lote: "L-VIEJO", vencimiento: ayer));
 
         Assert.Equal(idLote, editada.Items.Single().IdLote);
-        Assert.Equal([10m, 2m], (await MovimientosAsync(ctx, creada.Id)).Select(m => m.Cantidad));
+        Assert.Equal([10m, -2m], (await MovimientosAsync(ctx, creada.Id)).Select(m => m.Cantidad));
         Assert.All(await MovimientosAsync(ctx, creada.Id), m => Assert.Equal(idLote, m.IdLote));
 
         var vencida = await EditarAsync(
             ctx, creada.Id,
-            Solicitud(ctx, ctx.IdArticuloConLote, 12m, creada.NumeroExterno, lote: "L-NUEVO", vencimiento: ayer));
+            Solicitud(ctx, ctx.IdArticuloConLote, 8m, creada.NumeroExterno, lote: "L-NUEVO", vencimiento: ayer));
         Assert.Equal("lote_vencido_en_recepcion", await CodigoAsync(vencida, HttpStatusCode.Conflict));
     }
 
@@ -651,7 +659,59 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal("compra_edicion_con_aplicaciones", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
     }
 
+    /// <summary>Un pago vivo vinculado a la compra por <c>pagos.id_comprobante_compra</c> sigue atándola a su proveedor
+    /// aunque ya no tenga ninguna aplicación viva.</summary>
+    [Fact]
+    public async Task CambiarElProveedorDeUnaCompraConUnPagoVinculadoSinAplicacionVivaEs409()
+    {
+        var ctx = await PrepararAsync(nameof(CambiarElProveedorDeUnaCompraConUnPagoVinculadoSinAplicacionVivaEs409));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await ctx.Admin.PostAsJsonAsync(
+            $"/api/pagos/de-compra/{creada.Id}",
+            new SolicitudDePagoDeCompraConLineas(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), [new LineaDePago(ctx.IdEfectivo, 100m, null)], null));
+        Assert.True(pago.StatusCode == HttpStatusCode.Created, await pago.Content.ReadAsStringAsync());
+
+        await using (var db = Db(ctx))
+        {
+            var aplicacion = await db.AplicacionesPago.SingleAsync(a => a.IdComprobanteCompra == creada.Id);
+            var desaplicar = await ctx.Admin.DeleteAsync($"/api/pagos/{aplicacion.IdPago}/aplicaciones/{aplicacion.Id}");
+            Assert.Equal(HttpStatusCode.NoContent, desaplicar.StatusCode);
+        }
+
+        var respuesta = await EditarAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor2));
+
+        Assert.Equal("compra_edicion_con_aplicaciones", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
+    }
+
     // ---- auditoría y estado de cuenta --------------------------------------------------------------------------
+
+    /// <summary>Tras pasar la compra de un proveedor a otro de id MENOR, el saldo pendiente sale en el asiento del
+    /// proveedor actual y no en la reversa del anterior (que es la fila más nueva).</summary>
+    [Fact]
+    public async Task TrasCambiarDeProveedorElSaldoPendienteSaleEnElAsientoDelProveedorActual()
+    {
+        var ctx = await PrepararAsync(nameof(TrasCambiarDeProveedorElSaldoPendienteSaleEnElAsientoDelProveedorActual));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m, idProveedor: ctx.IdProveedor2));
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor));
+
+        async Task<List<JsonElement>> FilasAsync(int idProveedor)
+        {
+            var respuesta = await ctx.Admin.GetAsync($"/api/proveedores/{idProveedor}/cuenta-corriente?historico=true&tamanio=50");
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+            return [.. JsonDocument.Parse(cuerpo).RootElement.GetProperty("items").EnumerateArray()
+                .Where(f => f.GetProperty("idComprobanteCompra").GetInt32() == creada.Id)];
+        }
+
+        static bool TienePendiente(JsonElement f) =>
+            f.TryGetProperty("saldoPendienteDeLaCompra", out var v) && v.ValueKind == JsonValueKind.Number;
+
+        Assert.Equal(1, (await FilasAsync(ctx.IdProveedor)).Count(TienePendiente));
+        Assert.DoesNotContain(await FilasAsync(ctx.IdProveedor2), TienePendiente);
+    }
 
     [Fact]
     public async Task LaEdicionDejaUnaFilaDeAuditoriaConElAntesElDespuesYLasDiferencias()
