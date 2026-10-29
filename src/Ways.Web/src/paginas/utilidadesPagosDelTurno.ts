@@ -3,6 +3,7 @@
  * `PagosDelTurno.tsx` para poder testearlos sin DOM (`web-descriptor-tests`/
  * `mutation-proof-tests`), mismo criterio que `utilidadesVentasDelTurno.ts`.
  */
+import { aLineasDeSolicitud, textoDeMediosDelPago, totalDeLineasDePago, type LineaDePagoEditable } from '../api/lineasDePago'
 import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
@@ -11,7 +12,7 @@ import type {
   MedioPagoListado,
   OrigenFondosPago,
   ResumenDeTurno,
-  SolicitudDePago,
+  SolicitudDePagoConLineas,
 } from '../api/tipos'
 import { formatearImporte, redondearImporte } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -58,8 +59,7 @@ export function categoriaAlElegirProveedor(idProveedorNuevo: number | null, cate
 
 export type FormularioDePago = {
   idPuntoVenta: number
-  importe: number
-  idMedioPago: number
+  lineas: readonly LineaDePagoEditable[]
   categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
@@ -68,14 +68,14 @@ export type FormularioDePago = {
 }
 
 /**
- * Cuerpo de `POST /api/gastos` (decisión del pedido 2): `concepto` es la observación recortada
+ * Cuerpo de `POST /api/pagos` (decisión del pedido 2): `concepto` es la observación recortada
  * cuando no está vacía, o el texto fijo "Pago del turno" en caso contrario — nunca viaja en
  * blanco (el servidor lo rechaza con 400 `gasto_concepto_requerido`,
  * `ServicioDePagos.ExigirConceptoValido`). `detalle`/`numeroFactura`/
- * `idComprobanteCompra` no los pide este formulario: viajan `null`. `origenFondos` aterriza en
- * stage-gastos-origen-fondos-pos (PR2) — se manda tal cual lo eligió el cajero, nunca inferido.
+ * `idComprobanteCompra` no los pide este formulario: viajan `null`. `origenFondos` se manda tal
+ * cual lo eligió el cajero, nunca inferido. El llamador garantiza `lineasDePagoValidas`.
  */
-export function aSolicitudDePago(form: FormularioDePago): SolicitudDePago {
+export function aSolicitudDePago(form: FormularioDePago): SolicitudDePagoConLineas {
   const observaciones = form.observaciones.trim()
   return {
     idPuntoVenta: form.idPuntoVenta,
@@ -84,9 +84,8 @@ export function aSolicitudDePago(form: FormularioDePago): SolicitudDePago {
     idArea: form.idArea,
     concepto: observaciones !== '' ? observaciones : 'Pago del turno',
     detalle: null,
-    idMedioPago: form.idMedioPago,
     numeroFactura: null,
-    importe: form.importe,
+    lineas: aLineasDeSolicitud(form.lineas),
     idComprobanteCompra: null,
     origenFondos: form.origenFondos,
   }
@@ -108,6 +107,41 @@ export function efectivoDisponibleEnCaja(resumen: ResumenDeTurno): number {
  * turno: el efectivo pagado desde Tesorería no pasa por el cajón. */
 export function salidaDeEfectivoDeCaja(medio: MedioPagoListado | undefined, origenFondos: OrigenFondosPago): boolean {
   return medio?.comportamiento === 'Efectivo' && origenFondos === 'CajaTurno'
+}
+
+/** Líneas del pago que sacan efectivo del cajón (medio Efectivo desde la caja del turno): las demás no cuentan para el
+ * cajón ni para el faltante. */
+function lineasQueSacanEfectivo(
+  lineas: readonly LineaDePagoEditable[],
+  medios: readonly MedioPagoListado[],
+  origenFondos: OrigenFondosPago,
+): LineaDePagoEditable[] {
+  return lineas.filter((l) => salidaDeEfectivoDeCaja(medios.find((m) => m.id === l.idMedioPago), origenFondos))
+}
+
+/** `true` si alguna línea saca efectivo del cajón: habilita el aviso de efectivo disponible y el pulso del cajón. */
+export function haySalidaDeEfectivoDeCaja(
+  lineas: readonly LineaDePagoEditable[],
+  medios: readonly MedioPagoListado[],
+  origenFondos: OrigenFondosPago,
+): boolean {
+  return lineasQueSacanEfectivo(lineas, medios, origenFondos).length > 0
+}
+
+/** Suma de las líneas que sacan efectivo del cajón; 0 si ninguna lo hace. */
+export function importeEnEfectivoDeCaja(
+  lineas: readonly LineaDePagoEditable[],
+  medios: readonly MedioPagoListado[],
+  origenFondos: OrigenFondosPago,
+): number {
+  return totalDeLineasDePago(lineasQueSacanEfectivo(lineas, medios, origenFondos))
+}
+
+/** Texto de la columna "Medio de pago" del pago de un turno: con varias líneas, el reparto; con una sola (o sin
+ * líneas, respuestas anteriores) el nombre del medio del catálogo del dispositivo. */
+export function textoDeMedioDelPagoDeTurno(pago: PagoDeTurno, medios: readonly MedioPagoListado[] | null): string {
+  if ((pago.lineas?.length ?? 0) > 1) return textoDeMediosDelPago(pago)
+  return medios?.find((m) => m.id === pago.idMedioPago)?.nombre ?? `Medio #${pago.idMedioPago}`
 }
 
 /** Cuánto efectivo falta en el cajón para cubrir el importe; 0 si alcanza o no hay importe. */

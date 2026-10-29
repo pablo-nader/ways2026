@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
+import { errorDeLineasDePago, lineaDePagoVacia, type LineaDePagoEditable } from '../api/lineasDePago'
 import { clienteDePagos, copiaDeFalloDeEdicion, esPagoOriginadoEnPersonal } from '../api/registroDePagos'
 import { clienteDeProveedores } from '../api/proveedores'
 import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
@@ -15,15 +16,15 @@ import type {
   MedioPagoListado,
   OpcionDeProveedor,
   OrigenFondosPago,
-  SolicitudDeEdicionDePago,
+  SolicitudDeEdicionDePagoConLineas,
   TurnoResumen,
 } from '../api/tipos'
 import { pulsoDeCajon } from '../impresion/plantillas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
-import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { EditorDeLineasDePago } from '../componentes/EditorDeLineasDePago'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeEdicionDePago } from './ModalDeEdicionDePago'
@@ -38,8 +39,10 @@ import {
   faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
+  haySalidaDeEfectivoDeCaja,
+  importeEnEfectivoDeCaja,
   mediosValidosParaPago,
-  salidaDeEfectivoDeCaja,
+  textoDeMedioDelPagoDeTurno,
   totalDePagos,
 } from './utilidadesPagosDelTurno'
 
@@ -48,12 +51,13 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
 /**
  * "Pagos del turno" (stage-gastos-turno-carga-simple, POS de escritorio): captura pagos contra
- * el turno ABIERTO del punto de venta fijo del dispositivo (`POST /api/gastos`, mismo criterio de
+ * el turno ABIERTO del punto de venta fijo del dispositivo (`POST /api/pagos`, mismo criterio de
  * turno-resuelto-server-side que `Pos.tsx`/`Caja.tsx`) y lista los ya registrados del turno
  * (`GET /api/caja/turnos/{id}/detalle`, mismo endpoint que el Z-report). Sin turno abierto no hay
  * formulario, mismo criterio que `VentasDelTurno`.
  *
- * El medio de pago excluye `CuentaCorriente` (`mediosValidosParaPago`): es el mecanismo de
+ * El pago se reparte entre hasta 20 medios (`EditorDeLineasDePago`; el importe del pago es la suma de las
+ * líneas). Los medios excluyen `CuentaCorriente` (`mediosValidosParaPago`): es el mecanismo de
  * crédito del CLIENTE en una venta, nunca una salida real de dinero de la caja. El proveedor
  * (opcional) reusa el mismo helper de etiqueta/orden por intercalación española que
  * `Articulos.tsx` (`articulos/helpers.ts`) — elegirlo cambia la categoría a "Proveedor"
@@ -68,15 +72,15 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
  * refresco falle.
  *
  * Edición: cada pago de un turno que sigue abierto (`turnoAbierto`) se corrige en un modal
- * (`PUT /api/gastos/{id}`) que comparte con el alta la guarda de reentrancia (`guardandoRef`) y la
+ * (`PUT /api/pagos/{id}`, con el reparto por medio) que comparte con el alta la guarda de reentrancia (`guardandoRef`) y la
  * generación del detalle: mientras la edición está abierta o en vuelo, el resto de la pantalla
  * queda inerte (regla 9 — se bloquea el supersede, no se reconcilia). Si el servidor responde
  * `409 gasto_turno_cerrado` el modal queda abierto con el motivo y el detalle se refresca.
  *
- * Efectivo de caja: un pago en medio Efectivo pagado desde la caja del turno
- * (`salidaDeEfectivoDeCaja`) muestra el efectivo disponible del resumen del turno y, si el importe
- * lo supera, avisa cuánto falta sin impedir el registro. Con el seam de escritorio
- * (`cajaDeEscritorio`), un alta confirmada de ese tipo encola el pulso del cajón.
+ * Efectivo de caja: un pago con alguna línea en medio Efectivo pagado desde la caja del turno
+ * muestra el efectivo disponible del resumen del turno y, si la suma de ESAS líneas lo supera,
+ * avisa cuánto falta sin impedir el registro. Con el seam de escritorio (`cajaDeEscritorio`), un
+ * alta confirmada de ese tipo encola el pulso del cajón.
  */
 export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeEscritorio } = {}) {
   const { puntoVenta } = usePuntoVenta()
@@ -104,8 +108,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [errorEdicion, setErrorEdicion] = useState('')
 
-  const [importe, setImporte] = useState<number | null>(null)
-  const [idMedioPago, setIdMedioPago] = useState<number | ''>('')
+  const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => [lineaDePagoVacia()])
   const [categoria, setCategoria] = useState<CategoriaPago>('Otros')
   const [idProveedor, setIdProveedor] = useState<number | ''>('')
   const [idAreaElegida, setIdAreaElegida] = useState<number | ''>('')
@@ -225,8 +228,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   }
 
   function limpiarFormulario() {
-    setImporte(null)
-    setIdMedioPago('')
+    setLineas([lineaDePagoVacia()])
     setCategoria('Otros')
     setIdProveedor('')
     setIdAreaElegida('')
@@ -245,19 +247,13 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     // conviviendo con el error de validación (RDD-W1).
     setAviso('')
 
-    if (importe === null || importe <= 0) {
-      setErrorGuardar('El importe tiene que ser mayor a 0.')
-      return
-    }
-    if (idMedioPago === '') {
-      setErrorGuardar('Elegí un medio de pago.')
+    const errorDeLineas = errorDeLineasDePago(lineas)
+    if (errorDeLineas !== null) {
+      setErrorGuardar(errorDeLineas)
       return
     }
 
-    const abreElCajon = salidaDeEfectivoDeCaja(
-      medios?.find((m) => m.id === idMedioPago),
-      origenFondos,
-    )
+    const abreElCajon = haySalidaDeEfectivoDeCaja(lineas, medios ?? [], origenFondos)
 
     guardandoRef.current = true
     setGuardando(true)
@@ -271,8 +267,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
       await clienteDePagos.registrar(
         aSolicitudDePago({
           idPuntoVenta: puntoVenta.id,
-          importe,
-          idMedioPago,
+          lineas,
           categoria,
           idProveedor: idProveedor === '' ? null : idProveedor,
           idArea: idArea === '' ? null : idArea,
@@ -319,7 +314,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     setErrorEdicion('')
   }
 
-  async function guardarEdicion(solicitud: SolicitudDeEdicionDePago) {
+  async function guardarEdicion(solicitud: SolicitudDeEdicionDePagoConLineas) {
     // regla 11: guarda de reentrancia síncrona, compartida con el alta.
     if (guardandoRef.current) return
     if (!turno || !edicion) return
@@ -361,19 +356,17 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     () => ({
       hora: { valor: (g) => new Date(g.fecha) },
       categoria: { valor: (g) => etiquetaDeCategoriaPago(g.categoria) },
-      medio: { valor: (g) => medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}` },
+      medio: { valor: (g) => textoDeMedioDelPagoDeTurno(g, medios) },
       importe: { valor: (g) => g.importe },
     }),
     [medios],
   )
   const ordenDePagos = useOrdenamiento(pagos, columnasDePagos)
   const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
-  const saleDeLaCaja = salidaDeEfectivoDeCaja(
-    medios?.find((m) => m.id === idMedioPago),
-    origenFondos,
-  )
+  const saleDeLaCaja = haySalidaDeEfectivoDeCaja(lineas, medios ?? [], origenFondos)
   const efectivoDisponible = detalle ? efectivoDisponibleEnCaja(detalle.resumen) : null
-  const faltante = efectivoDisponible === null ? 0 : faltanteDeEfectivo(importe, efectivoDisponible)
+  const faltante =
+    efectivoDisponible === null ? 0 : faltanteDeEfectivo(importeEnEfectivoDeCaja(lineas, medios ?? [], origenFondos), efectivoDisponible)
 
   const herramientas = (
     <BotonIcono
@@ -406,33 +399,11 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
             {errorGuardar && <div className="alert alert-danger">{errorGuardar}</div>}
 
             <fieldset disabled={bloqueado} className="row g-2 align-items-end border-0 p-0 m-0 mb-3">
-              <div className="col-md-2">
-                <label className="form-label" htmlFor="pago-importe">
-                  Importe
-                </label>
-                <CampoImporte id="pago-importe" className="form-control" valor={importe} onChange={setImporte} />
+              <div className="col-12">
+                <EditorDeLineasDePago lineas={lineas} medios={mediosParaPago} onCambio={(cambio) => setLineas(cambio)} />
               </div>
 
-              <div className="col-md-2">
-                <label className="form-label" htmlFor="pago-medio-pago">
-                  Medio de pago
-                </label>
-                <select
-                  id="pago-medio-pago"
-                  className="form-select"
-                  value={idMedioPago}
-                  onChange={(e) => setIdMedioPago(e.target.value === '' ? '' : Number(e.target.value))}
-                >
-                  <option value="">Elegir…</option>
-                  {mediosParaPago.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="col-md-2">
+              <div className="col-md-3">
                 <label className="form-label" htmlFor="pago-categoria">
                   Categoría
                 </label>
@@ -450,7 +421,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                 </select>
               </div>
 
-              <div className="col-md-2">
+              <div className="col-md-3">
                 <label className="form-label" htmlFor="pago-proveedor">
                   Proveedor (opcional)
                 </label>
@@ -469,7 +440,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                 </select>
               </div>
 
-              <div className="col-md-2">
+              <div className="col-md-3">
                 <label className="form-label" htmlFor="pago-area">
                   Área
                 </label>
@@ -492,7 +463,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                 </select>
               </div>
 
-              <div className="col-md-2">
+              <div className="col-md-3">
                 <label className="form-label" htmlFor="pago-origen-fondos">
                   Pagado desde
                 </label>
@@ -574,7 +545,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
                           <span className="badge bg-secondary ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>
                         )}
                       </td>
-                      <td>{medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}`}</td>
+                      <td>{textoDeMedioDelPagoDeTurno(g, medios)}</td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                       <td className="text-end text-nowrap">
                         {g.turnoAbierto && !esPagoOriginadoEnPersonal(g) && (
@@ -616,7 +587,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
           areas={areas ?? []}
           guardando={guardandoEdicion}
           error={errorEdicion}
-          onGuardar={(solicitud) => void guardarEdicion(solicitud)}
+          onGuardarConLineas={(solicitud) => void guardarEdicion(solicitud)}
           onCancelar={cancelarEdicion}
         />
       )}

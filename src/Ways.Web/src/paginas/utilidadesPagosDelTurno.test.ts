@@ -10,11 +10,15 @@ import {
   faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
+  haySalidaDeEfectivoDeCaja,
+  importeEnEfectivoDeCaja,
   mediosValidosParaPago,
   salidaDeEfectivoDeCaja,
+  textoDeMedioDelPagoDeTurno,
   totalDePagos,
 } from './utilidadesPagosDelTurno'
 import type { FormularioDePago } from './utilidadesPagosDelTurno'
+import { lineaDePagoVacia } from '../api/lineasDePago'
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
   return {
@@ -57,8 +61,7 @@ function pagoFixture(sobrescribir: Partial<PagoDeTurno> = {}): PagoDeTurno {
 function formularioFixture(sobrescribir: Partial<FormularioDePago> = {}): FormularioDePago {
   return {
     idPuntoVenta: 7,
-    importe: 500,
-    idMedioPago: 1,
+    lineas: [{ ...lineaDePagoVacia(1), idMedioPago: 1, importe: 500 }],
     categoria: 'Otros',
     idProveedor: null,
     idArea: null,
@@ -153,14 +156,27 @@ describe('aSolicitudDePago', () => {
   })
 
   it('arma el resto del cuerpo con los valores del formulario, incluido un proveedor elegido', () => {
-    const solicitud = aSolicitudDePago(
-      formularioFixture({ idPuntoVenta: 9, importe: 250, idMedioPago: 3, categoria: 'Proveedor', idProveedor: 42 }),
-    )
+    const solicitud = aSolicitudDePago(formularioFixture({ idPuntoVenta: 9, categoria: 'Proveedor', idProveedor: 42 }))
     expect(solicitud.idPuntoVenta).toBe(9)
-    expect(solicitud.importe).toBe(250)
-    expect(solicitud.idMedioPago).toBe(3)
     expect(solicitud.categoria).toBe('Proveedor')
     expect(solicitud.idProveedor).toBe(42)
+  })
+
+  it('manda una línea por medio, con la referencia en blanco como null', () => {
+    const solicitud = aSolicitudDePago(
+      formularioFixture({
+        lineas: [
+          { clave: 1, idMedioPago: 1, importe: 600, referencia: '' },
+          { clave: 2, idMedioPago: 3, importe: 400, referencia: ' op 123 ' },
+        ],
+      }),
+    )
+    expect(solicitud.lineas).toEqual([
+      { idMedioPago: 1, importe: 600, referencia: null },
+      { idMedioPago: 3, importe: 400, referencia: 'op 123' },
+    ])
+    expect(solicitud).not.toHaveProperty('importe')
+    expect(solicitud).not.toHaveProperty('idMedioPago')
   })
 
   it('manda idArea tal cual lo trae el formulario, o null si no hay área', () => {
@@ -287,5 +303,64 @@ describe('areaPorDefecto', () => {
   it('sin áreas activas devuelve vacío', () => {
     expect(areaPorDefecto([areaFixture({ id: 2, activo: false })])).toBe('')
     expect(areaPorDefecto([])).toBe('')
+  })
+})
+
+describe('efectivo de caja de un pago con varios medios', () => {
+  const efectivo = medioFixture({ id: 1, comportamiento: 'Efectivo' })
+  const transferencia = medioFixture({ id: 3, nombre: 'Transferencia', comportamiento: 'Electronico' })
+  const medios = [efectivo, transferencia]
+  const lineas = [
+    { clave: 1, idMedioPago: 1, importe: 600, referencia: '' },
+    { clave: 2, idMedioPago: 3, importe: 400, referencia: '' },
+  ]
+
+  it('solo las líneas en efectivo cuentan para el cajón', () => {
+    expect(importeEnEfectivoDeCaja(lineas, medios, 'CajaTurno')).toBe(600)
+    expect(haySalidaDeEfectivoDeCaja(lineas, medios, 'CajaTurno')).toBe(true)
+  })
+
+  it('pagado desde Tesorería ninguna línea sale del cajón', () => {
+    expect(importeEnEfectivoDeCaja(lineas, medios, 'Tesoreria')).toBe(0)
+    expect(haySalidaDeEfectivoDeCaja(lineas, medios, 'Tesoreria')).toBe(false)
+  })
+
+  it('sin línea en efectivo no hay salida del cajón', () => {
+    expect(haySalidaDeEfectivoDeCaja([lineas[1]], medios, 'CajaTurno')).toBe(false)
+  })
+
+  it('suma varias líneas en efectivo y deja afuera una sin importe', () => {
+    const dos = [
+      { clave: 1, idMedioPago: 1, importe: 100, referencia: '' },
+      { clave: 2, idMedioPago: 1, importe: 50.5, referencia: '' },
+      { clave: 3, idMedioPago: 1, importe: null, referencia: '' },
+    ]
+    expect(importeEnEfectivoDeCaja(dos, medios, 'CajaTurno')).toBe(150.5)
+  })
+})
+
+describe('textoDeMedioDelPagoDeTurno', () => {
+  const medios = [medioFixture({ id: 1, nombre: 'Efectivo' })]
+  const linea = (idItem: number, idMedioPago: number, nombreMedioPago: string | null, importe: number) => ({
+    idItem,
+    idMedioPago,
+    nombreMedioPago,
+    importe,
+    referencia: null,
+  })
+
+  it('con varias líneas muestra el reparto', () => {
+    const pago = pagoFixture({ lineas: [linea(1, 1, 'Efectivo', 600), linea(2, 3, 'Transferencia', 400)] })
+    expect(textoDeMedioDelPagoDeTurno(pago, medios)).toBe('Efectivo $ 600,00 · Transferencia $ 400,00')
+  })
+
+  it('con una sola línea o sin líneas muestra el medio del catálogo', () => {
+    expect(textoDeMedioDelPagoDeTurno(pagoFixture({ lineas: [linea(1, 1, 'Efectivo', 100)] }), medios)).toBe('Efectivo')
+    expect(textoDeMedioDelPagoDeTurno(pagoFixture(), medios)).toBe('Efectivo')
+  })
+
+  it('con un medio fuera del catálogo cae a su número', () => {
+    expect(textoDeMedioDelPagoDeTurno(pagoFixture({ idMedioPago: 9 }), medios)).toBe('Medio #9')
+    expect(textoDeMedioDelPagoDeTurno(pagoFixture({ idMedioPago: 9 }), null)).toBe('Medio #9')
   })
 })

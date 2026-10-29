@@ -3,9 +3,7 @@ import { errorDeLineasDePago, type LineaDePagoEditable } from '../api/lineasDePa
 import {
   aFormularioDeEdicion,
   aSolicitudDeEdicionConLineas,
-  aSolicitudDeEdicionDePago,
   categoriaAlElegirProveedorAdministracion,
-  formularioDeEdicionCompleto,
   lineasIniciales,
 } from '../api/registroDePagos'
 import type { FormularioDeEdicionDePago, PagoEditable } from '../api/registroDePagos'
@@ -16,29 +14,24 @@ import type {
   MedioPagoListado,
   OpcionDeProveedor,
   OrigenFondosPago,
-  SolicitudDeEdicionDePago,
   SolicitudDeEdicionDePagoConLineas,
 } from '../api/tipos'
-import { CampoImporte } from '../componentes/CampoImporte'
 import { EditorDeLineasDePago } from '../componentes/EditorDeLineasDePago'
 import { Modal } from '../componentes/Modal'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 
-/** Cómo entrega la solicitud el modal. El POS (`PagosDelTurno`) edita un solo medio contra `/api/gastos`; la
- * administración (`Pagos`) edita el reparto por medio contra `/api/pagos/administracion`. */
-type Salida =
-  | { onGuardar: (solicitud: SolicitudDeEdicionDePago) => void; onGuardarConLineas?: undefined }
-  | { onGuardarConLineas: (solicitud: SolicitudDeEdicionDePagoConLineas) => void; onGuardar?: undefined }
-
-type Props = Salida & {
+type Props = {
   pago: PagoEditable & { lineas?: readonly LineaDePagoListada[] }
   medios: MedioPagoListado[]
   proveedores: OpcionDeProveedor[]
   areas: AreaListado[]
   /** Con una compra ligada el servidor exige categoría proveedor y el mismo proveedor (400). */
   ligadoACompra?: boolean
-  /** Un pago de caja (`CajaTurno`) se edita con un solo medio hasta el release del POS que lee varios. */
+  /** Solo lo pasa la administración: un pago de caja (`CajaTurno`) se edita con un solo medio hasta el release del POS
+   * que lee varios. El POS no lo pasa y edita siempre con varios medios. */
   origenFondos?: OrigenFondosPago
+  /** Recibe la solicitud con el reparto por medio ya armada y validada de forma local. */
+  onGuardarConLineas: (solicitud: SolicitudDeEdicionDePagoConLineas) => void
   /** Avisos de efectos (arqueo recalculado, ajuste compensatorio) mostrados sobre el formulario. */
   advertencias?: readonly string[]
   /** `true` mientras la escritura (y su refresco) están en vuelo: todo el diálogo queda inerte. */
@@ -64,22 +57,19 @@ export function ModalDeEdicionDePago({
   advertencias = [],
   guardando,
   error,
-  onGuardar,
   onGuardarConLineas,
   onCancelar,
 }: Props) {
   const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
   const [errorLocal, setErrorLocal] = useState('')
-  const conLineas = onGuardarConLineas !== undefined
-  const pagoDeCaja = conLineas && origenFondos === 'CajaTurno'
+  const pagoDeCaja = origenFondos === 'CajaTurno'
   // Un pago de caja con varios medios solo se ve: el POS instalado no los edita.
   const soloLectura = pagoDeCaja && lineas.length > 1
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
   // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del pago en silencio: la
   // opción actual se conserva rotulada como no disponible.
-  const medioFaltante = formulario.idMedioPago !== '' && !medios.some((m) => m.id === formulario.idMedioPago)
   const proveedorFaltante = formulario.idProveedor !== '' && !proveedores.some((p) => p.id === formulario.idProveedor)
   const areaFaltante = formulario.idArea !== '' && !areas.some((a) => a.id === formulario.idArea)
 
@@ -95,27 +85,17 @@ export function ModalDeEdicionDePago({
   function guardar() {
     if (guardando || soloLectura) return
 
-    if (onGuardarConLineas !== undefined) {
-      const errorDeLineas = errorDeLineasDePago(lineas)
-      if (formulario.concepto.trim() === '') {
-        setErrorLocal('Completá el concepto.')
-        return
-      }
-      if (errorDeLineas !== null) {
-        setErrorLocal(errorDeLineas)
-        return
-      }
-      setErrorLocal('')
-      onGuardarConLineas(aSolicitudDeEdicionConLineas(formulario, lineas))
+    const errorDeLineas = errorDeLineasDePago(lineas)
+    if (formulario.concepto.trim() === '') {
+      setErrorLocal('Completá el concepto.')
       return
     }
-
-    if (!formularioDeEdicionCompleto(formulario)) {
-      setErrorLocal('Completá el medio de pago, el concepto y un importe mayor a 0.')
+    if (errorDeLineas !== null) {
+      setErrorLocal(errorDeLineas)
       return
     }
     setErrorLocal('')
-    onGuardar?.(aSolicitudDeEdicionDePago(formulario))
+    onGuardarConLineas(aSolicitudDeEdicionConLineas(formulario, lineas))
   }
 
   const pie = (
@@ -144,58 +124,20 @@ export function ModalDeEdicionDePago({
       {(error || errorLocal) && <div className="alert alert-danger py-2 px-3 small">{error || errorLocal}</div>}
 
       <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
-        {conLineas ? (
-          <div className="col-12">
-            {soloLectura && (
-              <div className="alert alert-info py-2 px-3 small">
-                Este pago de caja tiene varios medios; se edita desde el POS nuevo.
-              </div>
-            )}
-            <EditorDeLineasDePago
-              lineas={lineas}
-              medios={medios}
-              onCambio={setLineas}
-              deshabilitado={soloLectura}
-              maximoDeLineas={pagoDeCaja ? 1 : undefined}
-            />
-          </div>
-        ) : (
-          <>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="pago-edicion-importe">
-                Importe
-              </label>
-              <CampoImporte
-                id="pago-edicion-importe"
-                className="form-control"
-                valor={formulario.importe}
-                onChange={(v) => setFormulario((prev) => ({ ...prev, importe: v }))}
-              />
+        <div className="col-12">
+          {soloLectura && (
+            <div className="alert alert-info py-2 px-3 small">
+              Este pago de caja tiene varios medios; se edita desde el POS nuevo.
             </div>
-
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="pago-edicion-medio-pago">
-                Medio de pago
-              </label>
-              <select
-                id="pago-edicion-medio-pago"
-                className="form-select"
-                value={formulario.idMedioPago}
-                onChange={(e) =>
-                  setFormulario((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))
-                }
-              >
-                <option value="">Elegir…</option>
-                {medioFaltante && <option value={formulario.idMedioPago}>Medio #{formulario.idMedioPago} (no disponible)</option>}
-                {medios.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
+          )}
+          <EditorDeLineasDePago
+            lineas={lineas}
+            medios={medios}
+            onCambio={(cambio) => setLineas(cambio)}
+            deshabilitado={soloLectura}
+            maximoDeLineas={pagoDeCaja ? 1 : undefined}
+          />
+        </div>
 
         <div className="col-md-4">
           <label className="form-label" htmlFor="pago-edicion-categoria">
