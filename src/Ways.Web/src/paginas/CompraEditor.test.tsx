@@ -3308,3 +3308,234 @@ describe('CompraEditor — aviso de número duplicado', () => {
     expect(llamadasADuplicados()).toHaveLength(0)
   })
 })
+
+describe('CompraEditor — editar una compra confirmada (E6-W1)', () => {
+  const confirmada = (sobrescribir: Partial<CompraDetalle> = {}) =>
+    compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-02T10:00:00Z', pagado: 400, saldoPendiente: 749.5, ...sobrescribir })
+
+  function mockearConfirmada(detalle: CompraDetalle = confirmada()) {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(detalle) : undefined))
+  }
+
+  async function renderizarConfirmada(detalle: CompraDetalle = confirmada()) {
+    mockearConfirmada(detalle)
+    renderEditor()
+    return screen.findByRole('button', { name: 'Editar compra' })
+  }
+
+  async function entrarEnEdicion(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(await screen.findByRole('button', { name: 'Editar compra' }))
+    await screen.findByRole('button', { name: 'Guardar cambios' })
+  }
+
+  it('un Admin ve "Editar compra" en una confirmada, y la pantalla sigue de solo lectura hasta que lo pulsa', async () => {
+    await renderizarConfirmada()
+
+    expect(screen.getByRole('button', { name: 'Editar compra' })).toBeEnabled()
+    expect(screen.queryByLabelText(/^Cantidad, línea \d+$/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Observaciones')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Guardar cambios' })).not.toBeInTheDocument()
+  })
+
+  it.each(['Borrador', 'Anulada'] as const)('no se ofrece en una compra %s', async (estado) => {
+    mockearConfirmada(compraFixture({ estado }))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.queryByRole('button', { name: 'Editar compra' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [ROL.Supervisor, 'Supervisor'],
+    [ROL.Vendedor, 'Vendedor'],
+  ] as const)('no se ofrece a un %s, que no escribe compras', async (rolId, rol) => {
+    usuarioActual = usuarioFixture({ rolId, rol })
+    mockearConfirmada()
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.queryByRole('button', { name: 'Editar compra' })).not.toBeInTheDocument()
+  })
+
+  it('en edición habilita el encabezado y la grilla, muestra el aviso de efectos y quita las demás acciones', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    await entrarEnEdicion(usuario)
+
+    await waitFor(() => expect(screen.getByLabelText('Proveedor')).toBeEnabled())
+    expect(screen.getByLabelText('Observaciones')).toBeEnabled()
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled()
+    expect(
+      screen.getByText(
+        'Los cambios ajustan el stock, la cuenta del proveedor y los costos por diferencia. Si el total baja de lo pagado, se liberan pagos aplicados (vuelven a quedar a cuenta). Si cambia el total, se revierte el redondeo.',
+      ),
+    ).toBeInTheDocument()
+
+    for (const nombre of ['Anular compra', 'Ajustar redondeo', 'Pagar', 'Aplicar', 'Editar compra', 'Guardar', 'Guardar borrador', 'Descartar borrador']) {
+      expect(screen.queryByRole('button', { name: nombre })).not.toBeInTheDocument()
+    }
+  })
+
+  it('Guardar cambios manda un PUT con los items editados, sale de la edición y muestra el detalle devuelto', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    apiPutMock.mockResolvedValue(
+      confirmada({ items: [itemFixture({ cantidad: 7 })], total: 800, pagado: 800, saldoPendiente: 0 }),
+    )
+    await entrarEnEdicion(usuario)
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+
+    const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
+    await usuario.clear(cantidad)
+    await usuario.type(cantidad, '7')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    const [ruta, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(ruta).toBe('/compras/1')
+    expect(cuerpo.items).toHaveLength(1)
+    expect(cuerpo.items[0]).toMatchObject({ idArticulo: 10, unidades: 7 })
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    // Salió de la edición: vuelve la vista de solo lectura con el pagado y el saldo del detalle devuelto.
+    expect(await screen.findByRole('button', { name: 'Editar compra' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Guardar cambios' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Cantidad, línea \d+$/)).not.toBeInTheDocument()
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
+  })
+
+  it('un doble click síncrono en Guardar cambios manda un solo PUT y deja todo inerte mientras está en vuelo', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    let resolverPut: (valor: CompraDetalle) => void = () => {}
+    apiPutMock.mockImplementation(() => new Promise((resolve) => (resolverPut = resolve)))
+    await entrarEnEdicion(usuario)
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+
+    const guardar = screen.getByRole('button', { name: 'Guardar cambios' })
+    act(() => {
+      guardar.click()
+      guardar.click()
+    })
+
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeDisabled()
+
+    await act(async () => {
+      resolverPut(confirmada())
+    })
+    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+  })
+
+  it('Cancelar descarta lo tipeado, sale de la edición y vuelve a pedir la compra', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    await entrarEnEdicion(usuario)
+    const observaciones = screen.getByLabelText('Observaciones')
+    await waitFor(() => expect(observaciones).toBeEnabled())
+    await usuario.type(observaciones, 'cambio que se descarta')
+    const lecturasAntes = apiGetMock.mock.calls.filter((c) => c[0] === '/compras/1').length
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByRole('button', { name: 'Editar compra' })).toBeEnabled()
+    await waitFor(() => expect(apiGetMock.mock.calls.filter((c) => c[0] === '/compras/1').length).toBe(lecturasAntes + 1))
+    expect(apiPutMock).not.toHaveBeenCalled()
+
+    // Al volver a editar, el campo trae lo del servidor y no lo tipeado.
+    await usuario.click(screen.getByRole('button', { name: 'Editar compra' }))
+    expect(await screen.findByLabelText('Observaciones')).toHaveValue('')
+  })
+
+  it('si la recarga al cancelar falla, conserva lo último conocido y lo avisa', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    await entrarEnEdicion(usuario)
+    let lecturas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1') {
+        lecturas += 1
+        return Promise.reject(new Error('sin red'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByText(/No se pudo recargar la compra/)).toBeInTheDocument()
+    expect(lecturas).toBe(1)
+    expect(screen.getByRole('button', { name: 'Editar compra' })).toBeEnabled()
+  })
+
+  it('Editar borra el aviso de éxito anterior', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    apiPutMock.mockResolvedValue(confirmada())
+    await entrarEnEdicion(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+
+    await usuario.click(await screen.findByRole('button', { name: 'Editar compra' }))
+
+    expect(screen.queryByText(/Cambios guardados/)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [
+      'compra_edicion_stock_negativo',
+      'El artículo Fideos 500g (lote L-1) quedaría con stock negativo.',
+      'El artículo Fideos 500g (lote L-1) quedaría con stock negativo.',
+    ],
+    [
+      'compra_cambio_concurrente',
+      'La compra cambió de estado mientras se editaba. Recargala y volvé a intentar.',
+      'La compra cambió mientras la editabas; recargala.',
+    ],
+    ['compra_duplicada', 'Ya existe una compra confirmada con ese número.', 'Ya existe una compra confirmada con ese número.'],
+    ['lote_vencido_en_recepcion', 'El lote L-1 ya está vencido.', 'El lote L-1 ya está vencido.'],
+  ])('el rechazo %s se muestra legible y se queda en edición', async (codigo, mensajeDelServidor, esperado) => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    apiPutMock.mockRejectedValue(new ErrorApi(409, codigo, mensajeDelServidor))
+    await entrarEnEdicion(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(esperado)
+    expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeEnabled()
+  })
+
+  it('en edición consulta duplicados excluyendo esta misma compra', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    const llamadas = () =>
+      apiGetMock.mock.calls.map((c) => c[0] as string).filter((ruta) => ruta.startsWith('/compras/duplicados'))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 600))
+    })
+    expect(llamadas()).toHaveLength(0)
+
+    await entrarEnEdicion(usuario)
+
+    await waitFor(() => expect(llamadas()).toHaveLength(1), { timeout: 3000 })
+    const parametros = new URLSearchParams(llamadas()[0].split('?')[1])
+    expect(parametros.get('numeroExterno')).toBe('0003-00012345')
+    expect(parametros.get('excluirId')).toBe('1')
+  })
+
+  it('"Editar compra" se deshabilita con el modal de pago abierto', async () => {
+    const usuario = userEvent.setup()
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(confirmada())
+      if (ruta === '/compras/1/pagos-aplicables') return Promise.resolve({ pagos: [] })
+      return undefined
+    })
+    renderEditor()
+    await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
+
+    expect(screen.getByRole('button', { name: 'Editar compra' })).toBeDisabled()
+  })
+})
