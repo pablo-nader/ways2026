@@ -298,6 +298,7 @@ app.MapearProveedores();
 app.MapearPersonal();
 app.MapearCuentasTesoreria();
 app.MapearCuentaDePersonal();
+app.MapearCargaSemanalDeHoras();
 app.MapearArticulos();
 // Familias de artículos (doc 10 §3): gestión, solo admin.
 app.MapearFamilias();

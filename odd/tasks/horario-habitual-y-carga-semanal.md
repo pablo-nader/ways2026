@@ -76,6 +76,29 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   diferencias; bajar horas revierte el importe exacto; superar 24 h por día responde 400;
   día futuro responde 400; confirmar en 0 h no se vuelve a precargar.
   Checks: dominio del cálculo de diferencias, integración del endpoint, concurrencia, RLS.
+  Evidencia (parcial, ejecutada 2026-10-29): commits 41f1130f (planificador y reglas de semana, dominio) y 3dcc94a1
+  (jornadas, CHECK con signo, servicio, endpoints, guardas, docs 10 §8c, tests). Ruta: delegada (trigger de escritura:
+  más de 2 archivos no triviales). Dominio 1967 OK (+31), aplicación 1173 OK (+23, incluye guardas estructurales:
+  inventario de dependientes y escrituras sin reintento), build de la solución sin errores. Integración NO ejecutada
+  (Docker no responde): `CargaSemanalDeHorasTests`, `JornadasPersonalSchemaTests`, los casos nuevos de
+  `MovimientosPersonalSchemaTests`, la entrada de `SuperficieDeAutorizacionTests` y `AislamientoDeTenantTests`
+  compilan pero NO corrieron; el ajuste de `CuentaDePersonalEndpointsTests` (una fecha por carga en la prueba
+  concurrente, porque ahora el día tiene tope de 24 h) tampoco. T2 queda sin tildar hasta correrlos.
+  RED: los tests de dominio se escribieron antes que los tipos (error de compilación CS0246 observado); el servicio y
+  los tests de aplicación se escribieron en orden inverso (sin RED observado, se declara).
+  Mutaciones: (1) cláusula LIFO del planificador, recorrer las capas de la primera a la última: 5 tests de
+  `PlanificadorDeHorasDelDiaTests` en rojo; revertida. (2) tope de 24 h del total pedido (`> 24` → `> 25`) en
+  `ReglaDeSemanaDeCarga.ValidarHorasDelDia`: rojo `LasHorasFueraDeRangoOConTresDecimalesSeRechazan`; revertida (el
+  planificador queda protegido además por `CalcularImporteDeHoras`, que rechaza una diferencia mayor que 24). (3) la
+  precarga solo en días no futuros (`!futuro &&`) del GET: rojo `LosDiasFuturosNoSePrecarganYSeMarcanComoFuturos`;
+  revertida. SIN mutación (requiere Postgres): el tope de 24 h por día de la carga individual
+  (`horas_del_dia_excedidas`), el orden de locks y la invariante jornada == libro; sus pruebas existen en
+  `CargaSemanalDeHorasTests` y no corrieron.
+  Decisiones de la tarea: «hoy» por zona horaria (parámetro `zona_horaria` de la empresa del personal, si no la zona por
+  defecto del sistema), el `hoy` de la respuesta es el de la zona por defecto; validación en orden: forma de la
+  solicitud (400 `solicitud_invalida`), 404 de personal, y por entrada `fecha_requerida`, `dia_duplicado`,
+  `fecha_futura`, `horas_invalidas`. Límite conocido: revertir una capa en varias partes puede diferir centavos del
+  importe acreditado por el redondeo de cada asiento.
 - [ ] T3 — Horario habitual en la pantalla Personal (web). Ruta: delegada.
   Aceptación: el formulario carga y edita las 7 horas; vacío = sin horario.
   Checks: Vitest de helpers y de la pantalla.

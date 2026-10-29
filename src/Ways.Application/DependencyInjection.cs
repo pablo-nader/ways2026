@@ -77,6 +77,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeProveedores>();
         services.AddScoped<ServicioDePersonal>();
         services.AddScoped<ServicioDeCuentaDePersonal>();
+        services.AddScoped<ServicioDeCargaSemanalDeHoras>();
         services.AddScoped<ServicioDePagoDePersonal>();
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
