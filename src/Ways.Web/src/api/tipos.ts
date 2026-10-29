@@ -3736,6 +3736,8 @@ export type PersonalListado = {
   nombreUsuario: string | null
   idCliente: number | null
   nombreCliente: string | null
+  /** Horas por día en orden ISO (índice 0 = lunes … 6 = domingo), 0 = franco; `null` si no tiene. */
+  horarioHabitual: number[] | null
 }
 
 /** Espejo del enum `TipoMovimientoPersonal`: viaja como texto PascalCase. */
@@ -3833,4 +3835,6 @@ export type DatosDePersonal = {
   idEmpresa: number | null
   idUsuario: number | null
   idCliente: number | null
+  /** `null` = sin horario habitual; si no, exactamente 7 horas (lunes a domingo), 0 = franco. */
+  horarioHabitual: number[] | null
 }

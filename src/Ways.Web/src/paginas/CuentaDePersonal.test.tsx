@@ -96,6 +96,7 @@ function empleadoBase(sobrescribir: Partial<PersonalListado> = {}): PersonalList
     nombreUsuario: null,
     idCliente: 21,
     nombreCliente: 'Cliente Ana',
+    horarioHabitual: null,
     ...sobrescribir,
   }
 }

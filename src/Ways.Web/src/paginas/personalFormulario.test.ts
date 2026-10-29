@@ -27,6 +27,7 @@ function personal(sobrescribir: Partial<PersonalListado> = {}): PersonalListado 
     nombreUsuario: 'ana',
     idCliente: 21,
     nombreCliente: 'Ana Gómez',
+    horarioHabitual: null,
     ...sobrescribir,
   }
 }
@@ -78,6 +79,43 @@ function cliente(sobrescribir: Partial<ClienteListado> = {}): ClienteListado {
   }
 }
 
+describe('horario habitual', () => {
+  const vacio = ['', '', '', '', '', '', '']
+
+  it('todo vacío viaja como null', () => {
+    expect(aDatos(formulario({ horario: vacio })).horarioHabitual).toBeNull()
+    expect(validarFormulario(formulario({ horario: vacio }))).toBeNull()
+  })
+
+  it('con algún día cargado, los vacíos son franco (0)', () => {
+    const datos = aDatos(formulario({ horario: ['8', '', '8,5', '', '', '4.25', ''] }))
+
+    expect(datos.horarioHabitual).toEqual([8, 0, 8.5, 0, 0, 4.25, 0])
+  })
+
+  it('acepta los límites 0 y 24', () => {
+    const f = formulario({ horario: ['0', '24', '', '', '', '', ''] })
+
+    expect(validarFormulario(f)).toBeNull()
+    expect(aDatos(f).horarioHabitual).toEqual([0, 24, 0, 0, 0, 0, 0])
+  })
+
+  it.each([['24,01'], ['25'], ['1,234'], ['-1'], ['1,2,3']])('%s es inválido y se marca en horario', (texto) => {
+    const error = validarFormulario(formulario({ horario: ['8', texto, '', '', '', '', ''] }))
+
+    expect(error?.campo).toBe('horario')
+  })
+
+  it('aFormulario carga el horario existente con coma decimal y null deja todo vacío', () => {
+    expect(aFormulario(personal({ horarioHabitual: [8, 8, 7.5, 0, 0, 0, 0] })).horario).toEqual(['8', '8', '7,5', '0', '0', '0', '0'])
+    expect(aFormulario(personal({ horarioHabitual: null })).horario).toEqual(vacio)
+  })
+
+  it('el código horario_habitual_invalido se ubica en horario', () => {
+    expect(errorAlGuardar(new ErrorApi(400, 'horario_habitual_invalido', 'x'))?.campo).toBe('horario')
+  })
+})
+
 describe('formularioVacio / aFormulario', () => {
   it('el formulario vacío no tiene id, ni vínculos, ni valor hora', () => {
     expect(formularioVacio()).toEqual({
@@ -90,6 +128,7 @@ describe('formularioVacio / aFormulario', () => {
       idEmpresa: null,
       idUsuario: null,
       idCliente: null,
+      horario: ['', '', '', '', '', '', ''],
     })
   })
 
@@ -104,6 +143,7 @@ describe('formularioVacio / aFormulario', () => {
       idEmpresa: 4,
       idUsuario: 11,
       idCliente: 21,
+      horario: ['', '', '', '', '', '', ''],
     })
   })
 
@@ -140,6 +180,7 @@ describe('aDatos', () => {
       idEmpresa: 4,
       idUsuario: 11,
       idCliente: 21,
+      horarioHabitual: null,
     })
   })
 
@@ -150,7 +191,7 @@ describe('aDatos', () => {
     expect(datos.telefono).toBeNull()
     expect(datos.observaciones).toBeNull()
     expect(Object.keys(datos).sort()).toEqual(
-      ['documento', 'idCliente', 'idEmpresa', 'idUsuario', 'nombre', 'observaciones', 'telefono', 'valorHora'],
+      ['documento', 'horarioHabitual', 'idCliente', 'idEmpresa', 'idUsuario', 'nombre', 'observaciones', 'telefono', 'valorHora'],
     )
   })
 

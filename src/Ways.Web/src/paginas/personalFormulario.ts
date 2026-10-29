@@ -1,5 +1,6 @@
 import { ErrorApi } from '../api/cliente'
 import { CODIGO_RESULTADO_INCIERTO, COPIA_RESULTADO_INCIERTO } from '../api/bajas'
+import { MAXIMO_DE_HORAS, parsearHoras } from './cuentaDePersonalFormularios'
 import type { ClienteListado, DatosDePersonal, PersonalListado, UsuarioListado } from '../api/tipos'
 
 /** Estado del formulario del ABM de personal. `valorHora` vacío es `null`; los vínculos sueltos son
@@ -15,9 +16,13 @@ export type Formulario = {
   idEmpresa: number | null
   idUsuario: number | null
   idCliente: number | null
+  /** Siete textos tipeados (lunes a domingo). Todos vacíos = sin horario habitual. */
+  horario: string[]
 }
 
-export type CampoConError = 'nombre' | 'valorHora' | 'idUsuario' | 'idCliente' | 'general'
+export const DIAS_DEL_HORARIO = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'] as const
+
+export type CampoConError = 'nombre' | 'valorHora' | 'idUsuario' | 'idCliente' | 'horario' | 'general'
 
 /** Un rechazo (local o del servidor) y el campo donde se muestra; `general` va arriba del formulario. */
 export type ErrorDePersonal = { campo: CampoConError; mensaje: string }
@@ -44,6 +49,7 @@ export function formularioVacio(): Formulario {
     idEmpresa: null,
     idUsuario: null,
     idCliente: null,
+    horario: DIAS_DEL_HORARIO.map(() => ''),
   }
 }
 
@@ -58,7 +64,20 @@ export function aFormulario(p: PersonalListado): Formulario {
     idEmpresa: p.idEmpresa,
     idUsuario: p.idUsuario,
     idCliente: p.idCliente,
+    horario: p.horarioHabitual ? p.horarioHabitual.map((h) => String(h).replace('.', ',')) : DIAS_DEL_HORARIO.map(() => ''),
   }
+}
+
+const COPIA_HORARIO_INVALIDO = `Cada día del horario habitual debe tener entre 0 y ${MAXIMO_DE_HORAS} horas, con hasta dos decimales.`
+
+/** Horario tipeado → payload. `null` si no se cargó ningún día; los días vacíos de un horario cargado
+ * cuentan como franco (0). `undefined` si algún día no es una cantidad válida. */
+function parsearHorario(horario: string[]): number[] | null | undefined {
+  const horas = horario.map(parsearHoras)
+  if (horas.every((h) => h === null)) return null
+  if (horas.some((h) => h !== null && (Number.isNaN(h) || h < 0 || h > MAXIMO_DE_HORAS))) return undefined
+
+  return horas.map((h) => h ?? 0)
 }
 
 function aVacioNulo(valor: string): string | null {
@@ -79,6 +98,7 @@ export function aDatos(f: Formulario): DatosDePersonal {
     idEmpresa: f.idEmpresa,
     idUsuario: f.idUsuario,
     idCliente: f.idCliente,
+    horarioHabitual: parsearHorario(f.horario) ?? null,
   }
 }
 
@@ -89,6 +109,8 @@ export function validarFormulario(f: Formulario): ErrorDePersonal | null {
   if (f.valorHora < 0 || f.valorHora > VALOR_HORA_MAXIMO) {
     return { campo: 'valorHora', mensaje: COPIA_VALOR_HORA_INVALIDO }
   }
+
+  if (parsearHorario(f.horario) === undefined) return { campo: 'horario', mensaje: COPIA_HORARIO_INVALIDO }
 
   return null
 }
@@ -104,6 +126,7 @@ const ERROR_POR_CODIGO: ReadonlyMap<string, ErrorDePersonal> = new Map<string, E
   ['usuario_invalido', { campo: 'idUsuario', mensaje: 'El usuario elegido ya no existe. Actualizá la pantalla y elegí otro.' }],
   ['nombre_requerido', { campo: 'nombre', mensaje: 'Ingresá el nombre.' }],
   ['valor_hora_invalido', { campo: 'valorHora', mensaje: COPIA_VALOR_HORA_INVALIDO }],
+  ['horario_habitual_invalido', { campo: 'horario', mensaje: COPIA_HORARIO_INVALIDO }],
   [
     'referencia_invalida',
     { campo: 'general', mensaje: 'Alguno de los datos elegidos ya no existe. Actualizá la pantalla e intentá de nuevo.' },
