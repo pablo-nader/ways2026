@@ -3790,6 +3790,42 @@ export type PaginaDeCuentaDePersonal = {
   hasta: string | null
 }
 
+/** Un día de un empleado en la carga semanal. `horas` es lo que muestra la celda: lo confirmado, el
+ * horario habitual precargado o `null` si no hay nada. `horasCargadas` es lo ya acreditado ese día. */
+export type DiaDeCargaSemanal = {
+  fecha: string
+  horasCargadas: number
+  confirmado: boolean
+  horas: number | null
+  precargado: boolean
+  futuro: boolean
+}
+
+export type FilaDeCargaSemanal = {
+  idPersonal: number
+  nombre: string
+  valorHora: number
+  /** Siete horas de lunes a domingo, o `null` si el empleado no tiene horario habitual. */
+  horarioHabitual: number[] | null
+  /** Siete días, de lunes a domingo. */
+  dias: DiaDeCargaSemanal[]
+}
+
+/** Espejo de la respuesta de `GET /api/personal/horas/semana`: `desde` es un lunes y `hasta` el domingo. */
+export type SemanaDeCargaDeHoras = {
+  desde: string
+  hasta: string
+  hoy: string
+  filas: FilaDeCargaSemanal[]
+}
+
+/** `horas` es el TOTAL deseado del día (0 a 24, hasta dos decimales), no un incremento. */
+export type DiaASolicitarDeCargaSemanal = { idPersonal: number; fecha: string; horas: number }
+
+export type SolicitudDeCargaSemanalDeHoras = { dias: DiaASolicitarDeCargaSemanal[] }
+
+export type ResultadoDeCargaSemanalDeHoras = { movimientosCreados: number; jornadasConfirmadas: number }
+
 /** Espejo de `SolicitudDeCargaDeHoras`. */
 export type SolicitudDeCargaDeHoras = {
   fecha: string

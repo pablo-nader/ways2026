@@ -125,6 +125,7 @@ const MODELO: EntradaDelModelo[] = [
           // Lectura de Admin y Supervisor (Politicas.LecturaDePersonal): el Supervisor ve la pantalla
           // en solo lectura, sin el resto de Administración.
           enlace(puedeVerPersonal, 'Personal', '/personal'),
+          enlace(puedeVerPersonal, 'Carga semanal de horas', '/personal/horas'),
         ],
       },
       {

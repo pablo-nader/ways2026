@@ -166,6 +166,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
         ['Clientes', '/clientes'],
         ['Proveedores', '/proveedores'],
         ['Personal', '/personal'],
+        ['Carga semanal de horas', '/personal/horas'],
       ],
     },
     {
@@ -197,7 +198,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
 // Personal es de lectura para Supervisor: es lo único de Administración que ve.
 const ADMINISTRACION_DE_SUPERVISOR: Resumen = {
   grupo: 'Administración',
-  secciones: [{ titulo: 'Terceros', enlaces: [['Personal', '/personal']] }],
+  secciones: [{ titulo: 'Terceros', enlaces: [['Personal', '/personal'], ['Carga semanal de horas', '/personal/horas']] }],
 }
 const ADMINISTRACION_DE_ROOT: Resumen = {
   grupo: 'Administración',
@@ -306,6 +307,7 @@ describe('esRutaActiva', () => {
     ['/familias/nueva', ['Administración']],
     ['/personal', ['Administración']],
     ['/personal/3/cuenta', ['Administración']],
+    ['/personal/horas', ['Administración']],
     ['/', []],
     ['/cajas', []],
   ]

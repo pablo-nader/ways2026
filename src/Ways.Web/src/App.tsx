@@ -37,6 +37,7 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
+import { CargaSemanalDeHoras } from './paginas/CargaSemanalDeHoras'
 import { CuentaDePersonal } from './paginas/CuentaDePersonal'
 import { Personal } from './paginas/Personal'
 import { CuentasTesoreria } from './paginas/CuentasTesoreria'
@@ -329,6 +330,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Personal />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Carga semanal de horas: mismas políticas que la carga de horas de la cuenta (Admin y Supervisor).
+                Va antes que `/personal/:id/cuenta` solo por lectura: React Router rankea por especificidad. */}
+            <Route
+              path="/personal/horas"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <CargaSemanalDeHoras />
                 </RutaProtegida>
               }
             />
