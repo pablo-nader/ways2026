@@ -328,8 +328,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
         var problema = JsonDocument.Parse(cuerpo).RootElement;
         Assert.Equal("compra_edicion_stock_negativo", problema.GetProperty("codigo").GetString());
-        Assert.Contains($"lote {idLote1}", problema.GetProperty("mensaje").GetString());
-        Assert.Contains($"artículo {ctx.IdArticuloConLote}", problema.GetProperty("mensaje").GetString());
+        Assert.Contains($"lote {idLote1}", problema.GetProperty("title").GetString());
+        Assert.Contains($"artículo {ctx.IdArticuloConLote}", problema.GetProperty("title").GetString());
 
         await using var db = Db(ctx);
         Assert.Equal(2m, (await db.StockLotes.SingleAsync(s => s.IdLote == idLote1)).Cantidad);
