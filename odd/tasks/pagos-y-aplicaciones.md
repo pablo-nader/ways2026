@@ -150,7 +150,7 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   trims the applications newest first (shared `RecorteDeAplicaciones`, also used by the pago edit); a proveedor/PV change releases all
   applications and unlinks `pagos.id_comprobante_compra`; compra-side redondeo reversed; migration `AplicacionesAlCambiarLaCompra` widens
   `tg_comprobantes_compra_admiten_aplicaciones` to `id_proveedor`/`id_punto_venta`. The temporary 409 is gone.
-- [ ] E6-S4 — Costs: re-run the `costo_nominal` update (and supplier codes) on edit, family-aware, under the same lock order.
+- [x] E6-S4 (written; CI pending; branch `pnader/pagos-e6-s4-costos`) — Costs: the edit re-runs the confirmation's `costo_nominal` step only for articles whose effective cost changed vs the previous version, never over a newer confirmed compra; new/changed supplier codes are associated; E6-S3 review follow-ups (PV inheritance only within the pago's empresa, CC ajuste PV fallback, `IgnoreQueryFilters` on `cambiaEmpresa`).
 - [ ] E6-W1 — Web: edit button on a confirmed compra, difference preview, new error codes.
 
 ## Progress
@@ -337,6 +337,27 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   pending. No race-style test for compra-edit x pago-writer (needs a rendezvous; deadlock-safety rests on the shared compra-first order).
   Route: delegated writer.
 
+- 2026-10-28 E6-S4 (branch `pnader/pagos-e6-s4-costos`, stacked on E6-S3): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1977 passed;
+  Application.Tests 1104 passed. Rules: costs = `CalculadorDeEdicionDeCompra.CostosQueCambian` (winner per article/family vs previous version) →
+  `LeerFamiliasDeLosArticulosAsync` → `BloquearArticulosConCostoAsync` (unchanged confirm helpers) → later-compra read AFTER the lock
+  (`fecha_recepcion` greater, or equal with greater id, confirmed, same exact `ActualizaElCosto` guard with that compra's own IVA flags) →
+  `SinLosPisadosPorUnaCompraMasNueva` (a later line on any family member omits the whole family) → one `UPDATE`. Codes: new/changed pairs, all when
+  the proveedor changes, after `SaveChanges`. Audit adds `costos_actualizados`, `costos_omitidos_por_compra_mas_nueva` and
+  `pagos_desvinculados[{id_pago, id_punto_venta_heredado}]`. Unlink SQL is now a CTE with `RETURNING` and inherits the PV only if live and of the
+  pago's empresa; `EscribirAjustesDeProveedorAsync` falls back to the first PV of the pago's empresa (409 `pago_sin_punto_de_venta` if none).
+  Mutation evidence: removing the previous-version comparison fails 4 of 14 `CalculadorDeEdicionDeCompraCostosTests`; removing `IgnoreQueryFilters`
+  on `cambiaEmpresa` fails the source test; both reverted. Integration tests (`ComprasEdicionConfirmadaTests` S4 region,
+  `ComprasEdicionCostosFamiliasTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending. Known limits: the later-compra
+  read has no race test (needs a rendezvous); the "PV of another empresa" inheritance branch has no integration test (needs a second empresa).
+  Route: delegated writer.
+  Judgment-day fix (same branch): the unlink CTE now does `COALESCE(pago PV, compra PV if live and same empresa, lowest-id live PV of the pago's
+  empresa)`, so an unlinked PV-less pago stays editable; only an empresa with no live PV leaves it NULL. Audit `costos_actualizados` now carries
+  `costo_anterior` (read from the locked rows before the UPDATE). New integration test
+  `UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable` (CI pending, Docker down).
+  Known limitations: (a) the later-compra cost guard only sees later compras' current cost lines on currently-live family members (a later compra
+  whose cost line was edited away, or on an article that left the family, is not detected); (b) the runtime CC ajuste fallback picks the lowest-id
+  live PV of the pago's empresa.
+
 ## Next step
 
-E6-S1/S2/S3 are written (branches `pnader/pagos-e6-edicion-compras`, `pnader/pagos-e6-s3-aplicaciones`, judgment-day pending); next is E6-S4 (costs) and E6-W1; E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.
+E6-S1/S2/S3/S4 are written (branches `pnader/pagos-e6-edicion-compras`, `pnader/pagos-e6-s3-aplicaciones`, `pnader/pagos-e6-s4-costos`, judgment-day pending); next is E6-W1; E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.

@@ -807,7 +807,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(2, auditoria.GetProperty("aplicaciones_tratadas").GetArrayLength());
         Assert.Equal(210m, auditoria.GetProperty("redondeo_revertido").GetDecimal());
         Assert.Equal(
-            [pagoA, pagoB], auditoria.GetProperty("pagos_desvinculados").EnumerateArray().Select(p => p.GetInt32()).Order());
+            [pagoA, pagoB],
+            auditoria.GetProperty("pagos_desvinculados").EnumerateArray().Select(p => p.GetProperty("id_pago").GetInt32()).Order());
     }
 
     /// <summary>Un cambio de punto de venta DENTRO de la misma empresa no cambia a quién pertenece la compra: las aplicaciones y
@@ -901,8 +902,21 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         var edicion = await ctx.Admin.PutAsJsonAsync(
             $"/api/gastos/administracion/{idPago}",
             new SolicitudDeEdicionDePago(
-                CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 500m));
+                CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 700m));
         Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
+
+        await using (var db = Db(ctx))
+        {
+            var ajuste = await db.MovimientosCuentaCorrienteProveedor
+                .Where(m => m.Tipo == TipoMovimientoCcProveedor.Ajuste && m.IdProveedor == ctx.IdProveedor)
+                .SingleAsync();
+            Assert.Equal(ctx.IdPuntoVenta, ajuste.IdPuntoVenta);
+        }
+
+        var desvinculados = (await AuditoriaDeLaEdicionAsync(ctx, creada.Id)).GetProperty("pagos_desvinculados").EnumerateArray().ToList();
+        var desvinculado = Assert.Single(desvinculados);
+        Assert.Equal(idPago, desvinculado.GetProperty("id_pago").GetInt32());
+        Assert.Equal(ctx.IdPuntoVenta, desvinculado.GetProperty("id_punto_venta_heredado").GetInt32());
 
         var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
         Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
@@ -914,6 +928,73 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
                 .Where(m => m.IdProveedor == idProveedor).SumAsync(m => (decimal?)m.Importe) ?? 0m;
             Assert.Equal(enLibro, await SaldoAsync(ctx, idProveedor));
         }
+    }
+
+    /// <summary>Un pago sin punto de venta propio vinculado a una compra cuyo punto de venta pasa a OTRA empresa: el de la
+    /// compra no sirve (no es de la empresa del pago), así que al desvincularlo toma el vivo de menor id de su propia empresa
+    /// y sigue siendo editable y borrable, con el saldo del proveedor igual a la suma de su libro.</summary>
+    [Fact]
+    public async Task UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable));
+        int idPvOtraEmpresa;
+        await using (var db = Db(ctx))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var empresa = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Empresas.Add(empresa);
+            await db.SaveChangesAsync();
+            var puntoVenta = new PuntoVenta
+            {
+                IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = "Otra empresa - Local", CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.PuntosVenta.Add(puntoVenta);
+            await db.SaveChangesAsync();
+            idPvOtraEmpresa = puntoVenta.Id;
+        }
+
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+
+        var altaPago = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos/administracion",
+            new SolicitudDePagoDeAdministracion(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
+                "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
+        var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
+        Assert.True(altaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
+
+        var vincular = await ctx.Admin.PostAsJsonAsync(
+            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+        Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
+
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idPuntoVenta: idPvOtraEmpresa));
+
+        await using (var db = Db(ctx))
+        {
+            var pago = await db.Pagos.AsNoTracking().SingleAsync(p => p.Id == idPago);
+            Assert.Null(pago.IdComprobanteCompra);
+            Assert.Equal(ctx.IdPuntoVenta, pago.IdPuntoVenta);
+        }
+
+        var desvinculado = Assert.Single(
+            (await AuditoriaDeLaEdicionAsync(ctx, creada.Id)).GetProperty("pagos_desvinculados").EnumerateArray());
+        Assert.Equal(ctx.IdPuntoVenta, desvinculado.GetProperty("id_punto_venta_heredado").GetInt32());
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/gastos/administracion/{idPago}",
+            new SolicitudDeEdicionDePago(
+                CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 700m));
+        Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
+
+        await using var contexto = Db(ctx);
+        var enLibro = await contexto.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.IdProveedor == ctx.IdProveedor).SumAsync(m => (decimal?)m.Importe) ?? 0m;
+        Assert.Equal(enLibro, await SaldoAsync(ctx, ctx.IdProveedor));
     }
 
     /// <summary>Un pago vinculado por <c>pagos.id_comprobante_compra</c> sin aplicación viva (se desaplicó) tampoco queda
@@ -1089,5 +1170,186 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
     {
         await using var db = Db(ctx);
         return await db.OrdenesCompra.Where(o => o.Id == idOrden).Select(o => o.Estado).SingleAsync();
+    }
+
+    // ---- costos y códigos de proveedor (E6-S4) -----------------------------------------------------------------
+
+    private async Task<decimal?> CostoNominalAsync(Contexto ctx, int idArticulo)
+    {
+        await using var db = Db(ctx);
+        return await db.Articulos.Where(a => a.Id == idArticulo).Select(a => a.CostoNominal).SingleAsync();
+    }
+
+    private async Task FijarCostoNominalAsync(Contexto ctx, int idArticulo, decimal costo)
+    {
+        await using var db = Db(ctx);
+        await db.Articulos.Where(a => a.Id == idArticulo)
+            .ExecuteUpdateAsync(a => a.SetProperty(x => x.CostoNominal, (decimal?)costo));
+    }
+
+    private static SolicitudDeCompra ConLineas(
+        Contexto ctx, string numero, params (int IdArticulo, decimal Unidades, decimal Costo, string? Codigo)[] lineas) =>
+        Solicitud(ctx, ctx.IdArticulo, 1m, numero) with
+        {
+            Items =
+            [
+                .. lineas.Select(l => new LineaDeCompraSolicitada(
+                    l.IdArticulo, "Item de prueba", l.Unidades, null, null, l.Costo, 0m, ctx.IdAlicuotaIva21, true,
+                    CodigoProveedor: l.Codigo))
+            ]
+        };
+
+    /// <summary>Cláusula bajo prueba: re-escribir el costo solo si cambió. Con el costo fijado a mano en 77 (distinto del que
+    /// escribió la confirmación, 121), una edición que solo sube la cantidad lo deja en 77: si la edición re-corriera el
+    /// paso de costos sin comparar, lo volvería a 121.</summary>
+    [Fact]
+    public async Task UnaEdicionQueSoloCambiaLaCantidadNoTocaElCostoNominal()
+    {
+        var ctx = await PrepararAsync(nameof(UnaEdicionQueSoloCambiaLaCantidadNoTocaElCostoNominal));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        Assert.Equal(121m, await CostoNominalAsync(ctx, ctx.IdArticulo));
+        await FijarCostoNominalAsync(ctx, ctx.IdArticulo, 77m);
+
+        await EditarConExitoAsync(ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 12m, creada.NumeroExterno));
+
+        Assert.Equal(77m, await CostoNominalAsync(ctx, ctx.IdArticulo));
+        var auditoria = await AuditoriaDeLaEdicionAsync(ctx, creada.Id);
+        Assert.Empty(auditoria.GetProperty("costos_actualizados").EnumerateArray());
+        Assert.Empty(auditoria.GetProperty("costos_omitidos_por_compra_mas_nueva").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task CambiarElCostoUnitarioDeUnaLineaActualizaElCostoNominalYLoAudita()
+    {
+        var ctx = await PrepararAsync(nameof(CambiarElCostoUnitarioDeUnaLineaActualizaElCostoNominalYLoAudita));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+
+        await EditarConExitoAsync(
+            ctx, creada.Id, ConLineas(ctx, creada.NumeroExterno, (ctx.IdArticulo, 10m, 150m, null)));
+
+        Assert.Equal(181.5m, await CostoNominalAsync(ctx, ctx.IdArticulo));
+        var actualizado = Assert.Single(
+            (await AuditoriaDeLaEdicionAsync(ctx, creada.Id)).GetProperty("costos_actualizados").EnumerateArray());
+        Assert.Equal(ctx.IdArticulo, actualizado.GetProperty("id_articulo").GetInt32());
+        Assert.Equal(181.5m, actualizado.GetProperty("costo").GetDecimal());
+    }
+
+    /// <summary>La factura más nueva domina: editar la vieja no pisa el costo del artículo que la nueva también actualiza, pero
+    /// el otro artículo de la misma edición sí se actualiza, y el rastro nombra al omitido.</summary>
+    [Fact]
+    public async Task UnaCompraConfirmadaMasNuevaConservaSuCostoYLasDemasLineasSeActualizan()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCompraConfirmadaMasNuevaConservaSuCostoYLasDemasLineasSeActualizan));
+        var vieja = await CrearYConfirmarAsync(
+            ctx, ConLineas(ctx, DatosDePrueba.NumeroExternoUnico(), (ctx.IdArticulo, 10m, 100m, null), (ctx.IdArticulo2, 10m, 100m, null)));
+        await CrearYConfirmarAsync(ctx, ConLineas(ctx, DatosDePrueba.NumeroExternoUnico(), (ctx.IdArticulo, 10m, 200m, null)));
+        Assert.Equal(242m, await CostoNominalAsync(ctx, ctx.IdArticulo));
+
+        await EditarConExitoAsync(
+            ctx, vieja.Id,
+            ConLineas(ctx, vieja.NumeroExterno, (ctx.IdArticulo, 10m, 150m, null), (ctx.IdArticulo2, 10m, 150m, null)));
+
+        Assert.Equal(242m, await CostoNominalAsync(ctx, ctx.IdArticulo));
+        Assert.Equal(181.5m, await CostoNominalAsync(ctx, ctx.IdArticulo2));
+        var auditoria = await AuditoriaDeLaEdicionAsync(ctx, vieja.Id);
+        Assert.Equal([ctx.IdArticulo], auditoria.GetProperty("costos_omitidos_por_compra_mas_nueva").EnumerateArray().Select(x => x.GetInt32()));
+        Assert.Equal(
+            [ctx.IdArticulo2], auditoria.GetProperty("costos_actualizados").EnumerateArray().Select(x => x.GetProperty("id_articulo").GetInt32()));
+    }
+
+    /// <summary>Una compra más nueva ANULADA no domina nada: el costo de la edición se escribe.</summary>
+    [Fact]
+    public async Task UnaCompraMasNuevaAnuladaNoImpideActualizarElCosto()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCompraMasNuevaAnuladaNoImpideActualizarElCosto));
+        var vieja = await CrearYConfirmarAsync(ctx, ConLineas(ctx, DatosDePrueba.NumeroExternoUnico(), (ctx.IdArticulo, 10m, 100m, null)));
+        var nueva = await CrearYConfirmarAsync(ctx, ConLineas(ctx, DatosDePrueba.NumeroExternoUnico(), (ctx.IdArticulo, 10m, 200m, null)));
+        var anulacion = await ctx.Admin.PostAsync($"/api/compras/{nueva.Id}/anular", null);
+        Assert.True(anulacion.StatusCode == HttpStatusCode.OK, await anulacion.Content.ReadAsStringAsync());
+
+        await EditarConExitoAsync(ctx, vieja.Id, ConLineas(ctx, vieja.NumeroExterno, (ctx.IdArticulo, 10m, 150m, null)));
+
+        Assert.Equal(181.5m, await CostoNominalAsync(ctx, ctx.IdArticulo));
+    }
+
+    private async Task<List<CodigoProveedor>> CodigosAsync(Contexto ctx)
+    {
+        await using var db = Db(ctx);
+        return await db.CodigosProveedor.AsNoTracking().IgnoreQueryFilters(["BajaLogica"]).OrderBy(c => c.Id).ToListAsync();
+    }
+
+    /// <summary>Una línea nueva con código asocia (artículo, proveedor, código); la edición nunca quita un código (quitar la
+    /// línea lo deja) y no resucita uno que se dio de baja mientras su línea no cambie.</summary>
+    [Fact]
+    public async Task UnaLineaNuevaAsociaSuCodigoDeProveedorYLaEdicionNuncaQuitaNiResucitaCodigos()
+    {
+        var ctx = await PrepararAsync(nameof(UnaLineaNuevaAsociaSuCodigoDeProveedorYLaEdicionNuncaQuitaNiResucitaCodigos));
+        var creada = await CrearYConfirmarAsync(
+            ctx, ConLineas(ctx, DatosDePrueba.NumeroExternoUnico(), (ctx.IdArticulo, 10m, 100m, "VIEJO-1")));
+        Assert.Equal(["VIEJO-1"], (await CodigosAsync(ctx)).Select(c => c.Codigo));
+
+        await EditarConExitoAsync(
+            ctx, creada.Id,
+            ConLineas(ctx, creada.NumeroExterno, (ctx.IdArticulo, 10m, 100m, "VIEJO-1"), (ctx.IdArticulo2, 5m, 100m, "NUEVO-2")));
+
+        var codigos = await CodigosAsync(ctx);
+        Assert.Equal(["VIEJO-1", "NUEVO-2"], codigos.Select(c => c.Codigo));
+        Assert.Equal([ctx.IdArticulo, ctx.IdArticulo2], codigos.Select(c => c.IdArticulo));
+        Assert.All(codigos, c => Assert.Equal(ctx.IdProveedor, c.IdProveedor));
+
+        await using (var db = Db(ctx))
+        {
+            await db.CodigosProveedor.Where(c => c.Codigo == "VIEJO-1")
+                .ExecuteUpdateAsync(c => c.SetProperty(x => x.DeletedAt, (DateTimeOffset?)DateTimeOffset.UtcNow));
+        }
+
+        await EditarConExitoAsync(
+            ctx, creada.Id,
+            ConLineas(ctx, creada.NumeroExterno, (ctx.IdArticulo, 12m, 100m, "VIEJO-1"), (ctx.IdArticulo2, 5m, 100m, "NUEVO-2")));
+        Assert.Equal(1, (await CodigosAsync(ctx)).Count(c => c.Codigo == "VIEJO-1"));
+        Assert.NotNull((await CodigosAsync(ctx)).Single(c => c.Codigo == "VIEJO-1").DeletedAt);
+
+        await EditarConExitoAsync(ctx, creada.Id, ConLineas(ctx, creada.NumeroExterno, (ctx.IdArticulo, 12m, 100m, null)));
+        Assert.Equal(2, (await CodigosAsync(ctx)).Count);
+    }
+
+    /// <summary>Un pago desvinculado cuyo punto de venta propio es nulo y cuyo punto de venta heredado no se pudo asignar
+    /// (el de la compra no es de su empresa) sigue pudiendo darse de baja: el ajuste de cuenta toma un punto de venta activo de
+    /// la empresa del pago en vez de reventar. Acá se simula esa forma poniendo el punto de venta del pago en nulo después de
+    /// desvincularlo.</summary>
+    [Fact]
+    public async Task UnPagoDesvinculadoSinPuntoDeVentaSePuedeBorrarYElAjusteUsaUnPuntoDeVentaDeSuEmpresa()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoDesvinculadoSinPuntoDeVentaSePuedeBorrarYElAjusteUsaUnPuntoDeVentaDeSuEmpresa));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+
+        var altaPago = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos/administracion",
+            new SolicitudDePagoDeAdministracion(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
+                "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
+        var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
+        Assert.True(altaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
+        var vincular = await ctx.Admin.PostAsJsonAsync(
+            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+        Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
+
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor2));
+
+        await using (var db = Db(ctx))
+        {
+            await db.Pagos.Where(p => p.Id == idPago).ExecuteUpdateAsync(p => p.SetProperty(x => x.IdPuntoVenta, (int?)null));
+        }
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
+
+        await using var contexto = Db(ctx);
+        var ajuste = await contexto.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Ajuste && m.IdProveedor == ctx.IdProveedor)
+            .SingleAsync();
+        Assert.Equal(ctx.IdPuntoVenta, ajuste.IdPuntoVenta);
     }
 }

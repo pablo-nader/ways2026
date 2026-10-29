@@ -37,7 +37,26 @@ public sealed record AplicacionTratadaPorLaEdicion(int IdAplicacion, int IdPago,
 /// de estarlo.</summary>
 public sealed record TratamientoDePagosDeLaEdicion(
     IReadOnlyList<AplicacionTratadaPorLaEdicion> Aplicaciones, decimal RedondeoRevertido,
-    IReadOnlyList<int> PagosDesvinculados);
+    IReadOnlyList<PagoDesvinculadoPorLaEdicion> PagosDesvinculados);
+
+/// <summary>Un pago que dejó de estar vinculado a la compra por <c>pagos.id_comprobante_compra</c>.
+/// <c>IdPuntoVentaHeredado</c> es el punto de venta que el pago tomó porque no tenía uno propio (el de la compra si es de su
+/// empresa y está vivo; si no, el vivo de menor id de su empresa); <c>null</c> si ya tenía uno, o si su empresa no tiene
+/// ningún punto de venta vivo.</summary>
+public sealed record PagoDesvinculadoPorLaEdicion(int IdPago, int? IdPuntoVentaHeredado);
+
+/// <summary>El costo nominal que la edición escribió en un artículo (o en cada miembro de su familia) y el que tenía antes
+/// (<c>null</c> si no tenía).</summary>
+public sealed record CostoActualizadoPorLaEdicion(int IdArticulo, decimal Costo, decimal? CostoAnterior = null);
+
+/// <summary>Lo que la edición hizo con los costos: los que escribió y los artículos cuyo costo NO tocó porque una compra
+/// confirmada más nueva ya tiene una línea que actualiza su costo (el de la más nueva se conserva).</summary>
+public sealed record CostosDeLaEdicion(
+    IReadOnlyList<CostoActualizadoPorLaEdicion> Actualizados, IReadOnlyList<int> OmitidosPorCompraMasNueva);
+
+/// <summary>Una línea con artículo de la compra, con el costo efectivo ya derivado, para decidir qué costos mueve la edición.</summary>
+public readonly record struct LineaDeCostoDeCompra(
+    int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo);
 
 /// <summary>
 /// Cálculo puro de la edición de una compra confirmada (sin base de datos): el stock y la cuenta corriente se corrigen
@@ -129,5 +148,75 @@ public static class CalculadorDeEdicionDeCompra
     {
         var limpio = codigo?.Trim();
         return string.IsNullOrEmpty(limpio) ? null : limpio;
+    }
+
+    /// <summary>
+    /// Los costos que una edición vuelve a escribir: de las actualizaciones que la compra editada produce
+    /// (<see cref="CalculadorDeCompra.ResolverActualizacionesDeCosto"/>, el mismo dedupe por orden y por familia de la
+    /// confirmación) solo las que NO coinciden con lo que producía la versión anterior de la compra. Una edición que solo
+    /// cambia cantidades deja el costo efectivo igual y no toca ningún costo; una línea que deja de actualizar el costo, o
+    /// que desaparece, no lo revierte. <paramref name="familiaPorArticulo"/> tiene que cubrir los artículos de ambas versiones.
+    /// </summary>
+    public static IReadOnlyList<ActualizacionDeCosto> CostosQueCambian(
+        IReadOnlyList<LineaDeCostoDeCompra> anteriores, IReadOnlyList<LineaDeCostoDeCompra> nuevas,
+        IReadOnlyDictionary<int, int> familiaPorArticulo)
+    {
+        var previas = CalculadorDeCompra.ResolverActualizacionesDeCosto(ComoTuplas(anteriores), familiaPorArticulo);
+
+        return
+        [
+            .. CalculadorDeCompra.ResolverActualizacionesDeCosto(ComoTuplas(nuevas), familiaPorArticulo)
+                .Where(n => !previas.Any(p => p.IdFamilia == n.IdFamilia && p.Costo == n.Costo
+                    && (n.IdFamilia is not null || p.IdArticulo == n.IdArticulo)))
+        ];
+    }
+
+    private static List<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)> ComoTuplas(
+        IReadOnlyList<LineaDeCostoDeCompra> lineas) =>
+        [.. lineas.Select(l => (l.Orden, l.IdArticulo, l.ActualizaCosto, l.CostoUnitario, l.CostoEfectivo))];
+
+    /// <summary>
+    /// De las filas a las que la edición les escribiría el costo (artículo y costo, ya bloqueadas), separa las que una compra
+    /// confirmada MÁS NUEVA ya domina: si algún artículo con línea posterior que actualiza el costo es la fila o es miembro
+    /// de su misma familia, escribirle el costo de esta compra pisaría el de la factura más nueva. Devuelve los aplicables y
+    /// los artículos omitidos, ascendentes. <paramref name="familiaPorArticulo"/> da la familia de cada artículo que es
+    /// miembro (filas y artículos posteriores); una clave ausente es un artículo suelto.
+    /// </summary>
+    public static (IReadOnlyList<(int IdArticulo, decimal Costo)> Aplicables, IReadOnlyList<int> Omitidos)
+        SinLosPisadosPorUnaCompraMasNueva(
+            IReadOnlyList<(int IdArticulo, decimal Costo)> filas, IReadOnlySet<int> articulosConLineaPosterior,
+            IReadOnlyDictionary<int, int> familiaPorArticulo)
+    {
+        var familiasDominadas = articulosConLineaPosterior
+            .Where(familiaPorArticulo.ContainsKey)
+            .Select(a => familiaPorArticulo[a])
+            .ToHashSet();
+
+        bool EstaDominada((int IdArticulo, decimal Costo) fila) =>
+            articulosConLineaPosterior.Contains(fila.IdArticulo)
+            || (familiaPorArticulo.TryGetValue(fila.IdArticulo, out var familia) && familiasDominadas.Contains(familia));
+
+        return (
+            [.. filas.Where(f => !EstaDominada(f))],
+            [.. filas.Where(EstaDominada).Select(f => f.IdArticulo).Order()]);
+    }
+
+    /// <summary>
+    /// Los códigos de proveedor que la edición vuelve a intentar asociar: los pares (artículo, código) de la compra editada
+    /// que la versión anterior no tenía, o todos si cambia el proveedor (los códigos son del proveedor). Nunca se quita un
+    /// código: borrar una línea o cambiarle el código deja el que ya se asoció. Un código que el usuario dio de baja a mano
+    /// después de confirmar no resucita mientras su línea no cambie.
+    /// </summary>
+    public static IReadOnlyList<AsociacionCandidata> CodigosDeProveedorAAsociar(
+        IEnumerable<LineaConCodigoDeProveedor> anteriores, IEnumerable<LineaConCodigoDeProveedor> nuevas, bool cambiaElProveedor)
+    {
+        var candidatas = AsociacionDeCodigosDeProveedor.Seleccionar(nuevas);
+        if (cambiaElProveedor)
+        {
+            return candidatas;
+        }
+
+        var previas = AsociacionDeCodigosDeProveedor.Seleccionar(anteriores).ToHashSet();
+        return [.. candidatas.Where(c => !previas.Contains(c))];
     }
 }
