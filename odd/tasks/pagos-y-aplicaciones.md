@@ -62,7 +62,7 @@ one PR per stage slice, judgment-day before each PR, auto-merge + Auto-fix.
 - [x] E4 (written; CI pending) — Rounding write-off with `tolerancia_redondeo_pago_proveedor` (default 500); see the E4 progress entry.
 - [ ] E5 — Pago editing with lines and applications, compensating entries.
 - [ ] E6 — Confirmed compra editing (items, total, stock and CC by difference; excess applied
-  amount goes back to credit).
+  amount goes back to credit). Slices S1–S4 and W1 below; S1 and S2 are written.
 - [ ] E7 — Cobros: rename sale method lines to cobros, apply cobros to CC sales.
 - [ ] POS release (`pos-v*`) once the POS bundle uses the new wire contract.
 
@@ -102,8 +102,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
 - [ ] E2-S4 (written; CI pending) — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
 - [x] E2-W1 — Web foundation: types and clients for the `/api/pagos` contract, pure helpers (`api/lineasDePago.ts`, with tests) and the shared `EditorDeLineasDePago` component. The POS payment form (`PagosDelTurno`, still on `/api/gastos` with one medio) does NOT use it yet: pending, tracked under E2-W2.
-- [ ] E2-W2 — Web: lines in the POS payment form (`PagosDelTurno`, shared `ModalDeEdicionDePago` one-medio mode). The administration part (form, edit modal in lines mode, history column) shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`).
-  - Also in W2: lift the CajaTurno single-line restriction in the back office (`ModalDeEdicionDePago` `origenFondos`) once the POS release ships.
+- [x] E2-W2 — Web: lines in the POS payment form. `PagosDelTurno` alta uses `EditorDeLineasDePago` (max 20 lines) and posts `POST /api/pagos` (`SolicitudDePagoConLineas`); the cash-drawer availability warning, the shortfall and the drawer pulse consider only the Efectivo lines paid from the shift cash (`importeEnEfectivoDeCaja`, `haySalidaDeEfectivoDeCaja`). The shift list and `DetalleDeTurnoListas` show the reparto (`textoDeMediosDelPago`) when a pago has more than one medio. `ModalDeEdicionDePago` is now lines-only and the POS edits through `PUT /api/pagos/{id}`; the legacy one-medio mode and the `/gastos` client calls are gone from the web (the backend keeps the legacy routes for old bundles). The administration part shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`). Web release: POS bundle needs Ways.Desktop bump + tag `pos-v0.16.0` to reach the registers.
+- [ ] E2-W4 — Lift the back-office CajaTurno single-line restriction (`Pagos`/`ModalDeEdicionDePago` `origenFondos` prop, `maximoDeLineas=1` and the read-only note) once every register runs `pos-v0.16.0`. Not lifted in W2 on purpose: installed registers keep the old bundle until each caja updates.
 - [x] E2-W3 — Web: administración (`Pagos`/`ModalDeAltaDePago`/edición with lines, `/api/pagos/administracion`) and pagar compra (`ModalDePagoDeCompra` via `/api/pagos/de-compra/{idCompra}`, result key `pago`; `CompraEditor` and `CuentaCorrienteDeProveedor` updated; `vincular-compra` and `desdePago` read on `/api/pagos`). Personal payments untouched (E2-P).
 - [x] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items. Done by S3b (column, FK and index
   dropped).
@@ -133,6 +133,25 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
 - [x] E4 — Rounding write-off of type CC plus the `tolerancia_redondeo_pago_proveedor` parameter (backend + web, branch `pnader/pagos-e4-redondeo`).
 - [ ] E3-W1 — Web: apply existing pagos when loading/paying a compra, credit per supplier.
 - [ ] E3-W2 — Web: apply/unapply screen and adoption of cashier pagos.
+
+### E6 slices
+
+Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por ahora sin restricción". Branch `pnader/pagos-e6-edicion-compras`
+(stacked on E4). Each slice is one PR through judgment-day.
+
+- [x] E6-S1 (written; CI pending) — `CalculadorDeEdicionDeCompra` (Domain, pure): stock difference per `(artículo, PV, lote)` netting the
+  ledger and skipping zeros, CC difference per proveedor, "requires handling the pagos" flag, lot-reuse matcher; `compra.edicion`
+  audit action (catalogue 27 → 28) and its payload.
+- [x] E6-S2 (written; CI pending) — `PUT /api/compras/{id}` dispatcher (`ActualizarAsync`: 404 first; borrador untouched; confirmada →
+  `ActualizarConfirmadaAsync`; anulada → `409 compra_no_editable`), stock by difference, lots, OC re-projection, CC by difference, audit;
+  anulación reverses the stock NET per key; CC statement shows the pending balance only on the newest `compra` row. Temporary
+  `409 compra_edicion_con_aplicaciones` (replaced by S3).
+- [ ] E6-S3 (written; CI pending; branch `pnader/pagos-e6-s3-aplicaciones`) — Applications: edit that lowers the total below what is applied
+  trims the applications newest first (shared `RecorteDeAplicaciones`, also used by the pago edit); a proveedor/PV change releases all
+  applications and unlinks `pagos.id_comprobante_compra`; compra-side redondeo reversed; migration `AplicacionesAlCambiarLaCompra` widens
+  `tg_comprobantes_compra_admiten_aplicaciones` to `id_proveedor`/`id_punto_venta`. The temporary 409 is gone.
+- [x] E6-S4 (written; CI pending; branch `pnader/pagos-e6-s4-costos`) — Costs: the edit re-runs the confirmation's `costo_nominal` step only for articles whose effective cost changed vs the previous version, never over a newer confirmed compra; new/changed supplier codes are associated; E6-S3 review follow-ups (PV inheritance only within the pago's empresa, CC ajuste PV fallback, `IgnoreQueryFilters` on `cambiaEmpresa`).
+- [x] E6-W1 (written; CI pending; branch `pnader/pagos-e6-w1-web`) — Web: "Editar compra" on a confirmed compra (Admin only), edit mode on the borrador form with "Guardar cambios" (PUT, the response is the refreshed detail) and "Cancelar" (discard + reload), effects banner, mapped error codes, audit labels. No numeric difference preview (the server computes the differences; the banner states the effects).
 
 ## Progress
 
@@ -292,6 +311,66 @@ Stacked on E2 (branch `pnader/pagos-e3-s1a-aplicaciones`). Each slice is one PR 
   (`RedondeoDePagosTests`, `RedondeoEsquemaTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
   Route: delegated writer.
 
+- 2026-10-28 E6-S1 + E6-S2 (branch `pnader/pagos-e6-edicion-compras`, stacked on E4): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1957
+  passed; Application.Tests 1099 passed (new `ServicioDeComprasEdicionLockOrderTests`, the new site in the no-retry structural map).
+  Mutation evidence (Domain): netting replaced by last-wins is killed by 2 tests; dropping the zero-diff `Where` is killed by 3; lock-order
+  mutant (a tracked header read before the membership lock) is killed by 2 of the new source-text tests; every mutant reverted.
+  Lock order of `EjecutarEdicionConfirmadaAsync`: membership (shared) → compra header `FOR UPDATE WHERE estado='confirmada'` (0 rows → 404 or
+  `409 compra_cambio_concurrente`) → single EF read → OCs ascending `FOR UPDATE` (`EscriturasDeOrdenDeCompra.BloquearAsync`) → lots ascending
+  `(artículo, código)` → stock (aggregate per `(artículo, PV)` then lots) → EF replace-set → OC re-projection → audit → proveedores ascending
+  (last), CC `compra` rows by difference. Codes: `compra_no_editable` (anulada), `compra_cambio_concurrente`, `compra_edicion_stock_negativo`,
+  `compra_edicion_con_aplicaciones` (TEMPORARY, removed in S3), `compra_edicion_sin_asiento_de_cuenta` (pre-ledger compras cannot change
+  total/proveedor), plus the confirm codes `compra_numero_externo_requerido`/`compra_incompleta_para_confirmar`/`compra_sin_items`. Docs:
+  doc 10 parts 05, 06, 08. Integration tests (`ComprasEdicionConfirmadaTests`, 23 tests incl. a deterministic edit×anular rendezvous;
+  `ComprasLifecycleTests` confirmed-PUT test rewritten) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
+  Not done on purpose: costs and supplier codes on edit (S4); web (W1). Route: delegated writer.
+
+- 2026-10-28 E6-S3 (branch `pnader/pagos-e6-s3-aplicaciones`, stacked on E6-S2): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1963 passed;
+  Application.Tests 1100 passed; `has-pending-model-changes` clean. Mutation evidence: `RecorteDeAplicaciones` newest-first order flipped to
+  oldest-first is killed by 6 of 9 helper tests; reverted. Rules: tope = new total (0 when proveedor/PV changes, which releases all and sets
+  `pagos.id_comprobante_compra = NULL`); redondeo of the compra reversed when it exists and total/proveedor/PV changes (decided in the plan,
+  WRITTEN in the final proveedores loop because the reversal locks the proveedor row). Lock order: membership → compra → OCs → pagos
+  ascending (`BloquearPagosDeLaEdicionAsync`) → lots → stock → EF write → OC projection → audit → proveedores ascending (redondeo reversal,
+  then the CC difference, per proveedor). The migration only widens the trigger; the function does not check empresa since
+  `AplicacionesEntreEmpresas`, so a PV-only change is not caught by the DB (service rule). Integration tests (`ComprasEdicionConfirmadaTests`
+  E6-S3 region, `AplicacionesPagoEsquemaTests` proveedor backstop) NOT run locally (Docker down): CI `backend-integration` is the proof,
+  pending. No race-style test for compra-edit x pago-writer (needs a rendezvous; deadlock-safety rests on the shared compra-first order).
+  Route: delegated writer.
+
+- 2026-10-28 E6-S4 (branch `pnader/pagos-e6-s4-costos`, stacked on E6-S3): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1977 passed;
+  Application.Tests 1104 passed. Rules: costs = `CalculadorDeEdicionDeCompra.CostosQueCambian` (winner per article/family vs previous version) →
+  `LeerFamiliasDeLosArticulosAsync` → `BloquearArticulosConCostoAsync` (unchanged confirm helpers) → later-compra read AFTER the lock
+  (`fecha_recepcion` greater, or equal with greater id, confirmed, same exact `ActualizaElCosto` guard with that compra's own IVA flags) →
+  `SinLosPisadosPorUnaCompraMasNueva` (a later line on any family member omits the whole family) → one `UPDATE`. Codes: new/changed pairs, all when
+  the proveedor changes, after `SaveChanges`. Audit adds `costos_actualizados`, `costos_omitidos_por_compra_mas_nueva` and
+  `pagos_desvinculados[{id_pago, id_punto_venta_heredado}]`. Unlink SQL is now a CTE with `RETURNING` and inherits the PV only if live and of the
+  pago's empresa; `EscribirAjustesDeProveedorAsync` falls back to the first PV of the pago's empresa (409 `pago_sin_punto_de_venta` if none).
+  Mutation evidence: removing the previous-version comparison fails 4 of 14 `CalculadorDeEdicionDeCompraCostosTests`; removing `IgnoreQueryFilters`
+  on `cambiaEmpresa` fails the source test; both reverted. Integration tests (`ComprasEdicionConfirmadaTests` S4 region,
+  `ComprasEdicionCostosFamiliasTests`) NOT run locally (Docker down): CI `backend-integration` is the proof, pending. Known limits: the later-compra
+  read has no race test (needs a rendezvous); the "PV of another empresa" inheritance branch has no integration test (needs a second empresa).
+  Route: delegated writer.
+  Judgment-day fix (same branch): the unlink CTE now does `COALESCE(pago PV, compra PV if live and same empresa, lowest-id live PV of the pago's
+  empresa)`, so an unlinked PV-less pago stays editable; only an empresa with no live PV leaves it NULL. Audit `costos_actualizados` now carries
+  `costo_anterior` (read from the locked rows before the UPDATE). New integration test
+  `UnPagoSinPuntoDeVentaDesvinculadoPorCambioDeEmpresaTomaUnPuntoDeVentaDeSuEmpresaYSigueEditable` (CI pending, Docker down).
+  Known limitations: (a) the later-compra cost guard only sees later compras' current cost lines on currently-live family members (a later compra
+  whose cost line was edited away, or on an article that left the family, is not detected); (b) the runtime CC ajuste fallback picks the lowest-id
+  live PV of the pago's empresa.
+
+- 2026-10-28 E2-W2 (branch `pnader/pagos-e2-w2-pos`): web `tsc -b` clean; `npm run lint` 0 errors; full `vitest run` 262 files / 8397 tests passed. Route: delegated writer (2+ non-trivial files). RED/GREEN: existing POS tests migrated to the lines contract plus new tests (alta with 2 lines, efectivo-only drawer check, multi-medio listing, multi-medio edit via PUT). Back-office restriction intentionally kept (see E2-W4).
+
+- 2026-10-28 E6-W1 (branch `pnader/pagos-e6-w1-web`, stacked on E6-S4): `npx tsc -b` clean; `npm run lint` 0 errors (pre-existing warnings only);
+  full `npx vitest run` 261 files / 8185 tests passed. `CompraEditor.tsx` gets an `editando` flag: `esEditable = esBorrador || editando` drives the
+  header/grid `disabled`, duplicate check (`excluirId` = this compra) and unit completion; edit mode swaps the confirm/draft buttons for
+  "Guardar cambios" (re-entrancy ref, whole screen inert while in flight, response applied directly: `PUT` returns the recalculated detail with
+  pagado/saldo) and "Cancelar" (reload gated by `generacionRef`, screen inert while it is in flight, failure keeps the last known data and warns).
+  Pagar / Ajustar redondeo / Anular / Aplicar precios are not rendered while editing; "Editar compra" is disabled with the payment or annul modal
+  open. `compras/errorDeEdicionDeCompra.ts` maps `compra_cambio_concurrente` to its own copy; the other 409s show the server message. Audit catalog
+  gains `compra.edicion`, `compra.redondeo`, `pago.aplicacion`, `pago.desaplicacion`, `pago.redondeo` (the web list remains a subset of the 28 back
+  actions). Mutation evidence: dropping `|| pagoAbierto || panelAnularAbierto` and dropping `setAviso('')` in `iniciarEdicion` each fail one test; reverted.
+  Route: delegated writer.
+
 ## Next step
 
-E4 is written (branch `pnader/pagos-e4-redondeo`, judgment-day pending); next are E3-W1/E3-W2 (apply/unapply screens) and E5 (pago editing with lines and applications); E2-W2 (POS payment form with lines) is still open.
+E1–E6 and E2-W2 are written and shipped as PRs (#500…#523); `pos-v0.16.0` (#524) is tagged on main once it merges. Open: E2-W4 (lift the back-office single-medio restriction once every register runs 0.16.0), E2-P (sueldo as one pago), C (cleanup of `/api/gastos`) and E7 (cobros).

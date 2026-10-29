@@ -186,6 +186,14 @@ public static class EscriturasDeOrdenDeCompra
         return ParsearEstado(lockeado.Estado);
     }
 
+    /// <summary>Toma el lock exclusivo de la orden (el mismo statement 1 de <see cref="ProyectarEstadoAsync"/>) sin exigir
+    /// nada de su estado y devuelve el estado. La edición de una compra confirmada lo usa para tomar, en orden ascendente
+    /// de id, el lock de cada orden que va a re-proyectar —la que deja y la que toma—, aunque la que deja esté anulada:
+    /// dejar una orden anulada no puede impedir editar la compra.</summary>
+    public static async Task<EstadoOrdenCompra> BloquearAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idOrdenCompra, CancellationToken ct) =>
+        ParsearEstado((await BloquearYLeerAsync(conexion, transaccion, idTenant, idOrdenCompra, ct)).Estado);
+
     private static EstadoOrdenCompra ParsearEstado(string estado) => estado switch
     {
         "borrador" => EstadoOrdenCompra.Borrador,

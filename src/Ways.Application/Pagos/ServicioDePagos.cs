@@ -872,7 +872,17 @@ public partial class ServicioDePagos(
             return;
         }
 
-        var idPuntoVenta = pago.IdPuntoVenta ?? await PuntoVentaDeLaCompraAsync(pago.IdComprobanteCompra, ct);
+        // Un pago desvinculado por la edición de una compra puede quedar sin punto de venta (el de la compra no era de su
+        // empresa): el asiento toma entonces el primer punto de venta activo de la empresa del pago.
+        var idPuntoVenta = pago.IdPuntoVenta
+            ?? await PuntoVentaDeLaCompraAsync(pago.IdComprobanteCompra, ct)
+            ?? await db.PuntosVenta
+                .Where(p => p.IdEmpresa == pago.IdEmpresa)
+                .OrderBy(p => p.Id)
+                .Select(p => (int?)p.Id)
+                .FirstOrDefaultAsync(ct)
+            ?? throw new ErrorDominio(
+                "pago_sin_punto_de_venta", "La empresa del pago no tiene ningún punto de venta activo para asentar el ajuste.", 409);
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
@@ -1749,23 +1759,22 @@ public partial class ServicioDePagos(
         var exceso = aplicado - pago.Importe;
         if (exceso > 0m)
         {
-            foreach (var aplicacion in aplicaciones.OrderByDescending(a => a.Fecha).ThenByDescending(a => a.Id))
+            var plan = RecorteDeAplicaciones.Planificar(
+                aplicaciones.Select(a => new AplicacionARecortar(a.Id, a.Fecha, a.Importe)), pago.Importe);
+
+            foreach (var recorte in plan)
             {
-                if (exceso <= 0m)
-                {
-                    break;
-                }
-
+                var aplicacion = aplicaciones.First(a => a.Id == recorte.Id);
                 aplicacion.UpdatedAt = momento;
-                if (aplicacion.Importe <= exceso)
-                {
-                    exceso -= aplicacion.Importe;
-                    aplicacion.DeletedAt = momento;
-                    continue;
-                }
 
-                aplicacion.Importe -= exceso;
-                exceso = 0m;
+                if (recorte.Baja)
+                {
+                    aplicacion.DeletedAt = momento;
+                }
+                else
+                {
+                    aplicacion.Importe = recorte.ImporteNuevo;
+                }
             }
 
             return;

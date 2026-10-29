@@ -454,6 +454,47 @@ public class AplicacionesPagoEsquemaTests(WaysApiFixture fixture) : IClassFixtur
         });
     }
 
+    /// <summary>E6-S3: el trigger también dispara al cambiar el proveedor de la compra. Un UPDATE directo que deja
+    /// aplicaciones vivas de pagos del proveedor anterior falla al commit; liberarlas en la misma transacción comitea.
+    /// Sin esta ampliación el UPDATE pasaría en silencio (el trigger solo miraba total y estado).</summary>
+    [Fact]
+    public async Task CambiarElProveedorDeUnaCompraConAplicacionesVivasFallaAlComitear()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(CambiarElProveedorDeUnaCompraConAplicacionesVivasFallaAlComitear));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idCompra = await InsertarCompraAsync(cruda, p, 100m);
+        var idPago = await InsertarPagoAsync(cruda, p, 100m);
+        await LaTransaccionComiteaAsync(cruda, tx => InsertarAplicacionAsync(cruda, tx, p, idPago, idCompra, 80m));
+
+        var excepcion = await LaTransaccionFallaAlComitearAsync(
+            cruda, tx => EjecutarAsync(
+                cruda, tx, "UPDATE comprobantes_compra SET id_proveedor = $1 WHERE id_comprobante_compra = $2",
+                p.IdProveedorOtro, idCompra));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal(TriggerCompra, excepcion.ConstraintName);
+
+        await LaTransaccionComiteaAsync(cruda, async tx =>
+        {
+            await EjecutarAsync(
+                cruda, tx, "UPDATE comprobantes_compra SET id_proveedor = $1 WHERE id_comprobante_compra = $2",
+                p.IdProveedorOtro, idCompra);
+            await EjecutarAsync(cruda, tx, "UPDATE aplicaciones_pago SET deleted_at = now() WHERE id_comprobante_compra = $1", idCompra);
+        });
+    }
+
+    [Fact]
+    public async Task CambiarElProveedorDeUnaCompraSinAplicacionesVivasComitea()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(CambiarElProveedorDeUnaCompraSinAplicacionesVivasComitea));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idCompra = await InsertarCompraAsync(cruda, p, 100m);
+
+        await LaTransaccionComiteaAsync(cruda, tx => EjecutarAsync(
+            cruda, tx, "UPDATE comprobantes_compra SET id_proveedor = $1 WHERE id_comprobante_compra = $2",
+            p.IdProveedorOtro, idCompra));
+    }
+
     [Fact]
     public async Task CambiarElProveedorOLaCategoriaDeUnPagoAplicadoFallaAlComitear()
     {

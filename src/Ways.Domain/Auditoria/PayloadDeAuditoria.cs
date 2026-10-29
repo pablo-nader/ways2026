@@ -141,6 +141,90 @@ public static class PayloadDeAuditoria
                 ["cantidad_de_items"] = cantidadDeItems
             });
 
+    /// <summary><c>compra.edicion</c>. El estado de la compra antes y después (proveedor, punto de venta, número, orden de
+    /// compra, total y líneas) y, solo en el valor nuevo, lo que la edición asentó en el stock y en la cuenta de cada
+    /// proveedor: son los asientos por diferencia, no una copia de los libros. Con <paramref name="pagos"/>, también las
+    /// aplicaciones recortadas o liberadas, el redondeo revertido y los pagos desvinculados. Las claves del anterior son un
+    /// subconjunto de las del nuevo.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        EdicionDeCompra(
+            ResumenDeCompraEditada anterior, ResumenDeCompraEditada nuevo,
+            IReadOnlyList<DiferenciaDeStockDeCompra> diferenciasDeStock,
+            IReadOnlyList<DiferenciaDeCuentaDeCompra> diferenciasDeCuenta,
+            TratamientoDePagosDeLaEdicion? pagos = null, CostosDeLaEdicion? costos = null)
+    {
+        var valorNuevo = ResumenComoPayload(nuevo);
+        if (pagos is not null)
+        {
+            valorNuevo["aplicaciones_tratadas"] = pagos.Aplicaciones
+                .Select(a => (object?)new Dictionary<string, object?>
+                {
+                    ["id_aplicacion"] = a.IdAplicacion,
+                    ["id_pago"] = a.IdPago,
+                    ["importe_anterior"] = a.ImporteAnterior,
+                    ["importe_nuevo"] = a.ImporteNuevo
+                })
+                .ToList();
+            valorNuevo["redondeo_revertido"] = pagos.RedondeoRevertido;
+            valorNuevo["pagos_desvinculados"] = pagos.PagosDesvinculados
+                .Select(p => (object?)new Dictionary<string, object?>
+                {
+                    ["id_pago"] = p.IdPago,
+                    ["id_punto_venta_heredado"] = p.IdPuntoVentaHeredado
+                })
+                .ToList();
+        }
+
+        if (costos is not null)
+        {
+            valorNuevo["costos_actualizados"] = costos.Actualizados
+                .Select(c => (object?)new Dictionary<string, object?>
+                {
+                    ["id_articulo"] = c.IdArticulo,
+                    ["costo"] = c.Costo,
+                    ["costo_anterior"] = c.CostoAnterior
+                })
+                .ToList();
+            valorNuevo["costos_omitidos_por_compra_mas_nueva"] = costos.OmitidosPorCompraMasNueva.Select(a => (object?)a).ToList();
+        }
+
+        valorNuevo["diferencias_de_stock"] = diferenciasDeStock
+            .Select(d => (object?)new Dictionary<string, object?>
+            {
+                ["id_articulo"] = d.IdArticulo,
+                ["id_punto_venta"] = d.IdPuntoVenta,
+                ["id_lote"] = d.IdLote,
+                ["cantidad"] = d.Delta
+            })
+            .ToList();
+        valorNuevo["diferencias_de_cuenta"] = diferenciasDeCuenta
+            .Select(d => (object?)new Dictionary<string, object?>
+            {
+                ["id_proveedor"] = d.IdProveedor,
+                ["importe"] = d.Delta
+            })
+            .ToList();
+
+        return (ResumenComoPayload(anterior), valorNuevo);
+    }
+
+    private static Dictionary<string, object?> ResumenComoPayload(ResumenDeCompraEditada resumen) => new()
+    {
+        ["id_proveedor"] = resumen.IdProveedor,
+        ["id_punto_venta"] = resumen.IdPuntoVenta,
+        ["numero_externo"] = resumen.NumeroExterno,
+        ["id_orden_compra"] = resumen.IdOrdenCompra,
+        ["total"] = resumen.Total,
+        ["items"] = resumen.Lineas
+            .Select(l => (object?)new Dictionary<string, object?>
+            {
+                ["id_articulo"] = l.IdArticulo,
+                ["cantidad"] = l.Cantidad,
+                ["total"] = l.Total
+            })
+            .ToList()
+    };
+
     /// <summary><c>stock.ajuste</c> — call site 9. <paramref name="cantidadAnterior"/> se deriva
     /// de <c>nueva − delta</c> (design decisión 9), nunca de un <c>SELECT</c> extra.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
