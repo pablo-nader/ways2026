@@ -363,14 +363,18 @@ public sealed record SolicitudDeEdicionDePagoConLineas(
 /// nuevo (sin <c>lineas</c> es <c>400 concepto_sin_pago_nuevo</c>), <c>lineas</c> (0 a 20) son el pago nuevo y
 /// <c>aplicaciones</c> (0 a 20) son pagos existentes cuyo disponible se aplica a esta compra; al menos una de las dos
 /// listas no puede estar vacía. Con <c>lineas</c>, la compra tiene que seguir con saldo después de aplicar lo existente
-/// (<c>409 compra_sin_saldo_pendiente</c>).</summary>
+/// (<c>409 compra_sin_saldo_pendiente</c>). <c>cerrarEnCero</c> (por defecto <c>false</c>) cierra a mano la diferencia entre el
+/// saldo y lo que paga el pedido (aplicaciones + líneas) si no supera la tolerancia de redondeo de la compra: lo que falta se
+/// perdona (la compra queda Pagada) y lo que sobra del pago nuevo se absorbe en vez de quedar a favor; pasada la tolerancia es
+/// <c>409 redondeo_excede_tolerancia</c> y no se escribe nada.</summary>
 public sealed record SolicitudDePagoDeCompraConLineas(
     DateOnly Fecha,
     IReadOnlyList<LineaDePago>? Lineas,
     string? Concepto,
-    IReadOnlyList<AplicacionDePagoExistente>? Aplicaciones = null)
+    IReadOnlyList<AplicacionDePagoExistente>? Aplicaciones = null,
+    bool CerrarEnCero = false)
 {
-    public ComandoDePagoDeCompraConAplicaciones AComando() => new(Fecha, Lineas, Concepto, Aplicaciones);
+    public ComandoDePagoDeCompraConAplicaciones AComando() => new(Fecha, Lineas, Concepto, Aplicaciones, CerrarEnCero);
 }
 
 /// <summary>Pago recién persistido del contrato nuevo: sin el medio ni el nombre de la cabecera, el reparto vive en
@@ -400,13 +404,16 @@ public sealed record PagoConLineas(
 /// <summary>Respuesta de <c>POST /api/pagos/de-compra/{idCompra}</c>: el pago bajo la clave <c>pago</c> (la ruta de compras
 /// conserva <c>gasto</c>) y el estado de pago de la compra. <c>pago</c> es <c>null</c> cuando el pedido no trajo líneas (solo
 /// aplicó pagos existentes); <c>aplicaciones</c> son todas las aplicaciones vivas a la compra después de la operación;
-/// <c>disponibleDelPago</c> es lo que del pago nuevo quedó a favor (<c>null</c> sin pago nuevo).</summary>
+/// <c>disponibleDelPago</c> es lo que del pago nuevo quedó a favor (<c>null</c> sin pago nuevo). <c>redondeo</c> es la diferencia
+/// que cerró <c>cerrarEnCero</c> (<c>null</c> si no se pidió o no había diferencia): positiva si faltaba pagar y se perdonó (la
+/// compra quedó Pagada), negativa si el pago nuevo pagó de más y el excedente se absorbió (disponible 0).</summary>
 public sealed record ResultadoDePagoDeCompraConLineas(
     PagoConLineas? Pago,
     decimal Pagado,
     decimal SaldoPendiente,
     IReadOnlyList<AplicacionALaCompraListada> Aplicaciones,
-    decimal? DisponibleDelPago);
+    decimal? DisponibleDelPago,
+    decimal? Redondeo = null);
 
 /// <summary>Una aplicación viva de un pago a la compra, tal como la devuelve el pago de una compra.</summary>
 public sealed record AplicacionALaCompraListada(int IdAplicacion, int IdPago, decimal Importe, DateTimeOffset Fecha);
@@ -417,4 +424,5 @@ public sealed record ResultadoDePagoDeCompraConAplicaciones(
     decimal Pagado,
     decimal SaldoPendiente,
     IReadOnlyList<AplicacionALaCompraListada> Aplicaciones,
-    decimal? DisponibleDelPago);
+    decimal? DisponibleDelPago,
+    decimal? Redondeo = null);

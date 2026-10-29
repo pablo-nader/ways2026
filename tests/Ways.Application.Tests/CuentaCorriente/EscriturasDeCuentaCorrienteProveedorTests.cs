@@ -132,6 +132,46 @@ public class EscriturasDeCuentaCorrienteProveedorTests
         Assert.Contains("Ajuste", excepcion.Message);
     }
 
+    // ---- redondeo (E4) -------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task UnRedondeoSinCompraNiPagoViolaLaFormaYLanza()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InsertarAsync(TipoMovimientoCcProveedor.Redondeo, idPuntoVenta: 1, idEmpleado: 1));
+
+        Assert.Contains("Redondeo", excepcion.Message);
+    }
+
+    [Fact]
+    public async Task UnRedondeoConCompraYPagoALaVezViolaLaFormaYLanza()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InsertarAsync(TipoMovimientoCcProveedor.Redondeo, idComprobanteCompra: 5, idPago: 9, idPuntoVenta: 1, idEmpleado: 1));
+
+        Assert.Contains("Redondeo", excepcion.Message);
+    }
+
+    [Fact]
+    public async Task UnRedondeoSinActorViolaLaFormaYLanza()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InsertarAsync(TipoMovimientoCcProveedor.Redondeo, idPago: 9));
+
+        Assert.Contains("Redondeo", excepcion.Message);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnRedondeoConUnSoloDestinoPasaLaGuardaYLlegaALaConexion(bool conCompra)
+    {
+        // La guarda de forma corre antes de tocar la conexión: con una conexión nula lo que falla es el acceso a ella.
+        await Assert.ThrowsAsync<NullReferenceException>(() => InsertarAsync(
+            TipoMovimientoCcProveedor.Redondeo, idComprobanteCompra: conCompra ? 5 : null, idPago: conCompra ? null : 9,
+            idPuntoVenta: 1, idEmpleado: 1));
+    }
+
     // ---- mutation target #13: Apertura forbids actor/PV (arm aislado de compra/pago/ajuste) ---------
 
     [Fact]

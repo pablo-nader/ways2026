@@ -346,6 +346,14 @@ export const PARAMETROS_CONOCIDOS: {
     tipo: 'decimal',
     porDefecto: '100',
   },
+  // E4 de pagos y aplicaciones (espejo de `ParametroConocido.ToleranciaRedondeoPagoProveedor`): hasta cuánto se perdona o
+  // absorbe al cerrar en cero una compra o un pago de proveedor.
+  {
+    clave: 'tolerancia_redondeo_pago_proveedor',
+    etiqueta: 'Tolerancia de redondeo en pagos a proveedores ($)',
+    tipo: 'decimal',
+    porDefecto: '500',
+  },
 ]
 
 /** Zonas IANA ofrecidas en el editor de `zona_horaria` (design decisión 12): un `<select>`
@@ -2668,12 +2676,14 @@ export type AplicacionDePagoSolicitada = { idPago: number; importe: number }
 
 /** Cuerpo de `POST /api/pagos/de-compra/{idCompra}` (espejo de `SolicitudDePagoDeCompraConLineas`). `fecha` viaja
  * como `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. `lineas` es el
- * dinero nuevo (puede ir vacío si `aplicaciones` cubre algo) y puede superar el saldo: el excedente queda a favor. */
+ * dinero nuevo (puede ir vacío si `aplicaciones` cubre algo) y puede superar el saldo: el excedente queda a favor.
+ * `cerrarEnCero` cierra a mano la diferencia con el saldo si entra en la tolerancia de redondeo (se omite si es falso). */
 export type SolicitudDePagoDeCompra = {
   fecha: string
   lineas: LineaDePagoSolicitud[]
   concepto: string | null
   aplicaciones?: AplicacionDePagoSolicitada[]
+  cerrarEnCero?: boolean
 }
 
 /** Una aplicación viva de un pago a la compra, tal como la devuelve el pago de una compra (espejo de `AplicacionALaCompraListada`). */
@@ -2681,14 +2691,21 @@ export type AplicacionALaCompraListada = { idAplicacion: number; idPago: number;
 
 /** Respuesta de `POST /api/pagos/de-compra/{idCompra}` (espejo de `ResultadoDePagoDeCompraConLineas`): el pago
  * creado bajo la clave `pago` (`null` si el pedido no trajo líneas), el estado de pago de la compra, todas sus
- * aplicaciones vivas y lo que del pago nuevo quedó a favor (`null` sin pago nuevo). */
+ * aplicaciones vivas y lo que del pago nuevo quedó a favor (`null` sin pago nuevo). `redondeo` es la diferencia que cerró
+ * `cerrarEnCero` (`null` o ausente si no hubo): positiva si faltaba pagar y se perdonó, negativa si el pago nuevo pagó de
+ * más y el excedente se absorbió. */
 export type ResultadoDePagoDeCompra = {
   pago: PagoConLineas | null
   pagado: number
   saldoPendiente: number
   aplicaciones: AplicacionALaCompraListada[]
   disponibleDelPago: number | null
+  redondeo?: number | null
 }
+
+/** Respuesta de `POST /api/compras/{id}/ajuste-de-redondeo` (espejo de `ResultadoDeRedondeoDeCompra`): `redondeo` es lo
+ * que se perdonó del saldo (positivo) y la compra queda paga. */
+export type ResultadoDeRedondeoDeCompra = { idCompra: number; redondeo: number; pagado: number; saldoPendiente: number }
 
 /** Un pago con disponible que se puede aplicar a una compra (espejo de `PagoAplicable`). `idProveedor` es `null` en un
  * pago sin proveedor, que adopta el de la compra al aplicarse. */
@@ -2701,8 +2718,9 @@ export type PagoAplicable = {
   idProveedor: number | null
 }
 
-/** Respuesta de `GET /api/compras/{id}/pagos-aplicables` (espejo de `PagosAplicables`). */
-export type PagosAplicables = { pagos: PagoAplicable[] }
+/** Respuesta de `GET /api/compras/{id}/pagos-aplicables` (espejo de `PagosAplicables`). `toleranciaRedondeo` es la tolerancia
+ * de redondeo vigente para esa compra (ausente o `null` en la lista de un proveedor, que no tiene compra de referencia). */
+export type PagosAplicables = { pagos: PagoAplicable[]; toleranciaRedondeo?: number | null }
 
 /** Página de resultados de `GET /api/compras` (espejo de `PaginaDeCompras`). */
 export type PaginaDeCompras = { items: CompraListada[]; total: number; pagina: number; tamanio: number }
@@ -2748,7 +2766,7 @@ export type SaldoDeProveedor = { idProveedor: number; saldo: number; compras: Co
 // `SaldoDeProveedor`/`/saldo`, el resumen por-compra — design decisión 9, dos read models a
 // propósito, ninguno amplía al otro). `POST …/ajustes` es la única escritura de esta superficie.
 
-export type TipoMovimientoCcProveedor = 'Apertura' | 'Compra' | 'Pago' | 'Ajuste'
+export type TipoMovimientoCcProveedor = 'Apertura' | 'Compra' | 'Pago' | 'Ajuste' | 'Redondeo'
 
 /** Una fila del ledger de proveedores — `saldoResultante` es la ÚNICA fuente del saldo corrido,
  * nunca re-derivada en pantalla (design decisión 11). `etiqueta` reutiliza el mismo enum

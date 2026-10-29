@@ -164,6 +164,12 @@ public static class EscriturasDeCuentaCorrienteProveedor
                 "Un movimiento de tipo Ajuste nunca lleva id_pago — invariante de escritura violado.");
         }
 
+        if (tipo == TipoMovimientoCcProveedor.Redondeo && (idComprobanteCompra is null) == (idPago is null))
+        {
+            throw new InvalidOperationException(
+                "Un movimiento de tipo Redondeo lleva exactamente uno de id_comprobante_compra o id_pago — invariante de escritura violado.");
+        }
+
         if (tipo != TipoMovimientoCcProveedor.Apertura && (idPuntoVenta is null || idEmpleado is null))
         {
             throw new InvalidOperationException(

@@ -27,6 +27,7 @@ import type {
   EstadoPago,
   PaginaDeCompras,
   PagosAplicables,
+  ResultadoDeRedondeoDeCompra,
   PercepcionSolicitada,
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
@@ -132,6 +133,9 @@ export const clienteDeCompras = {
     api.post<ResultadoAplicarPrecio[]>(`/compras/${id}/precios`, solicitud),
   /** `GET /api/compras/{id}/pagos-aplicables` — pagos con disponible que se pueden aplicar a la compra. */
   obtenerPagosAplicables: (id: number) => api.get<PagosAplicables>(`/compras/${id}/pagos-aplicables`),
+  /** `POST /api/compras/{id}/ajuste-de-redondeo` — `GestionDeCatalogo`: perdona el saldo de una compra confirmada si no supera
+   * la tolerancia de redondeo (409 `redondeo_excede_tolerancia` / `compra_sin_saldo_pendiente`). */
+  ajustarRedondeo: (id: number) => api.post<ResultadoDeRedondeoDeCompra>(`/compras/${id}/ajuste-de-redondeo`),
   /** `POST /api/pagos/de-compra/{idCompra}` — `GestionDeCatalogo` del lado del servidor: crea el pago de
    * tesorería con sus líneas por medio (puede superar el saldo) y/o aplica pagos existentes a la compra, en una transacción. */
   pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
@@ -517,18 +521,49 @@ export type PagoDeCompraFormulario = {
   concepto: string
   /** Pagos existentes tildados con el importe a aplicar de cada uno. */
   aplicaciones?: AplicacionDePagoSolicitada[]
+  /** Cerrar en cero la diferencia con el saldo (dentro de la tolerancia de redondeo). */
+  cerrarEnCero?: boolean
 }
 
 /** Texto del aviso con el que quien abrió el modal confirma el pago: sin pago nuevo solo se aplicaron pagos a cuenta,
  * y si el pago nuevo superó el saldo se dice cuánto quedó a favor. */
 export function textoDePagoRegistrado(
-  resultado: Pick<ResultadoDePagoDeCompra, 'pago' | 'disponibleDelPago'>,
+  resultado: Pick<ResultadoDePagoDeCompra, 'pago' | 'disponibleDelPago' | 'redondeo'>,
   formatear: (importe: number) => string,
 ): string {
-  if (resultado.pago === null) return 'Pagos a cuenta aplicados a la compra.'
+  const redondeo = textoDeRedondeo(resultado.redondeo ?? null, formatear)
+  if (resultado.pago === null) return `Pagos a cuenta aplicados a la compra.${redondeo}`
   const base = `Pago registrado: ${formatear(resultado.pago.importe)}.`
   const aFavor = resultado.disponibleDelPago ?? 0
-  return aFavor > 0 ? `${base} Quedaron ${formatear(aFavor)} a favor.` : base
+  return `${aFavor > 0 ? `${base} Quedaron ${formatear(aFavor)} a favor.` : base}${redondeo}`
+}
+
+/** Frase del redondeo que cerró un pago: positivo se perdonó (faltaba pagar), negativo se absorbió (se pagó de más). Vacía
+ * si no hubo. */
+export function textoDeRedondeo(redondeo: number | null, formatear: (importe: number) => string): string {
+  if (redondeo === null || redondeo === 0) return ''
+  return redondeo > 0
+    ? ` Se perdonaron ${formatear(redondeo)} de redondeo.`
+    : ` Se absorbieron ${formatear(-redondeo)} de redondeo.`
+}
+
+/** Diferencia con el saldo que dejaría el pago tal como está armado: saldo − pagos a cuenta aplicados − dinero nuevo. Positiva si
+ * falta pagar, negativa si se paga de más. */
+export function diferenciaDelPago(saldoPendiente: number, totalAplicado: number, totalDeLineasNuevas: number): number {
+  return redondearImporte(saldoPendiente - totalAplicado - totalDeLineasNuevas)
+}
+
+/** Se puede cerrar en cero cuando hay una diferencia y no supera la tolerancia de redondeo vigente. */
+export function sePuedeCerrarEnCero(diferencia: number, tolerancia: number | null): boolean {
+  return tolerancia !== null && diferencia !== 0 && Math.abs(diferencia) <= tolerancia
+}
+
+/** Una compra confirmada con saldo de hasta la tolerancia se puede ajustar por redondeo desde su pantalla. */
+export function sePuedeAjustarElRedondeo(
+  compra: Pick<CompraDetalle, 'estado' | 'saldoPendiente'>,
+  tolerancia: number | null,
+): boolean {
+  return compra.estado === 'Confirmada' && compra.saldoPendiente > 0 && tolerancia !== null && compra.saldoPendiente <= tolerancia
 }
 
 /** Valida el formulario con lo mismo que el servidor rechaza antes de escribir y, si pasa, arma la
@@ -569,6 +604,7 @@ export function prepararPagoDeCompra(
       lineas: hayDineroNuevo ? aLineasDeSolicitud(lineas) : [],
       concepto: !hayDineroNuevo || concepto === '' ? null : concepto,
       ...(aplicaciones.length > 0 ? { aplicaciones } : {}),
+      ...(formulario.cerrarEnCero ? { cerrarEnCero: true } : {}),
     },
   }
 }

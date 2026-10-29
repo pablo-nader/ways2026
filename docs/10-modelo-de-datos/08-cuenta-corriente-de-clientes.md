@@ -109,9 +109,10 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
     fecha                 timestamptz NOT NULL,   -- IRelojDelSistema, sin DEFAULT now()
     id_punto_venta        integer     NULL,       -- NULL solo en tipo = 'apertura'
     id_empleado           integer     NULL,       -- NULL solo en tipo = 'apertura'
-    tipo                  tipo_movimiento_cc_proveedor NOT NULL,  -- enum: apertura | compra | pago | ajuste
+    tipo                  tipo_movimiento_cc_proveedor NOT NULL,  -- enum: apertura | compra | pago | ajuste | redondeo
     id_comprobante_compra integer     NULL,       -- 'compra': la que originó la deuda
                                                   -- 'pago'/'ajuste': la compra imputada
+                                                  -- 'redondeo': la compra cuyo saldo se perdonó (o este NULL y va id_pago)
     id_pago              integer     NULL,       -- el pago registrado que materializó el movimiento
     importe               numeric(14,2) NOT NULL, -- + aumenta deuda, − la reduce
     saldo_resultante      numeric(14,2) NOT NULL,
@@ -152,6 +153,21 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 > (Slice 2) y el ajuste manual bajo `Politicas.SupervisionDeCuentaDeProveedor` (Slice 5). El
 > estado de cuenta paginado (`GET /api/proveedores/{id}/cuenta-corriente`) y el estado de pago
 > por compra re-sourced desde el ledger (Slice 4). Todos mergeados.
+>
+> **`redondeo` (E4 de pagos y aplicaciones).** Quinto valor del enum (`ALTER TYPE ... ADD VALUE` en su propia migración,
+> `RedondeoEnCuentaCorrienteDeProveedor`, porque Postgres no deja usar el valor en la transacción que lo agrega) y CHECK
+> `ck_movimientos_cuenta_corriente_proveedor_redondeo_un_destino` (`tipo <> 'redondeo' OR num_nonnulls(id_comprobante_compra,
+> id_pago) = 1`, migración `RedondeoUnDestino`): un redondeo perdona o absorbe la diferencia de UNA compra o de UN pago, nunca de
+> las dos ni de ninguna. Como las demás filas lleva punto de venta y empleado (la CHECK de apertura). Signos, siempre el de la
+> deuda que deja de existir, de modo que el saldo del proveedor queda neto en cero:
+> - **Lado compra** (faltó pagar): `importe` NEGATIVO con `id_comprobante_compra`. Pagar 1500 una compra de 1503,50 escribe −3,50.
+> - **Lado pago** (sobró): `importe` POSITIVO con `id_pago`. Pagar 1500 una compra de 1430,25 escribe +69,75 sobre el pago.
+> - **Reversa**: otro `redondeo` del mismo destino con el signo opuesto (el ledger no se reescribe). Los lectores suman todos, así
+>   que un redondeo revertido pesa 0. La reversa lleva el punto de venta del movimiento original (pago) o el de la compra.
+>
+> Lo escriben el pago de una compra con `cerrarEnCero`, `POST /api/compras/{id}/ajuste-de-redondeo` y `POST
+> /api/pagos/{id}/ajuste-de-redondeo` (ver §5, E4) y lo revierten la anulación de la compra, la baja y la edición de importe de un
+> pago, y desaplicar o recortar una aplicación de una compra con redondeo. El estado de cuenta lo rotula «Redondeo».
 
 ### 8c. Cuenta corriente del personal
 

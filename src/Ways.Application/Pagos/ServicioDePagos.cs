@@ -312,7 +312,9 @@ public partial class ServicioDePagos(
         // E3-S3: vincular es aplicar min(disponible, saldo) a esa compra; sin disponible no hay nada que aplicar.
         var aplicadoDelPago = (await LectorDeDisponiblePorPago.LeerAplicadoAsync(db, [pago.Id], ct))
             .GetValueOrDefault(pago.Id, 0m);
-        var disponibleDelPago = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicadoDelPago);
+        var redondeoDelPago = (await LectorDeDisponiblePorPago.LeerRedondeoAsync(db, [pago.Id], ct))
+            .GetValueOrDefault(pago.Id, 0m);
+        var disponibleDelPago = LectorDeDisponiblePorPago.Disponible(pago.Importe, aplicadoDelPago, redondeoDelPago);
         if (disponibleDelPago <= 0m)
         {
             throw new ErrorDominio("pago_sin_disponible", "El pago no tiene importe disponible para aplicar.", 409);
@@ -703,6 +705,11 @@ public partial class ServicioDePagos(
             throw PagoCambioConcurrente();
         }
 
+        // E4: lo aplicado a cada compra ANTES de la edición o la baja, para compensar el redondeo de las compras que pierdan lugar.
+        var aplicadoAntesPorCompra = aplicaciones
+            .GroupBy(a => a.IdComprobanteCompra)
+            .ToDictionary(g => g.Key, g => g.Sum(a => a.Importe));
+
         if (solicitud is { DeUnSoloMedio: true } && itemsVivos.Count > 1)
         {
             throw new ErrorDominio(
@@ -761,6 +768,11 @@ public partial class ServicioDePagos(
         await EscribirAjustesDeProveedorAsync(
             idTenant, pago, CalculadorDeAjustesDePago.AjustesDeProveedor(anterior, nuevo), detalle, idEmpleado,
             momento, ct);
+
+        await CompensarElRedondeoAsync(
+            idTenant, pago, anterior.Importe, aplicadoAntesPorCompra, comprasBloqueadas, esBaja: solicitud is null,
+            cambiaLaCuenta: anterior.IdProveedor != pago.IdProveedor || anterior.Categoria != pago.Categoria,
+            detalle, idEmpleado, momento, ct);
 
         if (turnoCerrado is not null && CalculadorDeAjustesDePago.AfectaElArqueo(pago.OrigenFondos, anterior, nuevo))
         {
@@ -1682,11 +1694,11 @@ public partial class ServicioDePagos(
             return;
         }
 
-        var aplicado = await db.AplicacionesPago
-            .Where(a => a.IdComprobanteCompra == idComprobanteCompra)
-            .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
+        // Lo pagado incluye lo perdonado por redondeo: una compra cerrada en cero no tiene lugar.
+        var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [idComprobanteCompra], ct))
+            .GetValueOrDefault(idComprobanteCompra, 0m);
 
-        var importe = Math.Min(disponibleDelPago ?? pago.Importe, compra.Total - aplicado);
+        var importe = Math.Min(disponibleDelPago ?? pago.Importe, compra.Total - pagado);
         if (importe <= 0m)
         {
             return;
@@ -1782,7 +1794,8 @@ public partial class ServicioDePagos(
             return;
         }
 
-        var lugar = compra.Total - aplicadoPorOtros - existente.Importe;
+        var perdonadoPorRedondeo = -await RedondeoDeProveedor.NetoDeLaCompraAsync(db, idCompraDelVinculo, ct);
+        var lugar = compra.Total - aplicadoPorOtros - existente.Importe - perdonadoPorRedondeo;
         var agregado = Math.Min(Math.Min(aumento, pago.Importe - aplicado), lugar);
         if (agregado <= 0m)
         {

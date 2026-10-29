@@ -11,7 +11,8 @@ public sealed record ComandoDePagoDeCompraConAplicaciones(
     DateOnly Fecha,
     IReadOnlyList<Ways.Domain.Pagos.LineaDePago>? Lineas,
     string? Concepto,
-    IReadOnlyList<AplicacionDePagoExistente>? Aplicaciones);
+    IReadOnlyList<AplicacionDePagoExistente>? Aplicaciones,
+    bool CerrarEnCero = false);
 
 /// <summary>Cuerpo de <c>POST /api/pagos/{id}/aplicaciones</c>: de 1 a 20 compras de UN mismo proveedor, cada una una vez.
 /// Todo campo se usa: <c>idComprobanteCompra</c> elige la compra y <c>importe</c> es lo que se aplica.</summary>
@@ -27,5 +28,7 @@ public sealed record PagoAplicable(
     decimal Disponible,
     int? IdProveedor);
 
-/// <summary>Respuesta de <c>GET /api/compras/{id}/pagos-aplicables</c> y <c>GET /api/proveedores/{id}/pagos-disponibles</c>.</summary>
-public sealed record PagosAplicables(IReadOnlyList<PagoAplicable> Pagos);
+/// <summary>Respuesta de <c>GET /api/compras/{id}/pagos-aplicables</c> y <c>GET /api/proveedores/{id}/pagos-disponibles</c>.
+/// <c>toleranciaRedondeo</c> es la tolerancia de redondeo vigente para el punto de venta de la compra (para saber si se puede
+/// cerrar en cero); la lista de un proveedor no tiene una compra de referencia y la deja en <c>null</c>.</summary>
+public sealed record PagosAplicables(IReadOnlyList<PagoAplicable> Pagos, decimal? ToleranciaRedondeo = null);

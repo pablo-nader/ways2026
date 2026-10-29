@@ -9,12 +9,12 @@ namespace Ways.Domain.Auditoria;
 ///
 /// <c>dto-contract-honesty</c>: cada constante documenta el par exacto que su call site (design,
 /// tabla "Call sites") tiene permitido escribir — la convención del repo es usar siempre una de
-/// estas 25 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
+/// estas 27 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
 /// acá primero, nunca improvisar un <c>new AccionAuditada(...)</c> inline. El <c>record</c>
 /// posicional público SÍ genera un constructor público (<c>new AccionAuditada("x", "y")</c>
 /// compila): nada en el tipo lo impide, y la membresía al catálogo no se valida en runtime
 /// (design decisión 15 — una acción retirada deja filas consultables cuyo <c>accion</c> ya no
-/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 25" es de convención +
+/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 27" es de convención +
 /// test (<see cref="Ways.Domain.Tests.Auditoria.AccionAuditadaTests"/> congela el catálogo
 /// exacto), no del tipo.
 /// </summary>
@@ -131,13 +131,22 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>id_entidad</c> es el pago.</summary>
     public static readonly AccionAuditada PagoDesaplicacion = new("pago.desaplicacion", "pago");
 
+    /// <summary>Cierre en cero de una compra por redondeo (<c>POST /api/compras/{id}/ajuste-de-redondeo</c> y el pago de una
+    /// compra con <c>cerrarEnCero</c>) — <c>Pagos/ServicioDePagos.Redondeo.cs</c>. El <c>id_entidad</c> es la compra.</summary>
+    public static readonly AccionAuditada CompraRedondeo = new("compra.redondeo", "comprobante_compra");
+
+    /// <summary>Cierre en cero de lo que queda disponible de un pago por redondeo (<c>POST /api/pagos/{id}/ajuste-de-redondeo</c> y
+    /// el pago de una compra con <c>cerrarEnCero</c> que paga de más) — <c>Pagos/ServicioDePagos.Redondeo.cs</c>. El
+    /// <c>id_entidad</c> es el pago.</summary>
+    public static readonly AccionAuditada PagoRedondeo = new("pago.redondeo", "pago");
+
     /// <summary>Alta de un punto de venta sobre una empresa existente —
     /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearPuntoVentaAsync</c>. Mismo dominio
     /// abreviado <c>pv</c> que <see cref="PuntoVentaBaja"/>. El aprovisionamiento de un tenant
     /// crea su primer punto de venta sin pasar por acá.</summary>
     public static readonly AccionAuditada PuntoVentaAlta = new("pv.alta", "punto_venta");
 
-    /// <summary>Las 25 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Las 27 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
@@ -170,6 +179,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         PagoBaja,
         PagoAplicacion,
         PagoDesaplicacion,
+        CompraRedondeo,
+        PagoRedondeo,
         PuntoVentaAlta
     ];
 }

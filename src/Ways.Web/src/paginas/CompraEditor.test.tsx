@@ -2543,6 +2543,97 @@ describe('CompraEditor — pagar una compra confirmada', () => {
   })
 })
 
+describe('CompraEditor — ajustar el redondeo de una compra confirmada', () => {
+  function mockearCompra(compra: CompraDetalle, tolerancia: number | null = 500) {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compra)
+      if (ruta === '/compras/1/pagos-aplicables') {
+        return Promise.resolve(tolerancia === null ? { pagos: [] } : { pagos: [], toleranciaRedondeo: tolerancia })
+      }
+      return undefined
+    })
+  }
+
+  it('ofrece Ajustar redondeo cuando el saldo entra en la tolerancia', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    renderEditor()
+
+    expect(await screen.findByRole('button', { name: 'Ajustar redondeo' })).toBeEnabled()
+  })
+
+  it('no lo ofrece si el saldo supera la tolerancia, si no hay saldo o si la tolerancia no llega', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 0, saldoPendiente: 1149.5 }), 10)
+    const { unmount } = renderEditor()
+    await screen.findByRole('button', { name: 'Pagar' })
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/compras/1/pagos-aplicables'))
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    unmount()
+
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1149.5, saldoPendiente: 0 }))
+    const segundo = renderEditor()
+    await screen.findByRole('button', { name: 'Anular compra' })
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    segundo.unmount()
+
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }), null)
+    const lecturasAntes = apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos-aplicables').length
+    renderEditor()
+    await screen.findByRole('button', { name: 'Pagar' })
+    await waitFor(() =>
+      expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos-aplicables').length).toBeGreaterThan(
+        lecturasAntes,
+      ),
+    )
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+  })
+
+  it('un rol sin escritura no pide la tolerancia ni ve el botón', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    renderEditor()
+
+    await screen.findByText('Fideos 500g')
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos-aplicables')).toHaveLength(0)
+  })
+
+  it('ajustar manda un solo POST aunque se haga doble click, avisa y deja la compra pagada sin recargarla', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    let resolver: (valor: unknown) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1/ajuste-de-redondeo') return new Promise((resolve) => (resolver = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    const boton = await screen.findByRole('button', { name: 'Ajustar redondeo' })
+    await usuario.dblClick(boton)
+
+    // Toda la pantalla queda inerte mientras la escritura está en vuelo.
+    expect(screen.getByRole('button', { name: 'Anular compra' })).toBeDisabled()
+
+    resolver({ idCompra: 1, redondeo: 3.5, pagado: 1149.5, saldoPendiente: 0 })
+    expect(await screen.findByText(/Redondeo aplicado: se perdonaron \$\s3,50/)).toBeInTheDocument()
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/ajuste-de-redondeo')).toHaveLength(1)
+    expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1')).toHaveLength(1)
+  })
+
+  it('un rechazo del servidor se muestra tal cual y deja reintentar', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'redondeo_excede_tolerancia', 'La diferencia supera la tolerancia.'))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await usuario.click(await screen.findByRole('button', { name: 'Ajustar redondeo' }))
+
+    expect(await screen.findByText('La diferencia supera la tolerancia.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ajustar redondeo' })).toBeEnabled()
+  })
+})
+
 describe('CompraEditor — cantidad según la unidad de venta del artículo', () => {
   it('un borrador reabierto resuelve la unidad: por unidad pide enteros, marca una fracción y la fila queda incompleta', async () => {
     mockearReferencia((ruta) => {
