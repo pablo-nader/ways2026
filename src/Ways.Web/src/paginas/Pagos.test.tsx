@@ -1016,7 +1016,7 @@ describe('Pagos (administración) — edición y baja', () => {
     expect(d.getByRole('button', { name: 'Agregar medio' })).toBeEnabled()
   })
 
-  it('un pago de caja con varios medios se ve de solo lectura y no se puede guardar', async () => {
+  it('un pago de caja que ya tiene varios medios se edita completo desde la administración', async () => {
     const repartido = pagoFixture({
       id: 33,
       concepto: 'Flete',
@@ -1034,10 +1034,9 @@ describe('Pagos (administración) — edición y baja', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
 
     const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
-    expect(d.getByText('Este pago de caja tiene varios medios; se edita desde el POS nuevo.')).toBeInTheDocument()
-    expect(d.getByLabelText('Importe de la línea 2')).toBeDisabled()
-    expect(d.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
-    expect(d.queryByRole('button', { name: 'Agregar medio' })).not.toBeInTheDocument()
+    expect(d.getByLabelText('Importe de la línea 2')).toBeEnabled()
+    expect(d.getByRole('button', { name: 'Guardar cambios' })).toBeEnabled()
+    expect(d.getByRole('button', { name: 'Agregar medio' })).toBeEnabled()
   })
 
   it('editar un pago de caja de un turno cerrado muestra el aviso de recálculo del arqueo', async () => {
