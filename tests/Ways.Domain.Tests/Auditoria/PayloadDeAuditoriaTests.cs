@@ -84,6 +84,54 @@ public class PayloadDeAuditoriaTests
             PayloadDeAuditoria.DescarteDeCompra(idProveedor: 7, numeroExterno: "0001-00000001", total: 121m, cantidadDeItems: 2));
 
     [Fact]
+    public void EdicionDeCompraEsConstruibleYLlevaLasDiferenciasSoloEnElValorNuevo()
+    {
+        var anterior = new ResumenDeCompraEditada(
+            7, 2, "0001-00000001", null, 100m, [new LineaAuditadaDeCompra(5, 10m, 100m)]);
+        var nuevo = anterior with { Total = 60m, Lineas = [new LineaAuditadaDeCompra(5, 6m, 60m)] };
+        var payload = PayloadDeAuditoria.EdicionDeCompra(
+            anterior, nuevo,
+            [new DiferenciaDeStockDeCompra(5, 2, null, -4m)],
+            [new DiferenciaDeCuentaDeCompra(7, -40m)]);
+
+        AsumirConstruible(AccionAuditada.CompraEdicion, payload);
+        Assert.Equal(100m, payload.Anterior!["total"]);
+        Assert.Equal(60m, payload.Nuevo["total"]);
+        Assert.False(payload.Anterior.ContainsKey("diferencias_de_stock"));
+        Assert.True(payload.Nuevo.ContainsKey("diferencias_de_stock"));
+        Assert.True(payload.Nuevo.ContainsKey("diferencias_de_cuenta"));
+    }
+
+    [Fact]
+    public void EdicionDeCompraConPagosLlevaLasAplicacionesTratadasElRedondeoYLosVinculosCortados()
+    {
+        var anterior = new ResumenDeCompraEditada(7, 2, "0001-00000001", null, 100m, [new LineaAuditadaDeCompra(5, 10m, 100m)]);
+        var payload = PayloadDeAuditoria.EdicionDeCompra(
+            anterior, anterior with { IdProveedor = 9 }, [], [],
+            new TratamientoDePagosDeLaEdicion(
+                [new AplicacionTratadaPorLaEdicion(11, 21, 40m, 0m)], 3m, [new PagoDesvinculadoPorLaEdicion(21, 2)]),
+            new CostosDeLaEdicion([new CostoActualizadoPorLaEdicion(5, 12.5m, 10m)], [8]));
+
+        AsumirConstruible(AccionAuditada.CompraEdicion, payload);
+        var tratada = Assert.IsType<Dictionary<string, object?>>(Assert.Single((List<object?>)payload.Nuevo["aplicaciones_tratadas"]!));
+        Assert.Equal(11, tratada["id_aplicacion"]);
+        Assert.Equal(21, tratada["id_pago"]);
+        Assert.Equal(0m, tratada["importe_nuevo"]);
+        Assert.Equal(3m, payload.Nuevo["redondeo_revertido"]);
+        var desvinculado = Assert.IsType<Dictionary<string, object?>>(
+            Assert.Single((List<object?>)payload.Nuevo["pagos_desvinculados"]!));
+        Assert.Equal(21, desvinculado["id_pago"]);
+        Assert.Equal(2, desvinculado["id_punto_venta_heredado"]);
+        var costo = Assert.IsType<Dictionary<string, object?>>(Assert.Single((List<object?>)payload.Nuevo["costos_actualizados"]!));
+        Assert.Equal(5, costo["id_articulo"]);
+        Assert.Equal(12.5m, costo["costo"]);
+        Assert.Equal(10m, costo["costo_anterior"]);
+        Assert.Equal([8], ((List<object?>)payload.Nuevo["costos_omitidos_por_compra_mas_nueva"]!).Cast<int>());
+        Assert.False(payload.Anterior!.ContainsKey("costos_actualizados"));
+        Assert.False(payload.Anterior!.ContainsKey("aplicaciones_tratadas"));
+    }
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,
