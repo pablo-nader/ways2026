@@ -63,9 +63,10 @@ export function ModalDeEdicionDePago({
   const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
   const [errorLocal, setErrorLocal] = useState('')
-  const pagoDeCaja = origenFondos === 'CajaTurno'
-  // Un pago de caja con varios medios solo se ve: el POS instalado no los edita.
-  const soloLectura = pagoDeCaja && lineas.length > 1
+  // Un pago de caja con un solo medio no pasa a tener varios desde acá hasta que todas las cajas tengan el POS
+  // nuevo; uno que ya nació con varios medios (en el POS nuevo) se edita completo.
+  const [nacioConVariosMedios] = useState(() => lineasIniciales(pago).length > 1)
+  const limitadoAUnMedio = origenFondos === 'CajaTurno' && !nacioConVariosMedios
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
   // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del pago en silencio: la
@@ -83,7 +84,7 @@ export function ModalDeEdicionDePago({
   }
 
   function guardar() {
-    if (guardando || soloLectura) return
+    if (guardando) return
 
     const errorDeLineas = errorDeLineasDePago(lineas)
     if (formulario.concepto.trim() === '') {
@@ -103,7 +104,7 @@ export function ModalDeEdicionDePago({
       <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={guardando}>
         Cancelar
       </button>
-      <button type="button" className="btn btn-primary" onClick={guardar} disabled={guardando || soloLectura}>
+      <button type="button" className="btn btn-primary" onClick={guardar} disabled={guardando}>
         {guardando ? 'Guardando…' : 'Guardar cambios'}
       </button>
     </>
@@ -125,17 +126,11 @@ export function ModalDeEdicionDePago({
 
       <fieldset disabled={guardando} className="row g-2 border-0 p-0 m-0">
         <div className="col-12">
-          {soloLectura && (
-            <div className="alert alert-info py-2 px-3 small">
-              Este pago de caja tiene varios medios; se edita desde el POS nuevo.
-            </div>
-          )}
           <EditorDeLineasDePago
             lineas={lineas}
             medios={medios}
             onCambio={(cambio) => setLineas(cambio)}
-            deshabilitado={soloLectura}
-            maximoDeLineas={pagoDeCaja ? 1 : undefined}
+            maximoDeLineas={limitadoAUnMedio ? 1 : undefined}
           />
         </div>
 
