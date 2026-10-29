@@ -332,9 +332,9 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
     }
 
     [Fact]
-    public async Task ElLinkSeCongelaAlConfirmarYCompraDetalleHaceRoundTrip()
+    public async Task ElLinkHaceRoundTripYEditarLaCompraConfirmadaLoPuedeQuitar()
     {
-        var ctx = await PrepararAsync(nameof(ElLinkSeCongelaAlConfirmarYCompraDetalleHaceRoundTrip));
+        var ctx = await PrepararAsync(nameof(ElLinkHaceRoundTripYEditarLaCompraConfirmadaLoPuedeQuitar));
         var orden = await CrearYEnviarOrdenAsync(ctx);
 
         var (_, creada, _) = await CrearBorradorDeCompraAsync(ctx, SolicitudDeCompraSimple(ctx, idOrdenCompra: orden.Id));
@@ -343,10 +343,13 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
         var confirmada = await ConfirmarCompraAsync(ctx, creada.Id);
         Assert.Equal(orden.Id, confirmada.IdOrdenCompra); // round-trip exacto (conflicto #4, dto-contract-honesty)
 
-        // Congelado: ningún endpoint permite editar una compra que ya no es borrador.
-        var intentoDeEdicion = await ctx.Admin.PutAsJsonAsync(
-            $"/api/compras/{creada.Id}", SolicitudDeCompraSimple(ctx, idOrdenCompra: null));
-        Assert.Equal(HttpStatusCode.Conflict, intentoDeEdicion.StatusCode);
+        // Desde E6 una compra confirmada se edita: quitar la orden la desliga y la orden se reproyecta.
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/compras/{creada.Id}", SolicitudDeCompraSimple(ctx, idOrdenCompra: null) with { NumeroExterno = confirmada.NumeroExterno });
+        Assert.True(edicion.IsSuccessStatusCode, await edicion.Content.ReadAsStringAsync());
+        var editada = await edicion.Content.ReadFromJsonAsync<CompraDetalle>();
+        Assert.Null(editada!.IdOrdenCompra);
+        Assert.Equal(EstadoOrdenCompra.Enviada, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
     }
 
     // ================================================================================================
