@@ -114,6 +114,11 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > spec de stock se enmienda explícitamente a cuatro, mismo contrato/lock order duplicado
 > intencional).
 
+> **Edición de una compra confirmada (E6):** `motivo = compra` también lo escribe `ServicioDeCompras.ActualizarConfirmadaAsync`: un
+> movimiento por clave `(artículo, punto de venta, lote)` con la DIFERENCIA con signo (positivo o negativo, nunca cero) contra lo que el
+> libro de esa compra ya suma, con `observaciones = 'Edición de la compra #id'`. Por eso el libro de una compra puede tener varios
+> movimientos `compra` de la misma clave; la anulación revierte la suma neta por clave, no cada uno.
+
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
 resolvía "a mano y que Dios ayude".
