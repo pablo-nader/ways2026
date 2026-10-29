@@ -319,6 +319,17 @@ export function Personal() {
       >
         Buscar
       </button>
+      <Link
+        to="/personal/horas"
+        className={`btn btn-sm btn-outline-secondary text-nowrap${bloqueado ? ' disabled' : ''}`}
+        aria-disabled={bloqueado}
+        tabIndex={bloqueado ? -1 : undefined}
+        onClick={(evento) => {
+          if (bloqueado) evento.preventDefault()
+        }}
+      >
+        Cargar horas de la semana
+      </Link>
       {puedeEscribir && (
         <BotonIcono
           icono="agregar"
