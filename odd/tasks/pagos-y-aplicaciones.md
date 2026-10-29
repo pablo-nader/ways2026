@@ -151,7 +151,7 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   applications and unlinks `pagos.id_comprobante_compra`; compra-side redondeo reversed; migration `AplicacionesAlCambiarLaCompra` widens
   `tg_comprobantes_compra_admiten_aplicaciones` to `id_proveedor`/`id_punto_venta`. The temporary 409 is gone.
 - [x] E6-S4 (written; CI pending; branch `pnader/pagos-e6-s4-costos`) — Costs: the edit re-runs the confirmation's `costo_nominal` step only for articles whose effective cost changed vs the previous version, never over a newer confirmed compra; new/changed supplier codes are associated; E6-S3 review follow-ups (PV inheritance only within the pago's empresa, CC ajuste PV fallback, `IgnoreQueryFilters` on `cambiaEmpresa`).
-- [ ] E6-W1 — Web: edit button on a confirmed compra, difference preview, new error codes.
+- [x] E6-W1 (written; CI pending; branch `pnader/pagos-e6-w1-web`) — Web: "Editar compra" on a confirmed compra (Admin only), edit mode on the borrador form with "Guardar cambios" (PUT, the response is the refreshed detail) and "Cancelar" (discard + reload), effects banner, mapped error codes, audit labels. No numeric difference preview (the server computes the differences; the banner states the effects).
 
 ## Progress
 
@@ -358,6 +358,17 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   whose cost line was edited away, or on an article that left the family, is not detected); (b) the runtime CC ajuste fallback picks the lowest-id
   live PV of the pago's empresa.
 
+- 2026-10-28 E6-W1 (branch `pnader/pagos-e6-w1-web`, stacked on E6-S4): `npx tsc -b` clean; `npm run lint` 0 errors (pre-existing warnings only);
+  full `npx vitest run` 261 files / 8185 tests passed. `CompraEditor.tsx` gets an `editando` flag: `esEditable = esBorrador || editando` drives the
+  header/grid `disabled`, duplicate check (`excluirId` = this compra) and unit completion; edit mode swaps the confirm/draft buttons for
+  "Guardar cambios" (re-entrancy ref, whole screen inert while in flight, response applied directly: `PUT` returns the recalculated detail with
+  pagado/saldo) and "Cancelar" (reload gated by `generacionRef`, screen inert while it is in flight, failure keeps the last known data and warns).
+  Pagar / Ajustar redondeo / Anular / Aplicar precios are not rendered while editing; "Editar compra" is disabled with the payment or annul modal
+  open. `compras/errorDeEdicionDeCompra.ts` maps `compra_cambio_concurrente` to its own copy; the other 409s show the server message. Audit catalog
+  gains `compra.edicion`, `compra.redondeo`, `pago.aplicacion`, `pago.desaplicacion`, `pago.redondeo` (the web list remains a subset of the 28 back
+  actions). Mutation evidence: dropping `|| pagoAbierto || panelAnularAbierto` and dropping `setAviso('')` in `iniciarEdicion` each fail one test; reverted.
+  Route: delegated writer.
+
 ## Next step
 
-E6-S1/S2/S3/S4 are written (branches `pnader/pagos-e6-edicion-compras`, `pnader/pagos-e6-s3-aplicaciones`, `pnader/pagos-e6-s4-costos`, judgment-day pending); next is E6-W1; E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.
+E6-S1/S2/S3/S4 and E6-W1 are written (branches `pnader/pagos-e6-edicion-compras`, `pnader/pagos-e6-s3-aplicaciones`, `pnader/pagos-e6-s4-costos`, `pnader/pagos-e6-w1-web`, judgment-day pending); E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.
