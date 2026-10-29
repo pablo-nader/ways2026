@@ -347,8 +347,8 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
         var edicion = await ctx.Admin.PutAsJsonAsync(
             $"/api/compras/{creada.Id}", SolicitudDeCompraSimple(ctx, idOrdenCompra: null) with { NumeroExterno = confirmada.NumeroExterno });
         Assert.True(edicion.IsSuccessStatusCode, await edicion.Content.ReadAsStringAsync());
-        var editada = await edicion.Content.ReadFromJsonAsync<CompraDetalle>();
-        Assert.Null(editada!.IdOrdenCompra);
+        var editada = JsonDocument.Parse(await edicion.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(JsonValueKind.Null, editada.GetProperty("idOrdenCompra").ValueKind);
         Assert.Equal(EstadoOrdenCompra.Enviada, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
     }
 
