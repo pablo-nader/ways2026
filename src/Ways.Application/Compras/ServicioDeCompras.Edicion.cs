@@ -28,7 +28,9 @@ namespace Ways.Application.Compras;
 /// pagos cuyas aplicaciones se recortan o liberan, o cuyo vínculo con la compra se corta (E6-S3), <c>FOR UPDATE</c>,
 /// ascendentes por id →
 /// lotes (ascendente por artículo y código RESUELTO, ordinal: <see cref="ServicioDeLotes.CodigoResuelto"/>, igual que la confirmación) → stock (ascendente por artículo y punto de venta, agregado antes que lotes) →
-/// escritura de encabezado, líneas, alícuotas y percepciones por EF → re-proyección de las órdenes → proveedores,
+/// artículos con costo a reescribir (E6-S4: ascendentes por id, <c>FOR NO KEY UPDATE</c>, como la confirmación) →
+/// escritura de encabezado, líneas, alícuotas y percepciones por EF → códigos de proveedor (sin lock de fila) →
+/// re-proyección de las órdenes → proveedores,
 /// ascendentes por id, ÚLTIMO lock de fila, y su asiento de cuenta corriente.</para>
 /// </summary>
 public partial class ServicioDeCompras
@@ -180,6 +182,7 @@ public partial class ServicioDeCompras
         // ascendentes por id: después de las órdenes y ANTES de lotes y stock, antes del proveedor, que sigue último.
         var cambiaEmpresa = cambiaPuntoVenta && await db.PuntosVenta
             .AsNoTracking()
+            .IgnoreQueryFilters(["BajaLogica"])
             .Where(p => p.Id == comprobante.IdPuntoVenta || p.Id == solicitud.IdPuntoVenta)
             .Select(p => p.IdEmpresa)
             .Distinct()
@@ -188,7 +191,7 @@ public partial class ServicioDeCompras
             id, comprobante.Total, calculada.Total, cambiaProveedor || cambiaEmpresa, ct);
 
         await BloquearPagosDeLaEdicionAsync(conexion, transaccionCruda, idTenant, plan.IdsDePagosAfectados, ct);
-        await AplicarElTratamientoDePagosAsync(
+        var desvinculados = await AplicarElTratamientoDePagosAsync(
             conexion, transaccionCruda, id, idTenant, plan, anterior.IdPuntoVenta, momento, ct);
 
         // 3.b Diferencia de cuenta corriente contra la suma de los asientos de la compra. Sin asiento propio (compra
@@ -342,6 +345,15 @@ public partial class ServicioDeCompras
 
         await AsentarDiferenciasDeStockAsync(conexion, transaccionCruda, idTenant, id, idEmpleado, momento, diferenciasDeStock, ct);
 
+        // 5.b Costos (E6-S4): después de stock y antes de los códigos y los proveedores, igual que la confirmación. Solo se
+        // reescribe el costo de los artículos cuya línea lo actualiza y cuyo costo efectivo cambió respecto de la versión
+        // anterior de la compra, y nunca el de uno que una compra confirmada más nueva ya domina. El encabezado todavía
+        // tiene el discrimina_iva y precios_incluyen_iva anteriores: se leen antes del paso 6.
+        var costos = await ActualizarCostosDeLaEdicionAsync(
+            conexion, transaccionCruda, idTenant, id, comprobante.FechaRecepcion ?? momento,
+            LineasDeCosto(itemsExistentes, comprobante.DiscriminaIva, comprobante.PreciosIncluyenIva),
+            LineasDeCosto(itemsNuevos, discriminaIva, solicitud.PreciosIncluyenIva), momento, ct);
+
         // 6. Encabezado, líneas, alícuotas y percepciones: replace-set por EF (RemoveRange + AddRange, el mismo del
         // borrador). El SaveChanges traduce la unicidad del número del proveedor (23505 → compra_duplicada). La fecha de
         // recepción, el empleado y el origen quedan como estaban.
@@ -372,6 +384,20 @@ public partial class ServicioDeCompras
         db.PercepcionesComprobanteCompra.AddRange(MaterializarPercepciones(id, idTenant, calculada, momento));
         await db.SaveChangesAsync(ct);
 
+        // 6.b Códigos de proveedor (E6-S4): los pares nuevos o cambiados, o todos si cambia el proveedor. Idempotente, y
+        // nunca quita un código. Va después del SaveChanges: las líneas ya insertadas toman FOR KEY SHARE sobre cada
+        // artículo, que es lo que impide que una baja concurrente deje un código huérfano (mismo argumento que la
+        // confirmación con los movimientos de stock).
+        foreach (var candidata in CalculadorDeEdicionDeCompra.CodigosDeProveedorAAsociar(
+                     itemsExistentes.Select(i => new LineaConCodigoDeProveedor(i.Orden, i.IdArticulo, i.CodigoProveedor)),
+                     itemsNuevos.Select(i => new LineaConCodigoDeProveedor(i.Orden, i.IdArticulo, i.CodigoProveedor)),
+                     cambiaProveedor))
+        {
+            await AsociarCodigoDeProveedorSiEstaLibreAsync(
+                conexion, transaccionCruda, idTenant, candidata.IdArticulo, solicitud.IdProveedor, candidata.Codigo,
+                momento, ct);
+        }
+
         // 7. Órdenes de compra: re-proyección con las líneas ya escritas, en el mismo orden ascendente del paso 2.
         foreach (var idOrden in ordenesAfectadas)
         {
@@ -383,7 +409,7 @@ public partial class ServicioDeCompras
             solicitud.IdProveedor, solicitud.IdPuntoVenta, numeroExterno, solicitud.IdOrdenCompra, calculada.Total,
             [.. itemsNuevos.Select(i => new LineaAuditadaDeCompra(i.IdArticulo, i.Cantidad, i.Total))]);
         var (valorAnterior, valorNuevo) = PayloadDeAuditoria.EdicionDeCompra(
-            anterior, nuevo, diferenciasDeStock, diferenciasDeCuenta, plan.Tratamiento);
+            anterior, nuevo, diferenciasDeStock, diferenciasDeCuenta, plan.Tratamiento(desvinculados), costos);
         var servicioDeAuditoria = new ServicioDeAuditoria(db, reloj, contexto);
         await servicioDeAuditoria.RegistrarAsync(
             conexion, transaccionCruda,
@@ -467,10 +493,10 @@ public partial class ServicioDeCompras
             .. Recortes.Select(r => PagoDeLaAplicacion[r.Id]).Concat(PagosADesvincular).Distinct().Order()
         ];
 
-        public TratamientoDePagosDeLaEdicion Tratamiento => new(
+        public TratamientoDePagosDeLaEdicion Tratamiento(IReadOnlyList<PagoDesvinculadoPorLaEdicion> desvinculados) => new(
             [.. Recortes.Select(r => new AplicacionTratadaPorLaEdicion(r.Id, PagoDeLaAplicacion[r.Id], r.ImporteAnterior, r.ImporteNuevo))],
             RevierteElRedondeo ? Math.Abs(RedondeoVigente) : 0m,
-            PagosADesvincular);
+            desvinculados);
     }
 
     /// <summary>E6-S3. Con la compra bloqueada: las aplicaciones vivas, el redondeo vigente y los pagos vinculados por
@@ -530,9 +556,12 @@ public partial class ServicioDeCompras
     /// achica las del recorte, y corta los vínculos <c>pagos.id_comprobante_compra</c> de los pagos que dejan de ser de esta
     /// compra. El asiento <c>pago</c> de cuenta corriente de cada pago NO se toca (libro de solo agregado): conserva su
     /// referencia histórica a la compra (tras un cambio de proveedor queda en el libro del proveedor anterior) y su crédito
-    /// con él. Un pago sin punto de venta propio tomaba el de la compra: al desvincularlo se queda con el que la compra
-    /// tenía (<paramref name="idPuntoVentaAnterior"/>), para seguir siendo editable y borrable.</summary>
-    private static async Task AplicarElTratamientoDePagosAsync(
+    /// con él. Un pago sin punto de venta propio tomaba el de la compra: al desvincularlo hereda el que la compra tenía
+    /// (<paramref name="idPuntoVentaAnterior"/>) SOLO si ese punto de venta está vivo y es de la empresa del pago; si no,
+    /// sigue sin punto de venta y sus ajustes de cuenta usan uno activo de su empresa
+    /// (<c>ServicioDePagos.EscribirAjustesDeProveedorAsync</c>). Devuelve cada pago desvinculado y el punto de venta que
+    /// heredó (<c>null</c> si no heredó ninguno), ascendentes por id, para el rastro.</summary>
+    private static async Task<IReadOnlyList<PagoDesvinculadoPorLaEdicion>> AplicarElTratamientoDePagosAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, PlanDePagosDeLaEdicion plan,
         int idPuntoVentaAnterior, DateTimeOffset momento, CancellationToken ct)
     {
@@ -563,19 +592,40 @@ public partial class ServicioDeCompras
             }
         }
 
-        if (plan.PagosADesvincular.Count > 0)
+        if (plan.PagosADesvincular.Count == 0)
         {
-            await using var desvincular = conexion.CreateCommand();
-            desvincular.Transaction = transaccion;
-            desvincular.CommandText =
-                "UPDATE pagos SET id_comprobante_compra = NULL, id_punto_venta = COALESCE(id_punto_venta, $4), updated_at = $1 " +
-                "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL";
-            ParametrosDeComando.Agregar(desvincular, momento);
-            ParametrosDeComando.Agregar(desvincular, id);
-            ParametrosDeComando.Agregar(desvincular, idTenant);
-            ParametrosDeComando.Agregar(desvincular, idPuntoVentaAnterior);
-            await desvincular.ExecuteNonQueryAsync(ct);
+            return [];
         }
+
+        var desvinculados = new List<PagoDesvinculadoPorLaEdicion>();
+
+        await using var desvincular = conexion.CreateCommand();
+        desvincular.Transaction = transaccion;
+        desvincular.CommandText =
+            "WITH antes AS (" +
+            "  SELECT id_pago, id_punto_venta AS id_punto_venta_antes FROM pagos " +
+            "  WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL) " +
+            "UPDATE pagos p SET id_comprobante_compra = NULL, updated_at = $1, " +
+            "id_punto_venta = COALESCE(p.id_punto_venta, (SELECT pv.id_punto_venta FROM puntos_venta pv " +
+            "  WHERE pv.id_punto_venta = $4 AND pv.id_tenant = $3 AND pv.id_empresa = p.id_empresa AND pv.deleted_at IS NULL)) " +
+            "FROM antes a WHERE p.id_pago = a.id_pago " +
+            "RETURNING p.id_pago, a.id_punto_venta_antes, p.id_punto_venta";
+        ParametrosDeComando.Agregar(desvincular, momento);
+        ParametrosDeComando.Agregar(desvincular, id);
+        ParametrosDeComando.Agregar(desvincular, idTenant);
+        ParametrosDeComando.Agregar(desvincular, idPuntoVentaAnterior);
+
+        await using (var lector = await desvincular.ExecuteReaderAsync(ct))
+        {
+            while (await lector.ReadAsync(ct))
+            {
+                var propio = await lector.IsDBNullAsync(1, ct) ? (int?)null : lector.GetInt32(1);
+                var actual = await lector.IsDBNullAsync(2, ct) ? (int?)null : lector.GetInt32(2);
+                desvinculados.Add(new PagoDesvinculadoPorLaEdicion(lector.GetInt32(0), propio is null ? actual : null));
+            }
+        }
+
+        return [.. desvinculados.OrderBy(d => d.IdPago)];
     }
 
     /// <summary>Un movimiento <c>compra</c> con signo por cada clave que cambia, el upsert del agregado de stock por
@@ -646,5 +696,86 @@ public partial class ServicioDeCompras
         ParametrosDeComando.Agregar(comando, idTenant);
 
         return await comando.ExecuteScalarAsync(ct) is not null;
+    }
+
+    private static List<LineaDeCostoDeCompra> LineasDeCosto(
+        IEnumerable<ItemComprobanteCompra> items, bool discriminaIva, bool preciosIncluyenIva) =>
+    [
+        .. items
+            .Where(i => i.IdArticulo is not null)
+            .Select(i => new LineaDeCostoDeCompra(
+                i.Orden, i.IdArticulo, i.ActualizaCosto, i.CostoUnitario,
+                CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
+                    i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva, preciosIncluyenIva, i.ImpuestoInterno)))
+    ];
+
+    private static bool ActualizaElCosto(LineaDeCostoDeCompra l) =>
+        CalculadorDeCompra.ActualizaElCosto((l.Orden, l.IdArticulo, l.ActualizaCosto, l.CostoUnitario, l.CostoEfectivo));
+
+    /// <summary>E6-S4. Reescribe <c>articulos.costo_nominal</c> con el MISMO camino de la confirmación (lectura de familias
+    /// bajo el lock de membresía compartido, <see cref="BloquearArticulosConCostoAsync"/> con las filas ascendentes y un solo
+    /// <see cref="ActualizarCostosNominalesAsync"/>), pero solo para lo que la edición cambia
+    /// (<see cref="CalculadorDeEdicionDeCompra.CostosQueCambian"/>): sin cambio de costo efectivo no hay ninguna ida a la
+    /// base. La compra más nueva se busca DESPUÉS de tomar los locks de artículo, con una lectura propia: una confirmación
+    /// concurrente de otra compra que ya comiteó se ve, y una que no, espera a este lock y escribe después.</summary>
+    private async Task<CostosDeLaEdicion> ActualizarCostosDeLaEdicionAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCompra, DateTimeOffset recepcion,
+        IReadOnlyList<LineaDeCostoDeCompra> anteriores, IReadOnlyList<LineaDeCostoDeCompra> nuevas, DateTimeOffset momento,
+        CancellationToken ct)
+    {
+        var sinCambios = new CostosDeLaEdicion([], []);
+        var idsConCosto = anteriores.Concat(nuevas).Where(ActualizaElCosto).Select(l => l.IdArticulo!.Value).Distinct().ToList();
+        if (idsConCosto.Count == 0)
+        {
+            return sinCambios;
+        }
+
+        var familias = await LeerFamiliasDeLosArticulosAsync(conexion, transaccion, idTenant, idsConCosto, ct);
+        var aCambiar = CalculadorDeEdicionDeCompra.CostosQueCambian(anteriores, nuevas, familias);
+        if (aCambiar.Count == 0)
+        {
+            return sinCambios;
+        }
+
+        var bloqueados = await BloquearArticulosConCostoAsync(conexion, transaccion, idTenant, aCambiar, ct);
+        if (bloqueados.Count == 0)
+        {
+            return sinCambios;
+        }
+
+        var idsBloqueados = bloqueados.Select(a => a.IdArticulo).ToList();
+        var posteriores = await db.ItemsComprobanteCompra
+            .AsNoTracking()
+            .Where(i => i.ActualizaCosto && i.IdArticulo != null && idsBloqueados.Contains(i.IdArticulo.Value))
+            .Join(
+                db.ComprobantesCompra.AsNoTracking().Where(c =>
+                    c.Estado == EstadoCompra.Confirmada && c.Id != idCompra
+                    && (c.FechaRecepcion > recepcion || (c.FechaRecepcion == recepcion && c.Id > idCompra))),
+                i => i.IdComprobanteCompra, c => c.Id,
+                (i, c) => new
+                {
+                    i.Orden, i.IdArticulo, i.ActualizaCosto, i.CostoUnitario, i.Total, i.Cantidad, i.PorcentajeIva,
+                    i.ImpuestoInterno, c.DiscriminaIva, c.PreciosIncluyenIva
+                })
+            .ToListAsync(ct);
+
+        var conLineaPosterior = posteriores
+            .Where(p => ActualizaElCosto(new LineaDeCostoDeCompra(
+                p.Orden, p.IdArticulo, p.ActualizaCosto, p.CostoUnitario,
+                CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
+                    p.Total, p.Cantidad, p.PorcentajeIva, p.DiscriminaIva, p.PreciosIncluyenIva, p.ImpuestoInterno))))
+            .Select(p => p.IdArticulo!.Value)
+            .ToHashSet();
+
+        var familiasDeLasFilas = conLineaPosterior.Count == 0
+            ? new Dictionary<int, int>()
+            : await LeerFamiliasDeLosArticulosAsync(
+                conexion, transaccion, idTenant, [.. idsBloqueados.Concat(conLineaPosterior).Distinct()], ct);
+        var (aplicables, omitidos) = CalculadorDeEdicionDeCompra.SinLosPisadosPorUnaCompraMasNueva(
+            bloqueados, conLineaPosterior, familiasDeLasFilas);
+
+        await ActualizarCostosNominalesAsync(conexion, transaccion, idTenant, aplicables, momento, ct);
+
+        return new CostosDeLaEdicion([.. aplicables.Select(a => new CostoActualizadoPorLaEdicion(a.IdArticulo, a.Costo))], omitidos);
     }
 }

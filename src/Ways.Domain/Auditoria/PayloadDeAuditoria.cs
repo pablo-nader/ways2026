@@ -151,7 +151,7 @@ public static class PayloadDeAuditoria
             ResumenDeCompraEditada anterior, ResumenDeCompraEditada nuevo,
             IReadOnlyList<DiferenciaDeStockDeCompra> diferenciasDeStock,
             IReadOnlyList<DiferenciaDeCuentaDeCompra> diferenciasDeCuenta,
-            TratamientoDePagosDeLaEdicion? pagos = null)
+            TratamientoDePagosDeLaEdicion? pagos = null, CostosDeLaEdicion? costos = null)
     {
         var valorNuevo = ResumenComoPayload(nuevo);
         if (pagos is not null)
@@ -166,7 +166,21 @@ public static class PayloadDeAuditoria
                 })
                 .ToList();
             valorNuevo["redondeo_revertido"] = pagos.RedondeoRevertido;
-            valorNuevo["pagos_desvinculados"] = pagos.PagosDesvinculados.Select(p => (object?)p).ToList();
+            valorNuevo["pagos_desvinculados"] = pagos.PagosDesvinculados
+                .Select(p => (object?)new Dictionary<string, object?>
+                {
+                    ["id_pago"] = p.IdPago,
+                    ["id_punto_venta_heredado"] = p.IdPuntoVentaHeredado
+                })
+                .ToList();
+        }
+
+        if (costos is not null)
+        {
+            valorNuevo["costos_actualizados"] = costos.Actualizados
+                .Select(c => (object?)new Dictionary<string, object?> { ["id_articulo"] = c.IdArticulo, ["costo"] = c.Costo })
+                .ToList();
+            valorNuevo["costos_omitidos_por_compra_mas_nueva"] = costos.OmitidosPorCompraMasNueva.Select(a => (object?)a).ToList();
         }
 
         valorNuevo["diferencias_de_stock"] = diferenciasDeStock

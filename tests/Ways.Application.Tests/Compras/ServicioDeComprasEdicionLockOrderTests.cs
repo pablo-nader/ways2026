@@ -79,6 +79,8 @@ public class ServicioDeComprasEdicionLockOrderTests
         var pagos = Indice(metodo, "BloquearPagosDeLaEdicionAsync(");
         var lotes = Indice(metodo, "ServicioDeLotes.ResolverOCrearAsync(");
         var stock = Indice(metodo, "AsentarDiferenciasDeStockAsync(");
+        var costos = Indice(metodo, "ActualizarCostosDeLaEdicionAsync(");
+        var codigos = Indice(metodo, "AsociarCodigoDeProveedorSiEstaLibreAsync(");
         var escritura = Indice(metodo, "await db.SaveChangesAsync(ct);");
         var proyeccion = Indice(metodo, "EscriturasDeOrdenDeCompra.ProyectarEstadoAsync(");
         var auditoria = Indice(metodo, "RegistrarAsync(");
@@ -91,7 +93,11 @@ public class ServicioDeComprasEdicionLockOrderTests
         Assert.True(ordenes < pagos, "órdenes → pagos (E6-S3)");
         Assert.True(pagos < lotes, "pagos → lotes");
         Assert.True(lotes < stock, "lotes → stock (design decisión 3 de la etapa 12)");
-        Assert.True(stock < escritura, "stock → escritura de encabezado y líneas");
+        Assert.True(stock < costos, "stock → costos (E6-S4, igual que la confirmación)");
+        Assert.True(costos < escritura, "costos → escritura de encabezado y líneas");
+        Assert.True(escritura < codigos, "las líneas insertadas toman el KEY SHARE del artículo antes de asociar su código");
+        Assert.True(codigos < proyeccion, "códigos → re-proyección de las órdenes");
+        Assert.True(codigos < proveedor, "códigos → proveedores (último lock de fila)");
         Assert.True(escritura < proyeccion, "la re-proyección de las órdenes lee las líneas ya escritas");
         Assert.True(proyeccion < auditoria, "proyección → auditoría");
         Assert.True(auditoria < proveedor, "auditoría → proveedores");
@@ -114,7 +120,8 @@ public class ServicioDeComprasEdicionLockOrderTests
         {
             "BloquearConfirmadaAsync(", "EscriturasDeOrdenDeCompra.BloquearAsync(", "ProyectarEstadoAsync(",
             "BloquearPagosDeLaEdicionAsync(", "AplicarElTratamientoDePagosAsync(", "PlanearElTratamientoDePagosAsync(",
-            "ServicioDeLotes.ResolverOCrearAsync(", "AsentarDiferenciasDeStockAsync(", "LockDeMembresiaDeFamilias."
+            "ServicioDeLotes.ResolverOCrearAsync(", "AsentarDiferenciasDeStockAsync(", "LockDeMembresiaDeFamilias.",
+            "ActualizarCostosDeLaEdicionAsync(", "AsociarCodigoDeProveedorSiEstaLibreAsync("
         })
         {
             Assert.DoesNotContain(marca, despues, StringComparison.Ordinal);
@@ -185,5 +192,74 @@ public class ServicioDeComprasEdicionLockOrderTests
         Assert.Contains("EstadoCompra.Borrador => await ActualizarBorradorAsync(id, solicitud, ct)", despachador, StringComparison.Ordinal);
         Assert.Contains("EstadoCompra.Confirmada => await ActualizarConfirmadaAsync(id, solicitud, ct)", despachador, StringComparison.Ordinal);
         Assert.Contains("\"compra_no_editable\"", despachador, StringComparison.Ordinal);
+    }
+
+    /// <summary>Texto fuente (no hay forma de armar un punto de venta con baja lógica referenciado por una compra viva): el
+    /// cálculo de "cambia la empresa" ve también los puntos de venta con baja lógica. Con el filtro global puesto, un punto de
+    /// venta anterior dado de baja desaparecería del <c>Distinct</c> y un cambio de empresa se vería como "misma empresa" y no
+    /// liberaría las aplicaciones. Mutación: quitar el <c>IgnoreQueryFilters</c> pone en rojo la aserción.</summary>
+    [Fact]
+    public void ElCalculoDeCambioDeEmpresaVeTambienLosPuntosDeVentaDadosDeBaja()
+    {
+        var metodo = Ejecucion();
+        var calculo = metodo[Indice(metodo, "var cambiaEmpresa =")..Indice(metodo, "var plan = await PlanearElTratamientoDePagosAsync(")];
+
+        Assert.Matches(@"db\.PuntosVenta\s*\.AsNoTracking\(\)\s*\.IgnoreQueryFilters\(\[""BajaLogica""\]\)", calculo);
+        Assert.Contains(".Distinct()", calculo, StringComparison.Ordinal);
+    }
+
+    private static string Costos()
+    {
+        var fuente = SinComentarios(LeerFuente());
+        var inicio = Indice(fuente, "private async Task<CostosDeLaEdicion> ActualizarCostosDeLaEdicionAsync(");
+        return fuente[inicio..];
+    }
+
+    /// <summary>E6-S4: el costo de la edición reusa los helpers de la confirmación en su orden (familias, bloqueo ascendente
+    /// de las filas, una escritura), y la búsqueda de la compra más nueva nace DESPUÉS del bloqueo: una confirmación
+    /// concurrente que ya comiteó se ve, y una que no, espera al lock y escribe después. Mutación: mover la lectura de
+    /// compras posteriores antes de <c>BloquearArticulosConCostoAsync</c> pone en rojo la última aserción.</summary>
+    [Fact]
+    public void ElCostoDeLaEdicionLeeFamiliasBloqueaLasFilasBuscaLaCompraMasNuevaYRecienEscribe()
+    {
+        var metodo = Costos();
+
+        var familias = Indice(metodo, "LeerFamiliasDeLosArticulosAsync(");
+        var cambian = Indice(metodo, "CalculadorDeEdicionDeCompra.CostosQueCambian(");
+        var bloqueo = Indice(metodo, "BloquearArticulosConCostoAsync(");
+        var posteriores = Indice(metodo, "db.ItemsComprobanteCompra");
+        var filtro = Indice(metodo, "CalculadorDeEdicionDeCompra.SinLosPisadosPorUnaCompraMasNueva(");
+        var escritura = Indice(metodo, "ActualizarCostosNominalesAsync(");
+
+        Assert.True(familias < cambian, "familias → costos que cambian");
+        Assert.True(cambian < bloqueo, "costos que cambian → bloqueo ascendente de las filas");
+        Assert.True(bloqueo < posteriores, "bloqueo → lectura de la compra más nueva (post-lock)");
+        Assert.True(posteriores < filtro, "lectura de la compra más nueva → filtro");
+        Assert.True(filtro < escritura, "filtro → escritura del costo");
+        Assert.Single(Regex.Matches(metodo, Regex.Escape("ActualizarCostosNominalesAsync(")));
+        Assert.Single(Regex.Matches(metodo, Regex.Escape("db.ItemsComprobanteCompra")));
+    }
+
+    /// <summary>Una edición sin cambio de costo efectivo no hace ninguna ida a la base para costos: las dos salidas
+    /// tempranas (sin líneas que actualicen, sin costos que cambien) van antes de la lectura de familias y del bloqueo.</summary>
+    [Fact]
+    public void UnaEdicionSinCambioDeCostoSaleAntesDeCualquierLecturaOLock()
+    {
+        var metodo = Costos();
+
+        Assert.True(Indice(metodo, "if (idsConCosto.Count == 0)") < Indice(metodo, "LeerFamiliasDeLosArticulosAsync("));
+        Assert.True(Indice(metodo, "if (aCambiar.Count == 0)") < Indice(metodo, "BloquearArticulosConCostoAsync("));
+    }
+
+    /// <summary>La compra más nueva se define por fecha de recepción y, en empate, por id mayor, y solo cuenta si está
+    /// confirmada y no es la propia compra.</summary>
+    [Fact]
+    public void LaCompraMasNuevaSeDefinePorFechaDeRecepcionYDesempatePorId()
+    {
+        var metodo = Costos();
+
+        Assert.Contains("c.Estado == EstadoCompra.Confirmada && c.Id != idCompra", metodo, StringComparison.Ordinal);
+        Assert.Contains(
+            "(c.FechaRecepcion > recepcion || (c.FechaRecepcion == recepcion && c.Id > idCompra))", metodo, StringComparison.Ordinal);
     }
 }
