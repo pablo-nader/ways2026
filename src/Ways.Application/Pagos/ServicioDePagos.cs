@@ -1749,23 +1749,22 @@ public partial class ServicioDePagos(
         var exceso = aplicado - pago.Importe;
         if (exceso > 0m)
         {
-            foreach (var aplicacion in aplicaciones.OrderByDescending(a => a.Fecha).ThenByDescending(a => a.Id))
+            var plan = RecorteDeAplicaciones.Planificar(
+                aplicaciones.Select(a => new AplicacionARecortar(a.Id, a.Fecha, a.Importe)), pago.Importe);
+
+            foreach (var recorte in plan)
             {
-                if (exceso <= 0m)
-                {
-                    break;
-                }
-
+                var aplicacion = aplicaciones.First(a => a.Id == recorte.Id);
                 aplicacion.UpdatedAt = momento;
-                if (aplicacion.Importe <= exceso)
-                {
-                    exceso -= aplicacion.Importe;
-                    aplicacion.DeletedAt = momento;
-                    continue;
-                }
 
-                aplicacion.Importe -= exceso;
-                exceso = 0m;
+                if (recorte.Baja)
+                {
+                    aplicacion.DeletedAt = momento;
+                }
+                else
+                {
+                    aplicacion.Importe = recorte.ImporteNuevo;
+                }
             }
 
             return;

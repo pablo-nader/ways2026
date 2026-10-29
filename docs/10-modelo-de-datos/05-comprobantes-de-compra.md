@@ -481,7 +481,7 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   no supera `comprobantes_compra.total`, la compra está `confirmada`, y cada pago aplicado es de categoría `proveedor`
 >   y del proveedor de la compra. La empresa NO es una condición desde la migración `AplicacionesEntreEmpresas` (la
 >   creación original la exigía): un pago puede aplicarse a una compra de otra empresa del mismo tenant, porque antes
->   de las aplicaciones ese vínculo ya contaba como pagado. Dispara además en el update de `total`/`estado` de la compra
+>   de las aplicaciones ese vínculo ya contaba como pagado. Dispara además en el update de `total`/`estado`/`id_proveedor` de la compra
 >   (`tg_comprobantes_compra_admiten_aplicaciones`) y en el de `id_proveedor`/`categoria`/`id_empresa` del pago
 >   (`tg_pagos_coherentes_con_aplicaciones`).
 > - El `23505` de `ux_aplicaciones_pago_pago_compra` sale como `409 aplicacion_duplicada` y el `23514` de la CHECK como
@@ -647,6 +647,61 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   un cambio de importe de un pago revierte su redondeo del lado del pago (el disponible vuelve a ser `importe − aplicado`); editar
 >   solo concepto, categoría o medios sin cambiar el importe no revierte nada. Aplicar o vincular sobre una compra con redondeo
 >   vigente no tiene lugar (su saldo es 0), y crecer una aplicación por edición descuenta lo perdonado.
+
+### Edición de una compra confirmada (E6)
+
+> **Sin cambio de esquema.** `PUT /api/compras/{id}` (`GestionDeCatalogo`) despacha por estado: `borrador` reemplaza su set completo (sin
+> cambios); `confirmada` se edita por DIFERENCIA (`ServicioDeCompras.ActualizarConfirmadaAsync`, `FabricaDeEstrategiaSinReintento`);
+> `anulada` es `409 compra_no_editable`; inexistente `404`, antes de validar el cuerpo. El cuerpo es el mismo de siempre; encabezado,
+> líneas, alícuotas y percepciones se reemplazan por EF (`RemoveRange`/`AddRange`, como el borrador) y `fecha_recepcion`, `id_empleado`
+> y `origen` conservan su valor. Una confirmada exige número y fecha de comprobante y al menos una línea (`400
+> compra_numero_externo_requerido` / `compra_incompleta_para_confirmar` / `compra_sin_items`). La unicidad del número sigue siendo
+> `ux_comprobantes_compra_numero_externo` (`409 compra_duplicada`).
+> - **Stock:** por clave `(artículo, punto de venta, lote)` se compara lo que el libro de la compra ya suma (confirmación y ediciones
+>   previas, neteado por clave) contra lo que la compra editada tendrá; cada clave con diferencia ≠ 0 escribe UN movimiento
+>   `motivo = compra` con la diferencia con signo (`observaciones = 'Edición de la compra #id'`) y el upsert de `stock` y `stock_lotes`.
+>   Cambiar el punto de venta saca del viejo y pone en el nuevo. Si una diferencia negativa deja un lote o el agregado en negativo:
+>   `409 compra_edicion_stock_negativo` (nombra artículo y lote) y la transacción entera se deshace.
+> - **Lotes:** la línea que conserva artículo, código de lote y vencimiento conserva su `id_lote` y no se vuelve a verificar contra «hoy» SOLO por lo ya recibido (si la suma de cantidades de esa clave crece, el vencimiento se verifica como en la confirmación); la línea que no cambia conserva su `precio_sugerido` guardado; los lotes se bloquean ascendentes por (artículo, código resuelto, ordinal), igual que la confirmación;
+>   las nuevas o cambiadas se resuelven con las exigencias de la confirmación (`lote_requerido`, `lote_vencido_en_recepcion`).
+> - **Cuenta del proveedor:** la diferencia contra la suma de los asientos `compra` de esa compra (por proveedor) escribe un asiento
+>   `compra` por la diferencia (`detalle = 'Edición de la compra #id: $A → $B'`) y actualiza `proveedores.saldo`. Si cambia el proveedor,
+>   el anterior recibe la reversa de lo suyo y el nuevo el total. La suma de los asientos `compra` de una compra sigue siendo su total,
+>   así que la anulación (que revierte esa suma) no cambia. Una compra anterior al libro de proveedores (sin asiento `compra`) no puede
+>   cambiar total ni proveedor: `409 compra_edicion_sin_asiento_de_cuenta`. El estado de cuenta muestra `saldoPendienteDeLaCompra` solo en
+>   el asiento `compra` más nuevo de cada compra, del proveedor actual de la compra.
+> - **Órdenes de compra:** se bloquean `FOR UPDATE`, ascendentes por id, la que la compra deja y la que toma, y las dos se re-proyectan con
+>   las líneas ya escritas. La ligadura de la orden nueva (existe, no anulada, mismo proveedor y punto de venta) solo se verifica si cambia
+>   la orden, el proveedor o el punto de venta.
+> - **Orden de locks:** membresía de familias (compartido) → encabezado `FOR UPDATE WHERE estado='confirmada'` (0 filas: `404` o `409
+>   compra_cambio_concurrente`) → órdenes → pagos afectados (ascendentes) → lotes → stock (agregado y después lotes) → escritura EF → re-proyección → proveedores (último).
+> - **Auditoría:** `compra.edicion` (entidad `comprobante_compra`, catálogo 27 → 28): antes y después del encabezado y las líneas, y en el
+>   valor nuevo las diferencias de stock y de cuenta asentadas.
+> - **Anulación:** revierte el stock NETO por `(artículo, punto de venta, lote)` (una clave que ya netea a cero no se revierte), porque
+>   revertir cada asiento de una compra editada rechazaría con un falso `compra_anulacion_stock_negativo`.
+> - **Pagos aplicados (E6-S3), sin 409:** el trigger diferido `tg_comprobantes_compra_admiten_aplicaciones` ahora dispara también por
+>   `id_proveedor` (migración `AplicacionesAlCambiarLaCompra`); la edición deja el estado coherente antes del commit. El punto de venta no se
+>   vigila en el trigger (la función no usa la empresa).
+>   - *El total baja por debajo de lo aplicado:* se recortan las aplicaciones vivas, la más NUEVA primero (`fecha` e `id` descendentes; mismo
+>     algoritmo, `RecorteDeAplicaciones`, que la edición de un pago): se dan de baja las que entran enteras y se achica la última, hasta que la
+>     suma sea el total nuevo. Lo recortado vuelve a ser disponible de cada pago; nada se reaplica (subir el total después tampoco).
+>   - *Cambia el proveedor o la empresa (por un punto de venta de otra empresa):* se liberan TODAS las aplicaciones vivas y se cortan los
+>     vínculos `pagos.id_comprobante_compra` de los pagos vivos (`NULL`). Un cambio de punto de venta dentro de la MISMA empresa no libera
+>     nada. Al desvincular, un pago sin punto de venta propio (`id_punto_venta NULL`, tomaba el de la compra) pasa a quedarse con el que
+>     la compra tenía antes, para que siga siendo editable y borrable. El pago conserva su proveedor y
+>     su asiento `pago` de cuenta corriente (libro de solo agregado): ese movimiento conserva su `id_comprobante_compra` histórico, así que
+>     tras un cambio de proveedor queda en el libro del proveedor anterior referido a una compra que ya no es suya, con su crédito allí. El crédito
+>     queda disponible para aplicarse a otras compras de ese proveedor. La empresa no es una condición de las aplicaciones (vínculos entre
+>     empresas válidos); soltar las aplicaciones por un cambio de empresa es una regla del servicio, no del trigger.
+>   - *Redondeo del lado de la compra:* si hay redondeo vigente y cambia el total, el proveedor o la empresa, se revierte con otro
+>     movimiento `redondeo` de signo opuesto (al proveedor que lo recibió, el anterior) y una fila `compra.redondeo`; la compra recupera su saldo.
+>     El redondeo del lado del pago no se toca.
+>   - *Auditoría:* el valor nuevo de `compra.edicion` lleva `aplicaciones_tratadas` (`id_aplicacion`, `id_pago`, `importe_anterior`,
+>     `importe_nuevo`; 0 = liberada), `redondeo_revertido` y `pagos_desvinculados`.
+>   - *Locks:* los pagos cuyas aplicaciones cambian o cuyo vínculo se corta se bloquean `FOR UPDATE`, ascendentes por id, después de las
+>     órdenes de compra y antes de lotes y stock. La reversa del redondeo toca la fila del proveedor, así que se escribe en el recorrido de
+>     proveedores del final (ascendente, con la diferencia de cuenta de cada uno).
+>   - Los costos del artículo (`costo_nominal`) y los códigos de proveedor todavía NO se vuelven a escribir al editar (E6-S4).
 
 ### Órdenes de compra (Etapa 16)
 
