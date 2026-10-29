@@ -178,11 +178,18 @@ public partial class ServicioDeCompras
         // 3. Pagos de la compra (E6-S3). Se planea con lecturas posteriores al lock del encabezado, que serializa a todo
         // escritor de aplicaciones de la compra (todos lo toman antes que el pago), y se bloquean los pagos afectados
         // ascendentes por id: después de las órdenes y ANTES de lotes y stock, antes del proveedor, que sigue último.
+        var cambiaEmpresa = cambiaPuntoVenta && await db.PuntosVenta
+            .AsNoTracking()
+            .Where(p => p.Id == comprobante.IdPuntoVenta || p.Id == solicitud.IdPuntoVenta)
+            .Select(p => p.IdEmpresa)
+            .Distinct()
+            .CountAsync(ct) > 1;
         var plan = await PlanearElTratamientoDePagosAsync(
-            id, comprobante.Total, calculada.Total, cambiaProveedor || cambiaPuntoVenta, ct);
+            id, comprobante.Total, calculada.Total, cambiaProveedor || cambiaEmpresa, ct);
 
         await BloquearPagosDeLaEdicionAsync(conexion, transaccionCruda, idTenant, plan.IdsDePagosAfectados, ct);
-        await AplicarElTratamientoDePagosAsync(conexion, transaccionCruda, id, idTenant, plan, momento, ct);
+        await AplicarElTratamientoDePagosAsync(
+            conexion, transaccionCruda, id, idTenant, plan, anterior.IdPuntoVenta, momento, ct);
 
         // 3.b Diferencia de cuenta corriente contra la suma de los asientos de la compra. Sin asiento propio (compra
         // anterior al libro de proveedores) el total del encabezado hace de asiento, pero un asiento nuevo dejaría a la
@@ -522,10 +529,12 @@ public partial class ServicioDeCompras
     /// <summary>Escribe el plan con los pagos ya bloqueados: libera todas las aplicaciones (una sentencia) o da de baja y
     /// achica las del recorte, y corta los vínculos <c>pagos.id_comprobante_compra</c> de los pagos que dejan de ser de esta
     /// compra. El asiento <c>pago</c> de cuenta corriente de cada pago NO se toca (libro de solo agregado): conserva su
-    /// referencia histórica a la compra y su crédito con el proveedor anterior.</summary>
+    /// referencia histórica a la compra (tras un cambio de proveedor queda en el libro del proveedor anterior) y su crédito
+    /// con él. Un pago sin punto de venta propio tomaba el de la compra: al desvincularlo se queda con el que la compra
+    /// tenía (<paramref name="idPuntoVentaAnterior"/>), para seguir siendo editable y borrable.</summary>
     private static async Task AplicarElTratamientoDePagosAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, PlanDePagosDeLaEdicion plan,
-        DateTimeOffset momento, CancellationToken ct)
+        int idPuntoVentaAnterior, DateTimeOffset momento, CancellationToken ct)
     {
         if (plan.LiberaTodo)
         {
@@ -559,11 +568,12 @@ public partial class ServicioDeCompras
             await using var desvincular = conexion.CreateCommand();
             desvincular.Transaction = transaccion;
             desvincular.CommandText =
-                "UPDATE pagos SET id_comprobante_compra = NULL, updated_at = $1 " +
+                "UPDATE pagos SET id_comprobante_compra = NULL, id_punto_venta = COALESCE(id_punto_venta, $4), updated_at = $1 " +
                 "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL";
             ParametrosDeComando.Agregar(desvincular, momento);
             ParametrosDeComando.Agregar(desvincular, id);
             ParametrosDeComando.Agregar(desvincular, idTenant);
+            ParametrosDeComando.Agregar(desvincular, idPuntoVentaAnterior);
             await desvincular.ExecuteNonQueryAsync(ct);
         }
     }

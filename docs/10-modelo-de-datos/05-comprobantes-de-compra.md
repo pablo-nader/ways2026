@@ -480,7 +480,7 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   no supera `comprobantes_compra.total`, la compra está `confirmada`, y cada pago aplicado es de categoría `proveedor`
 >   y del proveedor de la compra. La empresa NO es una condición desde la migración `AplicacionesEntreEmpresas` (la
 >   creación original la exigía): un pago puede aplicarse a una compra de otra empresa del mismo tenant, porque antes
->   de las aplicaciones ese vínculo ya contaba como pagado. Dispara además en el update de `total`/`estado`/`id_proveedor`/`id_punto_venta` de la compra
+>   de las aplicaciones ese vínculo ya contaba como pagado. Dispara además en el update de `total`/`estado`/`id_proveedor` de la compra
 >   (`tg_comprobantes_compra_admiten_aplicaciones`) y en el de `id_proveedor`/`categoria`/`id_empresa` del pago
 >   (`tg_pagos_coherentes_con_aplicaciones`).
 > - El `23505` de `ux_aplicaciones_pago_pago_compra` sale como `409 aplicacion_duplicada` y el `23514` de la CHECK como
@@ -679,17 +679,20 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > - **Anulación:** revierte el stock NETO por `(artículo, punto de venta, lote)` (una clave que ya netea a cero no se revierte), porque
 >   revertir cada asiento de una compra editada rechazaría con un falso `compra_anulacion_stock_negativo`.
 > - **Pagos aplicados (E6-S3), sin 409:** el trigger diferido `tg_comprobantes_compra_admiten_aplicaciones` ahora dispara también por
->   `id_proveedor` e `id_punto_venta` (migración `AplicacionesAlCambiarLaCompra`); la edición deja el estado coherente antes del commit.
+>   `id_proveedor` (migración `AplicacionesAlCambiarLaCompra`); la edición deja el estado coherente antes del commit. El punto de venta no se
+>   vigila en el trigger (la función no usa la empresa).
 >   - *El total baja por debajo de lo aplicado:* se recortan las aplicaciones vivas, la más NUEVA primero (`fecha` e `id` descendentes; mismo
 >     algoritmo, `RecorteDeAplicaciones`, que la edición de un pago): se dan de baja las que entran enteras y se achica la última, hasta que la
 >     suma sea el total nuevo. Lo recortado vuelve a ser disponible de cada pago; nada se reaplica (subir el total después tampoco).
->   - *Cambia el proveedor o el punto de venta (con él, la empresa):* se liberan TODAS las aplicaciones vivas y se cortan los vínculos
->     `pagos.id_comprobante_compra` de los pagos vivos (`NULL`): la compra ya no es del proveedor de esos pagos. El pago conserva su proveedor y
->     su asiento `pago` de cuenta corriente (libro de solo agregado: queda con su referencia histórica a la compra y su crédito con el
->     proveedor anterior), y el crédito queda disponible para aplicarse a otras compras de ese proveedor. La empresa ya no es una condición de
->     las aplicaciones (vínculos entre empresas válidos); soltar las aplicaciones por un cambio de punto de venta es una regla del servicio, no
->     del trigger.
->   - *Redondeo del lado de la compra:* si hay redondeo vigente y cambia el total, el proveedor o el punto de venta, se revierte con otro
+>   - *Cambia el proveedor o la empresa (por un punto de venta de otra empresa):* se liberan TODAS las aplicaciones vivas y se cortan los
+>     vínculos `pagos.id_comprobante_compra` de los pagos vivos (`NULL`). Un cambio de punto de venta dentro de la MISMA empresa no libera
+>     nada. Al desvincular, un pago sin punto de venta propio (`id_punto_venta NULL`, tomaba el de la compra) pasa a quedarse con el que
+>     la compra tenía antes, para que siga siendo editable y borrable. El pago conserva su proveedor y
+>     su asiento `pago` de cuenta corriente (libro de solo agregado): ese movimiento conserva su `id_comprobante_compra` histórico, así que
+>     tras un cambio de proveedor queda en el libro del proveedor anterior referido a una compra que ya no es suya, con su crédito allí. El crédito
+>     queda disponible para aplicarse a otras compras de ese proveedor. La empresa no es una condición de las aplicaciones (vínculos entre
+>     empresas válidos); soltar las aplicaciones por un cambio de empresa es una regla del servicio, no del trigger.
+>   - *Redondeo del lado de la compra:* si hay redondeo vigente y cambia el total, el proveedor o la empresa, se revierte con otro
 >     movimiento `redondeo` de signo opuesto (al proveedor que lo recibió, el anterior) y una fila `compra.redondeo`; la compra recupera su saldo.
 >     El redondeo del lado del pago no se toca.
 >   - *Auditoría:* el valor nuevo de `compra.edicion` lleva `aplicaciones_tratadas` (`id_aplicacion`, `id_pago`, `importe_anterior`,

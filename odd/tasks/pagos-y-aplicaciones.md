@@ -146,7 +146,7 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   `ActualizarConfirmadaAsync`; anulada → `409 compra_no_editable`), stock by difference, lots, OC re-projection, CC by difference, audit;
   anulación reverses the stock NET per key; CC statement shows the pending balance only on the newest `compra` row. Temporary
   `409 compra_edicion_con_aplicaciones` (replaced by S3).
-- [x] E6-S3 (written; CI pending; branch `pnader/pagos-e6-s3-aplicaciones`) — Applications: edit that lowers the total below what is applied
+- [ ] E6-S3 (written; CI pending; branch `pnader/pagos-e6-s3-aplicaciones`) — Applications: edit that lowers the total below what is applied
   trims the applications newest first (shared `RecorteDeAplicaciones`, also used by the pago edit); a proveedor/PV change releases all
   applications and unlinks `pagos.id_comprobante_compra`; compra-side redondeo reversed; migration `AplicacionesAlCambiarLaCompra` widens
   `tg_comprobantes_compra_admiten_aplicaciones` to `id_proveedor`/`id_punto_venta`. The temporary 409 is gone.

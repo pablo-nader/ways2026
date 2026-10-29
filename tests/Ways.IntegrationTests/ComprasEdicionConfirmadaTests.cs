@@ -810,10 +810,12 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
             [pagoA, pagoB], auditoria.GetProperty("pagos_desvinculados").EnumerateArray().Select(p => p.GetInt32()).Order());
     }
 
+    /// <summary>Un cambio de punto de venta DENTRO de la misma empresa no cambia a quién pertenece la compra: las aplicaciones y
+    /// los vínculos de los pagos quedan como están.</summary>
     [Fact]
-    public async Task CambiarElPuntoDeVentaLiberaLasAplicacionesYCortaElVinculoDeLosPagos()
+    public async Task CambiarElPuntoDeVentaDentroDeLaEmpresaConservaLasAplicacionesYElVinculoDeLosPagos()
     {
-        var ctx = await PrepararAsync(nameof(CambiarElPuntoDeVentaLiberaLasAplicacionesYCortaElVinculoDeLosPagos));
+        var ctx = await PrepararAsync(nameof(CambiarElPuntoDeVentaDentroDeLaEmpresaConservaLasAplicacionesYElVinculoDeLosPagos));
         var alta = await ctx.Admin.PostAsJsonAsync("/api/puntos-venta", new PuntoVentaAlta(ctx.IdEmpresa, "PV2", ModoPuntoVenta.Web));
         var cuerpoAlta = await alta.Content.ReadAsStringAsync();
         Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
@@ -825,10 +827,93 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
             ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idPuntoVenta: idPv2));
 
         Assert.Equal(idPv2, editada.IdPuntoVenta);
+        Assert.Equal(700m, editada.Pagado);
+        Assert.Equal([(pago, 700m)], await AplicacionesVivasAsync(ctx, creada.Id));
+        Assert.Equal(Vinculo(creada.Id, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
+    }
+
+    /// <summary>Pasar la compra a un punto de venta de OTRA empresa libera las aplicaciones y corta los vínculos.</summary>
+    [Fact]
+    public async Task CambiarElPuntoDeVentaAOtraEmpresaLiberaLasAplicacionesYCortaElVinculoDeLosPagos()
+    {
+        var ctx = await PrepararAsync(nameof(CambiarElPuntoDeVentaAOtraEmpresaLiberaLasAplicacionesYCortaElVinculoDeLosPagos));
+        int idPvOtraEmpresa;
+        await using (var db = Db(ctx))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var empresa = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Empresas.Add(empresa);
+            await db.SaveChangesAsync();
+            var puntoVenta = new PuntoVenta
+            {
+                IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = "Otra empresa - Local", CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.PuntosVenta.Add(puntoVenta);
+            await db.SaveChangesAsync();
+            idPvOtraEmpresa = puntoVenta.Id;
+        }
+
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+        var pago = await PagarAsync(ctx, creada.Id, 700m);
+
+        var editada = await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idPuntoVenta: idPvOtraEmpresa));
+
+        Assert.Equal(idPvOtraEmpresa, editada.IdPuntoVenta);
         Assert.Equal(0m, editada.Pagado);
         Assert.Empty(await AplicacionesVivasAsync(ctx, creada.Id));
         Assert.Equal(700m, await DisponibleAsync(ctx, pago));
         Assert.Equal(Vinculo(null, ctx.IdProveedor), await VinculoDelPagoAsync(ctx, pago));
+    }
+
+    /// <summary>Un pago administrativo sin punto de venta propio, convertido por <c>vincular-compra</c>, tomaba el punto de
+    /// venta de la compra: al desvincularlo se queda con el que la compra tenía y sigue siendo editable y borrable, con el
+    /// saldo de cada proveedor igual a la suma de su libro.</summary>
+    [Fact]
+    public async Task UnPagoSinPuntoDeVentaVinculadoPorConversionSigueEditableYBorrableTrasCambiarElProveedor()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoSinPuntoDeVentaVinculadoPorConversionSigueEditableYBorrableTrasCambiarElProveedor));
+        var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
+
+        var altaPago = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos/administracion",
+            new SolicitudDePagoDeAdministracion(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
+                "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
+        var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
+        Assert.True(altaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
+        var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
+
+        var vincular = await ctx.Admin.PostAsJsonAsync(
+            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+        Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
+
+        await EditarConExitoAsync(
+            ctx, creada.Id, Solicitud(ctx, ctx.IdArticulo, 10m, creada.NumeroExterno, idProveedor: ctx.IdProveedor2));
+
+        await using (var db = Db(ctx))
+        {
+            var pago = await db.Pagos.AsNoTracking().SingleAsync(p => p.Id == idPago);
+            Assert.Null(pago.IdComprobanteCompra);
+            Assert.Equal(ctx.IdPuntoVenta, pago.IdPuntoVenta);
+        }
+
+        var edicion = await ctx.Admin.PutAsJsonAsync(
+            $"/api/gastos/administracion/{idPago}",
+            new SolicitudDeEdicionDePago(
+                CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 500m));
+        Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
+
+        await using var contexto = Db(ctx);
+        foreach (var idProveedor in new[] { ctx.IdProveedor, ctx.IdProveedor2 })
+        {
+            var enLibro = await contexto.MovimientosCuentaCorrienteProveedor
+                .Where(m => m.IdProveedor == idProveedor).SumAsync(m => (decimal?)m.Importe) ?? 0m;
+            Assert.Equal(enLibro, await SaldoAsync(ctx, idProveedor));
+        }
     }
 
     /// <summary>Un pago vinculado por <c>pagos.id_comprobante_compra</c> sin aplicación viva (se desaplicó) tampoco queda
