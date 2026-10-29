@@ -143,7 +143,8 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     private async Task<int> SembrarArticuloAsync(
         Contexto ctx, string nombre, int? idArea = null, int? idCategoria = null, int? idMarca = null,
-        int? idGrupo = null, int? idProveedorHabitual = null, bool activo = true, bool eliminado = false)
+        int? idGrupo = null, int? idProveedorHabitual = null, bool activo = true, bool eliminado = false,
+        string? codigo = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -151,7 +152,7 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var articulo = new Articulo
         {
             IdTenant = ctx.IdTenant,
-            CodigoInterno = $"{nombre}-{Guid.NewGuid():N}",
+            CodigoInterno = codigo ?? $"{nombre}-{Guid.NewGuid():N}",
             Nombre = nombre,
             IdArea = idArea ?? ctx.IdAreaA,
             IdCategoria = idCategoria,
@@ -1348,5 +1349,176 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(60, pagina1.Total);
         Assert.Equal(ids.Take(30).ToList(), pagina1.Items.Select(f => f.Id).ToList());
         Assert.Equal(ids.Skip(30).Take(30).ToList(), pagina2.Items.Select(f => f.Id).ToList());
+    }
+
+    // ---- orden en el servidor: GET /api/reportes/articulos?orden=&direccion= -----------------------
+
+    /// <summary>Cinco artículos (posiciones 1 a 5, en orden de alta, es decir de id), pensados para que el orden
+    /// de cada columna difiera del orden por id y del orden por nombre, con vacíos repetidos (el desempate por
+    /// id se ve) y FK colgantes (un área y un proveedor dados de baja ordenan como vacíos).
+    /// <code>
+    /// pos nombre codigo area       categoria marca    grupo    proveedor      activo
+    ///  1  cc     k3     Almacén    Gaseosas  Marca B  Grupo B  Dos SRL        sí
+    ///  2  aa     k5     Verdulería -         -        -        -              no
+    ///  3  ee     k1     Almacén    Limpieza  Marca A  Grupo A  Tres SA        sí
+    ///  4  bb     k4     (baja)     Bebidas   -        -        (baja)         sí
+    ///  5  dd     k2     Verdulería -         Marca A  -        -              no
+    /// </code></summary>
+    private async Task<int[]> SembrarCincoParaOrdenAsync(Contexto ctx)
+    {
+        var areaDeBaja = await CrearAreaAsync(ctx, "Zona de baja");
+
+        var ids = new[]
+        {
+            await SembrarArticuloAsync(
+                ctx, "cc", codigo: "k3", idArea: ctx.IdAreaA, idCategoria: ctx.IdCategoriaHija, idMarca: ctx.IdMarcaB,
+                idGrupo: ctx.IdGrupoB, idProveedorHabitual: ctx.IdProveedorSinFantasia),
+            await SembrarArticuloAsync(ctx, "aa", codigo: "k5", idArea: ctx.IdAreaB, activo: false),
+            await SembrarArticuloAsync(
+                ctx, "ee", codigo: "k1", idArea: ctx.IdAreaA, idCategoria: ctx.IdCategoriaOtra, idMarca: ctx.IdMarcaA,
+                idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorFantasiaEnBlanco),
+            await SembrarArticuloAsync(
+                ctx, "bb", codigo: "k4", idArea: areaDeBaja, idCategoria: ctx.IdCategoriaPadre,
+                idProveedorHabitual: ctx.IdProveedorConFantasia),
+            await SembrarArticuloAsync(ctx, "dd", codigo: "k2", idArea: ctx.IdAreaB, idMarca: ctx.IdMarcaA, activo: false),
+        };
+
+        await DarDeBajaAreaAsync(ctx, areaDeBaja);
+        await DarDeBajaProveedorAsync(ctx, ctx.IdProveedorConFantasia);
+
+        return ids;
+    }
+
+    private static async Task<List<int>> RecorrerPaginasOrdenadasAsync(HttpClient cliente, string query, int tamanio = 2)
+    {
+        var ids = new List<int>();
+        for (var pagina = 1; pagina <= 10; pagina++)
+        {
+            var p = await ListarAsync(cliente, $"?{query}&pagina={pagina}&tamanio={tamanio}");
+            ids.AddRange(p.Items.Select(i => i.Id));
+            if (pagina * tamanio >= p.Total) break;
+        }
+
+        return ids;
+    }
+
+    private static List<int> PorPosicion(int[] ids, string posiciones) =>
+        [.. posiciones.Split(',').Select(p => ids[int.Parse(p) - 1])];
+
+    /// <summary>Cláusula bajo prueba: el <c>ORDER BY</c> aplicado ANTES de <c>Skip/Take</c> en
+    /// <c>ServicioDeReportesDeArticulos.ListarArticulosAsync</c>, sobre las etiquetas del LEFT JOIN. Cada caso recorre
+    /// las páginas de a dos filas y compara la secuencia completa: un orden aplicado después de paginar (o ausente)
+    /// la rompe. Un vacío (clasificación sin asignar, de baja o con FK colgante) va al final en las dos direcciones y
+    /// las filas empatadas salen por id ascendente. Estado ordena por el texto de la celda: ascendente es "Activo"
+    /// antes que "Inactivo".</summary>
+    [Theory]
+    [InlineData("nombre", "ascendente", "2,4,1,5,3")]
+    [InlineData("nombre", "descendente", "3,5,1,4,2")]
+    [InlineData("codigo", "ascendente", "3,5,1,4,2")]
+    [InlineData("codigo", "descendente", "2,4,1,5,3")]
+    [InlineData("area", "ascendente", "1,3,2,5,4")]
+    [InlineData("area", "descendente", "2,5,1,3,4")]
+    [InlineData("categoria", "ascendente", "4,1,3,2,5")]
+    [InlineData("categoria", "descendente", "3,1,4,2,5")]
+    [InlineData("marca", "ascendente", "3,5,1,2,4")]
+    [InlineData("marca", "descendente", "1,3,5,2,4")]
+    [InlineData("grupo", "ascendente", "3,1,2,4,5")]
+    [InlineData("grupo", "descendente", "1,3,2,4,5")]
+    [InlineData("proveedor", "ascendente", "1,3,2,4,5")]
+    [InlineData("proveedor", "descendente", "3,1,2,4,5")]
+    [InlineData("estado", "ascendente", "1,3,4,2,5")]
+    [InlineData("estado", "descendente", "2,5,1,3,4")]
+    public async Task CadaColumnaOrdenaTodoElConjuntoAtravesDeLasPaginas(string orden, string direccion, string esperadoPorPosicion)
+    {
+        var ctx = await PrepararAsync($"RepArtOrden{orden}{direccion}");
+        var ids = await SembrarCincoParaOrdenAsync(ctx);
+
+        var obtenido = await RecorrerPaginasOrdenadasAsync(ctx.Admin, $"orden={orden}&direccion={direccion}");
+
+        Assert.Equal(PorPosicion(ids, esperadoPorPosicion), obtenido);
+    }
+
+    [Fact]
+    public async Task SinOrdenSigueElOrdenDeSiempreNombreYLuegoId()
+    {
+        var ctx = await PrepararAsync(nameof(SinOrdenSigueElOrdenDeSiempreNombreYLuegoId));
+        var ids = await SembrarCincoParaOrdenAsync(ctx);
+
+        var obtenido = await RecorrerPaginasOrdenadasAsync(ctx.Admin, "soloIncompletos=false");
+
+        Assert.Equal(PorPosicion(ids, "2,4,1,5,3"), obtenido);
+    }
+
+    [Fact]
+    public async Task ElOrdenConviveConLosFiltrosYElTotalNoCambia()
+    {
+        var ctx = await PrepararAsync(nameof(ElOrdenConviveConLosFiltrosYElTotalNoCambia));
+        var ids = await SembrarCincoParaOrdenAsync(ctx);
+
+        var pagina = await ListarAsync(ctx.Admin, "?activo=true&orden=codigo&direccion=ascendente&tamanio=2");
+
+        Assert.Equal(3, pagina.Total);
+        Assert.Equal(PorPosicion(ids, "3,1"), pagina.Items.Select(i => i.Id).ToList());
+    }
+
+    [Theory]
+    [InlineData("orden=acciones", "orden_invalido")]
+    [InlineData("orden=Nombre", "orden_invalido")]
+    [InlineData("orden=nombre&direccion=asc", "direccion_invalida")]
+    [InlineData("direccion=descendente", "direccion_sin_orden")]
+    public async Task UnOrdenODireccionFueraDeLaListaSeRechazaConCuatrocientos(string query, string codigoEsperado)
+    {
+        var ctx = await PrepararAsync($"RepArtRechazo{codigoEsperado}{query.Length}");
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/reportes/articulos?{query}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(codigoEsperado, problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task ElSupervisorTambienOrdenaYElVendedorSigueRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(ElSupervisorTambienOrdenaYElVendedorSigueRechazado));
+        var ids = await SembrarCincoParaOrdenAsync(ctx);
+
+        var delSupervisor = await RecorrerPaginasOrdenadasAsync(ctx.Supervisor, "orden=codigo&direccion=ascendente");
+        var delVendedor = await ctx.Vendedor.GetAsync("/api/reportes/articulos?orden=codigo&direccion=ascendente");
+
+        Assert.Equal(PorPosicion(ids, "3,5,1,4,2"), delSupervisor);
+        Assert.Equal(HttpStatusCode.Forbidden, delVendedor.StatusCode);
+    }
+
+    [Fact]
+    public async Task ElOrdenNoMezclaArticulosDeOtroTenant()
+    {
+        var propio = await PrepararAsync($"{nameof(ElOrdenNoMezclaArticulosDeOtroTenant)}A");
+        var ajeno = await PrepararAsync($"{nameof(ElOrdenNoMezclaArticulosDeOtroTenant)}B");
+        var idsPropios = await SembrarCincoParaOrdenAsync(propio);
+        var idsAjenos = await SembrarCincoParaOrdenAsync(ajeno);
+
+        var obtenido = await RecorrerPaginasOrdenadasAsync(propio.Admin, "orden=codigo&direccion=descendente");
+
+        Assert.Equal(PorPosicion(idsPropios, "2,4,1,5,3"), obtenido);
+        Assert.Empty(obtenido.Intersect(idsAjenos));
+    }
+
+    /// <summary>El export conserva su orden de siempre (nombre y luego id) aunque el listado se pueda ordenar.</summary>
+    [Fact]
+    public async Task ElExportSigueEnOrdenDeNombreYIdAunConLaGrillaOrdenable()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportSigueEnOrdenDeNombreYIdAunConLaGrillaOrdenable));
+        await SembrarCincoParaOrdenAsync(ctx);
+
+        var respuesta = await ctx.Admin.GetAsync("/api/reportes/articulos/export?formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        using var libro = new XLWorkbook(await respuesta.Content.ReadAsStreamAsync());
+        var nombres = libro.Worksheets.First().RowsUsed()
+            .Select(f => f.Cell(2).GetString())
+            .Where(n => n is "aa" or "bb" or "cc" or "dd" or "ee")
+            .ToList();
+        Assert.Equal(["aa", "bb", "cc", "dd", "ee"], nombres);
     }
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
+using Ways.Application.Listados;
 using Ways.Application.Parametros;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
@@ -330,8 +331,12 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         bool? activo,
         int pagina = 1,
         int tamanio = 25,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrdenDeArticulos);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, TamanioMaximoDePaginaDeArticulos);
 
@@ -341,8 +346,18 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         var total = await query.CountAsync(ct);
 
-        var paginaDeArticulos = query.OrderBy(a => a.Nombre).ThenBy(a => a.Id).Skip((pagina - 1) * tamanio).Take(tamanio);
-        var items = await ProyectarArticulosDeReporteAsync(paginaDeArticulos, ct);
+        // Una columna propia del artículo (o ningún orden) ordena y pagina sobre `articulos` y recién después
+        // une los catálogos de esa página; solo una columna de catálogo necesita la unión antes de paginar.
+        var ordenaPorColumnaPropia = ordenPedido is null
+            or { Columna: ColumnaDeOrdenDeArticulosDeReporte.Codigo or ColumnaDeOrdenDeArticulosDeReporte.Nombre
+                or ColumnaDeOrdenDeArticulosDeReporte.Estado };
+
+        IQueryable<ArticuloConCatalogos> paginaDeArticulos = ordenaPorColumnaPropia
+            ? Ordenar(
+                UnirConCatalogos(OrdenarArticulos(query, ordenPedido).Skip((pagina - 1) * tamanio).Take(tamanio)),
+                ordenPedido)
+            : Ordenar(UnirConCatalogos(query), ordenPedido).Skip((pagina - 1) * tamanio).Take(tamanio);
+        var items = await AArticuloDeReporte(paginaDeArticulos).ToListAsync(ct);
 
         return new PaginaDe<ArticuloDeReporte>(items, total, pagina, tamanio);
     }
@@ -377,8 +392,8 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
 
-        var recorte = query.OrderBy(a => a.Nombre).ThenBy(a => a.Id).Take(topeDeFilas + 1);
-        var items = await ProyectarArticulosDeReporteAsync(recorte, ct);
+        var recorte = Ordenar(UnirConCatalogos(query), null).Take(topeDeFilas + 1);
+        var items = await AArticuloDeReporte(recorte).ToListAsync(ct);
 
         GuardaDeTope.Exigir(items.Count, topeDeFilas);
 
@@ -564,35 +579,136 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
     /// seguiría contándola, dejando un <c>total</c> mayor a <c>items.Count</c> (bug reproducido por
     /// judgment-day, ronda 1). <see cref="Proveedor.NombreFantasia"/> gana sobre
     /// <see cref="Proveedor.RazonSocial"/> cuando no es nulo/vacío.</summary>
-    private async Task<List<ArticuloDeReporte>> ProyectarArticulosDeReporteAsync(IQueryable<Articulo> query, CancellationToken ct)
-    {
-        var proyeccion =
-            from a in query
-            join area in db.Areas on a.IdArea equals area.Id into areasUnidas
-            from area in areasUnidas.DefaultIfEmpty()
-            join categoria in db.Categorias on a.IdCategoria equals categoria.Id into categoriasUnidas
-            from categoria in categoriasUnidas.DefaultIfEmpty()
-            join marca in db.Marcas on a.IdMarca equals marca.Id into marcasUnidas
-            from marca in marcasUnidas.DefaultIfEmpty()
-            join grupo in db.Grupos on a.IdGrupo equals grupo.Id into gruposUnidos
-            from grupo in gruposUnidos.DefaultIfEmpty()
-            join proveedor in db.Proveedores on a.IdProveedorHabitual equals proveedor.Id into proveedoresUnidos
-            from proveedor in proveedoresUnidos.DefaultIfEmpty()
-            orderby a.Nombre, a.Id
-            select new ArticuloDeReporte(
-                a.Id,
-                a.CodigoInterno,
-                a.Nombre,
-                area != null ? area.Nombre : null,
-                categoria != null ? categoria.Nombre : null,
-                marca != null ? marca.Nombre : null,
-                grupo != null ? grupo.Nombre : null,
-                proveedor != null
-                    ? (!string.IsNullOrWhiteSpace(proveedor.NombreFantasia) ? proveedor.NombreFantasia : proveedor.RazonSocial)
-                    : null,
-                a.Activo);
+    private IQueryable<ArticuloConCatalogos> UnirConCatalogos(IQueryable<Articulo> query) =>
+        from a in query
+        join area in db.Areas on a.IdArea equals area.Id into areasUnidas
+        from area in areasUnidas.DefaultIfEmpty()
+        join categoria in db.Categorias on a.IdCategoria equals categoria.Id into categoriasUnidas
+        from categoria in categoriasUnidas.DefaultIfEmpty()
+        join marca in db.Marcas on a.IdMarca equals marca.Id into marcasUnidas
+        from marca in marcasUnidas.DefaultIfEmpty()
+        join grupo in db.Grupos on a.IdGrupo equals grupo.Id into gruposUnidos
+        from grupo in gruposUnidos.DefaultIfEmpty()
+        join proveedor in db.Proveedores on a.IdProveedorHabitual equals proveedor.Id into proveedoresUnidos
+        from proveedor in proveedoresUnidos.DefaultIfEmpty()
+        select new ArticuloConCatalogos
+        {
+            A = a,
+            Area = area != null ? area.Nombre : null,
+            Categoria = categoria != null ? categoria.Nombre : null,
+            Marca = marca != null ? marca.Nombre : null,
+            Grupo = grupo != null ? grupo.Nombre : null,
+            Proveedor = proveedor != null
+                ? (!string.IsNullOrWhiteSpace(proveedor.NombreFantasia) ? proveedor.NombreFantasia : proveedor.RazonSocial)
+                : null,
+        };
 
-        return await proyeccion.ToListAsync(ct);
+    private static IQueryable<ArticuloDeReporte> AArticuloDeReporte(IQueryable<ArticuloConCatalogos> query) =>
+        query.Select(x => new ArticuloDeReporte(
+            x.A.Id, x.A.CodigoInterno, x.A.Nombre, x.Area, x.Categoria, x.Marca, x.Grupo, x.Proveedor, x.A.Activo));
+
+    /// <summary>Orden de SQL, aplicado antes de paginar y sobre las MISMAS etiquetas que muestra la
+    /// grilla (las del LEFT JOIN de <see cref="UnirConCatalogos"/>). Sin orden pedido: Nombre, luego Id
+    /// (también el orden del export). Con orden: la columna pedida y SIEMPRE Id ascendente como
+    /// desempate, para que dos páginas consecutivas nunca repitan ni salteen una fila. Una clasificación
+    /// sin asignar, dada de baja o con FK colgante llega como null y va al final en las dos direcciones.
+    /// Los textos usan la colación de la base, igual que el orden por nombre de siempre.</summary>
+    private static IOrderedQueryable<ArticuloConCatalogos> Ordenar(
+        IQueryable<ArticuloConCatalogos> query, OrdenDeListado<ColumnaDeOrdenDeArticulosDeReporte>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderBy(x => x.A.Nombre).ThenBy(x => x.A.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<ArticuloConCatalogos> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeArticulosDeReporte.Codigo => desc
+                ? query.OrderByDescending(x => x.A.CodigoInterno)
+                : query.OrderBy(x => x.A.CodigoInterno),
+            ColumnaDeOrdenDeArticulosDeReporte.Nombre => desc
+                ? query.OrderByDescending(x => x.A.Nombre)
+                : query.OrderBy(x => x.A.Nombre),
+            ColumnaDeOrdenDeArticulosDeReporte.Area => desc
+                ? query.OrderBy(x => x.Area == null).ThenByDescending(x => x.Area)
+                : query.OrderBy(x => x.Area == null).ThenBy(x => x.Area),
+            ColumnaDeOrdenDeArticulosDeReporte.Categoria => desc
+                ? query.OrderBy(x => x.Categoria == null).ThenByDescending(x => x.Categoria)
+                : query.OrderBy(x => x.Categoria == null).ThenBy(x => x.Categoria),
+            ColumnaDeOrdenDeArticulosDeReporte.Marca => desc
+                ? query.OrderBy(x => x.Marca == null).ThenByDescending(x => x.Marca)
+                : query.OrderBy(x => x.Marca == null).ThenBy(x => x.Marca),
+            ColumnaDeOrdenDeArticulosDeReporte.Grupo => desc
+                ? query.OrderBy(x => x.Grupo == null).ThenByDescending(x => x.Grupo)
+                : query.OrderBy(x => x.Grupo == null).ThenBy(x => x.Grupo),
+            ColumnaDeOrdenDeArticulosDeReporte.Proveedor => desc
+                ? query.OrderBy(x => x.Proveedor == null).ThenByDescending(x => x.Proveedor)
+                : query.OrderBy(x => x.Proveedor == null).ThenBy(x => x.Proveedor),
+            ColumnaDeOrdenDeArticulosDeReporte.Estado => desc
+                ? query.OrderBy(x => x.A.Activo)
+                : query.OrderByDescending(x => x.A.Activo),
+            _ => query.OrderBy(x => x.A.Nombre),
+        };
+
+        return ordenado.ThenBy(x => x.A.Id);
+    }
+
+    /// <summary>Mismo orden que <see cref="Ordenar"/> para las columnas propias del artículo, sobre
+    /// <c>articulos</c> a secas (sin unir catálogos). Estado ordena por el texto de la celda: "Activo" antes
+    /// que "Inactivo" en ascendente.</summary>
+    private static IOrderedQueryable<Articulo> OrdenarArticulos(
+        IQueryable<Articulo> query, OrdenDeListado<ColumnaDeOrdenDeArticulosDeReporte>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderBy(a => a.Nombre).ThenBy(a => a.Id);
+        }
+
+        var desc = pedido.Descendente;
+        IOrderedQueryable<Articulo> ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeArticulosDeReporte.Codigo => desc
+                ? query.OrderByDescending(a => a.CodigoInterno)
+                : query.OrderBy(a => a.CodigoInterno),
+            ColumnaDeOrdenDeArticulosDeReporte.Estado => desc
+                ? query.OrderBy(a => a.Activo)
+                : query.OrderByDescending(a => a.Activo),
+            ColumnaDeOrdenDeArticulosDeReporte.Nombre => desc
+                ? query.OrderByDescending(a => a.Nombre)
+                : query.OrderBy(a => a.Nombre),
+            _ => query.OrderBy(a => a.Nombre),
+        };
+
+        return ordenado.ThenBy(a => a.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeArticulosDeReporte> ClavesDeOrdenDeArticulos =
+        new Dictionary<string, ColumnaDeOrdenDeArticulosDeReporte>(StringComparer.Ordinal)
+        {
+            ["codigo"] = ColumnaDeOrdenDeArticulosDeReporte.Codigo,
+            ["nombre"] = ColumnaDeOrdenDeArticulosDeReporte.Nombre,
+            ["area"] = ColumnaDeOrdenDeArticulosDeReporte.Area,
+            ["categoria"] = ColumnaDeOrdenDeArticulosDeReporte.Categoria,
+            ["marca"] = ColumnaDeOrdenDeArticulosDeReporte.Marca,
+            ["grupo"] = ColumnaDeOrdenDeArticulosDeReporte.Grupo,
+            ["proveedor"] = ColumnaDeOrdenDeArticulosDeReporte.Proveedor,
+            ["estado"] = ColumnaDeOrdenDeArticulosDeReporte.Estado,
+        };
+
+    private sealed class ArticuloConCatalogos
+    {
+        public Articulo A { get; init; } = null!;
+
+        public string? Area { get; init; }
+
+        public string? Categoria { get; init; }
+
+        public string? Marca { get; init; }
+
+        public string? Grupo { get; init; }
+
+        public string? Proveedor { get; init; }
     }
 
     private static void ExigirFiltroExclusivo(int? id, bool sin, string nombreId, string nombreSin)
@@ -605,4 +721,16 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
                 400);
         }
     }
+}
+
+public enum ColumnaDeOrdenDeArticulosDeReporte
+{
+    Codigo,
+    Nombre,
+    Area,
+    Categoria,
+    Marca,
+    Grupo,
+    Proveedor,
+    Estado,
 }

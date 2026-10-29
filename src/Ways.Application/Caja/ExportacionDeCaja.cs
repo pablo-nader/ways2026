@@ -39,16 +39,7 @@ public static class ExportacionDeCaja
     /// <see cref="CategoriaPago"/> a etiqueta del lado del servidor (se buscó en
     /// <c>Ways.Application.Exportacion</c>/<c>Ways.Application.Reportes</c>, ninguno lo tenía), así
     /// que este mapeo nace acá, junto al único lugar que hoy lo necesita.</summary>
-    private static string EtiquetaDeCategoriaPago(CategoriaPago categoria) => categoria switch
-    {
-        CategoriaPago.Proveedor => "Proveedores",
-        CategoriaPago.Sueldos => "Sueldos",
-        CategoriaPago.Viaticos => "Viáticos",
-        CategoriaPago.Impuestos => "Impuestos",
-        CategoriaPago.Servicios => "Servicios",
-        CategoriaPago.Otros => "Otros",
-        _ => categoria.ToString()
-    };
+    private static string EtiquetaDeCategoriaPago(CategoriaPago categoria) => EtiquetasDeCategoriaDePago.De(categoria);
 
     /// <summary>stage-tesoreria-por-empresa (PR5): mismo criterio de "concepto efectivo" que
     /// <c>Tesoreria.tsx</c> — una fila de tipo <see cref="TipoMovimientoTesoreria.Pago"/> muestra

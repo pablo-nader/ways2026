@@ -183,9 +183,10 @@ de una línea es `(importe de la línea con IVA + impuesto_interno) / cantidad`,
 confirmación, la ficha del artículo y la cobertura de la orden de compra. Se rechazan con 400 un
 importe negativo (`impuesto_interno_invalido`), uno distinto de cero en un comprobante que no discrimina
 IVA (`impuesto_interno_sin_discriminar`) y uno en una línea por concepto
-(`concepto_con_impuesto_interno`). El artículo guarda `porcentaje_impuesto_interno` (§3): con un
-`costo_lista` sin IVA el costo nominal es `neto × (1 + %II/100 + %IVA/100)` (el IVA no grava al impuesto
-interno) y el descuento del proveedor se aplica sobre ese total. Las ventas y la facturación ARCA no
+(`concepto_con_impuesto_interno`). El artículo guarda `impuesto_interno` (§3), un importe en la base del
+`costo_lista`: con un `costo_lista` sin IVA el costo nominal por unidad es `neto × (1 + %IVA/100) +
+impuesto_interno` (el IVA no grava al impuesto interno; ambos se dividen entre `unidades_por_bulto` si el
+costo es por bulto) y el descuento del proveedor se aplica sobre ese total. Las ventas y la facturación ARCA no
 cambian (el comercio revende: el impuesto interno es costo, no crédito fiscal). El Libro IVA de compras
 tiene una columna `impuestos_internos` por fila y en totales, que entra en la `diferencia`.
 

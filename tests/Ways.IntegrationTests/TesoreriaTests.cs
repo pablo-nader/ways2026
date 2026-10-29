@@ -519,4 +519,237 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Contains(libro!.Items, m => m.Id == idPrincipal);
         Assert.DoesNotContain(libro.Items, m => m.Id == idDeOtraEmpresa);
     }
+
+    // ---- orden en el servidor: GET /api/reportes/tesoreria?orden=&direccion= --------------------------
+
+    private async Task<int> SembrarMovimientoConAsync(
+        Contexto ctx, TipoMovimientoTesoreria tipo, string concepto, int? idPuntoVenta, int idEmpleado, int diaDeAgosto,
+        decimal inicio, decimal ingreso, decimal egreso)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var movimiento = new MovimientoTesoreria
+        {
+            IdTenant = ctx.IdTenant,
+            IdEmpresa = ctx.IdEmpresa,
+            IdPuntoVenta = idPuntoVenta,
+            Fecha = new DateTimeOffset(2026, 8, diaDeAgosto, 12, 0, 0, TimeSpan.Zero),
+            Tipo = tipo,
+            Concepto = concepto,
+            Inicio = inicio,
+            Ingreso = ingreso,
+            Egreso = egreso,
+            Final = inicio + ingreso - egreso,
+            IdEmpleado = idEmpleado
+        };
+        db.MovimientosTesoreria.Add(movimiento);
+        await db.SaveChangesAsync();
+
+        return movimiento.Id;
+    }
+
+    /// <summary>Los tres usuarios del contexto por rol, de menor a mayor id (admin, supervisor, vendedor).</summary>
+    private async Task<(int Admin, int Supervisor, int Vendedor)> EmpleadosPorIdAsync(Contexto ctx)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var supervisor = await db.Usuarios.Where(u => u.RolId == (int)RolConocido.Supervisor).Select(u => u.Id).SingleAsync();
+        var vendedor = await db.Usuarios.Where(u => u.RolId == (int)RolConocido.Vendedor).Select(u => u.Id).SingleAsync();
+        return (ctx.IdEmpleadoAdmin, supervisor, vendedor);
+    }
+
+    /// <summary>Cinco movimientos (posiciones 1 a 5, en orden de alta, es decir de id), con cada columna en un orden
+    /// distinto del de id, empates (el desempate por id se ve) y un punto de venta dado de baja que ordena como vacío.
+    /// <code>
+    /// pos tipo        concepto inicio ingreso egreso final pv              empleado fecha
+    ///  1  RetiroCaja  c3       40     10      0      50    Local 1         vendedor 3
+    ///  2  Deposito    c1       20     0       5      15    PV secundario   admin    5
+    ///  3  Gasto       c5       30     30      10     50    -               superv.  1
+    ///  4  Ajuste      c2       5      5       0      10    Local 1         admin    4
+    ///  5  RetiroCaja  c4       60     0       20     40    (baja)          superv.  2
+    /// </code></summary>
+    private async Task<int[]> SembrarCincoMovimientosAsync(Contexto ctx)
+    {
+        var (admin, supervisor, vendedor) = await EmpleadosPorIdAsync(ctx);
+        var pvSecundario = await SembrarPuntoVentaAsync(ctx, "PV secundario");
+        var pvDeBaja = await SembrarPuntoVentaAsync(ctx, "PV a dar de baja");
+
+        var ids = new[]
+        {
+            await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.RetiroCaja, "c3", ctx.IdPuntoVenta, vendedor, 3, 40m, 10m, 0m),
+            await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.Deposito, "c1", pvSecundario, admin, 5, 20m, 0m, 5m),
+            await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.Pago, "c5", null, supervisor, 1, 30m, 30m, 10m),
+            await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.Ajuste, "c2", ctx.IdPuntoVenta, admin, 4, 5m, 5m, 0m),
+            await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.RetiroCaja, "c4", pvDeBaja, supervisor, 2, 60m, 0m, 20m),
+        };
+
+        await SoftDeletePuntoVentaAsync(ctx, pvDeBaja);
+
+        return ids;
+    }
+
+    private static async Task<List<int>> RecorrerOrdenadoAsync(HttpClient cliente, int idEmpresa, string orden, int tamanio = 2)
+    {
+        var ids = new List<int>();
+        for (var pagina = 1; pagina <= 10; pagina++)
+        {
+            var respuesta = await cliente.GetAsync(
+                $"/api/reportes/tesoreria?{ConstruirQuery(idEmpresa, null, null, null)}&{orden}&pagina={pagina}&tamanio={tamanio}");
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+            var p = JsonSerializer.Deserialize<PaginaDeMovimientosTesoreria>(cuerpo, OpcionesJson)!;
+            ids.AddRange(p.Items.Select(m => m.Id));
+            if (pagina * tamanio >= p.Total) break;
+        }
+
+        return ids;
+    }
+
+    private static List<int> PorPosicion(int[] ids, string posiciones) =>
+        [.. posiciones.Split(',').Select(p => ids[int.Parse(p) - 1])];
+
+    /// <summary>Cláusula bajo prueba: el <c>ORDER BY</c> aplicado ANTES de <c>Skip/Take</c> en
+    /// <c>ServicioDeTesoreria.ListarAsync</c>. Cada caso recorre las páginas de a dos filas y compara la secuencia
+    /// completa: un orden aplicado después de paginar (o ausente) la rompe. Un punto de venta ausente o dado de
+    /// baja va al final en las dos direcciones y las filas empatadas salen por id ascendente.</summary>
+    [Theory]
+    [InlineData("tipo", "ascendente", "4,2,3,1,5")]
+    [InlineData("tipo", "descendente", "1,5,3,2,4")]
+    [InlineData("inicio", "ascendente", "4,2,3,1,5")]
+    [InlineData("inicio", "descendente", "5,1,3,2,4")]
+    [InlineData("ingreso", "ascendente", "2,5,4,1,3")]
+    [InlineData("ingreso", "descendente", "3,1,4,2,5")]
+    [InlineData("egreso", "ascendente", "1,4,2,3,5")]
+    [InlineData("egreso", "descendente", "5,3,2,1,4")]
+    [InlineData("final", "ascendente", "4,2,5,1,3")]
+    [InlineData("final", "descendente", "1,3,5,2,4")]
+    [InlineData("concepto", "ascendente", "2,4,1,5,3")]
+    [InlineData("concepto", "descendente", "3,5,1,4,2")]
+    [InlineData("puntoVenta", "ascendente", "1,4,2,3,5")]
+    [InlineData("puntoVenta", "descendente", "2,1,4,3,5")]
+    [InlineData("empleado", "ascendente", "2,4,3,5,1")]
+    [InlineData("empleado", "descendente", "1,3,5,2,4")]
+    [InlineData("fecha", "ascendente", "3,5,1,4,2")]
+    [InlineData("fecha", "descendente", "2,4,1,5,3")]
+    public async Task CadaColumnaOrdenaTodoElLibroAtravesDeLasPaginas(string orden, string direccion, string esperadoPorPosicion)
+    {
+        var ctx = await PrepararAsync($"TesOrden{orden}{direccion}");
+        var ids = await SembrarCincoMovimientosAsync(ctx);
+
+        var obtenido = await RecorrerOrdenadoAsync(ctx.Admin, ctx.IdEmpresa, $"orden={orden}&direccion={direccion}");
+
+        Assert.Equal(PorPosicion(ids, esperadoPorPosicion), obtenido);
+    }
+
+    /// <summary>El libro sigue en orden de cadena (id ascendente) mientras nadie pida otro orden, y cada fila
+    /// conserva su inicio/final persistidos al reordenar: el orden es opt-in y no recalcula nada.</summary>
+    [Fact]
+    public async Task SinOrdenSigueElOrdenDeCadenaYAlReordenarCadaFilaConservaSuSaldo()
+    {
+        var ctx = await PrepararAsync(nameof(SinOrdenSigueElOrdenDeCadenaYAlReordenarCadaFilaConservaSuSaldo));
+        var ids = await SembrarCincoMovimientosAsync(ctx);
+
+        var sinOrden = await RecorrerOrdenadoAsync(ctx.Admin, ctx.IdEmpresa, "sinOrden=1");
+        Assert.Equal(ids.ToList(), sinOrden);
+
+        var respuesta = await ctx.Admin.GetAsync(
+            $"/api/reportes/tesoreria?{ConstruirQuery(ctx.IdEmpresa, null, null, null)}&orden=fecha&direccion=ascendente&tamanio=10");
+        var libro = JsonSerializer.Deserialize<PaginaDeMovimientosTesoreria>(await respuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        var primera = libro.Items[0];
+        Assert.Equal(ids[2], primera.Id);
+        Assert.Equal(30m, primera.Inicio);
+        Assert.Equal(50m, primera.Final);
+    }
+
+    /// <summary>El concepto ordena por el texto de la celda: "Etiqueta de categoría — concepto" en las filas de pago
+    /// (con el concepto del pago, que puede editarse después del movimiento) y el concepto propio en el resto. El
+    /// orden por etiqueta difiere del orden por concepto a secas: "Impuestos — zz…" va antes que "Sueldos — aa…".
+    /// Mutación: ordenar por <c>PagoConcepto ?? M.Concepto</c> deja el gasto de Sueldos antes que el de Impuestos.
+    /// Lista espejo de etiquetas: <c>EtiquetasDeCategoriaDePagoTests</c> (backend) y <c>tipos.test.ts</c> (web).</summary>
+    [Theory]
+    [InlineData("ascendente", "I,M,S")]
+    [InlineData("descendente", "S,M,I")]
+    public async Task ElConceptoOrdenaPorElTextoDeLaCeldaConLaEtiquetaDeCategoria(string direccion, string esperado)
+    {
+        var ctx = await PrepararAsync($"TesConcepto{direccion}");
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var idMedioEfectivo = await db.MediosPago
+                .Where(m => m.Comportamiento == Ways.Domain.Catalogos.ComportamientoMedioPago.Efectivo)
+                .Select(m => m.Id).FirstAsync();
+            foreach (var (categoria, concepto) in new[] { (CategoriaPago.Sueldos, "zz original"), (CategoriaPago.Impuestos, "zz impuesto") })
+            {
+                var alta = await ctx.Admin.PostAsJsonAsync(
+                    "/api/gastos/administracion",
+                    new SolicitudDePagoDeAdministracion(
+                        new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, categoria, null, null,
+                        concepto, null, idMedioEfectivo, null, 15000m));
+                Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+            }
+
+            var pagoDeSueldos = await db.Pagos.SingleAsync(g => g.Categoria == CategoriaPago.Sueldos);
+            pagoDeSueldos.Concepto = "aa editado";
+            await db.SaveChangesAsync();
+        }
+
+        var (admin, _, _) = await EmpleadosPorIdAsync(ctx);
+        var idM = await SembrarMovimientoConAsync(ctx, TipoMovimientoTesoreria.RetiroCaja, "Mm uno", null, admin, 2, 0m, 5m, 0m);
+
+        var respuesta = await ctx.Admin.GetAsync(
+            $"/api/reportes/tesoreria?{ConstruirQuery(ctx.IdEmpresa, null, null, null)}&orden=concepto&direccion={direccion}&tamanio=10");
+        var libro = JsonSerializer.Deserialize<PaginaDeMovimientosTesoreria>(await respuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+
+        var filaDeSueldos = Assert.Single(libro.Items, m => m.PagoCategoria == CategoriaPago.Sueldos);
+        var filaDeImpuestos = Assert.Single(libro.Items, m => m.PagoCategoria == CategoriaPago.Impuestos);
+        Assert.Equal("aa editado", filaDeSueldos.PagoConcepto);
+        var porClave = new Dictionary<string, int> { ["S"] = filaDeSueldos.Id, ["I"] = filaDeImpuestos.Id, ["M"] = idM };
+        Assert.Equal(esperado.Split(',').Select(k => porClave[k]).ToList(), libro.Items.Select(m => m.Id).ToList());
+    }
+
+    [Theory]
+    [InlineData("orden=acciones", "orden_invalido")]
+    [InlineData("orden=Fecha", "orden_invalido")]
+    [InlineData("orden=fecha&direccion=asc", "direccion_invalida")]
+    [InlineData("direccion=descendente", "direccion_sin_orden")]
+    public async Task UnOrdenODireccionFueraDeLaListaSeRechazaConCuatrocientos(string query, string codigoEsperado)
+    {
+        var ctx = await PrepararAsync($"TesRechazo{codigoEsperado}{query.Length}");
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/reportes/tesoreria?idEmpresa={ctx.IdEmpresa}&{query}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(codigoEsperado, problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task ElSupervisorTambienOrdenaYElVendedorSigueRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(ElSupervisorTambienOrdenaYElVendedorSigueRechazado));
+        var ids = await SembrarCincoMovimientosAsync(ctx);
+
+        var delSupervisor = await RecorrerOrdenadoAsync(ctx.Supervisor, ctx.IdEmpresa, "orden=fecha&direccion=ascendente");
+        var delVendedor = await ctx.Vendedor.GetAsync(
+            $"/api/reportes/tesoreria?idEmpresa={ctx.IdEmpresa}&orden=fecha&direccion=ascendente");
+
+        Assert.Equal(PorPosicion(ids, "3,5,1,4,2"), delSupervisor);
+        Assert.Equal(HttpStatusCode.Forbidden, delVendedor.StatusCode);
+    }
+
+    [Fact]
+    public async Task ElOrdenNoMezclaMovimientosDeOtroTenantNiDeOtraEmpresa()
+    {
+        var propio = await PrepararAsync("TesAislamientoA");
+        var ajeno = await PrepararAsync("TesAislamientoB");
+        var (idOtraEmpresa, idPuntoVentaDeOtraEmpresa) = await SembrarOtraEmpresaDelMismoTenantAsync(propio, "Otra empresa");
+        var idsPropios = await SembrarCincoMovimientosAsync(propio);
+        var idsAjenos = await SembrarCincoMovimientosAsync(ajeno);
+        var idDeOtraEmpresa = await SembrarMovimientoAsync(
+            propio, idPuntoVentaDeOtraEmpresa, new DateOnly(2026, 8, 6), 0m, 999m, 0m, 999m, idEmpresa: idOtraEmpresa);
+
+        var obtenido = await RecorrerOrdenadoAsync(propio.Admin, propio.IdEmpresa, "orden=fecha&direccion=descendente");
+
+        Assert.Equal(PorPosicion(idsPropios, "2,4,1,5,3"), obtenido);
+        Assert.Empty(obtenido.Intersect(idsAjenos));
+        Assert.DoesNotContain(idDeOtraEmpresa, obtenido);
+    }
 }

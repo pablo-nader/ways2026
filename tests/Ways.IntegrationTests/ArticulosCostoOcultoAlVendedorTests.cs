@@ -16,7 +16,7 @@ using Ways.Infrastructure.Seguridad;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// Los costos del artículo (<c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>, <c>PorcentajeImpuestoInterno</c>) los ven
+/// Los costos del artículo (<c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>, <c>ImpuestoInterno</c>) los ven
 /// admin y supervisor: el listado, el detalle y la grilla heredan <c>OperacionDePos</c> (el vendedor
 /// lee los mismos endpoints desde el POS), así que al vendedor le llega <c>null</c> en vez del costo.
 /// La sugerencia de precio se deriva del costo y no tiene campo que enmascarar: al vendedor se le
@@ -72,7 +72,7 @@ public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClas
                 EsProducto = true,
                 CostoLista = 70m,
                 DescuentoProveedor = 5m,
-                PorcentajeImpuestoInterno = 3m,
+                ImpuestoInterno = 3m,
                 CostoNominal = 61.5m,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
@@ -117,11 +117,11 @@ public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClas
         var listado = await cliente.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
         var fila = Assert.Single(listado!.Items);
         Assert.Equal((70m, 5m, 61.5m), (fila.CostoLista, fila.DescuentoProveedor, fila.CostoNominal));
-        Assert.Equal(3m, fila.PorcentajeImpuestoInterno);
+        Assert.Equal(3m, fila.ImpuestoInterno);
 
         var detalle = await cliente.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{idArticulo}", OpcionesJson);
         Assert.Equal((70m, 5m, 61.5m), (detalle!.CostoLista, detalle.DescuentoProveedor, detalle.CostoNominal));
-        Assert.Equal(3m, detalle.PorcentajeImpuestoInterno);
+        Assert.Equal(3m, detalle.ImpuestoInterno);
 
         var grilla = await cliente.GetFromJsonAsync<PaginaDeArticulosGrilla>("/api/articulos/grilla?nombre=con+costo", OpcionesJson);
         Assert.Equal(61.5m, Assert.Single(grilla!.Items).CostoNominal);
@@ -135,11 +135,11 @@ public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClas
         var listado = await vendedor.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
         var fila = Assert.Single(listado!.Items);
         Assert.Equal((null, null, null), (fila.CostoLista, fila.DescuentoProveedor, fila.CostoNominal));
-        Assert.Null(fila.PorcentajeImpuestoInterno);
+        Assert.Null(fila.ImpuestoInterno);
 
         var detalle = await vendedor.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{idArticulo}", OpcionesJson);
         Assert.Equal((null, null, null), (detalle!.CostoLista, detalle.DescuentoProveedor, detalle.CostoNominal));
-        Assert.Null(detalle.PorcentajeImpuestoInterno);
+        Assert.Null(detalle.ImpuestoInterno);
 
         var grilla = await vendedor.GetFromJsonAsync<PaginaDeArticulosGrilla>("/api/articulos/grilla?nombre=con+costo", OpcionesJson);
         Assert.Null(Assert.Single(grilla!.Items).CostoNominal);

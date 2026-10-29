@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tesoreria } from './Tesoreria'
 import { RutaProtegida } from '../auth/RutaProtegida'
+import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type { EmpresaListado, MovimientoTesoreriaListado, PaginaDeMovimientosTesoreria, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 
@@ -460,5 +461,211 @@ describe('Tesoreria — role gating (spec: A Supervisor Reads The G2 Listing And
 
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Tesorería')).not.toBeInTheDocument())
+  })
+})
+
+describe('Tesoreria — orden en el servidor', () => {
+  function consultasDelLibro(): string[] {
+    return apiGetMock.mock.calls.map((c) => c[0] as string).filter((ruta) => ruta.startsWith('/reportes/tesoreria?'))
+  }
+
+  function parametrosDeLaUltimaConsulta(): URLSearchParams {
+    return new URLSearchParams(consultasDelLibro().at(-1)!.split('?')[1])
+  }
+
+  async function cargada() {
+    renderTesoreria()
+    await screen.findByText('Apertura de turno')
+  }
+
+  /**
+   * Cláusula bajo prueba: cada encabezado de dato manda su propia clave en `orden`. Mutation-proof-
+   * tests: cruzar dos claves (por ejemplo `inicio` en la columna Final) rompe el caso de esa columna.
+   */
+  it.each([
+    ['Tipo', 'tipo'],
+    ['Inicio', 'inicio'],
+    ['Ingreso', 'ingreso'],
+    ['Egreso', 'egreso'],
+    ['Final', 'final'],
+    ['Concepto', 'concepto'],
+    ['Punto de venta', 'puntoVenta'],
+    ['Empleado', 'empleado'],
+    ['Fecha', 'fecha'],
+  ])('el encabezado "%s" pide orden=%s ascendente', async (titulo, clave) => {
+    mockearRutasBase()
+    await cargada()
+
+    const encabezado = screen.getByRole('columnheader', { name: new RegExp(`^${titulo}`) })
+    await userEvent.click(within(encabezado).getByRole('button'))
+
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe(clave))
+    expect(parametrosDeLaUltimaConsulta().get('direccion')).toBe('ascendente')
+  })
+
+  /** El libro llega en orden de cadena mientras nadie pida otro: sin `orden` ni `direccion` en la consulta. */
+  it('sin pedir un orden, la consulta no lleva orden ni dirección', async () => {
+    mockearRutasBase()
+    await cargada()
+
+    expect(parametrosDeLaUltimaConsulta().has('orden')).toBe(false)
+    expect(parametrosDeLaUltimaConsulta().has('direccion')).toBe(false)
+    expect(screen.getByRole('columnheader', { name: /^Fecha/ })).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('el clic recorre ascendente, descendente y vuelve al orden de cadena, con aria-sort en cada paso', async () => {
+    mockearRutasBase()
+    await cargada()
+    const encabezado = screen.getByRole('columnheader', { name: /^Final/ })
+    const boton = within(encabezado).getByRole('button')
+
+    await userEvent.click(boton)
+    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'ascending'))
+    expect(parametrosDeLaUltimaConsulta().get('direccion')).toBe('ascendente')
+
+    await userEvent.click(boton)
+    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'descending'))
+    expect(parametrosDeLaUltimaConsulta().get('direccion')).toBe('descendente')
+
+    await userEvent.click(boton)
+    await waitFor(() => expect(encabezado).toHaveAttribute('aria-sort', 'none'))
+    expect(parametrosDeLaUltimaConsulta().has('orden')).toBe(false)
+    expect(parametrosDeLaUltimaConsulta().has('direccion')).toBe(false)
+  })
+
+  /**
+   * Cláusula bajo prueba: `pagina: 1` al cambiar el orden y los filtros conservados. Mutation-proof-
+   * tests: quitar el reseteo deja `pagina=2` en la consulta; reiniciar los filtros pierde `idPuntoVenta`.
+   */
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/reportes/tesoreria?') ? Promise.resolve(paginaFixture([movimientoFixture()], { total: 60 })) : undefined,
+    )
+    await cargada()
+    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), String(puntoVentaNorte.id))
+    await userEvent.click(await screen.findByRole('button', { name: 'Siguiente' }))
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('2'))
+
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+    expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('1')
+    expect(parametrosDeLaUltimaConsulta().get('idPuntoVenta')).toBe(String(puntoVentaNorte.id))
+  })
+
+  it('un cambio de orden dispara una sola consulta', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/reportes/tesoreria?') ? Promise.resolve(paginaFixture([movimientoFixture()], { total: 60 })) : undefined,
+    )
+    await cargada()
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('2'))
+    const antes = consultasDelLibro().length
+
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+
+    expect(consultasDelLibro().length - antes).toBe(1)
+  })
+
+  it('el orden se conserva al cambiar un filtro', async () => {
+    mockearRutasBase()
+    await cargada()
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+
+    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), String(puntoVentaNorte.id))
+
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('idPuntoVenta')).toBe(String(puntoVentaNorte.id)))
+    expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto')
+  })
+
+  it('el export no lleva el orden: sale siempre en orden de cadena', async () => {
+    mockearRutasBase()
+    await cargada()
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    const rutaDescargada = apiDescargarMock.mock.calls[0][0] as string
+    expect(rutaDescargada).not.toContain('orden=')
+    expect(rutaDescargada).not.toContain('direccion=')
+  })
+
+  /**
+   * Cláusula bajo prueba: el gateo de generación frente a un cambio de orden. Mutation-proof-tests:
+   * sacar el `if (generacionRef.current !== miGeneracion) return` del `.then` deja que la respuesta
+   * del orden viejo, que llega tarde, pise las filas del orden vigente.
+   */
+  it('la respuesta de un orden viejo que llega tarde nunca pisa a la del orden vigente', async () => {
+    let resolverPrimera: (valor: PaginaDeMovimientosTesoreria) => void = () => {}
+    const primera = new Promise<PaginaDeMovimientosTesoreria>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+    mockearRutasBase((ruta) => {
+      if (!ruta.startsWith('/reportes/tesoreria?')) return undefined
+      llamadas += 1
+      if (llamadas === 1) return Promise.resolve(paginaFixture([movimientoFixture({ concepto: 'Apertura de turno' })]))
+      if (llamadas === 2) return primera
+      return Promise.resolve(paginaFixture([movimientoFixture({ id: 2, concepto: 'Orden vigente' })]))
+    })
+    renderTesoreria()
+    await screen.findByText('Apertura de turno')
+
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+    await screen.findByText('Orden vigente')
+
+    resolverPrimera(paginaFixture([movimientoFixture({ id: 3, concepto: 'Orden viejo' })]))
+    await waitFor(() => expect(screen.queryByText('Orden viejo')).not.toBeInTheDocument())
+    expect(screen.getByText('Orden vigente')).toBeInTheDocument()
+  })
+
+  /**
+   * Decisión del patrón de S5c: si la consulta de un orden nuevo falla, la tabla se va con su encabezado
+   * (no queda un encabezado declarando un orden que las filas no tienen) y Reintentar repite ese mismo
+   * orden. Mutation-proof-tests: dejar `setPagina` sin vaciar en el `.catch` deja las filas del orden
+   * anterior bajo un encabezado del nuevo.
+   */
+  it('si falla la consulta de un orden nuevo, no queda un encabezado que mienta y Reintentar repite ese orden', async () => {
+    let llamadas = 0
+    mockearRutasBase((ruta) => {
+      if (!ruta.startsWith('/reportes/tesoreria?')) return undefined
+      llamadas += 1
+      return llamadas === 2
+        ? Promise.reject(new ErrorApi(400, 'orden_invalido', 'orden no válido.'))
+        : Promise.resolve(paginaFixture())
+    })
+    await cargada()
+
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+
+    expect(await screen.findByText('orden no válido.')).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: /^Concepto/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('Apertura de turno')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+    const encabezado = await screen.findByRole('columnheader', { name: /^Concepto/ })
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+    expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto')
+    expect(screen.getByText('Apertura de turno')).toBeInTheDocument()
+  })
+
+  it('el orden elegido sigue vigente al cambiar de empresa', async () => {
+    mockearRutasBase(undefined, [empresaUnica, empresaOtra])
+    renderTesoreria()
+    await userEvent.selectOptions(await screen.findByLabelText('Empresa'), String(empresaUnica.id))
+    await screen.findByText('Apertura de turno')
+    await userEvent.click(screen.getByRole('button', { name: /^Concepto/ }))
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto'))
+
+    await userEvent.selectOptions(screen.getByLabelText('Empresa'), String(empresaOtra.id))
+
+    await waitFor(() => expect(parametrosDeLaUltimaConsulta().get('idEmpresa')).toBe(String(empresaOtra.id)))
+    expect(parametrosDeLaUltimaConsulta().get('orden')).toBe('concepto')
+    expect(parametrosDeLaUltimaConsulta().get('pagina')).toBe('1')
   })
 })

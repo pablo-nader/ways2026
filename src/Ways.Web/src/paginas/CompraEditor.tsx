@@ -990,7 +990,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
 
     let guardada: CompraDetalle
     try {
-      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, porcentajePorAlicuota)
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
       guardada = esNuevo || idCompra === null ? await clienteDeCompras.crear(solicitud) : await clienteDeCompras.actualizar(idCompra, solicitud)
     } catch (e) {
       liberar()

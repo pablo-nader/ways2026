@@ -54,7 +54,7 @@ const referencia: ValoresCompartidosDeLaFamilia = {
   costoListaPor: 'Unidad',
   costoListaIncluyeIva: true,
   descuentoProveedor: 5,
-  porcentajeImpuestoInterno: 0,
+  impuestoInterno: 0,
   costoNominal: null,
 }
 
@@ -294,7 +294,7 @@ describe('Familia — el detalle', () => {
         ['Costo de lista por', 'Unidad'],
         ['Costo de lista incluye IVA', 'Sí'],
         ['Descuento', '5%'],
-        ['Impuestos internos', '0%'],
+        ['Impuestos internos', '$ 0,00'],
         ['Costo nominal', '—'],
       ]),
     )

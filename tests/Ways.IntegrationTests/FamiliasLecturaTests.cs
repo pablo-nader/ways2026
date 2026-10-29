@@ -247,7 +247,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 AcumulaEnVenta: referencia.AcumulaEnVenta, CostoLista: referencia.CostoLista,
                 CostoListaPor: referencia.CostoListaPor, CostoListaIncluyeIva: referencia.CostoListaIncluyeIva,
                 DescuentoProveedor: referencia.DescuentoProveedor,
-                PorcentajeImpuestoInterno: referencia.PorcentajeImpuestoInterno, CostoNominal: referencia.CostoNominal),
+                ImpuestoInterno: referencia.ImpuestoInterno, CostoNominal: referencia.CostoNominal),
             detalle.Valores);
 
         var fijas = new[] { e.IdListaGeneral, e.IdListaMayorista, s.ListaMinorista }.Order().ToList();
@@ -318,7 +318,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 ControlaLote: referencia.ControlaLote, AcumulaEnVenta: referencia.AcumulaEnVenta,
                 CostoLista: referencia.CostoLista, CostoListaPor: referencia.CostoListaPor,
                 CostoListaIncluyeIva: referencia.CostoListaIncluyeIva, DescuentoProveedor: referencia.DescuentoProveedor,
-                PorcentajeImpuestoInterno: referencia.PorcentajeImpuestoInterno, CostoNominal: referencia.CostoNominal),
+                ImpuestoInterno: referencia.ImpuestoInterno, CostoNominal: referencia.CostoNominal),
             valores);
     }
 

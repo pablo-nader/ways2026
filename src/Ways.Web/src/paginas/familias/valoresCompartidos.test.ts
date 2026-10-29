@@ -19,7 +19,7 @@ function valores(sobrescribir: Partial<ValoresCompartidosDeLaFamilia> = {}): Val
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: 5,
-    porcentajeImpuestoInterno: 8.5,
+    impuestoInterno: 8.5,
     costoNominal: 99,
     ...sobrescribir,
   }
@@ -49,7 +49,7 @@ describe('formatearValorCompartido', () => {
     ['costoListaPor', 'Unidad'],
     ['costoListaIncluyeIva', 'Sí'],
     ['descuentoProveedor', '5%'],
-    ['porcentajeImpuestoInterno', '8.5%'],
+    ['impuestoInterno', '$ 8,50'],
     ['costoNominal', '$ 99,00'],
   ] as const)('%s se muestra como "%s"', (clave, esperado) => {
     expect(formatearValorCompartido(clave, valores(), nombres)).toBe(esperado)
@@ -84,7 +84,7 @@ describe('formatearValorCompartido', () => {
         'costoListaPor',
         'costoListaIncluyeIva',
         'descuentoProveedor',
-        'porcentajeImpuestoInterno',
+        'impuestoInterno',
         'costoNominal',
       ].sort(),
     )
