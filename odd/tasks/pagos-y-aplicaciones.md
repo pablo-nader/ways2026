@@ -146,9 +146,10 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   `ActualizarConfirmadaAsync`; anulada → `409 compra_no_editable`), stock by difference, lots, OC re-projection, CC by difference, audit;
   anulación reverses the stock NET per key; CC statement shows the pending balance only on the newest `compra` row. Temporary
   `409 compra_edicion_con_aplicaciones` (replaced by S3).
-- [ ] E6-S3 — Applications: edit that lowers the total below what is applied, or changes proveedor/PV/empresa, releases the excess
-  applications back to credit instead of the temporary 409 (and compra-side redondeo handling); migration widening
-  `tg_comprobantes_compra_admiten_aplicaciones` to `id_proveedor`/`id_punto_venta`.
+- [x] E6-S3 (written; CI pending; branch `pnader/pagos-e6-s3-aplicaciones`) — Applications: edit that lowers the total below what is applied
+  trims the applications newest first (shared `RecorteDeAplicaciones`, also used by the pago edit); a proveedor/PV change releases all
+  applications and unlinks `pagos.id_comprobante_compra`; compra-side redondeo reversed; migration `AplicacionesAlCambiarLaCompra` widens
+  `tg_comprobantes_compra_admiten_aplicaciones` to `id_proveedor`/`id_punto_venta`. The temporary 409 is gone.
 - [ ] E6-S4 — Costs: re-run the `costo_nominal` update (and supplier codes) on edit, family-aware, under the same lock order.
 - [ ] E6-W1 — Web: edit button on a confirmed compra, difference preview, new error codes.
 
@@ -318,12 +319,24 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   `409 compra_cambio_concurrente`) → single EF read → OCs ascending `FOR UPDATE` (`EscriturasDeOrdenDeCompra.BloquearAsync`) → lots ascending
   `(artículo, código)` → stock (aggregate per `(artículo, PV)` then lots) → EF replace-set → OC re-projection → audit → proveedores ascending
   (last), CC `compra` rows by difference. Codes: `compra_no_editable` (anulada), `compra_cambio_concurrente`, `compra_edicion_stock_negativo`,
-  `compra_edicion_con_aplicaciones` (TEMPORARY, S3 replaces it), `compra_edicion_sin_asiento_de_cuenta` (pre-ledger compras cannot change
+  `compra_edicion_con_aplicaciones` (TEMPORARY, removed in S3), `compra_edicion_sin_asiento_de_cuenta` (pre-ledger compras cannot change
   total/proveedor), plus the confirm codes `compra_numero_externo_requerido`/`compra_incompleta_para_confirmar`/`compra_sin_items`. Docs:
   doc 10 parts 05, 06, 08. Integration tests (`ComprasEdicionConfirmadaTests`, 23 tests incl. a deterministic edit×anular rendezvous;
   `ComprasLifecycleTests` confirmed-PUT test rewritten) NOT run locally (Docker down): CI `backend-integration` is the proof, pending.
   Not done on purpose: costs and supplier codes on edit (S4); web (W1). Route: delegated writer.
 
+- 2026-10-28 E6-S3 (branch `pnader/pagos-e6-s3-aplicaciones`, stacked on E6-S2): `dotnet build Ways.slnx` 0 errors; Domain.Tests 1963 passed;
+  Application.Tests 1100 passed; `has-pending-model-changes` clean. Mutation evidence: `RecorteDeAplicaciones` newest-first order flipped to
+  oldest-first is killed by 6 of 9 helper tests; reverted. Rules: tope = new total (0 when proveedor/PV changes, which releases all and sets
+  `pagos.id_comprobante_compra = NULL`); redondeo of the compra reversed when it exists and total/proveedor/PV changes (decided in the plan,
+  WRITTEN in the final proveedores loop because the reversal locks the proveedor row). Lock order: membership → compra → OCs → pagos
+  ascending (`BloquearPagosDeLaEdicionAsync`) → lots → stock → EF write → OC projection → audit → proveedores ascending (redondeo reversal,
+  then the CC difference, per proveedor). The migration only widens the trigger; the function does not check empresa since
+  `AplicacionesEntreEmpresas`, so a PV-only change is not caught by the DB (service rule). Integration tests (`ComprasEdicionConfirmadaTests`
+  E6-S3 region, `AplicacionesPagoEsquemaTests` proveedor backstop) NOT run locally (Docker down): CI `backend-integration` is the proof,
+  pending. No race-style test for compra-edit x pago-writer (needs a rendezvous; deadlock-safety rests on the shared compra-first order).
+  Route: delegated writer.
+
 ## Next step
 
-E6-S1/S2 are written (branch `pnader/pagos-e6-edicion-compras`, judgment-day pending); next is E6-S3 (applications handling and the trigger migration), then E6-S4 (costs) and E6-W1; E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.
+E6-S1/S2/S3 are written (branches `pnader/pagos-e6-edicion-compras`, `pnader/pagos-e6-s3-aplicaciones`, judgment-day pending); next is E6-S4 (costs) and E6-W1; E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.
