@@ -807,7 +807,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(2, auditoria.GetProperty("aplicaciones_tratadas").GetArrayLength());
         Assert.Equal(210m, auditoria.GetProperty("redondeo_revertido").GetDecimal());
         Assert.Equal(
-            [pagoA, pagoB], auditoria.GetProperty("pagos_desvinculados").EnumerateArray().Select(p => p.GetInt32()).Order());
+            [pagoA, pagoB],
+            auditoria.GetProperty("pagos_desvinculados").EnumerateArray().Select(p => p.GetProperty("id_pago").GetInt32()).Order());
     }
 
     /// <summary>Un cambio de punto de venta DENTRO de la misma empresa no cambia a quién pertenece la compra: las aplicaciones y
