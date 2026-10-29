@@ -116,6 +116,33 @@ public class MovimientosPersonalSchemaTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(constraint, excepcion.ConstraintName);
     }
 
+    [Theory]
+    [InlineData("NULL", true)]
+    [InlineData("ARRAY[8,8,8,8,8,0,0]::numeric[]", true)]
+    [InlineData("ARRAY[0,0,0,0,0,0,24]::numeric[]", true)]
+    [InlineData("ARRAY[8,8,8,8,8,0]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,0,0]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,-1]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,25]::numeric[]", false)]
+    [InlineData("ARRAY[8,8,8,8,8,0,NULL]::numeric[]", false)]
+    public async Task ElHorarioHabitualSoloAceptaNullOSieteValoresEntreCeroYVeinticuatro(string valor, bool valido)
+    {
+        var s = await SembrarAsync(nameof(ElHorarioHabitualSoloAceptaNullOSieteValoresEntreCeroYVeinticuatro) + valor.GetHashCode());
+
+        await using var actualizar = await ComandoAsync(
+            s.IdTenantA, $"UPDATE personal SET horario_habitual = {valor} WHERE id_personal = $1", s.IdPersonalDeA);
+
+        if (valido)
+        {
+            Assert.Equal(1, await actualizar.ExecuteNonQueryAsync());
+            return;
+        }
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => actualizar.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_personal_horario_habitual", excepcion.ConstraintName);
+    }
+
     [Fact]
     public async Task ElEnumDeclaraLosTresTiposParaQueElPagoNoNecesiteOtraMigracion()
     {

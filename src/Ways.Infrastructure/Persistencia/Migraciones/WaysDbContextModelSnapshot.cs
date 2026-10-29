@@ -4329,6 +4329,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("citext")
                         .HasColumnName("documento");
 
+                    b.PrimitiveCollection<decimal[]>("HorarioHabitual")
+                        .HasColumnType("numeric(4,2)[]")
+                        .HasColumnName("horario_habitual");
+
                     b.Property<int?>("IdCliente")
                         .HasColumnType("integer")
                         .HasColumnName("id_cliente");
@@ -4402,6 +4406,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("personal", null, t =>
                         {
+                            t.HasCheckConstraint("ck_personal_horario_habitual", "horario_habitual IS NULL OR (cardinality(horario_habitual) = 7 AND array_position(horario_habitual, NULL) IS NULL AND 0 <= ALL (horario_habitual) AND 24 >= ALL (horario_habitual))");
+
                             t.HasCheckConstraint("ck_personal_valor_hora", "valor_hora >= 0");
                         });
                 });
