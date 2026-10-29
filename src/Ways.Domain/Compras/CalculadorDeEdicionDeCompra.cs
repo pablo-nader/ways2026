@@ -28,6 +28,17 @@ public sealed record ResumenDeCompraEditada(
     int IdProveedor, int IdPuntoVenta, string? NumeroExterno, int? IdOrdenCompra, decimal Total,
     IReadOnlyList<LineaAuditadaDeCompra> Lineas);
 
+/// <summary>Una aplicación de pago a la compra que la edición recortó o liberó. <c>ImporteNuevo</c> cero es una aplicación
+/// liberada entera; mayor que cero, una achicada.</summary>
+public sealed record AplicacionTratadaPorLaEdicion(int IdAplicacion, int IdPago, decimal ImporteAnterior, decimal ImporteNuevo);
+
+/// <summary>Lo que la edición de una compra hizo con sus pagos: aplicaciones recortadas o liberadas, redondeo del lado de la
+/// compra revertido (importe positivo; 0 si no había) y pagos vinculados por <c>pagos.id_comprobante_compra</c> que dejaron
+/// de estarlo.</summary>
+public sealed record TratamientoDePagosDeLaEdicion(
+    IReadOnlyList<AplicacionTratadaPorLaEdicion> Aplicaciones, decimal RedondeoRevertido,
+    IReadOnlyList<int> PagosDesvinculados);
+
 /// <summary>
 /// Cálculo puro de la edición de una compra confirmada (sin base de datos): el stock y la cuenta corriente se corrigen
 /// por DIFERENCIA contra lo que la compra ya asentó, nunca reescribiendo los libros. Los libros son de solo agregado: lo
@@ -92,22 +103,15 @@ public static class CalculadorDeEdicionDeCompra
     }
 
     /// <summary>
-    /// Si la edición toca lo que los pagos ya aplicados a la compra dependen de: el total baja por debajo de lo ya pagado
-    /// (aplicaciones más lo perdonado por redondeo), cambia el total de una compra con redondeo perdonado (la diferencia
-    /// perdonada ya no sería la que cierra el saldo), o cambia el proveedor, el punto de venta o la empresa de una compra con
-    /// pagos aplicados o redondeo (los pagos son de un proveedor y de una empresa). Una compra sin pagos ni redondeo se edita
-    /// sin restricción.
+    /// Si la edición deja sin efecto el redondeo del lado de la compra (lo perdonado de su saldo): el redondeo cerraba el
+    /// saldo que quedaba con ESE total y ESAS aplicaciones, así que cambiar el total, o cambiar el proveedor o el punto
+    /// de venta (la compra deja la cuenta y la empresa donde se perdonó), lo hace perdonar de más. Sin redondeo vigente
+    /// (<paramref name="redondeoVigente"/> es la suma con signo de sus movimientos, negativa mientras haya algo perdonado)
+    /// no hay nada que revertir.
     /// </summary>
-    public static bool RequiereTratarLosPagos(
-        decimal pagado, decimal redondeoVigente, bool tieneAplicaciones, decimal totalAnterior, decimal totalNuevo,
-        bool cambiaProveedor, bool cambiaPuntoVenta, bool cambiaEmpresa)
-    {
-        var tienePagos = tieneAplicaciones || redondeoVigente != 0m;
-
-        return totalNuevo < pagado
-            || (redondeoVigente != 0m && totalNuevo != totalAnterior)
-            || (tienePagos && (cambiaProveedor || cambiaPuntoVenta || cambiaEmpresa));
-    }
+    public static bool RevierteElRedondeo(
+        decimal redondeoVigente, decimal totalAnterior, decimal totalNuevo, bool cambiaLaPertenencia) =>
+        redondeoVigente != 0m && (cambiaLaPertenencia || totalNuevo != totalAnterior);
 
     /// <summary>La línea ya guardada que tiene exactamente el mismo artículo, código de lote y vencimiento que la pedida, o
     /// <c>null</c>. Una línea así no cambia de lote: conserva el que se resolvió al confirmar y no se vuelve a verificar su

@@ -143,15 +143,32 @@ public static class PayloadDeAuditoria
 
     /// <summary><c>compra.edicion</c>. El estado de la compra antes y después (proveedor, punto de venta, número, orden de
     /// compra, total y líneas) y, solo en el valor nuevo, lo que la edición asentó en el stock y en la cuenta de cada
-    /// proveedor: son los asientos por diferencia, no una copia de los libros. Las claves del anterior son un
+    /// proveedor: son los asientos por diferencia, no una copia de los libros. Con <paramref name="pagos"/>, también las
+    /// aplicaciones recortadas o liberadas, el redondeo revertido y los pagos desvinculados. Las claves del anterior son un
     /// subconjunto de las del nuevo.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
         EdicionDeCompra(
             ResumenDeCompraEditada anterior, ResumenDeCompraEditada nuevo,
             IReadOnlyList<DiferenciaDeStockDeCompra> diferenciasDeStock,
-            IReadOnlyList<DiferenciaDeCuentaDeCompra> diferenciasDeCuenta)
+            IReadOnlyList<DiferenciaDeCuentaDeCompra> diferenciasDeCuenta,
+            TratamientoDePagosDeLaEdicion? pagos = null)
     {
         var valorNuevo = ResumenComoPayload(nuevo);
+        if (pagos is not null)
+        {
+            valorNuevo["aplicaciones_tratadas"] = pagos.Aplicaciones
+                .Select(a => (object?)new Dictionary<string, object?>
+                {
+                    ["id_aplicacion"] = a.IdAplicacion,
+                    ["id_pago"] = a.IdPago,
+                    ["importe_anterior"] = a.ImporteAnterior,
+                    ["importe_nuevo"] = a.ImporteNuevo
+                })
+                .ToList();
+            valorNuevo["redondeo_revertido"] = pagos.RedondeoRevertido;
+            valorNuevo["pagos_desvinculados"] = pagos.PagosDesvinculados.Select(p => (object?)p).ToList();
+        }
+
         valorNuevo["diferencias_de_stock"] = diferenciasDeStock
             .Select(d => (object?)new Dictionary<string, object?>
             {

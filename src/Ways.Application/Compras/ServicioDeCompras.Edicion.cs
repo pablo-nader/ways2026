@@ -6,11 +6,13 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Familias;
+using Ways.Application.Pagos;
 using Ways.Application.Stock;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Pagos;
 using Ways.Domain.Stock;
 
 namespace Ways.Application.Compras;
@@ -23,6 +25,8 @@ namespace Ways.Application.Compras;
 /// <para><b>Orden de locks</b> (el global del repo): membresía de familias COMPARTIDO (primera sentencia, aunque esta
 /// slice no toca costos; la slice de costos lo necesita y moverlo después reabriría el orden) → encabezado de la compra
 /// <c>FOR UPDATE … WHERE estado='confirmada'</c> → órdenes de compra afectadas, ascendentes por id, <c>FOR UPDATE</c> →
+/// pagos cuyas aplicaciones se recortan o liberan, o cuyo vínculo con la compra se corta (E6-S3), <c>FOR UPDATE</c>,
+/// ascendentes por id →
 /// lotes (ascendente por artículo y código RESUELTO, ordinal: <see cref="ServicioDeLotes.CodigoResuelto"/>, igual que la confirmación) → stock (ascendente por artículo y punto de venta, agregado antes que lotes) →
 /// escritura de encabezado, líneas, alícuotas y percepciones por EF → re-proyección de las órdenes → proveedores,
 /// ascendentes por id, ÚLTIMO lock de fila, y su asiento de cuenta corriente.</para>
@@ -171,12 +175,14 @@ public partial class ServicioDeCompras
             }
         }
 
-        // 3. Pagos de la compra. TEMPORAL (E6-S3 lo reemplaza por el tratamiento de las aplicaciones): mientras tanto, una
-        // edición que toca lo que los pagos aplicados o el redondeo perdonado suponen se rechaza.
-        await ExigirQueLaEdicionNoToqueLosPagosAsync(
-            id, comprobante, solicitud, cambiaProveedor, cambiaPuntoVenta,
-            cambiaEmpresa: cambiaPuntoVenta && await EmpresaDelPuntoVentaAsync(comprobante.IdPuntoVenta, ct) != idEmpresaNueva,
-            calculada.Total, ct);
+        // 3. Pagos de la compra (E6-S3). Se planea con lecturas posteriores al lock del encabezado, que serializa a todo
+        // escritor de aplicaciones de la compra (todos lo toman antes que el pago), y se bloquean los pagos afectados
+        // ascendentes por id: después de las órdenes y ANTES de lotes y stock, antes del proveedor, que sigue último.
+        var plan = await PlanearElTratamientoDePagosAsync(
+            id, comprobante.Total, calculada.Total, cambiaProveedor || cambiaPuntoVenta, ct);
+
+        await BloquearPagosDeLaEdicionAsync(conexion, transaccionCruda, idTenant, plan.IdsDePagosAfectados, ct);
+        await AplicarElTratamientoDePagosAsync(conexion, transaccionCruda, id, idTenant, plan, momento, ct);
 
         // 3.b Diferencia de cuenta corriente contra la suma de los asientos de la compra. Sin asiento propio (compra
         // anterior al libro de proveedores) el total del encabezado hace de asiento, pero un asiento nuevo dejaría a la
@@ -369,23 +375,57 @@ public partial class ServicioDeCompras
         var nuevo = new ResumenDeCompraEditada(
             solicitud.IdProveedor, solicitud.IdPuntoVenta, numeroExterno, solicitud.IdOrdenCompra, calculada.Total,
             [.. itemsNuevos.Select(i => new LineaAuditadaDeCompra(i.IdArticulo, i.Cantidad, i.Total))]);
-        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.EdicionDeCompra(anterior, nuevo, diferenciasDeStock, diferenciasDeCuenta);
-        await new ServicioDeAuditoria(db, reloj, contexto).RegistrarAsync(
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.EdicionDeCompra(
+            anterior, nuevo, diferenciasDeStock, diferenciasDeCuenta, plan.Tratamiento);
+        var servicioDeAuditoria = new ServicioDeAuditoria(db, reloj, contexto);
+        await servicioDeAuditoria.RegistrarAsync(
             conexion, transaccionCruda,
             new RegistroDeAuditoria(
                 idTenant, solicitud.IdPuntoVenta, AccionAuditada.CompraEdicion, id, valorAnterior, valorNuevo),
             ct);
 
-        // 9. proveedores — ÚLTIMO lock de fila for update de esta transacción (ascendente por id), y su asiento.
-        foreach (var diferencia in diferenciasDeCuenta)
-        {
-            var nuevoSaldo = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
-                conexion, transaccionCruda, idTenant, diferencia.IdProveedor, diferencia.Delta, ct);
+        // 9. proveedores — ÚLTIMO lock de fila for update de esta transacción, ascendentes por id, y sus asientos. La
+        // reversa del redondeo de la compra (que va al proveedor que lo recibió, el anterior) comparte el recorrido con los
+        // asientos de la diferencia: mismo orden total, y para cada proveedor la reversa se asienta antes que la diferencia.
+        // Se decide en el paso 3 (el cupo de las aplicaciones ya la da por hecha) pero se escribe acá porque tocar la fila
+        // del proveedor antes de lotes y stock rompería el orden de locks.
+        var proveedoresATocar = diferenciasDeCuenta
+            .Select(d => d.IdProveedor)
+            .Concat(plan.RevierteElRedondeo ? [anterior.IdProveedor] : [])
+            .Distinct()
+            .Order()
+            .ToList();
 
-            await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
-                conexion, transaccionCruda, idTenant, diferencia.IdProveedor, momento, solicitud.IdPuntoVenta, idEmpleado,
-                TipoMovimientoCcProveedor.Compra, id, idPago: null, diferencia.Delta, nuevoSaldo,
-                DetalleDeLaEdicion(id, anterior, solicitud.IdProveedor, calculada.Total, diferencia.IdProveedor), ct);
+        foreach (var idProveedor in proveedoresATocar)
+        {
+            if (plan.RevierteElRedondeo && idProveedor == anterior.IdProveedor)
+            {
+                var revertido = await RedondeoDeProveedor.RevertirDeLaCompraAsync(
+                    db, conexion, transaccionCruda, idTenant, idProveedor, id, anterior.IdPuntoVenta, idEmpleado, momento,
+                    "edición de la compra", ct);
+
+                if (revertido != 0m)
+                {
+                    await servicioDeAuditoria.RegistrarAsync(
+                        conexion, transaccionCruda,
+                        new RegistroDeAuditoria(
+                            idTenant, anterior.IdPuntoVenta, AccionAuditada.CompraRedondeo, id,
+                            new Dictionary<string, object?> { ["redondeo"] = revertido },
+                            new Dictionary<string, object?> { ["redondeo"] = 0m, ["motivo"] = "edición de la compra" }),
+                        ct);
+                }
+            }
+
+            foreach (var diferencia in diferenciasDeCuenta.Where(d => d.IdProveedor == idProveedor))
+            {
+                var nuevoSaldo = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
+                    conexion, transaccionCruda, idTenant, diferencia.IdProveedor, diferencia.Delta, ct);
+
+                await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
+                    conexion, transaccionCruda, idTenant, diferencia.IdProveedor, momento, solicitud.IdPuntoVenta, idEmpleado,
+                    TipoMovimientoCcProveedor.Compra, id, idPago: null, diferencia.Delta, nuevoSaldo,
+                    DetalleDeLaEdicion(id, anterior, solicitud.IdProveedor, calculada.Total, diferencia.IdProveedor), ct);
+            }
         }
 
         await transaccion.CommitAsync(ct);
@@ -407,46 +447,124 @@ public partial class ServicioDeCompras
             : $"Edición de la compra #{id}: la compra pasó a otro proveedor";
     }
 
-    private async Task<int> EmpresaDelPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
-        await db.PuntosVenta.Where(pv => pv.Id == idPuntoVenta).Select(pv => pv.IdEmpresa).FirstAsync(ct);
-
-    /// <summary>TEMPORAL — reemplazado por E6-S3. Rechaza con 409 <c>compra_edicion_con_aplicaciones</c> la edición que
-    /// <see cref="CalculadorDeEdicionDeCompra.RequiereTratarLosPagos"/> marca. Lectura de las aplicaciones vivas y del
-    /// redondeo bajo el lock del encabezado, que serializa a todo escritor de aplicaciones de la compra.</summary>
-    private async Task ExigirQueLaEdicionNoToqueLosPagosAsync(
-        int id, ComprobanteCompra comprobante, SolicitudDeCompra solicitud, bool cambiaProveedor,
-        bool cambiaPuntoVenta, bool cambiaEmpresa, decimal totalNuevo, CancellationToken ct)
+    /// <summary>Lo que la edición hace con los pagos de la compra, decidido bajo el lock del encabezado.
+    /// <paramref name="Recortes"/> son las aplicaciones a achicar o dar de baja; con <paramref name="LiberaTodo"/> (cambia el
+    /// proveedor o el punto de venta) son TODAS las vivas y se liberan en una sentencia.</summary>
+    private sealed record PlanDePagosDeLaEdicion(
+        IReadOnlyList<AplicacionRecortada> Recortes, IReadOnlyDictionary<int, int> PagoDeLaAplicacion, bool LiberaTodo,
+        bool RevierteElRedondeo, decimal RedondeoVigente, IReadOnlyList<int> PagosADesvincular)
     {
-        var aplicado = await db.AplicacionesPago
-            .Where(a => a.IdComprobanteCompra == id)
-            .SumAsync(a => (decimal?)a.Importe, ct) ?? 0m;
-        var tieneAplicaciones = await db.AplicacionesPago.AnyAsync(a => a.IdComprobanteCompra == id, ct);
-        var perdonado = -(await db.MovimientosCuentaCorrienteProveedor
-            .Where(m => m.IdComprobanteCompra == id && m.Tipo == TipoMovimientoCcProveedor.Redondeo)
-            .SumAsync(m => (decimal?)m.Importe, ct) ?? 0m);
+        /// <summary>Pagos cuyas aplicaciones cambian o cuyo vínculo se corta, ascendentes y sin repetir: los que se bloquean.</summary>
+        public IReadOnlyList<int> IdsDePagosAfectados =>
+        [
+            .. Recortes.Select(r => PagoDeLaAplicacion[r.Id]).Concat(PagosADesvincular).Distinct().Order()
+        ];
 
-        // Un pago vivo vinculado por pagos.id_comprobante_compra ata la compra a su proveedor y empresa aunque no tenga
-        // aplicación viva.
-        if ((cambiaProveedor || cambiaPuntoVenta || cambiaEmpresa)
-            && await db.Pagos.AnyAsync(p => p.IdComprobanteCompra == id, ct))
+        public TratamientoDePagosDeLaEdicion Tratamiento => new(
+            [.. Recortes.Select(r => new AplicacionTratadaPorLaEdicion(r.Id, PagoDeLaAplicacion[r.Id], r.ImporteAnterior, r.ImporteNuevo))],
+            RevierteElRedondeo ? Math.Abs(RedondeoVigente) : 0m,
+            PagosADesvincular);
+    }
+
+    /// <summary>E6-S3. Con la compra bloqueada: las aplicaciones vivas, el redondeo vigente y los pagos vinculados por
+    /// <c>pagos.id_comprobante_compra</c> se leen UNA vez (los pagos solo cambian aplicaciones tomando antes el lock de la
+    /// compra, así que la lectura es estable hasta el commit). Reglas, sin 409 de por medio:
+    /// <list type="bullet">
+    /// <item>Cambia el proveedor o el punto de venta (con él, la empresa): se liberan TODAS las aplicaciones vivas y se
+    /// cortan los vínculos de los pagos. El pago conserva su proveedor y todo su asiento de cuenta (el crédito sigue con el
+    /// proveedor anterior); lo liberado vuelve a ser disponible de cada pago y nada se reaplica.</item>
+    /// <item>El total baja por debajo de lo aplicado: se recortan las aplicaciones, la más nueva primero
+    /// (<see cref="RecorteDeAplicaciones"/>, el mismo algoritmo que la edición de un pago) hasta que la suma sea el total
+    /// nuevo.</item>
+    /// <item>El redondeo del lado de la compra se revierte si cambia el total, el proveedor o el punto de venta
+    /// (<see cref="CalculadorDeEdicionDeCompra.RevierteElRedondeo"/>): el cupo se calcula con lo perdonado ya en cero, pero
+    /// el asiento de la reversa se escribe con el resto de los proveedores, al final.</item>
+    /// </list></summary>
+    private async Task<PlanDePagosDeLaEdicion> PlanearElTratamientoDePagosAsync(
+        int id, decimal totalAnterior, decimal totalNuevo, bool cambiaLaPertenencia, CancellationToken ct)
+    {
+        var vivas = await db.AplicacionesPago
+            .AsNoTracking()
+            .Where(a => a.IdComprobanteCompra == id)
+            .Select(a => new { a.Id, a.IdPago, a.Fecha, a.Importe })
+            .ToListAsync(ct);
+
+        var redondeoVigente = await RedondeoDeProveedor.NetoDeLaCompraAsync(db, id, ct);
+        var vinculados = cambiaLaPertenencia
+            ? await db.Pagos.AsNoTracking().Where(p => p.IdComprobanteCompra == id).Select(p => p.Id).ToListAsync(ct)
+            : [];
+
+        var tope = cambiaLaPertenencia ? 0m : totalNuevo;
+        var recortes = RecorteDeAplicaciones.Planificar(vivas.Select(a => new AplicacionARecortar(a.Id, a.Fecha, a.Importe)), tope);
+
+        return new PlanDePagosDeLaEdicion(
+            recortes, vivas.ToDictionary(a => a.Id, a => a.IdPago), cambiaLaPertenencia && vivas.Count > 0,
+            CalculadorDeEdicionDeCompra.RevierteElRedondeo(redondeoVigente, totalAnterior, totalNuevo, cambiaLaPertenencia),
+            redondeoVigente, [.. vinculados.Order()]);
+    }
+
+    /// <summary>Lock <c>FOR UPDATE</c> de cada pago afectado, ascendentes por id. Sin filtro de baja: un pago con aplicación
+    /// viva no puede estar dado de baja (lo exige el trigger) y uno que ya no existe simplemente no toma nada.</summary>
+    private static async Task BloquearPagosDeLaEdicionAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, IReadOnlyList<int> idsDePagos, CancellationToken ct)
+    {
+        foreach (var idPago in idsDePagos)
         {
-            throw new ErrorDominio(
-                "compra_edicion_con_aplicaciones",
-                "La compra tiene pagos vinculados: no puede cambiar de proveedor, punto de venta ni empresa. Desvinculá o " +
-                "dá de baja los pagos antes de editarla.",
-                409);
+            await using var comando = conexion.CreateCommand();
+            comando.Transaction = transaccion;
+            comando.CommandText = "SELECT 1 FROM pagos WHERE id_pago = $1 AND id_tenant = $2 FOR UPDATE";
+            ParametrosDeComando.Agregar(comando, idPago);
+            ParametrosDeComando.Agregar(comando, idTenant);
+            await comando.ExecuteScalarAsync(ct);
+        }
+    }
+
+    /// <summary>Escribe el plan con los pagos ya bloqueados: libera todas las aplicaciones (una sentencia) o da de baja y
+    /// achica las del recorte, y corta los vínculos <c>pagos.id_comprobante_compra</c> de los pagos que dejan de ser de esta
+    /// compra. El asiento <c>pago</c> de cuenta corriente de cada pago NO se toca (libro de solo agregado): conserva su
+    /// referencia histórica a la compra y su crédito con el proveedor anterior.</summary>
+    private static async Task AplicarElTratamientoDePagosAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, PlanDePagosDeLaEdicion plan,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        if (plan.LiberaTodo)
+        {
+            await LiberarAplicacionesDeLaCompraAsync(conexion, transaccion, id, idTenant, momento, ct);
+        }
+        else
+        {
+            foreach (var recorte in plan.Recortes)
+            {
+                await using var comando = conexion.CreateCommand();
+                comando.Transaction = transaccion;
+                comando.CommandText = recorte.Baja
+                    ? "UPDATE aplicaciones_pago SET deleted_at = $1, updated_at = $1 " +
+                      "WHERE id_aplicacion_pago = $2 AND id_tenant = $3 AND deleted_at IS NULL"
+                    : "UPDATE aplicaciones_pago SET importe = $4, updated_at = $1 " +
+                      "WHERE id_aplicacion_pago = $2 AND id_tenant = $3 AND deleted_at IS NULL";
+                ParametrosDeComando.Agregar(comando, momento);
+                ParametrosDeComando.Agregar(comando, recorte.Id);
+                ParametrosDeComando.Agregar(comando, idTenant);
+                if (!recorte.Baja)
+                {
+                    ParametrosDeComando.Agregar(comando, recorte.ImporteNuevo);
+                }
+
+                await comando.ExecuteNonQueryAsync(ct);
+            }
         }
 
-        if (CalculadorDeEdicionDeCompra.RequiereTratarLosPagos(
-                aplicado + perdonado, perdonado, tieneAplicaciones, comprobante.Total, totalNuevo,
-                cambiaProveedor, cambiaPuntoVenta, cambiaEmpresa))
+        if (plan.PagosADesvincular.Count > 0)
         {
-            throw new ErrorDominio(
-                "compra_edicion_con_aplicaciones",
-                "La edición toca lo que los pagos de la compra suponen (el total quedaría por debajo de lo pagado, o cambia " +
-                "el proveedor, el punto de venta o la empresa de una compra con pagos aplicados o redondeo). Desaplicá los " +
-                "pagos antes de editarla.",
-                409);
+            await using var desvincular = conexion.CreateCommand();
+            desvincular.Transaction = transaccion;
+            desvincular.CommandText =
+                "UPDATE pagos SET id_comprobante_compra = NULL, updated_at = $1 " +
+                "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL";
+            ParametrosDeComando.Agregar(desvincular, momento);
+            ParametrosDeComando.Agregar(desvincular, id);
+            ParametrosDeComando.Agregar(desvincular, idTenant);
+            await desvincular.ExecuteNonQueryAsync(ct);
         }
     }
 
