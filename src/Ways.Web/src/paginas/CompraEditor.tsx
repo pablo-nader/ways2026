@@ -69,6 +69,7 @@ import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
 import { AvisoDeNumeroDuplicado } from './compras/AvisoDeNumeroDuplicado'
+import { AVISO_DE_EDICION_DE_COMPRA, mensajeDeErrorDeEdicion } from './compras/errorDeEdicionDeCompra'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
 import { useDuplicadosDeCompra } from './compras/useDuplicadosDeCompra'
 import { GrillaDeItemsDeCompra } from './compras/GrillaDeItemsDeCompra'
@@ -424,6 +425,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   const [cargandoCompra, setCargandoCompra] = useState(!esNuevo)
   const [errorCompra, setErrorCompra] = useState('')
   const generacionRef = useRef(0)
+  // Edición de una compra CONFIRMADA (E6): el formulario del borrador se habilita sobre el mismo detalle.
+  const [editando, setEditando] = useState(false)
 
   useEffect(() => {
     if (esNuevo || idCompra === null) return
@@ -512,7 +515,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   const [encabezado, setEncabezado] = useState<EncabezadoDeCompraFormulario>(encabezadoVacio())
   const proximaClaveRef = useRef(1)
   const [lineas, setLineas] = useState<LineaDeCompraFormulario[]>(() => [lineaDeCompraVacia(0)])
-  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador', completarConArticulo)
+  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador' || editando, completarConArticulo)
 
   useEffect(() => {
     if (ordenParaPrecargar === null) return
@@ -643,7 +646,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   const [estadoInicial] = useState<EstadoDeNavegacion>(() => (ubicacion.state as EstadoDeNavegacion | null) ?? {})
 
   const [guardando, setGuardando] = useState(false)
-  const [accion, setAccion] = useState<'guardar' | 'borrador' | null>(null)
+  const [accion, setAccion] = useState<'guardar' | 'borrador' | 'cambios' | null>(null)
   const guardandoRef = useRef(false)
   // Códigos de proveedor que la grilla está consultando: guardar espera a que terminen, así una fila
   // nunca se guarda como concepto y después la muta una respuesta tardía.
@@ -782,6 +785,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   // todavía en curso — el gate queda asimétrico.
   const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
 
+  // Cancelar la edición vuelve a pedir la compra al servidor: mientras esa lectura está en vuelo la pantalla queda inerte
+  // (nada la puede reemplazar ni se puede volver a entrar en edición), así su respuesta no pisa un formulario nuevo.
+  const [recargando, setRecargando] = useState(false)
+  const recargandoRef = useRef(false)
+  const [errorRecarga, setErrorRecarga] = useState('')
+
   // Las puertas de "descartar cambios" y de "cambiar el proveedor" dejan inerte el resto de la
   // pantalla mientras están abiertas.
   const ocupado =
@@ -789,6 +798,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     anulando ||
     aplicandoPrecios ||
     ajustandoRedondeo ||
+    recargando ||
     vinculandoPago ||
     descartarBorradorAbierto ||
     descartarAbierto ||
@@ -922,7 +932,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     idTipoComprobante: encabezado.idTipoComprobante,
     numeroExterno: encabezado.numeroExterno,
     excluirId: idCompra,
-    activo: puedeEscribir && (esNuevo || compra?.estado === 'Borrador'),
+    activo: puedeEscribir && (esNuevo || compra?.estado === 'Borrador' || editando),
   })
 
   const cantidadPorCodigo = lineas.filter((l) => l.resueltaPorCodigo).length
@@ -1049,6 +1059,87 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
     setErrorVincularPago(errorDelVinculo ?? '')
   }
 
+  function iniciarEdicion() {
+    // Cada acción que empieza borra lo que dijo la anterior (react-async-state, regla 16).
+    setAviso('')
+    setError('')
+    setAdvertencia('')
+    setErrorRedondeo('')
+    setErrorRecarga('')
+    setIntentoFallido(null)
+    setEditando(true)
+  }
+
+  /**
+   * Descarta lo tipeado: el formulario vuelve a lo último que trajo el servidor y se pide la compra de nuevo. Si la
+   * lectura falla se conserva lo último conocido y se avisa, nunca se deja a medias.
+   */
+  async function cancelarEdicion() {
+    if (recargandoRef.current || idCompra === null) return
+    recargandoRef.current = true
+    setRecargando(true)
+    setError('')
+    setAdvertencia('')
+    setErrorRecarga('')
+    setIntentoFallido(null)
+    setEditando(false)
+    setCompra((prev) => (prev === null ? prev : { ...prev }))
+    const miGeneracion = (generacionRef.current += 1)
+
+    try {
+      const detalle = await clienteDeCompras.obtener(idCompra)
+      if (generacionRef.current === miGeneracion) setCompra(detalle)
+    } catch {
+      if (generacionRef.current === miGeneracion) {
+        setErrorRecarga('No se pudo recargar la compra: se muestran los últimos datos conocidos.')
+      }
+    } finally {
+      recargandoRef.current = false
+      setRecargando(false)
+    }
+  }
+
+  /** Guarda los cambios de una compra confirmada (`PUT /api/compras/{id}`): no hay paso de confirmar. */
+  async function guardarCambios() {
+    if (guardandoRef.current || creandoArticuloRef.current || idCompra === null) return
+    if (consultandoCodigosRef.current) {
+      setEsperandoCodigos(true)
+      return
+    }
+    setEsperandoCodigos(false)
+    if (mensajeDeLoQueImpideGuardar(encabezado, lineas, true) !== null) {
+      setAviso('')
+      setAdvertencia('')
+      setError('')
+      setIntentoFallido('guardar')
+      return
+    }
+
+    guardandoRef.current = true
+    setGuardando(true)
+    setAccion('cambios')
+    setError('')
+    setAdvertencia('')
+    setAviso('')
+    setIntentoFallido(null)
+    generacionRef.current += 1
+
+    try {
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, porcentajePorAlicuota)
+      const guardada = await clienteDeCompras.actualizar(idCompra, solicitud)
+      // La respuesta es el detalle ya recalculado (pagado y saldo incluidos): es el refresco, no hace falta pedirlo de nuevo.
+      setCompra(guardada)
+      setEditando(false)
+      setAviso('Cambios guardados: el stock, la cuenta del proveedor y los costos ya se ajustaron.')
+    } catch (e) {
+      setError(mensajeDeErrorDeEdicion(e))
+    } finally {
+      guardandoRef.current = false
+      setGuardando(false)
+      setAccion(null)
+    }
+  }
+
   function pedirDescartarBorrador(evento: MouseEvent<HTMLButtonElement>) {
     // Se captura acá, sincrónicamente: para cuando corra un efecto el botón ya está deshabilitado.
     setDisparadorDeDescartarBorrador(evento.currentTarget)
@@ -1150,12 +1241,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
   }
 
   const esBorrador = esNuevo || compra?.estado === 'Borrador'
+  const esEditable = esBorrador || editando
   const esConfirmada = compra?.estado === 'Confirmada'
   const tienePreciosSugeridos = compra?.items.some((i) => i.precioSugerido !== null) ?? false
   const tieneArticulos = compra?.items.some((i) => i.idArticulo !== null) ?? false
   // Un rol sin escritura ve el borrador existente en la tabla de solo lectura: el formulario
   // recalcula los totales desde los costos de cada línea, que el vendedor no recibe.
-  const mostrarFormulario = esBorrador && (puedeEscribir || compra === null)
+  const mostrarFormulario = esEditable && (puedeEscribir || compra === null)
 
   return (
     <div className="container-fluid py-4">
@@ -1227,7 +1319,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               id="compra-proveedor"
               className="form-select"
               value={encabezado.idProveedor}
-              disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+              disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => cambiarProveedor(e.target.value, e.currentTarget)}
             >
               <option value="">Elegir…</option>
@@ -1246,7 +1338,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               id="compra-tipo"
               className="form-select"
               value={encabezado.idTipoComprobante}
-              disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+              disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => cambiarTipo(e.target.value)}
             >
               <option value="">Elegir…</option>
@@ -1263,7 +1355,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                   type="checkbox"
                   className="form-check-input"
                   checked={discriminaIva}
-                  disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+                  disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
                   onChange={(e) => cambiarDiscriminaIva(e.target.checked)}
                 />
                 <label className="form-check-label small" htmlFor="compra-discrimina-iva">
@@ -1278,7 +1370,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                   type="checkbox"
                   className="form-check-input"
                   checked={encabezado.preciosIncluyenIva}
-                  disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+                  disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
                   onChange={(e) => cambiarPreciosIncluyenIva(e.target.checked)}
                 />
                 <label className="form-check-label small" htmlFor="compra-precios-incluyen-iva">
@@ -1295,7 +1387,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               id="compra-punto-venta"
               className="form-select"
               value={encabezado.idPuntoVenta}
-              disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+              disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => cambiarPuntoVenta(e.target.value)}
             >
               <option value="">Elegir…</option>
@@ -1313,7 +1405,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
             <CampoNumeroDeComprobante
               idBase="compra-numero-externo"
               valor={encabezado.numeroExterno}
-              disabled={!esBorrador || ocupado || !puedeEscribir}
+              disabled={!esEditable || ocupado || !puedeEscribir}
               onChange={(numeroExterno) => setEncabezado((prev) => ({ ...prev, numeroExterno }))}
             />
           </div>
@@ -1325,7 +1417,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               id="compra-fecha-comprobante"
               className="form-control"
               value={encabezado.fechaComprobante}
-              disabled={!esBorrador || ocupado || !puedeEscribir}
+              disabled={!esEditable || ocupado || !puedeEscribir}
               onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaComprobante: valor }))}
             />
           </div>
@@ -1343,7 +1435,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               type="text"
               className="form-control"
               value={encabezado.observaciones}
-              disabled={!esBorrador || ocupado || !puedeEscribir}
+              disabled={!esEditable || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, observaciones: e.target.value }))}
             />
           </div>
@@ -1351,6 +1443,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
 
         {mostrarFormulario ? (
           <>
+            {editando && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {AVISO_DE_EDICION_DE_COMPRA}
+              </div>
+            )}
             <GrillaDeItemsDeCompra
               lineas={lineas}
               alicuotas={alicuotas ?? []}
@@ -1450,7 +1547,18 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
               </div>
             )}
 
-            {puedeEscribir && (
+            {puedeEscribir && editando && (
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={() => void guardarCambios()}>
+                  {accion === 'cambios' ? 'Guardando…' : 'Guardar cambios'}
+                </button>
+                <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={() => void cancelarEdicion()}>
+                  Cancelar
+                </button>
+              </div>
+            )}
+
+            {puedeEscribir && !editando && (
               <>
                 <div className="d-flex flex-wrap gap-2 mb-2">
                   <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={() => void guardar(true)}>
@@ -1583,9 +1691,19 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPan
                 </div>
               )}
 
+              {errorRecarga && <div className="alert alert-warning py-1 px-2 small">{errorRecarga}</div>}
+
               {esConfirmada && puedeEscribir && (
                 <>
                   <div className="d-flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      className="btn btn-outline-primary"
+                      disabled={ocupado || pagoAbierto || panelAnularAbierto}
+                      onClick={iniciarEdicion}
+                    >
+                      Editar compra
+                    </button>
                     {sePuedePagarLaCompra(compra) && (
                       <button type="button" className="btn btn-primary" disabled={ocupado} onClick={() => setPagoAbierto(true)}>
                         Pagar
