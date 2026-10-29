@@ -84,6 +84,25 @@ public class PayloadDeAuditoriaTests
             PayloadDeAuditoria.DescarteDeCompra(idProveedor: 7, numeroExterno: "0001-00000001", total: 121m, cantidadDeItems: 2));
 
     [Fact]
+    public void EdicionDeCompraEsConstruibleYLlevaLasDiferenciasSoloEnElValorNuevo()
+    {
+        var anterior = new ResumenDeCompraEditada(
+            7, 2, "0001-00000001", null, 100m, [new LineaAuditadaDeCompra(5, 10m, 100m)]);
+        var nuevo = anterior with { Total = 60m, Lineas = [new LineaAuditadaDeCompra(5, 6m, 60m)] };
+        var payload = PayloadDeAuditoria.EdicionDeCompra(
+            anterior, nuevo,
+            [new DiferenciaDeStockDeCompra(5, 2, null, -4m)],
+            [new DiferenciaDeCuentaDeCompra(7, -40m)]);
+
+        AsumirConstruible(AccionAuditada.CompraEdicion, payload);
+        Assert.Equal(100m, payload.Anterior!["total"]);
+        Assert.Equal(60m, payload.Nuevo["total"]);
+        Assert.False(payload.Anterior.ContainsKey("diferencias_de_stock"));
+        Assert.True(payload.Nuevo.ContainsKey("diferencias_de_stock"));
+        Assert.True(payload.Nuevo.ContainsKey("diferencias_de_cuenta"));
+    }
+
+    [Fact]
     public void AjusteDeStockEsConstruible() =>
         AsumirConstruible(
             AccionAuditada.StockAjuste,
