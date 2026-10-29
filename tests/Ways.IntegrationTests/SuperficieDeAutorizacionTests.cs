@@ -126,6 +126,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Supervisor están en CuentaDePersonalEndpointsTests.AdminYSupervisorEscribenYLeenPeroElVendedorQuedaAfuera.
         ("POST", "/api/personal/{id:int}/horas"),
         ("POST", "/api/personal/{id:int}/ajustes"),
+        // Carga semanal de horas: guardar la semana usa GestionDeCuentaDePersonal (Supervisor y Admin), igual que la carga
+        // individual. El 403 del Vendedor y el 200 del Supervisor están en
+        // CargaSemanalDeHorasTests.LectoraYGestionRespetanLasPoliticasDeCadaRol.
+        ("POST", "/api/personal/horas/semana"),
         // Pago de personal: mismo criterio que la carga de horas y el ajuste (Supervisor y Admin); el 403 del
         // Vendedor y el 403 del Supervisor con origen tesorería (la regla va en el servicio, no en la política)
         // están en PagoDePersonalTests.

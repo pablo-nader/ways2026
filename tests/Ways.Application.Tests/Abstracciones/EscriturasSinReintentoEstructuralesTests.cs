@@ -94,6 +94,10 @@ public class EscriturasSinReintentoEstructuralesTests
         // idempotencia; un reintento tras un commit ambiguo duplicaría el movimiento.
         { "Ways.Application/Plantel/ServicioDeCuentaDePersonal.cs", "EscribirAsync" },
 
+        // Carga semanal de horas: bloquea los personales, lee el libro del día y escribe los asientos de diferencia, el saldo
+        // y las jornadas sin clave de idempotencia; un reintento tras un commit ambiguo duplicaría los asientos.
+        { "Ways.Application/Plantel/ServicioDeCargaSemanalDeHoras.cs", "GuardarSemanaAsync" },
+
         // Pago de personal: mueve el saldo del personal y el del cliente, y escribe el asiento del libro, el
         // descuento de cuenta corriente, los pagos de sueldos y el egreso de tesorería sin clave de idempotencia;
         // un reintento tras un commit ambiguo pagaría dos veces.

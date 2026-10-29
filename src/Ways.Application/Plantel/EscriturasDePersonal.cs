@@ -84,6 +84,87 @@ public static class EscriturasDePersonal
         return Convert.ToInt32(resultado);
     }
 
+    /// <summary>Toma el lock de la fila del personal vivo y devuelve su valor hora vigente, leído bajo ese lock
+    /// (un cambio concurrente del valor espera a esta transacción). <c>null</c> si no existe, está dada de baja
+    /// o es de otro tenant: el llamador responde 404. Las escrituras que leen el libro del día antes de decidir
+    /// qué asentar toman este lock primero y en orden ascendente de id para no abrazarse.</summary>
+    public static async Task<decimal?> BloquearPersonalAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT valor_hora FROM personal " +
+            "WHERE id_personal = $1 AND id_tenant = $2 AND deleted_at IS NULL FOR UPDATE";
+
+        ParametrosDeComando.Agregar(comando, idPersonal);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null or DBNull ? null : Convert.ToDecimal(resultado);
+    }
+
+    /// <summary>Los asientos de tipo horas de un personal en las fechas dadas, en orden de inserción. Se lee
+    /// con la fila del personal ya bloqueada: antes del lock el resultado puede quedar viejo.</summary>
+    public static async Task<IReadOnlyDictionary<DateOnly, List<PlanificadorDeHorasDelDia.AsientoExistente>>>
+        LeerAsientosDeHorasAsync(
+            DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal,
+            IReadOnlyCollection<DateOnly> fechas, CancellationToken ct)
+    {
+        var resultado = new Dictionary<DateOnly, List<PlanificadorDeHorasDelDia.AsientoExistente>>();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT fecha, horas, valor_hora FROM movimientos_personal " +
+            "WHERE id_personal = $1 AND id_tenant = $2 AND tipo = 'horas' AND fecha = ANY($3) " +
+            "ORDER BY id_movimiento";
+
+        ParametrosDeComando.Agregar(comando, idPersonal);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, fechas.ToArray());
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        while (await lector.ReadAsync(ct))
+        {
+            var fecha = lector.GetFieldValue<DateOnly>(0);
+            if (!resultado.TryGetValue(fecha, out var asientos))
+            {
+                asientos = [];
+                resultado[fecha] = asientos;
+            }
+
+            asientos.Add(new PlanificadorDeHorasDelDia.AsientoExistente(lector.GetDecimal(1), lector.GetDecimal(2)));
+        }
+
+        return resultado;
+    }
+
+    /// <summary>Marca el día como confirmado con su total. Upsert: la unicidad de <c>(id_personal, fecha)</c>
+    /// nunca se viola desde la aplicación. El llamador pasa el total ya calculado bajo el lock del personal.</summary>
+    public static async Task UpsertarJornadaAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, int idEmpleado,
+        DateOnly fecha, decimal horas, DateTimeOffset ahora, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO jornadas_personal " +
+            "(id_tenant, id_personal, id_empleado, fecha, horas, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $6) " +
+            "ON CONFLICT (id_personal, id_tenant, fecha) DO UPDATE " +
+            "SET horas = EXCLUDED.horas, id_empleado = EXCLUDED.id_empleado, updated_at = EXCLUDED.updated_at";
+
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idPersonal);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.Agregar(comando, fecha);
+        ParametrosDeComando.Agregar(comando, horas);
+        ParametrosDeComando.Agregar(comando, ahora);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
     /// <summary>Defensa en profundidad, infraestructura pura (nunca un <c>ErrorDominio</c> 4xx): una
     /// violación es un defecto del llamador. Espeja la forma por tipo de los CHECK de la tabla.</summary>
     private static void ValidarFormaPorTipo(TipoMovimientoPersonal tipo, decimal? horas, decimal? valorHora)

@@ -10,8 +10,9 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// Libro de personal (doc 10 §8c). Sin <c>id_punto_venta</c> a propósito: las cargas de horas y los
 /// ajustes son de back office y no pasan por un turno. Cada CHECK por tipo nombra una sola forma y cada
 /// cláusula de <c>ck_movimientos_personal_horas</c> tiene una fila de prueba que viola solo esa
-/// cláusula. El importe no negativo de una carga no es una cláusula aparte: lo implican
-/// <c>horas &gt; 0</c>, <c>valor_hora &gt;= 0</c> y <c>importe = round(horas * valor_hora, 2)</c>.
+/// cláusula. Las horas van con signo (de -24 a 24, sin cero): una carga es positiva y una corrección de la
+/// carga semanal es negativa; el signo del importe lo fijan <c>valor_hora &gt;= 0</c> y
+/// <c>importe = round(horas * valor_hora, 2)</c>.
 /// </summary>
 public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<MovimientoPersonal>
 {
@@ -21,7 +22,7 @@ public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<Movimien
         {
             t.HasCheckConstraint(
                 "ck_movimientos_personal_horas",
-                "tipo <> 'horas' OR (horas IS NOT NULL AND horas > 0 AND horas <= 24 "
+                "tipo <> 'horas' OR (horas IS NOT NULL AND horas >= -24 AND horas <= 24 AND horas <> 0 "
                 + "AND valor_hora IS NOT NULL AND valor_hora >= 0 "
                 + "AND importe = round(horas * valor_hora, 2))");
 
