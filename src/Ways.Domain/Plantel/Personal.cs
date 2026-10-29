@@ -22,6 +22,10 @@ public class Personal : EntidadTenant
     /// <summary>Valor por defecto de la próxima carga de horas; no es el valor de cargas ya hechas.</summary>
     public decimal ValorHora { get; set; }
 
+    /// <summary>Horas habituales por día en orden ISO (0 = lunes … 6 = domingo); 0 es franco.
+    /// <c>null</c> ⇒ sin horario. Solo precarga la carga de horas, no acredita nada.</summary>
+    public decimal[]? HorarioHabitual { get; set; }
+
     /// <summary>Cuenta de acceso del propio empleado. A lo sumo un personal vivo por usuario.</summary>
     public int? IdUsuario { get; set; }
 

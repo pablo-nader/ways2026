@@ -1789,42 +1789,21 @@ export const ORIGENES_DE_FONDOS_PAGO: { valor: OrigenFondosPago; etiqueta: strin
   { valor: 'Tesoreria', etiqueta: 'Caja general' },
 ]
 
-/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Pagos.SolicitudDePago`. Sin
- * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Pago Requires An Open
- * Turno), nunca viaja en el cuerpo. `origenFondos` aterriza en stage-gastos-origen-fondos-pos
- * (PR2) — el POS siempre lo manda explícito (la UI no tiene default silencioso), aunque el
- * contrato de C# lo acepta opcional para retrocompatibilidad de otros clientes. */
-export type SolicitudDePago = {
+/** Una entrega de dinero de un pago, por un medio (espejo de `LineaDePago`). `referencia` nula si no se carga. */
+export type LineaDePagoSolicitud = { idMedioPago: number; importe: number; referencia: string | null }
+
+/** Cuerpo de `POST /api/pagos` — espejo de `Ways.Application.Pagos.SolicitudDePagoConLineas`. Sin `idTurnoCaja`: el
+ * servidor lo resuelve del `idPuntoVenta`, nunca viaja en el cuerpo. El importe del pago es la suma de las líneas y
+ * `origenFondos` se manda siempre explícito (la UI no tiene default silencioso). */
+export type SolicitudDePagoConLineas = {
   idPuntoVenta: number
   categoria: CategoriaPago
   idProveedor: number | null
   idArea: number | null
   concepto: string
   detalle: string | null
-  idMedioPago: number
   numeroFactura: string | null
-  importe: number
-  idComprobanteCompra: number | null
-  origenFondos: OrigenFondosPago
-}
-
-/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Pagos.PagoRegistrado`.
- * `idTurnoCaja`/`idPuntoVenta` son `number | null` porque el DTO de C# ya los declara `int?`
- * (stage-gastos-origen-fondos-pos, PR2: el mirror los tenía mal tipados desde antes de este PR). */
-export type PagoRegistrado = {
-  id: number
-  idTurnoCaja: number | null
-  idPuntoVenta: number | null
-  fecha: string
-  categoria: CategoriaPago
-  idProveedor: number | null
-  idArea: number | null
-  concepto: string
-  detalle: string | null
-  idMedioPago: number
-  numeroFactura: string | null
-  importe: number
-  idEmpleado: number
+  lineas: LineaDePagoSolicitud[]
   idComprobanteCompra: number | null
   origenFondos: OrigenFondosPago
 }
@@ -1832,9 +1811,6 @@ export type PagoRegistrado = {
 // --- Pagos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
 // la tesorería de la empresa, con fecha de negocio potencialmente retroactiva — espejo de los
 // pagos de administración de `Ways.Application.Pagos.Contratos`.
-
-/** Una entrega de dinero de un pago, por un medio (espejo de `LineaDePago`). `referencia` nula si no se carga. */
-export type LineaDePagoSolicitud = { idMedioPago: number; importe: number; referencia: string | null }
 
 /** Cuerpo de `POST /api/pagos/administracion` — espejo de `SolicitudDePagoDeAdministracionConLineas`. `fecha`
  * viaja como `YYYY-MM-DD` (mismo shape que `SolicitudDeCompra.fechaComprobante`) — nunca un ISO con hora: la hora

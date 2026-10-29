@@ -1442,14 +1442,14 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
 
   it('un pago en efectivo desde la caja, registrado en "Pagos", imprime el pulso del cajón por la cola del shell', async () => {
     mockearPagosDelTurno()
-    apiPostMock.mockImplementation((ruta: string) => Promise.resolve(ruta === '/gastos' ? { id: 1 } : undefined))
+    apiPostMock.mockImplementation((ruta: string) => Promise.resolve(ruta === '/pagos' ? { id: 1 } : undefined))
     renderShell()
     await esperarAlConsumidorFinal()
     await elegirDeMenu('Caja', 'Pagos')
     await screen.findByText('Este turno todavía no tiene pagos.')
 
-    await userEvent.type(screen.getByLabelText('Importe'), '100')
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(screen.getByLabelText('Importe de la línea 1'), '100')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de la línea 1'), medioEfectivo.nombre)
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))

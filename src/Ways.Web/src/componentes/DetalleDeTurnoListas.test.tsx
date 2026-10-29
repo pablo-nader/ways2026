@@ -92,3 +92,36 @@ describe('DetalleDeTurnoListas — orden por columna', () => {
     expect(within(tickets).getByRole('columnheader', { name: /Número/ })).toHaveAttribute('aria-sort', 'none')
   })
 })
+
+describe('DetalleDeTurnoListas — medios del pago', () => {
+  const linea = (idItem: number, idMedioPago: number, nombreMedioPago: string, importe: number) => ({
+    idItem,
+    idMedioPago,
+    nombreMedioPago,
+    importe,
+    referencia: null,
+  })
+
+  it('un pago con varios medios muestra el reparto; uno con un solo medio, ese medio', () => {
+    render(
+      <DetalleDeTurnoListas
+        tickets={[]}
+        pagos={[
+          pago(1, { importe: 1000, lineas: [linea(1, 1, 'Efectivo', 600), linea(2, 3, 'Transferencia', 400)] }),
+          pago(2, { importe: 150, lineas: [linea(3, 1, 'Efectivo', 150)] }),
+        ]}
+      />,
+    )
+    const [, pagos] = screen.getAllByRole('table')
+
+    expect(within(pagos).getByRole('cell', { name: 'Efectivo $ 600,00 · Transferencia $ 400,00' })).toBeInTheDocument()
+    expect(within(pagos).getByRole('cell', { name: 'Efectivo' })).toBeInTheDocument()
+  })
+
+  it('un pago de una respuesta sin líneas no inventa un medio', () => {
+    render(<DetalleDeTurnoListas tickets={[]} pagos={[pago(1)]} />)
+    const [, pagos] = screen.getAllByRole('table')
+
+    expect(within(pagos).getByRole('cell', { name: '—' })).toBeInTheDocument()
+  })
+})

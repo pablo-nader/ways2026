@@ -102,8 +102,8 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
 - [ ] E2-S4 (written; CI pending) — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
 - [x] E2-W1 — Web foundation: types and clients for the `/api/pagos` contract, pure helpers (`api/lineasDePago.ts`, with tests) and the shared `EditorDeLineasDePago` component. The POS payment form (`PagosDelTurno`, still on `/api/gastos` with one medio) does NOT use it yet: pending, tracked under E2-W2.
-- [ ] E2-W2 — Web: lines in the POS payment form (`PagosDelTurno`, shared `ModalDeEdicionDePago` one-medio mode). The administration part (form, edit modal in lines mode, history column) shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`).
-  - Also in W2: lift the CajaTurno single-line restriction in the back office (`ModalDeEdicionDePago` `origenFondos`) once the POS release ships.
+- [x] E2-W2 — Web: lines in the POS payment form. `PagosDelTurno` alta uses `EditorDeLineasDePago` (max 20 lines) and posts `POST /api/pagos` (`SolicitudDePagoConLineas`); the cash-drawer availability warning, the shortfall and the drawer pulse consider only the Efectivo lines paid from the shift cash (`importeEnEfectivoDeCaja`, `haySalidaDeEfectivoDeCaja`). The shift list and `DetalleDeTurnoListas` show the reparto (`textoDeMediosDelPago`) when a pago has more than one medio. `ModalDeEdicionDePago` is now lines-only and the POS edits through `PUT /api/pagos/{id}`; the legacy one-medio mode and the `/gastos` client calls are gone from the web (the backend keeps the legacy routes for old bundles). The administration part shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`). Web release: POS bundle needs Ways.Desktop bump + tag `pos-v0.16.0` to reach the registers.
+- [ ] E2-W4 — Lift the back-office CajaTurno single-line restriction (`Pagos`/`ModalDeEdicionDePago` `origenFondos` prop, `maximoDeLineas=1` and the read-only note) once every register runs `pos-v0.16.0`. Not lifted in W2 on purpose: installed registers keep the old bundle until each caja updates.
 - [x] E2-W3 — Web: administración (`Pagos`/`ModalDeAltaDePago`/edición with lines, `/api/pagos/administracion`) and pagar compra (`ModalDePagoDeCompra` via `/api/pagos/de-compra/{idCompra}`, result key `pago`; `CompraEditor` and `CuentaCorrienteDeProveedor` updated; `vincular-compra` and `desdePago` read on `/api/pagos`). Personal payments untouched (E2-P).
 - [x] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items. Done by S3b (column, FK and index
   dropped).
@@ -358,6 +358,8 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   whose cost line was edited away, or on an article that left the family, is not detected); (b) the runtime CC ajuste fallback picks the lowest-id
   live PV of the pago's empresa.
 
+- 2026-10-28 E2-W2 (branch `pnader/pagos-e2-w2-pos`): web `tsc -b` clean; `npm run lint` 0 errors; full `vitest run` 262 files / 8397 tests passed. Route: delegated writer (2+ non-trivial files). RED/GREEN: existing POS tests migrated to the lines contract plus new tests (alta with 2 lines, efectivo-only drawer check, multi-medio listing, multi-medio edit via PUT). Back-office restriction intentionally kept (see E2-W4).
+
 - 2026-10-28 E6-W1 (branch `pnader/pagos-e6-w1-web`, stacked on E6-S4): `npx tsc -b` clean; `npm run lint` 0 errors (pre-existing warnings only);
   full `npx vitest run` 261 files / 8185 tests passed. `CompraEditor.tsx` gets an `editando` flag: `esEditable = esBorrador || editando` drives the
   header/grid `disabled`, duplicate check (`excluirId` = this compra) and unit completion; edit mode swaps the confirm/draft buttons for
@@ -371,4 +373,4 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
 
 ## Next step
 
-E6-S1/S2/S3/S4 and E6-W1 are written (branches `pnader/pagos-e6-edicion-compras`, `pnader/pagos-e6-s3-aplicaciones`, `pnader/pagos-e6-s4-costos`, `pnader/pagos-e6-w1-web`, judgment-day pending); E4 stays pending its judgment-day, and E3-W1/E3-W2, E5 and E2-W2 are still open.
+E1–E6 and E2-W2 are written and shipped as PRs (#500…#523); `pos-v0.16.0` (#524) is tagged on main once it merges. Open: E2-W4 (lift the back-office single-medio restriction once every register runs 0.16.0), E2-P (sueldo as one pago), C (cleanup of `/api/gastos`) and E7 (cobros).
