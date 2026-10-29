@@ -894,7 +894,7 @@ export function FormularioArticulo({
 
             <div className="col-md-2">
               <Etiqueta htmlFor="art-impuesto-interno" deFamilia={bloqueoDeFamilia}>
-                Impuestos internos ($ por {valor.costoListaPor === 'Bulto' ? 'bulto' : 'unidad'})
+                Impuestos internos ($)
               </Etiqueta>
               <input
                 id="art-impuesto-interno"
