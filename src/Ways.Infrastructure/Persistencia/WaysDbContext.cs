@@ -120,7 +120,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // el primer consumidor de Application.
     public DbSet<ComprobanteVenta> ComprobantesVenta => Set<ComprobanteVenta>();
     public DbSet<ItemComprobanteVenta> ItemsComprobanteVenta => Set<ItemComprobanteVenta>();
-    public DbSet<PagoComprobante> PagosComprobante => Set<PagoComprobante>();
+    public DbSet<Cobro> Cobros => Set<Cobro>();
     public DbSet<Stock> Stock => Set<Stock>();
     public DbSet<MovimientoStock> MovimientosStock => Set<MovimientoStock>();
     public DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente => Set<MovimientoCuentaCorriente>();

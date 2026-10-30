@@ -137,7 +137,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         // El pago (mismo importe, medio efectivo) es lo que hace al medio "con actividad" para
         // CalculadorDeArqueo — sin esto el turno no tendría ningún medio arqueable.
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,

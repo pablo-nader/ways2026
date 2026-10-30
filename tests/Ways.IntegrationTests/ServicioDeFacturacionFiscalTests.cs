@@ -482,7 +482,7 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         // esta slice NUNCA escribe.
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.False(await db.MovimientosStock.AnyAsync(m => m.IdTenant == ctx.IdTenant));
-        Assert.False(await db.PagosComprobante.AnyAsync(p => p.IdComprobanteVenta == emitido.Id));
+        Assert.False(await db.Cobros.AnyAsync(p => p.IdComprobanteVenta == emitido.Id));
         Assert.False(await db.MovimientosCuentaCorriente.AnyAsync(m => m.IdTenant == ctx.IdTenant));
 
         // target 5.23 — dto-contract-honesty: ningún nombre de propiedad de material de clave en

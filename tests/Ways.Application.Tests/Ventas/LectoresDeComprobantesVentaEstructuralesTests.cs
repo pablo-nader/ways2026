@@ -9,9 +9,9 @@ namespace Ways.Application.Tests.Ventas;
 /// predicado compartido <c>SinEspejosFiscales</c> (o, en SQL crudo, <c>id_venta_origen IS NULL</c>).
 ///
 /// Qué es: un barrido de TEXTO sobre <c>src/</c>. Para cada sentencia que menciona <c>ComprobantesVenta</c>,
-/// <c>ItemsComprobanteVenta</c> o <c>PagosComprobante</c> (también como <c>Set&lt;ComprobanteVenta&gt;()</c> y sus
+/// <c>ItemsComprobanteVenta</c> o <c>Cobros</c> (también como <c>Set&lt;ComprobanteVenta&gt;()</c> y sus
 /// equivalentes de items y pagos) o, en SQL crudo, <c>comprobantes_venta</c>, <c>items_comprobante_venta</c> o
-/// <c>pagos_comprobante</c>, exige una de dos cosas: que la sentencia contenga el predicado, o que la línea esté en
+/// <c>cobros</c>, exige una de dos cosas: que la sentencia contenga el predicado, o que la línea esté en
 /// <see cref="LectoresPermitidos"/> con su justificación y la cantidad exacta de apariciones (más o menos falla, así
 /// que un lector nuevo con el mismo texto que uno permitido, o una aparición quitada, se notan). Una entrada que ya no
 /// coincide con ninguna lectura también falla, para que la lista no acumule fantasmas. Las pruebas de autoverificación
@@ -71,7 +71,7 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "var crudos = await db.ComprobantesVenta")] =
                 (1, PorTurno),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
-                "var pagosDelTurno = db.PagosComprobante")] =
+                "var pagosDelTurno = db.Cobros")] =
                 (1, PorTurno),
             [("Ways.Application/Caja/LectorDeMovimientosDelTurno.cs",
                 "db.ComprobantesVenta,")] =
@@ -89,7 +89,7 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "FROM comprobantes_venta e")] =
                 (1, "Busca los espejos pendientes de UN punto de venta: tiene que verlos, un espejo pendiente detiene su serie."),
             [("Ways.Application/Fiscal/ServicioDeDecisionDeFacturacion.cs",
-                "\"FROM pagos_comprobante p \" +")] =
+                "\"FROM cobros p \" +")] =
                 (1, "Pagos de UNA venta, ya bloqueada por id y que no es un espejo: de ahí sale lo cobrado por medio."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
                 "var venta = await db.ComprobantesVenta.AsNoTracking()")] =
@@ -134,7 +134,7 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "\"DELETE FROM comprobantes_venta WHERE id_comprobante_venta = $1\", ct, idEspejo);")] =
                 (1, "Borra UN espejo fiscal liberado (rechazado por ARCA o con un número que ARCA no tiene), por id."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionDeVentas.cs",
-                "\"FROM pagos_comprobante p \" +")] =
+                "\"FROM cobros p \" +")] =
                 (1, "Pagos de UNA venta ya decidida, por id: de ahí sale lo cobrado por medio que la decisión llevó al acumulado."),
             [("Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs",
                 "var actual = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idComprobante, ct);")] =
@@ -170,13 +170,13 @@ public class LectoresDeComprobantesVentaEstructuralesTests
                 "var items = await db.ItemsComprobanteVenta")] =
                 (2, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
-                "var pagos = await db.PagosComprobante")] =
+                "var pagos = await db.Cobros")] =
                 (2, PorId),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var crudos = await db.ComprobantesVenta")] =
                 (1, PorTurno),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
-                "var pagos = await db.PagosComprobante.AsNoTracking()")] =
+                "var pagos = await db.Cobros.AsNoTracking()")] =
                 (1, "Pagos de los ids de la página del listado, que ya salen sin espejos."),
             [("Ways.Application/Ventas/ServicioDeVentas.cs",
                 "var comprobantePreLectura = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);")] =
@@ -205,12 +205,12 @@ public class LectoresDeComprobantesVentaEstructuralesTests
     private sealed record Lectura(string Archivo, string Linea, string Sentencia);
 
     private static readonly Regex LecturaLinq = new(
-        @"\b(?:ComprobantesVenta|ItemsComprobanteVenta|PagosComprobante)\b(?!\s*\.\s*(?:Add|AddRange)\()"
-        + @"|\bSet\s*<\s*(?:ComprobanteVenta|ItemComprobanteVenta|PagoComprobante)\s*>\s*\(",
+        @"\b(?:ComprobantesVenta|ItemsComprobanteVenta|(?<=\.)Cobros)\b(?!\s*\.\s*(?:Add|AddRange)\()"
+        + @"|\bSet\s*<\s*(?:ComprobanteVenta|ItemComprobanteVenta|Cobro)\s*>\s*\(",
         RegexOptions.Compiled);
 
     private static readonly Regex LecturaSql = new(
-        @"\b(?:FROM|JOIN)\s+(?:comprobantes_venta|items_comprobante_venta|pagos_comprobante)\b",
+        @"\b(?:FROM|JOIN)\s+(?:comprobantes_venta|items_comprobante_venta|cobros)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static string Normalizar(string ruta) => ruta.Replace('\\', '/');
@@ -425,12 +425,12 @@ public class LectoresDeComprobantesVentaEstructuralesTests
     [Theory]
     [InlineData("var x = await db.ComprobantesVenta.Where(c => c.Total > 0).ToListAsync(ct);")]
     [InlineData("var x = await db.ItemsComprobanteVenta.ToListAsync(ct);")]
-    [InlineData("var x = await db.PagosComprobante.ToListAsync(ct);")]
+    [InlineData("var x = await db.Cobros.ToListAsync(ct);")]
     [InlineData("var x = await db.Set<ComprobanteVenta>().ToListAsync(ct);")]
     [InlineData("var x = await db.Set<ItemComprobanteVenta>().ToListAsync(ct);")]
-    [InlineData("var x = await db.Set<PagoComprobante>().ToListAsync(ct);")]
+    [InlineData("var x = await db.Set<Cobro>().ToListAsync(ct);")]
     [InlineData("var f = await conexion.QueryAsync(\"SELECT * FROM comprobantes_venta WHERE total > 0\");")]
-    [InlineData("var f = await conexion.QueryAsync(\"SELECT * FROM x JOIN pagos_comprobante p ON p.id = 1\");")]
+    [InlineData("var f = await conexion.QueryAsync(\"SELECT * FROM x JOIN cobros p ON p.id = 1\");")]
     public void ElBarridoClasificaUnLectorSinProteccionComoDesprotegido(string sentencia)
     {
         var lectura = Assert.Single(LeerLecturasDe("Ways.Application/Muestra.cs", Muestra(sentencia)));

@@ -114,13 +114,13 @@ public class PagoDePersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<W
 
     private Task<int> InsertarMovimientoCcAsync(
         Siembra s, string tipo, string importe, string idMovimientoPersonal, string idComprobanteVenta = "NULL",
-        string idPagoComprobante = "NULL", int? idTenant = null) =>
+        string idCobro = "NULL", int? idTenant = null) =>
         EjecutarAsync(
             idTenant ?? s.IdTenant,
             "INSERT INTO movimientos_cuenta_corriente " +
-            "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_venta, id_pago_comprobante, " +
+            "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_venta, id_cobro, " +
             " importe, saldo_resultante, id_movimiento_personal) " +
-            $"VALUES ($1, $2, now(), $3, $4, '{tipo}', {idComprobanteVenta}, {idPagoComprobante}, {importe}, 0, {idMovimientoPersonal})",
+            $"VALUES ($1, $2, now(), $3, $4, '{tipo}', {idComprobanteVenta}, {idCobro}, {importe}, 0, {idMovimientoPersonal})",
             idTenant ?? s.IdTenant, s.IdCliente, s.IdPuntoVenta, s.IdUsuario);
 
     private Task<int> InsertarPagoAsync(Siembra s, string categoria, string idMovimientoPersonal, int? idTenant = null) =>
@@ -164,12 +164,12 @@ public class PagoDePersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<W
     [InlineData("ajuste", "-50", "ID", "NULL", "NULL", "ck_movimientos_cuenta_corriente_vinculo_personal")]
     [InlineData("pago", "-50", "ID", "NULL", "NULL", "ck_movimientos_cuenta_corriente_vinculo_personal")]
     public async Task UnaFormaInvalidaViolaSuCheck(
-        string tipo, string importe, string movimientoPersonal, string comprobanteVenta, string pagoComprobante, string constraint)
+        string tipo, string importe, string movimientoPersonal, string comprobanteVenta, string cobro, string constraint)
     {
-        var s = await SembrarAsync(nameof(UnaFormaInvalidaViolaSuCheck) + tipo + importe + movimientoPersonal + comprobanteVenta + pagoComprobante);
+        var s = await SembrarAsync(nameof(UnaFormaInvalidaViolaSuCheck) + tipo + importe + movimientoPersonal + comprobanteVenta + cobro);
         var vinculo = movimientoPersonal == "ID" ? s.IdMovimientoPersonal.ToString() : movimientoPersonal;
 
-        var excepcion = await ViolacionAsync(InsertarMovimientoCcAsync(s, tipo, importe, vinculo, comprobanteVenta, pagoComprobante));
+        var excepcion = await ViolacionAsync(InsertarMovimientoCcAsync(s, tipo, importe, vinculo, comprobanteVenta, cobro));
 
         Assert.Equal("23514", excepcion.SqlState);
         Assert.Equal(constraint, excepcion.ConstraintName);

@@ -9,10 +9,10 @@ namespace Ways.Domain.Ventas;
 /// (<see cref="EntidadTenant"/>).
 ///
 /// Su clave alterna <c>(Id, IdTenant)</c> es la que <see cref="CuentaCorriente.MovimientoCuentaCorriente"/>
-/// referencia vía <c>id_pago_comprobante</c> (design: Table Shapes — write path A, "referenced
+/// referencia vía <c>id_cobro</c> (design: Table Shapes — write path A, "referenced
 /// by the CC movimiento") cuando el medio de este pago es cuenta corriente.
 /// </summary>
-public class PagoComprobante : EntidadTenant
+public class Cobro : EntidadTenant
 {
     public int Id { get; set; }
 

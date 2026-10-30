@@ -374,7 +374,7 @@ internal sealed class ApoyoDeConsultasMcp(WaysApiFixture fixture, ApoyoDeConecto
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, tenant.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = tenant.IdTenant,
             IdComprobanteVenta = idComprobante,

@@ -227,7 +227,7 @@ public class PagosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFix
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new Ways.Domain.Ventas.PagoComprobante
+        db.Cobros.Add(new Ways.Domain.Ventas.Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,

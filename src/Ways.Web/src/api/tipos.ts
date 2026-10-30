@@ -3101,8 +3101,8 @@ export type VentasPorVendedor = {
 }
 
 /** Fila de `GET /api/reportes/ventas/por-medio-pago`, agrupada por
- * `pagos_comprobante.id_medio_pago` — espejo de `FilaVentasPorMedioPago`. `cantidadPagos` cuenta
- * filas de `pagos_comprobante`, no comprobantes (un pago dividido aporta una fila a cada medio). */
+ * `cobros.id_medio_pago` — espejo de `FilaVentasPorMedioPago`. `cantidadPagos` cuenta
+ * filas de `cobros`, no comprobantes (un pago dividido aporta una fila a cada medio). */
 export type FilaVentasPorMedioPago = {
   idMedioPago: number
   neto: number

@@ -182,13 +182,13 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
             UpdatedAt = ahora
         });
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
             IdMedioPago = idMedioPago,
             // el pago nunca es negativo, incluso para una NCX con Total negativo (mismo criterio
-            // que ck_pagos_comprobante_importe_no_negativo).
+            // que ck_cobros_importe_no_negativo).
             Importe = Math.Abs(importe),
             Vuelto = 0m,
             CreatedAt = ahora,

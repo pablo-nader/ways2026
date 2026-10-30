@@ -4,7 +4,7 @@ namespace Ways.Domain.Pagos;
 
 /// <summary>
 /// Línea por medio de pago de un <see cref="Pago"/> (doc 10 §5, tabla <c>items_pago</c>). Hija operativa:
-/// scope <c>id_tenant</c> únicamente, igual que <see cref="Ways.Domain.Ventas.PagoComprobante"/>.
+/// scope <c>id_tenant</c> únicamente, igual que <see cref="Ways.Domain.Ventas.Cobro"/>.
 ///
 /// Rebanadas E2-S1, E2-S3a y E2-S3b: el servicio escribe un ítem por línea del pago en la misma transacción que
 /// la cabecera, que ya no guarda el medio (vive solo acá) y lleva el total. La invariante «la suma de

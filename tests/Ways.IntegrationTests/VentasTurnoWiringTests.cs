@@ -179,7 +179,7 @@ public class VentasTurnoWiringTests(WaysApiFixture fixture) : IClassFixture<Ways
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,

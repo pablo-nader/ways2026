@@ -1232,7 +1232,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     private async Task<int> ContarPagosDeComprobanteAsync(int idComprobante)
     {
         await using var db = ContextoDePlataforma();
-        return await db.PagosComprobante.IgnoreQueryFilters()
+        return await db.Cobros.IgnoreQueryFilters()
             .CountAsync(p => p.IdComprobanteVenta == idComprobante);
     }
 

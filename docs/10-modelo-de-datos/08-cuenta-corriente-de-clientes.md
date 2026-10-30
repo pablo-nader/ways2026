@@ -8,7 +8,7 @@ movimientos_cuenta_corriente (    -- [operativa]
     tipo tipo_movimiento_cc,                 -- enum: consumo | pago | ajuste
                                              --     | actualizacion_precios | descuento_personal
     id_comprobante_venta NULL,               -- consumo/devolución que lo originó
-    id_pago_comprobante NULL,                -- el pago con medio "cuenta corriente"
+    id_cobro NULL,                -- el pago con medio "cuenta corriente"
     importe numeric(14,2),                   -- + aumenta deuda, − la reduce
     saldo_resultante numeric(14,2),
     detalle text,
@@ -16,7 +16,7 @@ movimientos_cuenta_corriente (    -- [operativa]
 );
 ```
 
-El pago con medio `cuenta_corriente` en `pagos_comprobante` genera el movimiento
+El pago con medio `cuenta_corriente` en `cobros` genera el movimiento
 `consumo` en la misma transacción. El límite de crédito se valida contra
 `saldo + nuevo consumo <= limite_credito` (o `credito_ilimitado`). La reliquidación a
 precio del día (F4) recorre los consumos no actualizados, consulta `precios` vigentes y
@@ -37,7 +37,7 @@ que hoy, pero auditable.
 > la parte de un pago al personal que se cancela contra la deuda del cliente vinculado al empleado (§8c).
 > No mueve dinero: no tiene turno, comprobante ni pago. Siempre lleva `id_movimiento_personal` (FK
 > compuesta `(id_movimiento_personal, id_tenant)` a `movimientos_personal`, RESTRICT), no lleva
-> `id_comprobante_venta` ni `id_pago_comprobante` y su `importe` es negativo; el índice único parcial
+> `id_comprobante_venta` ni `id_cobro` y su `importe` es negativo; el índice único parcial
 > `ux_movimientos_cuenta_corriente_movimiento_personal` admite a lo sumo uno por pago. Dos CHECK lo
 > garantizan: `ck_movimientos_cuenta_corriente_descuento_personal` (la forma) y
 > `ck_movimientos_cuenta_corriente_vinculo_personal` (solo ese tipo lleva el vínculo). El valor del enum

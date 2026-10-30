@@ -131,8 +131,8 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
         return comprobante.Id;
     }
 
-    /// <summary><c>pagos_comprobante.importe</c> siempre no-negativo (CHECK
-    /// <c>ck_pagos_comprobante_importe_no_negativo</c>) — el signo de una NCX lo aporta el
+    /// <summary><c>cobros.importe</c> siempre no-negativo (CHECK
+    /// <c>ck_cobros_importe_no_negativo</c>) — el signo de una NCX lo aporta el
     /// <c>Signo</c> del tipo de comprobante del encabezado, nunca este importe. <paramref name="vuelto"/>
     /// es el cambio devuelto sobre lo entregado, igual que lo persiste <c>ServicioDeVentas</c>.</summary>
     private async Task SembrarPagoAsync(
@@ -141,7 +141,7 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = idComprobanteVenta,
@@ -487,7 +487,7 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     /// el <c>x.Signo</c> de <c>(x.Importe - x.Vuelto) * x.Signo</c> en
     /// <c>ServicioDeReportesDeVentas.ConsultarPorMedioPagoAsync</c> —
     /// el único lugar de esta etapa donde una NCX resta un importe que, por esquema, SIEMPRE llega
-    /// no-negativo (<c>ck_pagos_comprobante_importe_no_negativo</c>). Mutación aplicada: reemplazar
+    /// no-negativo (<c>ck_cobros_importe_no_negativo</c>). Mutación aplicada: reemplazar
     /// <c>(x.Importe - x.Vuelto) * x.Signo</c> por <c>(x.Importe - x.Vuelto)</c> (quitar el signo) → este
     /// test pasó de <c>250m</c> a fallar con <c>350m</c> — confirmado, revertido.</summary>
     [Fact]

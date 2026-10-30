@@ -244,7 +244,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(2500m, descuento.SaldoResultante);
         Assert.Equal(ctx.IdPuntoVenta, descuento.IdPuntoVenta);
         Assert.Null(descuento.IdComprobanteVenta);
-        Assert.Null(descuento.IdPagoComprobante);
+        Assert.Null(descuento.IdCobro);
         Assert.Equal("Descuento por pago de personal: Ana", descuento.Detalle);
         Assert.Equal(2500m, await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).SingleAsync());
 

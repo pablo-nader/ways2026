@@ -25,7 +25,7 @@ namespace Ways.Application.Fiscal;
 /// (con un TA recién firmado) es DEFINITIVO — jamás un loop de refirmado.
 ///
 /// <b>BINDING WARNING — T1 reasertada (design.md D12)</b>: esta clase NUNCA escribe
-/// <c>movimientos_stock</c>/<c>pagos_comprobante</c>/<c>movimientos_cuenta_corriente</c> ni exige un
+/// <c>movimientos_stock</c>/<c>cobros</c>/<c>movimientos_cuenta_corriente</c> ni exige un
 /// turno abierto — seguro ÚNICAMENTE porque I4 (sin certificado activo, CERO bytes en el cable) hace
 /// ese camino inalcanzable en producción hoy. El target 75 (zero-rows) es el trip-wire DOCUMENTADO
 /// que 19c debe poner en rojo cuando agregue esos tres loops.

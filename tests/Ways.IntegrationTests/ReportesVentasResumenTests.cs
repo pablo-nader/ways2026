@@ -95,7 +95,7 @@ public class ReportesVentasResumenTests(WaysApiFixture fixture) : IClassFixture<
 
     /// <summary>Siembra directo, sin pasar por <c>ServicioDeVentas</c> (que exige turno abierto) —
     /// mismo criterio que <c>SaldoDeProveedorTests.SembrarPagoAsync</c>: la derivación del reporte
-    /// nunca toca <c>items_comprobante_venta</c>/<c>pagos_comprobante</c>.</summary>
+    /// nunca toca <c>items_comprobante_venta</c>/<c>cobros</c>.</summary>
     private async Task SembrarComprobanteAsync(
         Contexto ctx, DateTimeOffset fecha, decimal total, bool esNcx = false,
         EstadoComprobante estado = EstadoComprobante.Emitido, bool eliminado = false)
