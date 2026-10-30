@@ -96,9 +96,9 @@ describe('etiquetaDeAccion', () => {
   // pantalla renderizaba `tenant.baja` en crudo y el `<select>` no podía filtrar por ninguna de
   // las tres bajas de organización. El front lista un subconjunto del catálogo del back (que tiene
   // más entradas): esta prueba congela el que se ofrece en el `<select>`.
-  // Mutation target: sacar cualquiera de las 20 entradas.
-  it('el catálogo del front ofrece las 20 acciones esperadas, las bajas y las de pagos incluidas', () => {
-    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(20)
+  // Mutation target: sacar cualquiera de las 22 entradas.
+  it('el catálogo del front ofrece las 22 acciones esperadas, las bajas, las de pagos y las de cobros incluidas', () => {
+    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(22)
 
     expect(CATALOGO_DE_ACCIONES_AUDITADAS.map((a) => a.valor)).toEqual([
       'precio.cambio',
@@ -109,6 +109,8 @@ describe('etiquetaDeAccion', () => {
       'pago.aplicacion',
       'pago.desaplicacion',
       'pago.redondeo',
+      'cobro.aplicacion',
+      'cobro.desaplicacion',
       'stock.ajuste',
       'stock.decomiso',
       'stock.conteo',
@@ -131,6 +133,8 @@ describe('etiquetaDeAccion', () => {
     expect(etiquetaDeAccion('pago.aplicacion')).toBe('Aplicación de pago a compras')
     expect(etiquetaDeAccion('pago.desaplicacion')).toBe('Desaplicación de pago de una compra')
     expect(etiquetaDeAccion('pago.redondeo')).toBe('Ajuste de redondeo de pago')
+    expect(etiquetaDeAccion('cobro.aplicacion')).toBe('Aplicación de cobro a ventas')
+    expect(etiquetaDeAccion('cobro.desaplicacion')).toBe('Desaplicación de cobro de una venta')
   })
 
   // judgment-day ronda 2, juez A: el fallback `?? accion` (design decisión 15 — "una acción

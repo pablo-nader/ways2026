@@ -1299,6 +1299,24 @@ public class ServicioDeVentas(
                 valorAnteriorVentaAnulacion, valorNuevoVentaAnulacion),
             ct);
 
+        // 1.7. E7-S2: libera las aplicaciones de cobro del comprobante, sea el recibo o la venta, con una fila de
+        // auditoría por cada una (id_entidad = el recibo). Corre con la fila del comprobante ya bloqueada por el UPDATE del
+        // paso 1 y ANTES de stock y cuenta corriente; ServicioDeCobros toma el FOR UPDATE de los dos comprobantes antes de
+        // tocar una aplicación, así que nunca espera una fila de aplicaciones_cobro que esta anulación tenga tomada.
+        var liberadas = await Ways.Application.CuentaCorriente.EscriturasDeAplicacionesDeCobro.LiberarDelComprobanteAsync(
+            conexion, transaccionCruda, idTenant, id, momento, ct);
+        foreach (var liberada in liberadas)
+        {
+            var (anteriorDesaplicacion, nuevoDesaplicacion) = Ways.Domain.Auditoria.PayloadDeAuditoria.DesaplicacionDeCobro(
+                liberada.IdAplicacion, liberada.IdComprobanteVenta, liberada.Importe, idComprobanteAnulado: id);
+            await servicioDeAuditoriaAnulacion.RegistrarAsync(
+                conexion, transaccionCruda,
+                new Ways.Domain.Auditoria.RegistroDeAuditoria(
+                    idTenant, liberada.IdPuntoVentaDelRecibo, Ways.Domain.Auditoria.AccionAuditada.CobroDesaplicacion,
+                    liberada.IdComprobanteCobro, anteriorDesaplicacion, nuevoDesaplicacion),
+                ct);
+        }
+
         // 2. Movimientos de stock inversos — uno por cada movimiento ORIGINAL de motivo = venta
         // de este comprobante (nunca recalculado desde items: ver el doc-comment de
         // AnularAsync). Orden ascendente (id_articulo, id_lote), mismo criterio anti-deadlock que

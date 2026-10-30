@@ -179,17 +179,24 @@ public class ServicioDeMediosPago(
         });
     }
 
-    /// <summary>Si ni la cuenta ni la empresa del medio cambian, no hay nada nuevo que validar ni que bloquear.
-    /// "Nueva" es una cuenta distinta de la guardada: solo esa debe estar activa.</summary>
+    /// <summary>En una edición, primero <see cref="ReglaDeComportamientoDeMedioEnUso"/>. Después, si ni la cuenta ni la
+    /// empresa del medio cambian, no hay nada nuevo que validar ni que bloquear. "Nueva" es una cuenta distinta de la
+    /// guardada: solo esa debe estar activa.</summary>
     protected override async Task AntesDeGuardarAsync(MedioPago entidad, CancellationToken ct)
     {
+        var entrada = Db.ChangeTracker.Entries<MedioPago>().FirstOrDefault(e => ReferenceEquals(e.Entity, entidad));
+        var esNuevo = entrada is null || entrada.State is EntityState.Added or EntityState.Detached;
+
+        if (!esNuevo)
+        {
+            await ExigirComportamientoNoEnUsoAsync(entidad, entrada!.Property(m => m.Comportamiento).OriginalValue, ct);
+        }
+
         if (entidad.IdCuentaTesoreria is not { } idCuenta)
         {
             return;
         }
 
-        var entrada = Db.ChangeTracker.Entries<MedioPago>().FirstOrDefault(e => ReferenceEquals(e.Entity, entidad));
-        var esNuevo = entrada is null || entrada.State is EntityState.Added or EntityState.Detached;
         var cuentaGuardada = esNuevo ? null : entrada!.Property(m => m.IdCuentaTesoreria).OriginalValue;
         var empresaGuardada = esNuevo ? null : entrada!.Property(m => m.IdEmpresa).OriginalValue;
 
@@ -199,6 +206,24 @@ public class ServicioDeMediosPago(
         }
 
         await ExigirCuentaAsignableAsync(idCuenta, entidad.IdEmpresa, asignacionNueva: idCuenta != cuentaGuardada, ct);
+    }
+
+    /// <summary>Solo un cambio que entra o sale de cuenta corriente necesita mirar los cobros. El <c>FOR UPDATE</c> del medio
+    /// choca con el <c>FOR KEY SHARE</c> que toma la FK de un cobro que se está insertando: o ese cobro comitea antes y la
+    /// consulta lo ve, o espera a que esta edición termine. Cuentan también los cobros dados de baja y los de comprobantes
+    /// anulados: siguen nombrando al medio.</summary>
+    private async Task ExigirComportamientoNoEnUsoAsync(
+        MedioPago entidad, ComportamientoMedioPago anterior, CancellationToken ct)
+    {
+        if (!ReglaDeComportamientoDeMedioEnUso.CambiaLaCuentaCorriente(anterior, entidad.Comportamiento))
+        {
+            return;
+        }
+
+        await guardaDeCuentas.BloquearFilaAsync<MedioPago>(entidad.Id, ct);
+        var figuraEnCobros = await Db.Cobros.IgnoreQueryFilters(["BajaLogica"]).AnyAsync(c => c.IdMedioPago == entidad.Id, ct);
+
+        ReglaDeComportamientoDeMedioEnUso.Exigir(anterior, entidad.Comportamiento, figuraEnCobros);
     }
 
     private async Task ExigirCuentaAsignableAsync(

@@ -5,7 +5,7 @@ namespace Ways.Domain.Tests.Auditoria;
 
 /// <summary>
 /// stage-14-auditoria-trazabilidad, Slice 1 (task 1.13, design decisión 4): el catálogo genérico
-/// — 28 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
+/// — 30 entradas, sin duplicados, naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, <c>Entidad</c>
 /// no vacía. Las tres de <c>pv.baja</c>/<c>tenant.baja</c>/<c>empresa.baja</c> las agregó la etapa
 /// 20 slice 4 (judgment-day ronda 1, hallazgo C1): las bajas de organización no dejaban rastro.
 /// <c>pv.modo</c> la agregó stage-desktop-pos (DB CHANGE GATE aprobado): el flip administrativo de
@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneVeintiochoEntradas()
+    public void TieneTreintaEntradas()
     {
-        Assert.Equal(28, AccionAuditada.Todas.Count);
+        Assert.Equal(30, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -61,9 +61,9 @@ public partial class AccionAuditadaTests
     /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
     /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
     /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
-    /// 28 pares exactos que el resto del código asume.</summary>
+    /// 30 pares exactos que el resto del código asume.</summary>
     [Fact]
-    public void ElCatalogoTieneExactamenteLosVeintiochoParesEsperados()
+    public void ElCatalogoTieneExactamenteLosTreintaParesEsperados()
     {
         (string Accion, string Entidad)[] esperado =
         [
@@ -94,7 +94,9 @@ public partial class AccionAuditadaTests
             ("compra.redondeo", "comprobante_compra"),
             ("pago.redondeo", "pago"),
             ("pv.alta", "punto_venta"),
-            ("compra.edicion", "comprobante_compra")
+            ("compra.edicion", "comprobante_compra"),
+            ("cobro.aplicacion", "comprobante_venta"),
+            ("cobro.desaplicacion", "comprobante_venta")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

@@ -150,11 +150,20 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
 
-    /// <summary>Las 28 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Aplicación de lo disponible de un cobro (recibo <c>RC</c>) a una o más ventas en cuenta corriente —
+    /// <c>CuentaCorriente/ServicioDeCobros.cs</c>. El <c>id_entidad</c> es el recibo.</summary>
+    public static readonly AccionAuditada CobroAplicacion = new("cobro.aplicacion", "comprobante_venta");
+
+    /// <summary>Desaplicación de un cobro de una venta, a mano o porque se anuló el recibo o la venta —
+    /// <c>CuentaCorriente/ServicioDeCobros.cs</c> y <c>Ventas/ServicioDeVentas.cs</c>. El <c>id_entidad</c> es el
+    /// recibo.</summary>
+    public static readonly AccionAuditada CobroDesaplicacion = new("cobro.desaplicacion", "comprobante_venta");
+
+    /// <summary>Las 30 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
-    /// validarlo y la edición/baja de pagos y el alta de puntos de venta, más el descarte de un borrador de compra, los cierres por redondeo y la edición de una compra confirmada) — usada por el catálogo genérico de tests (naming
+    /// validarlo y la edición/baja de pagos y el alta de puntos de venta, más el descarte de un borrador de compra, los cierres por redondeo, la edición de una compra confirmada y la aplicación/desaplicación de cobros) — usada por el catálogo genérico de tests (naming
     /// <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier consumidor que
     /// necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
@@ -186,6 +195,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         CompraRedondeo,
         PagoRedondeo,
         PuntoVentaAlta,
-        CompraEdicion
+        CompraEdicion,
+        CobroAplicacion,
+        CobroDesaplicacion
     ];
 }

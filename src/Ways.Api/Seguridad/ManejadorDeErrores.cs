@@ -196,6 +196,12 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_aplicaciones_pago_pago_compra" } =>
                 (StatusCodes.Status409Conflict, "Ese pago ya está aplicado a esa compra.", "aplicacion_duplicada"),
 
+            // E7-S2: una sola aplicación viva por par recibo-venta. El servicio agranda la fila existente y los escritores
+            // se serializan con el FOR UPDATE de los dos comprobantes, así que este índice es solo el respaldo de una
+            // escritura que se salte esos locks.
+            { SqlState: "23505", ConstraintName: "ux_aplicaciones_cobro_cobro_venta" } =>
+                (StatusCodes.Status409Conflict, "Ese recibo ya está aplicado a esa venta.", "aplicacion_cobro_duplicada"),
+
             { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
                 (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
 
@@ -1178,6 +1184,38 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "Un item con monto de ajuste manual tiene que tener su porcentaje.",
                     "ajuste_manual_sin_porcentaje"),
+
+            // E7-S2 (aplicaciones de cobros a ventas): al aplicar, ReglaDeAplicacionDeCobro valida las mismas reglas con
+            // los mismos códigos bajo el FOR UPDATE de los comprobantes. Los triggers también disparan cuando otro escritor
+            // cambia lo que miden (la anulación que libera aplicaciones, la edición de un cobro con aplicaciones), y para
+            // la parte en cuenta corriente de la venta ServicioDeMediosPago no deja que un medio con cobros entre ni salga
+            // de cuenta corriente. Estas ramas traducen lo que igual llegue a la base. Los constraint triggers son
+            // diferidos: fallan al comitear, no al insertar. Las FKs fk_aplicaciones_cobro_* salen como
+            // referencia_invalida por el backstop genérico de las fk_*.
+            "ck_aplicaciones_cobro_importe_positivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe de una aplicación de cobro tiene que ser positivo.",
+                    "aplicacion_importe_invalido"),
+
+            "tg_aplicaciones_cobro_comprobantes_validos" =>
+                (StatusCodes.Status409Conflict,
+                    "El cobro solo se aplica de un recibo emitido a una venta emitida.",
+                    "aplicacion_cobro_comprobante_invalido"),
+
+            "tg_aplicaciones_cobro_no_excede_cobro" =>
+                (StatusCodes.Status409Conflict,
+                    "Las aplicaciones superan lo cobrado del recibo.",
+                    "cobro_excede_disponible"),
+
+            "tg_aplicaciones_cobro_no_excede_venta" =>
+                (StatusCodes.Status409Conflict,
+                    "Las aplicaciones superan la parte en cuenta corriente de la venta.",
+                    "aplicacion_excede_saldo_de_venta"),
+
+            "tg_aplicaciones_cobro_mismo_cliente" =>
+                (StatusCodes.Status409Conflict,
+                    "El recibo y la venta tienen que ser del mismo cliente.",
+                    "aplicacion_cobro_otro_cliente"),
 
             _ => null
         };

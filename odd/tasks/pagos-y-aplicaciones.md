@@ -163,7 +163,7 @@ contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers 
 - [x] E7-S1 — Rename `PagoComprobante`/`pagos_comprobante` to `Cobro`/`cobros` (PK, AK, FKs, indexes, CHECKs,
   `movimientos_cuenta_corriente.id_pago_comprobante` -> `id_cobro`), error-handler constraint names, raw SQL in
   `Fiscal/*`, table label, doc 10 parts 04/07/08/01 + diagram. Wire unchanged. Template: `RenombrarGastosAPagos`.
-- [ ] E7-S2 — `aplicaciones_cobro` (N:M RC comprobante -> CC venta, importe), deferred triggers (sum <= RC net cobrado,
+- [x] E7-S2 — `aplicaciones_cobro` (N:M RC comprobante -> CC venta, importe), deferred triggers (sum <= RC net cobrado,
   sum <= venta CC share, same cliente, both confirmed/not anulled), readers: cobrado and saldo pendiente per venta,
   disponible per RC; anulación of a venta or RC releases its applications; audit codes `cobro.aplicacion`/
   `cobro.desaplicacion`.
@@ -391,6 +391,8 @@ contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers 
   Route: delegated writer.
 
 - 2026-10-30 E7-S1 (branch `pnader/cobros-e7-s1`, commit 9c4c94eb): migration `RenombrarPagosComprobanteACobros` hand-written as renames (EF scaffolded drop/create); `id_pago`→`id_cobro`, `movimientos_cuenta_corriente.id_pago_comprobante`→`id_cobro`, policy `cobros_tenant`, sequence renamed; the compras-side `ix/fk_pagos_comprobante_compra` names left on purpose. `dotnet build` 0 errors; Domain.Tests 2018 passed; Application.Tests 1186 passed; `has-pending-model-changes` clean. Integration (`RenombrarPagosComprobanteACobrosMigracionTests`) NOT run locally (Docker down): CI is the proof. Route: delegated writer.
+
+- 2026-10-30 E7-S2 (branch `pnader/cobros-e7-s2`, stacked on E7-S1, commit bfaacb8b): table `aplicaciones_cobro` (no origen enum, no backfill), migration `AplicacionesDeCobro` with deferred triggers (comprobantes validos, no excede cobro, no excede venta, mismo cliente) re-fired on `comprobantes_venta` estado/cliente/tipo and on `cobros` updates/deletes; codes `aplicacion_cobro_comprobante_invalido`, `cobro_excede_disponible`, `aplicacion_excede_saldo_de_venta`, `aplicacion_cobro_otro_cliente`, `aplicacion_cobro_duplicada`. `ServicioDeCobros` apply/unapply (RC + ventas FOR UPDATE ascending, single read under lock, no retry); anulación of a venta or an RC (same `AnularAsync`) releases applications at step 1.7. Audit `cobro.aplicacion`/`cobro.desaplicacion` labels in the three mirrored places. Domain.Tests 2036 passed; Application.Tests 1195 passed; `has-pending-model-changes` clean; web tipos/Auditoria 28 passed, `tsc -b` clean. Mutation evidence: 6 mutants killed (rule caps, anulado, signo, cliente, lock order). Integration (`AplicacionesDeCobroTests`) NOT run locally (Docker down): CI is the proof. Known limit: the venta CC share ignores reliquidación deltas. Route: delegated writer (opus).
 
 ## Next step
 

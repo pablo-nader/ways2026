@@ -187,4 +187,24 @@ public class ManejadorDeErroresVentasTests
         Assert.Equal(StatusCodes.Status400BadRequest, estado);
         Assert.Equal("ajuste_manual_sin_porcentaje", codigo);
     }
+
+    // ---- aplicaciones de cobros a ventas (E7-S2) -------------------------------------------
+
+    /// <summary>Los seis respaldos de <c>aplicaciones_cobro</c>, envueltos por EF (un SaveChanges) y crudos (los triggers
+    /// diferidos fallan en el COMMIT, que Npgsql tira sin envolver).</summary>
+    [Theory]
+    [InlineData("23514", "ck_aplicaciones_cobro_importe_positivo", StatusCodes.Status400BadRequest, "aplicacion_importe_invalido")]
+    [InlineData("23514", "tg_aplicaciones_cobro_comprobantes_validos", StatusCodes.Status409Conflict, "aplicacion_cobro_comprobante_invalido")]
+    [InlineData("23514", "tg_aplicaciones_cobro_no_excede_cobro", StatusCodes.Status409Conflict, "cobro_excede_disponible")]
+    [InlineData("23514", "tg_aplicaciones_cobro_no_excede_venta", StatusCodes.Status409Conflict, "aplicacion_excede_saldo_de_venta")]
+    [InlineData("23514", "tg_aplicaciones_cobro_mismo_cliente", StatusCodes.Status409Conflict, "aplicacion_cobro_otro_cliente")]
+    [InlineData("23505", "ux_aplicaciones_cobro_cobro_venta", StatusCodes.Status409Conflict, "aplicacion_cobro_duplicada")]
+    public async Task LosRespaldosDeAplicacionesDeCobroSeTraducenAlCodigoDeNegocio(
+        string sqlState, string constraint, int estadoEsperado, string codigoEsperado)
+    {
+        var postgres = CrearExcepcion(sqlState, constraint);
+
+        Assert.Equal((estadoEsperado, codigoEsperado), await ManejarAsync(new DbUpdateException("respaldo", postgres)));
+        Assert.Equal((estadoEsperado, codigoEsperado), await ManejarAsync(CrearExcepcion(sqlState, constraint)));
+    }
 }

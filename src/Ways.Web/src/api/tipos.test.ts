@@ -16,6 +16,8 @@ describe('etiquetas que el servidor replica para ordenar', () => {
       ['pago.aplicacion', 'Aplicación de pago a compras'],
       ['pago.desaplicacion', 'Desaplicación de pago de una compra'],
       ['pago.redondeo', 'Ajuste de redondeo de pago'],
+      ['cobro.aplicacion', 'Aplicación de cobro a ventas'],
+      ['cobro.desaplicacion', 'Desaplicación de cobro de una venta'],
       ['stock.ajuste', 'Ajuste de stock'],
       ['stock.decomiso', 'Decomiso de stock'],
       ['stock.conteo', 'Conteo de inventario'],

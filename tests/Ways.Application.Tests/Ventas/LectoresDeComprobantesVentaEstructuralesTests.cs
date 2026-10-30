@@ -79,6 +79,9 @@ public class LectoresDeComprobantesVentaEstructuralesTests
             [("Ways.Application/Caja/LectorDeRendicionDeDispositivos.cs",
                 "FROM comprobantes_venta cv")] =
                 (1, "Cuenta los comprobantes de la serie de un dispositivo por (punto de venta, tipo de ticket, rango de números): un espejo es de un tipo fiscal y numera por la serie fiscal."),
+            [("Ways.Application/Catalogos/ServicioDeMediosPago.cs",
+                "var figuraEnCobros = await Db.Cobros.IgnoreQueryFilters([\"BajaLogica\"]).AnyAsync(c => c.IdMedioPago == entidad.Id, ct);")] =
+                (1, "Existencia de cualquier cobro con el medio, para bloquear un cambio de comportamiento: el cobro de un espejo también nombra al medio y tiene que contar."),
             [("Ways.Application/CuentaCorriente/LectorDeConsumosReliquidables.cs",
                 "join c in db.ComprobantesVenta on m.IdComprobanteVenta equals (int?)c.Id")] =
                 (1, PorCuentaCorriente),

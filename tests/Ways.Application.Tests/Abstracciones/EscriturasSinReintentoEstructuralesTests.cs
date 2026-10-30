@@ -131,6 +131,12 @@ public class EscriturasSinReintentoEstructuralesTests
         // corriente y tesorería sin clave de idempotencia; un reintento sobre un commit ambiguo pagaría dos veces.
         { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "PagarCompraConAplicacionesAsync" },
 
+        // Aplicar y desaplicar el cobro de un recibo a ventas (E7-S2): escriben aplicaciones y auditoría sin clave de
+        // idempotencia; un reintento tras un commit ambiguo aplicaría dos veces o respondería 404 a una desaplicación que sí
+        // tuvo éxito.
+        { "Ways.Application/CuentaCorriente/ServicioDeCobros.cs", "AplicarAsync" },
+        { "Ways.Application/CuentaCorriente/ServicioDeCobros.cs", "DesaplicarAsync" },
+
         // Cierre en cero por redondeo: escribe un movimiento de cuenta corriente y mueve el saldo del proveedor sin clave de
         // idempotencia; un reintento sobre un commit ambiguo perdonaría o absorbería la diferencia dos veces.
         { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDeCompraAsync" },
