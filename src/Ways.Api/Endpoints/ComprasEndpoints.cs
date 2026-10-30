@@ -32,9 +32,14 @@ public static class ComprasEndpoints
             OrigenCompra? origen,
             int? pagina,
             int? tamanio,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, origen, ct))
+            servicio.ListarAsync(
+                idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, origen, orden, direccion, ct))
         .WithSummary(
+            "orden (numero, proveedor, tipo, estado, fechaRecepcion, total) y direccion (ascendente, " +
+            "descendente) ordenan todo el conjunto filtrado antes de paginar; 400 si no son válidos. " +
             "Lista comprobantes de compra con filtros y paginado. idEmpresa (stage-tesoreria-por-" +
             "empresa, PR5) filtra por la empresa del punto de venta de la compra — usado por el " +
             "picker 'Vincular a compra' de Pagos para no ofrecer compras de otra empresa. origen " +

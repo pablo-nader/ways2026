@@ -5,6 +5,7 @@
  * (design.md: "client + pure mappers; `tipos.ts` mirrors the read/write DTOs").
  */
 import { api } from './cliente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import { esTextoDeCantidadValido } from './cantidadPorUnidad'
 import type {
   ComprobanteEmitido,
@@ -52,10 +53,29 @@ export function filtrosDeRemitosVacios(): FiltrosDeRemitos {
   return { idPuntoVenta: null, idCliente: null, estado: null, desde: '', hasta: '', pagina: 1, tamanio: 25 }
 }
 
+/** Claves de `orden` que acepta `GET /api/remitos`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_REMITOS = [
+  'numero',
+  'cliente',
+  'puntoVenta',
+  'estado',
+  'fechaEmision',
+  'total',
+] as const
+
+export type ColumnaOrdenableDeRemitos = (typeof COLUMNAS_ORDENABLES_DE_REMITOS)[number]
+
+export type OrdenDeRemitos = OrdenDeServidor<ColumnaOrdenableDeRemitos>
+
+export function esColumnaOrdenableDeRemitos(columna: string): columna is ColumnaOrdenableDeRemitos {
+  return (COLUMNAS_ORDENABLES_DE_REMITOS as readonly string[]).includes(columna)
+}
+
 /** Arma el query string de `GET /api/remitos` — `desde`/`hasta` con el mismo offset horario
  * explícito que el resto de la web (mutation-proof-tests regla 10). */
-export function construirQueryDeRemitos(filtros: FiltrosDeRemitos): string {
+export function construirQueryDeRemitos(filtros: FiltrosDeRemitos, orden: OrdenDeRemitos = null): string {
   const parametros = new URLSearchParams()
+  agregarOrdenAlQuery(parametros, orden)
   if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
   if (filtros.idCliente !== null) parametros.set('idCliente', String(filtros.idCliente))
   if (filtros.estado !== null) parametros.set('estado', filtros.estado)
@@ -67,7 +87,8 @@ export function construirQueryDeRemitos(filtros: FiltrosDeRemitos): string {
 }
 
 export const clienteDeRemitos = {
-  listar: (filtros: FiltrosDeRemitos) => api.get<PaginaDeRemitos>(`/remitos${construirQueryDeRemitos(filtros)}`),
+  listar: (filtros: FiltrosDeRemitos, orden: OrdenDeRemitos = null) =>
+    api.get<PaginaDeRemitos>(`/remitos${construirQueryDeRemitos(filtros, orden)}`),
   obtener: (id: number) => api.get<RemitoDetalle>(`/remitos/${id}`),
   crear: (solicitud: SolicitudDeRemito) => api.post<RemitoDetalle>('/remitos', solicitud),
   actualizar: (id: number, solicitud: SolicitudDeRemito) => api.put<RemitoDetalle>(`/remitos/${id}`, solicitud),

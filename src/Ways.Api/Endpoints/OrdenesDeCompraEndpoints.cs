@@ -37,9 +37,15 @@ public static class OrdenesDeCompraEndpoints
             DateTimeOffset? hasta,
             int? pagina,
             int? tamanio,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(idProveedor, idPuntoVenta, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista órdenes de compra con filtros y paginado.");
+            servicio.ListarAsync(
+                idProveedor, idPuntoVenta, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
+        .WithSummary(
+            "Lista órdenes de compra con filtros y paginado. orden (numero, proveedor, puntoVenta, estado, " +
+            "fechaEmision, fechaEsperada) y direccion (ascendente, descendente) ordenan todo el conjunto " +
+            "filtrado antes de paginar; 400 si no son válidos.");
 
         grupo.MapGet("/{id:int}", (ServicioDeOrdenesDeCompra servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDetalleAsync(id, ct))

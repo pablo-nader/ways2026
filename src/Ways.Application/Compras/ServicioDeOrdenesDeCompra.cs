@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Listados;
 using Ways.Application.Organizacion;
 using Ways.Application.Ventas;
 using Ways.Domain.Common;
@@ -50,8 +51,12 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         DateTimeOffset? hasta = null,
         int pagina = 1,
         int tamanio = 25,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -59,9 +64,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         var total = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderByDescending(o => o.FechaEmision)
-            .ThenByDescending(o => o.Id)
+        var items = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(o => new OrdenDeCompraListada(
@@ -70,6 +73,52 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         return new PaginaDeOrdenesDeCompra(items, total, pagina, tamanio);
     }
+
+    /// <summary>Sin orden pedido: <c>FechaEmision</c> e <c>Id</c> descendentes (el orden de siempre). Con orden: la
+    /// columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. Un borrador sin número (la pantalla lo rotula
+    /// con su id) y una fecha esperada ausente van al final en las dos direcciones; proveedor y punto de venta
+    /// ordenan por el texto de la celda y uno dado de baja o con FK colgante llega vacío (<c>db.Proveedores</c> y
+    /// <c>db.PuntosVenta</c> ya excluyen las bajas); el estado, por su etiqueta.</summary>
+    private IOrderedQueryable<OrdenCompra> Ordenar(
+        IQueryable<OrdenCompra> query, OrdenDeListado<ColumnaDeOrdenDeOrdenesDeCompra>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(o => o.FechaEmision).ThenByDescending(o => o.Id);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeOrdenesDeCompra.Numero => OrdenarPor.ClaveConVacios(query, o => o.Numero, desc),
+            ColumnaDeOrdenDeOrdenesDeCompra.Proveedor => OrdenarPor.ClaveConVacios(
+                query,
+                o => db.Proveedores.Where(p => p.Id == o.IdProveedor).Select(p => p.RazonSocial).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeOrdenesDeCompra.PuntoVenta => OrdenarPor.ClaveConVacios(
+                query,
+                o => db.PuntosVenta.Where(pv => pv.Id == o.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeOrdenesDeCompra.Estado => OrdenarPor.Clave(
+                query, EtiquetaPorCaso.Selector((OrdenCompra o) => o.Estado, EtiquetasDeEstadoDeDocumento.OrdenCompra), desc),
+            ColumnaDeOrdenDeOrdenesDeCompra.FechaEmision => OrdenarPor.Clave(query, o => o.FechaEmision, desc),
+            ColumnaDeOrdenDeOrdenesDeCompra.FechaEsperada => OrdenarPor.ClaveConVacios(query, o => o.FechaEsperada, desc),
+            _ => query.OrderByDescending(o => o.FechaEmision),
+        };
+
+        return ordenado.ThenBy(o => o.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeOrdenesDeCompra> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeOrdenesDeCompra>(StringComparer.Ordinal)
+        {
+            ["numero"] = ColumnaDeOrdenDeOrdenesDeCompra.Numero,
+            ["proveedor"] = ColumnaDeOrdenDeOrdenesDeCompra.Proveedor,
+            ["puntoVenta"] = ColumnaDeOrdenDeOrdenesDeCompra.PuntoVenta,
+            ["estado"] = ColumnaDeOrdenDeOrdenesDeCompra.Estado,
+            ["fechaEmision"] = ColumnaDeOrdenDeOrdenesDeCompra.FechaEmision,
+            ["fechaEsperada"] = ColumnaDeOrdenDeOrdenesDeCompra.FechaEsperada,
+        };
 
     /// <summary>Cláusulas bajo prueba (<c>mutation-proof-tests</c>, design.md:194-204, mutation
     /// target #34b), en orden de daño si se pierden:
