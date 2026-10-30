@@ -1,4 +1,7 @@
+using Ways.Application.Fiscal;
+using Ways.Application.Ventas;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.CuentaCorriente;
 
@@ -10,7 +13,68 @@ namespace Ways.Application.CuentaCorriente;
 /// total ya calculado.
 /// </summary>
 public sealed record SolicitudDePagoACuenta(
-    int IdPuntoVenta, IReadOnlyList<PagoDeCuenta>? Pagos, string? Observaciones);
+    int IdPuntoVenta, IReadOnlyList<PagoDeCuenta>? Pagos, string? Observaciones,
+    IReadOnlyList<AplicacionDeCobroPedida?>? Aplicaciones = null);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/cobros/{idRecibo}/aplicaciones</c>: las ventas a las que se aplica lo disponible del recibo
+/// (<see cref="AplicacionDeCobroPedida"/>: <c>idComprobanteVenta</c> e <c>importe</c>). De 1 a
+/// <see cref="ReglaDeAplicacionDeCobro.MaximoDeVentasPorPedido"/>, sin repetir ventas.
+/// </summary>
+public sealed record SolicitudDeAplicacionesDeCobro(IReadOnlyList<AplicacionDeCobroPedida?>? Aplicaciones);
+
+/// <summary>
+/// Respuesta de <c>POST /api/clientes/{id}/cuenta-corriente/pagos</c>: los mismos campos que
+/// <see cref="ComprobanteEmitido"/> (la forma que leen los registros instalados) más las aplicaciones vivas del recibo
+/// (<see cref="Aplicaciones"/>, vacía si el pedido no trajo ninguna). Un recibo no tiene ítems, presupuesto de origen ni
+/// factura: esos campos viajan igual que siempre (<c>[]</c>, <c>null</c>, <c>false</c>, <c>null</c>).
+/// </summary>
+public sealed record PagoACuentaRegistrado(
+    int Id,
+    long Numero,
+    string NumeroVisible,
+    EstadoComprobante Estado,
+    DateTimeOffset Fecha,
+    int IdPuntoVenta,
+    int IdCliente,
+    int? IdComprobanteAsociado,
+    decimal Subtotal,
+    decimal DescuentoTotal,
+    decimal DescuentoManualTotal,
+    decimal RecargoManualTotal,
+    decimal Total,
+    string? DireccionEntrega,
+    string? Observaciones,
+    IReadOnlyList<ItemEmitido> Items,
+    IReadOnlyList<PagoEmitido> Pagos,
+    int? IdPresupuestoOrigen,
+    bool FacturaForzada,
+    EstadoFiscalDeVenta? Fiscal,
+    IReadOnlyList<AplicacionDeCobroListada> Aplicaciones)
+{
+    public static PagoACuentaRegistrado De(
+        ComprobanteEmitido c, IReadOnlyList<AplicacionDeCobroListada> aplicaciones) => new(
+        c.Id, c.Numero, c.NumeroVisible, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.IdComprobanteAsociado,
+        c.Subtotal, c.DescuentoTotal, c.DescuentoManualTotal, c.RecargoManualTotal, c.Total, c.DireccionEntrega,
+        c.Observaciones, c.Items, c.Pagos, c.IdPresupuestoOrigen, c.FacturaForzada, c.Fiscal, aplicaciones);
+}
+
+/// <summary>Una venta del cliente con saldo pendiente en cuenta corriente (<c>GET …/ventas-pendientes</c>):
+/// <see cref="ParteEnCuentaCorriente"/> es lo que quedó a cuenta, <see cref="Cobrado"/> lo aplicado por recibos y
+/// <see cref="SaldoPendiente"/> la diferencia (siempre mayor a cero acá).</summary>
+public sealed record VentaPendienteDeCobro(
+    int Id, string CodigoTipo, string? Letra, long Numero, string NumeroVisible, DateTimeOffset Fecha,
+    decimal ParteEnCuentaCorriente, decimal Cobrado, decimal SaldoPendiente);
+
+/// <summary>Una aplicación viva de un recibo, con el número visible de la venta a la que se aplicó.</summary>
+public sealed record AplicacionDeReciboListada(
+    int Id, int IdComprobanteVenta, string NumeroVisibleDeVenta, decimal Importe, DateTimeOffset Fecha);
+
+/// <summary>Un recibo no anulado del cliente (<c>GET …/recibos</c>): lo cobrado neto de vuelto, lo aplicado a ventas y lo
+/// disponible para aplicar, con sus aplicaciones vivas.</summary>
+public sealed record ReciboDeCliente(
+    int Id, long Numero, string NumeroVisible, DateTimeOffset Fecha, decimal NetoCobrado, decimal Aplicado,
+    decimal Disponible, IReadOnlyList<AplicacionDeReciboListada> Aplicaciones);
 
 /// <summary>Un medio de pago de la RC — mismo shape que
 /// <see cref="Ventas.PagoDeVenta"/>, redeclarado acá porque una RC no es un checkout (design

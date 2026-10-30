@@ -2414,7 +2414,72 @@ export type PagoDeCuenta = { idMedioPago: number; importe: number; referencia: s
 
 /** Cuerpo de `POST /api/clientes/{id}/cuenta-corriente/pagos` — sin ningún campo de importe
  * propio (design decisión 6, espejo de `SolicitudDePagoACuenta`). */
-export type SolicitudDePagoACuenta = { idPuntoVenta: number; pagos: PagoDeCuenta[]; observaciones: string | null }
+export type SolicitudDePagoACuenta = {
+  idPuntoVenta: number
+  pagos: PagoDeCuenta[]
+  observaciones: string | null
+  /** E7-S3: ventas del cliente a las que aplicar el cobro en el mismo acto (hasta 20, sin repetir). Ausente o vacío:
+   * el recibo se registra sin aplicar nada, como siempre. */
+  aplicaciones?: AplicacionDeCobroSolicitada[]
+}
+
+/** Una venta pedida y el importe del recibo que se le aplica (espejo de `AplicacionDeCobroPedida`). */
+export type AplicacionDeCobroSolicitada = { idComprobanteVenta: number; importe: number }
+
+/** Cuerpo de `POST /api/cobros/{idRecibo}/aplicaciones` (espejo de `SolicitudDeAplicacionesDeCobro`). */
+export type SolicitudDeAplicacionesDeCobro = { aplicaciones: AplicacionDeCobroSolicitada[] }
+
+/** Una aplicación viva de un recibo (espejo de `AplicacionDeCobroListada`). */
+export type AplicacionDeCobroListada = { id: number; idComprobanteVenta: number; importe: number; fecha: string }
+
+/** Respuesta de aplicar y de desaplicar: lo cobrado neto de vuelto, lo aplicado, lo disponible y las aplicaciones vivas
+ * del recibo (espejo de `EstadoDeCobro`). */
+export type EstadoDeCobro = {
+  idRecibo: number
+  netoCobrado: number
+  aplicado: number
+  disponible: number
+  aplicaciones: AplicacionDeCobroListada[]
+}
+
+/** Respuesta de `POST …/cuenta-corriente/pagos`: el comprobante RC de siempre más sus aplicaciones vivas (espejo de
+ * `PagoACuentaRegistrado`). Opcional por compatibilidad con un servidor anterior a E7-S3. */
+export type PagoACuentaRegistrado = ComprobanteEmitido & { aplicaciones?: AplicacionDeCobroListada[] }
+
+/** Una venta del cliente con saldo pendiente en cuenta corriente (espejo de `VentaPendienteDeCobro`). `letra` es `null`
+ * en un comprobante sin letra. */
+export type VentaPendienteDeCobro = {
+  id: number
+  codigoTipo: string
+  letra: string | null
+  numero: number
+  numeroVisible: string
+  fecha: string
+  parteEnCuentaCorriente: number
+  cobrado: number
+  saldoPendiente: number
+}
+
+/** Una aplicación viva de un recibo con el número visible de su venta (espejo de `AplicacionDeReciboListada`). */
+export type AplicacionDeReciboListada = {
+  id: number
+  idComprobanteVenta: number
+  numeroVisibleDeVenta: string
+  importe: number
+  fecha: string
+}
+
+/** Un recibo no anulado del cliente con lo cobrado, aplicado y disponible (espejo de `ReciboDeCliente`). */
+export type ReciboDeCliente = {
+  id: number
+  numero: number
+  numeroVisible: string
+  fecha: string
+  netoCobrado: number
+  aplicado: number
+  disponible: number
+  aplicaciones: AplicacionDeReciboListada[]
+}
 
 // --- Cuenta corriente: ajuste manual y reliquidación (stage-7-cuenta-corriente, Slice 6) ------
 // Espejo de `Ways.Application.CuentaCorriente.Contratos` (ajuste) y

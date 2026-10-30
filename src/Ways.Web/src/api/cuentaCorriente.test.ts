@@ -26,7 +26,10 @@ import {
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
   type PagoACuentaParaCalculo,
+  clienteDeCobros,
+  clienteDeCuentaCorriente,
 } from './cuentaCorriente'
+import { api } from './cliente'
 import type { ClienteListado, MedioPagoListado, MovimientoDeCuentaCorriente, ResultadoDeReliquidacion, TipoMovimientoCc } from './tipos'
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
@@ -862,5 +865,55 @@ describe('clienteParaElTicketDeVenta', () => {
   it('el Consumidor Final no lleva cliente', () => {
     const consumidorFinal = { ...cliente, esConsumidorFinal: true }
     expect(clienteParaElTicketDeVenta({ cliente: consumidorFinal, pagos: venta50, medios, consumoPendiente: 0, saldoConfirmado: true })).toBeNull()
+  })
+})
+
+describe('clientes HTTP de cobros (E7-S3)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('listarVentasPendientes pide GET .../ventas-pendientes del cliente', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue([])
+
+    await clienteDeCuentaCorriente.listarVentasPendientes(7)
+
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledWith('/clientes/7/cuenta-corriente/ventas-pendientes')
+  })
+
+  it('listarRecibos sin conDisponible no manda query', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue([])
+
+    await clienteDeCuentaCorriente.listarRecibos(7)
+
+    expect(get).toHaveBeenCalledWith('/clientes/7/cuenta-corriente/recibos')
+  })
+
+  it('listarRecibos con conDisponible manda ?conDisponible=true', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue([])
+
+    await clienteDeCuentaCorriente.listarRecibos(7, true)
+
+    expect(get).toHaveBeenCalledWith('/clientes/7/cuenta-corriente/recibos?conDisponible=true')
+  })
+
+  it('aplicar manda POST /cobros/{idRecibo}/aplicaciones con la solicitud tal cual', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({})
+    const solicitud = { aplicaciones: [{ idComprobanteVenta: 11, importe: 30 }] }
+
+    await clienteDeCobros.aplicar(5, solicitud)
+
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledWith('/cobros/5/aplicaciones', solicitud)
+  })
+
+  it('desaplicar manda DELETE /cobros/{idRecibo}/aplicaciones/{idAplicacion}', async () => {
+    const borrar = vi.spyOn(api, 'delete').mockResolvedValue({})
+
+    await clienteDeCobros.desaplicar(5, 9)
+
+    expect(borrar).toHaveBeenCalledTimes(1)
+    expect(borrar).toHaveBeenCalledWith('/cobros/5/aplicaciones/9')
   })
 })

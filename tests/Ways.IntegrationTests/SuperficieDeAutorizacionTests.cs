@@ -115,6 +115,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // línea de arriba (apila SupervisionDeCuentaCorriente en vez de GestionDeCatalogo, ver
         // CuentaCorrienteEndpoints); 403 Vendedor cubierto en AjustesDeCuentaCorrienteTests.
         ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/ajustes"),
+        // E7-S3: aplicar y liberar el cobro de un recibo — mismo criterio que el ajuste (OperacionDePos en el grupo y
+        // SupervisionDeCuentaCorriente apilado, sin GestionDeCatalogo). El 403 del Vendedor y el 200 del Supervisor están en
+        // CobrosEndpointsTests.
+        ("POST", "/api/cobros/{idRecibo:int}/aplicaciones"),
+        ("DELETE", "/api/cobros/{idRecibo:int}/aplicaciones/{idAplicacion:int}"),
         // stage-15-cc-proveedores-ledger (Slice 5, task 5.2, design decisión 12): ajuste manual
         // de PROVEEDORES — mapeado TOP-LEVEL sobre `app`, mismo criterio de composición que
         // "/api/proveedores/{id}/saldo" (ProveedoresEndpoints.cs); apila

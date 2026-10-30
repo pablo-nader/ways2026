@@ -13,17 +13,21 @@ import { redondearImporte } from '../formato/importes'
 import type {
   ComportamientoMedioPago,
   ClienteListado,
-  ComprobanteEmitido,
   DetalleDeConsumo,
   DetalleDeLinea,
+  EstadoDeCobro,
   EstadoDeCuenta,
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
+  PagoACuentaRegistrado,
   PagoDeCuenta,
+  ReciboDeCliente,
   ResultadoDeReliquidacion,
   SolicitudDeAjuste,
+  SolicitudDeAplicacionesDeCobro,
   SolicitudDePagoACuenta,
   SolicitudDeReliquidacion,
+  VentaPendienteDeCobro,
 } from './tipos'
 
 // Sumas de importes tipeados y saldos: conservan hasta 2 decimales (no son importes de venta calculados).
@@ -111,11 +115,21 @@ export const clienteDeCuentaCorriente = {
     api.get<EstadoDeCuenta>(
       `/clientes/${idCliente}/cuenta-corriente${construirQueryEstadoDeCuenta(desde, hasta, historico)}`,
     ),
-  /** `POST /api/clientes/{id}/cuenta-corriente/pagos` — 201 con el comprobante RC, o
+  /** `POST /api/clientes/{id}/cuenta-corriente/pagos` — 201 con el comprobante RC (más sus `aplicaciones` vivas), o
    * `409 turno_no_abierto` si el punto de venta no tiene turno abierto (spec: RC Requires An
-   * Open Turno — rechazado antes que cualquier otro procesamiento). */
+   * Open Turno — rechazado antes que cualquier otro procesamiento). Con `aplicaciones` en la solicitud, el recibo y
+   * sus aplicaciones se escriben juntos o no se escribe nada. */
   registrarPago: (idCliente: number, solicitud: SolicitudDePagoACuenta) =>
-    api.post<ComprobanteEmitido>(`/clientes/${idCliente}/cuenta-corriente/pagos`, solicitud),
+    api.post<PagoACuentaRegistrado>(`/clientes/${idCliente}/cuenta-corriente/pagos`, solicitud),
+  /** `GET /api/clientes/{id}/cuenta-corriente/ventas-pendientes` — ventas con saldo pendiente, la más nueva primero. */
+  listarVentasPendientes: (idCliente: number) =>
+    api.get<VentaPendienteDeCobro[]>(`/clientes/${idCliente}/cuenta-corriente/ventas-pendientes`),
+  /** `GET /api/clientes/{id}/cuenta-corriente/recibos` — recibos no anulados con cobrado, aplicado y disponible;
+   * `soloConDisponible` deja los que todavía tienen algo para aplicar. */
+  listarRecibos: (idCliente: number, soloConDisponible = false) =>
+    api.get<ReciboDeCliente[]>(
+      `/clientes/${idCliente}/cuenta-corriente/recibos${soloConDisponible ? '?conDisponible=true' : ''}`,
+    ),
   /** `POST /api/clientes/{id}/cuenta-corriente/ajustes` — 201 con el movimiento `Ajuste`. Sin
    * turno (design: Open Questions — "provenance, not authority"), a diferencia de un pago. */
   registrarAjuste: (idCliente: number, solicitud: SolicitudDeAjuste) =>
@@ -130,6 +144,17 @@ export const clienteDeCuentaCorriente = {
    * formulas") — `idsMovimientosCubiertos` vacío + `delta === 0` es un no-op limpio. */
   ejecutarReliquidacion: (idCliente: number, solicitud: SolicitudDeReliquidacion) =>
     api.post<ResultadoDeReliquidacion>(`/clientes/${idCliente}/cuenta-corriente/reliquidacion`, solicitud),
+}
+
+/** Aplicar y liberar el cobro de un recibo (E7-S3). Solo Supervisor y Admin; un 409 trae el código de la regla
+ * (`cobro_excede_disponible`, `aplicacion_excede_saldo_de_venta`, `aplicacion_cobro_otro_cliente`, …). */
+export const clienteDeCobros = {
+  /** `POST /api/cobros/{idRecibo}/aplicaciones` — 200 con el estado del recibo. */
+  aplicar: (idRecibo: number, solicitud: SolicitudDeAplicacionesDeCobro) =>
+    api.post<EstadoDeCobro>(`/cobros/${idRecibo}/aplicaciones`, solicitud),
+  /** `DELETE /api/cobros/{idRecibo}/aplicaciones/{idAplicacion}` — 200 con el estado del recibo. */
+  desaplicar: (idRecibo: number, idAplicacion: number) =>
+    api.delete<EstadoDeCobro>(`/cobros/${idRecibo}/aplicaciones/${idAplicacion}`),
 }
 
 /** Etiqueta de pantalla por tipo de movimiento — un `Ajuste` se distingue por `etiqueta` (manual
