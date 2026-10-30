@@ -100,6 +100,7 @@ public interface IWaysDbContext
     DbSet<ComprobanteVenta> ComprobantesVenta { get; }
     DbSet<ItemComprobanteVenta> ItemsComprobanteVenta { get; }
     DbSet<Cobro> Cobros { get; }
+    DbSet<AplicacionCobro> AplicacionesCobro { get; }
     DbSet<Ways.Domain.Stock.Stock> Stock { get; }
     DbSet<MovimientoStock> MovimientosStock { get; }
     DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente { get; }

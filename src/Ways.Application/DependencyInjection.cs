@@ -136,6 +136,7 @@ public static class DependencyInjection
         // stage-7-cuenta-corriente (Slice 2): pago a cuenta (RC) — reusa
         // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync, se registra junto a la caja.
         services.AddScoped<ServicioDeCuentaCorriente>();
+        services.AddScoped<ServicioDeCobros>();
 
         // stage-7-cuenta-corriente (Slice 3): reliquidación a precio del día — el lector de
         // elegibles alimenta tanto el preview como el commit del servicio.

@@ -5081,6 +5081,77 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("usuarios", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Ventas.AplicacionCobro", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_aplicacion_cobro");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<DateTimeOffset>("Fecha")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha");
+
+                    b.Property<int>("IdComprobanteCobro")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_cobro");
+
+                    b.Property<int>("IdComprobanteVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_venta");
+
+                    b.Property<int>("IdEmpleado")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empleado");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("Importe")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("importe");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_aplicaciones_cobro");
+
+                    b.HasIndex("IdEmpleado")
+                        .HasDatabaseName("ix_aplicaciones_cobro_empleado");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_aplicaciones_cobro_tenant");
+
+                    b.HasIndex("IdComprobanteCobro", "IdTenant")
+                        .HasDatabaseName("ix_aplicaciones_cobro_cobro");
+
+                    b.HasIndex("IdComprobanteVenta", "IdTenant")
+                        .HasDatabaseName("ix_aplicaciones_cobro_venta");
+
+                    b.HasIndex("IdComprobanteCobro", "IdComprobanteVenta", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_aplicaciones_cobro_cobro_venta")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("aplicaciones_cobro", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_aplicaciones_cobro_importe_positivo", "importe > 0");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Ventas.Cobro", b =>
                 {
                     b.Property<int>("Id")
@@ -7710,6 +7781,39 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasConstraintName("fk_usuarios_rol");
 
                     b.Navigation("Rol");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Ventas.AplicacionCobro", b =>
+                {
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpleado")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_cobro_empleado");
+
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_cobro_tenant");
+
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteCobro", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_cobro_cobro");
+
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_aplicaciones_cobro_venta");
                 });
 
             modelBuilder.Entity("Ways.Domain.Ventas.Cobro", b =>

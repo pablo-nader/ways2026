@@ -121,6 +121,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<ComprobanteVenta> ComprobantesVenta => Set<ComprobanteVenta>();
     public DbSet<ItemComprobanteVenta> ItemsComprobanteVenta => Set<ItemComprobanteVenta>();
     public DbSet<Cobro> Cobros => Set<Cobro>();
+    public DbSet<AplicacionCobro> AplicacionesCobro => Set<AplicacionCobro>();
     public DbSet<Stock> Stock => Set<Stock>();
     public DbSet<MovimientoStock> MovimientosStock => Set<MovimientoStock>();
     public DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente => Set<MovimientoCuentaCorriente>();

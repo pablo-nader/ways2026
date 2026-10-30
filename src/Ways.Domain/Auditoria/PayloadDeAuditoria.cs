@@ -343,4 +343,54 @@ public static class PayloadDeAuditoria
                 ["nombre"] = nombre,
                 ["modo"] = modo
             });
+
+    /// <summary><c>cobro.aplicacion</c> (E7-S2). Estado del recibo antes y después de aplicar: lo cobrado, lo aplicado,
+    /// lo disponible y sus aplicaciones vivas <c>{id_comprobante_venta, importe}</c> ordenadas por venta.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        AplicacionDeCobro(
+            decimal netoCobrado,
+            IReadOnlyCollection<(int IdComprobanteVenta, decimal Importe)> anteriores,
+            IReadOnlyCollection<(int IdComprobanteVenta, decimal Importe)> nuevas) => (
+            EstadoDeAplicacionesDeCobro(netoCobrado, anteriores),
+            EstadoDeAplicacionesDeCobro(netoCobrado, nuevas));
+
+    /// <summary><c>cobro.desaplicacion</c> (E7-S2): una fila por aplicación liberada, a mano
+    /// (<paramref name="idComprobanteAnulado"/> <c>null</c>) o porque se anuló el recibo o la venta.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        DesaplicacionDeCobro(int idAplicacion, int idComprobanteVenta, decimal importe, int? idComprobanteAnulado) => (
+            new Dictionary<string, object?>
+            {
+                ["id_aplicacion"] = idAplicacion,
+                ["id_comprobante_venta"] = idComprobanteVenta,
+                ["importe"] = importe,
+                ["viva"] = true
+            },
+            new Dictionary<string, object?>
+            {
+                ["id_aplicacion"] = idAplicacion,
+                ["id_comprobante_venta"] = idComprobanteVenta,
+                ["importe"] = importe,
+                ["viva"] = false,
+                ["id_comprobante_anulado"] = idComprobanteAnulado
+            });
+
+    private static Dictionary<string, object?> EstadoDeAplicacionesDeCobro(
+        decimal netoCobrado, IReadOnlyCollection<(int IdComprobanteVenta, decimal Importe)> aplicaciones)
+    {
+        var aplicado = aplicaciones.Sum(a => a.Importe);
+        return new Dictionary<string, object?>
+        {
+            ["neto_cobrado"] = netoCobrado,
+            ["aplicado"] = aplicado,
+            ["disponible"] = netoCobrado - aplicado,
+            ["aplicaciones"] = aplicaciones
+                .OrderBy(a => a.IdComprobanteVenta)
+                .Select(a => new Dictionary<string, object?>
+                {
+                    ["id_comprobante_venta"] = a.IdComprobanteVenta,
+                    ["importe"] = a.Importe
+                })
+                .ToList()
+        };
+    }
 }

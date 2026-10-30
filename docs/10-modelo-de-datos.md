@@ -55,7 +55,7 @@ parte apuntan a la sección `N` de este índice.
 | 5. Comprobantes de compra | [05-comprobantes-de-compra.md](10-modelo-de-datos/05-comprobantes-de-compra.md) | 28 | `comprobantes_compra`, `alicuotas_comprobante_compra`, `percepciones_comprobante_compra`, `items_comprobante_compra`, `pagos`, `items_pago`, `aplicaciones_pago`, `ordenes_compra`, `items_orden_compra` |
 | 6. Stock | [06-stock.md](10-modelo-de-datos/06-stock.md) | 8 | `stock`, `movimientos_stock`, `lotes`, `stock_lotes` |
 | 7. Caja: turnos, arqueos y tesorería | [07-caja-turnos-arqueos-y-tesoreria.md](10-modelo-de-datos/07-caja-turnos-arqueos-y-tesoreria.md) | 23 | `turnos_caja`, `movimientos_caja`, `arqueos_turno`, `movimientos_tesoreria`, `cuentas_tesoreria`, `movimientos_cuenta` |
-| 8. Cuenta corriente de clientes | [08-cuenta-corriente-de-clientes.md](10-modelo-de-datos/08-cuenta-corriente-de-clientes.md) | 19 | `movimientos_cuenta_corriente`, `movimientos_cuenta_corriente_proveedor`, `movimientos_personal`, `jornadas_personal` |
+| 8. Cuenta corriente de clientes | [08-cuenta-corriente-de-clientes.md](10-modelo-de-datos/08-cuenta-corriente-de-clientes.md) | 23 | `movimientos_cuenta_corriente`, `aplicaciones_cobro`, `movimientos_cuenta_corriente_proveedor`, `movimientos_personal`, `jornadas_personal` |
 | 9. Parámetros operativos | [09-parametros-operativos.md](10-modelo-de-datos/09-parametros-operativos.md) | 1 | `parametros` |
 | 10. Auditoría | [10-auditoria.md](10-modelo-de-datos/10-auditoria.md) | 4 | `auditoria` |
 | 11. Conector MCP: almacén OAuth | [11-conector-mcp.md](10-modelo-de-datos/11-conector-mcp.md) | 4 | `aplicaciones_oauth`, `autorizaciones_oauth`, `alcances_oauth`, `tokens_oauth` |

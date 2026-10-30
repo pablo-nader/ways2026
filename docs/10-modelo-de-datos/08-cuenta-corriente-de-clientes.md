@@ -99,6 +99,62 @@ que hoy, pero auditable.
 > `GET /api/proveedores/{id}/cuenta-corriente` suman `saldoPendienteDeLaCompra`. Son datos de
 > encabezado, los ve también el vendedor; el costo de las líneas sigue oculto.
 
+### 8a. Aplicaciones de cobros a ventas: `aplicaciones_cobro` (E7-S2)
+
+El cobro de un cliente es el recibo `RC` de pago a cuenta (con sus `cobros` y su único movimiento `pago`, negativo). Un
+recibo se aplica por partes a una o más ventas en cuenta corriente del mismo cliente, y una venta recibe partes de varios
+recibos; lo que un recibo no tiene aplicado queda a favor del cliente. Aplicar no mueve `clientes.saldo` ni escribe
+movimientos: el saldo ya bajó al registrar el recibo, la aplicación solo dice qué ventas cancela. Los recibos anteriores
+quedan sin aplicar (sin backfill) y no hay redondeo del lado de las ventas.
+
+```sql
+aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id_tenant únicamente]
+    id_aplicacion_cobro, id_tenant,
+    id_comprobante_cobro integer NOT NULL,   -- el recibo RC: FK compuesta (id_comprobante_cobro, id_tenant) → comprobantes_venta, RESTRICT
+    id_comprobante_venta integer NOT NULL,   -- la venta:     FK compuesta (id_comprobante_venta, id_tenant) → comprobantes_venta, RESTRICT
+    importe numeric(14,2) NOT NULL,
+    id_empleado integer NOT NULL,            -- FK simple a usuarios (quién aplicó)
+    fecha timestamptz NOT NULL,
+    created_at, updated_at, deleted_at,
+
+    CONSTRAINT ck_aplicaciones_cobro_importe_positivo CHECK (importe > 0)
+);
+-- único parcial: ux_aplicaciones_cobro_cobro_venta (id_comprobante_cobro, id_comprobante_venta, id_tenant) WHERE deleted_at IS NULL
+-- índices: ix_aplicaciones_cobro_tenant, ix_aplicaciones_cobro_cobro (id_comprobante_cobro, id_tenant),
+--          ix_aplicaciones_cobro_venta (id_comprobante_venta, id_tenant), ix_aplicaciones_cobro_empleado
+```
+
+> **Invariantes** (constraint triggers `DEFERRABLE INITIALLY DEFERRED`, migración `AplicacionesDeCobro`; fallan al comitear
+> como `23514` con un `CONSTRAINT` por regla, que `ManejadorDeErrores` traduce a `409`). Solo cuentan las aplicaciones vivas:
+>
+> - `tg_aplicaciones_cobro_comprobantes_validos` (`aplicacion_cobro_comprobante_invalido`): el comprobante del cobro es un
+>   `RC`; la venta no es un `RC`, su tipo tiene signo positivo (no es una nota de crédito) y no es un espejo fiscal; ninguno
+>   de los dos está anulado.
+> - `tg_aplicaciones_cobro_no_excede_cobro` (`cobro_excede_disponible`): la suma de las aplicaciones de un recibo no
+>   supera su neto cobrado, `sum(cobros.importe - cobros.vuelto)`.
+> - `tg_aplicaciones_cobro_no_excede_venta` (`aplicacion_excede_saldo_de_venta`): la suma de las aplicaciones de una venta
+>   no supera su parte en cuenta corriente, la suma de sus `cobros` con un medio de comportamiento `cuenta_corriente`.
+> - `tg_aplicaciones_cobro_mismo_cliente` (`aplicacion_cobro_otro_cliente`): recibo y venta son del mismo cliente.
+> - Disparan en insert/update/delete de `aplicaciones_cobro` (triggers `tg_aplicaciones_cobro_no_excede_cobro` y
+>   `tg_aplicaciones_cobro_no_excede_venta`), en el update de `estado`/`id_cliente`/`id_tipo_comprobante` de
+>   `comprobantes_venta` (`tg_comprobantes_venta_admiten_aplicaciones_cobro`) y en el update de
+>   `importe`/`vuelto`/`id_medio_pago`/`id_comprobante_venta`/`deleted_at` o el delete de `cobros`
+>   (`tg_cobros_cubren_aplicaciones_cobro`). El insert de `cobros` no dispara: los cobros nacen en la transacción del
+>   comprobante y una aplicación de esa misma transacción se valida al comitear.
+> - El `23505` de `ux_aplicaciones_cobro_cobro_venta` sale como `409 aplicacion_cobro_duplicada` y el `23514` de la CHECK
+>   como `400 aplicacion_importe_invalido`.
+>
+> **Escritores.** `ServicioDeCobros.AplicarAsync`/`DesaplicarAsync` validan lo mismo antes de escribir
+> (`ReglaDeAplicacionDeCobro`, mismos códigos) bajo el `FOR UPDATE` del recibo y de las ventas en id ascendente, y recién
+> después leen y escriben las aplicaciones; sin reintento automático. La anulación de una venta o de un recibo
+> (`ServicioDeVentas.AnularAsync`) libera en la misma transacción las aplicaciones vivas donde el comprobante es el recibo o
+> la venta, con una fila `cobro.desaplicacion` por cada una (`id_entidad` = el recibo). Auditoría: `cobro.aplicacion` y
+> `cobro.desaplicacion`, entidad `comprobante_venta`.
+>
+> **Lecturas** (`LectorDeAplicacionesDeCobro`). Disponible del recibo = neto cobrado − aplicado (cero si está anulado).
+> Saldo pendiente de la venta = parte en cuenta corriente − cobrado por aplicaciones (cero si está anulada). Un medio de
+> pago dado de baja sigue contando para la parte en cuenta corriente. HTTP y pantallas llegan en E7-S3 y E7-W1.
+
 ### 8b. Cuenta corriente de proveedores
 
 > **Edición de una compra confirmada (E6):** el tipo `compra` deja de ser «uno por compra». Editar una compra confirmada asienta, por la

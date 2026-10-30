@@ -46,4 +46,6 @@ erDiagram
     movimientos_stock }o--o| comprobantes_venta : ""
     movimientos_stock }o--o| comprobantes_compra : ""
     movimientos_cuenta_corriente }o--|| clientes : ""
+    comprobantes_venta ||--o{ aplicaciones_cobro : "recibo"
+    comprobantes_venta ||--o{ aplicaciones_cobro : "venta"
 ```
