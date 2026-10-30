@@ -140,14 +140,14 @@ public sealed record FilaVentasPorVendedor(int IdEmpleado, decimal Neto, int Can
 public sealed record VentasPorVendedor(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<FilaVentasPorVendedor> Filas);
 
-/// <summary>Una fila de <c>ventas/por-medio-pago</c>, agrupada por <c>pagos_comprobante.id_medio_pago</c>.
+/// <summary>Una fila de <c>ventas/por-medio-pago</c>, agrupada por <c>cobros.id_medio_pago</c>.
 /// <see cref="Neto"/> es <c>Σ ((importe − vuelto) × signo del tipo de comprobante del encabezado)</c>:
 /// el efectivo es el neto que quedó en caja, no lo que entregó el cliente. Ni el importe ni el
-/// vuelto de un pago son negativos (CHECK <c>ck_pagos_comprobante_importe_no_negativo</c> y
-/// <c>ck_pagos_comprobante_vuelto_no_negativo</c>), así
+/// vuelto de un pago son negativos (CHECK <c>ck_cobros_importe_no_negativo</c> y
+/// <c>ck_cobros_vuelto_no_negativo</c>), así
 /// que el signo lo aporta el encabezado — mismo discriminador que <c>ventas/resumen</c>
 /// (design decisión 9), ninguna rama condicional. <see cref="CantidadPagos"/> cuenta filas de
-/// <c>pagos_comprobante</c>, no comprobantes — un TX con pago dividido entre dos medios aporta una
+/// <c>cobros</c>, no comprobantes — un TX con pago dividido entre dos medios aporta una
 /// fila a cada uno.</summary>
 public sealed record FilaVentasPorMedioPago(int IdMedioPago, decimal Neto, int CantidadPagos);
 

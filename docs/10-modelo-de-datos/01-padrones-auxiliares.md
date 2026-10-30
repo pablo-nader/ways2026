@@ -314,7 +314,7 @@ medios_pago (                 -- [catálogo]
 ```
 
 Mata las columnas fijas `efectivo/tarjetas/c_corriente` del legacy. Un pago es una fila
-(ver `pagos_comprobante`), la caja totaliza por medio, y agregar "QR" es un INSERT del
+(ver `cobros`), la caja totaliza por medio, y agregar "QR" es un INSERT del
 tenant, no una migración.
 
 `porcentaje_facturacion` solo se guarda y se expone (ABM y copia offline del POS); la

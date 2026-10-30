@@ -120,12 +120,12 @@ public class ServicioDeReliquidacion(
         var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
             conexion, transaccionCruda, idTenant, idCliente, resultado.Delta, ct);
 
-        // 7. Movimiento — un único ActualizacionPrecios; id_comprobante_venta/id_pago_comprobante
+        // 7. Movimiento — un único ActualizacionPrecios; id_comprobante_venta/id_cobro
         // NULL (no lo origina un comprobante puntual, sino la corrida completa).
         var detalle = JsonSerializer.Serialize(resultado.Detalle);
         var idMovimiento = await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
             conexion, transaccionCruda, idTenant, idCliente, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCc.ActualizacionPrecios, idComprobanteVenta: null, idPagoComprobante: null, resultado.Delta,
+            TipoMovimientoCc.ActualizacionPrecios, idComprobanteVenta: null, idCobro: null, resultado.Delta,
             nuevoSaldo, detalle, ct);
 
         // 8. Marcador — self-FK sobre cada consumo cubierto (design decisión 2).

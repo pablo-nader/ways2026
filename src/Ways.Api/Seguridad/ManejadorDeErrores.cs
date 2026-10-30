@@ -714,7 +714,7 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
 
             // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
-            // las cuatro CHECKs de comprobantes_venta/pagos_comprobante/movimientos_stock
+            // las cuatro CHECKs de comprobantes_venta/cobros/movimientos_stock
             // no comparten un prefijo común (a diferencia de "ck_ofertas_"), así que el guard
             // de esta rama llama directo a ClasificarCheckDeVentas (switch por nombre EXACTO,
             // nunca Contains) en vez de filtrar por StartsWith primero. ValidadorDePagos/
@@ -1117,9 +1117,9 @@ public class ManejadorDeErrores(
 
     /// <summary>stage-5-pos-ventas (Slice 3, task 3.12, tasks.md "Orchestrator Decisions
     /// Recorded This Phase" #2, design: Backstop Map; ampliado en un follow-up con
-    /// <c>ck_pagos_comprobante_importe_no_negativo</c>, gate de DB aprobado 2026-08-04): switch
+    /// <c>ck_cobros_importe_no_negativo</c>, gate de DB aprobado 2026-08-04): switch
     /// por nombre EXACTO de las cuatro CHECKs nuevas de <c>comprobantes_venta</c>/
-    /// <c>pagos_comprobante</c>/<c>movimientos_stock</c> — sin prefijo compartido entre las tres
+    /// <c>cobros</c>/<c>movimientos_stock</c> — sin prefijo compartido entre las tres
     /// tablas (a diferencia de <c>ClasificarCheckDeOfertas</c>, que sí puede filtrar por
     /// <c>"ck_ofertas_"</c> antes de llamar), así que el caso del switch de arriba llama directo
     /// a esta función.
@@ -1139,12 +1139,12 @@ public class ManejadorDeErrores(
                     "El número del comprobante tiene que ser positivo.",
                     "numero_de_comprobante_invalido"),
 
-            "ck_pagos_comprobante_vuelto_no_negativo" =>
+            "ck_cobros_vuelto_no_negativo" =>
                 (StatusCodes.Status400BadRequest,
                     "El vuelto de un pago no puede ser negativo.",
                     "vuelto_de_pago_negativo"),
 
-            "ck_pagos_comprobante_importe_no_negativo" =>
+            "ck_cobros_importe_no_negativo" =>
                 (StatusCodes.Status400BadRequest,
                     "El importe de un pago no puede ser negativo.",
                     "pago_importe_negativo"),
@@ -1193,7 +1193,7 @@ public class ManejadorDeErrores(
     /// (<c>movimiento_de_caja_sin_motivo</c> para retiro/refuerzo,
     /// <c>motivo_de_apertura_cajon_invalido</c> para apertura_cajon — ambos de
     /// <c>ReglaDeMovimientosDeCaja</c>, Slice 2): mismo criterio que
-    /// <c>ck_pagos_comprobante_vuelto_no_negativo</c>, que tampoco reusa el código de una regla
+    /// <c>ck_cobros_vuelto_no_negativo</c>, que tampoco reusa el código de una regla
     /// de dominio distinta.</summary>
     private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeCaja(string nombreDeCheck) =>
         nombreDeCheck switch

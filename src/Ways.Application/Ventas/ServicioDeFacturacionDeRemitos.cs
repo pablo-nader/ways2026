@@ -233,7 +233,7 @@ public class ServicioDeFacturacionDeRemitos(
 
         // 3. Pagos.
         var pagosEntidad = pagos
-            .Select(p => new PagoComprobante
+            .Select(p => new Cobro
             {
                 IdComprobanteVenta = comprobante.Id,
                 IdMedioPago = p.IdMedioPago,
@@ -244,7 +244,7 @@ public class ServicioDeFacturacionDeRemitos(
                 UpdatedAt = momento
             })
             .ToList();
-        db.PagosComprobante.AddRange(pagosEntidad);
+        db.Cobros.AddRange(pagosEntidad);
         await db.SaveChangesAsync(ct);
 
         // 4. Cuenta corriente — mismo criterio, mismo loop que ServicioDeVentas.EjecutarTransaccionAsync
@@ -361,7 +361,7 @@ public class ServicioDeFacturacionDeRemitos(
     }
 
     private static ComprobanteEmitido Proyectar(
-        ComprobanteVenta comprobante, IReadOnlyList<PagoComprobante> pagos) => new(
+        ComprobanteVenta comprobante, IReadOnlyList<Cobro> pagos) => new(
         comprobante.Id, comprobante.Numero,
         NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
         comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,

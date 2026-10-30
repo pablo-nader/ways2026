@@ -2828,6 +2828,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_cliente");
 
+                    b.Property<int?>("IdCobro")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cobro");
+
                     b.Property<int?>("IdComprobanteVenta")
                         .HasColumnType("integer")
                         .HasColumnName("id_comprobante_venta");
@@ -2843,10 +2847,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<int?>("IdMovimientoPersonal")
                         .HasColumnType("integer")
                         .HasColumnName("id_movimiento_personal");
-
-                    b.Property<int?>("IdPagoComprobante")
-                        .HasColumnType("integer")
-                        .HasColumnName("id_pago_comprobante");
 
                     b.Property<int>("IdPuntoVenta")
                         .HasColumnType("integer")
@@ -2884,6 +2884,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_movimientos_cuenta_corriente_consumos_pendientes")
                         .HasFilter("tipo = 'consumo' AND id_movimiento_actualizacion IS NULL");
 
+                    b.HasIndex("IdCobro", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_cuenta_corriente_cobro");
+
                     b.HasIndex("IdComprobanteVenta", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_corriente_comprobante_venta");
 
@@ -2895,9 +2898,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_movimientos_cuenta_corriente_movimiento_personal")
                         .HasFilter("id_movimiento_personal IS NOT NULL");
 
-                    b.HasIndex("IdPagoComprobante", "IdTenant")
-                        .HasDatabaseName("ix_movimientos_cuenta_corriente_pago_comprobante");
-
                     b.HasIndex("IdPuntoVenta", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_corriente_punto_venta");
 
@@ -2906,7 +2906,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("movimientos_cuenta_corriente", null, t =>
                         {
-                            t.HasCheckConstraint("ck_movimientos_cuenta_corriente_descuento_personal", "tipo <> 'descuento_personal' OR (id_movimiento_personal IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_comprobante IS NULL AND importe < 0)");
+                            t.HasCheckConstraint("ck_movimientos_cuenta_corriente_descuento_personal", "tipo <> 'descuento_personal' OR (id_movimiento_personal IS NOT NULL AND id_comprobante_venta IS NULL AND id_cobro IS NULL AND importe < 0)");
 
                             t.HasCheckConstraint("ck_movimientos_cuenta_corriente_vinculo_personal", "id_movimiento_personal IS NULL OR tipo = 'descuento_personal'");
                         });
@@ -5081,6 +5081,76 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("usuarios", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Ventas.Cobro", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cobro");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int>("IdComprobanteVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_comprobante_venta");
+
+                    b.Property<int>("IdMedioPago")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("Importe")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("importe");
+
+                    b.Property<string>("Referencia")
+                        .HasColumnType("text")
+                        .HasColumnName("referencia");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<decimal>("Vuelto")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("vuelto");
+
+                    b.HasKey("Id")
+                        .HasName("pk_cobros");
+
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_cobros_id_cobro_id_tenant");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_cobros_tenant");
+
+                    b.HasIndex("IdComprobanteVenta", "IdTenant")
+                        .HasDatabaseName("ix_cobros_comprobante");
+
+                    b.HasIndex("IdMedioPago", "IdTenant")
+                        .HasDatabaseName("ix_cobros_medio_pago");
+
+                    b.ToTable("cobros", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_cobros_importe_no_negativo", "importe >= 0");
+
+                            t.HasCheckConstraint("ck_cobros_vuelto_no_negativo", "vuelto >= 0");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Ventas.ComprobanteVenta", b =>
                 {
                     b.Property<int>("Id")
@@ -5735,76 +5805,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_numeraciones_comprobante_punto_venta");
 
                     b.ToTable("numeraciones_comprobante", (string)null);
-                });
-
-            modelBuilder.Entity("Ways.Domain.Ventas.PagoComprobante", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasColumnName("id_pago");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<DateTimeOffset?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("deleted_at");
-
-                    b.Property<int>("IdComprobanteVenta")
-                        .HasColumnType("integer")
-                        .HasColumnName("id_comprobante_venta");
-
-                    b.Property<int>("IdMedioPago")
-                        .HasColumnType("integer")
-                        .HasColumnName("id_medio_pago");
-
-                    b.Property<int>("IdTenant")
-                        .HasColumnType("integer")
-                        .HasColumnName("id_tenant");
-
-                    b.Property<decimal>("Importe")
-                        .HasColumnType("numeric(14,2)")
-                        .HasColumnName("importe");
-
-                    b.Property<string>("Referencia")
-                        .HasColumnType("text")
-                        .HasColumnName("referencia");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.Property<decimal>("Vuelto")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("numeric(14,2)")
-                        .HasDefaultValue(0m)
-                        .HasColumnName("vuelto");
-
-                    b.HasKey("Id")
-                        .HasName("pk_pagos_comprobante");
-
-                    b.HasAlternateKey("Id", "IdTenant")
-                        .HasName("ak_pagos_comprobante_id_pago_id_tenant");
-
-                    b.HasIndex("IdTenant")
-                        .HasDatabaseName("ix_pagos_comprobante_tenant");
-
-                    b.HasIndex("IdComprobanteVenta", "IdTenant")
-                        .HasDatabaseName("ix_pagos_comprobante_comprobante");
-
-                    b.HasIndex("IdMedioPago", "IdTenant")
-                        .HasDatabaseName("ix_pagos_comprobante_medio_pago");
-
-                    b.ToTable("pagos_comprobante", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_pagos_comprobante_importe_no_negativo", "importe >= 0");
-
-                            t.HasCheckConstraint("ck_pagos_comprobante_vuelto_no_negativo", "vuelto >= 0");
-                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Ventas.Presupuesto", b =>
@@ -6958,6 +6958,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .IsRequired()
                         .HasConstraintName("fk_movimientos_cuenta_corriente_cliente");
 
+                    b.HasOne("Ways.Domain.Ventas.Cobro", null)
+                        .WithMany()
+                        .HasForeignKey("IdCobro", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_cuenta_corriente_cobro");
+
                     b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
                         .WithMany()
                         .HasForeignKey("IdComprobanteVenta", "IdTenant")
@@ -6978,13 +6985,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_movimientos_cuenta_corriente_movimiento_personal");
-
-                    b.HasOne("Ways.Domain.Ventas.PagoComprobante", null)
-                        .WithMany()
-                        .HasForeignKey("IdPagoComprobante", "IdTenant")
-                        .HasPrincipalKey("Id", "IdTenant")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("fk_movimientos_cuenta_corriente_pago_comprobante");
 
                     b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
                         .WithMany()
@@ -7712,6 +7712,32 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Navigation("Rol");
                 });
 
+            modelBuilder.Entity("Ways.Domain.Ventas.Cobro", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_tenant");
+
+                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdComprobanteVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_comprobante");
+
+                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdMedioPago", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cobros_medio_pago");
+                });
+
             modelBuilder.Entity("Ways.Domain.Ventas.ComprobanteVenta", b =>
                 {
                     b.HasOne("Ways.Domain.Usuarios.Usuario", null)
@@ -7967,32 +7993,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_numeraciones_comprobante_punto_venta");
-                });
-
-            modelBuilder.Entity("Ways.Domain.Ventas.PagoComprobante", b =>
-                {
-                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
-                        .WithMany()
-                        .HasForeignKey("IdTenant")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_pagos_comprobante_tenant");
-
-                    b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
-                        .WithMany()
-                        .HasForeignKey("IdComprobanteVenta", "IdTenant")
-                        .HasPrincipalKey("Id", "IdTenant")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_pagos_comprobante_comprobante");
-
-                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
-                        .WithMany()
-                        .HasForeignKey("IdMedioPago", "IdTenant")
-                        .HasPrincipalKey("Id", "IdTenant")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_pagos_comprobante_medio_pago");
                 });
 
             modelBuilder.Entity("Ways.Domain.Ventas.Presupuesto", b =>

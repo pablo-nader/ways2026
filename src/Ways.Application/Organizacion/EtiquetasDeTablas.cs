@@ -73,7 +73,7 @@ public static class EtiquetasDeTablas
             ["ofertas_listas"] = "ofertas",
             ["ordenes_compra"] = "órdenes de compra",
             ["pagos"] = "gastos",
-            ["pagos_comprobante"] = "pagos",
+            ["cobros"] = "pagos",
             ["parametros"] = "parámetros",
             ["percepciones_comprobante_compra"] = "compras",
             ["personal"] = "personal",

@@ -84,7 +84,7 @@ derived from the other.
 `GET /api/reportes/ventas/por-punto-venta`, `/por-vendedor`, and
 `/por-medio-pago` MUST apply the same net-sales semantics and bucketing as
 `ventas/resumen`, grouped respectively by `id_punto_venta`, `id_empleado`
-(the emitting vendedor), and `pagos_comprobante.id_medio_pago`. Each row
+(the emitting vendedor), and `cobros.id_medio_pago`. Each row
 MUST report its own subtotal, not a percentage of an implicit whole.
 
 #### Scenario: Grouping by vendedor sums each empleado's TX independently

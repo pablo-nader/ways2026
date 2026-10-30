@@ -60,9 +60,9 @@ ListaPrecio | vitrinas | id_lista_precio,id_tenant | marcado
 Marca | articulos | id_marca,id_tenant | marcado
 MedioPago | acumulados_de_facturacion | id_medio_pago,id_tenant | sinmarca
 MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
+MedioPago | cobros | id_medio_pago,id_tenant | marcado
 MedioPago | items_pago | id_medio_pago,id_tenant | marcado
 MedioPago | movimientos_cuenta | id_medio_pago,id_tenant | sinmarca
-MedioPago | pagos_comprobante | id_medio_pago,id_tenant | marcado
 MedioPago | turnos_caja | id_medio_pago_efectivo,id_tenant | marcado
 Personal | jornadas_personal | id_personal,id_tenant | sinmarca
 Personal | movimientos_personal | id_personal,id_tenant | sinmarca
@@ -103,6 +103,7 @@ Tenant | auditoria | id_tenant | excluido
 Tenant | categorias | id_tenant | marcado
 Tenant | certificados_fiscales | id_tenant | marcado
 Tenant | clientes | id_tenant | marcado
+Tenant | cobros | id_tenant | marcado
 Tenant | codigos_barra | id_tenant | marcado
 Tenant | codigos_proveedor | id_tenant | marcado
 Tenant | combos | id_tenant | marcado
@@ -143,7 +144,6 @@ Tenant | ofertas | id_tenant | marcado
 Tenant | ofertas_listas | id_tenant | sinmarca
 Tenant | ordenes_compra | id_tenant | marcado
 Tenant | pagos | id_tenant | marcado
-Tenant | pagos_comprobante | id_tenant | marcado
 Tenant | parametros | id_tenant | marcado
 Tenant | percepciones_comprobante_compra | id_tenant | marcado
 Tenant | personal | id_tenant | marcado

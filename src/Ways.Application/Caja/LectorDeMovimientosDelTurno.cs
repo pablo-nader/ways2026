@@ -20,10 +20,10 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
 {
     public async Task<InsumosDeArqueo> LeerAsync(int idTurnoCaja, CancellationToken ct = default)
     {
-        // PagoComprobante no tiene navigation property a ComprobanteVenta (convención del
-        // proyecto: FKs sin propiedad de navegación, ver PagoComprobanteConfiguration) — join
+        // Cobro no tiene navigation property a ComprobanteVenta (convención del
+        // proyecto: FKs sin propiedad de navegación, ver CobroConfiguration) — join
         // explícito por id_comprobante_venta en vez de una propiedad de navegación inexistente.
-        var pagosDelTurno = db.PagosComprobante
+        var pagosDelTurno = db.Cobros
             .Join(
                 db.ComprobantesVenta,
                 p => p.IdComprobanteVenta,
@@ -33,7 +33,7 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
 
         // 1. pagos por medio — solo comprobantes emitido (spec: Anulados Are Excluded From The
         // Derivation). Suma los importes tal cual, sin mirar el signo del tipo de comprobante: un pago nunca es negativo
-        // (ck_pagos_comprobante_importe_no_negativo) y una nota de crédito no lleva pagos (ValidadorDePagos, regla 0c), así que no resta ni suma
+        // (ck_cobros_importe_no_negativo) y una nota de crédito no lleva pagos (ValidadorDePagos, regla 0c), así que no resta ni suma
         // nada: este lector no necesita el signo del comprobante.
         var pagosPorMedio = await pagosDelTurno
             .GroupBy(x => x.IdMedioPago)

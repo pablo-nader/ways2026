@@ -24,7 +24,7 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
             t.HasCheckConstraint(
                 "ck_movimientos_cuenta_corriente_descuento_personal",
                 "tipo <> 'descuento_personal' OR (id_movimiento_personal IS NOT NULL "
-                + "AND id_comprobante_venta IS NULL AND id_pago_comprobante IS NULL AND importe < 0)");
+                + "AND id_comprobante_venta IS NULL AND id_cobro IS NULL AND importe < 0)");
 
             t.HasCheckConstraint(
                 "ck_movimientos_cuenta_corriente_vinculo_personal",
@@ -52,7 +52,7 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
             .IsRequired();
 
         builder.Property(m => m.IdComprobanteVenta).HasColumnName("id_comprobante_venta");
-        builder.Property(m => m.IdPagoComprobante).HasColumnName("id_pago_comprobante");
+        builder.Property(m => m.IdCobro).HasColumnName("id_cobro");
 
         builder.Property(m => m.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(m => m.SaldoResultante).HasColumnName("saldo_resultante").HasColumnType("numeric(14,2)").IsRequired();
@@ -82,7 +82,7 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
 
         builder.HasIndex(m => new { m.IdPuntoVenta, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_corriente_punto_venta");
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_cuenta_corriente_empleado");
-        builder.HasIndex(m => new { m.IdPagoComprobante, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_corriente_pago_comprobante");
+        builder.HasIndex(m => new { m.IdCobro, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_corriente_cobro");
 
         // A lo sumo un descuento por pago de personal; también es el índice de soporte de la FK compuesta.
         // Sin traducción de 23505 en ManejadorDeErrores: solo lo escribe ServicioDePagoDePersonal, con el id de un
@@ -134,11 +134,11 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
             .HasConstraintName("fk_movimientos_cuenta_corriente_movimiento_personal")
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne<PagoComprobante>()
+        builder.HasOne<Cobro>()
             .WithMany()
-            .HasForeignKey(m => new { m.IdPagoComprobante, m.IdTenant })
+            .HasForeignKey(m => new { m.IdCobro, m.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
-            .HasConstraintName("fk_movimientos_cuenta_corriente_pago_comprobante")
+            .HasConstraintName("fk_movimientos_cuenta_corriente_cobro")
             .OnDelete(DeleteBehavior.Restrict);
 
         // DESVIACIÓN DOCUMENTADA vs. design (Table Shapes A, "no second index for the reverse

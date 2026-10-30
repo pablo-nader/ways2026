@@ -26,7 +26,7 @@ namespace Ways.IntegrationTests;
 ///
 /// Los pagos/gastos/movimientos de cada turno se siembran DIRECTO por EF (sin pasar por el
 /// checkout completo, que no es parte de esta slice — Slice 5 lo conecta) — mismo criterio que
-/// <c>VentasStockYCuentaCorrienteRlsTests</c>: la derivación solo lee <c>pagos_comprobante</c> +
+/// <c>VentasStockYCuentaCorrienteRlsTests</c>: la derivación solo lee <c>cobros</c> +
 /// <c>comprobantes_venta.{id_turno_caja,estado}</c> + <c>pagos</c> + <c>movimientos_caja</c>,
 /// nunca <c>items_comprobante_venta</c>.
 /// </summary>
@@ -120,7 +120,7 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,

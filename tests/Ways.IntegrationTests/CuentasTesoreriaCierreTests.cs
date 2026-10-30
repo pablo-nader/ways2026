@@ -137,7 +137,7 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedioPago, Importe = importe,
             Vuelto = 0m, CreatedAt = ahora, UpdatedAt = ahora
@@ -385,7 +385,7 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
 
     // ---- bruto negativo, cero y sin actividad ---------------------------------------------------
 
-    /// <summary>Un importe de pago nunca es negativo (<c>ck_pagos_comprobante_importe_no_negativo</c>) y una nota de crédito no
+    /// <summary>Un importe de pago nunca es negativo (<c>ck_cobros_importe_no_negativo</c>) y una nota de crédito no
     /// lleva pagos, así que el cierre no llega hoy a un bruto negativo: el escritor se ejercita directamente, con la
     /// actividad que daría un bruto neto negativo, dentro de una transacción real.</summary>
     [Fact]

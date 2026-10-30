@@ -153,6 +153,25 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
 - [x] E6-S4 (written; CI pending; branch `pnader/pagos-e6-s4-costos`) — Costs: the edit re-runs the confirmation's `costo_nominal` step only for articles whose effective cost changed vs the previous version, never over a newer confirmed compra; new/changed supplier codes are associated; E6-S3 review follow-ups (PV inheritance only within the pago's empresa, CC ajuste PV fallback, `IgnoreQueryFilters` on `cambiaEmpresa`).
 - [x] E6-W1 (written; CI pending; branch `pnader/pagos-e6-w1-web`) — Web: "Editar compra" on a confirmed compra (Admin only), edit mode on the borrador form with "Guardar cambios" (PUT, the response is the refreshed detail) and "Cancelar" (discard + reload), effects banner, mapped error codes, audit labels. No numeric difference preview (the server computes the differences; the banner states the effects).
 
+### E7 slices
+
+Owner decision (2026-10-30): the existing customer "pago a cuenta" receipt (`RC`, numbered, needs an open turno) IS the
+cobro. A cobro can be applied to one or more CC ventas; the unapplied part stays in favor of the customer (the CC
+balance already reflects it). Old RCs stay unapplied (no backfill). No rounding write-off on sales for now. The wire
+contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers send it.
+
+- [x] E7-S1 — Rename `PagoComprobante`/`pagos_comprobante` to `Cobro`/`cobros` (PK, AK, FKs, indexes, CHECKs,
+  `movimientos_cuenta_corriente.id_pago_comprobante` -> `id_cobro`), error-handler constraint names, raw SQL in
+  `Fiscal/*`, table label, doc 10 parts 04/07/08/01 + diagram. Wire unchanged. Template: `RenombrarGastosAPagos`.
+- [ ] E7-S2 — `aplicaciones_cobro` (N:M RC comprobante -> CC venta, importe), deferred triggers (sum <= RC net cobrado,
+  sum <= venta CC share, same cliente, both confirmed/not anulled), readers: cobrado and saldo pendiente per venta,
+  disponible per RC; anulación of a venta or RC releases its applications; audit codes `cobro.aplicacion`/
+  `cobro.desaplicacion`.
+- [ ] E7-S3 — HTTP: optional `aplicaciones` when registering a pago a cuenta, apply/unapply on an existing RC,
+  listing of a customer's ventas with saldo pendiente and of RCs with disponible.
+- [ ] E7-W1 — Web: `ModalPagoACuenta` picks ventas to apply, `CuentaCorriente` shows saldo pendiente per venta and the
+  disponible per RC with apply/unapply. Reaches registers only with a later `pos-v*` release.
+
 ## Progress
 
 - 2026-10-28: planning closed with the owner; worktree `pnader/pagos-e1-renombre`.
@@ -370,6 +389,8 @@ Owner (2026-10-28): "se deberían permitir editar los pagos y las compras, por a
   gains `compra.edicion`, `compra.redondeo`, `pago.aplicacion`, `pago.desaplicacion`, `pago.redondeo` (the web list remains a subset of the 28 back
   actions). Mutation evidence: dropping `|| pagoAbierto || panelAnularAbierto` and dropping `setAviso('')` in `iniciarEdicion` each fail one test; reverted.
   Route: delegated writer.
+
+- 2026-10-30 E7-S1 (branch `pnader/cobros-e7-s1`, commit 9c4c94eb): migration `RenombrarPagosComprobanteACobros` hand-written as renames (EF scaffolded drop/create); `id_pago`→`id_cobro`, `movimientos_cuenta_corriente.id_pago_comprobante`→`id_cobro`, policy `cobros_tenant`, sequence renamed; the compras-side `ix/fk_pagos_comprobante_compra` names left on purpose. `dotnet build` 0 errors; Domain.Tests 2018 passed; Application.Tests 1186 passed; `has-pending-model-changes` clean. Integration (`RenombrarPagosComprobanteACobrosMigracionTests`) NOT run locally (Docker down): CI is the proof. Route: delegated writer.
 
 ## Next step
 

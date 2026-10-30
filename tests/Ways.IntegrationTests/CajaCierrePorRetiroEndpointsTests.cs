@@ -22,7 +22,7 @@ namespace Ways.IntegrationTests;
 /// etapa 5 (cierre por retiro, práctica del dueño): <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c>
 /// y <c>GET /api/caja/turnos/{id}/resumen-de-cierre</c> punta a punta — spec arqueo-de-cierre,
 /// sección "Cierre Por Retiro". Mismo criterio de siembra directa por EF que
-/// <see cref="CajaCierreEndpointsTests"/>: la derivación solo lee <c>pagos_comprobante</c> +
+/// <see cref="CajaCierreEndpointsTests"/>: la derivación solo lee <c>cobros</c> +
 /// <c>comprobantes_venta.{id_turno_caja,estado}</c> + <c>pagos</c> + <c>movimientos_caja</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -116,7 +116,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        db.PagosComprobante.Add(new PagoComprobante
+        db.Cobros.Add(new Cobro
         {
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,

@@ -99,7 +99,7 @@ public interface IWaysDbContext
     // crudo, no un DbSet.
     DbSet<ComprobanteVenta> ComprobantesVenta { get; }
     DbSet<ItemComprobanteVenta> ItemsComprobanteVenta { get; }
-    DbSet<PagoComprobante> PagosComprobante { get; }
+    DbSet<Cobro> Cobros { get; }
     DbSet<Ways.Domain.Stock.Stock> Stock { get; }
     DbSet<MovimientoStock> MovimientosStock { get; }
     DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente { get; }

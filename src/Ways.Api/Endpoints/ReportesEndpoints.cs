@@ -362,7 +362,7 @@ public static class ReportesEndpoints
             ServicioDeReportesDeVentas servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
             CancellationToken ct) =>
             servicio.ObtenerPorMedioPagoAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
-        .WithSummary("Ventas netas del período agrupadas por medio de pago (pagos_comprobante.id_medio_pago).");
+        .WithSummary("Ventas netas del período agrupadas por medio de pago (cobros.id_medio_pago).");
 
         grupo.MapGet("/ventas/por-medio-pago/export", async (
             ServicioDeReportesDeVentas servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,

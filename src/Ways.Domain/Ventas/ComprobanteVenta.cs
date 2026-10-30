@@ -10,7 +10,7 @@ namespace Ways.Domain.Ventas;
 /// stage 6 lo cierra). Entidad dedicada con auditoría completa (<see cref="EntidadTenant"/>): a
 /// diferencia de <c>numeraciones_comprobante</c>/<c>ofertas_listas</c>, tiene identidad propia
 /// (<see cref="Id"/>) y es el padre referenciado por <see cref="ItemComprobanteVenta"/>/
-/// <see cref="PagoComprobante"/> — mismo criterio que <c>Oferta</c>/<c>Cliente</c>, no el de las
+/// <see cref="Cobro"/> — mismo criterio que <c>Oferta</c>/<c>Cliente</c>, no el de las
 /// junctions PK-only.
 ///
 /// Inmutable una vez emitido (doc 10 principio 6): el único camino de escritura posterior a la
