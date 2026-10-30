@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorriente } from './CuentaCorriente'
+import { SeccionesDeCobros } from '../componentes/cobros/SeccionesDeCobros'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type {
@@ -14,19 +15,32 @@ import type {
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
   PuntoVentaListado,
+  ReciboDeCliente,
   ResultadoDeReliquidacion,
   UsuarioAutenticado,
+  VentaPendienteDeCobro,
+  EstadoDeCobro,
 } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiDeleteMock = vi.fn()
+// Las secciones de cobros (recibos y ventas pendientes) leen de rutas propias: se atienden aparte para que los
+// `mockImplementation` de `apiGetMock`, que contestan todo `/cuenta-corriente`, no las confundan con el estado.
+const recibosGetMock = vi.fn()
+const ventasPendientesGetMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
-    get: (...args: unknown[]) => apiGetMock(...(args as [string])),
+    get: (...args: unknown[]) => {
+      const ruta = args[0] as string
+      if (ruta.includes('/cuenta-corriente/recibos')) return recibosGetMock(ruta)
+      if (ruta.includes('/cuenta-corriente/ventas-pendientes')) return ventasPendientesGetMock(ruta)
+      return apiGetMock(...(args as [string]))
+    },
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
     put: vi.fn(),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -269,6 +283,11 @@ afterEach(() => {
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  apiDeleteMock.mockReset()
+  recibosGetMock.mockReset()
+  recibosGetMock.mockImplementation(() => Promise.resolve<ReciboDeCliente[]>([]))
+  ventasPendientesGetMock.mockReset()
+  ventasPendientesGetMock.mockImplementation(() => Promise.resolve<VentaPendienteDeCobro[]>([]))
   usuarioActual = usuarioFixture()
 })
 
@@ -1107,7 +1126,7 @@ describe('CuentaCorriente — orden del ledger y del detalle por consumo', () =>
   ]
 
   const celdas = (columna: number) =>
-    Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[columna]?.textContent)
+    Array.from(screen.getByRole('table', { name: 'Movimientos' }).querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[columna]?.textContent)
 
   it('el ledger conserva el orden del servidor, ordena por importe numérico a pedido y cada fila conserva su saldo guardado', async () => {
     mockearRutasBase((ruta) =>
@@ -1116,7 +1135,7 @@ describe('CuentaCorriente — orden del ledger y del detalle por consumo', () =>
         : undefined,
     )
     renderPantalla()
-    await screen.findByRole('table')
+    await screen.findByRole('table', { name: 'Movimientos' })
     await screen.findByText('$ 4.980,00')
 
     expect(celdas(4)).toEqual(['$ 5.000,00', '$ 4.980,00', '$ 5.080,00'])
@@ -1138,7 +1157,7 @@ describe('CuentaCorriente — orden del ledger y del detalle por consumo', () =>
     renderPantalla()
     await screen.findByText('$ 4.980,00')
 
-    const fecha = screen.getByRole('columnheader', { name: 'Fecha' })
+    const fecha = within(screen.getByRole('table', { name: 'Movimientos' })).getByRole('columnheader', { name: 'Fecha' })
     await userEvent.click(within(fecha).getByRole('button'))
     await userEvent.click(within(fecha).getByRole('button'))
     expect(fecha).toHaveAttribute('aria-sort', 'descending')
@@ -1194,9 +1213,335 @@ describe('CuentaCorriente — orden del ledger y del detalle por consumo', () =>
 
     await userEvent.click(within(screen.getByRole('columnheader', { name: 'Detalle' })).getByRole('button'))
 
-    const detalles = Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[2]?.textContent)
+    const detalles = Array.from(screen.getByRole('table', { name: 'Movimientos' }).querySelectorAll('tbody tr')).map((fila) => fila.querySelectorAll('td')[2]?.textContent)
     expect(detalles[0]).toBe('0 cosa')
     expect(detalles[1]).toMatch(/^1 consumo re-preciado/)
     expect(detalles[2]).toBe('Zeta')
+  })
+})
+
+function ventaPendienteFixture(sobrescribir: Partial<VentaPendienteDeCobro> = {}): VentaPendienteDeCobro {
+  return {
+    id: 11,
+    codigoTipo: 'FA',
+    letra: 'B',
+    numero: 11,
+    numeroVisible: '0001-00000011',
+    fecha: '2026-09-01T12:00:00Z',
+    parteEnCuentaCorriente: 150,
+    cobrado: 0,
+    saldoPendiente: 150,
+    ...sobrescribir,
+  }
+}
+
+const ventasPendientes: VentaPendienteDeCobro[] = [
+  ventaPendienteFixture({
+    id: 12,
+    numero: 12,
+    numeroVisible: '0001-00000012',
+    fecha: '2026-09-05T12:00:00Z',
+    parteEnCuentaCorriente: 400,
+    cobrado: 100,
+    saldoPendiente: 300,
+  }),
+  ventaPendienteFixture(),
+]
+
+const recibosFixture: ReciboDeCliente[] = [
+  {
+    id: 21,
+    numero: 21,
+    numeroVisible: '0007-00000021',
+    fecha: '2026-09-10T12:00:00Z',
+    netoCobrado: 450,
+    aplicado: 150,
+    disponible: 300,
+    aplicaciones: [
+      {
+        id: 31,
+        idComprobanteVenta: 10,
+        numeroVisibleDeVenta: '0001-00000010',
+        importe: 150,
+        fecha: '2026-09-10T12:00:00Z',
+        origen: 'Historial',
+      },
+    ],
+  },
+  {
+    id: 22,
+    numero: 22,
+    numeroVisible: '0007-00000022',
+    fecha: '2026-09-12T12:00:00Z',
+    netoCobrado: 100,
+    aplicado: 100,
+    disponible: 0,
+    aplicaciones: [
+      {
+        id: 32,
+        idComprobanteVenta: 9,
+        numeroVisibleDeVenta: '0001-00000009',
+        importe: 100,
+        fecha: '2026-09-12T12:00:00Z',
+        origen: 'Manual',
+      },
+    ],
+  },
+]
+
+const estadoDeCobroFixture: EstadoDeCobro = { idRecibo: 21, netoCobrado: 450, aplicado: 450, disponible: 0, aplicaciones: [] }
+
+function conCobros() {
+  mockearRutasBase()
+  recibosGetMock.mockImplementation(() => Promise.resolve(recibosFixture))
+  ventasPendientesGetMock.mockImplementation(() => Promise.resolve(ventasPendientes))
+}
+
+/** Espera a los DATOS de las dos secciones, no a sus títulos (que se renderizan antes de que lleguen). */
+async function renderConCobros() {
+  renderPantalla()
+  const recibos = await screen.findByRole('region', { name: 'Recibos' })
+  await within(recibos).findByText('0007-00000021')
+  const ventas = screen.getByRole('region', { name: 'Ventas con saldo pendiente' })
+  await within(ventas).findByText('0001-00000012')
+  return { recibos, ventas }
+}
+
+function llamadasAlEstado() {
+  return apiGetMock.mock.calls.filter(
+    (c) => (c[0] as string).endsWith('/cuenta-corriente') || (c[0] as string).includes('/cuenta-corriente?'),
+  )
+}
+
+describe('CuentaCorriente — cobros aplicados a ventas', () => {
+  it('muestra los recibos con lo cobrado, aplicado y disponible, y la marca «Historial» solo en las aplicaciones del historial', async () => {
+    conCobros()
+    const { recibos } = await renderConCobros()
+
+    const fila = within(recibos).getByText('0007-00000021').closest('tr') as HTMLElement
+    expect(within(fila).getByText('$ 450,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 150,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 300,00')).toBeInTheDocument()
+
+    const historial = screen.getByTestId('cc-aplicacion-31')
+    expect(within(historial).getByText('Historial')).toBeInTheDocument()
+    expect(within(historial).getByText(/0001-00000010/)).toBeInTheDocument()
+    expect(within(screen.getByTestId('cc-aplicacion-32')).queryByText('Historial')).not.toBeInTheDocument()
+  })
+
+  it('lista las ventas con saldo pendiente con su parte en cuenta corriente, lo cobrado y el saldo', async () => {
+    conCobros()
+    const { ventas } = await renderConCobros()
+
+    const fila = within(ventas).getByText('0001-00000012').closest('tr') as HTMLElement
+    expect(within(fila).getByText('$ 400,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 100,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 300,00')).toBeInTheDocument()
+  })
+
+  it('«Solo con disponible» vuelve a pedir los recibos con el filtro', async () => {
+    conCobros()
+    const { recibos } = await renderConCobros()
+
+    await userEvent.click(within(recibos).getByLabelText('Solo con disponible'))
+
+    await waitFor(() =>
+      expect(recibosGetMock).toHaveBeenLastCalledWith('/clientes/5/cuenta-corriente/recibos?conDisponible=true'),
+    )
+  })
+
+  it('un Vendedor ve los recibos y las ventas pero no «Aplicar» ni «Desaplicar»', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    conCobros()
+    const { recibos } = await renderConCobros()
+
+    expect(within(recibos).queryByRole('button', { name: /Aplicar/ })).not.toBeInTheDocument()
+    expect(within(recibos).queryByRole('button', { name: /Desaplicar/ })).not.toBeInTheDocument()
+  })
+
+  it('un recibo sin disponible no ofrece «Aplicar»', async () => {
+    conCobros()
+    await renderConCobros()
+
+    expect(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Aplicar el recibo 0007-00000022' })).not.toBeInTheDocument()
+  })
+
+  it('aplicar un recibo reparte el disponible entre las ventas más viejas, envía el cuerpo y refresca recibos, ventas y estado', async () => {
+    conCobros()
+    apiPostMock.mockResolvedValue(estadoDeCobroFixture)
+    await renderConCobros()
+    const estadoAntes = llamadasAlEstado().length
+    const recibosAntes = recibosGetMock.mock.calls.length
+    const ventasAntes = ventasPendientesGetMock.mock.calls.length
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Aplicar a las más viejas' }))
+    expect(screen.getByTestId('cc-aplicar-restante')).toHaveTextContent('$ 0,00')
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(apiPostMock).toHaveBeenCalledWith('/cobros/21/aplicaciones', {
+      aplicaciones: [
+        { idComprobanteVenta: 12, importe: 150 },
+        { idComprobanteVenta: 11, importe: 150 },
+      ],
+    })
+    expect(await screen.findByText('Cobro aplicado: recibo 0007-00000021.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(recibosGetMock.mock.calls.length).toBeGreaterThan(recibosAntes)
+      expect(ventasPendientesGetMock.mock.calls.length).toBeGreaterThan(ventasAntes)
+      expect(llamadasAlEstado().length).toBeGreaterThan(estadoAntes)
+    })
+  })
+
+  it('no envía si lo cargado supera el disponible del recibo', async () => {
+    conCobros()
+    await renderConCobros()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    await userEvent.type(await screen.findByLabelText('Importe a aplicar a la venta 0001-00000012'), '300')
+    await userEvent.type(screen.getByLabelText('Importe a aplicar a la venta 0001-00000011'), '150')
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect((await screen.findAllByText(/supera el importe disponible/)).length).toBeGreaterThan(0)
+  })
+
+  it('un rechazo del servidor deja el modal abierto con el mensaje y vuelve a pedir las listas', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    const recibosAntes = recibosGetMock.mock.calls.length
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    await userEvent.type(await screen.findByLabelText('Importe a aplicar a la venta 0001-00000011'), '100')
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    expect(await screen.findByText('El recibo ya no tiene ese disponible.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).toBeInTheDocument()
+    await waitFor(() => expect(recibosGetMock.mock.calls.length).toBeGreaterThan(recibosAntes))
+  })
+
+  it('tras un 409 y una recarga con menos disponible, el modal valida contra el disponible vigente y conserva lo tipeado', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    recibosGetMock.mockImplementation(() =>
+      Promise.resolve<ReciboDeCliente[]>([{ ...recibosFixture[0], aplicado: 350, disponible: 100 }, recibosFixture[1]]),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    const modal = await screen.findByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })
+    const importe = within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000011')
+    await userEvent.type(importe, '100')
+    await userEvent.click(within(modal).getByRole('button', { name: 'Aplicar' }))
+
+    expect(await within(modal).findByText('El recibo ya no tiene ese disponible.')).toBeInTheDocument()
+    expect(await within(modal).findByText(/Disponible para aplicar: \$ 100,00/)).toBeInTheDocument()
+    expect(importe).toHaveValue('100,00')
+
+    await userEvent.type(within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000012'), '50')
+    expect((await within(modal).findAllByText(/supera el importe disponible/)).length).toBeGreaterThan(0)
+  })
+
+  it('si el recibo ya no tiene disponible tras la recarga, el modal se cierra con un aviso', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    recibosGetMock.mockImplementation(() =>
+      Promise.resolve<ReciboDeCliente[]>([{ ...recibosFixture[0], aplicado: 450, disponible: 0 }, recibosFixture[1]]),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    await userEvent.type(await screen.findByLabelText('Importe a aplicar a la venta 0001-00000011'), '100')
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    expect(await screen.findByText(/El recibo 0007-00000021 ya no tiene importe disponible/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+  })
+
+  it('si la recarga de ventas falla tras un 409, el modal sigue abierto con el error y los importes', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    ventasPendientesGetMock.mockImplementation(() =>
+      Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar las ventas pendientes.')),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    const modal = await screen.findByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })
+    await userEvent.type(within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000011'), '100')
+    await userEvent.click(within(modal).getByRole('button', { name: 'Aplicar' }))
+
+    expect(await within(modal).findByText('No se pudieron cargar las ventas pendientes.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).toBe(modal)
+    expect(within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000011')).toHaveValue('100,00')
+    expect(within(modal).getByRole('button', { name: 'Aplicar' })).toBeDisabled()
+  })
+
+  it('al cambiar «Solo con disponible» los recibos anteriores dejan de ser accionables hasta que llega la respuesta', async () => {
+    conCobros()
+    const { recibos } = await renderConCobros()
+    recibosGetMock.mockImplementation(() => new Promise(() => {}))
+
+    await userEvent.click(within(recibos).getByLabelText('Solo con disponible'))
+
+    expect(await within(recibos).findByText('Cargando recibos…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+  })
+
+  it('al cambiar de cliente se descartan los recibos y las ventas del anterior antes de que llegue la nueva respuesta', async () => {
+    conCobros()
+    const props = { puedeSupervisar: true, versionExterna: 0, onEscritura: vi.fn() }
+    const { rerender } = render(<SeccionesDeCobros idCliente={5} {...props} />)
+    await screen.findByText('0007-00000021')
+    await screen.findByText('0001-00000012')
+    recibosGetMock.mockImplementation(() => new Promise(() => {}))
+    ventasPendientesGetMock.mockImplementation(() => new Promise(() => {}))
+
+    rerender(<SeccionesDeCobros idCliente={6} {...props} />)
+
+    expect(screen.queryByRole('button', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+    expect(screen.queryByText('0001-00000012')).not.toBeInTheDocument()
+    expect(screen.getByText('Cargando recibos…')).toBeInTheDocument()
+  })
+
+  it('desaplicar pide confirmación, llama al servidor con el recibo y la aplicación y refresca', async () => {
+    conCobros()
+    apiDeleteMock.mockResolvedValue(estadoDeCobroFixture)
+    await renderConCobros()
+    const estadoAntes = llamadasAlEstado().length
+
+    await userEvent.click(screen.getByRole('button', { name: 'Desaplicar $ 150,00 de la venta 0001-00000010' }))
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByRole('button', { name: 'Desaplicar' }))
+
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledTimes(1))
+    expect(apiDeleteMock).toHaveBeenCalledWith('/cobros/21/aplicaciones/31')
+    expect(await screen.findByText('Cobro desaplicado: recibo 0007-00000021, venta 0001-00000010.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlEstado().length).toBeGreaterThan(estadoAntes))
+  })
+
+  it('cancelar la confirmación no desaplica nada', async () => {
+    conCobros()
+    await renderConCobros()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Desaplicar $ 150,00 de la venta 0001-00000010' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancelar' }))
+
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Desaplicar cobro' })).not.toBeInTheDocument()
+  })
+
+  it('una falla al cargar los recibos se muestra en su sección sin tapar el resto de la pantalla', async () => {
+    conCobros()
+    recibosGetMock.mockImplementation(() => Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar los recibos.')))
+    renderPantalla()
+
+    const recibos = await screen.findByRole('region', { name: 'Recibos' })
+    expect(await within(recibos).findByText('No se pudieron cargar los recibos.')).toBeInTheDocument()
+    expect(await screen.findByText('$ 500,00')).toBeInTheDocument()
   })
 })

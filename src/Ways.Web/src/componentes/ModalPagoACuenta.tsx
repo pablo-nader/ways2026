@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
 import {
@@ -12,9 +12,17 @@ import {
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
 } from '../api/cuentaCorriente'
-import type { ComprobanteEmitido, EstadoDeCuentaHeader, MedioPagoListado, PuntoVentaListado } from '../api/tipos'
+import type {
+  ComprobanteEmitido,
+  EstadoDeCuentaHeader,
+  MedioPagoListado,
+  PuntoVentaListado,
+  VentaPendienteDeCobro,
+} from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 import { CampoImporte } from './CampoImporte'
+import { aAplicacionesSolicitadas, validarAplicaciones, type ImportesPorVenta } from './cobros/aplicaciones'
+import { EditorDeAplicacionesACobrar } from './EditorDeAplicacionesACobrar'
 
 const CLAVE_PUNTO_VENTA = 'ways.cuentaCorriente.idPuntoVenta'
 
@@ -196,6 +204,36 @@ export function ModalPagoACuenta({
   const [error, setError] = useState('')
   const [gateTurno, setGateTurno] = useState(false)
 
+  // Ventas a las que se puede aplicar el cobro. Es opcional: si la lectura falla, el pago a cuenta se registra igual,
+  // sin aplicaciones. `null` mientras carga. La generación descarta una respuesta vieja si se vuelve a pedir.
+  const [ventasPendientes, setVentasPendientes] = useState<VentaPendienteDeCobro[] | null>(null)
+  const [errorPendientes, setErrorPendientes] = useState(false)
+  const [importesPorVenta, setImportesPorVenta] = useState<ImportesPorVenta>({})
+  const generacionPendientesRef = useRef(0)
+
+  const cargarPendientes = useCallback(() => {
+    const miGeneracion = ++generacionPendientesRef.current
+    clienteDeCuentaCorriente
+      .listarVentasPendientes(idCliente)
+      .then((ventas) => {
+        if (generacionPendientesRef.current !== miGeneracion) return
+        setVentasPendientes(ventas)
+        setErrorPendientes(false)
+      })
+      .catch(() => {
+        if (generacionPendientesRef.current !== miGeneracion) return
+        setVentasPendientes([])
+        setErrorPendientes(true)
+      })
+  }, [idCliente])
+
+  useEffect(() => {
+    cargarPendientes()
+    return () => {
+      generacionPendientesRef.current += 1
+    }
+  }, [cargarPendientes])
+
   const mediosFisicos = useMemo(() => medios.filter(medioFisicoParaPagoACuenta), [medios])
   const medioPorId = useMemo(() => {
     const indice: Record<number, MedioPagoListado> = {}
@@ -240,6 +278,11 @@ export function ModalPagoACuenta({
       return
     }
 
+    const ventas = ventasPendientes ?? []
+    const rechazoAplicaciones = validarAplicaciones(ventas, importesPorVenta, importeAplicado)
+    // El editor de aplicaciones ya muestra este rechazo junto a los importes: no se repite en el banner.
+    if (rechazoAplicaciones) return
+
     registrandoRef.current = true
     setRegistrando(true)
     setError('')
@@ -248,7 +291,9 @@ export function ModalPagoACuenta({
     onAntesDeEscribir()
 
     try {
-      const solicitud = aSolicitudDePagoACuenta(idPuntoVenta, pagosCalculo, observaciones)
+      const aplicaciones = aAplicacionesSolicitadas(ventas, importesPorVenta)
+      const base = aSolicitudDePagoACuenta(idPuntoVenta, pagosCalculo, observaciones)
+      const solicitud = aplicaciones.length > 0 ? { ...base, aplicaciones } : base
       const comprobante = await clienteDeCuentaCorriente.registrarPago(idCliente, solicitud)
       registrandoRef.current = false
       setRegistrando(false)
@@ -261,6 +306,9 @@ export function ModalPagoACuenta({
         setGateTurno(true)
       } else {
         setError(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
+        // Un saldo que cambió mientras el modal estaba abierto: se vuelve a pedir la lista para que lo cargado se
+        // revise contra lo vigente.
+        if (e instanceof ErrorApi && e.estado === 409 && e.codigo.startsWith('aplicacion_')) cargarPendientes()
       }
     }
   }
@@ -383,6 +431,25 @@ export function ModalPagoACuenta({
                   <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={registrando} onClick={agregarFila}>
                     + Agregar otro medio
                   </button>
+
+                  {errorPendientes && (
+                    <div className="alert alert-warning py-1 px-2 small" data-testid="cc-pago-pendientes-error">
+                      No se pudieron cargar las ventas pendientes. Podés registrar el pago igual; lo no aplicado
+                      queda a favor del cliente.
+                    </div>
+                  )}
+                  {ventasPendientes !== null && ventasPendientes.length > 0 && (
+                    <div className="mb-3">
+                      <EditorDeAplicacionesACobrar
+                        prefijoId="cc-pago-aplicar"
+                        ventas={ventasPendientes}
+                        importes={importesPorVenta}
+                        onCambiar={setImportesPorVenta}
+                        tope={importeAplicado}
+                        disabled={registrando}
+                      />
+                    </div>
+                  )}
 
                   <div className="mb-3">
                     <label className="form-label" htmlFor="cc-pago-observaciones">
