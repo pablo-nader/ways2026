@@ -47,20 +47,60 @@ public class ServicioDeCobrosLockOrderTests
     [Fact]
     public void AplicarBloqueaLosComprobantesAntesDeLeerYEscribirLasAplicaciones()
     {
-        var metodo = Metodo(Cobros(), "private async Task<int> EjecutarAplicarAsync(", "public async Task<EstadoDeCobro> DesaplicarAsync(");
+        var metodo = Metodo(Cobros(), "internal async Task<IReadOnlyList<AplicacionDeCobroListada>> AplicarBajoLocksAsync(", "public async Task<EstadoDeCobro> DesaplicarAsync(");
 
-        var apertura = Indice(metodo, "db.Database.BeginTransactionAsync(ct);");
         var locks = Indice(metodo, "BloquearComprobantesAsync(");
         var lectura = Indice(metodo, "db.AplicacionesCobro.Where(a => a.IdComprobanteCobro == idRecibo).ToListAsync(ct)");
         var topes = Indice(metodo, "ReglaDeAplicacionDeCobro.ExigirTopes(");
         var alta = Indice(metodo, "db.AplicacionesCobro.Add(");
         var escritura = Indice(metodo, "await db.SaveChangesAsync(ct);");
-        var commit = Indice(metodo, "transaccion.CommitAsync(ct);");
 
-        Assert.True(apertura < locks, "Los locks se toman adentro de la transacción.");
         Assert.True(locks < lectura, "Las aplicaciones del recibo se leen DESPUÉS del FOR UPDATE de los comprobantes.");
         Assert.True(lectura < topes && topes < alta, "Los topes se validan con lo leído bajo el lock y antes de escribir.");
-        Assert.True(alta < escritura && escritura < commit);
+        Assert.True(alta < escritura);
+    }
+
+    /// <summary>Aplicar sobre un recibo existente abre la transacción, corre el cuerpo (que toma los locks) y comitea; el
+    /// cuerpo no abre ni comitea nada, porque también lo corre el registro de un recibo con aplicaciones.</summary>
+    [Fact]
+    public void AplicarAbreLaTransaccionCorreElCuerpoBajoLocksYComitea()
+    {
+        var fuente = Cobros();
+        var envoltorio = Metodo(fuente, "private async Task<int> EjecutarAplicarAsync(", "internal async Task<IReadOnlyList<AplicacionDeCobroListada>> AplicarBajoLocksAsync(");
+        var cuerpo = Metodo(fuente, "internal async Task<IReadOnlyList<AplicacionDeCobroListada>> AplicarBajoLocksAsync(", "public async Task<EstadoDeCobro> DesaplicarAsync(");
+
+        var apertura = Indice(envoltorio, "db.Database.BeginTransactionAsync(ct);");
+        var llamada = Indice(envoltorio, "AplicarBajoLocksAsync(");
+        var commit = Indice(envoltorio, "transaccion.CommitAsync(ct);");
+        Assert.True(apertura < llamada && llamada < commit);
+
+        Assert.DoesNotContain("BeginTransactionAsync", cuerpo, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommitAsync", cuerpo, StringComparison.Ordinal);
+    }
+
+    /// <summary>E7-S3: registrar un recibo con aplicaciones las escribe dentro de la misma transacción, con las ventas
+    /// bloqueadas ANTES de la fila del cliente de cuenta corriente (la anulación toma la venta y después el cliente) y
+    /// antes del commit. Sin aplicaciones el cuerpo no corre.</summary>
+    [Fact]
+    public void RegistrarUnReciboAplicaLasVentasAntesDeTomarLaFilaDelCliente()
+    {
+        var metodo = Metodo(
+            LeerFuente("Ways.Application", "CuentaCorriente", "ServicioDeCuentaCorriente.cs"),
+            "private async Task<PagoACuentaRegistrado> EjecutarTransaccionAsync(",
+            "private async Task<Cliente> ResolverClienteAsync(");
+
+        var apertura = Indice(metodo, "db.Database.BeginTransactionAsync(ct);");
+        var recibo = Indice(metodo, "db.ComprobantesVenta.Add(comprobante);");
+        var cobros = Indice(metodo, "db.Cobros.AddRange(");
+        var aplicar = Indice(metodo, "servicioDeCobros.AplicarBajoLocksAsync(");
+        var cliente = Indice(metodo, "EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(");
+        var commit = Indice(metodo, "transaccion.CommitAsync(ct);");
+
+        Assert.True(apertura < recibo && recibo < cobros, "El recibo y sus cobros se escriben antes de aplicarlos.");
+        Assert.True(cobros < aplicar, "Los topes miden contra los cobros ya escritos del recibo.");
+        Assert.True(aplicar < cliente, "Las ventas se bloquean antes que la fila del cliente.");
+        Assert.True(cliente < commit);
+        Assert.Contains("if (aplicaciones.Count > 0)", metodo, StringComparison.Ordinal);
     }
 
     /// <summary>Lo aplicado del recibo se lee UNA vez (la lista trackeada) y de ahí salen el disponible de los topes y el

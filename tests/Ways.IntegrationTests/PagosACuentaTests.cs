@@ -783,7 +783,9 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             db, reloj, contexto, lector, new LectorDeResumenDeCierrePorRetiro(db, lector),
             new LectorDeRendicionDeDispositivos(db),
             new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto));
-        var servicio = new ServicioDeCuentaCorriente(db, reloj, contexto, servicioDeTurnos);
+        var servicio = new ServicioDeCuentaCorriente(
+            db, reloj, contexto, servicioDeTurnos,
+            new ServicioDeCobros(db, reloj, contexto, new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto)));
 
         var emitido = await servicio.RegistrarPagoAsync(idCliente, new SolicitudDePagoACuenta(ctx.IdPuntoVenta, pagos, null));
         Assert.False(emitido.Estado == EstadoComprobante.Anulado);

@@ -49,13 +49,7 @@ public class ServicioDeCobros(
         var momento = reloj.Ahora;
 
         await ExigirComprobanteExistenteAsync(idRecibo, "el recibo", ct);
-        var validas = ReglaDeAplicacionDeCobro.ExigirPedidas(pedidas);
-        foreach (var idVenta in validas.Select(p => p.IdComprobanteVenta).Order())
-        {
-            await ExigirComprobanteExistenteAsync(idVenta, "la venta", ct);
-        }
-
-        ReglaDeAplicacionDeCobro.ExigirImportesValidos(validas);
+        var validas = await ExigirPedidasExistentesAsync(pedidas, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
@@ -64,12 +58,46 @@ public class ServicioDeCobros(
         return await ObtenerEstadoAsync(idRecibo, ct);
     }
 
+    /// <summary>
+    /// Lo que se valida antes de abrir la transacción: la forma del pedido, que cada venta exista (404 antes que los
+    /// importes) y que los importes sean válidos. Lo usan aplicar sobre un recibo existente y registrar un recibo con
+    /// aplicaciones.
+    /// </summary>
+    internal async Task<IReadOnlyList<AplicacionDeCobroPedida>> ExigirPedidasExistentesAsync(
+        IReadOnlyList<AplicacionDeCobroPedida?>? pedidas, CancellationToken ct)
+    {
+        var validas = ReglaDeAplicacionDeCobro.ExigirPedidas(pedidas);
+        foreach (var idVenta in validas.Select(p => p.IdComprobanteVenta).Order())
+        {
+            await ExigirComprobanteExistenteAsync(idVenta, "la venta", ct);
+        }
+
+        ReglaDeAplicacionDeCobro.ExigirImportesValidos(validas);
+        return validas;
+    }
+
     private async Task<int> EjecutarAplicarAsync(
         int idTenant, int idRecibo, IReadOnlyList<AplicacionDeCobroPedida> pedidas, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+        await AplicarBajoLocksAsync(idTenant, idRecibo, pedidas, idEmpleado, momento, ct);
+        await transaccion.CommitAsync(ct);
 
+        return idRecibo;
+    }
+
+    /// <summary>
+    /// El cuerpo de aplicar, dentro de una transacción ya abierta por el llamador, que la comitea: aplicar sobre un recibo
+    /// existente (<see cref="AplicarAsync"/>) y registrar un recibo con sus aplicaciones en la misma transacción
+    /// (<c>ServicioDeCuentaCorriente.RegistrarPagoAsync</c>, E7-S3). Devuelve las aplicaciones vivas del recibo en id
+    /// ascendente. El llamador que ya tomó la fila del cliente de cuenta corriente NO puede llamarlo: el orden de locks de
+    /// la clase pone los comprobantes antes que el cliente.
+    /// </summary>
+    internal async Task<IReadOnlyList<AplicacionDeCobroListada>> AplicarBajoLocksAsync(
+        int idTenant, int idRecibo, IReadOnlyList<AplicacionDeCobroPedida> pedidas, int idEmpleado, DateTimeOffset momento,
+        CancellationToken ct)
+    {
         // Paso 1: el recibo y las ventas, FOR UPDATE en id ascendente. Es la ÚNICA lectura de su tipo, estado y cliente.
         var bloqueados = await BloquearComprobantesAsync(
             pedidas.Select(p => p.IdComprobanteVenta).Append(idRecibo), idTenant, ct);
@@ -128,9 +156,11 @@ public class ServicioDeCobros(
             idTenant, recibo.IdPuntoVenta, AccionAuditada.CobroAplicacion, idRecibo, valorAnterior, valorNuevo));
 
         await db.SaveChangesAsync(ct);
-        await transaccion.CommitAsync(ct);
 
-        return idRecibo;
+        return aplicaciones
+            .OrderBy(a => a.Id)
+            .Select(a => new AplicacionDeCobroListada(a.Id, a.IdComprobanteVenta, a.Importe, a.Fecha))
+            .ToList();
     }
 
     /// <summary>
@@ -185,6 +215,15 @@ public class ServicioDeCobros(
 
         return idRecibo;
     }
+
+    /// <summary>Las ventas del cliente con saldo pendiente en cuenta corriente, de la más nueva a la más vieja.</summary>
+    public Task<IReadOnlyList<VentaPendienteDeCobro>> ListarVentasPendientesAsync(int idCliente, CancellationToken ct = default) =>
+        LectorDeCobrosDeCliente.LeerVentasPendientesAsync(db, idCliente, ct);
+
+    /// <summary>Los recibos no anulados del cliente con lo disponible y sus aplicaciones, del más nuevo al más viejo.</summary>
+    public Task<IReadOnlyList<ReciboDeCliente>> ListarRecibosAsync(
+        int idCliente, bool soloConDisponible, CancellationToken ct = default) =>
+        LectorDeCobrosDeCliente.LeerRecibosAsync(db, idCliente, soloConDisponible, ct);
 
     /// <summary>Lo cobrado, lo aplicado, lo disponible y las aplicaciones vivas de un recibo, en id ascendente.</summary>
     public async Task<EstadoDeCobro> ObtenerEstadoAsync(int idRecibo, CancellationToken ct = default)
