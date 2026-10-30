@@ -265,7 +265,7 @@ describe('GrillaDeArticulos — columnas', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
 
-    expect(onEliminar).toHaveBeenCalledWith(expect.objectContaining({ id: 3, nombre: 'Articulo Tres' }))
+    expect(onEliminar).toHaveBeenCalledWith(expect.objectContaining({ id: 3, nombre: 'Articulo Tres' }), expect.any(HTMLButtonElement))
   })
 })
 

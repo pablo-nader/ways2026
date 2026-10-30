@@ -65,7 +65,7 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       { id: 1, numero: 1, numeroVisible: '0007-00000001', estado: 'Emitido', fecha: '2026-09-16T13:00:00Z', idPuntoVenta: 7, idCliente: 1, total: 750 },
     ],
     gastos: [
-      { id: 9, idPuntoVenta: 7, fecha: '2026-09-16T14:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 501, turnoAbierto: false, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
+      { id: 9, idPuntoVenta: 7, fecha: '2026-09-16T14:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 501, turnoAbierto: false, idProveedor: null, idArea: null, concepto: 'Pago', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
     ],
     fechaRecalculo: null,
     idEmpleadoRecalculo: null,
@@ -147,7 +147,7 @@ beforeEach(() => {
 })
 
 describe('ModalDetalleDeTurno', () => {
-  it('muestra la cabecera del turno, el arqueo por medio con totales, y los tickets y gastos', async () => {
+  it('muestra la cabecera del turno, el arqueo por medio con totales, y los tickets y pagos', async () => {
     mockearRutas(rutasDe(501))
     render(<ModalDetalleDeTurno idTurno={501} onCerrar={vi.fn()} />)
 
@@ -335,5 +335,33 @@ describe('ModalDetalleDeTurno', () => {
 
     const dialogo = await screen.findByRole('dialog')
     expect(dialogo.querySelector('.modal-dialog')).toHaveClass('modal-dialog-scrollable')
+  })
+})
+
+describe('ModalDetalleDeTurno — orden del arqueo', () => {
+  it('la diferencia ordena por su valor numérico y el total del pie no se mueve', async () => {
+    const turno = turnoFixture({
+      arqueos: [
+        { idMedioPago: 1, importeEsperado: 1000, importeDeclarado: 900, diferencia: 100, importeEsperadoOriginal: null },
+        { idMedioPago: 2, importeEsperado: 500, importeDeclarado: 550, diferencia: -50, importeEsperadoOriginal: null },
+        { idMedioPago: 3, importeEsperado: 9000, importeDeclarado: 0, diferencia: 9000, importeEsperadoOriginal: null },
+      ],
+    })
+    mockearRutas(rutasDe(501, { turno }), [medio(1, 'Efectivo'), medio(2, 'Tarjeta'), medio(3, 'Cheque')])
+    render(<ModalDetalleDeTurno idTurno={501} onCerrar={vi.fn()} />)
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Detalle del cierre #501' })
+    await within(dialogo).findByText('jperez')
+    const tabla = within(dialogo).getAllByRole('table')[0]
+    const diferencia = within(tabla).getByRole('columnheader', { name: /Diferencia/ })
+
+    await userEvent.click(within(diferencia).getByRole('button'))
+
+    expect(diferencia).toHaveAttribute('aria-sort', 'ascending')
+    const medios = () =>
+      Array.from(tabla.querySelectorAll('tbody tr')).map((fila) => within(fila as HTMLElement).getAllByRole('cell')[0].textContent)
+    expect(medios()).toEqual(['Tarjeta', 'Efectivo', 'Cheque'])
+    const totales = tabla.querySelector('tfoot tr') as HTMLElement
+    expect(within(totales).getAllByRole('cell')[0]).toHaveTextContent('Total')
   })
 })

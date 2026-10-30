@@ -9,7 +9,7 @@ using Ways.Application.Reportes;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Reportes;
@@ -21,7 +21,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// stage-10-agregacion-dashboard, Slice 5 (tasks 5.4-5.5): <c>GET /api/reportes/compras/por-proveedor</c>
 /// y <c>GET /api/reportes/gastos/resumen</c> punta a punta — el patrón de 4 pruebas por endpoint
-/// (spec reportes-de-gestion: Compras Bucketed By Fecha De Recepción Confirmada Only, Gastos
+/// (spec reportes-de-gestion: Compras Bucketed By Fecha De Recepción Confirmada Only, Pagos
 /// Resumen, Raw SQL MUST Spell Out Soft-Delete And Estado Filters Explicitly, Tenant Isolation
 /// Holds On Raw SQL Via Connection-Level RLS) más la matriz de roles de las dos rutas —
 /// <c>ReportesAutorizacionTests</c> (task 4.7, slice 4) no existe todavía en esta rama aislada
@@ -163,19 +163,19 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    /// <summary>Siembra directo, sin pasar por <c>ServicioDeGastos</c> (que resuelve el turno server
+    /// <summary>Siembra directo, sin pasar por <c>ServicioDePagos</c> (que resuelve el turno server
     /// side desde el request HTTP) — <paramref name="idTurno"/> viene de un turno real abierto por
-    /// API (FK no bypaseable), pero <see cref="Gasto.Fecha"/>/<see cref="Gasto.DeletedAt"/> se
+    /// API (FK no bypaseable), pero <see cref="Pago.Fecha"/>/<see cref="Pago.DeletedAt"/> se
     /// controlan a mano para las aserciones de bucketing y soft-delete.</summary>
-    private async Task SembrarGastoAsync(
-        Contexto ctx, int idTurno, DateTimeOffset fecha, decimal importe, CategoriaGasto categoria,
+    private async Task SembrarPagoAsync(
+        Contexto ctx, int idTurno, DateTimeOffset fecha, decimal importe, CategoriaPago categoria,
         bool eliminado = false)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
         var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
-        var gasto = new Gasto
+        var pago = new Pago
         {
             IdTenant = ctx.IdTenant,
             Fecha = fecha,
@@ -184,15 +184,20 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             IdTurnoCaja = idTurno,
             IdEmpleado = 1,
             Categoria = categoria,
-            OrigenFondos = OrigenFondosGasto.CajaTurno,
+            OrigenFondos = OrigenFondosPago.CajaTurno,
             Concepto = "Gasto de reporte",
-            IdMedioPago = ctx.IdMedioEfectivo,
             Importe = importe,
             CreatedAt = ahora,
             UpdatedAt = ahora,
             DeletedAt = eliminado ? ahora : null
         };
-        db.Gastos.Add(gasto);
+        db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = ctx.IdMedioEfectivo, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora,
+            DeletedAt = eliminado ? ahora : null
+        });
         await db.SaveChangesAsync();
     }
 
@@ -208,18 +213,18 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         return JsonSerializer.Deserialize<ComprasPorProveedor>(cuerpo, OpcionesJson)!;
     }
 
-    private static async Task<HttpResponseMessage> LlamarGastosAsync(
+    private static async Task<HttpResponseMessage> LlamarPagosAsync(
         HttpClient cliente, int idEmpresa, DateOnly desde, DateOnly hasta, Granularidad granularidad = Granularidad.Dia) =>
         await cliente.GetAsync(
             $"/api/reportes/gastos/resumen?idEmpresa={idEmpresa}&desde={desde:yyyy-MM-dd}&hasta={hasta:yyyy-MM-dd}&granularidad={granularidad}");
 
-    private static async Task<ResumenDeGastos> ObtenerGastosAsync(
+    private static async Task<ResumenDePagos> ObtenerPagosAsync(
         HttpClient cliente, int idEmpresa, DateOnly desde, DateOnly hasta, Granularidad granularidad = Granularidad.Dia)
     {
-        var respuesta = await LlamarGastosAsync(cliente, idEmpresa, desde, hasta, granularidad);
+        var respuesta = await LlamarPagosAsync(cliente, idEmpresa, desde, hasta, granularidad);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
-        return JsonSerializer.Deserialize<ResumenDeGastos>(cuerpo, OpcionesJson)!;
+        return JsonSerializer.Deserialize<ResumenDePagos>(cuerpo, OpcionesJson)!;
     }
 
     // ==== compras/por-proveedor — el patrón de 4 pruebas ==========================================
@@ -334,43 +339,43 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(1, lineaProveedor2.CantidadCompras);
     }
 
-    // ==== gastos/resumen — el patrón de 4 pruebas ==================================================
+    // ==== pagos/resumen — el patrón de 4 pruebas ==================================================
 
     [Fact]
-    public async Task UnGastoDeOtroTenantNuncaApareceEnElResumenDeGastos()
+    public async Task UnPagoDeOtroTenantNuncaApareceEnElResumenDePagos()
     {
-        var ctxA = await PrepararAsync(nameof(UnGastoDeOtroTenantNuncaApareceEnElResumenDeGastos) + "-A");
-        var ctxB = await PrepararAsync(nameof(UnGastoDeOtroTenantNuncaApareceEnElResumenDeGastos) + "-B");
+        var ctxA = await PrepararAsync(nameof(UnPagoDeOtroTenantNuncaApareceEnElResumenDePagos) + "-A");
+        var ctxB = await PrepararAsync(nameof(UnPagoDeOtroTenantNuncaApareceEnElResumenDePagos) + "-B");
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
         var turnoB = await AbrirTurnoAsync(ctxB.Admin, ctxB.IdPuntoVenta);
 
-        await SembrarGastoAsync(ctxB, turnoB, DateTimeOffset.UtcNow, 999_999m, CategoriaGasto.Otros);
+        await SembrarPagoAsync(ctxB, turnoB, DateTimeOffset.UtcNow, 999_999m, CategoriaPago.Otros);
 
-        var resumen = await ObtenerGastosAsync(ctxA.Admin, ctxA.IdEmpresa, hoy, hoy);
+        var resumen = await ObtenerPagosAsync(ctxA.Admin, ctxA.IdEmpresa, hoy, hoy);
 
         Assert.Equal(0m, resumen.ImporteTotal);
     }
 
     [Fact]
-    public async Task UnGastoSoftDeletedNuncaApareceEnElResumenDeGastos()
+    public async Task UnPagoSoftDeletedNuncaApareceEnElResumenDePagos()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoSoftDeletedNuncaApareceEnElResumenDeGastos));
+        var ctx = await PrepararAsync(nameof(UnPagoSoftDeletedNuncaApareceEnElResumenDePagos));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
         var mediodia = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
-        await SembrarGastoAsync(ctx, turno, mediodia, 5000m, CategoriaGasto.Otros, eliminado: true);
-        await SembrarGastoAsync(ctx, turno, mediodia, 100m, CategoriaGasto.Otros);
+        await SembrarPagoAsync(ctx, turno, mediodia, 5000m, CategoriaPago.Otros, eliminado: true);
+        await SembrarPagoAsync(ctx, turno, mediodia, 100m, CategoriaPago.Otros);
 
-        var resumen = await ObtenerGastosAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
+        var resumen = await ObtenerPagosAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
         Assert.Equal(100m, resumen.ImporteTotal);
     }
 
-    /// <summary>Sustituye la pata de "estado" del patrón de 4 pruebas: <c>gastos</c> no tiene
+    /// <summary>Sustituye la pata de "estado" del patrón de 4 pruebas: <c>pagos</c> no tiene
     /// columna de estado (design: Raw-SQL Invariant Checklist), así que la cuarta prueba
     /// no-negociable de este endpoint es su clave de agrupación propia — el desglose por
-    /// categoría (spec: Gastos Resumen, "optionally grouped by categoria").</summary>
+    /// categoría (spec: Pagos Resumen, "optionally grouped by categoria").</summary>
     [Fact]
     public async Task ElDesglosePorCategoriaSumaCadaCategoriaPorSeparado()
     {
@@ -379,33 +384,33 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var mediodia = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
-        await SembrarGastoAsync(ctx, turno, mediodia, 200m, CategoriaGasto.Sueldos);
-        await SembrarGastoAsync(ctx, turno, mediodia, 300m, CategoriaGasto.Sueldos);
-        await SembrarGastoAsync(ctx, turno, mediodia, 150m, CategoriaGasto.Servicios);
+        await SembrarPagoAsync(ctx, turno, mediodia, 200m, CategoriaPago.Sueldos);
+        await SembrarPagoAsync(ctx, turno, mediodia, 300m, CategoriaPago.Sueldos);
+        await SembrarPagoAsync(ctx, turno, mediodia, 150m, CategoriaPago.Servicios);
 
-        var resumen = await ObtenerGastosAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
+        var resumen = await ObtenerPagosAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
         Assert.Equal(650m, resumen.ImporteTotal);
-        var sueldos = Assert.Single(resumen.PorCategoria, c => c.Categoria == CategoriaGasto.Sueldos);
+        var sueldos = Assert.Single(resumen.PorCategoria, c => c.Categoria == CategoriaPago.Sueldos);
         Assert.Equal(500m, sueldos.Importe);
-        Assert.Equal(2, sueldos.CantidadGastos);
-        var servicios = Assert.Single(resumen.PorCategoria, c => c.Categoria == CategoriaGasto.Servicios);
+        Assert.Equal(2, sueldos.CantidadPagos);
+        var servicios = Assert.Single(resumen.PorCategoria, c => c.Categoria == CategoriaPago.Servicios);
         Assert.Equal(150m, servicios.Importe);
-        Assert.Equal(1, servicios.CantidadGastos);
+        Assert.Equal(1, servicios.CantidadPagos);
     }
 
     [Fact]
-    public async Task ElResumenDeGastosCoincideConElCalculoAManoYRellenaLosBucketsSinGastos()
+    public async Task ElResumenDePagosCoincideConElCalculoAManoYRellenaLosBucketsSinPagos()
     {
-        var ctx = await PrepararAsync(nameof(ElResumenDeGastosCoincideConElCalculoAManoYRellenaLosBucketsSinGastos));
+        var ctx = await PrepararAsync(nameof(ElResumenDePagosCoincideConElCalculoAManoYRellenaLosBucketsSinPagos));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
         var ayer = hoy.AddDays(-1);
         var mediodiaHoy = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
-        await SembrarGastoAsync(ctx, turno, mediodiaHoy, 700m, CategoriaGasto.Otros);
+        await SembrarPagoAsync(ctx, turno, mediodiaHoy, 700m, CategoriaPago.Otros);
 
-        var resumen = await ObtenerGastosAsync(ctx.Admin, ctx.IdEmpresa, ayer, hoy);
+        var resumen = await ObtenerPagosAsync(ctx.Admin, ctx.IdEmpresa, ayer, hoy);
 
         Assert.Equal(700m, resumen.ImporteTotal);
         Assert.Equal(2, resumen.Serie.Count);
@@ -467,13 +472,13 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     [Fact]
-    public async Task UnaEmpresaDeOtroTenantDevuelve404EnGastos()
+    public async Task UnaEmpresaDeOtroTenantDevuelve404EnPagos()
     {
-        var ctxA = await PrepararAsync(nameof(UnaEmpresaDeOtroTenantDevuelve404EnGastos) + "-A");
-        var ctxB = await PrepararAsync(nameof(UnaEmpresaDeOtroTenantDevuelve404EnGastos) + "-B");
+        var ctxA = await PrepararAsync(nameof(UnaEmpresaDeOtroTenantDevuelve404EnPagos) + "-A");
+        var ctxB = await PrepararAsync(nameof(UnaEmpresaDeOtroTenantDevuelve404EnPagos) + "-B");
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
 
-        var respuesta = await LlamarGastosAsync(ctxA.Admin, ctxB.IdEmpresa, hoy, hoy);
+        var respuesta = await LlamarPagosAsync(ctxA.Admin, ctxB.IdEmpresa, hoy, hoy);
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }

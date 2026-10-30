@@ -9,6 +9,7 @@ import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, SolicitudDeCierre
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { formatearImporte } from '../formato/importes'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
@@ -50,7 +51,7 @@ function formatearFechaHora(iso: string): string {
  * comportamiento de la app web (quedan `undefined`/el default). `rutaVolver` reemplaza el destino
  * fijo `/caja` — el shell de escritorio no tiene esa ruta, la suya es `/vender`. `alCerrarExitosamente`
  * avisa al llamador el `TurnoConArqueos` recién cerrado — el shell de escritorio lo usa para
- * navegar a la Caja Z (`CajaZ.tsx`, la vista completa con tickets/gastos) en vez de dejar al
+ * navegar a la Caja Z (`CajaZ.tsx`, la vista completa con tickets/pagos) en vez de dejar al
  * cajero en el resumen mínimo de acá; la app web normal no lo pasa y esta pantalla sigue mostrando
  * su propio resumen con los links "Volver a caja"/"Ver Caja Z" de siempre.
  *
@@ -63,6 +64,74 @@ function formatearFechaHora(iso: string): string {
 type PropsCierreDeCaja = {
   rutaVolver?: string
   alCerrarExitosamente?: (turno: TurnoConArqueos) => void
+}
+
+type ArqueoCerrado = TurnoConArqueos['arqueos'][number]
+
+type PropsTablaDeArqueosCerrados = { arqueos: ArqueoCerrado[]; medioPorId: Record<number, MedioPagoListado> }
+
+function nombreDeMedio(idMedioPago: number, medioPorId: Record<number, MedioPagoListado>): string {
+  return medioPorId[idMedioPago]?.nombre ?? `Medio #${idMedioPago}`
+}
+
+/** El arqueo del turno ya cerrado: solo lectura, se ordena por cualquier columna. La grilla donde se cuenta el cierre
+ * conserva el orden del resumen porque sus filas se editan. */
+function TablaDeArqueosCerrados({ arqueos, medioPorId }: PropsTablaDeArqueosCerrados) {
+  const columnas = useMemo<ColumnasOrdenables<ArqueoCerrado>>(
+    () => ({
+      medio: { valor: (a) => nombreDeMedio(a.idMedioPago, medioPorId) },
+      esperado: { valor: (a) => a.importeEsperado },
+      declarado: { valor: (a) => a.importeDeclarado },
+      diferencia: { valor: (a) => a.diferencia },
+    }),
+    [medioPorId],
+  )
+  const { filas, orden, alternar } = useOrdenamiento(arqueos, columnas)
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-sm table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <EncabezadoOrdenable columna="medio" orden={orden} onAlternar={alternar}>
+              Medio
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="esperado" orden={orden} onAlternar={alternar} className="text-end">
+              Esperado
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="declarado" orden={orden} onAlternar={alternar} className="text-end">
+              Declarado
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="diferencia" orden={orden} onAlternar={alternar} className="text-end">
+              Diferencia
+            </EncabezadoOrdenable>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((a) => (
+            <tr key={a.idMedioPago}>
+              <td>{nombreDeMedio(a.idMedioPago, medioPorId)}</td>
+              <td className="text-end">
+                {formatearMoneda(a.importeEsperado)}
+                {a.importeEsperadoOriginal !== null && (
+                  <div className="small text-muted">Esperado original: {formatearMoneda(a.importeEsperadoOriginal)}</div>
+                )}
+              </td>
+              <td className="text-end">{formatearMoneda(a.importeDeclarado)}</td>
+              <td className="text-end">{formatearMoneda(a.diferencia)}</td>
+            </tr>
+          ))}
+          {arqueos.length === 0 && (
+            <tr>
+              <td colSpan={4} className="text-center text-muted">
+                Este turno no tuvo actividad: no hay ningún medio arqueado.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: PropsCierreDeCaja = {}) {
@@ -358,42 +427,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                 )}
               </div>
 
-              <div className="table-responsive">
-                <table className="table table-sm table-striped table-bordered align-middle">
-                  <thead>
-                    <tr>
-                      <th>Medio</th>
-                      <th className="text-end">Esperado</th>
-                      <th className="text-end">Declarado</th>
-                      <th className="text-end">Diferencia</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {zReporte.arqueos.map((a) => (
-                      <tr key={a.idMedioPago}>
-                        <td>{medioPorId[a.idMedioPago]?.nombre ?? `Medio #${a.idMedioPago}`}</td>
-                        <td className="text-end">
-                          {formatearMoneda(a.importeEsperado)}
-                          {a.importeEsperadoOriginal !== null && (
-                            <div className="small text-muted">
-                              Esperado original: {formatearMoneda(a.importeEsperadoOriginal)}
-                            </div>
-                          )}
-                        </td>
-                        <td className="text-end">{formatearMoneda(a.importeDeclarado)}</td>
-                        <td className="text-end">{formatearMoneda(a.diferencia)}</td>
-                      </tr>
-                    ))}
-                    {zReporte.arqueos.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="text-center text-muted">
-                          Este turno no tuvo actividad: no hay ningún medio arqueado.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <TablaDeArqueosCerrados arqueos={zReporte.arqueos} medioPorId={medioPorId} />
 
               {/* stage-11-exportacion-reportes (Slice 6b, design: Web Composition, "link from
                   the just-closed turno to its Caja Z screen"): mismo gate OperacionDePos que

@@ -4,9 +4,9 @@ import { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoVal
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import {
-  CATEGORIAS_GASTO,
+  CATEGORIAS_PAGO,
   TIPOS_MOVIMIENTO_CAJA,
-  type CategoriaGasto,
+  type CategoriaPago,
   type MedioPagoAlta,
   type MedioPagoListado,
   type ResumenDeTurno,
@@ -15,6 +15,7 @@ import {
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from '../componentes/grilla'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { formatearImporte } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -29,8 +30,8 @@ function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
 }
 
-function etiquetaCategoriaGasto(categoria: CategoriaGasto): string {
-  return CATEGORIAS_GASTO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
+function etiquetaCategoriaPago(categoria: CategoriaPago): string {
+  return CATEGORIAS_PAGO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
 }
 
 type PropsFormularioApertura = {
@@ -143,6 +144,121 @@ type PropsPanelTurnoAbierto = {
   turno: TurnoResumen
   medios: MedioPagoListado[] | null
   errorMedios: string
+}
+
+type FilaDeTotal = { clave: string; nombre: string; total: number }
+
+const COLUMNAS_DE_TOTALES: ColumnasOrdenables<FilaDeTotal> = {
+  nombre: { valor: (f) => f.nombre },
+  total: { valor: (f) => f.total },
+}
+
+type PropsTablaDeTotales = {
+  columnaNombre: string
+  filas: FilaDeTotal[]
+  /** Fila que va siempre al final, fuera del orden (por ejemplo los retiros entre los egresos). */
+  filaFija?: { nombre: string; total: number }
+  textoVacio: string
+}
+
+/** Tabla de totales por nombre del resumen parcial: se ordena por cualquier columna; la fila fija queda al final. */
+function TablaDeTotalesPorNombre({ columnaNombre, filas, filaFija, textoVacio }: PropsTablaDeTotales) {
+  const { filas: ordenadas, orden, alternar } = useOrdenamiento(filas, COLUMNAS_DE_TOTALES)
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-sm table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+              {columnaNombre}
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="total" orden={orden} onAlternar={alternar} className="text-end">
+              Total
+            </EncabezadoOrdenable>
+          </tr>
+        </thead>
+        <tbody>
+          {ordenadas.length === 0 && (filaFija === undefined || filaFija.total === 0) ? (
+            <tr>
+              <td colSpan={2} className="text-center text-muted">
+                {textoVacio}
+              </td>
+            </tr>
+          ) : (
+            <>
+              {ordenadas.map((f) => (
+                <tr key={f.clave}>
+                  <td>{f.nombre}</td>
+                  <td className="text-end">{formatearMoneda(f.total)}</td>
+                </tr>
+              ))}
+              {filaFija && (
+                <tr>
+                  <td>{filaFija.nombre}</td>
+                  <td className="text-end">{formatearMoneda(filaFija.total)}</td>
+                </tr>
+              )}
+            </>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+type MedioDelResumen = ResumenDeTurno['medios'][number]
+
+type PropsTablaDeMedios = {
+  medios: MedioDelResumen[]
+  idMedioAncla: number | null
+  medioPorId: Record<number, MedioPagoListado>
+}
+
+function TablaDeMediosDelResumen({ medios, idMedioAncla, medioPorId }: PropsTablaDeMedios) {
+  const columnas = useMemo<ColumnasOrdenables<MedioDelResumen>>(
+    () => ({
+      medio: { valor: (m) => medioPorId[m.idMedioPago]?.nombre ?? `Medio #${m.idMedioPago}` },
+      esperado: { valor: (m) => m.importeEsperado },
+    }),
+    [medioPorId],
+  )
+  const { filas, orden, alternar } = useOrdenamiento(medios, columnas)
+
+  return (
+    <div className="table-responsive">
+      <table className="table table-sm table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <EncabezadoOrdenable columna="medio" orden={orden} onAlternar={alternar}>
+              Medio
+            </EncabezadoOrdenable>
+            <EncabezadoOrdenable columna="esperado" orden={orden} onAlternar={alternar} className="text-end">
+              Esperado
+            </EncabezadoOrdenable>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((m) => (
+            <tr key={m.idMedioPago}>
+              <td>
+                {medioPorId[m.idMedioPago]?.nombre ?? `Medio #${m.idMedioPago}`}
+                {m.idMedioPago === idMedioAncla && <span className="badge bg-secondary ms-1">efectivo</span>}
+              </td>
+              <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
+            </tr>
+          ))}
+          {medios.length === 0 && (
+            <tr>
+              <td colSpan={2} className="text-center text-muted">
+                Todavía no hay actividad en este turno.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 /** Turno abierto: movimientos (retiro/refuerzo/apertura de cajón) + resumen parcial — misma
@@ -355,36 +471,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
           {cargandoResumen && <p className="text-muted">Calculando…</p>}
 
           {!cargandoResumen && resumen && (
-            <div className="table-responsive">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Medio</th>
-                    <th className="text-end">Esperado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resumen.medios.map((m) => (
-                    <tr key={m.idMedioPago}>
-                      <td>
-                        {medioPorId[m.idMedioPago]?.nombre ?? `Medio #${m.idMedioPago}`}
-                        {m.idMedioPago === resumen.idMedioAncla && (
-                          <span className="badge bg-secondary ms-1">efectivo</span>
-                        )}
-                      </td>
-                      <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
-                    </tr>
-                  ))}
-                  {resumen.medios.length === 0 && (
-                    <tr>
-                      <td colSpan={2} className="text-center text-muted">
-                        Todavía no hay actividad en este turno.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <TablaDeMediosDelResumen medios={resumen.medios} idMedioAncla={resumen.idMedioAncla} medioPorId={medioPorId} />
           )}
         </div>
       </div>
@@ -414,31 +501,11 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
 
           <div className="col-lg-4">
             <h6>Ingresos por área</h6>
-            <div className="table-responsive">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Área</th>
-                    <th className="text-end">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resumen.ingresosPorArea.map((a) => (
-                    <tr key={a.idArea}>
-                      <td>{a.nombreArea}</td>
-                      <td className="text-end">{formatearMoneda(a.total)}</td>
-                    </tr>
-                  ))}
-                  {resumen.ingresosPorArea.length === 0 && (
-                    <tr>
-                      <td colSpan={2} className="text-center text-muted">
-                        Todavía no hay ingresos en este turno.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <TablaDeTotalesPorNombre
+              columnaNombre="Área"
+              filas={resumen.ingresosPorArea.map((a) => ({ clave: String(a.idArea), nombre: a.nombreArea, total: a.total }))}
+              textoVacio="Todavía no hay ingresos en este turno."
+            />
           </div>
 
           <div className="col-lg-4">
@@ -446,67 +513,26 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
             <div className="row g-2">
               <div className="col-6">
                 <div className="small text-muted mb-1">Por categoría</div>
-                <div className="table-responsive">
-                  <table className="table table-sm table-striped table-bordered align-middle">
-                    <thead>
-                      <tr>
-                        <th>Categoría</th>
-                        <th className="text-end">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {resumen.egresos.porCategoria.length === 0 && resumen.egresos.retiros === 0 ? (
-                        <tr>
-                          <td colSpan={2} className="text-center text-muted">
-                            Todavía no hay egresos en este turno.
-                          </td>
-                        </tr>
-                      ) : (
-                        <>
-                          {resumen.egresos.porCategoria.map((e) => (
-                            <tr key={e.categoria}>
-                              <td>{etiquetaCategoriaGasto(e.categoria)}</td>
-                              <td className="text-end">{formatearMoneda(e.total)}</td>
-                            </tr>
-                          ))}
-                          <tr>
-                            <td>Retiros</td>
-                            <td className="text-end">{formatearMoneda(resumen.egresos.retiros)}</td>
-                          </tr>
-                        </>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <TablaDeTotalesPorNombre
+                  columnaNombre="Categoría"
+                  filas={resumen.egresos.porCategoria.map((e) => ({
+                    clave: e.categoria,
+                    nombre: etiquetaCategoriaPago(e.categoria),
+                    total: e.total,
+                  }))}
+                  filaFija={{ nombre: 'Retiros', total: resumen.egresos.retiros }}
+                  textoVacio="Todavía no hay egresos en este turno."
+                />
+
               </div>
 
               <div className="col-6">
                 <div className="small text-muted mb-1">Por área</div>
-                <div className="table-responsive">
-                  <table className="table table-sm table-striped table-bordered align-middle">
-                    <thead>
-                      <tr>
-                        <th>Área</th>
-                        <th className="text-end">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {resumen.egresos.porArea.map((a) => (
-                        <tr key={a.idArea ?? 'sin-area'}>
-                          <td>{a.nombreArea}</td>
-                          <td className="text-end">{formatearMoneda(a.total)}</td>
-                        </tr>
-                      ))}
-                      {resumen.egresos.porArea.length === 0 && (
-                        <tr>
-                          <td colSpan={2} className="text-center text-muted">
-                            Todavía no hay egresos en este turno.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <TablaDeTotalesPorNombre
+                  columnaNombre="Área"
+                  filas={resumen.egresos.porArea.map((a) => ({ clave: String(a.idArea ?? 'sin-area'), nombre: a.nombreArea, total: a.total }))}
+                  textoVacio="Todavía no hay egresos en este turno."
+                />
               </div>
             </div>
           </div>

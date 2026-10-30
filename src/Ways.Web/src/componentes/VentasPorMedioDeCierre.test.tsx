@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { VentasPorMedioDeCierre } from './VentasPorMedioDeCierre'
 import type { ResumenDeCierrePorRetiro } from '../api/tipos'
@@ -94,5 +94,46 @@ describe('VentasPorMedioDeCierre', () => {
     expect(screen.queryByTestId('fiado-en-cuenta-corriente')).not.toBeInTheDocument()
     expect(screen.getByTestId('ventas-por-medio')).not.toHaveTextContent(/undefined|NaN/)
     expect(celdasDeLaTabla()).toContainEqual(['Total general', '$ 8.000,00'])
+  })
+})
+
+describe('VentasPorMedioDeCierre — orden por columna', () => {
+  it('el importe ordena por su valor numérico y los totales del servidor quedan al pie sin ordenarse', () => {
+    render(
+      <VentasPorMedioDeCierre
+        cierre={cierreFixture({
+          ventasPorMedio: [
+            { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 5000 },
+            { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 3000 },
+            { idMedioPago: 3, nombre: 'Cheque', comportamiento: 'Electronico', importe: 10000 },
+          ],
+        })}
+      />,
+    )
+
+    const encabezado = screen.getByRole('columnheader', { name: /Importe/ })
+    fireEvent.click(within(encabezado).getByRole('button'))
+
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+    expect(celdasDeLaTabla().map((c) => c[0])).toEqual([
+      'Tarjeta',
+      'Efectivo',
+      'Cheque',
+      'Total digitales',
+      'Total efectivo',
+      'Total general',
+    ])
+  })
+
+  it('el medio ordena alfabéticamente y el segundo clic invierte', () => {
+    render(<VentasPorMedioDeCierre cierre={cierreFixture()} />)
+
+    const encabezado = screen.getByRole('columnheader', { name: /Medio/ })
+    fireEvent.click(within(encabezado).getByRole('button'))
+    expect(celdasDeLaTabla().slice(0, 2).map((c) => c[0])).toEqual(['Efectivo', 'Tarjeta'])
+
+    fireEvent.click(within(encabezado).getByRole('button'))
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+    expect(celdasDeLaTabla().slice(0, 2).map((c) => c[0])).toEqual(['Tarjeta', 'Efectivo'])
   })
 })

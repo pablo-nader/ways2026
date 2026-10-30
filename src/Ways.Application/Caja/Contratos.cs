@@ -1,6 +1,7 @@
+using System.Text.Json.Serialization;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
@@ -85,18 +86,18 @@ public sealed record TicketLimite(long Numero, DateTimeOffset Fecha, string Codi
 /// por debajo del total vendido del turno.</summary>
 public sealed record IngresoPorArea(int IdArea, string NombreArea, decimal Total);
 
-/// <summary>Egresos de una categoría de gasto dentro del turno (legacy D6, segundo bloque: "por
+/// <summary>Egresos de una categoría de pago dentro del turno (legacy D6, segundo bloque: "por
 /// tipo").</summary>
-public sealed record EgresoPorCategoria(CategoriaGasto Categoria, decimal Total);
+public sealed record EgresoPorCategoria(CategoriaPago Categoria, decimal Total);
 
 /// <summary>Egresos de un área dentro del turno (legacy D6, segundo bloque: "por área") — agrupa
-/// <see cref="Ways.Domain.Gastos.Gasto.Importe"/> por <see cref="Ways.Domain.Gastos.Gasto.IdArea"/>,
+/// <see cref="Ways.Domain.Pagos.Pago.Importe"/> por <see cref="Ways.Domain.Pagos.Pago.IdArea"/>,
 /// que a diferencia de <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.IdArea"/> es NULLABLE:
-/// <see cref="IdArea"/> null representa el bucket "Sin área" (gastos sin área declarada), nunca
+/// <see cref="IdArea"/> null representa el bucket "Sin área" (pagos sin área declarada), nunca
 /// descartados.</summary>
 public sealed record EgresoPorArea(int? IdArea, string NombreArea, decimal Total);
 
-/// <summary>Egresos del turno (legacy D6, segundo bloque: "por área y por tipo") — gastos
+/// <summary>Egresos del turno (legacy D6, segundo bloque: "por área y por tipo") — pagos
 /// agrupados por categoría y por área más el total de retiros físicos (<c>movimientos_caja</c>
 /// tipo <see cref="TipoMovimientoCaja.Retiro"/>); nunca incluye <see
 /// cref="TipoMovimientoCaja.Refuerzo"/> ni <see cref="TipoMovimientoCaja.AperturaCajon"/>, que no
@@ -178,15 +179,15 @@ public sealed record PaginaDeHistoricoDeCajas(
     IReadOnlyList<FilaDeHistoricoDeCajas> Items, int Total, int Pagina, int Tamanio);
 
 /// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/detalle</c> (spec: G2 Detail Reuses
-/// ResumenDeTurno Plus Ticket And Gasto Listings) — el MISMO <see cref="ResumenDeTurno"/> que
+/// ResumenDeTurno Plus Ticket And Pago Listings) — el MISMO <see cref="ResumenDeTurno"/> que
 /// <c>/resumen</c> devuelve, sin tocarlo, más las dos listas que <see cref="LectorDeLineasDelTurno"/>
 /// lee: los tickets del turno (<see cref="Ways.Application.Ventas.ComprobanteListado"/>, anulados
-/// excluidos) y sus gastos (<see cref="Ways.Application.Gastos.GastoListado"/>), más la marca del
+/// excluidos) y sus pagos (<see cref="Ways.Application.Pagos.PagoListado"/>), más la marca del
 /// último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
 public sealed record DetalleDeTurno(
     ResumenDeTurno Resumen,
     IReadOnlyList<Ways.Application.Ventas.ComprobanteListado> Tickets,
-    IReadOnlyList<Ways.Application.Gastos.GastoListado> Gastos,
+    [property: JsonPropertyName("gastos")] IReadOnlyList<Ways.Application.Pagos.PagoListado> Pagos,
     DateTimeOffset? FechaRecalculo,
     int? IdEmpleadoRecalculo);
 
@@ -204,9 +205,9 @@ public sealed record DetalleDeTurno(
 /// stage-tesoreria-por-empresa (PR5): agrega <see cref="IdEmpresa"/> (la cadena es por empresa,
 /// no por punto de venta), <see cref="NombrePuntoVenta"/> (dangling-fk-read-models: <c>null</c>
 /// tanto sin punto de venta como con uno dado de baja lógica — mismo predicado, nunca dos) y,
-/// cuando <see cref="IdGasto"/> está seteado, <see cref="GastoCategoria"/>/<see cref="GastoConcepto"/>
-/// resueltos del gasto de origen (para que el libro sea legible sin una segunda consulta) — ambos
-/// <c>null</c> cuando la fila no es de tipo <see cref="TipoMovimientoTesoreria.Gasto"/> o el gasto
+/// cuando <see cref="IdPago"/> está seteado, <see cref="PagoCategoria"/>/<see cref="PagoConcepto"/>
+/// resueltos del pago de origen (para que el libro sea legible sin una segunda consulta) — ambos
+/// <c>null</c> cuando la fila no es de tipo <see cref="TipoMovimientoTesoreria.Pago"/> o el pago
 /// referenciado ya no es visible.</summary>
 public sealed record MovimientoTesoreriaListado(
     int Id,
@@ -216,9 +217,9 @@ public sealed record MovimientoTesoreriaListado(
     DateTimeOffset Fecha,
     TipoMovimientoTesoreria Tipo,
     int? IdTurnoCaja,
-    int? IdGasto,
-    CategoriaGasto? GastoCategoria,
-    string? GastoConcepto,
+    [property: JsonPropertyName("idGasto")] int? IdPago,
+    [property: JsonPropertyName("gastoCategoria")] CategoriaPago? PagoCategoria,
+    [property: JsonPropertyName("gastoConcepto")] string? PagoConcepto,
     string Concepto,
     decimal Inicio,
     decimal Ingreso,
@@ -303,7 +304,7 @@ public sealed record PuntoVentaDeCierre(int Id, int Numero, string Nombre);
 
 /// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.VentasPorMedio"/> — lo COBRADO por
 /// medio (ventas y recibos de cuenta corriente del turno), neto de vuelto en el efectivo y nunca de
-/// gastos; la cuenta corriente no es una fila, ver <see
+/// pagos; la cuenta corriente no es una fila, ver <see
 /// cref="ResumenDeCierrePorRetiro.VentasACuentaCorriente"/>. Con el nombre ya resuelto
 /// (<see cref="Ways.Domain.Caja.CalculadorDeCierrePorRetiro"/> es puro y solo conoce ids).
 /// <see cref="Comportamiento"/> es la clasificación con que la fila entra en los subtotales (ver
@@ -328,7 +329,7 @@ public sealed record RetiroDeCierre(DateTimeOffset Fecha, decimal Importe, strin
 /// declarado − esperado</c> (positivo = sobrante, negativo = faltante — el signo OPUESTO al de
 /// <c>ArqueoTurno.Diferencia</c>, que persiste <c>esperado − declarado</c>). NUNCA una fórmula
 /// sobre <see cref="TotalRetiros"/>/<see cref="VentasEnEfectivoNetas"/>/<see
-/// cref="GastosEnEfectivo"/>/<see cref="Refuerzos"/>: esa fórmula solo vale cuando el ancla se
+/// cref="PagosEnEfectivo"/>/<see cref="Refuerzos"/>: esa fórmula solo vale cuando el ancla se
 /// declaró con <see cref="FondoInicial"/> (cierto en el modo retiro, NUNCA en el clásico, donde el
 /// cajero declara lo que realmente contó). Cuando el ancla no tiene fila en <c>arqueos_turno</c>
 /// (sin actividad física de efectivo en el turno), <c>Diferencia = 0</c>.
@@ -357,6 +358,6 @@ public sealed record ResumenDeCierrePorRetiro(
     IReadOnlyList<RetiroDeCierre> Retiros,
     decimal TotalRetiros,
     decimal VentasEnEfectivoNetas,
-    decimal GastosEnEfectivo,
+    [property: JsonPropertyName("gastosEnEfectivo")] decimal PagosEnEfectivo,
     decimal Refuerzos,
     decimal Diferencia);

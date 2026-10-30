@@ -86,6 +86,29 @@ describe('App — ruta /combos', () => {
     expect(window.location.pathname).toBe('/admin/combos')
   })
 
+  /** Las altas de familia y de tenant ya no son páginas: sus URL viejas (marcadores, el menú) llevan al listado con el
+   * modal de alta abierto, y el parámetro que lo abre se consume. */
+  it.each([
+    ['/admin/familias/nueva', ROL.Admin, '/admin/familias', 'Nueva familia'],
+    ['/admin/organizacion/nuevo-tenant', ROL.Root, '/admin/organizacion/tenants', 'Nuevo tenant'],
+  ])('%s redirige al listado con el modal de alta abierto', async (ruta, rolId, destino, titulo) => {
+    apiGetMock.mockImplementation((rutaApi: string) => {
+      if (rutaApi === '/auth/me') {
+        return Promise.resolve({ id: 1, usuario: 'u', mail: 'u@ejemplo.com', rolId, rol: 'Rol', ultimaConexion: null, idTenant: 1 })
+      }
+      if (rutaApi === '/puntos-venta') return Promise.resolve([PUNTO_DE_VENTA])
+      if (rutaApi === '/familias' || rutaApi === '/plataforma/tenants') return Promise.resolve([])
+      return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe.'))
+    })
+    window.history.pushState({}, '', ruta)
+
+    render(<App />)
+
+    expect(await screen.findByRole('dialog', { name: titulo })).toBeInTheDocument()
+    await waitFor(() => expect(window.location.pathname).toBe(destino))
+    await waitFor(() => expect(window.location.search).toBe(''))
+  })
+
   it.each([
     ['Supervisor', ROL.Supervisor],
     ['Vendedor', ROL.Vendedor],
@@ -97,5 +120,26 @@ describe('App — ruta /combos', () => {
 
     await waitFor(() => expect(window.location.pathname).not.toBe('/admin/combos'))
     expect(screen.queryByText('No hay combos cargados.')).not.toBeInTheDocument()
+  })
+})
+
+describe('App — ruta vieja /gastos', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/auth/me') {
+        return Promise.resolve({ id: 1, usuario: 'u', mail: 'u@ejemplo.com', rolId: ROL.Admin, rol: 'Rol', ultimaConexion: null, idTenant: 1 })
+      }
+      if (ruta === '/puntos-venta') return Promise.resolve([PUNTO_DE_VENTA])
+      return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe.'))
+    })
+  })
+
+  it('redirige a /pagos para que los marcadores viejos sigan funcionando', async () => {
+    window.history.pushState({}, '', '/admin/gastos')
+
+    render(<App />)
+
+    await waitFor(() => expect(window.location.pathname).toBe('/admin/pagos'))
   })
 })

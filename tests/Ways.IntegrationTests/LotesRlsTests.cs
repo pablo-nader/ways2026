@@ -7,7 +7,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;

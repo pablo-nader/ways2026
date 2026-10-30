@@ -1,5 +1,5 @@
 import { ErrorApi } from '../api/cliente'
-import type { OrigenFondosGasto } from '../api/tipos'
+import type { OrigenFondosPago } from '../api/tipos'
 import type { CampoDeCuenta, ErrorDeCuenta } from './cuentaDePersonalFormularios'
 
 export type { CampoDeCuenta, ErrorDeCuenta }
@@ -33,7 +33,7 @@ export function esRechazoCierto(e: unknown): e is ErrorApi {
 
 /** Se elige por `codigo`, nunca por `mensaje`. Es un `Map` porque el código viene del servidor: sobre un
  * objeto, `'constructor'` resolvería contra el prototipo. Los códigos son los de `ReglaDeMovimientoDePersonal`,
- * `ReglaDePagoDePersonal`, `ServicioDePagoDePersonal` y los de gastos y turnos que el pago reutiliza. */
+ * `ReglaDePagoDePersonal`, `ServicioDePagoDePersonal` y los de pagos y turnos que el pago reutiliza. */
 const ERROR_POR_CODIGO: ReadonlyMap<string, ErrorDeCuenta> = new Map<string, ErrorDeCuenta>([
   ['fecha_requerida', { campo: 'fecha', mensaje: 'Ingresá la fecha.' }],
   ['horas_invalidas', { campo: 'horas', mensaje: 'Las horas deben ser mayores que 0 y hasta 24, con hasta dos decimales.' }],
@@ -119,7 +119,7 @@ export function desactualizaLaDeuda(e: ErrorApi): boolean {
 /** El rechazo de una escritura de la cuenta, ubicado en el campo que corresponde. `origenDelPago` es el
  * origen de fondos que se envió (`null` si el pago no llevaba líneas): un 403 solo se explica con la
  * tesorería cuando fue la tesorería lo que se pidió. */
-export function errorDeEscritura(e: ErrorApi, escritura: Escritura, origenDelPago: OrigenFondosGasto | null = null): ErrorDeCuenta {
+export function errorDeEscritura(e: ErrorApi, escritura: Escritura, origenDelPago: OrigenFondosPago | null = null): ErrorDeCuenta {
   const propio = ERROR_POR_CODIGO.get(e.codigo)
   if (propio) return propio
 

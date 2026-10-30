@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { CambiosDeUnArticulo, PrevisualizacionDeAgrupacion, ProblemaDeAgrupacion, ValoresCompartidosDeLaFamilia } from '../../api/tipos'
 import { formatearFechaHora } from '../articulos/familia'
@@ -21,7 +21,7 @@ const base: ValoresCompartidosDeLaFamilia = {
   costoListaPor: 'Unidad',
   costoListaIncluyeIva: true,
   descuentoProveedor: null,
-  porcentajeImpuestoInterno: 0,
+  impuestoInterno: 0,
   costoNominal: null,
 }
 
@@ -279,5 +279,28 @@ describe('VistaDePrevisualizacion — los problemas', () => {
     )
 
     expect(within(screen.getByRole('alert')).getAllByRole('listitem')).toHaveLength(2)
+  })
+})
+
+describe('VistaDePrevisualizacion — orden por columna', () => {
+  it('la tabla de campos se ordena por la etiqueta y el tercer clic vuelve al orden del servidor', () => {
+    montar(previsualizacion({ articulos: [cambios(32, { campos: ['costo_lista', 'id_categoria'], nuevo: { ...base, costoLista: 1, idCategoria: null } })] }))
+    const campo = screen.getByRole('columnheader', { name: /Campo/ })
+    const etiquetas = () =>
+      within(screen.getByRole('table'))
+        .getAllByRole('row')
+        .slice(1)
+        .map((f) => within(f).getAllByRole('cell')[0].textContent)
+
+    fireEvent.click(within(campo).getByRole('button'))
+    expect(campo).toHaveAttribute('aria-sort', 'ascending')
+    expect(etiquetas()).toEqual(['Categoría', 'Costo de lista'])
+
+    fireEvent.click(within(campo).getByRole('button'))
+    expect(etiquetas()).toEqual(['Costo de lista', 'Categoría'])
+
+    fireEvent.click(within(campo).getByRole('button'))
+    expect(campo).toHaveAttribute('aria-sort', 'none')
+    expect(etiquetas()).toEqual(['Costo de lista', 'Categoría'])
   })
 })

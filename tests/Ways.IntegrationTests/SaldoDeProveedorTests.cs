@@ -8,7 +8,7 @@ using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Compras;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
@@ -16,7 +16,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
@@ -37,7 +37,7 @@ namespace Ways.IntegrationTests;
 ///
 /// JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el LISTADO
 /// (<c>GET /api/proveedores</c>) vuelve a ser <c>GestionDeCatalogo</c> (ver
-/// <c>ProveedoresEndpointsTests</c>); el selector de proveedor del formulario de gastos usa la
+/// <c>ProveedoresEndpointsTests</c>); el selector de proveedor del formulario de pagos usa la
 /// proyección mínima separada <c>GET /api/proveedores/opciones</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -88,9 +88,9 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         // MedioPago y Cliente son tenant-scoped (CatalogoSimple/Cliente : EntidadTenant) — bajo
         // TenantActualFijo.Plataforma el filtro de EF no acota por tenant y .FirstAsync() puede
         // devolver una fila de OTRO tenant creado en paralelo por otra prueba de esta misma
-        // colección, violando fk_gastos_medio_pago/fk_comprobantes_venta_cliente más adelante.
+        // colección, violando fk_items_pago_medio_pago/fk_comprobantes_venta_cliente más adelante.
         // Contexto tenant-scoped propio, mismo criterio que
-        // CajaCierreEndpointsTests/GastosEndpointsTests.PrepararAsync.
+        // CajaCierreEndpointsTests/PagosEndpointsTests.PrepararAsync.
         await using var dbTenant = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var idMedioEfectivo = await dbTenant.MediosPago
             .Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
@@ -165,12 +165,12 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    private static async Task<HttpResponseMessage> RegistrarGastoLigadoAsync(
+    private static async Task<HttpResponseMessage> RegistrarPagoLigadoAsync(
         Contexto ctx, HttpClient cliente, int idComprobanteCompra, decimal importe) =>
         await cliente.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, null, null, "Pago de compra", null, ctx.IdMedioEfectivo,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Proveedor, null, null, "Pago de compra", null, ctx.IdMedioEfectivo,
                 null, importe, idComprobanteCompra));
 
     private static async Task<SaldoDeProveedor> ObtenerSaldoAsync(Contexto ctx, int? idProveedor = null)
@@ -184,13 +184,13 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     // ---- task 4.7: saldo derivado, nunca persistido --------------------------------------------
 
     [Fact]
-    public async Task ElSaldoRefleneComprasConfirmadasNetoDeGastos()
+    public async Task ElSaldoRefleneComprasConfirmadasNetoDePagos()
     {
-        var ctx = await PrepararAsync(nameof(ElSaldoRefleneComprasConfirmadasNetoDeGastos));
+        var ctx = await PrepararAsync(nameof(ElSaldoRefleneComprasConfirmadasNetoDePagos));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 5000m, "0001-00000401");
         await AbrirTurnoAsync(ctx);
-        var gasto = await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 3000m);
-        Assert.Equal(HttpStatusCode.Created, gasto.StatusCode);
+        var pago = await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 3000m);
+        Assert.Equal(HttpStatusCode.Created, pago.StatusCode);
 
         var saldo = await ObtenerSaldoAsync(ctx);
 
@@ -219,25 +219,25 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(2000m, saldo.Compras[0].Total);
     }
 
-    /// <summary>design decisión 6, la regla invertida: "annulling is allowed, the linked gastos
+    /// <summary>design decisión 6, la regla invertida: "annulling is allowed, the linked pagos
     /// stay linked (the link is history, not a claim of debt), the response reports how many
     /// payments the operator has left dangling, and the derived saldo keeps counting them as
     /// money paid — which they are". Backstop de regresión: si algún día alguien "arregla" esto
-    /// para descontar el gasto colgante de la anulación, este test lo tiene que romper.</summary>
+    /// para descontar el pago colgante de la anulación, este test lo tiene que romper.</summary>
     [Fact]
-    public async Task UnGastoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo()
+    public async Task UnPagoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo));
+        var ctx = await PrepararAsync(nameof(UnPagoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000405");
         await AbrirTurnoAsync(ctx);
-        var gasto = await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 100m);
-        Assert.Equal(HttpStatusCode.Created, gasto.StatusCode);
+        var pago = await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 100m);
+        Assert.Equal(HttpStatusCode.Created, pago.StatusCode);
 
         var respuestaAnulacion = await ctx.Admin.PostAsync($"/api/compras/{compra.Id}/anular", null);
         var cuerpoAnulacion = await respuestaAnulacion.Content.ReadAsStringAsync();
         Assert.True(respuestaAnulacion.StatusCode == HttpStatusCode.OK, cuerpoAnulacion);
         var resultadoAnulacion = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpoAnulacion, OpcionesJson)!;
-        Assert.Equal(1, resultadoAnulacion.GastosLigados);
+        Assert.Equal(1, resultadoAnulacion.PagosLigados);
 
         var saldo = await ObtenerSaldoAsync(ctx);
 
@@ -256,7 +256,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Empty(saldo.Compras);
     }
 
-    // ---- task 4.8: estado de pago por-compra, de gastos LIGADOS únicamente ---------------------
+    // ---- task 4.8: estado de pago por-compra, de pagos LIGADOS únicamente ---------------------
 
     [Fact]
     public async Task UnaCompraTotalmentePagadaQuedaPagada()
@@ -264,7 +264,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var ctx = await PrepararAsync(nameof(UnaCompraTotalmentePagadaQuedaPagada));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000406");
         await AbrirTurnoAsync(ctx);
-        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 1000m);
+        await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 1000m);
 
         var saldo = await ObtenerSaldoAsync(ctx);
 
@@ -274,17 +274,17 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     [Fact]
-    public async Task UnGastoSinLigarNoMarcaUnaCompraComoPagadaPeroReduceElSaldoTotal()
+    public async Task UnPagoSinLigarNoMarcaUnaCompraComoPagadaPeroReduceElSaldoTotal()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoSinLigarNoMarcaUnaCompraComoPagadaPeroReduceElSaldoTotal));
+        var ctx = await PrepararAsync(nameof(UnPagoSinLigarNoMarcaUnaCompraComoPagadaPeroReduceElSaldoTotal));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 2000m, "0001-00000407");
         await AbrirTurnoAsync(ctx);
 
-        // Gasto de categoría proveedor, mismo proveedor, SIN idComprobanteCompra.
+        // Pago de categoría proveedor, mismo proveedor, SIN idComprobanteCompra.
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, ctx.IdProveedor, null, "Pago suelto", null,
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago suelto", null,
                 ctx.IdMedioEfectivo, null, 500m));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 
@@ -303,7 +303,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var ctx = await PrepararAsync(nameof(UnPagoParcialLigadoDaEstadoParcial));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000408");
         await AbrirTurnoAsync(ctx);
-        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 400m);
+        await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 400m);
 
         var saldo = await ObtenerSaldoAsync(ctx);
 
@@ -314,13 +314,13 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     [Fact]
-    public async Task VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada()
+    public async Task VariosPagosLigadosALaMismaCompraSeAcumulanHastaPagada()
     {
-        var ctx = await PrepararAsync(nameof(VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada));
+        var ctx = await PrepararAsync(nameof(VariosPagosLigadosALaMismaCompraSeAcumulanHastaPagada));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000410");
         await AbrirTurnoAsync(ctx);
-        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 300m);
-        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 200m);
+        await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 300m);
+        await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 200m);
 
         var saldoParcial = await ObtenerSaldoAsync(ctx);
 
@@ -329,7 +329,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(EstadoPago.Parcial, lineaParcial.EstadoPago);
         Assert.Equal(500m, saldoParcial.Saldo);
 
-        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 500m);
+        await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 500m);
 
         var saldoPagada = await ObtenerSaldoAsync(ctx);
 
@@ -390,16 +390,16 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.OK, saldo.StatusCode);
     }
 
-    /// <summary>spec: operacion-de-pos delta / Paying A Compra Keeps The Existing Gastos Gate —
+    /// <summary>spec: operacion-de-pos delta / Paying A Compra Keeps The Existing Pagos Gate —
     /// un Vendedor con turno abierto sigue pudiendo pagar una compra, sin ningún tier nuevo.</summary>
     [Fact]
-    public async Task UnVendedorPagaUnaCompraBajoElGateInalteradoDeGastos()
+    public async Task UnVendedorPagaUnaCompraBajoElGateInalteradoDePagos()
     {
-        var ctx = await PrepararAsync(nameof(UnVendedorPagaUnaCompraBajoElGateInalteradoDeGastos));
+        var ctx = await PrepararAsync(nameof(UnVendedorPagaUnaCompraBajoElGateInalteradoDePagos));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000412");
         await AbrirTurnoAsync(ctx, ctx.Vendedor);
 
-        var respuesta = await RegistrarGastoLigadoAsync(ctx, ctx.Vendedor, compra.Id, 1000m);
+        var respuesta = await RegistrarPagoLigadoAsync(ctx, ctx.Vendedor, compra.Id, 1000m);
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
@@ -457,7 +457,7 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<CategoriaPago>("categoria_pago");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<OrigenCompra>("origen_compra");
                 // stage-15-cc-proveedores-ledger, Slice 4 (deviación registrada, mismo patrón
@@ -549,28 +549,28 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await db.SaveChangesAsync();
     }
 
-    /// <summary>spec: arqueo-de-cierre / A Proveedor Gasto Linked To A Compra Introduces No New
-    /// Derivation Term — el gasto ligado a una compra confirmada resta su importe exacto del
+    /// <summary>spec: arqueo-de-cierre / A Proveedor Pago Linked To A Compra Introduces No New
+    /// Derivation Term — el pago ligado a una compra confirmada resta su importe exacto del
     /// <c>importe_esperado</c> del medio en el que se pagó, a través del MISMO término
-    /// <c>SUM(gastos.importe on that medio)</c> que cualquier otro gasto — <c>CalculadorDeArqueo</c>
+    /// <c>SUM(pagos.importe on that medio)</c> que cualquier otro pago — <c>CalculadorDeArqueo</c>
     /// no gana ninguna rama nueva (la prueba complementaria de que el archivo queda
     /// byte-idéntico corre por <c>git diff</c> al cierre de esta slice, no acá).</summary>
     [Fact]
-    public async Task UnGastoDeProveedorLigadoAUnaCompraReduceElEsperadoAtravesDelTerminoExistente()
+    public async Task UnPagoDeProveedorLigadoAUnaCompraReduceElEsperadoAtravesDelTerminoExistente()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoDeProveedorLigadoAUnaCompraReduceElEsperadoAtravesDelTerminoExistente));
+        var ctx = await PrepararAsync(nameof(UnPagoDeProveedorLigadoAUnaCompraReduceElEsperadoAtravesDelTerminoExistente));
         var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "0001-00000413");
         var idTurno = await AbrirTurnoAsync(ctx);
 
         await SembrarPagoAsync(ctx, idTurno, importe: 1500m);
-        var gasto = await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 400m);
-        Assert.Equal(HttpStatusCode.Created, gasto.StatusCode);
+        var pago = await RegistrarPagoLigadoAsync(ctx, ctx.Admin, compra.Id, 400m);
+        Assert.Equal(HttpStatusCode.Created, pago.StatusCode);
 
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{idTurno}/resumen", OpcionesJson);
         Assert.NotNull(resumen);
         var efectivo = resumen!.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo);
 
-        // 1500 (pago) - 400 (gasto de compra, mismo término que cualquier otro gasto) = 1100.
+        // 1500 (pago) - 400 (pago de compra, mismo término que cualquier otro pago) = 1100.
         Assert.Equal(1100m, efectivo.ImporteEsperado);
     }
 

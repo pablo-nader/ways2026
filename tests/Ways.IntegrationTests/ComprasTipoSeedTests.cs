@@ -11,7 +11,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -137,7 +137,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     npgsql.MapEnum<EstadoTurno>("estado_turno");
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<CategoriaPago>("categoria_pago");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
                     npgsql.MapEnum<OrigenCompra>("origen_compra");
                     // stage-15-cc-proveedores-ledger, Slice 2 (hallazgo registrado en tasks.md):
@@ -158,8 +158,9 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     npgsql.MapEnum<EstadoFacturacionDeVenta>("estado_facturacion_venta");
                     // stage-desktop-pos: mismo gap que arriba, ahora con modo_punto_venta.
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
-                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
-                    npgsql.MapEnum<Ways.Domain.Gastos.OrigenFondosGasto>("origen_fondos_gasto");
+                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
+                    npgsql.MapEnum<Ways.Domain.Pagos.OrigenFondosPago>("origen_fondos_pago");
+                    npgsql.MapEnum<Ways.Domain.Pagos.OrigenAplicacionPago>("origen_aplicacion_pago");
                 })
                 .Options;
 

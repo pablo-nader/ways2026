@@ -132,11 +132,12 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
             select new Unido { A = a, Actor = u == null ? null : u.NombreUsuario };
 
         // El LEFT JOIN a puntos de venta existe SOLO cuando se ordena por esa columna: el listado de
-        // siempre, el conteo y el export no lo pagan. Pasa por el DbSet filtrado: un punto de venta dado de
-        // baja o colgante llega como null, igual que un evento de todo el tenant.
+        // siempre, el conteo y el export no lo pagan. La baja lógica se filtra a mano: el
+        // IgnoreQueryFilters(["BajaLogica"]) de usuarios alcanza a toda la consulta, así que el filtro global ya no
+        // protege acá. Un punto de venta dado de baja o colgante llega como null, igual que un evento de todo el tenant.
         var unido = orden is { Columna: ColumnaDeOrdenDeAuditoria.PuntoVenta }
             ? from x in baseUnida
-              join pv in db.PuntosVenta on x.A.IdPuntoVenta equals pv.Id into puntosVenta
+              join pv in db.PuntosVenta.Where(p => p.DeletedAt == null) on x.A.IdPuntoVenta equals pv.Id into puntosVenta
               from pv in puntosVenta.DefaultIfEmpty()
               select new Unido { A = x.A, Actor = x.Actor, PuntoVenta = pv == null ? null : pv.Nombre }
             : baseUnida;
@@ -197,6 +198,11 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
             ["precio.cambio"] = "Cambio de precio",
             ["venta.anulacion"] = "Anulación de venta",
             ["compra.anulacion"] = "Anulación de compra",
+            ["compra.edicion"] = "Edición de compra",
+            ["compra.redondeo"] = "Ajuste de redondeo de compra",
+            ["pago.aplicacion"] = "Aplicación de pago a compras",
+            ["pago.desaplicacion"] = "Desaplicación de pago de una compra",
+            ["pago.redondeo"] = "Ajuste de redondeo de pago",
             ["stock.ajuste"] = "Ajuste de stock",
             ["stock.decomiso"] = "Decomiso de stock",
             ["stock.conteo"] = "Conteo de inventario",

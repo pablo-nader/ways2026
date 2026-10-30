@@ -211,7 +211,7 @@ public class AjusteDeCuentaCorrienteDeProveedorTests(WaysApiFixture fixture) : I
         Assert.Equal(300m, movimiento.SaldoResultante);
         Assert.Equal(TipoMovimientoCcProveedor.Ajuste, movimiento.Tipo);
         Assert.Null(movimiento.IdComprobanteCompra);
-        Assert.Null(movimiento.IdGasto);
+        Assert.Null(movimiento.IdPago);
         Assert.Equal("Descuento por reclamo", movimiento.Detalle);
         Assert.Equal(EtiquetaDeAjuste.Manual, movimiento.Etiqueta);
 

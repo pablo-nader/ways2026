@@ -200,7 +200,7 @@ public class ServicioDeArticulos(
                 Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
                 x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor,
                 x.Articulo.DisponibleOnline, x.Articulo.DisponibleVenta, x.TieneImagen, x.Articulo.TeclaAtajo,
-                x.Articulo.PorcentajeImpuestoInterno))
+                x.Articulo.ImpuestoInterno))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -243,7 +243,7 @@ public class ServicioDeArticulos(
             CostoListaIncluyeIva = null,
             DescuentoProveedor = null,
             CostoNominal = null,
-            PorcentajeImpuestoInterno = null
+            ImpuestoInterno = null
         };
 
     /// <summary>Asigna <c>codigo_interno</c> de forma atómica (design decision 6) cuando se
@@ -291,7 +291,7 @@ public class ServicioDeArticulos(
         ExigirUnidadesPorBultoValida(datos.UnidadesPorBulto);
         ExigirCostoValido(datos.CostoLista, "costo_lista");
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
-        ExigirPorcentajeImpuestoInternoValido(datos.PorcentajeImpuestoInterno);
+        ExigirImpuestoInternoValido(datos.ImpuestoInterno);
         ExigirCostoListaPorDefinido(datos.CostoListaPor);
         ExigirUnidadesParaCostoPorBulto(datos.CostoListaPor, datos.UnidadesPorBulto);
         ExigirTeclaAtajoDefinida(datos.TeclaAtajo);
@@ -300,7 +300,7 @@ public class ServicioDeArticulos(
         var porcentajeIva = await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
         var costoNominal = CalcularCostoNominal(
             datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.UnidadesPorBulto, porcentajeIva,
-            datos.DescuentoProveedor, datos.PorcentajeImpuestoInterno);
+            datos.DescuentoProveedor, datos.ImpuestoInterno);
 
         // judgment-day ronda 1 (item 3): .Distinct() ANTES de validar/insertar — un duplicado
         // en el payload no debe inflar el conteo de "subset presente" ni generar dos INSERT
@@ -434,7 +434,7 @@ public class ServicioDeArticulos(
                     CostoListaPor = datos.CostoListaPor,
                     CostoListaIncluyeIva = datos.CostoListaIncluyeIva,
                     DescuentoProveedor = datos.DescuentoProveedor,
-                    PorcentajeImpuestoInterno = datos.PorcentajeImpuestoInterno,
+                    ImpuestoInterno = datos.ImpuestoInterno,
                     CostoNominal = costoNominalAGuardar,
                     DisponibleParaTodas = datos.DisponibleParaTodas,
                     Activo = datos.Activo,
@@ -532,7 +532,7 @@ public class ServicioDeArticulos(
         ExigirUnidadesPorBultoValida(datos.UnidadesPorBulto);
         ExigirCostoValido(datos.CostoLista, "costo_lista");
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
-        ExigirPorcentajeImpuestoInternoValido(datos.PorcentajeImpuestoInterno);
+        ExigirImpuestoInternoValido(datos.ImpuestoInterno);
 
         if (datos.CostoListaPor is { } costoListaPorPedido)
         {
@@ -614,7 +614,7 @@ public class ServicioDeArticulos(
             // guardado, que puede ser el costo efectivo que dejó una compra.
             var costoListaPor = datos.CostoListaPor ?? editado.CostoListaPor;
             var costoListaIncluyeIva = datos.CostoListaIncluyeIva ?? editado.CostoListaIncluyeIva;
-            var porcentajeImpuestoInterno = datos.PorcentajeImpuestoInterno ?? editado.PorcentajeImpuestoInterno;
+            var impuestoInterno = datos.ImpuestoInterno ?? editado.ImpuestoInterno;
             ExigirUnidadesParaCostoPorBulto(costoListaPor, datos.UnidadesPorBulto);
 
             var porcentajeIvaGuardado = editado.IdAlicuotaIva == datos.IdAlicuotaIva
@@ -623,14 +623,14 @@ public class ServicioDeArticulos(
             var cambiaElCalculo = CalculadorDeCostoNominal.CambiaAlgunaEntrada(
                 new CalculadorDeCostoNominal.Entradas(
                     editado.CostoLista, editado.CostoListaPor, editado.CostoListaIncluyeIva, editado.UnidadesPorBulto,
-                    porcentajeIvaGuardado, editado.DescuentoProveedor, editado.PorcentajeImpuestoInterno),
+                    porcentajeIvaGuardado, editado.DescuentoProveedor, editado.ImpuestoInterno),
                 new CalculadorDeCostoNominal.Entradas(
                     datos.CostoLista, costoListaPor, costoListaIncluyeIva, datos.UnidadesPorBulto, porcentajeIva,
-                    datos.DescuentoProveedor, porcentajeImpuestoInterno));
+                    datos.DescuentoProveedor, impuestoInterno));
             var costoNominal = cambiaElCalculo
                 ? CalcularCostoNominal(
                     datos.CostoLista, costoListaPor, costoListaIncluyeIva, datos.UnidadesPorBulto, porcentajeIva,
-                    datos.DescuentoProveedor, porcentajeImpuestoInterno)
+                    datos.DescuentoProveedor, impuestoInterno)
                 : editado.CostoNominal;
 
             await ExigirAreaValidaAsync(datos.IdArea, ct);
@@ -647,7 +647,7 @@ public class ServicioDeArticulos(
             // puede haber cambiado. Lo mismo vale para acumula_en_venta, el único campo compartido cuyo nulo en
             // el pedido significa "conservar el guardado": su valor sale de esa misma lectura, no de otra.
             var pedido = ValoresCompartidosDe(
-                datos, editado.AcumulaEnVenta, costoListaPor, costoListaIncluyeIva, porcentajeImpuestoInterno, costoNominal);
+                datos, editado.AcumulaEnVenta, costoListaPor, costoListaIncluyeIva, impuestoInterno, costoNominal);
             var resolucion = bloqueados.IdFamilia is null
                 ? ResolucionDeAlcanceDeFamilia.SoloElArticulo
                 : ReglaDeFamilias.ResolverEdicionDeMiembro(
@@ -902,7 +902,7 @@ public class ServicioDeArticulos(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
         datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote, AcumulaEnVentaDe(datos),
         datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor,
-        datos.PorcentajeImpuestoInterno, costoNominal);
+        datos.ImpuestoInterno, costoNominal);
 
     /// <summary>El <c>acumula_en_venta</c> con el que nace el artículo: el del pedido, o, si no lo trae, el único válido
     /// para su unidad de venta (un artículo por importe nunca acumula).</summary>
@@ -918,11 +918,11 @@ public class ServicioDeArticulos(
     /// acá: el record es posicional.</summary>
     private static ValoresCompartidosDeFamilia ValoresCompartidosDe(
         EdicionArticulo datos, bool acumulaEnVentaGuardado, CostoListaPor costoListaPor, bool costoListaIncluyeIva,
-        decimal porcentajeImpuestoInterno, decimal? costoNominal) => new(
+        decimal impuestoInterno, decimal? costoNominal) => new(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
         datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote,
         datos.AcumulaEnVenta ?? acumulaEnVentaGuardado, datos.CostoLista, costoListaPor, costoListaIncluyeIva,
-        datos.DescuentoProveedor, porcentajeImpuestoInterno, costoNominal);
+        datos.DescuentoProveedor, impuestoInterno, costoNominal);
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {
@@ -1179,7 +1179,7 @@ public class ServicioDeArticulos(
 
         return CalculadorDeCostoNominal.Calcular(
             articulo.CostoLista, articulo.CostoListaPor, articulo.CostoListaIncluyeIva, articulo.UnidadesPorBulto,
-            porcentajeIva, articulo.DescuentoProveedor, articulo.PorcentajeImpuestoInterno);
+            porcentajeIva, articulo.DescuentoProveedor, articulo.ImpuestoInterno);
     }
 
     /// <summary><see cref="ArticuloEmpresa.IdTenant"/> NO se auto-estampa (task 1.4: no hereda
@@ -1295,11 +1295,11 @@ public class ServicioDeArticulos(
     /// tope que sí cumple el costo de lista, y ese caso es un 400 y no un desborde de la base.</summary>
     private static decimal? CalcularCostoNominal(
         decimal? costoLista, CostoListaPor costoListaPor, bool costoListaIncluyeIva, decimal? unidadesPorBulto,
-        decimal porcentajeIva, decimal? descuentoProveedor, decimal porcentajeImpuestoInterno)
+        decimal porcentajeIva, decimal? descuentoProveedor, decimal impuestoInterno)
     {
         var costoNominal = CalculadorDeCostoNominal.Calcular(
             costoLista, costoListaPor, costoListaIncluyeIva, unidadesPorBulto, porcentajeIva, descuentoProveedor,
-            porcentajeImpuestoInterno);
+            impuestoInterno);
         ExigirCostoValido(costoNominal, "costo_nominal");
 
         return costoNominal;
@@ -1339,19 +1339,19 @@ public class ServicioDeArticulos(
         }
     }
 
-    /// <summary>Columna <c>numeric(7,4)</c>: de 0 a 999,9999.</summary>
-    private static void ExigirPorcentajeImpuestoInternoValido(decimal? valor)
+    /// <summary>Columna <c>numeric(14,2)</c>: importe de 0 a 999999999999,99 con hasta dos decimales.</summary>
+    private static void ExigirImpuestoInternoValido(decimal? valor)
     {
         if (valor is not { } v)
         {
             return;
         }
 
-        if (v < 0m || v >= 1000m || decimal.Round(v, 4) != v)
+        if (v < 0m || v >= 1_000_000_000_000m || decimal.Round(v, 2) != v)
         {
             throw new ErrorDominio(
-                "porcentaje_impuesto_interno_invalido",
-                "El campo porcentaje_impuesto_interno debe estar entre 0 y 999.9999, con hasta cuatro decimales.",
+                "impuesto_interno_articulo_invalido",
+                "El campo impuesto_interno debe estar entre 0 y 999999999999.99, con hasta dos decimales.",
                 400);
         }
     }
@@ -1609,5 +1609,5 @@ public class ServicioDeArticulos(
         a.CostoLista, a.CostoListaPor, a.CostoListaIncluyeIva, a.DescuentoProveedor, a.CostoNominal,
         a.DisponibleParaTodas, idsEmpresas, a.Activo,
         a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia, CodigoProveedor: null, a.DisponibleOnline, a.DisponibleVenta,
-        TeclaAtajo: a.TeclaAtajo, PorcentajeImpuestoInterno: a.PorcentajeImpuestoInterno);
+        TeclaAtajo: a.TeclaAtajo, ImpuestoInterno: a.ImpuestoInterno);
 }

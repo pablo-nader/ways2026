@@ -190,6 +190,12 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_movimientos_cuenta_cierre" } =>
                 (StatusCodes.Status409Conflict, "El turno ya está cerrado.", "turno_ya_cerrado"),
 
+            // E3-S1a: una sola aplicación viva por par pago-compra. El servicio escribe una por (pago, compra) y los
+            // escritores se serializan con el FOR UPDATE de la compra, así que este índice es solo el respaldo de una
+            // escritura que se salte ese lock.
+            { SqlState: "23505", ConstraintName: "ux_aplicaciones_pago_pago_compra" } =>
+                (StatusCodes.Status409Conflict, "Ese pago ya está aplicado a esa compra.", "aplicacion_duplicada"),
+
             { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
                 (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
 
@@ -410,15 +416,15 @@ public class ManejadorDeErrores(
                     "Este dispositivo ya tiene una reserva de numeración vigente para esa serie.",
                     "reserva_de_numeracion_duplicada"),
 
-            // GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_gasto — un gasto
+            // GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_pago — un pago
             // no puede originar dos movimientos de tesorería. Exact-match, sin ordering trap: "
-            // _id_gasto" no colisiona con ninguna substring de ClasificarUnicidad. Inalcanzable
-            // hoy — ningún escritor de esta etapa puebla IdGasto todavía (ver el doc-comment de
-            // MovimientoTesoreria.IdGasto); queda como backstop de esquema puro para la etapa
+            // _id_pago" no colisiona con ninguna substring de ClasificarUnicidad. Inalcanzable
+            // hoy — ningún escritor de esta etapa puebla IdPago todavía (ver el doc-comment de
+            // MovimientoTesoreria.IdPago); queda como backstop de esquema puro para la etapa
             // futura que sí lo escriba.
-            { SqlState: "23505", ConstraintName: string uxMovimientoTesoreriaGasto }
+            { SqlState: "23505", ConstraintName: string uxMovimientoTesoreriaPago }
                 when string.Equals(
-                    uxMovimientoTesoreriaGasto, "ux_movimientos_tesoreria_id_gasto", StringComparison.OrdinalIgnoreCase) =>
+                    uxMovimientoTesoreriaPago, "ux_movimientos_tesoreria_id_pago", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict,
                     "Este gasto ya tiene un movimiento de tesorería vinculado.",
                     "movimiento_de_tesoreria_de_gasto_duplicado"),
@@ -722,9 +728,9 @@ public class ManejadorDeErrores(
 
             // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
             // switch por nombre EXACTO de las seis CHECKs nuevas de turnos_caja/movimientos_caja/
-            // gastos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
+            // pagos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
             // (mismo motivo que ClasificarCheckDeVentas). ReglaDeTurnos/ReglaDeMovimientosDeCaja
-            // (Slice 2), ServicioDeGastos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
+            // (Slice 2), ServicioDePagos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
             // validan estos invariantes en el camino de servicio — bajo operación normal ninguna
             // de las seis ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
             // de banda.
@@ -1178,7 +1184,7 @@ public class ManejadorDeErrores(
 
     /// <summary>stage-6-turnos-caja (Slice 1, task 1.7, tasks.md "Orchestrator Decisions
     /// Recorded This Phase" — design decisión 8): switch por nombre EXACTO de las seis CHECKs
-    /// nuevas de <c>turnos_caja</c>/<c>movimientos_caja</c>/<c>gastos</c>/
+    /// nuevas de <c>turnos_caja</c>/<c>movimientos_caja</c>/<c>pagos</c>/
     /// <c>movimientos_tesoreria</c>. <c>ck_movimientos_caja_motivo_minimo</c> y
     /// <c>ck_movimientos_caja_importe</c> cubren, cada una, una sola regla UNIFORME sobre los
     /// tres <c>tipo_movimiento_caja</c> (design decisión 8: sin rama por tipo) — la CHECK en sí
@@ -1222,19 +1228,58 @@ public class ManejadorDeErrores(
                     "El motivo del movimiento de caja tiene que tener al menos 5 caracteres.",
                     "movimiento_de_caja_motivo_invalido"),
 
-            "ck_gastos_importe_positivo" =>
+            "ck_pagos_importe_positivo" =>
                 (StatusCodes.Status400BadRequest,
                     "El importe del gasto tiene que ser positivo.",
                     "gasto_importe_invalido"),
 
             // GastosOrigenFondosYTesoreriaPorEmpresa: defensa en profundidad de
-            // ServicioDeGastos.RegistrarAsync, que hoy solo emite origen_fondos = caja_turno y
+            // ServicioDePagos.RegistrarAsync, que hoy solo emite origen_fondos = caja_turno y
             // siempre con un turno resuelto. Inalcanzable por operación normal — backstop de una
             // escritura cruda/fuera de banda (misma familia que ck_turnos_caja_medio_efectivo_solo_cerrado).
-            "ck_gastos_caja_turno_requiere_turno" =>
+            "ck_pagos_caja_turno_requiere_turno" =>
                 (StatusCodes.Status400BadRequest,
                     "Un gasto de caja de turno tiene que tener un turno.",
                     "gasto_caja_turno_requiere_turno"),
+
+            // E2-S1 (líneas por medio de pago): ServicioDePagos escribe un ítem por línea, con el medio y el
+            // importe validados por ReglaDeLineasDePago, así que ninguna de las tres ramas es alcanzable por operación
+            // normal. Son backstops de una escritura cruda/fuera de banda; las FKs fk_items_pago_* salen como
+            // referencia_invalida por el backstop genérico de las fk_*.
+            "ck_items_pago_importe_positivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe de una línea de pago tiene que ser positivo.",
+                    "item_de_pago_importe_invalido"),
+
+            "ck_items_pago_referencia_longitud" =>
+                (StatusCodes.Status400BadRequest,
+                    "La referencia de una línea de pago no puede superar los 100 caracteres.",
+                    "item_de_pago_referencia_invalida"),
+
+            // Constraint trigger diferido: falla al comitear, no al insertar la línea.
+            "tg_items_pago_suma_igual_importe" =>
+                (StatusCodes.Status400BadRequest,
+                    "La suma de las líneas del pago no coincide con su importe.",
+                    "pago_suma_de_items_invalida"),
+
+            // E3-S1a (aplicaciones de pagos a compras): los escritores (alta, vincular, aplicar, editar y baja de un
+            // pago) calculan el tope de cada aplicación con los locks de todas las compras involucradas y del pago, así
+            // que ninguna rama es alcanzable por operación normal; son el backstop de una escritura que se salte esos locks. Los dos constraint triggers son diferidos: fallan al comitear, no al insertar.
+            // Las FKs fk_aplicaciones_pago_* salen como referencia_invalida por el backstop genérico de las fk_*.
+            "ck_aplicaciones_pago_importe_positivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe de una aplicación de pago tiene que ser positivo.",
+                    "aplicacion_importe_invalido"),
+
+            "tg_aplicaciones_pago_no_excede_pago" =>
+                (StatusCodes.Status409Conflict,
+                    "Las aplicaciones superan el importe del pago, o el pago está dado de baja.",
+                    "aplicacion_excede_pago"),
+
+            "tg_aplicaciones_pago_no_excede_compra" =>
+                (StatusCodes.Status409Conflict,
+                    "Las aplicaciones superan el total de la compra, o la compra o el pago no admiten aplicaciones.",
+                    "aplicacion_excede_compra"),
 
             "ck_movimientos_tesoreria_cadena" =>
                 (StatusCodes.Status400BadRequest,

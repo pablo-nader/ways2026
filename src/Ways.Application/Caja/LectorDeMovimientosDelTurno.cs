@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
@@ -9,10 +9,10 @@ namespace Ways.Application.Caja;
 /// <summary>
 /// El único lector de los insumos de la derivación (design decisión 5; The Cierre Transaction,
 /// paso 2) — 7 consultas agrupadas de cantidad FIJA, nunca una por fila (Testing Strategy:
-/// Integration (budget), tasks 4.3/4.14): pagos por medio, vueltos por medio, gastos por medio,
+/// Integration (budget), tasks 4.3/4.14): pagos por medio, vueltos por medio, pagos por medio,
 /// refuerzos, retiros, fondo inicial y el catálogo completo de medios. Compartido tal cual por
 /// <c>ServicioDeTurnos.CerrarAsync</c>, <c>ServicioDeResumenDeTurno</c> y el recálculo del arqueo de
-/// un turno cerrado en <c>ServicioDeGastos</c> — la única fuente de
+/// un turno cerrado en <c>ServicioDePagos</c> — la única fuente de
 /// <see cref="InsumosDeArqueo"/> que existe en el sistema (spec: Resumen Parcial Uses The Same
 /// Derivation As Cierre).
 /// </summary>
@@ -47,14 +47,21 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
             .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Vuelto) })
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);
 
-        // 3. gastos por medio — el gasto resta según SU PROPIO id_medio_pago, nunca todo al ancla.
-        // stage-gastos-origen-fondos-pos (PR2): filtra a OrigenFondos.CajaTurno — un gasto de
+        // 3. pagos por medio — el pago resta según el medio de CADA ÍTEM (E2-S2: un pago puede repartirse en
+        // varios medios), nunca todo al ancla ni según la cabecera.
+        // stage-gastos-origen-fondos-pos (PR2): filtra a OrigenFondos.CajaTurno — un pago de
         // origen Tesoreria ya salió del fondo de tesorería en el momento en que se registró
-        // (ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync), nunca del efectivo del cajón, así
+        // (ServicioDePagos.EscribirMovimientoDeTesoreriaAsync), nunca del efectivo del cajón, así
         // que no puede restar del arqueo de NINGÚN medio ni volverlo arqueable por sí solo.
-        var gastosPorMedio = await db.Gastos
-            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosGasto.CajaTurno)
-            .GroupBy(g => g.IdMedioPago)
+        // Ni el pago ni el ítem dado de baja suman: lo resuelve el filtro global de baja lógica de ambas tablas.
+        var pagosDeCajaPorMedio = await db.ItemsPago
+            .Join(
+                db.Pagos,
+                i => i.IdPago,
+                g => g.Id,
+                (i, g) => new { i.IdMedioPago, i.Importe, g.IdTurnoCaja, g.OrigenFondos })
+            .Where(x => x.IdTurnoCaja == idTurnoCaja && x.OrigenFondos == OrigenFondosPago.CajaTurno)
+            .GroupBy(x => x.IdMedioPago)
             .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Importe) })
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);
 
@@ -90,8 +97,8 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
                 m.Comportamiento,
                 pagosPorMedio.GetValueOrDefault(m.Id),
                 vueltosPorMedio.GetValueOrDefault(m.Id),
-                gastosPorMedio.GetValueOrDefault(m.Id),
-                pagosPorMedio.ContainsKey(m.Id) || gastosPorMedio.ContainsKey(m.Id)))
+                pagosDeCajaPorMedio.GetValueOrDefault(m.Id),
+                pagosPorMedio.ContainsKey(m.Id) || pagosDeCajaPorMedio.ContainsKey(m.Id)))
             .ToList();
 
         return new InsumosDeArqueo(fondoInicial, refuerzos, retiros, actividad);

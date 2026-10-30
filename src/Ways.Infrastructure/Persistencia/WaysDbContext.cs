@@ -17,7 +17,7 @@ using Ways.Domain.Common;
 using Ways.Domain.Compras;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Combos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
@@ -76,6 +76,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Proveedor> Proveedores => Set<Proveedor>();
     public DbSet<Personal> Personal => Set<Personal>();
     public DbSet<MovimientoPersonal> MovimientosPersonal => Set<MovimientoPersonal>();
+    public DbSet<JornadaPersonal> JornadasPersonal => Set<JornadaPersonal>();
     public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
     public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
@@ -134,11 +135,13 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<MovimientoTesoreria> MovimientosTesoreria => Set<MovimientoTesoreria>();
     public DbSet<CuentaTesoreria> CuentasTesoreria => Set<CuentaTesoreria>();
     public DbSet<MovimientoCuenta> MovimientosCuenta => Set<MovimientoCuenta>();
-    public DbSet<Gasto> Gastos => Set<Gasto>();
+    public DbSet<Pago> Pagos => Set<Pago>();
+    public DbSet<ItemPago> ItemsPago => Set<ItemPago>();
+    public DbSet<AplicacionPago> AplicacionesPago => Set<AplicacionPago>();
 
     // stage-8-compras-transferencias-inventario, Slice 1 (schema + seed gate, DB CHANGE GATE
     // exercised in autonomous mode): modelo adelantado a la migración, mismo trámite que
-    // TurnoCaja/Gasto en stage-6 Slice 1 — sin exponer en IWaysDbContext todavía, Slice 2
+    // TurnoCaja/Pago en stage-6 Slice 1 — sin exponer en IWaysDbContext todavía, Slice 2
     // (ServicioDeCompras) es el primer consumidor de Application.
     public DbSet<ComprobanteCompra> ComprobantesCompra => Set<ComprobanteCompra>();
     public DbSet<ItemComprobanteCompra> ItemsComprobanteCompra => Set<ItemComprobanteCompra>();
@@ -322,6 +325,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoPersonal(modelBuilder);
+        AplicarFiltroDeTenantEnJornadaPersonal(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
@@ -917,6 +921,21 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoPersonal), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoPersonal.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="JornadaPersonal"/> es mutable pero sin baja lógica, así que no hereda <see cref="EntidadTenant"/>:
+    /// necesita la variante escrita a mano, con <c>IdTenant</c> escrito explícito por <c>EscriturasDePersonal</c>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnJornadaPersonal(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(JornadaPersonal))!;
+
+        var parametro = Expression.Parameter(typeof(JornadaPersonal), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(JornadaPersonal.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

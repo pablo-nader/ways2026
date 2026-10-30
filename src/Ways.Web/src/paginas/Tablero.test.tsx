@@ -10,7 +10,7 @@ import type {
   MedioPagoListado,
   PuntoVentaListado,
   Rentabilidad,
-  ResumenDeGastos,
+  ResumenDePagos,
   ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
@@ -115,7 +115,7 @@ function ventasFixture(sobrescribir: Partial<ResumenDeVentas> = {}): ResumenDeVe
   }
 }
 
-function gastosFixture(sobrescribir: Partial<ResumenDeGastos> = {}): ResumenDeGastos {
+function pagosFixture(sobrescribir: Partial<ResumenDePagos> = {}): ResumenDePagos {
   return {
     desde: '2026-08-05',
     hasta: '2026-08-11',
@@ -257,7 +257,7 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/reportes/ventas/resumen?')) return Promise.resolve(ventasFixture())
-    if (ruta.startsWith('/reportes/gastos/resumen?')) return Promise.resolve(gastosFixture())
+    if (ruta.startsWith('/reportes/gastos/resumen?')) return Promise.resolve(pagosFixture())
     if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) return Promise.resolve(ventasPorPuntoVentaFixture())
     if (ruta.startsWith('/reportes/ventas/por-vendedor?')) return Promise.resolve(ventasPorVendedorFixture())
     if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) return Promise.resolve(ventasPorMedioPagoFixture())
@@ -268,6 +268,14 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/stock/reposicion/resumen?')) return Promise.resolve(reposicionResumenFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
+}
+
+/** Texto de la primera celda de cada fila de datos de la tabla del panel. */
+function primerasCeldas(panel: HTMLElement): (string | null)[] {
+  return within(panel)
+    .getAllByRole('row')
+    .slice(1)
+    .map((fila) => within(fila).getAllByRole('cell')[0].textContent)
 }
 
 function renderTablero() {
@@ -306,7 +314,7 @@ beforeEach(() => {
 })
 
 describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () => {
-  it('por defecto carga el rango de los últimos 7 días y muestra ventas, gastos y ticket promedio', async () => {
+  it('por defecto carga el rango de los últimos 7 días y muestra ventas, pagos y ticket promedio', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 7, 15, 12, 0, 0))
     mockearRutasBase()
@@ -317,10 +325,10 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(screen.getByLabelText('Hasta')).toHaveValue('15/08/2026')
 
     expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument() // ventas netas
-    expect(screen.getByText('$ 300,00')).toBeInTheDocument() // gastos
+    expect(screen.getByText('$ 300,00')).toBeInTheDocument() // pagos
     expect(screen.getByText('$ 250,00')).toBeInTheDocument() // ticket promedio
     expect(screen.getByRole('img', { name: 'Serie de ventas netas por período' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Serie de gastos por período' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Serie de pagos por período' })).toBeInTheDocument()
   })
 
   it('un ticket promedio null se muestra como "—", nunca como $ 0,00', async () => {
@@ -425,7 +433,7 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
   })
 
-  it('mapea neto e importe como valor de las series de ventas y gastos', async () => {
+  it('mapea neto e importe como valor de las series de ventas y pagos', async () => {
     mockearRutasBase()
     renderTablero()
 
@@ -535,6 +543,74 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     expect(await screen.findByText('Producto Estrella')).toBeInTheDocument()
     expect(screen.getByText('12')).toBeInTheDocument()
     expect(screen.getByText('$ 2.400,00')).toBeInTheDocument()
+  })
+
+  it('cada tabla de desglose se ordena por su columna numérica (900 antes que 1.500) sin tocar el gráfico', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) {
+        return Promise.resolve(
+          ventasPorPuntoVentaFixture({
+            filas: [
+              { idPuntoVenta: 10, neto: 1500, cantidadTx: 5, ticketPromedio: 300 },
+              { idPuntoVenta: 99, neto: 900, cantidadTx: 2, ticketPromedio: 450 },
+            ],
+          }),
+        )
+      }
+      if (ruta.startsWith('/reportes/ventas/por-vendedor?')) {
+        return Promise.resolve(
+          ventasPorVendedorFixture({
+            filas: [
+              { idEmpleado: 9, neto: 1500, cantidadTx: 3, ticketPromedio: 500 },
+              { idEmpleado: 8, neto: 900, cantidadTx: 1, ticketPromedio: 900 },
+            ],
+          }),
+        )
+      }
+      if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) {
+        return Promise.resolve(
+          ventasPorMedioPagoFixture({
+            filas: [
+              { idMedioPago: 1, neto: 1500, cantidadPagos: 4 },
+              { idMedioPago: 88, neto: 900, cantidadPagos: 2 },
+            ],
+          }),
+        )
+      }
+      if (ruta.startsWith('/reportes/articulos/top?')) {
+        return Promise.resolve(
+          topArticulosFixture({
+            articulos: [
+              { idArticulo: 55, descripcion: 'Producto Estrella', cantidad: 12, total: 1500 },
+              { idArticulo: 56, descripcion: 'Producto Opaco', cantidad: 3, total: 900 },
+            ],
+          }),
+        )
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('PV #99')
+    await screen.findByText('Medio #88')
+    await screen.findByText('Producto Opaco')
+    await screen.findByText('Vendedor #8')
+    const barrasAntes = screen.getAllByTestId('bar-chart').map((b) => b.dataset.serie)
+
+    const casos: [string, RegExp, string[]][] = [
+      ['Ventas por punto de venta', /^Neto/, ['PV #99', 'PV Centro']],
+      ['Ventas por vendedor', /^Neto/, ['Vendedor #8', 'Vendedor #9']],
+      ['Ventas por medio de pago', /^Neto/, ['Medio #88', 'Efectivo']],
+      ['Top artículos', /^Total/, ['Producto Opaco', 'Producto Estrella']],
+    ]
+    for (const [titulo, columna, esperado] of casos) {
+      const panel = screen.getByRole('heading', { name: titulo }).closest('div.border') as HTMLElement
+      fireEvent.click(within(panel).getByRole('button', { name: columna }))
+      expect(within(panel).getByRole('columnheader', { name: columna })).toHaveAttribute('aria-sort', 'ascending')
+      expect(primerasCeldas(panel)).toEqual(esperado)
+    }
+
+    expect(screen.getAllByTestId('bar-chart').map((b) => b.dataset.serie)).toEqual(barrasAntes)
   })
 
   // Independencia por panel (Judge B, ronda 1): un panel que falla no debe contaminar el
@@ -1034,6 +1110,30 @@ describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashb
     expect(screen.getByText('$ 150,00')).toBeInTheDocument()
   })
 
+  it('la tabla de comisiones se ordena por neto vendido como número', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/reportes/comisiones?')
+        ? Promise.resolve(
+            comisionesFixture({
+              filas: [
+                { idEmpleado: 42, netoVendido: 1500, comision: 75 },
+                { idEmpleado: 43, netoVendido: 900, comision: 45 },
+              ],
+            }),
+          )
+        : undefined,
+    )
+    renderTablero()
+
+    await screen.findByText('Vendedor #42')
+    const panel = screen.getByRole('heading', { name: 'Comisiones' }).closest('div.border') as HTMLElement
+    fireEvent.click(within(panel).getByRole('button', { name: /Neto vendido/ }))
+
+    expect(within(panel).getByRole('columnheader', { name: /Neto vendido/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(primerasCeldas(panel)).toEqual(['Vendedor #43', 'Vendedor #42'])
+  })
+
   // Hard constraint (droppable slice): tasa 0 (default) nunca renderiza una tabla de filas en
   // $ 0,00 simulando datos — muestra un estado "desactivado" honesto en su lugar
   // (mutation-proof-tests: mutación aplicada — reemplazada la rama `datos.comisionPorcentaje ===
@@ -1075,7 +1175,7 @@ describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashb
 })
 
 describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
-  it('la card G1 tiene botones de descarga de ventas y gastos, cada uno apuntando a su ruta /export con los filtros vigentes', async () => {
+  it('la card G1 tiene botones de descarga de ventas y pagos, cada uno apuntando a su ruta /export con los filtros vigentes', async () => {
     mockearRutasBase()
     renderTablero()
 
@@ -1089,7 +1189,7 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
       ),
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Descargar gastos' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Descargar pagos' }))
     await waitFor(() =>
       expect(apiDescargarMock).toHaveBeenCalledWith(
         `/reportes/gastos/resumen/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&granularidad=Dia&formato=xlsx`,
@@ -1124,7 +1224,7 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
     renderTablero()
 
     await screen.findByText('Empresa Uno SA')
-    fireEvent.click(await screen.findByRole('button', { name: 'Descargar gastos' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar pagos' }))
 
     expect(await screen.findByText('El export supera el tope de 25000 filas.')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/')

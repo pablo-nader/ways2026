@@ -34,7 +34,7 @@ export function etiquetaDeProveedor(proveedor: Pick<ProveedorListado, 'razonSoci
 /** Proveedores ordenados alfabéticamente por la MISMA etiqueta que se muestra en el select — nunca
  * por `razonSocial` cruda, que dejaría el orden visual desalineado con lo que se lee en pantalla.
  * Genérico sobre cualquier shape que tenga `razonSocial`/`nombreFantasia` (JD-A1: además del
- * `ProveedorListado` completo del ABM, el selector de `GastosDelTurno` usa la proyección mínima
+ * `ProveedorListado` completo del ABM, el selector de `PagosDelTurno` usa la proyección mínima
  * `OpcionDeProveedor` de `GET /api/proveedores/opciones`) — preserva el tipo de entrada en el de
  * salida, sin angostarlo a `ProveedorListado`. */
 export function ordenarProveedoresPorEtiqueta<T extends Pick<ProveedorListado, 'razonSocial' | 'nombreFantasia'>>(

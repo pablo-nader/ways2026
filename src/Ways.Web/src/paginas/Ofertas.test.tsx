@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Ofertas } from './Ofertas'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloListado, FamiliaListado, GrupoListado, ListaPrecioListado, OfertaListado, PaginaDe } from '../api/tipos'
@@ -17,7 +17,15 @@ vi.mock('../api/cliente', () => ({
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
-  ErrorApi: class ErrorApiMock extends Error {},
+  ErrorApi: class ErrorApiMock extends Error {
+    estado: number
+    codigo: string
+    constructor(estado: number, codigo: string, mensaje: string) {
+      super(mensaje)
+      this.estado = estado
+      this.codigo = codigo
+    }
+  },
 }))
 
 function grupoFixture(sobrescribir: Partial<GrupoListado> = {}): GrupoListado {
@@ -457,8 +465,6 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
           resolverCreacion = resolve
         }),
     )
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     render(<Ofertas />)
     await screen.findByText('Oferta existente')
 
@@ -479,7 +485,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
     await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
 
     expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringMatching(/^\/ofertas\/\d+$/))
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Nueva oferta')).toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toHaveValue('Oferta nueva')
     expect(apiPostMock).toHaveBeenCalledTimes(1)
@@ -488,8 +494,95 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
 
     resolverCreacion(ofertaFixture())
     await screen.findByText('Oferta "Oferta nueva" creada.')
+  })
+})
 
-    confirmSpy.mockRestore()
+describe('Ofertas — la baja se confirma en un modal', () => {
+  async function pedirLaBaja() {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })] })
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    const eliminar = screen.getByRole('button', { name: 'Eliminar' })
+    await userEvent.click(eliminar)
+    return { confirmSpy, eliminar, confirmacion: await screen.findByRole('alertdialog') }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('abre una confirmación que nombra la oferta y no escribe hasta confirmar', async () => {
+    const { confirmSpy, confirmacion } = await pedirLaBaja()
+
+    expect(confirmacion).toHaveTextContent('¿Dar de baja la oferta "Oferta existente"?')
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('cancelar cierra la confirmación sin dar de baja y devuelve el foco al botón', async () => {
+    const { eliminar, confirmacion } = await pedirLaBaja()
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(eliminar).toHaveFocus()
+  })
+
+  it('un doble clic sincrónico en Confirmar baja emite un solo DELETE y la puerta queda inerte mientras escribe', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    let resolver: () => void = () => {}
+    apiDeleteMock.mockReturnValue(new Promise<void>((r) => (resolver = r)))
+    const confirmar = within(confirmacion).getByRole('button', { name: 'Confirmar baja' })
+
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/ofertas/2')
+    await waitFor(() => expect(within(confirmacion).getByRole('button', { name: 'Dando de baja…' })).toBeDisabled())
+    expect(within(confirmacion).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+
+    await act(async () => resolver())
+    await screen.findByText('Oferta "Oferta existente" dada de baja.')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `invalidarEdicionEnCurso()` de `pedirBaja`. Sin él, la edición que llega tarde monta su modal encima de la confirmación. */
+  it('abrir la baja descarta una apertura de edición todavía en vuelo: su modal no se monta encima de la confirmación', async () => {
+    let resolverDetalle: (o: OfertaListado) => void = () => {}
+    const existente = ofertaFixture({ id: 2, nombre: 'Oferta existente' })
+    mockearApiGet({ ofertas: [existente] })
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/2' ? new Promise<OfertaListado>((r) => (resolverDetalle = r)) : base(ruta),
+    )
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/ofertas/2'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await screen.findByRole('alertdialog')
+    await act(async () => resolverDetalle(existente))
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('una baja rechazada muestra el motivo dentro de la confirmación, que sigue abierta, sin aviso de éxito', async () => {
+    const { confirmacion } = await pedirLaBaja()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'oferta_en_uso', 'La oferta está en uso.'))
+
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(await within(confirmacion).findByRole('alert')).toHaveTextContent('La oferta está en uso.')
+    expect(screen.getAllByText('La oferta está en uso.')).toHaveLength(1)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.queryByText('Oferta "Oferta existente" dada de baja.')).not.toBeInTheDocument()
   })
 })
 
@@ -801,7 +894,10 @@ describe('Ofertas — disponible online', () => {
     })
     render(<Ofertas />)
     await screen.findByText('En la tienda')
-    const columnas = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    const columnas = screen
+      .getAllByRole('columnheader')
+      .slice(0, 8)
+      .map((c) => c.textContent?.replace('↕', ''))
     const posicion = columnas.indexOf('Online')
     expect(posicion).toBeGreaterThan(-1)
 
@@ -833,5 +929,281 @@ describe('Ofertas — disponible online', () => {
     expect(
       await within(dialogo).findByText('Falta indicar si la oferta está disponible online. Recargá la pantalla e intentá de nuevo.'),
     ).toBeInTheDocument()
+  })
+})
+
+// Filtros por columna y orden por encabezado (grillas, slice S5b2).
+
+const ofertaZeta = ofertaFixture({
+  id: 1,
+  nombre: 'Zeta oferta',
+  nombreArticulo: 'Pancho',
+  porcentaje: 15,
+  prioridad: 100,
+  acumulable: false,
+  activo: true,
+  disponibleOnline: true,
+})
+const ofertaAlfa = ofertaFixture({
+  id: 2,
+  nombre: 'Alfa oferta',
+  idArticulo: null,
+  idGrupo: 1,
+  porcentaje: null,
+  importeFijo: 900,
+  prioridad: 9,
+  acumulable: true,
+  activo: false,
+  disponibleOnline: true,
+})
+const ofertaMedio = ofertaFixture({
+  id: 3,
+  nombre: 'Medio oferta',
+  idArticulo: null,
+  idFamilia: 7,
+  porcentaje: null,
+  importeFijo: 1500,
+  prioridad: 20,
+  acumulable: true,
+  activo: true,
+  disponibleOnline: false,
+})
+/** El orden del servidor (Medio, Zeta, Alfa) no coincide con ningún orden por columna. */
+const ENTREGADAS = [ofertaMedio, ofertaZeta, ofertaAlfa]
+
+function columnaVisible(indice: number) {
+  return screen
+    .getAllByRole('row')
+    .slice(2)
+    .map((f) => within(f).getAllByRole('cell')[indice]?.textContent ?? '')
+}
+
+describe('Ofertas — filtros por columna y orden', () => {
+  /** Mutación registrada: pasar `filtradas` sin ordenar a la tabla deja el orden del servidor y rompe las aserciones. */
+  it('ordena cada columna por su valor: prioridad como número, beneficio por tipo y monto, y el tercer clic vuelve al original', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+    // El alcance se rotula con el catálogo: se espera al dato (el grupo) y no a la fila, que se rinde antes.
+    await screen.findByText('Grupo: Bebidas')
+
+    expect(columnaVisible(0)).toEqual(['Medio oferta', 'Zeta oferta', 'Alfa oferta'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(0)).toEqual(['Alfa oferta', 'Medio oferta', 'Zeta oferta'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(0)).toEqual(['Zeta oferta', 'Medio oferta', 'Alfa oferta'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(0)).toEqual(['Medio oferta', 'Zeta oferta', 'Alfa oferta'])
+
+    // Como texto "100" < "20" < "9"; como número, 9 < 20 < 100.
+    await usuario.click(screen.getByRole('button', { name: 'Prioridad' }))
+    expect(columnaVisible(3)).toEqual(['9', '20', '100'])
+    await usuario.click(screen.getByRole('button', { name: 'Prioridad' }))
+    expect(columnaVisible(3)).toEqual(['100', '20', '9'])
+
+    // El porcentaje va antes que los importes y entre importes manda el monto: 900 antes que 1.500.
+    await usuario.click(screen.getByRole('button', { name: 'Beneficio' }))
+    expect(columnaVisible(0)).toEqual(['Zeta oferta', 'Alfa oferta', 'Medio oferta'])
+    await usuario.click(screen.getByRole('button', { name: 'Beneficio' }))
+    expect(columnaVisible(0)).toEqual(['Medio oferta', 'Alfa oferta', 'Zeta oferta'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Alcance' }))
+    expect(columnaVisible(1)).toEqual(['Artículo: Pancho', 'Familia: Sabores', 'Grupo: Bebidas'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Acumulable' }))
+    expect(columnaVisible(0)).toEqual(['Zeta oferta', 'Medio oferta', 'Alfa oferta'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Estado' }))
+    expect(columnaVisible(5)).toEqual(['Activa', 'Activa', 'Inactiva'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Online' }))
+    expect(columnaVisible(6)).toEqual(['No', 'No', 'Sí'])
+    expect(columnaVisible(0)[2]).toBe('Zeta oferta')
+  })
+
+  /** Mutación registrada: pasar `ofertas` en vez de `filtradas` a `useOrdenamiento` deja todas las filas con un filtro puesto. */
+  it('filtra cada columna de datos, con selectores para acumulable, estado y online, y combina los filtros con Y', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'ALF')
+    expect(columnaVisible(0)).toEqual(['Alfa oferta'])
+    await usuario.clear(screen.getByLabelText('Filtrar por nombre'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por alcance'), 'sabores')
+    expect(columnaVisible(0)).toEqual(['Medio oferta'])
+    await usuario.clear(screen.getByLabelText('Filtrar por alcance'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por beneficio'), '15%')
+    expect(columnaVisible(0)).toEqual(['Zeta oferta'])
+    await usuario.clear(screen.getByLabelText('Filtrar por beneficio'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por prioridad'), '100')
+    expect(columnaVisible(0)).toEqual(['Zeta oferta'])
+    await usuario.clear(screen.getByLabelText('Filtrar por prioridad'))
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por acumulable'), 'Sí')
+    expect(columnaVisible(0)).toEqual(['Medio oferta', 'Alfa oferta'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por acumulable'), '')
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Inactiva')
+    expect(columnaVisible(0)).toEqual(['Alfa oferta'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), '')
+
+    // "Online" es Sí solo si está disponible online Y activa: la inactiva figura como No.
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por online'), 'No')
+    expect(columnaVisible(0)).toEqual(['Medio oferta', 'Alfa oferta'])
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por acumulable'), 'Sí')
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'medio')
+    expect(columnaVisible(0)).toEqual(['Medio oferta'])
+  })
+
+  it('"Limpiar filtros" restaura las filas; sin coincidencias el estado vacío lo dice y sin ofertas dice otra cosa', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'no existe')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay ofertas cargadas.')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(columnaVisible(0)).toEqual(['Medio oferta', 'Zeta oferta', 'Alfa oferta'])
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+  })
+
+  it('sin ofertas dice que no hay', async () => {
+    mockearApiGet({ ofertas: [] })
+    render(<Ofertas />)
+
+    expect(await screen.findByText('No hay ofertas cargadas.')).toBeInTheDocument()
+  })
+
+  it('la fila de filtros tiene una celda por encabezado', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(8)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(8)
+  })
+
+  /** El alcance se rotula con el catálogo cargado: cuando el catálogo llega después, la columna se vuelve a calcular. */
+  it('el filtro por alcance usa el nombre del grupo del catálogo, no su id', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+    await screen.findByText('Grupo: Bebidas')
+
+    await usuario.type(screen.getByLabelText('Filtrar por alcance'), 'bebidas')
+    expect(columnaVisible(0)).toEqual(['Alfa oferta'])
+  })
+
+  /** Mutación registrada: reemplazar el render por `cargando ? <Cargando /> : <table>` desmonta la fila de filtros durante el refresco. */
+  it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const respuestaBase = apiGetMock.getMockImplementation()!
+    let resolverRefresco!: (ofertas: OfertaListado[]) => void
+    let cargasDeOfertas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/ofertas') return respuestaBase(ruta)
+      cargasDeOfertas += 1
+      if (cargasDeOfertas === 1) return Promise.resolve(ENTREGADAS)
+
+      return new Promise<OfertaListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    apiDeleteMock.mockResolvedValue(undefined)
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    const filtro = screen.getByLabelText('Filtrar por nombre')
+    await usuario.type(filtro, 'zet')
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Oferta "Zeta oferta" dada de baja.')
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro.isConnected).toBe(true)
+    expect(filtro).toHaveValue('zet')
+    expect(filtro).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
+
+    await act(async () => {
+      resolverRefresco(ENTREGADAS)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(columnaVisible(0)).toEqual(['Zeta oferta'])
+  })
+
+  /** Mutación registrada: quitar `limpiarFiltros()` tras `crear` deja el filtro por nombre puesto y la oferta nueva oculta; falla. */
+  it('tras crear una oferta se limpian los filtros por columna para que la fila nueva se vea', async () => {
+    const nueva = ofertaFixture({ id: 9, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 })
+    mockearApiGet({ ofertas: ENTREGADAS })
+    const respuestaBase = apiGetMock.getMockImplementation()!
+    let cargasDeOfertas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/ofertas') return respuestaBase(ruta)
+      cargasDeOfertas += 1
+
+      return Promise.resolve(cargasDeOfertas === 1 ? ENTREGADAS : [...ENTREGADAS, nueva])
+    })
+    apiPostMock.mockResolvedValue(nueva)
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    expect(screen.queryByText('Alfa oferta')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await usuario.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await usuario.click(screen.getByRole('radio', { name: 'Grupo' }))
+    await screen.findByRole('option', { name: 'Bebidas' })
+    await usuario.selectOptions(screen.getByLabelText('Grupo objetivo'), 'Bebidas')
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta nueva" creada.')
+    await waitFor(() => expect(columnaVisible(0)).toEqual(['Medio oferta', 'Zeta oferta', 'Alfa oferta', 'Oferta nueva']))
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+  })
+
+  it('los filtros quedan inertes mientras la baja está en vuelo y con la puerta de baja abierta', async () => {
+    mockearApiGet({ ofertas: ENTREGADAS })
+    let resolverBaja!: () => void
+    apiDeleteMock.mockReturnValue(new Promise<void>((resolver) => (resolverBaja = resolver)))
+    const usuario = userEvent.setup()
+    render(<Ofertas />)
+    await screen.findByText('Zeta oferta')
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    const puerta = await screen.findByRole('alertdialog')
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar baja' }))
+    expect(screen.getByLabelText('Filtrar por prioridad')).toBeDisabled()
+
+    await act(async () => {
+      resolverBaja()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled())
   })
 })

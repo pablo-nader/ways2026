@@ -544,3 +544,50 @@ describe('ModalCuentaCorrientePos — reintentar tras un error de carga', () => 
     expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeEnabled()
   })
 })
+
+describe('ModalCuentaCorrientePos — orden de los movimientos', () => {
+  const MOVIMIENTOS = [
+    movimiento({ id: 1, fecha: '2026-09-10T15:00:00Z', importe: 5000, saldoResultante: 5000 }),
+    movimiento({ id: 2, fecha: '2026-09-12T15:00:00Z', tipo: 'Pago', importe: -20, saldoResultante: 4980 }),
+    movimiento({ id: 3, fecha: '2026-09-11T15:00:00Z', importe: 100, saldoResultante: 5080 }),
+  ]
+
+  const filas = () =>
+    Array.from(dialogo().getByRole('table').querySelectorAll('tbody tr')).map((fila) =>
+      Array.from(fila.querySelectorAll('td')).map((c) => c.textContent),
+    )
+
+  it('conserva el orden del servidor hasta elegir una columna; el importe ordena por valor y cada fila conserva su saldo', async () => {
+    obtenerEstadoMock.mockResolvedValue(estado(5080, MOVIMIENTOS))
+    montar()
+    await dialogo().findByRole('table')
+
+    expect(filas().map((f) => f[3])).toEqual(['$ 5.000,00', '$ 4.980,00', '$ 5.080,00'])
+
+    const importe = dialogo().getByRole('columnheader', { name: /Importe/ })
+    fireEvent.click(within(importe).getByRole('button'))
+
+    expect(importe).toHaveAttribute('aria-sort', 'ascending')
+    expect(filas().map((f) => [f[2], f[3]])).toEqual([
+      ['-$ 20,00', '$ 4.980,00'],
+      ['$ 100,00', '$ 5.080,00'],
+      ['$ 5.000,00', '$ 5.000,00'],
+    ])
+  })
+
+  it('la fecha ordena cronológicamente y el tercer clic vuelve al orden del servidor', async () => {
+    obtenerEstadoMock.mockResolvedValue(estado(5080, MOVIMIENTOS))
+    montar()
+    await dialogo().findByRole('table')
+
+    const fecha = dialogo().getByRole('columnheader', { name: /Fecha/ })
+    fireEvent.click(within(fecha).getByRole('button'))
+    fireEvent.click(within(fecha).getByRole('button'))
+    expect(fecha).toHaveAttribute('aria-sort', 'descending')
+    expect(filas().map((f) => f[3])).toEqual(['$ 4.980,00', '$ 5.080,00', '$ 5.000,00'])
+
+    fireEvent.click(within(fecha).getByRole('button'))
+    expect(fecha).toHaveAttribute('aria-sort', 'none')
+    expect(filas().map((f) => f[3])).toEqual(['$ 5.000,00', '$ 4.980,00', '$ 5.080,00'])
+  })
+})

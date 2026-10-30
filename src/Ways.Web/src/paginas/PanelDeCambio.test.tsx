@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { formatearValor, PanelDeCambio } from './PanelDeCambio'
 
@@ -58,5 +58,28 @@ describe('PanelDeCambio', () => {
 
     expect(screen.getByTestId('panel-cambio-anterior-estado')).toHaveTextContent('activo')
     expect(screen.getByTestId('panel-cambio-nuevo-estado')).toHaveTextContent('activo')
+  })
+})
+
+describe('PanelDeCambio — orden por columna', () => {
+  function clavesEnPantalla(): string[] {
+    return screen
+      .getAllByRole('row')
+      .slice(1)
+      .map((fila) => fila.querySelector('td')?.textContent ?? '')
+  }
+
+  it('la clave ordena en los dos sentidos y el valor anterior también es ordenable', () => {
+    render(<PanelDeCambio valorAnterior={{ zeta: 'b', alfa: 'c' }} valorNuevo={{ zeta: 'b2', alfa: 'c2' }} />)
+
+    const clave = screen.getByRole('columnheader', { name: /Clave/ })
+    fireEvent.click(within(clave).getByRole('button'))
+    expect(clavesEnPantalla()).toEqual(['alfa', 'zeta'])
+    fireEvent.click(within(clave).getByRole('button'))
+    expect(clave).toHaveAttribute('aria-sort', 'descending')
+    expect(clavesEnPantalla()).toEqual(['zeta', 'alfa'])
+
+    fireEvent.click(within(screen.getByRole('columnheader', { name: /Valor anterior/ })).getByRole('button'))
+    expect(clavesEnPantalla()).toEqual(['zeta', 'alfa'])
   })
 })

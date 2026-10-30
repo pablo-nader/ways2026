@@ -81,12 +81,20 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     public static readonly ParametroConocido RedondeoSugerenciaPrecio =
         new("redondeo_sugerencia_precio", typeof(decimal), "100");
 
+    /// <summary>Diferencia máxima, en pesos, que el redondeo perdona o absorbe al cerrar en cero una compra con saldo o un
+    /// pago con disponible (E4 de pagos y aplicaciones): con <c>500</c>, pagar 1500 una compra de 1503,50 o de 1430,25
+    /// no deja saldo. Es del lado de proveedores: no tiene nada que ver con <see cref="ToleranciaPago"/> de las ventas.
+    /// Resuelve punto de venta → empresa → default; el punto de venta es el de la compra al cerrarla en cero, y el del
+    /// pago (o la empresa, si no tiene) en el ajuste explícito de un pago. Sin migración.</summary>
+    public static readonly ParametroConocido ToleranciaRedondeoPagoProveedor =
+        new("tolerancia_redondeo_pago_proveedor", typeof(decimal), "500");
+
     private static readonly IReadOnlyDictionary<string, ParametroConocido> PorClave =
         new[]
         {
             ToleranciaPago, ImporteAdicionalRecarga, ImporteEnvio, SlotsTicketsEspera,
             ZonaHoraria, ComisionPorcentaje, LotesHabilitado, DiasAlertaVencimiento,
-            DiasRotacion, DiasCoberturaObjetivo, RedondeoSugerenciaPrecio
+            DiasRotacion, DiasCoberturaObjetivo, RedondeoSugerenciaPrecio, ToleranciaRedondeoPagoProveedor
         }.ToDictionary(p => p.Clave, p => p, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Devuelve el registro de <paramref name="clave"/>, o rechaza con un error de

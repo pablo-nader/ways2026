@@ -70,8 +70,8 @@ export function formatearValorCompartido(clave: ClaveCompartida, valores: Valore
       return valores.costoListaIncluyeIva === null ? SIN_VALOR : siONo(valores.costoListaIncluyeIva)
     case 'descuentoProveedor':
       return valores.descuentoProveedor === null ? SIN_VALOR : `${valores.descuentoProveedor}%`
-    case 'porcentajeImpuestoInterno':
-      return `${valores.porcentajeImpuestoInterno}%`
+    case 'impuestoInterno':
+      return formatearImporte(valores.impuestoInterno, { simbolo: true })
     case 'costoNominal':
       return formatearImporte(valores.costoNominal, { simbolo: true })
   }

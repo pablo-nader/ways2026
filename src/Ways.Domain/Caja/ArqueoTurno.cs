@@ -4,7 +4,7 @@ namespace Ways.Domain.Caja;
 /// Una fila por medio de pago con actividad en el turno, escrita una sola vez al cierre (doc 10
 /// §7, design: Table Shapes — write path A; The Cierre Transaction). Ninguna fila se elimina. La
 /// única escritura posterior al cierre es el recálculo administrativo de
-/// <see cref="ImporteEsperado"/> al editar o dar de baja un gasto de caja del turno, que conserva
+/// <see cref="ImporteEsperado"/> al editar o dar de baja un pago de caja del turno, que conserva
 /// el valor del cierre en <see cref="ImporteEsperadoOriginal"/> y marca el turno
 /// (<see cref="TurnoCaja.FechaRecalculo"/>).
 ///

@@ -35,7 +35,7 @@ function estadoDesde(valor: string): Estado {
 export function CampoNumeroDeComprobante({ idBase, valor, onChange, disabled = false }: Props) {
   const [estado, setEstado] = useState<Estado>(() => estadoDesde(valor))
 
-  // Un valor que no emitió este campo (carga de la compra, pre-carga desde un gasto) reemplaza lo mostrado.
+  // Un valor que no emitió este campo (carga de la compra, pre-carga desde un pago) reemplaza lo mostrado.
   if (valor !== estado.valorVisto) setEstado(estadoDesde(valor))
 
   function aplicar(partes: PartesDeNumero) {

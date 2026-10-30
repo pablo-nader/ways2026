@@ -12,7 +12,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
@@ -2967,7 +2967,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<CategoriaGasto>("Categoria")
+                    b.Property<CategoriaPago>("Categoria")
                         .HasColumnType("categoria_gasto")
                         .HasColumnName("categoria");
 
@@ -3040,7 +3040,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("text")
                         .HasColumnName("numero_factura");
 
-                    b.Property<OrigenFondosGasto>("OrigenFondos")
+                    b.Property<OrigenFondosPago>("OrigenFondos")
                         .HasColumnType("origen_fondos_gasto")
                         .HasColumnName("origen_fondos");
 

@@ -52,6 +52,10 @@ describe('etiquetaDeTipoDeMovimiento', () => {
     expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Pago', etiqueta: null }))).toBe('Pago')
   })
 
+  it('Redondeo se rotula «Redondeo»', () => {
+    expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Redondeo', etiqueta: null }))).toBe('Redondeo')
+  })
+
   it('Ajuste delega en etiquetarAjuste, en ambas direcciones', () => {
     expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Ajuste', etiqueta: 'Manual' }))).toBe('Ajuste manual')
     expect(etiquetaDeTipoDeMovimiento(movimientoFixture({ tipo: 'Ajuste', etiqueta: 'AnulacionContramovimiento' }))).toBe(
@@ -66,8 +70,8 @@ describe('referenciaDeMovimiento', () => {
     expect(referenciaDeMovimiento({ idComprobanteCompra: 5, idGasto: 9 })).toBe('Compra #5')
   })
 
-  it('sin idComprobanteCompra pero con idGasto devuelve "Gasto #N"', () => {
-    expect(referenciaDeMovimiento({ idComprobanteCompra: null, idGasto: 9 })).toBe('Gasto #9')
+  it('sin idComprobanteCompra pero con idGasto devuelve "Pago #N"', () => {
+    expect(referenciaDeMovimiento({ idComprobanteCompra: null, idGasto: 9 })).toBe('Pago #9')
   })
 
   it('sin ninguno de los dos (apertura, ajuste manual) devuelve "—"', () => {

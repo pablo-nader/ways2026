@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { arrastreDeTenant, copiaDeFalloDeBaja } from '../api/bajas'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -8,15 +8,56 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
+import { ModalDeNuevoTenant } from './tenants/ModalDeNuevoTenant'
+import { ModalDeTenant, type FormularioDeTenant } from './tenants/ModalDeTenant'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
   'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
+const OPCIONES_DE_ESTADO = [
+  { valor: 'Activo', etiqueta: 'Activo' },
+  { valor: 'Suspendido', etiqueta: 'Suspendido' },
+]
+
+const textoDeId = (tenant: TenantListado) => String(tenant.id).padStart(4, '0')
+const textoDeCreado = (tenant: TenantListado) => new Date(tenant.createdAt).toLocaleDateString('es-AR')
+
+const ORDENABLES: ColumnasOrdenables<TenantListado> = {
+  id: { valor: (tenant) => tenant.id },
+  nombre: { valor: (tenant) => tenant.nombre },
+  estado: { valor: (tenant) => tenant.estado },
+  empresas: { valor: (tenant) => tenant.cantidadEmpresas },
+  puntosVenta: { valor: (tenant) => tenant.cantidadPuntosVenta },
+  usuarios: { valor: (tenant) => tenant.cantidadUsuarios },
+  creado: { valor: (tenant) => new Date(tenant.createdAt) },
+}
+
+const FILTRABLES: ColumnasFiltrables<TenantListado> = {
+  id: { etiqueta: 'ID', valor: textoDeId },
+  nombre: { etiqueta: 'Nombre', valor: (tenant) => tenant.nombre },
+  estado: { etiqueta: 'Estado', valor: (tenant) => tenant.estado, opciones: OPCIONES_DE_ESTADO },
+  empresas: { etiqueta: 'Empresas', valor: (tenant) => tenant.cantidadEmpresas },
+  puntosVenta: { etiqueta: 'Puntos de venta', valor: (tenant) => tenant.cantidadPuntosVenta },
+  usuarios: { etiqueta: 'Usuarios', valor: (tenant) => tenant.cantidadUsuarios },
+  creado: { etiqueta: 'Creado', valor: textoDeCreado },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['id', 'nombre', 'estado', 'empresas', 'puntosVenta', 'usuarios', 'creado', null]
+
 type AccionDeEstado = 'suspenderTenant' | 'reactivarTenant'
 
 /** Lo que la puerta de confirmación tiene pendiente. Las tres acciones de esta pantalla que
- * escriben sobre una fila entera pasan por ella; editar el nombre tiene su propio formulario. */
+ * escriben sobre una fila entera pasan por ella; editar el nombre tiene su propio modal. */
 type Confirmacion =
   | { tipo: 'baja'; fila: TenantListado }
   | { tipo: 'estado'; fila: TenantListado; accion: AccionDeEstado }
@@ -39,17 +80,25 @@ const COPIA_DE_ESTADO: Readonly<
 }
 
 /**
- * ABM (parcial) de tenants — plataforma-only. El alta completa (tenant + empresa + punto de
- * venta + plantilla + admin) vive en <c>NuevoTenant.tsx</c> (aprovisionamiento, ADR-16): acá
- * se lista, se edita el nombre, se suspende/reactiva y —desde la etapa 20— se da de baja
- * lógicamente, con su empresa, sus puntos de venta y sus usuarios en la misma cascada.
+ * ABM de tenants — plataforma-only. El alta completa (tenant + empresa + punto de venta +
+ * plantilla + admin) es el modal <c>ModalDeNuevoTenant</c> (aprovisionamiento, ADR-16) y el
+ * renombrado, <c>ModalDeTenant</c>; acá además se lista, se suspende/reactiva y —desde la etapa
+ * 20— se da de baja lógicamente, con su empresa, sus puntos de venta y sus usuarios en la misma
+ * cascada. `/organizacion/nuevo-tenant` redirige acá con `?nuevo=1`, que abre el modal de alta
+ * una sola vez.
  */
 export function Tenants() {
   const [items, setItems] = useState<TenantListado[]>([])
+  /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
+  const [cargada, setCargada] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
-  const [edicion, setEdicion] = useState<{ id: number; nombre: string } | null>(null)
+  const [parametros, setParametros] = useSearchParams()
+  const [edicion, setEdicion] = useState<FormularioDeTenant | null>(null)
+  /** El rechazo del renombrado vive en el modal; `error` queda para lo que le pasó a la pantalla. */
+  const [errorDeEdicion, setErrorDeEdicion] = useState('')
+  const [creando, setCreando] = useState(() => parametros.get('nuevo') === '1')
   const [ocupado, setOcupado] = useState<number | null>(null)
   /**
    * Acción pendiente de confirmación. La puerta es MODAL: mientras hay una, `bloqueado` deja
@@ -91,6 +140,9 @@ export function Tenants() {
    * escribe antes del primer `await` y se apaga en el mismo `finally` ungated.
    */
   const ocupadoRef = useRef(false)
+  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): el botón de alta, que es estable. */
+  const nuevoRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
@@ -104,13 +156,33 @@ export function Tenants() {
       if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los tenants.')
     } finally {
-      if (generacion.current === token) setCargando(false)
+      if (generacion.current === token) {
+        setCargando(false)
+        setCargada(true)
+      }
     }
   }, [])
 
   useEffect(() => {
     void cargar(++generacion.current)
   }, [cargar])
+
+  // El parámetro abre el modal al llegar (también con la pantalla ya montada: el menú vuelve a ella con `?nuevo=1`) y se
+  // consume para que recargar o volver no lo reabra.
+  useEffect(() => {
+    if (!parametros.has('nuevo')) return
+
+    setCreando(true)
+    setParametros(
+      (previos) => {
+        const siguientes = new URLSearchParams(previos)
+        siguientes.delete('nuevo')
+
+        return siguientes
+      },
+      { replace: true },
+    )
+  }, [parametros, setParametros])
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de
@@ -134,21 +206,21 @@ export function Tenants() {
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(id)
-    setError('')
-    setAviso('')
+    setErrorDeEdicion('')
     try {
       try {
         await clienteDeOrganizacion.editarTenant(id, { nombre })
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        setErrorDeEdicion(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
 
-      if (generacion.current !== token) return
-
-      setEdicion(null)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`: así el
+      // disparador (o el botón de alta, si la fila se reemplazó) ya está habilitado cuando el modal restaura el foco.
+      // La respuesta no lleva gate: `bloqueado` deja inerte la pantalla entera mientras la escritura está en vuelo.
       await refrescarTrasEscribir(token, `Se actualizó el tenant "${nombre}".`, AVISO_REFRESCO_FALLIDO)
+      setEdicion(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
@@ -248,9 +320,6 @@ export function Tenants() {
       // Un 204 SIEMPRE cierra la puerta y refresca. La generación solo gobierna el REFRESCO, que es
       // una lectura: nunca el desenlace de la escritura que acaba de commitear.
       setConfirmacion(null)
-      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
-      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
-      setEdicion((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Se dio de baja el tenant "${fila.nombre}".`,
@@ -266,24 +335,27 @@ export function Tenants() {
    * que nada pueda acuñar una generación nueva mientras el operador decide (regla 9). */
   const bloqueado = ocupado !== null || confirmacion !== null
 
-  // Un `<Link>` no admite `disabled`: la clase `disabled` de Bootstrap le apaga los eventos de
-  // puntero y `tabIndex={-1}` lo saca del recorrido de tabulación. Pero las dos cosas son
-  // presentación: `pointer-events: none` solo bloquea el hit-testing del mouse, y ni el Enter
-  // sobre un `<a>` enfocado por programa ni un click sintético pasan por ahí. El `preventDefault`
-  // es el que efectivamente cancela la navegación mientras la puerta está abierta.
+  const { filas: filtrados, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(items, FILTRABLES)
+  const { filas: visibles, orden, alternar } = useOrdenamiento(filtrados, ORDENABLES)
+
+  function abrirEdicion(tenant: TenantListado) {
+    setEdicion({ id: tenant.id, nombre: tenant.nombre })
+    setError('')
+    setAviso('')
+    setErrorDeEdicion('')
+  }
+
+  function abrirAlta() {
+    setCreando(true)
+    setError('')
+    setAviso('')
+  }
+
   const herramientas = (
     <nav className="p-2">
-      <Link
-        to="/organizacion/nuevo-tenant"
-        className={`btn btn-sm btn-success text-nowrap${bloqueado ? ' disabled' : ''}`}
-        aria-disabled={bloqueado}
-        tabIndex={bloqueado ? -1 : undefined}
-        onClick={(evento) => {
-          if (bloqueado) evento.preventDefault()
-        }}
-      >
+      <button ref={nuevoRef} type="button" className="btn btn-sm btn-success text-nowrap" disabled={bloqueado} onClick={abrirAlta}>
         Nuevo tenant
-      </Link>
+      </button>
     </nav>
   )
 
@@ -316,67 +388,82 @@ export function Tenants() {
         )}
 
         {edicion && (
-          <form
-            className="row g-3 border p-3 mb-4 bg-body"
-            onSubmit={(e) => {
-              e.preventDefault()
-              guardarNombre()
-            }}
-          >
-            <div className="col-12">
-              <strong>Editando tenant {edicion.id}</strong>
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="t-nombre">
-                Nombre
-              </label>
-              <input
-                id="t-nombre"
-                className="form-control"
-                maxLength={150}
-                value={edicion.nombre}
-                onChange={(e) => setEdicion({ ...edicion, nombre: e.target.value })}
-                disabled={bloqueado}
-                required
-              />
-            </div>
-            <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success" disabled={bloqueado}>
-                {ocupado !== null ? 'Guardando…' : 'Guardar'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setEdicion(null)}
-                disabled={bloqueado}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
+          <ModalDeTenant
+            valor={edicion}
+            guardando={ocupado !== null}
+            error={errorDeEdicion}
+            focoDeReserva={nuevoRef}
+            onCambio={setEdicion}
+            onGuardar={guardarNombre}
+            onCancelar={() => setEdicion(null)}
+          />
         )}
 
-        {cargando ? (
+        {creando && (
+          <ModalDeNuevoTenant
+            focoDeReserva={nuevoRef}
+            onCreado={() => {
+              // El tenant nuevo puede caer fuera de los filtros vigentes: se limpian para que la fila creada se vea.
+              limpiarFiltros()
+              void cargar(++generacion.current)
+            }}
+            onCancelar={() => setCreando(false)}
+          />
+        )}
+
+        {!cargada ? (
           <Cargando />
         ) : (
           <div className="table-responsive">
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Nombre</th>
-                  <th>Estado</th>
-                  <th className="text-end">Empresas</th>
-                  <th className="text-end">Puntos de venta</th>
-                  <th className="text-end">Usuarios</th>
-                  <th>Creado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="id" orden={orden} onAlternar={alternar}>
+                    ID
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="empresas" orden={orden} onAlternar={alternar} className="text-end">
+                    Empresas
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="puntosVenta" orden={orden} onAlternar={alternar} className="text-end">
+                    Puntos de venta
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="usuarios" orden={orden} onAlternar={alternar} className="text-end">
+                    Usuarios
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="creado" orden={orden} onAlternar={alternar}>
+                    Creado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={CELDAS_DE_FILTROS}
+                  columnas={FILTRABLES}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {items.map((t) => (
+                {cargando && (
+                  <tr>
+                    <td colSpan={8}>
+                      <Cargando />
+                    </td>
+                  </tr>
+                )}
+                {!cargando && visibles.map((t) => (
                   <tr key={t.id}>
-                    <td>{String(t.id).padStart(4, '0')}</td>
+                    <td>{textoDeId(t)}</td>
                     <td>{t.nombre}</td>
                     <td>
                       <EtiquetaEstado estado={t.estado} />
@@ -384,12 +471,12 @@ export function Tenants() {
                     <td className="text-end">{t.cantidadEmpresas}</td>
                     <td className="text-end">{t.cantidadPuntosVenta}</td>
                     <td className="text-end">{t.cantidadUsuarios}</td>
-                    <td>{new Date(t.createdAt).toLocaleDateString('es-AR')}</td>
+                    <td>{textoDeCreado(t)}</td>
                     <td className="text-end text-nowrap">
                       <BotonIcono
                         icono="editar"
                         className="me-1"
-                        onClick={() => setEdicion({ id: t.id, nombre: t.nombre })}
+                        onClick={() => abrirEdicion(t)}
                         disabled={bloqueado}
                       />
                       {t.estado === 'Activo' && (
@@ -420,10 +507,10 @@ export function Tenants() {
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && (
+                {!cargando && visibles.length === 0 && (
                   <tr>
                     <td colSpan={8} className="text-center text-muted py-4">
-                      No hay tenants cargados.
+                      {items.length === 0 ? 'No hay tenants cargados.' : 'Ningún registro coincide con los filtros.'}
                     </td>
                   </tr>
                 )}

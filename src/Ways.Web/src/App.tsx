@@ -28,8 +28,6 @@ import { Familias } from './paginas/Familias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
-import { NuevaFamilia } from './paginas/NuevaFamilia'
-import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
 import { Combos } from './paginas/Combos'
 import { OrdenDeCompra } from './paginas/OrdenDeCompra'
@@ -39,13 +37,14 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
+import { CargaSemanalDeHoras } from './paginas/CargaSemanalDeHoras'
 import { CuentaDePersonal } from './paginas/CuentaDePersonal'
 import { Personal } from './paginas/Personal'
 import { CuentasTesoreria } from './paginas/CuentasTesoreria'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
-import { Gastos } from './paginas/Gastos'
+import { Pagos } from './paginas/Pagos'
 import { LibroIva } from './paginas/LibroIva'
 import { Remito } from './paginas/Remito'
 import { Remitos } from './paginas/Remitos'
@@ -86,7 +85,7 @@ export function App() {
             <Route path="/" element={<Inicio />} />
 
             {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition, spec tablero):
-                G1 parity — ventas y gastos de los últimos 7 días por defecto, ticket promedio.
+                G1 parity — ventas y pagos de los últimos 7 días por defecto, ticket promedio.
                 Politicas.LecturaDeReportes del lado del servidor: Supervisor + Admin, ni
                 Vendedor ni Root. */}
             <Route
@@ -335,6 +334,17 @@ export function App() {
               }
             />
 
+            {/* Carga semanal de horas: mismas políticas que la carga de horas de la cuenta (Admin y Supervisor).
+                Va antes que `/personal/:id/cuenta` solo por lectura: React Router rankea por especificidad. */}
+            <Route
+              path="/personal/horas"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <CargaSemanalDeHoras />
+                </RutaProtegida>
+              }
+            />
+
             {/* Cuenta del empleado: se llega desde el enlace "Cuenta" del listado, sin entrada de menú propia.
                 Lectura y escrituras de Admin y Supervisor (Politicas.LecturaDePersonal y
                 GestionDeCuentaDePersonal); pagar de la tesorería es solo del Admin. */}
@@ -378,9 +388,10 @@ export function App() {
 
             {/* Familias de artículos (doc 10 §3): admin-only end a end, la misma puerta que /articulos
                 (Politicas.GestionDeCatalogo del lado del servidor, también para las lecturas: el detalle
-                trae los costos de la referencia). `/familias/nueva` va ANTES de `/familias/:id`: un
-                literal más específico gana sobre el parámetro en react-router, pero declararlo primero
-                es el mismo criterio defensivo que `/remitos/facturacion`. */}
+                trae los costos de la referencia). `/familias/nueva` (el alta ya es un modal del listado)
+                va ANTES de `/familias/:id` y redirige al listado con el modal abierto, para no romper
+                marcadores: un literal más específico gana sobre el parámetro en react-router, pero
+                declararlo primero es el mismo criterio defensivo que `/remitos/facturacion`. */}
             <Route
               path="/familias"
               element={
@@ -393,7 +404,7 @@ export function App() {
               path="/familias/nueva"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
-                  <NuevaFamilia />
+                  <Navigate to="/familias?nuevo=1" replace />
                 </RutaProtegida>
               }
             />
@@ -430,15 +441,17 @@ export function App() {
               }
             />
 
+            <Route path="/gastos" element={<Navigate to="/pagos" replace />} />
+
             {/* stage-gastos-admin-retroactivos (PR3, owner's use case 2): árbol propio, admin-only
                 end a end — mismo gate que /proveedores (Politicas.GestionDeCatalogo del lado del
-                servidor): el gasto administrativo mueve la tesorería de la empresa sin pasar por
-                un turno, a diferencia de "Gastos del turno" (POS, Politicas.OperacionDePos). */}
+                servidor): el pago administrativo mueve la tesorería de la empresa sin pasar por
+                un turno, a diferencia de "Pagos del turno" (POS, Politicas.OperacionDePos). */}
             <Route
-              path="/gastos"
+              path="/pagos"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
-                  <Gastos />
+                  <Pagos />
                 </RutaProtegida>
               }
             />
@@ -633,7 +646,7 @@ export function App() {
               path="/organizacion/nuevo-tenant"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root]}>
-                  <NuevoTenant />
+                  <Navigate to="/organizacion/tenants?nuevo=1" replace />
                 </RutaProtegida>
               }
             />

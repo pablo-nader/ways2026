@@ -48,6 +48,9 @@ personal (                    -- [catálogo]
     nombre citext, documento citext NULL, telefono citext NULL, observaciones,
     valor_hora          numeric(14,2) NOT NULL DEFAULT 0,  -- CHECK >= 0; valor por defecto de la
                                              -- próxima carga de horas, no el de cargas ya hechas
+    horario_habitual    numeric(4,2)[] NULL,  -- 7 horas lunes→domingo (ISO), cada una en [0, 24];
+                                             -- 0 = franco; NULL = sin horario. CHECK
+                                             -- ck_personal_horario_habitual. Solo precarga la carga
     saldo               numeric(14,2) NOT NULL DEFAULT 0,  -- cache; positivo: la empresa le debe al
                                              -- empleado. El libro es movimientos_personal (§8c)
     id_usuario          integer NULL,        -- FK simple a usuarios; único entre filas vivas

@@ -65,7 +65,7 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         IdAlicuotaIva: v.IdAlicuotaIva, UnidadVenta: v.UnidadVenta, UnidadesPorBulto: v.UnidadesPorBulto,
         EsProducto: v.EsProducto, CostoLista: v.CostoLista, DescuentoProveedor: v.DescuentoProveedor, Activo: activo, ControlaLote: v.ControlaLote,
         AcumulaEnVenta: v.AcumulaEnVenta, IdFamilia: idFamilia, CostoListaPor: v.CostoListaPor,
-        CostoListaIncluyeIva: v.CostoListaIncluyeIva, PorcentajeImpuestoInterno: v.PorcentajeImpuestoInterno);
+        CostoListaIncluyeIva: v.CostoListaIncluyeIva, ImpuestoInterno: v.ImpuestoInterno);
 
     private static Task<HttpResponseMessage> PostArticuloAsync(HttpClient admin, AltaArticulo alta) =>
         admin.PostAsJsonAsync("/api/articulos", alta, OpcionesJson);

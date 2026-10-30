@@ -75,40 +75,42 @@ public class CalculadorDeCostoNominalTests
     // ---- Impuestos internos ----------------------------------------------------------------------
 
     [Fact]
-    public void SinIvaElImpuestoInternoSeSumaAlNetoYElIvaNoSeCalculaSobreEl() =>
-        // 100 + 100 x 5 % + 100 x 21 % (el IVA no grava el impuesto interno).
+    public void SinIvaElImpuestoInternoSeSumaComoImporteYElIvaNoSeCalculaSobreEl() =>
+        // 100 + 100 x 21 % + 5 (el IVA no grava el impuesto interno).
         Assert.Equal(126m, CalculadorDeCostoNominal.Calcular(
-            100m, CostoListaPor.Unidad, false, null, 21m, null, porcentajeImpuestoInterno: 5m));
+            100m, CostoListaPor.Unidad, false, null, 21m, null, impuestoInterno: 5m));
 
     [Fact]
     public void ConIvaIncluidoElCostoDeListaYaTraeTodoYElImpuestoInternoNoSeSumaOtraVez() =>
         Assert.Equal(121m, CalculadorDeCostoNominal.Calcular(
-            121m, CostoListaPor.Unidad, true, null, 21m, null, porcentajeImpuestoInterno: 5m));
+            121m, CostoListaPor.Unidad, true, null, 21m, null, impuestoInterno: 5m));
 
     [Fact]
     public void ElDescuentoDelProveedorSeAplicaSobreElCostoConIvaEImpuestoInterno() =>
+        // (100 x 1,21 + 5) x 0,9
         Assert.Equal(113.4m, CalculadorDeCostoNominal.Calcular(
-            100m, CostoListaPor.Unidad, false, null, 21m, 10m, porcentajeImpuestoInterno: 5m));
+            100m, CostoListaPor.Unidad, false, null, 21m, 10m, impuestoInterno: 5m));
 
     [Fact]
-    public void PorBultoSinIvaDivideYSumaImpuestoInternoEIva() =>
-        Assert.Equal(15.12m, CalculadorDeCostoNominal.Calcular(
-            120m, CostoListaPor.Bulto, false, 10m, 21m, null, porcentajeImpuestoInterno: 5m));
+    public void PorBultoSinIvaElImpuestoInternoSeDivideEntreLasUnidadesDelBulto() =>
+        // 120 / 10 = 12; 12 x 1,21 + 50 / 10
+        Assert.Equal(19.52m, CalculadorDeCostoNominal.Calcular(
+            120m, CostoListaPor.Bulto, false, 10m, 21m, null, impuestoInterno: 50m));
 
     [Fact]
-    public void SinPorcentajeDeImpuestoInternoElCalculoEsElDeSiempre() =>
+    public void SinImpuestoInternoElCalculoEsElDeSiempre() =>
         Assert.Equal(
             CalculadorDeCostoNominal.Calcular(100m, CostoListaPor.Unidad, false, null, 21m, null),
-            CalculadorDeCostoNominal.Calcular(100m, CostoListaPor.Unidad, false, null, 21m, null, porcentajeImpuestoInterno: 0m));
+            CalculadorDeCostoNominal.Calcular(100m, CostoListaPor.Unidad, false, null, 21m, null, impuestoInterno: 0m));
 
     [Fact]
-    public void ElPorcentajeDeImpuestoInternoSoloCuentaSiElCostoSeGuardaSinIvaAntesODespues()
+    public void ElImpuestoInternoSoloCuentaSiElCostoSeGuardaSinIvaAntesODespues()
     {
-        Assert.False(CalculadorDeCostoNominal.CambiaAlgunaEntrada(Base(), Base() with { PorcentajeImpuestoInterno = 5m }));
+        Assert.False(CalculadorDeCostoNominal.CambiaAlgunaEntrada(Base(), Base() with { ImpuestoInterno = 5m }));
         Assert.True(CalculadorDeCostoNominal.CambiaAlgunaEntrada(
-            Base() with { IncluyeIva = false }, Base() with { IncluyeIva = false, PorcentajeImpuestoInterno = 5m }));
+            Base() with { IncluyeIva = false }, Base() with { IncluyeIva = false, ImpuestoInterno = 5m }));
         Assert.False(CalculadorDeCostoNominal.CambiaAlgunaEntrada(
-            Base() with { PorcentajeImpuestoInterno = 5m }, Base() with { PorcentajeImpuestoInterno = 8m }));
+            Base() with { ImpuestoInterno = 5m }, Base() with { ImpuestoInterno = 8m }));
     }
 
     // ---- CambiaAlgunaEntrada ---------------------------------------------------------------------

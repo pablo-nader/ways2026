@@ -8,6 +8,7 @@
  */
 import { api } from './cliente'
 import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
+import { aLineasDeSolicitud, errorDeLineasDePago, type LineaDePagoEditable } from './lineasDePago'
 import {
   brutoDeLinea,
   cantidadDeLinea,
@@ -26,11 +27,14 @@ import type {
   OrigenCompra,
   EstadoPago,
   PaginaDeCompras,
+  PagosAplicables,
+  ResultadoDeRedondeoDeCompra,
   PercepcionSolicitada,
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
   ResultadoDePagoDeCompra,
   SaldoDeProveedor,
+  AplicacionDePagoSolicitada,
   SolicitudDeAplicarPrecios,
   SolicitudDeCompra,
   SolicitudDePagoDeCompra,
@@ -69,8 +73,8 @@ export type FiltrosDeCompras = {
   desde: string
   hasta: string
   /** stage-tesoreria-por-empresa (PR5): filtro opcional por la empresa del punto de venta de la
-   * compra — usado por el picker "Vincular a compra" de Gastos para no ofrecer compras de otra
-   * empresa que la del gasto. */
+   * compra — usado por el picker "Vincular a compra" de Pagos para no ofrecer compras de otra
+   * empresa que la del pago. */
   idEmpresa: number | null
   pagina: number
   tamanio: number
@@ -149,10 +153,15 @@ export const clienteDeCompras = {
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>
     api.post<ResultadoAplicarPrecio[]>(`/compras/${id}/precios`, solicitud),
-  /** `POST /api/compras/{id}/pagos` — `GestionDeCatalogo` del lado del servidor: crea el gasto de
-   * tesorería y el pago de cuenta corriente imputado a la compra en una transacción. */
+  /** `GET /api/compras/{id}/pagos-aplicables` — pagos con disponible que se pueden aplicar a la compra. */
+  obtenerPagosAplicables: (id: number) => api.get<PagosAplicables>(`/compras/${id}/pagos-aplicables`),
+  /** `POST /api/compras/{id}/ajuste-de-redondeo` — `GestionDeCatalogo`: perdona el saldo de una compra confirmada si no supera
+   * la tolerancia de redondeo (409 `redondeo_excede_tolerancia` / `compra_sin_saldo_pendiente`). */
+  ajustarRedondeo: (id: number) => api.post<ResultadoDeRedondeoDeCompra>(`/compras/${id}/ajuste-de-redondeo`),
+  /** `POST /api/pagos/de-compra/{idCompra}` — `GestionDeCatalogo` del lado del servidor: crea el pago de
+   * tesorería con sus líneas por medio (puede superar el saldo) y/o aplica pagos existentes a la compra, en una transacción. */
   pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
-    api.post<ResultadoDePagoDeCompra>(`/compras/${id}/pagos`, solicitud),
+    api.post<ResultadoDePagoDeCompra>(`/pagos/de-compra/${id}`, solicitud),
   /** `GET /api/proveedores/{id}/saldo` — top-level, no dentro de `/api/proveedores` (design: API
    * Surface). Usado acá solo para la columna de estado de pago cuando el listado está filtrado
    * por un proveedor puntual; el panel completo lo construye `Proveedores.tsx` en la Slice 6. */
@@ -271,7 +280,6 @@ export function aSolicitudDeCompra(
   lineas: LineaDeCompraFormulario[],
   discriminaEfectivo = false,
   registraLibroIva = false,
-  porcentajePorAlicuota: Record<number, number> = {},
 ): SolicitudDeCompra {
   const completas = lineas.filter(lineaCompletaParaEnvio)
   const modo = { discriminaIva: discriminaEfectivo, preciosIncluyenIva: discriminaEfectivo && encabezado.preciosIncluyenIva }
@@ -289,7 +297,7 @@ export function aSolicitudDeCompra(
     numeroExterno: encabezado.numeroExterno.trim() === '' ? null : encabezado.numeroExterno.trim(),
     fechaComprobante: encabezado.fechaComprobante === '' ? null : encabezado.fechaComprobante,
     observaciones: encabezado.observaciones.trim() === '' ? null : encabezado.observaciones.trim(),
-    items: completas.map((l) => aLineaSolicitada(l, impuestoInternoDeLinea(l, porcentajePorAlicuota, modo))),
+    items: completas.map((l) => aLineaSolicitada(l, impuestoInternoDeLinea(l, modo))),
     idOrdenCompra: encabezado.idOrdenCompra,
     discriminaIva: encabezado.discriminaIva,
     ivaImpreso: ivaImpreso.length === 0 ? null : ivaImpreso,
@@ -388,7 +396,7 @@ export function lineaFormularioACalculo(
     costoUnitario: v.costoUnitario,
     descuento: v.descuento,
     porcentajeIva: l.idAlicuotaIva === '' ? 0 : (porcentajePorAlicuota[l.idAlicuotaIva] ?? 0),
-    impuestoInterno: modo === undefined ? 0 : impuestoInternoDeLinea(l, porcentajePorAlicuota, modo),
+    impuestoInterno: modo === undefined ? 0 : impuestoInternoDeLinea(l, modo),
   }
 }
 
@@ -517,7 +525,7 @@ function desglosarIva(
 // ---- Pago de una compra confirmada -----------------------------------------------------------
 
 /** Hoy como `YYYY-MM-DD` en la zona del navegador, la misma con la que el resto de la web decide la
- * fecha de negocio por defecto (`Gastos.tsx`). */
+ * fecha de negocio por defecto (`Pagos.tsx`). */
 export function fechaDeHoyParaPago(ahora: Date = new Date()): string {
   const mes = String(ahora.getMonth() + 1).padStart(2, '0')
   const dia = String(ahora.getDate()).padStart(2, '0')
@@ -530,30 +538,95 @@ export function sePuedePagarLaCompra(compra: Pick<CompraDetalle, 'estado' | 'sal
 }
 
 export type PagoDeCompraFormulario = {
-  importe: number | null
+  lineas: LineaDePagoEditable[]
   fecha: string
-  idMedioPago: number | null
   concepto: string
+  /** Pagos existentes tildados con el importe a aplicar de cada uno. */
+  aplicaciones?: AplicacionDePagoSolicitada[]
+  /** Cerrar en cero la diferencia con el saldo (dentro de la tolerancia de redondeo). */
+  cerrarEnCero?: boolean
 }
 
-/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir (importe positivo y
- * hasta el saldo pendiente, fecha no futura, medio de pago elegido) y, si pasa, arma la
- * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Un concepto en blanco viaja
- * como `null` y el servidor arma `Pago <tipo> <número>`. */
+/** Texto del aviso con el que quien abrió el modal confirma el pago: sin pago nuevo solo se aplicaron pagos a cuenta,
+ * y si el pago nuevo superó el saldo se dice cuánto quedó a favor. */
+export function textoDePagoRegistrado(
+  resultado: Pick<ResultadoDePagoDeCompra, 'pago' | 'disponibleDelPago' | 'redondeo'>,
+  formatear: (importe: number) => string,
+): string {
+  const redondeo = textoDeRedondeo(resultado.redondeo ?? null, formatear)
+  if (resultado.pago === null) return `Pagos a cuenta aplicados a la compra.${redondeo}`
+  const base = `Pago registrado: ${formatear(resultado.pago.importe)}.`
+  const aFavor = resultado.disponibleDelPago ?? 0
+  return `${aFavor > 0 ? `${base} Quedaron ${formatear(aFavor)} a favor.` : base}${redondeo}`
+}
+
+/** Frase del redondeo que cerró un pago: positivo se perdonó (faltaba pagar), negativo se absorbió (se pagó de más). Vacía
+ * si no hubo. */
+export function textoDeRedondeo(redondeo: number | null, formatear: (importe: number) => string): string {
+  if (redondeo === null || redondeo === 0) return ''
+  return redondeo > 0
+    ? ` Se perdonaron ${formatear(redondeo)} de redondeo.`
+    : ` Se absorbieron ${formatear(-redondeo)} de redondeo.`
+}
+
+/** Diferencia con el saldo que dejaría el pago tal como está armado: saldo − pagos a cuenta aplicados − dinero nuevo. Positiva si
+ * falta pagar, negativa si se paga de más. */
+export function diferenciaDelPago(saldoPendiente: number, totalAplicado: number, totalDeLineasNuevas: number): number {
+  return redondearImporte(saldoPendiente - totalAplicado - totalDeLineasNuevas)
+}
+
+/** Se puede cerrar en cero cuando hay una diferencia y no supera la tolerancia de redondeo vigente. */
+export function sePuedeCerrarEnCero(diferencia: number, tolerancia: number | null): boolean {
+  return tolerancia !== null && diferencia !== 0 && Math.abs(diferencia) <= tolerancia
+}
+
+/** Una compra confirmada con saldo de hasta la tolerancia se puede ajustar por redondeo desde su pantalla. */
+export function sePuedeAjustarElRedondeo(
+  compra: Pick<CompraDetalle, 'estado' | 'saldoPendiente'>,
+  tolerancia: number | null,
+): boolean {
+  return compra.estado === 'Confirmada' && compra.saldoPendiente > 0 && tolerancia !== null && compra.saldoPendiente <= tolerancia
+}
+
+/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir y, si pasa, arma la
+ * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Las líneas pueden sumar más que el saldo (el
+ * excedente queda a favor). Si hay pagos a aplicar, solo se descartan las líneas vacías (sin medio y sin importe): un
+ * importe tipeado sin medio es un error, nunca se pierde en silencio. Sin líneas el pedido solo aplica pagos y no lleva
+ * concepto (es del pago nuevo). Lo aplicado no puede superar el saldo. Un concepto en blanco viaja como `null`. */
 export function prepararPagoDeCompra(
   formulario: PagoDeCompraFormulario,
   saldoPendiente: number,
   hoy: string,
 ): { solicitud: SolicitudDePagoDeCompra } | { error: string } {
-  const { importe, idMedioPago } = formulario
-  if (importe === null || !(importe > 0)) return { error: 'Ingresá un importe mayor a 0.' }
-  if (importe > saldoPendiente) return { error: 'El importe no puede superar el saldo pendiente de la compra.' }
+  const aplicaciones = formulario.aplicaciones ?? []
+
+  if (aplicaciones.length > 0) {
+    const sinMedio = formulario.lineas.findIndex((l) => l.idMedioPago === '' && (l.importe ?? 0) !== 0)
+    if (sinMedio >= 0) return { error: `Elegí el medio de la línea ${sinMedio + 1}.` }
+  }
+  const lineas = aplicaciones.length > 0 ? formulario.lineas.filter((l) => l.idMedioPago !== '') : formulario.lineas
+  const hayDineroNuevo = lineas.length > 0
+
+  if (aplicaciones.length === 0 || hayDineroNuevo) {
+    const errorDeLineas = errorDeLineasDePago(lineas)
+    if (errorDeLineas !== null) return { error: errorDeLineas }
+  }
+  if (aplicaciones.some((a) => !(a.importe > 0))) return { error: 'El importe de cada pago a aplicar tiene que ser mayor a 0.' }
+  const totalAplicado = redondearImporte(aplicaciones.reduce((suma, a) => suma + a.importe, 0))
+  if (totalAplicado > saldoPendiente) {
+    return { error: 'Lo aplicado de pagos a cuenta no puede superar el saldo pendiente de la compra.' }
+  }
   if (!formulario.fecha) return { error: 'Elegí la fecha del pago.' }
   if (formulario.fecha > hoy) return { error: 'La fecha del pago no puede ser futura.' }
-  if (idMedioPago === null) return { error: 'Elegí el medio de pago.' }
 
   const concepto = formulario.concepto.trim()
   return {
-    solicitud: { fecha: formulario.fecha, importe, idMedioPago, concepto: concepto === '' ? null : concepto },
+    solicitud: {
+      fecha: formulario.fecha,
+      lineas: hayDineroNuevo ? aLineasDeSolicitud(lineas) : [],
+      concepto: !hayDineroNuevo || concepto === '' ? null : concepto,
+      ...(aplicaciones.length > 0 ? { aplicaciones } : {}),
+      ...(formulario.cerrarEnCero ? { cerrarEnCero: true } : {}),
+    },
   }
 }

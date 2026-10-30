@@ -17,13 +17,15 @@ import {
   normalizarFilas,
   completarConArticulo,
   percepcionesAplicables,
+  sePuedeAjustarElRedondeo,
   sePuedePagarLaCompra,
+  textoDePagoRegistrado,
   type EncabezadoDeCompraFormulario,
   type LineaDeCompraFormulario,
 } from '../api/compras'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
-import { clienteDeGastos, clienteDeGastosDeAdministracion } from '../api/gastos'
+import { clienteDePagos, clienteDePagosDeAdministracion } from '../api/registroDePagos'
 import { clienteDeOrdenesDeCompra } from '../api/ordenesDeCompra'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDePrecios } from '../api/precios'
@@ -32,7 +34,7 @@ import type {
   AlicuotaIvaListado,
   CompraDetalle,
   EmpresaListado,
-  GastoDeAdministracionListado,
+  PagoDeAdministracionListado,
   ListaPrecioListado,
   OrdenDeCompraDetalle,
   PaginaDe,
@@ -67,9 +69,11 @@ import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
 import { AvisoDeNumeroDuplicado } from './compras/AvisoDeNumeroDuplicado'
+import { AVISO_DE_EDICION_DE_COMPRA, mensajeDeErrorDeEdicion } from './compras/errorDeEdicionDeCompra'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
 import { useDuplicadosDeCompra } from './compras/useDuplicadosDeCompra'
 import { GrillaDeItemsDeCompra } from './compras/GrillaDeItemsDeCompra'
+import { ModalDeAnulacionDeCompra } from './compras/ModalDeAnulacionDeCompra'
 import {
   hayCambiosSinGuardar,
   huellaDeFormulario,
@@ -87,7 +91,7 @@ function formatearFechaHora(iso: string | null): string {
   return iso ? fechaHoraATexto(iso) : '—'
 }
 
-/** `gasto.fecha` es un `timestamptz` (instante) — el `<input type="date">` de
+/** `pago.fecha` es un `timestamptz` (instante) — el `<input type="date">` de
  * `fechaComprobante` necesita el día LOCAL, mismo criterio que el resto de esta web (nunca el día
  * UTC, que puede desplazarse un día en ART). */
 function fechaLocalDesdeIso(iso: string): string {
@@ -311,7 +315,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
 
 // ---- Pantalla principal -------------------------------------------------------------------------
 
-type PropsPantalla = { idCompra: number | null; idOrdenCompra: number | null; idDesdeGasto: number | null }
+type PropsPantalla = { idCompra: number | null; idOrdenCompra: number | null; idDesdePago: number | null }
 
 /** Lo que `guardar` deja en el estado de la navegación al aterrizar en el borrador recién creado:
  * la pantalla de destino arranca con el resultado de la acción a la vista. */
@@ -319,14 +323,14 @@ type EstadoDeNavegacion = {
   aviso?: string
   advertencia?: string
   error?: string
-  gastoVinculado?: boolean
-  errorVincularGasto?: string
+  pagoVinculado?: boolean
+  errorVincularPago?: string
 }
 
 /** Remontada por `key={idCompra ?? 'nuevo-' + (idOrdenCompra ?? 's')}` (react-async-state regla 8)
  * — ningún estado de acá (borrador en edición, paneles de confirmar/anular) sobrevive a un cambio
  * de compra. */
-function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPantalla) {
+function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdePago }: PropsPantalla) {
   const navigate = useNavigate()
   const { usuario } = useAuth()
   const puedeEscribir = usuario !== null && usuario.rolId === ROL.Admin
@@ -421,6 +425,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [cargandoCompra, setCargandoCompra] = useState(!esNuevo)
   const [errorCompra, setErrorCompra] = useState('')
   const generacionRef = useRef(0)
+  // Edición de una compra CONFIRMADA (E6): el formulario del borrador se habilita sobre el mismo detalle.
+  const [editando, setEditando] = useState(false)
 
   useEffect(() => {
     if (esNuevo || idCompra === null) return
@@ -478,38 +484,38 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     }
   }, [esNuevo, idOrdenCompra])
 
-  // ---- pre-carga desde un gasto (stage-gasto-a-compra, PR4): "Crear compra" de Gastos.tsx navega
-  // acá con `?desdeGasto=` — se resuelve UNA vez, para un borrador NUEVO, y el vínculo se re-arma
+  // ---- pre-carga desde un pago (stage-gasto-a-compra, PR4): "Crear compra" de Pagos.tsx navega
+  // acá con `?desdePago=` — se resuelve UNA vez, para un borrador NUEVO, y el vínculo se re-arma
   // automáticamente al confirmar (ver `confirmar` más abajo). El id sobrevive al remontaje
   // nuevo→existente porque `guardarBorrador` lo reenvía en el `navigate` de creación. ------------
-  const [gastoOrigen, setGastoOrigen] = useState<GastoDeAdministracionListado | null>(null)
-  const [errorGastoOrigen, setErrorGastoOrigen] = useState('')
+  const [pagoOrigen, setPagoOrigen] = useState<PagoDeAdministracionListado | null>(null)
+  const [errorPagoOrigen, setErrorPagoOrigen] = useState('')
 
   useEffect(() => {
-    if (idDesdeGasto === null) return
+    if (idDesdePago === null) return
     let vigente = true
 
-    clienteDeGastosDeAdministracion
-      .obtener(idDesdeGasto)
-      .then((gasto) => {
+    clienteDePagosDeAdministracion
+      .obtener(idDesdePago)
+      .then((pago) => {
         if (!vigente) return
-        setGastoOrigen(gasto)
+        setPagoOrigen(pago)
       })
       .catch((e) => {
         if (!vigente) return
-        setErrorGastoOrigen(e instanceof ErrorApi ? e.message : 'No se pudo cargar el gasto de origen.')
+        setErrorPagoOrigen(e instanceof ErrorApi ? e.message : 'No se pudo cargar el pago de origen.')
       })
 
     return () => {
       vigente = false
     }
-  }, [idDesdeGasto])
+  }, [idDesdePago])
 
   // ---- formulario editable (nuevo o borrador existente) ------------------------------------------
   const [encabezado, setEncabezado] = useState<EncabezadoDeCompraFormulario>(encabezadoVacio())
   const proximaClaveRef = useRef(1)
   const [lineas, setLineas] = useState<LineaDeCompraFormulario[]>(() => [lineaDeCompraVacia(0)])
-  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador', completarConArticulo)
+  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador' || editando, completarConArticulo)
 
   useEffect(() => {
     if (ordenParaPrecargar === null) return
@@ -524,19 +530,19 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     setLineas(normalizarFilas(filas, proximaClaveRef.current++))
   }, [ordenParaPrecargar])
 
-  // Prefill desde el gasto de origen: SOLO para un borrador nuevo (una compra ya creada/en edición
+  // Prefill desde el pago de origen: SOLO para un borrador nuevo (una compra ya creada/en edición
   // no vuelve a pisar lo que el operador ya tocó — mismo criterio que ordenParaPrecargar arriba).
   useEffect(() => {
-    if (!esNuevo || gastoOrigen === null) return
+    if (!esNuevo || pagoOrigen === null) return
     setEncabezado((prev) => ({
       ...prev,
-      idProveedor: gastoOrigen.idProveedor ?? prev.idProveedor,
-      idPuntoVenta: gastoOrigen.idPuntoVenta ?? prev.idPuntoVenta,
-      numeroExterno: gastoOrigen.numeroFactura ?? prev.numeroExterno,
-      fechaComprobante: fechaLocalDesdeIso(gastoOrigen.fecha),
-      observaciones: gastoOrigen.concepto,
+      idProveedor: pagoOrigen.idProveedor ?? prev.idProveedor,
+      idPuntoVenta: pagoOrigen.idPuntoVenta ?? prev.idPuntoVenta,
+      numeroExterno: pagoOrigen.numeroFactura ?? prev.numeroExterno,
+      fechaComprobante: fechaLocalDesdeIso(pagoOrigen.fecha),
+      observaciones: pagoOrigen.concepto,
     }))
-  }, [esNuevo, gastoOrigen])
+  }, [esNuevo, pagoOrigen])
 
   useEffect(() => {
     if (compra === null) return
@@ -553,21 +559,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     [proveedores, tipos, puntosVenta, empresas],
   )
 
-  // Un borrador NUEVO que viene de una orden de compra o de un gasto fija proveedor y punto de venta
+  // Un borrador NUEVO que viene de una orden de compra o de un pago fija proveedor y punto de venta
   // por efecto, antes de que la referencia termine de cargar: el modo de precios del proveedor se
   // aplica UNA vez, cuando su lista llega, por el mismo camino que elegirlo a mano. Si la orden ya
   // trae costos estimados, el modo actual se conserva.
   const origenAplicadoRef = useRef(false)
   useEffect(() => {
     if (!esNuevo || origenAplicadoRef.current || proveedores === null) return
-    if (ordenParaPrecargar === null && gastoOrigen === null) return
+    if (ordenParaPrecargar === null && pagoOrigen === null) return
     origenAplicadoRef.current = true
     const conservarModo = ordenParaPrecargar?.cobertura.some((c) => c.pendiente > 0 && c.costoEstimado !== null) ?? false
     setEncabezado((prev) => alElegirProveedor(prev, prev.idProveedor, referenciaDePercepciones, conservarModo))
-  }, [esNuevo, proveedores, ordenParaPrecargar, gastoOrigen, referenciaDePercepciones])
+  }, [esNuevo, proveedores, ordenParaPrecargar, pagoOrigen, referenciaDePercepciones])
 
   // Con un único punto de venta no hay nada que elegir: se preselecciona UNA vez, cuando llega su
-  // lista, y solo si el borrador nuevo todavía no tiene uno (orden de compra o gasto de origen).
+  // lista, y solo si el borrador nuevo todavía no tiene uno (orden de compra o pago de origen).
   const puntoVentaPreseleccionadoRef = useRef(false)
   useEffect(() => {
     if (!esNuevo || puntoVentaPreseleccionadoRef.current || puntosVenta === null) return
@@ -640,7 +646,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [estadoInicial] = useState<EstadoDeNavegacion>(() => (ubicacion.state as EstadoDeNavegacion | null) ?? {})
 
   const [guardando, setGuardando] = useState(false)
-  const [accion, setAccion] = useState<'guardar' | 'borrador' | null>(null)
+  const [accion, setAccion] = useState<'guardar' | 'borrador' | 'cambios' | null>(null)
   const guardandoRef = useRef(false)
   // Códigos de proveedor que la grilla está consultando: guardar espera a que terminen, así una fila
   // nunca se guarda como concepto y después la muta una respuesta tardía.
@@ -678,44 +684,43 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- vínculo automático con el gasto de origen, DESPUÉS de confirmar (stage-gasto-a-compra,
+  // ---- vínculo automático con el pago de origen, DESPUÉS de confirmar (stage-gasto-a-compra,
   // PR4): un fallo acá NUNCA revierte la confirmación — la compra queda confirmada igual, con un
   // botón para reintentar el vínculo solo. --------------------------------------------------------
-  const [gastoVinculado, setGastoVinculado] = useState(estadoInicial.gastoVinculado ?? false)
-  const [vinculandoGasto, setVinculandoGasto] = useState(false)
-  const vinculandoGastoRef = useRef(false)
-  const [errorVincularGasto, setErrorVincularGasto] = useState(estadoInicial.errorVincularGasto ?? '')
+  const [pagoVinculado, setPagoVinculado] = useState(estadoInicial.pagoVinculado ?? false)
+  const [vinculandoPago, setVinculandoPago] = useState(false)
+  const vinculandoPagoRef = useRef(false)
+  const [errorVincularPago, setErrorVincularPago] = useState(estadoInicial.errorVincularPago ?? '')
 
-  async function vincularGasto(idCompraConfirmada: number): Promise<string | null> {
-    if (idDesdeGasto === null) return null
+  async function vincularPago(idCompraConfirmada: number): Promise<string | null> {
+    if (idDesdePago === null) return null
     try {
-      await clienteDeGastos.vincularCompra(idDesdeGasto, idCompraConfirmada)
+      await clienteDePagos.vincularCompra(idDesdePago, idCompraConfirmada)
       return null
     } catch (e) {
-      return e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto de origen a esta compra.'
+      return e instanceof ErrorApi ? e.message : 'No se pudo vincular el pago de origen a esta compra.'
     }
   }
 
-  async function reintentarVinculoConGasto(idCompraConfirmada: number) {
-    if (vinculandoGastoRef.current) return
-    vinculandoGastoRef.current = true
-    setVinculandoGasto(true)
-    setErrorVincularGasto('')
+  async function reintentarVinculoConPago(idCompraConfirmada: number) {
+    if (vinculandoPagoRef.current) return
+    vinculandoPagoRef.current = true
+    setVinculandoPago(true)
+    setErrorVincularPago('')
 
     try {
-      const errorDelVinculo = await vincularGasto(idCompraConfirmada)
-      if (errorDelVinculo === null) setGastoVinculado(true)
-      else setErrorVincularGasto(errorDelVinculo)
+      const errorDelVinculo = await vincularPago(idCompraConfirmada)
+      if (errorDelVinculo === null) setPagoVinculado(true)
+      else setErrorVincularPago(errorDelVinculo)
     } finally {
-      vinculandoGastoRef.current = false
-      setVinculandoGasto(false)
+      vinculandoPagoRef.current = false
+      setVinculandoPago(false)
     }
   }
 
   const [anulando, setAnulando] = useState(false)
   const anulandoRef = useRef(false)
   const [panelAnularAbierto, setPanelAnularAbierto] = useState(false)
-  const [confirmadoParaAnular, setConfirmadoParaAnular] = useState(false)
   const [errorAnular, setErrorAnular] = useState('')
   const [resultadoAnulacion, setResultadoAnulacion] = useState<ResultadoAnulacion | null>(null)
 
@@ -730,12 +735,46 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   const [pagoAbierto, setPagoAbierto] = useState(false)
 
+  // Ajuste por redondeo (E4): la tolerancia vigente se lee con la lista de pagos aplicables solo mientras la compra
+  // confirmada tenga saldo (flag de vigencia: una respuesta vieja no pisa a la de otro saldo). La escritura tiene su guard de
+  // reentrancia, deja la pantalla inerte (`ocupado`) hasta responder y no se reintenta sola.
+  const [toleranciaRedondeo, setToleranciaRedondeo] = useState<number | null>(null)
+  const necesitaTolerancia = puedeEscribir && compra?.estado === 'Confirmada' && compra.saldoPendiente > 0
+  const idCompraConSaldo = necesitaTolerancia ? compra.id : null
+  const saldoConTolerancia = necesitaTolerancia ? compra.saldoPendiente : 0
+
+  useEffect(() => {
+    if (idCompraConSaldo === null) {
+      setToleranciaRedondeo(null)
+      return
+    }
+    let vigente = true
+
+    clienteDeCompras
+      .obtenerPagosAplicables(idCompraConSaldo)
+      .then((respuesta) => {
+        if (vigente) setToleranciaRedondeo(respuesta.toleranciaRedondeo ?? null)
+      })
+      .catch(() => {
+        // Sin la tolerancia el botón no se ofrece; pagar la compra no depende de esta lectura.
+        if (vigente) setToleranciaRedondeo(null)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idCompraConSaldo, saldoConTolerancia])
+
+  const [ajustandoRedondeo, setAjustandoRedondeo] = useState(false)
+  const ajustandoRedondeoRef = useRef(false)
+  const [errorRedondeo, setErrorRedondeo] = useState('')
+
   // El pago ya trae el pagado y el saldo pendiente leídos bajo el lock de la compra: se vuelcan al
   // detalle en pantalla sin volver a pedirlo, así no hay una segunda lectura que pueda fallar o
   // llegar vieja después de un pago que sí se registró.
   function alPagar(resultado: ResultadoDePagoDeCompra) {
     setPagoAbierto(false)
-    setAviso(`Pago registrado: ${formatearMoneda(resultado.gasto.importe)}.`)
+    setAviso(textoDePagoRegistrado(resultado, formatearMoneda))
     setCompra((prev) =>
       prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
     )
@@ -746,13 +785,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   // todavía en curso — el gate queda asimétrico.
   const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
 
+  // Cancelar la edición vuelve a pedir la compra al servidor: mientras esa lectura está en vuelo la pantalla queda inerte
+  // (nada la puede reemplazar ni se puede volver a entrar en edición), así su respuesta no pisa un formulario nuevo.
+  const [recargando, setRecargando] = useState(false)
+  const recargandoRef = useRef(false)
+  const [errorRecarga, setErrorRecarga] = useState('')
+
   // Las puertas de "descartar cambios" y de "cambiar el proveedor" dejan inerte el resto de la
   // pantalla mientras están abiertas.
   const ocupado =
     guardando ||
     anulando ||
     aplicandoPrecios ||
-    vinculandoGasto ||
+    ajustandoRedondeo ||
+    recargando ||
+    vinculandoPago ||
     descartarBorradorAbierto ||
     descartarAbierto ||
     proveedorPendiente !== null
@@ -885,7 +932,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     idTipoComprobante: encabezado.idTipoComprobante,
     numeroExterno: encabezado.numeroExterno,
     excluirId: idCompra,
-    activo: puedeEscribir && (esNuevo || compra?.estado === 'Borrador'),
+    activo: puedeEscribir && (esNuevo || compra?.estado === 'Borrador' || editando),
   })
 
   const cantidadPorCodigo = lineas.filter((l) => l.resueltaPorCodigo).length
@@ -937,13 +984,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       setGuardando(false)
       setAccion(null)
     }
-    // `desdeGasto` viaja en la URL de la compra recién guardada: sin esto, el remontaje (nuevo →
+    // `desdePago` viaja en la URL de la compra recién guardada: sin esto, el remontaje (nuevo →
     // existente) perdería el vínculo pendiente.
-    const rutaDeLaCompra = (id: number) => `/compras/${id}${idDesdeGasto !== null ? `?desdeGasto=${idDesdeGasto}` : ''}`
+    const rutaDeLaCompra = (id: number) => `/compras/${id}${idDesdePago !== null ? `?desdePago=${idDesdePago}` : ''}`
 
     let guardada: CompraDetalle
     try {
-      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva, porcentajePorAlicuota)
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
       guardada = esNuevo || idCompra === null ? await clienteDeCompras.crear(solicitud) : await clienteDeCompras.actualizar(idCompra, solicitud)
     } catch (e) {
       liberar()
@@ -988,15 +1035,15 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       return
     }
 
-    // El vínculo con el gasto de origen corre DESPUÉS de que la confirmación ya comiteó — un
-    // fallo acá se muestra aparte (errorVincularGasto) y nunca deshace la confirmación.
-    const errorDelVinculo = await vincularGasto(confirmada.id)
+    // El vínculo con el pago de origen corre DESPUÉS de que la confirmación ya comiteó — un
+    // fallo acá se muestra aparte (errorVincularPago) y nunca deshace la confirmación.
+    const errorDelVinculo = await vincularPago(confirmada.id)
     const avisoDeConfirmacion = confirmada.items.some((i) => i.idArticulo !== null)
       ? 'Compra confirmada: el stock y el costo ya se actualizaron.'
       : 'Compra confirmada.'
     const vinculo = {
-      gastoVinculado: idDesdeGasto !== null && errorDelVinculo === null,
-      errorVincularGasto: errorDelVinculo ?? undefined,
+      pagoVinculado: idDesdePago !== null && errorDelVinculo === null,
+      errorVincularPago: errorDelVinculo ?? undefined,
     }
     if (esNuevo) {
       // Sin liberar: la pantalla queda inerte hasta que la navegación la reemplace.
@@ -1008,8 +1055,89 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // regla 6: un 2xx de confirmar nunca se reporta como fallo — la respuesta ES el resultado.
     setCompra(confirmada)
     setAviso(avisoDeConfirmacion)
-    setGastoVinculado(vinculo.gastoVinculado)
-    setErrorVincularGasto(errorDelVinculo ?? '')
+    setPagoVinculado(vinculo.pagoVinculado)
+    setErrorVincularPago(errorDelVinculo ?? '')
+  }
+
+  function iniciarEdicion() {
+    // Cada acción que empieza borra lo que dijo la anterior (react-async-state, regla 16).
+    setAviso('')
+    setError('')
+    setAdvertencia('')
+    setErrorRedondeo('')
+    setErrorRecarga('')
+    setIntentoFallido(null)
+    setEditando(true)
+  }
+
+  /**
+   * Descarta lo tipeado: el formulario vuelve a lo último que trajo el servidor y se pide la compra de nuevo. Si la
+   * lectura falla se conserva lo último conocido y se avisa, nunca se deja a medias.
+   */
+  async function cancelarEdicion() {
+    if (recargandoRef.current || idCompra === null) return
+    recargandoRef.current = true
+    setRecargando(true)
+    setError('')
+    setAdvertencia('')
+    setErrorRecarga('')
+    setIntentoFallido(null)
+    setEditando(false)
+    setCompra((prev) => (prev === null ? prev : { ...prev }))
+    const miGeneracion = (generacionRef.current += 1)
+
+    try {
+      const detalle = await clienteDeCompras.obtener(idCompra)
+      if (generacionRef.current === miGeneracion) setCompra(detalle)
+    } catch {
+      if (generacionRef.current === miGeneracion) {
+        setErrorRecarga('No se pudo recargar la compra: se muestran los últimos datos conocidos.')
+      }
+    } finally {
+      recargandoRef.current = false
+      setRecargando(false)
+    }
+  }
+
+  /** Guarda los cambios de una compra confirmada (`PUT /api/compras/{id}`): no hay paso de confirmar. */
+  async function guardarCambios() {
+    if (guardandoRef.current || creandoArticuloRef.current || idCompra === null) return
+    if (consultandoCodigosRef.current) {
+      setEsperandoCodigos(true)
+      return
+    }
+    setEsperandoCodigos(false)
+    if (mensajeDeLoQueImpideGuardar(encabezado, lineas, true) !== null) {
+      setAviso('')
+      setAdvertencia('')
+      setError('')
+      setIntentoFallido('guardar')
+      return
+    }
+
+    guardandoRef.current = true
+    setGuardando(true)
+    setAccion('cambios')
+    setError('')
+    setAdvertencia('')
+    setAviso('')
+    setIntentoFallido(null)
+    generacionRef.current += 1
+
+    try {
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
+      const guardada = await clienteDeCompras.actualizar(idCompra, solicitud)
+      // La respuesta es el detalle ya recalculado (pagado y saldo incluidos): es el refresco, no hace falta pedirlo de nuevo.
+      setCompra(guardada)
+      setEditando(false)
+      setAviso('Cambios guardados: el stock, la cuenta del proveedor y los costos ya se ajustaron.')
+    } catch (e) {
+      setError(mensajeDeErrorDeEdicion(e))
+    } finally {
+      guardandoRef.current = false
+      setGuardando(false)
+      setAccion(null)
+    }
   }
 
   function pedirDescartarBorrador(evento: MouseEvent<HTMLButtonElement>) {
@@ -1040,9 +1168,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   async function anular() {
     // regla 9: guard de reentrancia de primera línea.
-    if (ocupado) return
-    if (anulandoRef.current) return
-    if (!confirmadoParaAnular || idCompra === null) return
+    if (ocupado || anulandoRef.current || idCompra === null) return
 
     anulandoRef.current = true
     setAnulando(true)
@@ -1058,7 +1184,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       setCompra(resultado.compra)
       setResultadoAnulacion(resultado)
       setPanelAnularAbierto(false)
-      setConfirmadoParaAnular(false)
     } catch (e) {
       anulandoRef.current = false
       setAnulando(false)
@@ -1068,6 +1193,29 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       // Transferencias.tsx para stock_insuficiente_para_transferencia — sibling surfaces, mismo
       // criterio de "nombra el artículo, nunca lo envuelvas").
       setErrorAnular(e instanceof ErrorApi ? e.message : 'No se pudo anular la compra.')
+    }
+  }
+
+  async function ajustarRedondeo() {
+    // regla 9: guard de reentrancia de primera línea.
+    if (ocupado || ajustandoRedondeoRef.current || idCompra === null) return
+
+    ajustandoRedondeoRef.current = true
+    setAjustandoRedondeo(true)
+    setErrorRedondeo('')
+    generacionRef.current += 1
+
+    try {
+      const resultado = await clienteDeCompras.ajustarRedondeo(idCompra)
+      setCompra((prev) =>
+        prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
+      )
+      setAviso(`Redondeo aplicado: se perdonaron ${formatearMoneda(resultado.redondeo)} y la compra quedó paga.`)
+    } catch (e) {
+      setErrorRedondeo(e instanceof ErrorApi ? e.message : 'No se pudo ajustar el redondeo.')
+    } finally {
+      ajustandoRedondeoRef.current = false
+      setAjustandoRedondeo(false)
     }
   }
 
@@ -1093,12 +1241,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   }
 
   const esBorrador = esNuevo || compra?.estado === 'Borrador'
+  const esEditable = esBorrador || editando
   const esConfirmada = compra?.estado === 'Confirmada'
   const tienePreciosSugeridos = compra?.items.some((i) => i.precioSugerido !== null) ?? false
   const tieneArticulos = compra?.items.some((i) => i.idArticulo !== null) ?? false
   // Un rol sin escritura ve el borrador existente en la tabla de solo lectura: el formulario
   // recalcula los totales desde los costos de cada línea, que el vendedor no recibe.
-  const mostrarFormulario = esBorrador && (puedeEscribir || compra === null)
+  const mostrarFormulario = esEditable && (puedeEscribir || compra === null)
 
   return (
     <div className="container-fluid py-4">
@@ -1118,7 +1267,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
           </div>
         )}
         {errorOrdenParaPrecargar && <div className="alert alert-warning py-1 px-2 small">{errorOrdenParaPrecargar}</div>}
-        {errorGastoOrigen && <div className="alert alert-warning py-1 px-2 small">{errorGastoOrigen}</div>}
+        {errorPagoOrigen && <div className="alert alert-warning py-1 px-2 small">{errorPagoOrigen}</div>}
         {encabezado.idOrdenCompra !== null && (
           <div className="alert alert-info py-1 px-2 small">
             Vinculada a la orden de compra{' '}
@@ -1130,24 +1279,24 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             Cargado por el asistente: revisá contra la factura antes de confirmar.
           </div>
         )}
-        {idDesdeGasto !== null && !gastoVinculado && (
+        {idDesdePago !== null && !pagoVinculado && (
           <div className="alert alert-info py-1 px-2 small">
-            Se vinculará al gasto #{idDesdeGasto} al confirmar.
+            Se vinculará al pago #{idDesdePago} al confirmar.
           </div>
         )}
-        {gastoVinculado && (
-          <div className="alert alert-success py-1 px-2 small">Vinculada al gasto #{idDesdeGasto}.</div>
+        {pagoVinculado && (
+          <div className="alert alert-success py-1 px-2 small">Vinculada al pago #{idDesdePago}.</div>
         )}
-        {errorVincularGasto && (
+        {errorVincularPago && (
           <div className="alert alert-danger py-1 px-2 small d-flex justify-content-between align-items-center">
-            <span>{errorVincularGasto}</span>
+            <span>{errorVincularPago}</span>
             <button
               type="button"
               className="btn btn-sm btn-outline-danger"
-              disabled={vinculandoGasto}
-              onClick={() => compra && void reintentarVinculoConGasto(compra.id)}
+              disabled={vinculandoPago}
+              onClick={() => compra && void reintentarVinculoConPago(compra.id)}
             >
-              {vinculandoGasto ? 'Reintentando…' : 'Reintentar vínculo'}
+              {vinculandoPago ? 'Reintentando…' : 'Reintentar vínculo'}
             </button>
           </div>
         )}
@@ -1170,7 +1319,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               id="compra-proveedor"
               className="form-select"
               value={encabezado.idProveedor}
-              disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+              disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => cambiarProveedor(e.target.value, e.currentTarget)}
             >
               <option value="">Elegir…</option>
@@ -1189,7 +1338,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               id="compra-tipo"
               className="form-select"
               value={encabezado.idTipoComprobante}
-              disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+              disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => cambiarTipo(e.target.value)}
             >
               <option value="">Elegir…</option>
@@ -1206,7 +1355,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   type="checkbox"
                   className="form-check-input"
                   checked={discriminaIva}
-                  disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+                  disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
                   onChange={(e) => cambiarDiscriminaIva(e.target.checked)}
                 />
                 <label className="form-check-label small" htmlFor="compra-discrimina-iva">
@@ -1221,7 +1370,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   type="checkbox"
                   className="form-check-input"
                   checked={encabezado.preciosIncluyenIva}
-                  disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+                  disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
                   onChange={(e) => cambiarPreciosIncluyenIva(e.target.checked)}
                 />
                 <label className="form-check-label small" htmlFor="compra-precios-incluyen-iva">
@@ -1238,7 +1387,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               id="compra-punto-venta"
               className="form-select"
               value={encabezado.idPuntoVenta}
-              disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+              disabled={!esEditable || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => cambiarPuntoVenta(e.target.value)}
             >
               <option value="">Elegir…</option>
@@ -1256,7 +1405,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             <CampoNumeroDeComprobante
               idBase="compra-numero-externo"
               valor={encabezado.numeroExterno}
-              disabled={!esBorrador || ocupado || !puedeEscribir}
+              disabled={!esEditable || ocupado || !puedeEscribir}
               onChange={(numeroExterno) => setEncabezado((prev) => ({ ...prev, numeroExterno }))}
             />
           </div>
@@ -1268,7 +1417,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               id="compra-fecha-comprobante"
               className="form-control"
               value={encabezado.fechaComprobante}
-              disabled={!esBorrador || ocupado || !puedeEscribir}
+              disabled={!esEditable || ocupado || !puedeEscribir}
               onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaComprobante: valor }))}
             />
           </div>
@@ -1286,7 +1435,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               type="text"
               className="form-control"
               value={encabezado.observaciones}
-              disabled={!esBorrador || ocupado || !puedeEscribir}
+              disabled={!esEditable || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, observaciones: e.target.value }))}
             />
           </div>
@@ -1294,6 +1443,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
         {mostrarFormulario ? (
           <>
+            {editando && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {AVISO_DE_EDICION_DE_COMPRA}
+              </div>
+            )}
             <GrillaDeItemsDeCompra
               lineas={lineas}
               alicuotas={alicuotas ?? []}
@@ -1393,7 +1547,18 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               </div>
             )}
 
-            {puedeEscribir && (
+            {puedeEscribir && editando && (
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={() => void guardarCambios()}>
+                  {accion === 'cambios' ? 'Guardando…' : 'Guardar cambios'}
+                </button>
+                <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={() => void cancelarEdicion()}>
+                  Cancelar
+                </button>
+              </div>
+            )}
+
+            {puedeEscribir && !editando && (
               <>
                 <div className="d-flex flex-wrap gap-2 mb-2">
                   <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={() => void guardar(true)}>
@@ -1521,28 +1686,53 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               {resultadoAnulacion && (
                 <div className="alert alert-warning">
                   Compra anulada. {resultadoAnulacion.gastosLigados > 0
-                    ? `Quedan ${resultadoAnulacion.gastosLigados} gasto(s) ligado(s) a esta compra sin desvincular — la anulación no los revierte, quedan como historial de un pago ya realizado.`
-                    : 'No había ningún gasto ligado a esta compra.'}
+                    ? `Quedan ${resultadoAnulacion.gastosLigados} pago(s) ligado(s) a esta compra sin desvincular — la anulación no los revierte, quedan como historial de lo ya pagado.`
+                    : 'No había ningún pago ligado a esta compra.'}
                 </div>
               )}
+
+              {errorRecarga && <div className="alert alert-warning py-1 px-2 small">{errorRecarga}</div>}
 
               {esConfirmada && puedeEscribir && (
                 <>
                   <div className="d-flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      className="btn btn-outline-primary"
+                      disabled={ocupado || pagoAbierto || panelAnularAbierto}
+                      onClick={iniciarEdicion}
+                    >
+                      Editar compra
+                    </button>
                     {sePuedePagarLaCompra(compra) && (
                       <button type="button" className="btn btn-primary" disabled={ocupado} onClick={() => setPagoAbierto(true)}>
                         Pagar
+                      </button>
+                    )}
+                    {sePuedeAjustarElRedondeo(compra, toleranciaRedondeo) && (
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary"
+                        disabled={ocupado}
+                        onClick={() => void ajustarRedondeo()}
+                      >
+                        {ajustandoRedondeo ? 'Ajustando…' : 'Ajustar redondeo'}
                       </button>
                     )}
                     <button
                       type="button"
                       className="btn btn-danger"
                       disabled={ocupado}
-                      onClick={() => setPanelAnularAbierto(true)}
+                      onClick={() => {
+                        setErrorAnular('')
+                        setPanelAnularAbierto(true)
+                      }}
                     >
                       Anular compra
                     </button>
                   </div>
+
+                  {errorRedondeo && <div className="alert alert-danger py-2 px-3 small">{errorRedondeo}</div>}
 
                   {pagoAbierto && (
                     <ModalDePagoDeCompra
@@ -1555,46 +1745,17 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   )}
 
                   {panelAnularAbierto && (
-                    <div className="border p-3 mb-3">
-                      <strong>Anular compra</strong>
-                      {errorAnular && <div className="alert alert-danger py-1 px-2 small mt-2">{errorAnular}</div>}
-                      <div className="form-check my-2">
-                        <input
-                          id="compra-confirmacion-anular"
-                          type="checkbox"
-                          className="form-check-input"
-                          checked={confirmadoParaAnular}
-                          disabled={anulando}
-                          onChange={(e) => setConfirmadoParaAnular(e.target.checked)}
-                        />
-                        <label className="form-check-label" htmlFor="compra-confirmacion-anular">
-                          {tieneArticulos
-                            ? 'Confirmo que quiero anular esta compra. Es irreversible: se revierte el stock que entró, el costo del artículo NO se corrige solo (se edita aparte).'
-                            : 'Confirmo que quiero anular esta compra. Es irreversible.'}
-                        </label>
-                      </div>
-                      <div className="d-flex gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary"
-                          disabled={anulando}
-                          onClick={() => {
-                            setPanelAnularAbierto(false)
-                            setConfirmadoParaAnular(false)
-                          }}
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger"
-                          disabled={!confirmadoParaAnular || ocupado}
-                          onClick={anular}
-                        >
-                          {anulando ? 'Anulando…' : 'Anular'}
-                        </button>
-                      </div>
-                    </div>
+                    <ModalDeAnulacionDeCompra
+                      tieneArticulos={tieneArticulos}
+                      anulando={anulando}
+                      bloqueado={ocupado}
+                      error={errorAnular}
+                      onConfirmar={anular}
+                      onCancelar={() => {
+                        setPanelAnularAbierto(false)
+                        setErrorAnular('')
+                      }}
+                    />
                   )}
 
                   {tienePreciosSugeridos && listasPrecio && listasPrecio.length > 0 && (
@@ -1646,12 +1807,13 @@ export function CompraEditor() {
     idOrdenCompraParam !== null && Number.isFinite(Number(idOrdenCompraParam)) ? Number(idOrdenCompraParam) : null
 
   // stage-gasto-a-compra (PR4): a diferencia de `idOrdenCompra` (solo aplica a un borrador nuevo),
-  // `desdeGasto` se lee SIEMPRE — sobrevive al remontaje nuevo→existente (`guardarBorrador` lo
+  // `desdePago` se lee SIEMPRE — sobrevive al remontaje nuevo→existente (`guardarBorrador` lo
   // reenvía en el `navigate` de creación) porque el vínculo real recién se dispara al CONFIRMAR,
-  // no al crear el borrador.
-  const idDesdeGastoParam = searchParams.get('desdeGasto')
-  const idDesdeGasto =
-    idDesdeGastoParam !== null && Number.isFinite(Number(idDesdeGastoParam)) ? Number(idDesdeGastoParam) : null
+  // no al crear el borrador. `desdeGasto` es el nombre anterior del parámetro: un borrador abierto
+  // antes del renombre lo trae en su URL y no debe perder el vínculo.
+  const idDesdePagoParam = searchParams.get('desdePago') ?? searchParams.get('desdeGasto')
+  const idDesdePago =
+    idDesdePagoParam !== null && Number.isFinite(Number(idDesdePagoParam)) ? Number(idDesdePagoParam) : null
 
   if (!idValido) {
     return (
@@ -1668,10 +1830,10 @@ export function CompraEditor() {
 
   return (
     <PantallaCompraEditor
-      key={idNumerico ?? `nuevo-${idOrdenCompra ?? 's'}-${idDesdeGasto ?? 'g'}`}
+      key={idNumerico ?? `nuevo-${idOrdenCompra ?? 's'}-${idDesdePago ?? 'g'}`}
       idCompra={idNumerico}
       idOrdenCompra={idOrdenCompra}
-      idDesdeGasto={idDesdeGasto}
+      idDesdePago={idDesdePago}
     />
   )
 }

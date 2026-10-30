@@ -3,6 +3,7 @@ import { ErrorApi } from '../api/cliente'
 import { copiaDeFalloDeBaja } from '../api/bajas'
 import {
   clienteDeOrganizacion,
+  ETIQUETA_SIN_DUENIO,
   etiquetaDeTenant,
   filtrarPorTenant,
   opcionesDeTenant,
@@ -17,14 +18,21 @@ import { useAuth } from '../auth/useAuth'
 import { ROL } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
 import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
+import {
   aEdicionDeEmpresa,
   aFormularioDeEmpresa,
   alicuotasDePercepcionValidas,
-  LARGO_MAXIMO_INGRESOS_BRUTOS,
   MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA,
   type FormularioDeEmpresa,
 } from './empresaFormulario'
-import { atributosDeCampoDecimal } from '../formato/numeros'
+import { ModalDeEmpresa } from './organizacion/ModalDeEmpresa'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -35,9 +43,46 @@ const AVISO_REFRESCO_FALLIDO_BAJA =
  * la cascada— en vez de inventar un número que la fila no tiene. */
 const ARRASTRE_DE_EMPRESA = ['Sus puntos de venta activos'] as const
 
+const textoDeId = (empresa: EmpresaListado) => String(empresa.id).padStart(4, '0')
+const textoDeFantasia = (empresa: EmpresaListado) => empresa.nombreFantasia ?? '—'
+const textoDeCuit = (empresa: EmpresaListado) => empresa.cuit ?? '—'
+const nombreDeTenant = (empresa: EmpresaListado) => etiquetaDeTenant(empresa)
+/** Un dueño dado de baja se rotula "—" en la celda, pero para filtrar y ordenar cuenta como vacío. */
+const tenantParaFiltrarYOrdenar = (empresa: EmpresaListado) => {
+  const etiqueta = nombreDeTenant(empresa)
+
+  return etiqueta === ETIQUETA_SIN_DUENIO ? '' : etiqueta
+}
+
+const ORDENABLES_BASE: ColumnasOrdenables<EmpresaListado> = {
+  id: { valor: (empresa) => empresa.id },
+  razonSocial: { valor: (empresa) => empresa.razonSocial },
+  nombreFantasia: { valor: (empresa) => empresa.nombreFantasia },
+  cuit: { valor: (empresa) => empresa.cuit },
+}
+const FILTRABLES_BASE: ColumnasFiltrables<EmpresaListado> = {
+  id: { etiqueta: 'ID', valor: textoDeId },
+  razonSocial: { etiqueta: 'Razón social', valor: (empresa) => empresa.razonSocial },
+  nombreFantasia: { etiqueta: 'Nombre de fantasía', valor: textoDeFantasia },
+  cuit: { etiqueta: 'CUIT', valor: textoDeCuit },
+}
+/** La columna de tenant solo existe para plataforma: sus definiciones son otro mapa estable, no una condición dentro del hook. */
+const ORDENABLES_PLATAFORMA: ColumnasOrdenables<EmpresaListado> = {
+  ...ORDENABLES_BASE,
+  tenant: { valor: tenantParaFiltrarYOrdenar },
+}
+const FILTRABLES_PLATAFORMA: ColumnasFiltrables<EmpresaListado> = {
+  ...FILTRABLES_BASE,
+  tenant: { etiqueta: 'Tenant', valor: tenantParaFiltrarYOrdenar },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_BASE = ['id', 'razonSocial', 'nombreFantasia', 'cuit', null]
+const CELDAS_PLATAFORMA = ['id', 'tenant', 'razonSocial', 'nombreFantasia', 'cuit', null]
+
 /**
  * Lectura/edición/baja de empresas — el alta sigue siendo plataforma-only vía aprovisionamiento
- * (`NuevoTenant.tsx`); la baja (etapa 20) la puede ejecutar también un admin de tenant sobre las
+ * (`paginas/tenants/ModalDeNuevoTenant.tsx`); la baja (etapa 20) la puede ejecutar también un admin de tenant sobre las
  * propias, porque `DELETE /api/empresas/{id}` reusa la policy del grupo
  * (`GestionDeOrganizacion`) y esta pantalla ya está detrás de esos mismos roles.
  * El backend ya filtra por alcance: la plataforma ve
@@ -51,10 +96,15 @@ export function Empresas() {
   const esPlataforma = usuario?.rolId === ROL.Root
 
   const [items, setItems] = useState<EmpresaListado[]>([])
+  /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
+  const [cargada, setCargada] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<FormularioDeEmpresa | null>(null)
+  /** Rechazo del guardado: vive adentro del modal, aparte del `error` de la pantalla (carga y baja). */
+  const [errorFormulario, setErrorFormulario] = useState('')
+  const [disparoDeError, setDisparoDeError] = useState(0)
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
@@ -73,6 +123,10 @@ export function Empresas() {
    * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
    */
   const ocupadoRef = useRef(false)
+  /** Destino de foco al cerrar el modal cuando el "Editar" que lo abrió ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): esta pantalla no tiene botón de alta, así que
+   * el punto estable es la zona de avisos, donde queda el aviso de éxito. */
+  const zonaDeAvisosRef = useRef<HTMLDivElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
@@ -87,7 +141,10 @@ export function Empresas() {
       if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las empresas.')
     } finally {
-      if (generacion.current === token) setCargando(false)
+      if (generacion.current === token) {
+        setCargando(false)
+        setCargada(true)
+      }
     }
   }, [])
 
@@ -113,7 +170,8 @@ export function Empresas() {
     if (!formulario || ocupadoRef.current) return
 
     if (!alicuotasDePercepcionValidas(formulario)) {
-      setError(MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA)
+      setErrorFormulario(MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA)
+      setDisparoDeError((n) => n + 1)
       return
     }
 
@@ -122,24 +180,32 @@ export function Empresas() {
     ocupadoRef.current = true
     setOcupado(datos.id)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
+      // La respuesta de la escritura no se compara con la generación: el modal queda inerte hasta
+      // que el refresco aterriza y nada puede acuñar otro token ni reabrir el formulario mientras tanto.
       try {
         await clienteDeOrganizacion.editarEmpresa(datos.id, aEdicionDeEmpresa(datos))
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
 
-      if (generacion.current !== token) return
-
-      setFormulario(null)
       await refrescarTrasEscribir(token, `Se actualizó "${datos.razonSocial}".`, AVISO_REFRESCO_FALLIDO)
+      // El modal sigue montado durante el refresco y se cierra en el mismo lote que libera `ocupado`
+      // (el `finally` corre en el mismo tick): así los controles ya están habilitados al devolver el foco.
+      setFormulario(null)
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
     }
+  }
+
+  function abrirEdicion(empresa: EmpresaListado) {
+    setErrorFormulario('')
+    setFormulario(aFormularioDeEmpresa(empresa))
   }
 
   /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
@@ -211,13 +277,25 @@ export function Empresas() {
   // viva y se reaplicaría sola en cuanto la opción reapareciera.
   const opcionesTenant = opcionesDeTenant(items)
   const tenantVigente = seleccionVigente(opcionesTenant, filtroTenant)
-  const visibles = filtrarPorTenant(items, tenantVigente)
+  const alcanzadas = filtrarPorTenant(items, tenantVigente)
+  const columnasFiltrables = esPlataforma ? FILTRABLES_PLATAFORMA : FILTRABLES_BASE
+  const celdasDeFiltros = esPlataforma ? CELDAS_PLATAFORMA : CELDAS_BASE
+  const { filas: filtradas, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(
+    alcanzadas,
+    columnasFiltrables,
+  )
+  const { filas: visibles, orden, alternar } = useOrdenamiento(
+    filtradas,
+    esPlataforma ? ORDENABLES_PLATAFORMA : ORDENABLES_BASE,
+  )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Empresas" variante="inverse">
-        {error && !baja && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
+        <div ref={zonaDeAvisosRef} tabIndex={-1} style={{ outline: 'none' }}>
+          {error && !baja && <div className="alert alert-danger">{error}</div>}
+          {aviso && <div className="alert alert-success">{aviso}</div>}
+        </div>
 
         {baja && (
           <ConfirmacionDeBaja
@@ -232,131 +310,20 @@ export function Empresas() {
         )}
 
         {formulario && (
-          <form
-            className="row g-3 border p-3 mb-4 bg-body"
-            onSubmit={(e) => {
-              e.preventDefault()
-              guardar()
-            }}
-          >
-            <div className="col-12">
-              <strong>Editando empresa {formulario.id}</strong>
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="e-razon">
-                Razón social
-              </label>
-              <input
-                id="e-razon"
-                className="form-control"
-                maxLength={150}
-                value={formulario.razonSocial}
-                onChange={(e) => setFormulario({ ...formulario, razonSocial: e.target.value })}
-                disabled={bloqueado}
-                required
-              />
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="e-fantasia">
-                Nombre de fantasía
-              </label>
-              <input
-                id="e-fantasia"
-                className="form-control"
-                maxLength={150}
-                value={formulario.nombreFantasia}
-                onChange={(e) => setFormulario({ ...formulario, nombreFantasia: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="e-cuit">
-                CUIT
-              </label>
-              <input
-                id="e-cuit"
-                className="form-control"
-                maxLength={13}
-                value={formulario.cuit}
-                onChange={(e) => setFormulario({ ...formulario, cuit: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-12">
-              <strong>Datos fiscales</strong>
-            </div>
-            <div className="col-md-4">
-              <label className="form-label" htmlFor="e-ingresos-brutos">
-                Ingresos brutos
-              </label>
-              <input
-                id="e-ingresos-brutos"
-                className="form-control"
-                maxLength={LARGO_MAXIMO_INGRESOS_BRUTOS}
-                value={formulario.ingresosBrutos}
-                onChange={(e) => setFormulario({ ...formulario, ingresosBrutos: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="e-inicio-actividades">
-                Inicio de actividades
-              </label>
-              <input
-                id="e-inicio-actividades"
-                type="date"
-                className="form-control"
-                value={formulario.inicioActividades}
-                onChange={(e) => setFormulario({ ...formulario, inicioActividades: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-12">
-              <strong>Percepciones que le aplican los proveedores</strong>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="e-percepcion-iibb">
-                Alícuota de percepción de IIBB (%)
-              </label>
-              <input
-                id="e-percepcion-iibb"
-                {...atributosDeCampoDecimal({ decimales: 3 })}
-                className="form-control"
-                value={formulario.alicuotaPercepcionIibb}
-                onChange={(e) => setFormulario({ ...formulario, alicuotaPercepcionIibb: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label" htmlFor="e-percepcion-iva">
-                Alícuota de percepción de IVA (%)
-              </label>
-              <input
-                id="e-percepcion-iva"
-                {...atributosDeCampoDecimal({ decimales: 3 })}
-                className="form-control"
-                value={formulario.alicuotaPercepcionIva}
-                onChange={(e) => setFormulario({ ...formulario, alicuotaPercepcionIva: e.target.value })}
-                disabled={bloqueado}
-              />
-            </div>
-            <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success" disabled={bloqueado}>
-                {ocupado !== null ? 'Guardando…' : 'Guardar'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setFormulario(null)}
-                disabled={bloqueado}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
+          <ModalDeEmpresa
+            valor={formulario}
+            guardando={ocupado !== null}
+            bloqueado={bloqueado}
+            error={errorFormulario}
+            disparoDeError={disparoDeError}
+            focoDeReserva={zonaDeAvisosRef}
+            onCambio={setFormulario}
+            onGuardar={() => void guardar()}
+            onCancelar={() => setFormulario(null)}
+          />
         )}
 
-        {cargando ? (
+        {!cargada ? (
           <Cargando />
         ) : (
           <>
@@ -391,27 +358,57 @@ export function Empresas() {
               <table className="table table-striped table-hover table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    {esPlataforma && <th>Tenant</th>}
-                    <th>Razón social</th>
-                    <th>Nombre de fantasía</th>
-                    <th>CUIT</th>
-                    <th className="text-end">Acciones</th>
+                    <EncabezadoOrdenable columna="id" orden={orden} onAlternar={alternar}>
+                      ID
+                    </EncabezadoOrdenable>
+                    {esPlataforma && (
+                      <EncabezadoOrdenable columna="tenant" orden={orden} onAlternar={alternar}>
+                        Tenant
+                      </EncabezadoOrdenable>
+                    )}
+                    <EncabezadoOrdenable columna="razonSocial" orden={orden} onAlternar={alternar}>
+                      Razón social
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="nombreFantasia" orden={orden} onAlternar={alternar}>
+                      Nombre de fantasía
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="cuit" orden={orden} onAlternar={alternar}>
+                      CUIT
+                    </EncabezadoOrdenable>
+                    <th scope="col" className="text-end">
+                      Acciones
+                    </th>
                   </tr>
+                  <FilaDeFiltros
+                    celdas={celdasDeFiltros}
+                    columnas={columnasFiltrables}
+                    filtros={filtros}
+                    onCambio={cambiarFiltro}
+                    onLimpiar={limpiarFiltros}
+                    hayFiltros={hayFiltros}
+                    deshabilitado={bloqueado}
+                  />
                 </thead>
                 <tbody>
-                  {visibles.map((e) => (
+                  {cargando && (
+                    <tr>
+                      <td colSpan={esPlataforma ? 6 : 5}>
+                        <Cargando />
+                      </td>
+                    </tr>
+                  )}
+                  {!cargando && visibles.map((e) => (
                     <tr key={e.id}>
-                      <td>{String(e.id).padStart(4, '0')}</td>
-                      {esPlataforma && <td>{etiquetaDeTenant(e)}</td>}
+                      <td>{textoDeId(e)}</td>
+                      {esPlataforma && <td>{nombreDeTenant(e)}</td>}
                       <td>{e.razonSocial}</td>
-                      <td>{e.nombreFantasia ?? '—'}</td>
-                      <td>{e.cuit ?? '—'}</td>
+                      <td>{textoDeFantasia(e)}</td>
+                      <td>{textoDeCuit(e)}</td>
                       <td className="text-end text-nowrap">
                         <BotonIcono
                           icono="editar"
                           className="me-1"
-                          onClick={() => setFormulario(aFormularioDeEmpresa(e))}
+                          onClick={() => abrirEdicion(e)}
                           disabled={bloqueado}
                         />
                         <BotonIcono
@@ -422,10 +419,10 @@ export function Empresas() {
                       </td>
                     </tr>
                   ))}
-                  {visibles.length === 0 && (
+                  {!cargando && visibles.length === 0 && (
                     <tr>
                       <td colSpan={esPlataforma ? 6 : 5} className="text-center text-muted py-4">
-                        No hay empresas cargadas.
+                        {items.length === 0 ? 'No hay empresas cargadas.' : 'Ningún registro coincide con los filtros.'}
                       </td>
                     </tr>
                   )}

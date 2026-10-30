@@ -121,7 +121,7 @@ public static class CajaEndpoints
         // proposal is where the caja detail lives": la ruta MOVIÓ acá desde
         // /api/reportes/cajas/{id} para que OperacionDePos se herede por co-locación en vez de
         // pelearse con LecturaDeReportes; spec historico-de-cajas: G2 Detail Reuses ResumenDeTurno
-        // Plus Ticket And Gasto Listings). ServicioDeResumenDeTurno.ObtenerAsync corre TAL CUAL
+        // Plus Ticket And Pago Listings). ServicioDeResumenDeTurno.ObtenerAsync corre TAL CUAL
         // (misma derivación que /resumen, invariante intacto) + LectorDeLineasDelTurno, dos
         // lecturas indexadas llanas — sin escritura, sin agregado nuevo.
         grupo.MapGet("/{id:int}/detalle", async (
@@ -131,13 +131,13 @@ public static class CajaEndpoints
             await visibilidad.ExigirVisibleAsync(id, ct);
             var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
             var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
-            var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
+            var pagos = await lectorDeLineas.LeerPagosAsync(id, ct);
             var recalculo = await db.TurnosCaja
                 .Where(t => t.Id == id)
                 .Select(t => new { t.FechaRecalculo, t.IdEmpleadoRecalculo })
                 .FirstAsync(ct);
 
-            return Results.Ok(new DetalleDeTurno(resumen, tickets, gastos, recalculo.FechaRecalculo, recalculo.IdEmpleadoRecalculo));
+            return Results.Ok(new DetalleDeTurno(resumen, tickets, pagos, recalculo.FechaRecalculo, recalculo.IdEmpleadoRecalculo));
         })
         .WithSummary(
             "Detalle del turno (Z-report): el mismo resumen de /resumen más los tickets y gastos " +
@@ -163,7 +163,7 @@ public static class CajaEndpoints
             // ANTES de leer punto de venta/fechas para el encabezado.
             var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
             var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
-            var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
+            var pagos = await lectorDeLineas.LeerPagosAsync(id, ct);
 
             // El turno YA está confirmado existente por ObtenerAsync — lectura plana por PK para
             // el encabezado (PV/rango), el único dato que ResumenDeTurno no trae (nunca duplica la
@@ -173,7 +173,7 @@ public static class CajaEndpoints
                 .Select(t => new { t.IdPuntoVenta, t.FechaApertura, t.FechaCierre, t.FechaRecalculo, t.IdEmpleadoRecalculo })
                 .FirstAsync(ct);
             var detalle = new DetalleDeTurno(
-                resumen, tickets, gastos, turno.FechaRecalculo, turno.IdEmpleadoRecalculo);
+                resumen, tickets, pagos, turno.FechaRecalculo, turno.IdEmpleadoRecalculo);
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, turno.IdPuntoVenta, ct);
             var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
@@ -192,7 +192,7 @@ public static class CajaEndpoints
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })
         .WithSummary(
-            "Export XLSX del Z-report: mismo resumen + tickets + gastos que /detalle, gate " +
+            "Export XLSX del Z-report: mismo resumen + tickets + pagos que /detalle, gate " +
             "OperacionDePos heredado por co-locación — el cajero puede descargar su propio cierre.");
 
         return app;

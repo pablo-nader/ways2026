@@ -194,7 +194,7 @@ describe('Combos — listado', () => {
     render(<Combos />)
 
     await screen.findByText('En la tienda')
-    const posicion = screen.getAllByRole('columnheader').map((c) => c.textContent).indexOf('Online')
+    const posicion = within(screen.getAllByRole('row')[0]).getAllByRole('columnheader').map((c) => c.textContent?.replace('↕', '')).indexOf('Online')
     expect(posicion).toBeGreaterThan(-1)
     const celdaDe = (nombre: string) => within(screen.getByText(nombre).closest('tr')!).getAllByRole('cell')[posicion]
     expect(celdaDe('En la tienda')).toHaveTextContent('Sí')
@@ -1616,5 +1616,166 @@ describe('Combos — rótulo de una empresa o familia que falta', () => {
 
     expect(fila(2).getByRole('option', { name: 'Familia #7 (no disponible)' })).toBeInTheDocument()
     expect(fila(2).getByText('Este componente ya no está disponible: quitalo o reemplazalo para poder guardar.')).toBeInTheDocument()
+  })
+})
+
+describe('Combos — orden y filtros por columna', () => {
+  const sinGaseosa = { idArticulo: 2, idFamilia: null, nombre: 'Gaseosa 500', cantidad: 1, disponible: false }
+  const combos = [
+    comboFixture({ id: 1, codigo: 12, nombre: 'Zeta', precio: 1500 }),
+    comboFixture({ id: 2, codigo: 3, nombre: 'Álamo', precio: 900, activo: false, componentes: [sinGaseosa] }),
+    comboFixture({ id: 3, codigo: 100, nombre: 'Medio', precio: 12000, disponibleOnline: false }),
+  ]
+
+  /** Las dos primeras filas son el encabezado y los filtros; la celda 1 de cada fila de datos es el nombre. */
+  function nombresEnPantalla() {
+    return screen
+      .getAllByRole('row')
+      .slice(2)
+      .map((f) => within(f).getAllByRole('cell')[1]?.textContent)
+  }
+
+  async function montarConCombos() {
+    mockearApiGet({ combos })
+    render(<Combos />)
+    await screen.findByText('Zeta')
+  }
+
+  it('la fila de filtros tiene una celda por columna del encabezado y limpiar queda bajo Acciones', async () => {
+    await montarConCombos()
+
+    const [encabezados, filtros] = screen.getAllByRole('row')
+    const celdasDeEncabezado = within(encabezados).getAllByRole('columnheader')
+    const celdasDeFiltros = within(filtros).getAllByRole('columnheader')
+
+    expect(celdasDeFiltros).toHaveLength(celdasDeEncabezado.length)
+    expect(celdasDeEncabezado.at(-1)).toHaveTextContent('Acciones')
+    expect(within(celdasDeFiltros.at(-1)!).getByRole('button', { name: 'Limpiar filtros' })).toBeInTheDocument()
+  })
+
+  it('cada columna de datos se puede ordenar y Acciones no', async () => {
+    await montarConCombos()
+
+    for (const nombre of ['Código', 'Nombre', 'Precio', 'Componentes', 'Estado', 'Online']) {
+      expect(screen.getByRole('button', { name: nombre })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('columnheader', { name: 'Acciones' })).not.toHaveAttribute('aria-sort')
+  })
+
+  it('el precio se ordena como número (900 antes que 1.500) y el tercer clic vuelve al orden del servidor', async () => {
+    await montarConCombos()
+    const boton = screen.getByRole('button', { name: 'Precio' })
+    const encabezado = screen.getByRole('columnheader', { name: 'Precio' })
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Álamo', 'Medio'])
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Álamo', 'Zeta', 'Medio'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Medio', 'Zeta', 'Álamo'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'descending')
+
+    await usuario.click(boton)
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Álamo', 'Medio'])
+    expect(encabezado).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('el código se ordena por su número: C3, C12, C100', async () => {
+    await montarConCombos()
+
+    await usuario.click(screen.getByRole('button', { name: 'Código' }))
+
+    expect(nombresEnPantalla()).toEqual(['Álamo', 'Zeta', 'Medio'])
+  })
+
+  it('ordenar por nombre ignora acentos y mayúsculas', async () => {
+    await montarConCombos()
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+
+    expect(nombresEnPantalla()).toEqual(['Álamo', 'Medio', 'Zeta'])
+  })
+
+  it('cada filtro de texto acota las filas', async () => {
+    await montarConCombos()
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'ALAMO')
+    expect(nombresEnPantalla()).toEqual(['Álamo'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por código' }), 'C100')
+    expect(nombresEnPantalla()).toEqual(['Medio'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por precio' }), '12.000')
+    expect(nombresEnPantalla()).toEqual(['Medio'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por componentes' }), 'no disponibles')
+    expect(nombresEnPantalla()).toEqual(['Álamo'])
+  })
+
+  it('los filtros de estado y de online son selects y se combinan con el de texto', async () => {
+    await montarConCombos()
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por estado' }), 'Inactivo')
+    expect(nombresEnPantalla()).toEqual(['Álamo'])
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por estado' }), 'Activo')
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por online' }), 'No')
+    expect(nombresEnPantalla()).toEqual(['Medio'])
+
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'zeta')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(nombresEnPantalla()).toEqual(['Zeta', 'Álamo', 'Medio'])
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toHaveValue('')
+  })
+
+  it('con filtros activos el orden se aplica sobre lo filtrado', async () => {
+    await montarConCombos()
+
+    await usuario.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por estado' }), 'Activo')
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+
+    expect(nombresEnPantalla()).toEqual(['Medio', 'Zeta'])
+  })
+
+  it('el campo de filtro sigue montado y con su valor mientras el listado se recarga tras una baja', async () => {
+    const refresco = diferida<ComboListado[]>()
+    let lecturas = 0
+    mockearApiGet({ combos: () => (++lecturas === 1 ? Promise.resolve(combos) : refresco.promesa) })
+    render(<Combos />)
+    await screen.findByText('Zeta')
+    apiDeleteMock.mockResolvedValue(undefined)
+    await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'm')
+    const campo = screen.getByRole('searchbox', { name: 'Filtrar por nombre' })
+
+    await usuario.click(screen.getByRole('button', { name: 'Dar de baja Álamo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(await screen.findByText('Combo "Álamo" dado de baja.')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
+    expect(campo).toHaveValue('m')
+
+    await act(async () => {
+      refresco.resolver([combos[0], combos[2]])
+      await refresco.promesa
+    })
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBe(campo)
+    expect(campo).toHaveValue('m')
+    expect(nombresEnPantalla()).toEqual(['Medio'])
+  })
+
+  it('con la puerta de baja abierta los filtros quedan inertes', async () => {
+    await montarConCombos()
+
+    await usuario.click(screen.getByRole('button', { name: 'Dar de baja Álamo' }))
+
+    expect(screen.getByRole('searchbox', { name: 'Filtrar por nombre' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Filtrar por estado' })).toBeDisabled()
   })
 })
