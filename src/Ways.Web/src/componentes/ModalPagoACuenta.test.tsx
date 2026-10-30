@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi } from '../api/cliente'
@@ -150,7 +150,7 @@ describe('ModalPagoACuenta — aplicar a ventas', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     expect(registrarPagoMock).not.toHaveBeenCalled()
-    expect((await screen.findAllByText(/supera el importe disponible/)).length).toBeGreaterThan(0)
+    expect(await screen.findByText(/supera el importe disponible/)).toBeInTheDocument()
   })
 
   it('si no se pudo cargar la lista de ventas, avisa y el pago se registra igual, sin aplicaciones', async () => {
@@ -172,6 +172,10 @@ describe('ModalPagoACuenta — aplicar a ventas', () => {
 
     await waitFor(() => expect(listarVentasPendientesMock).toHaveBeenCalledWith(5))
     await cargarPago('300')
+    // Sin ventas no hay nada que mostrar: se deja que la respuesta vacía se procese antes de afirmar la ausencia.
+    await act(async () => {
+      await listarVentasPendientesMock.mock.results[0].value
+    })
     expect(screen.queryByTestId('cc-pago-aplicar-editor')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cc-pago-pendientes-error')).not.toBeInTheDocument()
   })

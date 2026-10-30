@@ -280,10 +280,8 @@ export function ModalPagoACuenta({
 
     const ventas = ventasPendientes ?? []
     const rechazoAplicaciones = validarAplicaciones(ventas, importesPorVenta, importeAplicado)
-    if (rechazoAplicaciones) {
-      setError(rechazoAplicaciones)
-      return
-    }
+    // El editor de aplicaciones ya muestra este rechazo junto a los importes: no se repite en el banner.
+    if (rechazoAplicaciones) return
 
     registrandoRef.current = true
     setRegistrando(true)
@@ -436,8 +434,8 @@ export function ModalPagoACuenta({
 
                   {errorPendientes && (
                     <div className="alert alert-warning py-1 px-2 small" data-testid="cc-pago-pendientes-error">
-                      No se pudieron cargar las ventas pendientes. Podés registrar el pago sin aplicarlo a ventas y
-                      aplicarlo después desde la cuenta corriente.
+                      No se pudieron cargar las ventas pendientes. Podés registrar el pago igual; lo no aplicado
+                      queda a favor del cliente.
                     </div>
                   )}
                   {ventasPendientes !== null && ventasPendientes.length > 0 && (

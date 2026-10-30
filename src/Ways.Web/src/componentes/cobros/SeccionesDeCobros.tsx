@@ -13,7 +13,10 @@ function moneda(valor: number): string {
 
 type PropsModalAplicar = {
   recibo: ReciboDeCliente
-  ventas: VentaPendienteDeCobro[]
+  /** `null` solo si todavía no llegó ninguna lista; el modal conserva la última válida mientras se recarga o falla. */
+  ventas: VentaPendienteDeCobro[] | null
+  cargandoVentas: boolean
+  errorVentas: string
   onCerrar: () => void
   /** Se llama con el 2xx; el refresco de las secciones y del estado vive en el llamador. */
   onAplicado: () => void
@@ -26,7 +29,10 @@ type PropsModalAplicar = {
  * (inputs, FIFO y botones), la guarda de reentrancia es el `ref` y la respuesta no navega ni puede ser reemplazada por
  * otra acción: el modal es lo único activo.
  */
-function ModalAplicarCobro({ recibo, ventas, onCerrar, onAplicado, onDesactualizado }: PropsModalAplicar) {
+function ModalAplicarCobro({ recibo, ventas: ventasRecibidas, cargandoVentas, errorVentas, onCerrar, onAplicado, onDesactualizado }: PropsModalAplicar) {
+  const [ultimasVentas, setUltimasVentas] = useState<VentaPendienteDeCobro[]>(ventasRecibidas ?? [])
+  if (ventasRecibidas !== null && ventasRecibidas !== ultimasVentas) setUltimasVentas(ventasRecibidas)
+  const ventas = ultimasVentas
   const [importes, setImportes] = useState<ImportesPorVenta>({})
   const [aplicando, setAplicando] = useState(false)
   const aplicandoRef = useRef(false)
@@ -36,7 +42,7 @@ function ModalAplicarCobro({ recibo, ventas, onCerrar, onAplicado, onDesactualiz
   const aplicaciones = aAplicacionesSolicitadas(ventas, importes)
 
   async function aplicar() {
-    if (aplicandoRef.current) return
+    if (aplicandoRef.current || cargandoVentas || errorVentas) return
     if (rechazoLocal) {
       setError(rechazoLocal)
       return
@@ -74,6 +80,8 @@ function ModalAplicarCobro({ recibo, ventas, onCerrar, onAplicado, onDesactualiz
             </div>
             <div className="modal-body">
               {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
+              {errorVentas && <div className="alert alert-danger py-1 px-2 small">{errorVentas}</div>}
+              {cargandoVentas && <p className="small text-muted">Actualizando las ventas pendientes…</p>}
               <p className="small text-muted">
                 Disponible para aplicar: {moneda(recibo.disponible)}. Lo que no se aplique sigue disponible en el recibo.
               </p>
@@ -91,7 +99,7 @@ function ModalAplicarCobro({ recibo, ventas, onCerrar, onAplicado, onDesactualiz
               <button type="button" className="btn btn-outline-secondary" disabled={aplicando} onClick={onCerrar}>
                 Cancelar
               </button>
-              <button type="button" className="btn btn-primary" disabled={aplicando || aplicaciones.length === 0} onClick={aplicar}>
+              <button type="button" className="btn btn-primary" disabled={aplicando || cargandoVentas || !!errorVentas || aplicaciones.length === 0} onClick={aplicar}>
                 {aplicando ? 'Aplicando…' : 'Aplicar'}
               </button>
             </div>
@@ -195,7 +203,11 @@ export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, 
   const [errorVentas, setErrorVentas] = useState('')
   const generacionVentasRef = useRef(0)
 
-  const [reciboAAplicar, setReciboAAplicar] = useState<ReciboDeCliente | null>(null)
+  /** El modal guarda el id y resuelve el recibo vigente en cada render; `respaldo` solo cubre una recarga de recibos fallida. */
+  const [reciboAAplicar, setReciboAAplicar] = useState<{ id: number; respaldo: ReciboDeCliente } | null>(null)
+  const [aviso, setAviso] = useState('')
+  const [cargandoVentas, setCargandoVentas] = useState(true)
+  const [clave, setClave] = useState({ idCliente, soloConDisponible })
   const [desaplicacion, setDesaplicacion] = useState<{ recibo: ReciboDeCliente; aplicacion: AplicacionDeReciboListada } | null>(null)
 
   const cargarRecibos = useCallback(() => {
@@ -217,15 +229,18 @@ export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, 
   const cargarVentas = useCallback(() => {
     const miGeneracion = ++generacionVentasRef.current
     setErrorVentas('')
+    setCargandoVentas(true)
     clienteDeCuentaCorriente
       .listarVentasPendientes(idCliente)
       .then((datos) => {
         if (generacionVentasRef.current !== miGeneracion) return
         setVentas(datos)
+        setCargandoVentas(false)
       })
       .catch((e) => {
         if (generacionVentasRef.current !== miGeneracion) return
         setVentas(null)
+        setCargandoVentas(false)
         setErrorVentas(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las ventas pendientes.')
       })
   }, [idCliente])
@@ -238,12 +253,36 @@ export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, 
     cargarVentas()
   }, [cargarVentas, versionExterna])
 
+  if (clave.idCliente !== idCliente || clave.soloConDisponible !== soloConDisponible) {
+    const cambioElCliente = clave.idCliente !== idCliente
+    setClave({ idCliente, soloConDisponible })
+    setRecibos(null)
+    setErrorRecibos('')
+    if (cambioElCliente) {
+      setVentas(null)
+      setErrorVentas('')
+      setCargandoVentas(true)
+      setReciboAAplicar(null)
+      setDesaplicacion(null)
+      setAviso('')
+    }
+  }
+
+  const reciboVigente = reciboAAplicar
+    ? (recibos?.find((r) => r.id === reciboAAplicar.id) ?? (recibos === null ? reciboAAplicar.respaldo : null))
+    : null
+  if (reciboAAplicar && recibos !== null && (reciboVigente === null || reciboVigente.disponible <= 0)) {
+    setReciboAAplicar(null)
+    setAviso(`El recibo ${reciboAAplicar.respaldo.numeroVisible} ya no tiene importe disponible para aplicar.`)
+  }
+
   function recargar() {
     cargarRecibos()
     cargarVentas()
   }
 
   function alEscribir(mensaje: string) {
+    setAviso('')
     setReciboAAplicar(null)
     setDesaplicacion(null)
     recargar()
@@ -269,6 +308,11 @@ export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, 
           </div>
         </div>
         {errorRecibos && <div className="alert alert-danger py-1 px-2 small">{errorRecibos}</div>}
+        {aviso && (
+          <div className="alert alert-warning py-1 px-2 small" role="status">
+            {aviso}
+          </div>
+        )}
         <div className="table-responsive">
           <table className="table table-sm table-bordered align-middle">
             <thead>
@@ -319,7 +363,10 @@ export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, 
                                   ? 'El cliente no tiene ventas con saldo pendiente.'
                                   : undefined
                             }
-                            onClick={() => setReciboAAplicar(recibo)}
+                            onClick={() => {
+                              setAviso('')
+                              setReciboAAplicar({ id: recibo.id, respaldo: recibo })
+                            }}
                           >
                             Aplicar
                           </button>
@@ -400,12 +447,14 @@ export function SeccionesDeCobros({ idCliente, puedeSupervisar, versionExterna, 
         </div>
       </section>
 
-      {reciboAAplicar && ventas && (
+      {reciboVigente && (
         <ModalAplicarCobro
-          recibo={reciboAAplicar}
+          recibo={reciboVigente}
           ventas={ventas}
+          cargandoVentas={cargandoVentas}
+          errorVentas={errorVentas}
           onCerrar={() => setReciboAAplicar(null)}
-          onAplicado={() => alEscribir(`Cobro aplicado: recibo ${reciboAAplicar.numeroVisible}.`)}
+          onAplicado={() => alEscribir(`Cobro aplicado: recibo ${reciboVigente.numeroVisible}.`)}
           onDesactualizado={recargar}
         />
       )}

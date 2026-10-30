@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorriente } from './CuentaCorriente'
+import { SeccionesDeCobros } from '../componentes/cobros/SeccionesDeCobros'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type {
@@ -1421,6 +1422,90 @@ describe('CuentaCorriente — cobros aplicados a ventas', () => {
     expect(await screen.findByText('El recibo ya no tiene ese disponible.')).toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).toBeInTheDocument()
     await waitFor(() => expect(recibosGetMock.mock.calls.length).toBeGreaterThan(recibosAntes))
+  })
+
+  it('tras un 409 y una recarga con menos disponible, el modal valida contra el disponible vigente y conserva lo tipeado', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    recibosGetMock.mockImplementation(() =>
+      Promise.resolve<ReciboDeCliente[]>([{ ...recibosFixture[0], aplicado: 350, disponible: 100 }, recibosFixture[1]]),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    const modal = await screen.findByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })
+    const importe = within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000011')
+    await userEvent.type(importe, '100')
+    await userEvent.click(within(modal).getByRole('button', { name: 'Aplicar' }))
+
+    expect(await within(modal).findByText('El recibo ya no tiene ese disponible.')).toBeInTheDocument()
+    expect(await within(modal).findByText(/Disponible para aplicar: \$ 100,00/)).toBeInTheDocument()
+    expect(importe).toHaveValue('100,00')
+
+    await userEvent.type(within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000012'), '50')
+    expect((await within(modal).findAllByText(/supera el importe disponible/)).length).toBeGreaterThan(0)
+  })
+
+  it('si el recibo ya no tiene disponible tras la recarga, el modal se cierra con un aviso', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    recibosGetMock.mockImplementation(() =>
+      Promise.resolve<ReciboDeCliente[]>([{ ...recibosFixture[0], aplicado: 450, disponible: 0 }, recibosFixture[1]]),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    await userEvent.type(await screen.findByLabelText('Importe a aplicar a la venta 0001-00000011'), '100')
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    expect(await screen.findByText(/El recibo 0007-00000021 ya no tiene importe disponible/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+  })
+
+  it('si la recarga de ventas falla tras un 409, el modal sigue abierto con el error y los importes', async () => {
+    conCobros()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cobro_excede_disponible', 'El recibo ya no tiene ese disponible.'))
+    await renderConCobros()
+    ventasPendientesGetMock.mockImplementation(() =>
+      Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar las ventas pendientes.')),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar el recibo 0007-00000021' }))
+    const modal = await screen.findByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })
+    await userEvent.type(within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000011'), '100')
+    await userEvent.click(within(modal).getByRole('button', { name: 'Aplicar' }))
+
+    expect(await within(modal).findByText('No se pudieron cargar las ventas pendientes.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Aplicar el recibo 0007-00000021' })).toBe(modal)
+    expect(within(modal).getByLabelText('Importe a aplicar a la venta 0001-00000011')).toHaveValue('100,00')
+    expect(within(modal).getByRole('button', { name: 'Aplicar' })).toBeDisabled()
+  })
+
+  it('al cambiar «Solo con disponible» los recibos anteriores dejan de ser accionables hasta que llega la respuesta', async () => {
+    conCobros()
+    const { recibos } = await renderConCobros()
+    recibosGetMock.mockImplementation(() => new Promise(() => {}))
+
+    await userEvent.click(within(recibos).getByLabelText('Solo con disponible'))
+
+    expect(await within(recibos).findByText('Cargando recibos…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+  })
+
+  it('al cambiar de cliente se descartan los recibos y las ventas del anterior antes de que llegue la nueva respuesta', async () => {
+    conCobros()
+    const props = { puedeSupervisar: true, versionExterna: 0, onEscritura: vi.fn() }
+    const { rerender } = render(<SeccionesDeCobros idCliente={5} {...props} />)
+    await screen.findByText('0007-00000021')
+    await screen.findByText('0001-00000012')
+    recibosGetMock.mockImplementation(() => new Promise(() => {}))
+    ventasPendientesGetMock.mockImplementation(() => new Promise(() => {}))
+
+    rerender(<SeccionesDeCobros idCliente={6} {...props} />)
+
+    expect(screen.queryByRole('button', { name: 'Aplicar el recibo 0007-00000021' })).not.toBeInTheDocument()
+    expect(screen.queryByText('0001-00000012')).not.toBeInTheDocument()
+    expect(screen.getByText('Cargando recibos…')).toBeInTheDocument()
   })
 
   it('desaplicar pide confirmación, llama al servidor con el recibo y la aplicación y refresca', async () => {
