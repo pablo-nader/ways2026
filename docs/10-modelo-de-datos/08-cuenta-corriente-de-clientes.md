@@ -179,9 +179,9 @@ aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id
 > tramos. Las filas llevan `origen = 'historial'`, `fecha` = la más tardía entre la del recibo y la de la venta,
 > `id_empleado` = quien emitió el recibo y `created_at`/`updated_at` = el momento de la migración; se desaplican como
 > cualquier otra (`DELETE …/aplicaciones/{id}`). Sin filas de auditoría: es una migración. Las aplicaciones manuales que
-> ya existan descuentan de los dos lados; si el reparto cae sobre un par que ya tiene una aplicación viva, ese par se
-> saltea (índice único parcial) y lo suyo queda sin aplicar. Un recibo que ya tiene una aplicación manual viva (S3 puede
-> desplegarse antes que S4) queda fuera del reparto: alguien ya lo manejó y conserva su saldo como crédito. Sumar a mano a
+> ya existan descuentan de los dos lados. Un recibo que ya tiene una aplicación manual viva (S3 puede desplegarse antes
+> que S4) queda fuera del reparto por completo: alguien ya lo manejó y conserva su saldo como crédito, así que ningún
+> par generado puede colisionar con una aplicación viva. Sumar a mano a
 > una aplicación existente la deja en `origen = 'manual'`. El `Down` borra solo las filas `historial` y después quita la
 > columna y el enum: una fila histórica a la que alguien le sumó a mano pasó a manual y sobrevive al retroceso. La
 > migración deja los constraint triggers de `aplicaciones_cobro` otra vez en `DEFERRED` al terminar, en el `Up` y en el
