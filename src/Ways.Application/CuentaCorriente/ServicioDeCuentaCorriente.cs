@@ -91,10 +91,15 @@ public class ServicioDeCuentaCorriente(
         var importeAplicado = ValidadorDePagoACuenta.Validar(pagosAValidar);
 
         // E7-S3: aplicaciones opcionales. Ausente o vacío es el comportamiento de siempre. La forma, el 404 de cada venta y
-        // los importes se validan acá, antes de reservar el número; los topes y el cliente, bajo los locks de la transacción.
+        // los importes, el cliente y los topes se miden acá sin locks, antes de reservar el número, para no quemar numeración con un pedido
+        // que se sabe rechazado; la medición autoritativa (y las carreras) quedan bajo los locks de la transacción.
         IReadOnlyList<AplicacionDeCobroPedida> aplicaciones = solicitud.Aplicaciones is { Count: > 0 } pedidas
             ? await servicioDeCobros.ExigirPedidasExistentesAsync(pedidas, ct)
             : [];
+        if (aplicaciones.Count > 0)
+        {
+            await servicioDeCobros.ExigirAplicacionesViablesAsync(cliente.Id, importeAplicado, aplicaciones, ct);
+        }
 
         // Misma corrección que ServicioDeVentas.EmitirAsync: el número se reserva y COMITEA en su
         // propia transacción, ANTES de la que escribe el resto — "se consume aunque falle el

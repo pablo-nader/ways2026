@@ -260,6 +260,80 @@ public class CobrosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(0m, await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).SingleAsync());
     }
 
+    /// <summary>Cláusula que prueba: la medición temprana de <c>ServicioDeCobros.ExigirAplicacionesViablesAsync</c>, que
+    /// corre antes de reservar el número. Un pedido rechazado por esa medición no avanza <c>numeraciones_comprobante</c> del
+    /// tipo RC; el recibo siguiente recibe el número que habría recibido el rechazado.</summary>
+    [Theory]
+    [InlineData("excede_recibo", "cobro_excede_disponible")]
+    [InlineData("excede_venta", "aplicacion_excede_saldo_de_venta")]
+    [InlineData("otro_cliente", "aplicacion_cobro_otro_cliente")]
+    public async Task UnPedidoRechazadoPorLaMedicionTempranaNoAvanzaLaNumeracionDelRecibo(string caso, string codigoEsperado)
+    {
+        var ctx = await PrepararAsync(nameof(UnPedidoRechazadoPorLaMedicionTempranaNoAvanzaLaNumeracionDelRecibo) + caso.Replace("_", string.Empty));
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente numeración");
+        var idOtro = await SembrarClienteAsync(ctx, "Otro cliente numeración");
+        var ventaPropia = await SembrarVentaEnCuentaCorrienteAsync(ctx, idCliente, 100m);
+        var ventaAjena = await SembrarVentaEnCuentaCorrienteAsync(ctx, idOtro, 100m);
+
+        // Un primer recibo crea la fila de numeración de RC; desde ahí se mide.
+        await RegistrarReciboAsync(ctx, idCliente, 10m);
+        var antes = await ProximoNumeroDeReciboAsync(ctx);
+
+        var solicitud = caso switch
+        {
+            "excede_recibo" => Pago(ctx, 40m, (ventaPropia, 60m)),
+            "excede_venta" => Pago(ctx, 500m, (ventaPropia, 101m)),
+            _ => Pago(ctx, 40m, (ventaAjena, 10m))
+        };
+        var respuesta = await RegistrarPagoAsync(ctx.Admin, idCliente, solicitud);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal(codigoEsperado, await CodigoDeAsync(respuesta));
+        Assert.Equal(antes, await ProximoNumeroDeReciboAsync(ctx));
+
+        var siguiente = await RegistrarPagoAsync(ctx.Admin, idCliente, Pago(ctx, 20m));
+        Assert.Equal(HttpStatusCode.Created, siguiente.StatusCode);
+        Assert.Equal(antes, (await LeerAsync(siguiente)).GetProperty("numero").GetInt64());
+    }
+
+    private async Task<long> ProximoNumeroDeReciboAsync(Contexto ctx)
+    {
+        await using var db = ContextoDelTenant(ctx.IdTenant);
+        return await db.NumeracionesComprobante
+            .Where(n => n.IdPuntoVenta == ctx.IdPuntoVenta && n.TipoComprobante == "RC")
+            .Select(n => n.ProximoNumero)
+            .SingleAsync();
+    }
+
+    /// <summary>Un cajero (Vendedor: <c>OperacionDePos</c> sin <c>SupervisionDeCuentaCorriente</c>) registra un pago a cuenta
+    /// con aplicaciones, pero no aplica ni libera después sobre <c>/api/cobros</c>.</summary>
+    [Fact]
+    public async Task UnVendedorRegistraElPagoConAplicacionesPeroNoAplicaNiLiberaDespues()
+    {
+        var ctx = await PrepararAsync(nameof(UnVendedorRegistraElPagoConAplicacionesPeroNoAplicaNiLiberaDespues));
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente cajero");
+        var ventaA = await SembrarVentaEnCuentaCorrienteAsync(ctx, idCliente, 100m);
+        var ventaB = await SembrarVentaEnCuentaCorrienteAsync(ctx, idCliente, 100m);
+        using var vendedor = await CrearClienteConRolAsync(ctx, RolConocido.Vendedor, "vendedor-caja");
+
+        var registro = await RegistrarPagoAsync(vendedor, idCliente, Pago(ctx, 50m, (ventaA, 30m)));
+
+        Assert.Equal(HttpStatusCode.Created, registro.StatusCode);
+        var cuerpo = await LeerAsync(registro);
+        var idRecibo = cuerpo.GetProperty("id").GetInt32();
+        var idAplicacion = cuerpo.GetProperty("aplicaciones")[0].GetProperty("id").GetInt32();
+
+        var aplicar = await vendedor.PostAsJsonAsync($"/api/cobros/{idRecibo}/aplicaciones", Aplicaciones((ventaB, 10m)));
+        Assert.Equal(HttpStatusCode.Forbidden, aplicar.StatusCode);
+        var liberar = await vendedor.DeleteAsync($"/api/cobros/{idRecibo}/aplicaciones/{idAplicacion}");
+        Assert.Equal(HttpStatusCode.Forbidden, liberar.StatusCode);
+
+        await using var db = ContextoDelTenant(ctx.IdTenant);
+        var vivas = await db.AplicacionesCobro.Where(a => a.IdComprobanteCobro == idRecibo).ToListAsync();
+        Assert.Equal(ventaA, Assert.Single(vivas).IdComprobanteVenta);
+        Assert.Null(vivas[0].DeletedAt);
+    }
+
     [Fact]
     public async Task UnaVentaInexistenteODeOtroTenantEs404YNoEscribeNada()
     {

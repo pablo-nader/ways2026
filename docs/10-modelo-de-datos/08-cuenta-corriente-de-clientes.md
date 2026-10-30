@@ -159,8 +159,12 @@ aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id
 > (`409 medio_pago_comportamiento_en_uso`); entre efectivo y electrónico sí puede cambiar. Las pantallas llegan en E7-W1.
 >
 > **HTTP** (E7-S3). `POST /api/clientes/{id}/cuenta-corriente/pagos` acepta `aplicaciones` opcional y las escribe en la
-> transacción del recibo, antes de la fila del cliente; `POST /api/cobros/{idRecibo}/aplicaciones` y
-> `DELETE /api/cobros/{idRecibo}/aplicaciones/{idAplicacion}` (Supervisor y Admin) aplican y liberan;
+> transacción del recibo, antes de la fila del cliente, y las mide sin locks antes de reservar el número del recibo, de
+> modo que un pedido que se sabe rechazado (supera lo cobrado o el saldo de una venta, o la venta es de otro cliente) no
+> consume numeración; la medición bajo locks sigue siendo la autoridad. Aplicar al registrar el pago lo permite quien
+> registra el pago a cuenta (cualquier rol con `OperacionDePos`, incluido el Vendedor); aplicar o liberar después, con
+> `POST /api/cobros/{idRecibo}/aplicaciones` y `DELETE /api/cobros/{idRecibo}/aplicaciones/{idAplicacion}`, exige
+> Supervisor o Admin;
 > `GET …/cuenta-corriente/ventas-pendientes` y `GET …/cuenta-corriente/recibos[?conDisponible=true]` listan.
 >
 > **Límite conocido.** La parte en cuenta corriente de una venta no descuenta las notas de crédito asociadas

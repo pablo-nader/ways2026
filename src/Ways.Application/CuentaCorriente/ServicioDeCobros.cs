@@ -76,6 +76,39 @@ public class ServicioDeCobros(
         return validas;
     }
 
+    /// <summary>
+    /// Respuesta temprana de registrar un recibo con aplicaciones: las mismas reglas que <see cref="AplicarBajoLocksAsync"/>
+    /// (venta del mismo cliente y topes del recibo y de cada venta), medidas sin locks y ANTES de reservar el número del
+    /// recibo, para que un pedido que va a ser rechazado de todos modos no consuma numeración. El recibo todavía no existe:
+    /// su disponible es lo cobrado en el pedido. No reemplaza la medición bajo locks, que sigue siendo la autoridad
+    /// ante una carrera.
+    /// </summary>
+    internal async Task ExigirAplicacionesViablesAsync(
+        int idCliente, decimal disponibleDelRecibo, IReadOnlyList<AplicacionDeCobroPedida> pedidas, CancellationToken ct)
+    {
+        var idsVentas = pedidas.Select(p => p.IdComprobanteVenta).Distinct().ToList();
+        var datos = await db.ComprobantesVenta.SinEspejosFiscales()
+            .Where(c => idsVentas.Contains(c.Id))
+            .Join(db.TiposComprobante, c => c.IdTipoComprobante, t => t.Id, (c, t) => new
+            {
+                c.Id, t.Codigo, t.Signo, c.Estado, c.IdCliente
+            })
+            .ToListAsync(ct);
+
+        var reciboVirtual = new ComprobanteParaAplicar(0, ReglaDeAplicacionDeCobro.CodigoDeRecibo, 1, EstadoComprobante.Emitido, idCliente);
+        foreach (var pedida in pedidas)
+        {
+            var venta = datos.FirstOrDefault(d => d.Id == pedida.IdComprobanteVenta)
+                ?? throw ErrorDominio.NoEncontrado($"No existe la venta {pedida.IdComprobanteVenta}.");
+            ReglaDeAplicacionDeCobro.ExigirVenta(
+                reciboVirtual, new ComprobanteParaAplicar(venta.Id, venta.Codigo, venta.Signo, venta.Estado, venta.IdCliente));
+        }
+
+        var saldos = await LectorDeAplicacionesDeCobro.LeerSaldoPorVentaAsync(db, idsVentas, ct);
+        ReglaDeAplicacionDeCobro.ExigirTopes(
+            disponibleDelRecibo, pedidas.Select(p => (p, saldos[p.IdComprobanteVenta].SaldoPendiente)));
+    }
+
     private async Task<int> EjecutarAplicarAsync(
         int idTenant, int idRecibo, IReadOnlyList<AplicacionDeCobroPedida> pedidas, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct)
