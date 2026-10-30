@@ -28,12 +28,7 @@ public static class LectorDeAplicacionesDeCobro
         }
 
         var estados = await LeerEstadosAsync(db, idsRecibos, ct);
-
-        var cobros = await db.Cobros
-            .Where(c => idsRecibos.Contains(c.IdComprobanteVenta)
-                && db.ComprobantesVenta.SinEspejosFiscales().Any(v => v.Id == c.IdComprobanteVenta))
-            .Select(c => new { c.IdComprobanteVenta, c.Importe, c.Vuelto })
-            .ToListAsync(ct);
+        var netos = await LeerNetoCobradoPorReciboAsync(db, idsRecibos, ct);
 
         var aplicado = await db.AplicacionesCobro
             .Where(a => idsRecibos.Contains(a.IdComprobanteCobro))
@@ -43,12 +38,25 @@ public static class LectorDeAplicacionesDeCobro
 
         return estados.ToDictionary(e => e.Key, e =>
         {
-            var neto = ReglaDeAplicacionDeCobro.NetoCobrado(
-                cobros.Where(c => c.IdComprobanteVenta == e.Key).Select(c => (c.Importe, c.Vuelto)));
+            var neto = netos[e.Key];
             var deEsteRecibo = aplicado.GetValueOrDefault(e.Key, 0m);
             return new DisponibleDeCobro(
                 e.Key, neto, deEsteRecibo, ReglaDeAplicacionDeCobro.Disponible(e.Value, neto, deEsteRecibo));
         });
+    }
+
+    /// <summary>Lo cobrado de cada recibo pedido, sin mirar sus aplicaciones; un id sin cobros figura con 0.</summary>
+    public static async Task<IReadOnlyDictionary<int, decimal>> LeerNetoCobradoPorReciboAsync(
+        IWaysDbContext db, IReadOnlyCollection<int> idsRecibos, CancellationToken ct)
+    {
+        var cobros = await db.Cobros
+            .Where(c => idsRecibos.Contains(c.IdComprobanteVenta)
+                && db.ComprobantesVenta.SinEspejosFiscales().Any(v => v.Id == c.IdComprobanteVenta))
+            .Select(c => new { c.IdComprobanteVenta, c.Importe, c.Vuelto })
+            .ToListAsync(ct);
+
+        return idsRecibos.Distinct().ToDictionary(id => id, id => ReglaDeAplicacionDeCobro.NetoCobrado(
+            cobros.Where(c => c.IdComprobanteVenta == id).Select(c => (c.Importe, c.Vuelto))));
     }
 
     public static async Task<IReadOnlyDictionary<int, SaldoDeVenta>> LeerSaldoPorVentaAsync(

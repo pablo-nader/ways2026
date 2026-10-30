@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Catalogos;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
@@ -558,5 +559,104 @@ public class AplicacionesDeCobroTests(WaysApiFixture fixture) : IClassFixture<Wa
         var rechazo = await Assert.ThrowsAsync<ErrorDominio>(
             () => Servicio(dbAjeno, ajeno).AplicarAsync(recibo, [new AplicacionDeCobroPedida(ventaAjena, 10m)]));
         Assert.Equal(404, rechazo.EstadoHttp);
+    }
+
+    // ---- carrera ------------------------------------------------------------------------------
+
+    /// <summary>db-error-backstops: dos aplicaciones concurrentes del mismo recibo que juntas superan lo disponible. El
+    /// <c>FOR UPDATE</c> del recibo las serializa y la segunda ve lo que la primera aplicó; si no lo hiciera, el trigger
+    /// diferido la frenaría al comitear. Lo observable en los dos casos: una sola gana, la otra es 409
+    /// <c>cobro_excede_disponible</c> y lo aplicado nunca supera lo cobrado.</summary>
+    [Fact]
+    public async Task DosAplicacionesConcurrentesDelMismoReciboNuncaSuperanLoDisponible()
+    {
+        var ctx = await PrepararAsync(nameof(DosAplicacionesConcurrentesDelMismoReciboNuncaSuperanLoDisponible));
+        var recibo = await SembrarReciboAsync(ctx, 500m);
+        var ventas = new[] { await SembrarVentaEnCuentaCorrienteAsync(ctx, 400m), await SembrarVentaEnCuentaCorrienteAsync(ctx, 400m) };
+
+        using var puerta = new Barrier(2);
+        var resultados = await Task.WhenAll(ventas.Select(venta => Task.Run(async () =>
+        {
+            await using var db = ContextoDelTenant(ctx.IdTenant);
+            var servicio = Servicio(db, ctx);
+            puerta.SignalAndWait(TimeSpan.FromSeconds(10));
+            try
+            {
+                await servicio.AplicarAsync(recibo, [new AplicacionDeCobroPedida(venta, 300m)]);
+                return (string?)null;
+            }
+            catch (ErrorDominio error)
+            {
+                return $"{error.EstadoHttp}:{error.Codigo}";
+            }
+            catch (PostgresException error) when (error.ConstraintName == TriggerCobro)
+            {
+                return "409:cobro_excede_disponible";
+            }
+        })));
+
+        Assert.Single(resultados, r => r is null);
+        Assert.Single(resultados, r => r == "409:cobro_excede_disponible");
+
+        await using var lectura = ContextoDelTenant(ctx.IdTenant);
+        var disponible = (await LectorDeAplicacionesDeCobro.LeerDisponiblePorReciboAsync(lectura, [recibo], default))[recibo];
+        Assert.Equal(300m, disponible.Aplicado);
+        Assert.Equal(200m, disponible.Disponible);
+    }
+
+    // ---- comportamiento del medio --------------------------------------------------------------
+
+    private static async Task<string> CodigoDeErrorAsync(HttpResponseMessage respuesta) =>
+        (await respuesta.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("codigo").GetString()!;
+
+    private static MedioPagoAlta MedioCuentaCorrienteComo(ComportamientoMedioPago comportamiento) =>
+        new("Cuenta corriente", null, 3, comportamiento, false, false, null);
+
+    /// <summary>LA CLÁUSULA: <c>ServicioDeMediosPago</c> no deja que un medio con cobros salga de cuenta corriente. Sin la
+    /// guarda el PUT da 200 y la parte en cuenta corriente de la venta pasa a 0 con dos recibos aplicados: anular uno
+    /// dejaría viva la aplicación del otro por encima de esa parte y la anulación fallaría al comitear. Un id inexistente
+    /// sigue dando 404 antes que el 409.</summary>
+    [Fact]
+    public async Task UnMedioConCobrosNoSaleDeCuentaCorrienteYLaAnulacionSigueAndando()
+    {
+        var ctx = await PrepararAsync(nameof(UnMedioConCobrosNoSaleDeCuentaCorrienteYLaAnulacionSigueAndando));
+        var recibo = await SembrarReciboAsync(ctx, 500m);
+        var otroRecibo = await SembrarReciboAsync(ctx, 500m);
+        var venta = await SembrarVentaEnCuentaCorrienteAsync(ctx, 400m);
+        await using (var db = ContextoDelTenant(ctx.IdTenant))
+        {
+            await Servicio(db, ctx).AplicarAsync(recibo, [new AplicacionDeCobroPedida(venta, 200m)]);
+            await Servicio(db, ctx).AplicarAsync(otroRecibo, [new AplicacionDeCobroPedida(venta, 100m)]);
+        }
+
+        var inexistente = await ctx.Admin.PutAsJsonAsync(
+            "/api/catalogos/medios-pago/999999999", MedioCuentaCorrienteComo(ComportamientoMedioPago.Electronico));
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+
+        var cambio = await ctx.Admin.PutAsJsonAsync(
+            $"/api/catalogos/medios-pago/{ctx.IdMedioCuentaCorriente}", MedioCuentaCorrienteComo(ComportamientoMedioPago.Electronico));
+        Assert.Equal(HttpStatusCode.Conflict, cambio.StatusCode);
+        Assert.Equal("medio_pago_comportamiento_en_uso", await CodigoDeErrorAsync(cambio));
+
+        await using (var lectura = ContextoDelTenant(ctx.IdTenant))
+        {
+            Assert.Equal(
+                ComportamientoMedioPago.CuentaCorriente,
+                await lectura.MediosPago.Where(m => m.Id == ctx.IdMedioCuentaCorriente).Select(m => m.Comportamiento).SingleAsync());
+        }
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{recibo}/anulacion", null);
+        Assert.True(anulacion.StatusCode == HttpStatusCode.OK, await anulacion.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task UnMedioSinCobrosPuedeSalirDeCuentaCorriente()
+    {
+        var ctx = await PrepararAsync(nameof(UnMedioSinCobrosPuedeSalirDeCuentaCorriente));
+
+        var cambio = await ctx.Admin.PutAsJsonAsync(
+            $"/api/catalogos/medios-pago/{ctx.IdMedioCuentaCorriente}", MedioCuentaCorrienteComo(ComportamientoMedioPago.Electronico));
+
+        Assert.True(cambio.StatusCode == HttpStatusCode.OK, await cambio.Content.ReadAsStringAsync());
     }
 }

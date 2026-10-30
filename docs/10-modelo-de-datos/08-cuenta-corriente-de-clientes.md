@@ -144,16 +144,24 @@ aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id
 > - El `23505` de `ux_aplicaciones_cobro_cobro_venta` sale como `409 aplicacion_cobro_duplicada` y el `23514` de la CHECK
 >   como `400 aplicacion_importe_invalido`.
 >
-> **Escritores.** `ServicioDeCobros.AplicarAsync`/`DesaplicarAsync` validan lo mismo antes de escribir
-> (`ReglaDeAplicacionDeCobro`, mismos códigos) bajo el `FOR UPDATE` del recibo y de las ventas en id ascendente, y recién
-> después leen y escriben las aplicaciones; sin reintento automático. La anulación de una venta o de un recibo
+> **Escritores.** `ServicioDeCobros.AplicarAsync` valida lo mismo antes de escribir (`ReglaDeAplicacionDeCobro`, mismos
+> códigos) bajo el `FOR UPDATE` del recibo y de las ventas en id ascendente, y recién después lee y escribe las
+> aplicaciones. `DesaplicarAsync` toma los mismos dos locks y da de baja la aplicación sin pasar por esa regla: liberar
+> nunca supera un tope. Los dos, sin reintento automático. La anulación de una venta o de un recibo
 > (`ServicioDeVentas.AnularAsync`) libera en la misma transacción las aplicaciones vivas donde el comprobante es el recibo o
 > la venta, con una fila `cobro.desaplicacion` por cada una (`id_entidad` = el recibo). Auditoría: `cobro.aplicacion` y
 > `cobro.desaplicacion`, entidad `comprobante_venta`.
 >
 > **Lecturas** (`LectorDeAplicacionesDeCobro`). Disponible del recibo = neto cobrado − aplicado (cero si está anulado).
 > Saldo pendiente de la venta = parte en cuenta corriente − cobrado por aplicaciones (cero si está anulada). Un medio de
-> pago dado de baja sigue contando para la parte en cuenta corriente. HTTP y pantallas llegan en E7-S3 y E7-W1.
+> pago dado de baja sigue contando para la parte en cuenta corriente. La parte en cuenta corriente se calcula con el
+> comportamiento actual del medio, así que un medio que ya figura en `cobros` no puede entrar ni salir de cuenta corriente
+> (`409 medio_pago_comportamiento_en_uso`); entre efectivo y electrónico sí puede cambiar. HTTP y pantallas llegan en
+> E7-S3 y E7-W1.
+>
+> **Límite conocido.** La parte en cuenta corriente de una venta no descuenta las notas de crédito asociadas
+> (`id_comprobante_asociado` = la venta) ni los deltas de una reliquidación: una venta con una nota de crédito sigue
+> admitiendo aplicaciones por su parte en cuenta corriente original.
 
 ### 8b. Cuenta corriente de proveedores
 

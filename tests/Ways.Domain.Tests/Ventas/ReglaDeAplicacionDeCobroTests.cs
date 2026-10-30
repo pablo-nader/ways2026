@@ -115,6 +115,16 @@ public class ReglaDeAplicacionDeCobroTests
             Codigo(() => ReglaDeAplicacionDeCobro.ExigirVenta(Recibo(), Venta(estado: EstadoComprobante.Anulado))));
     }
 
+    /// <summary>LA CLÁUSULA: el borde de <c>venta.Signo &lt;= 0</c>. Un tipo de signo 0 no es una venta que deba algo; con
+    /// <c>&lt; 0</c> pasaría.</summary>
+    [Fact]
+    public void UnComprobanteDeSignoCeroNoEsUnaVentaALaQueAplicarUnCobro()
+    {
+        Assert.Equal(
+            "aplicacion_cobro_comprobante_invalido",
+            Codigo(() => ReglaDeAplicacionDeCobro.ExigirVenta(Recibo(), Venta(codigo: "XX", signo: 0))));
+    }
+
     [Fact]
     public void LaVentaTieneQueSerDelClienteDelRecibo()
     {

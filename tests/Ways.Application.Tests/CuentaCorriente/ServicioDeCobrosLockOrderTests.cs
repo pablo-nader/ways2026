@@ -61,7 +61,23 @@ public class ServicioDeCobrosLockOrderTests
         Assert.True(locks < lectura, "Las aplicaciones del recibo se leen DESPUÉS del FOR UPDATE de los comprobantes.");
         Assert.True(lectura < topes && topes < alta, "Los topes se validan con lo leído bajo el lock y antes de escribir.");
         Assert.True(alta < escritura && escritura < commit);
+    }
+
+    /// <summary>Lo aplicado del recibo se lee UNA vez (la lista trackeada) y de ahí salen el disponible de los topes y el
+    /// rastro: ni una segunda consulta de sus aplicaciones ni el lector de disponible, que las vuelve a sumar en la base.
+    /// Es texto fuente: no prueba qué ve la transacción bajo concurrencia, solo que hay una única fuente.</summary>
+    [Fact]
+    public void AplicarDerivaElDisponibleYElRastroDeUnaSolaLecturaDeLasAplicaciones()
+    {
+        var metodo = Metodo(Cobros(), "private async Task<int> EjecutarAplicarAsync(", "public async Task<EstadoDeCobro> DesaplicarAsync(");
+
         Assert.Single(Regex.Matches(metodo, @"db\.AplicacionesCobro\.Where\("));
+        Assert.DoesNotContain("LeerDisponiblePorReciboAsync", metodo, StringComparison.Ordinal);
+
+        var suma = Indice(metodo, "aplicaciones.Sum(a => a.Importe)");
+        var topes = Indice(metodo, "ReglaDeAplicacionDeCobro.ExigirTopes(");
+        var rastro = Indice(metodo, "aplicaciones.Select(a => (a.IdComprobanteVenta, a.Importe)).ToList());");
+        Assert.True(suma < topes && topes < rastro);
     }
 
     [Fact]

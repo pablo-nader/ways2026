@@ -80,14 +80,20 @@ public class ServicioDeCobros(
             ReglaDeAplicacionDeCobro.ExigirVenta(recibo.Datos, bloqueados[pedida.IdComprobanteVenta].Datos);
         }
 
-        // Paso 2: con los dos lados bloqueados, nadie más puede cambiar lo aplicado hasta el commit. Única lectura de las
-        // aplicaciones del recibo, que son las que se mutan.
+        // Paso 2: única lectura de las aplicaciones del recibo, que son las que se mutan; lo aplicado, el disponible y el
+        // rastro salen de esta misma lista. Los locks no congelan todo lo aplicado: ningún otro aplicar ni desaplicar de este
+        // recibo ni de estas ventas corre hasta el commit, pero la anulación de un tercer comprobante (otra venta a la que
+        // este recibo está aplicado, u otro recibo aplicado a estas ventas) toma solo su propia fila y puede liberar en
+        // paralelo una aplicación que acá se leyó viva. Eso solo achica el disponible y los saldos vistos (el rastro la
+        // muestra viva), y los constraint triggers diferidos vuelven a medir los topes al comitear.
         var aplicaciones = await db.AplicacionesCobro.Where(a => a.IdComprobanteCobro == idRecibo).ToListAsync(ct);
-        var disponible = (await LectorDeAplicacionesDeCobro.LeerDisponiblePorReciboAsync(db, [idRecibo], ct))[idRecibo];
+        var netoCobrado = (await LectorDeAplicacionesDeCobro.LeerNetoCobradoPorReciboAsync(db, [idRecibo], ct))[idRecibo];
+        var disponible = ReglaDeAplicacionDeCobro.Disponible(
+            recibo.Estado, netoCobrado, aplicaciones.Sum(a => a.Importe));
         var saldos = await LectorDeAplicacionesDeCobro.LeerSaldoPorVentaAsync(
             db, pedidas.Select(p => p.IdComprobanteVenta).ToList(), ct);
         ReglaDeAplicacionDeCobro.ExigirTopes(
-            disponible.Disponible, pedidas.Select(p => (p, saldos[p.IdComprobanteVenta].SaldoPendiente)));
+            disponible, pedidas.Select(p => (p, saldos[p.IdComprobanteVenta].SaldoPendiente)));
 
         var anteriores = aplicaciones.Select(a => (a.IdComprobanteVenta, a.Importe)).ToList();
 
@@ -117,7 +123,7 @@ public class ServicioDeCobros(
         }
 
         var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AplicacionDeCobro(
-            disponible.NetoCobrado, anteriores, aplicaciones.Select(a => (a.IdComprobanteVenta, a.Importe)).ToList());
+            netoCobrado, anteriores, aplicaciones.Select(a => (a.IdComprobanteVenta, a.Importe)).ToList());
         auditoria.Registrar(new RegistroDeAuditoria(
             idTenant, recibo.IdPuntoVenta, AccionAuditada.CobroAplicacion, idRecibo, valorAnterior, valorNuevo));
 
