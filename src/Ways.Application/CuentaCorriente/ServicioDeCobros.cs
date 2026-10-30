@@ -174,6 +174,7 @@ public class ServicioDeCobros(
                 IdComprobanteCobro = idRecibo,
                 IdComprobanteVenta = pedida.IdComprobanteVenta,
                 Importe = pedida.Importe,
+                Origen = OrigenAplicacionCobro.Manual,
                 IdEmpleado = idEmpleado,
                 Fecha = momento,
                 CreatedAt = momento,

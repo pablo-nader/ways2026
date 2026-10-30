@@ -558,10 +558,14 @@ public class CobrosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         {
             await db.ComprobantesVenta.Where(c => c.Id == anulado)
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.Estado, EstadoComprobante.Anulado));
+            // La del recibo agotado pasa a histórica: el listado tiene que leer el origen de cada fila.
+            await db.AplicacionesCobro.Where(a => a.IdComprobanteCobro == agotado)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.Origen, OrigenAplicacionCobro.Historial));
         }
 
         var todos = (await LeerAsync(await ctx.Admin.GetAsync($"/api/clientes/{idCliente}/cuenta-corriente/recibos"))).EnumerateArray().ToList();
         Assert.Equal(new[] { agotado, parcial }, todos.Select(r => r.GetProperty("id").GetInt32()));
+        Assert.Equal("Historial", Assert.Single(todos[0].GetProperty("aplicaciones").EnumerateArray()).GetProperty("origen").GetString());
         var filaParcial = todos[1];
         Assert.Equal(60m, filaParcial.GetProperty("netoCobrado").GetDecimal());
         Assert.Equal(10m, filaParcial.GetProperty("aplicado").GetDecimal());
@@ -569,6 +573,7 @@ public class CobrosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var aplicacion = Assert.Single(filaParcial.GetProperty("aplicaciones").EnumerateArray());
         Assert.Equal(venta, aplicacion.GetProperty("idComprobanteVenta").GetInt32());
         Assert.False(string.IsNullOrEmpty(aplicacion.GetProperty("numeroVisibleDeVenta").GetString()));
+        Assert.Equal("Manual", aplicacion.GetProperty("origen").GetString());
 
         var conDisponible = (await LeerAsync(await ctx.Admin.GetAsync(
             $"/api/clientes/{idCliente}/cuenta-corriente/recibos?conDisponible=true"))).EnumerateArray().ToList();

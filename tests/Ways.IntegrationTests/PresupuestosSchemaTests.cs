@@ -886,6 +886,7 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
                     npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
                     npgsql.MapEnum<OrigenAplicacionPago>("origen_aplicacion_pago");
+                    npgsql.MapEnum<OrigenAplicacionCobro>("origen_aplicacion_cobro");
                 })
                 .Options;
 

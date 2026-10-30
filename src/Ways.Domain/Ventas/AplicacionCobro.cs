@@ -26,6 +26,9 @@ public class AplicacionCobro : EntidadTenant
     /// <summary>Siempre <c>&gt; 0</c> (<c>ck_aplicaciones_cobro_importe_positivo</c>).</summary>
     public decimal Importe { get; set; }
 
+    /// <summary>Cómo nació la aplicación. Sumar a una aplicación existente no cambia su origen.</summary>
+    public OrigenAplicacionCobro Origen { get; set; } = OrigenAplicacionCobro.Manual;
+
     /// <summary>Usuario que hizo la aplicación (FK simple, igual que <see cref="ComprobanteVenta.IdEmpleado"/>).</summary>
     public int IdEmpleado { get; set; }
 

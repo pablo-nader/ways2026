@@ -2460,6 +2460,10 @@ export type VentaPendienteDeCobro = {
   saldoPendiente: number
 }
 
+/** Cómo nació una aplicación de cobro (espejo de `OrigenAplicacionCobro`): `Historial` la armó la migración de los
+ * recibos anteriores, aplicando cada uno a las ventas más viejas del cliente. */
+export type OrigenAplicacionCobro = 'Manual' | 'Historial'
+
 /** Una aplicación viva de un recibo con el número visible de su venta (espejo de `AplicacionDeReciboListada`). */
 export type AplicacionDeReciboListada = {
   id: number
@@ -2467,6 +2471,7 @@ export type AplicacionDeReciboListada = {
   numeroVisibleDeVenta: string
   importe: number
   fecha: string
+  origen: OrigenAplicacionCobro
 }
 
 /** Un recibo no anulado del cliente con lo cobrado, aplicado y disponible (espejo de `ReciboDeCliente`). */

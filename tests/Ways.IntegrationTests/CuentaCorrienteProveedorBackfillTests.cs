@@ -85,6 +85,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_pago.
                 npgsql.MapEnum<Ways.Domain.Pagos.OrigenFondosPago>("origen_fondos_pago");
                 npgsql.MapEnum<Ways.Domain.Pagos.OrigenAplicacionPago>("origen_aplicacion_pago");
+                npgsql.MapEnum<Ways.Domain.Ventas.OrigenAplicacionCobro>("origen_aplicacion_cobro");
             })
             .Options;
 
