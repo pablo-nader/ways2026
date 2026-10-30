@@ -326,6 +326,23 @@ describe('ModalDePagoDeCompra', () => {
     expect(screen.getByLabelText('Importe a aplicar del pago 71')).toBeDisabled()
   })
 
+  it('muestra la fecha de cada pago y oculta los sin proveedor hasta tildar «Incluir pagos sin proveedor»', async () => {
+    mockearMedios(undefined, [
+      pagoAplicable({ idPago: 70, fecha: '2026-09-01T15:00:00Z' }),
+      pagoAplicable({ idPago: 71, idProveedor: null, concepto: 'Gasto del turno' }),
+    ])
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    montar()
+    await screen.findByRole('checkbox', { name: /Usar el pago #70/ })
+
+    expect(screen.getByText(new Date('2026-09-01T15:00:00Z').toLocaleDateString('es-AR'))).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /Usar el pago #71/ })).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('checkbox', { name: 'Incluir pagos sin proveedor' }))
+    expect(screen.getByRole('checkbox', { name: /Usar el pago #71/ })).toBeInTheDocument()
+    expect(screen.getByText('Gasto del turno')).toBeInTheDocument()
+  })
+
   it('al tildar un pago a cuenta la línea precargada baja a lo que resta, y al destildar vuelve al saldo', async () => {
     mockearMedios(undefined, [pagoAplicable({ idPago: 70, disponible: 100 })])
     const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
