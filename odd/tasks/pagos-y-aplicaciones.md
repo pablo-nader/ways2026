@@ -170,7 +170,7 @@ contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers 
 - [x] E7-S3 — HTTP: optional `aplicaciones` when registering a pago a cuenta, apply/unapply on an existing RC,
   listing of a customer's ventas with saldo pendiente and of RCs with disponible.
 - [x] E7-S4 — Owner decision 2026-10-30 (supersedes "old RCs stay unapplied"): a migration applies each historical RC to the same customer's oldest CC ventas by (fecha, id) until exhausted; applications get `origen = 'historial'` (new enum `origen_aplicacion_cobro`) and can be unapplied. Reason: without it the S3 listings showed every old CC venta as pending and every old RC as available.
-- [ ] E7-W1 — Web: `ModalPagoACuenta` picks ventas to apply, `CuentaCorriente` shows saldo pendiente per venta and the
+- [x] E7-W1 — Web: `ModalPagoACuenta` picks ventas to apply, `CuentaCorriente` shows saldo pendiente per venta and the
   disponible per RC with apply/unapply. Reaches registers only with a later `pos-v*` release.
 
 ## Progress
@@ -399,6 +399,9 @@ contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers 
 
 - 2026-10-30 E7-S3 judgment-day: APPROVED (no criticals); fixed in f0d7ed29: predictable application rejections checked before the RC number is reserved, cashier permission pinned by a test, Vitest for the new clients. PR #532.
 - 2026-10-30 E7-S4 (branch `pnader/cobros-e7-s4`, stacked on E7-S3, commit 5e851597): enum `origen_aplicacion_cobro` (`manual`/`historial`) + column `origen`; migration `AplicarCobrosHistoricosPorAntiguedad` with set-based FIFO pairing per (tenant, cliente) by (fecha, id) via cumulative-interval overlap, `SET LOCAL app.acceso`, deferred caps set IMMEDIATE, `ON CONFLICT DO NOTHING` against live manual pairs; fecha = later of the two, empleado = the RC's; no audit rows; Down deletes only `historial`. Domain.Tests 2037; Application.Tests 1208; `has-pending-model-changes` clean; web `tsc -b` clean. Integration (`AplicarCobrosHistoricosMigracionTests`, under `ways_app` with and without the GUC) NOT run locally (Docker down): CI is the proof; pairing mutants killed only in a SQLite simulation. Route: delegated writer (opus).
+
+- 2026-10-30 E7-S4 judgment-day: one CRITICAL (enum CLR default rendering as 0 in HEAD-migrating test contexts) fixed with `defaultValueSql`; plus merge sets origen Manual, RCs with a live manual application excluded, constraints reset to DEFERRED, `origen` in the apply response; scoped re-judgment APPROVED by both; unreachable `ON CONFLICT` removed and the origen rule tested (6e7b5734). PR #533.
+- 2026-10-30 E7-W1 (branch `pnader/cobros-e7-w1`, stacked on E7-S4, commit a9b2bff3): pure helpers `componentes/cobros/aplicaciones.ts` (`repartirFifo` in centavos, `validarAplicaciones`), shared `EditorDeAplicacionesACobrar`, `ModalPagoACuenta` optional 'Aplicar a ventas' (works if pendientes fail to load), `SeccionesDeCobros` in `CuentaCorriente` (recibos with Historial badge, apply/desaplicar for Supervisor/Admin, ventas con saldo pendiente). `tsc -b` clean; lint 0 errors; full vitest 269 files / 8544 tests passed. Not browser-checked. Reaches registers only with a `pos-v*` release. Route: delegated writer.
 
 ## Next step
 
