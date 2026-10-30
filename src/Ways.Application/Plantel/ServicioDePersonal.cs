@@ -230,6 +230,7 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
     public async Task<PersonalListado> CrearAsync(DatosDePersonal datos, CancellationToken ct = default)
     {
         var normalizados = Normalizar(datos);
+        ReglaDeHorarioHabitual.Validar(datos.HorarioHabitual);
         await ExigirReferenciasAsync(datos, excluirId: null, ct);
 
         var ahora = reloj.Ahora;
@@ -240,6 +241,7 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
             Telefono = normalizados.Telefono,
             Observaciones = normalizados.Observaciones,
             ValorHora = datos.ValorHora,
+            HorarioHabitual = datos.HorarioHabitual,
             IdEmpresa = datos.IdEmpresa,
             IdUsuario = datos.IdUsuario,
             IdCliente = datos.IdCliente,
@@ -261,6 +263,7 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
         }
 
         var normalizados = Normalizar(datos);
+        ReglaDeHorarioHabitual.Validar(datos.HorarioHabitual);
         await ExigirReferenciasAsync(datos, excluirId: id, ct);
 
         var personal = await db.Personal.FirstOrDefaultAsync(p => p.Id == id, ct)
@@ -271,6 +274,7 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
         personal.Telefono = normalizados.Telefono;
         personal.Observaciones = normalizados.Observaciones;
         personal.ValorHora = datos.ValorHora;
+        personal.HorarioHabitual = datos.HorarioHabitual;
         personal.IdEmpresa = datos.IdEmpresa;
         personal.IdUsuario = datos.IdUsuario;
         personal.IdCliente = datos.IdCliente;
@@ -348,7 +352,8 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
         return new PersonalListado(
             p.Id, p.Nombre, p.Documento, p.Telefono, p.Observaciones, p.ValorHora, p.Saldo, p.IdEmpresa,
             fila.IdUsuarioVivo, fila.NombreUsuario,
-            cliente?.Id, cliente is null ? null : NombreDeCliente(cliente));
+            cliente?.Id, cliente is null ? null : NombreDeCliente(cliente),
+            p.HorarioHabitual);
     }
 
     private static string NombreDeCliente(Cliente cliente) =>

@@ -103,6 +103,55 @@ public class ServicioDePersonalTests
         Assert.Null(leido.IdCliente);
     }
 
+    private static readonly decimal[] SemanaLaboral = [8m, 8m, 8m, 8m, 8m, 4.5m, 0m];
+
+    [Fact]
+    public async Task ElHorarioHabitualSeGuardaAlCrearSeReemplazaAlEditarYSeBorraConNull()
+    {
+        var bd = nameof(ElHorarioHabitualSeGuardaAlCrearSeReemplazaAlEditarYSeBorraConNull);
+        var servicio = CrearServicio(bd);
+
+        var creado = await servicio.CrearAsync(Datos() with { HorarioHabitual = SemanaLaboral });
+        Assert.Equal(SemanaLaboral, creado.HorarioHabitual);
+        Assert.Equal(SemanaLaboral, (await servicio.ListarAsync()).Items.Single().HorarioHabitual);
+
+        decimal[] otra = [0m, 6m, 6m, 6m, 6m, 6m, 0m];
+        var editado = await servicio.ActualizarAsync(creado.Id, Datos() with { HorarioHabitual = otra });
+        Assert.Equal(otra, editado.HorarioHabitual);
+
+        var sinHorario = await servicio.ActualizarAsync(creado.Id, Datos());
+        Assert.Null(sinHorario.HorarioHabitual);
+        Assert.Null((await servicio.ObtenerAsync(creado.Id)).HorarioHabitual);
+    }
+
+    [Theory]
+    [InlineData(6)]
+    [InlineData(8)]
+    public async Task UnHorarioDeOtraLongitudSeRechazaAlCrearYAlEditar(int largo)
+    {
+        var bd = nameof(UnHorarioDeOtraLongitudSeRechazaAlCrearYAlEditar) + largo;
+        var servicio = CrearServicio(bd);
+        var invalido = Datos() with { HorarioHabitual = new decimal[largo] };
+
+        var alCrear = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(invalido));
+        Assert.Equal("horario_habitual_invalido", alCrear.Codigo);
+
+        var existente = await servicio.CrearAsync(Datos());
+        var alEditar = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(existente.Id, invalido));
+        Assert.Equal("horario_habitual_invalido", alEditar.Codigo);
+    }
+
+    [Fact]
+    public async Task EditarUnPersonalInexistenteResponde404AunqueElHorarioSeaInvalido()
+    {
+        var servicio = CrearServicio(nameof(EditarUnPersonalInexistenteResponde404AunqueElHorarioSeaInvalido));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => servicio.ActualizarAsync(999, Datos() with { HorarioHabitual = new decimal[3] }));
+
+        Assert.Equal(404, error.EstadoHttp);
+    }
+
     [Fact]
     public async Task SeCreaConUsuarioYClienteYElListadoMuestraSusNombres()
     {

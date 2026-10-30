@@ -1,8 +1,9 @@
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
-import type { GastoDeTurno, TicketDeTurno } from '../api/tipos'
+import type { PagoDeTurno, TicketDeTurno } from '../api/tipos'
 import { fechaHoraATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
-import { etiquetaDeOrigenFondos } from '../paginas/utilidadesGastosDelTurno'
+import { textoDeMediosDelPago } from '../api/lineasDePago'
+import { etiquetaDeOrigenFondos } from '../paginas/utilidadesPagosDelTurno'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -19,22 +20,28 @@ const COLUMNAS_DE_TICKETS: ColumnasOrdenables<TicketDeTurno> = {
   total: { valor: (t) => t.total },
 }
 
-const COLUMNAS_DE_GASTOS: ColumnasOrdenables<GastoDeTurno> = {
+/** Los nombres de los medios vienen en las líneas del pago; una respuesta sin líneas no los trae. */
+function textoDeMedios(pago: PagoDeTurno): string {
+  return (pago.lineas?.length ?? 0) > 0 ? textoDeMediosDelPago(pago) : '—'
+}
+
+const COLUMNAS_DE_PAGOS: ColumnasOrdenables<PagoDeTurno> = {
   fecha: { valor: (g) => new Date(g.fecha) },
   categoria: { valor: (g) => g.categoria },
+  medio: { valor: (g) => textoDeMedios(g) },
   importe: { valor: (g) => g.importe },
 }
 
 type Props = {
   tickets: TicketDeTurno[]
-  gastos: GastoDeTurno[]
+  pagos: PagoDeTurno[]
 }
 
-/** Las listas de tickets y de gastos del detalle de un turno cerrado: las comparten la pantalla
+/** Las listas de tickets y de pagos del detalle de un turno cerrado: las comparten la pantalla
  * "Caja Z" y el modal de detalle de "Cierres de caja" del POS. */
-export function DetalleDeTurnoListas({ tickets, gastos }: Props) {
+export function DetalleDeTurnoListas({ tickets, pagos }: Props) {
   const ordenTickets = useOrdenamiento(tickets, COLUMNAS_DE_TICKETS)
-  const ordenGastos = useOrdenamiento(gastos, COLUMNAS_DE_GASTOS)
+  const ordenPagos = useOrdenamiento(pagos, COLUMNAS_DE_PAGOS)
 
   return (
     <>
@@ -77,37 +84,41 @@ export function DetalleDeTurnoListas({ tickets, gastos }: Props) {
         </table>
       </div>
 
-      <h6>Gastos</h6>
+      <h6>Pagos</h6>
       <div className="table-responsive">
         <table className="table table-sm table-striped table-bordered align-middle">
           <thead>
             <tr>
-              <EncabezadoOrdenable columna="fecha" orden={ordenGastos.orden} onAlternar={ordenGastos.alternar}>
+              <EncabezadoOrdenable columna="fecha" orden={ordenPagos.orden} onAlternar={ordenPagos.alternar}>
                 Fecha
               </EncabezadoOrdenable>
-              <EncabezadoOrdenable columna="categoria" orden={ordenGastos.orden} onAlternar={ordenGastos.alternar}>
+              <EncabezadoOrdenable columna="categoria" orden={ordenPagos.orden} onAlternar={ordenPagos.alternar}>
                 Categoría
               </EncabezadoOrdenable>
-              <EncabezadoOrdenable columna="importe" orden={ordenGastos.orden} onAlternar={ordenGastos.alternar} className="text-end">
+              <EncabezadoOrdenable columna="medio" orden={ordenPagos.orden} onAlternar={ordenPagos.alternar}>
+                Medio de pago
+              </EncabezadoOrdenable>
+              <EncabezadoOrdenable columna="importe" orden={ordenPagos.orden} onAlternar={ordenPagos.alternar} className="text-end">
                 Importe
               </EncabezadoOrdenable>
             </tr>
           </thead>
           <tbody>
-            {ordenGastos.filas.map((g) => (
+            {ordenPagos.filas.map((g) => (
               <tr key={g.id}>
                 <td>{formatearFechaHora(g.fecha)}</td>
                 <td>
                   {g.categoria}
                   {g.origenFondos === 'Tesoreria' && <span className="badge bg-secondary ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>}
                 </td>
+                <td>{textoDeMedios(g)}</td>
                 <td className="text-end">{formatearMoneda(g.importe)}</td>
               </tr>
             ))}
-            {gastos.length === 0 && (
+            {pagos.length === 0 && (
               <tr>
-                <td colSpan={3} className="text-center text-muted py-3">
-                  Sin gastos.
+                <td colSpan={4} className="text-center text-muted py-3">
+                  Sin pagos.
                 </td>
               </tr>
             )}

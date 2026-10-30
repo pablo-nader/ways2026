@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { InputHTMLAttributes, ReactNode } from 'react'
-import { ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
-import type { EmpresaListado, MedioPagoListado, OrigenFondosGasto, PuntoVentaListado } from '../api/tipos'
+import { ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
+import type { EmpresaListado, MedioPagoListado, OrigenFondosPago, PuntoVentaListado } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { CampoImporte } from '../componentes/CampoImporte'
@@ -415,9 +415,9 @@ export function ModalDePago({
         <>
           <div className="col-md-6">
             <Campo id="pago-origen" etiqueta="Origen del dinero" error={error} campo="origen">
-              <select id="pago-origen" className={`form-select${error?.campo === 'origen' ? ' is-invalid' : ''}`} value={f.origen} disabled={escribiendo} onChange={(e) => cambiar({ origen: e.target.value as OrigenFondosGasto | '' })} {...atributosDeError('pago-origen', error, 'origen')}>
+              <select id="pago-origen" className={`form-select${error?.campo === 'origen' ? ' is-invalid' : ''}`} value={f.origen} disabled={escribiendo} onChange={(e) => cambiar({ origen: e.target.value as OrigenFondosPago | '' })} {...atributosDeError('pago-origen', error, 'origen')}>
                 <option value="">Elegí de dónde sale el dinero…</option>
-                {ORIGENES_DE_FONDOS_GASTO.filter((o) => o.valor !== 'Tesoreria' || ofreceTesoreria).map((o) => (
+                {ORIGENES_DE_FONDOS_PAGO.filter((o) => o.valor !== 'Tesoreria' || ofreceTesoreria).map((o) => (
                   <option key={o.valor} value={o.valor}>
                     {o.etiqueta}
                   </option>

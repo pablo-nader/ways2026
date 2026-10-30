@@ -22,7 +22,7 @@ namespace Ways.IntegrationTests;
 ///
 /// JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple, que había movido el
 /// LISTADO completo a <c>Politicas.OperacionDePos</c> para el selector de proveedor del
-/// formulario de gastos del turno — exponía margen/cuit/contacto a Vendedor. El selector ahora
+/// formulario de pagos del turno — exponía margen/cuit/contacto a Vendedor. El selector ahora
 /// usa la proyección mínima <c>GET /api/proveedores/opciones</c>, cubierta en
 /// <c>OpcionesDeProveedorEndpointsTests</c>.
 /// </summary>
@@ -223,7 +223,7 @@ public class ProveedoresEndpointsTests(WaysApiFixture fixture) : IClassFixture<W
 
     /// <summary>JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el listado
     /// vuelve a ser Admin-only, un Vendedor no puede leer <c>ProveedorListado</c> completo (margen,
-    /// cuit, contacto). El selector del formulario de gastos usa la ruta mínima separada
+    /// cuit, contacto). El selector del formulario de pagos usa la ruta mínima separada
     /// (<c>OpcionesDeProveedorEndpointsTests</c>).</summary>
     [Fact]
     public async Task UnVendedorNoPuedeListarProveedores()

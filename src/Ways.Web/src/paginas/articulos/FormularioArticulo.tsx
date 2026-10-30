@@ -69,8 +69,8 @@ export type Formulario = {
   costoListaPor: CostoListaPor
   costoListaIncluyeIva: boolean
   descuentoProveedor: string
-  /** Porcentaje de impuestos internos sobre el costo neto (hasta 4 decimales); campo compartido de la familia. */
-  porcentajeImpuestoInterno: string
+  /** Importe de impuestos internos sin IVA, en la misma base que el costo de lista (hasta 2 decimales); campo compartido de la familia. */
+  impuestoInterno: string
   /** El costo nominal guardado, solo de lectura: lo calcula el servidor y no viaja en un alta ni en una edición. */
   costoNominal: string
   /** Las entradas de costo con las que se cargó el artículo; `null` en un alta. Con ellas se decide si se muestra
@@ -130,7 +130,7 @@ export function formularioVacio(): Formulario {
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: '0',
-    porcentajeImpuestoInterno: '0',
+    impuestoInterno: '0',
     costoNominal: '',
     costoGuardado: null,
     costosOcultos: false,
@@ -156,7 +156,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     costoListaIncluyeIva: a.costoListaIncluyeIva ?? true,
     unidadesPorBulto: a.unidadesPorBulto === null ? '' : String(a.unidadesPorBulto),
     descuentoProveedor: a.descuentoProveedor === null ? (a.costoListaPor === null ? '' : '0') : String(a.descuentoProveedor),
-    porcentajeImpuestoInterno: a.porcentajeImpuestoInterno == null ? (a.costoListaPor === null ? '' : '0') : String(a.porcentajeImpuestoInterno),
+    impuestoInterno: a.impuestoInterno == null ? (a.costoListaPor === null ? '' : '0') : String(a.impuestoInterno),
     idAlicuotaIva: a.idAlicuotaIva,
   }
 
@@ -178,7 +178,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     costoListaPor: costos.costoListaPor,
     costoListaIncluyeIva: costos.costoListaIncluyeIva,
     descuentoProveedor: costos.descuentoProveedor,
-    porcentajeImpuestoInterno: costos.porcentajeImpuestoInterno,
+    impuestoInterno: costos.impuestoInterno,
     costoNominal: a.costoNominal === null ? '' : String(a.costoNominal),
     costoGuardado: costos,
     costosOcultos: a.costoListaPor === null,
@@ -222,7 +222,7 @@ function camposComunes(f: Formulario) {
     costoLista: numeroOpcional(f.costoLista),
     descuentoProveedor: f.costosOcultos ? null : (numeroOpcional(f.descuentoProveedor) ?? 0),
     // Quien no ve los costos manda null: en una edición el servidor conserva el guardado y en un alta asume 0.
-    porcentajeImpuestoInterno: f.costosOcultos ? null : (numeroOpcional(f.porcentajeImpuestoInterno) ?? 0),
+    impuestoInterno: f.costosOcultos ? null : (numeroOpcional(f.impuestoInterno) ?? 0),
     disponibleParaTodas: f.disponibleParaTodas,
     idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
     activo: f.activo,
@@ -894,15 +894,15 @@ export function FormularioArticulo({
 
             <div className="col-md-2">
               <Etiqueta htmlFor="art-impuesto-interno" deFamilia={bloqueoDeFamilia}>
-                Impuestos internos (%)
+                Impuestos internos ($)
               </Etiqueta>
               <input
                 id="art-impuesto-interno"
-                {...atributosDeCampoDecimal({ decimales: 4 })}
+                {...atributosDeCampoDecimal({ decimales: 2 })}
                 className="form-control"
-                value={valor.porcentajeImpuestoInterno}
+                value={valor.impuestoInterno}
                 disabled={bloqueoDeFamilia}
-                onChange={(e) => onCambio({ ...valor, porcentajeImpuestoInterno: e.target.value })}
+                onChange={(e) => onCambio({ ...valor, impuestoInterno: e.target.value })}
               />
             </div>
 

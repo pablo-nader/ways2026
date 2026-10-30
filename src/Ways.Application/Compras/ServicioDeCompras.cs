@@ -8,6 +8,7 @@ using Ways.Application.Auditoria;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Familias;
+using Ways.Application.Pagos;
 using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
@@ -50,7 +51,7 @@ namespace Ways.Application.Compras;
 /// los miembros vivos de la familia de su artículo; <see cref="AplicarPrecioSugeridoAsync"/> intenta aplicar, de
 /// las líneas de una misma familia, solo la de mayor orden.
 /// </summary>
-public class ServicioDeCompras(
+public partial class ServicioDeCompras(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios,
     ServicioDeParametros servicioDeParametros)
 {
@@ -346,7 +347,8 @@ public class ServicioDeCompras(
                 throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
             }
 
-            throw new ErrorDominio("compra_no_editable", "Solo una compra en borrador puede editarse.", 409);
+            throw new ErrorDominio(
+                "compra_cambio_concurrente", "La compra cambió de estado mientras se editaba. Recargala y volvé a intentar.", 409);
         }
 
         // El lock de fila crudo de arriba ya serializa cualquier escritor concurrente sobre este
@@ -477,8 +479,8 @@ public class ServicioDeCompras(
     /// auditoría <c>compra.descarte</c> en la misma transacción. Solo un borrador puede descartarse: una
     /// confirmada o anulada ya movió stock y cuenta corriente, y su historia no se borra.
     ///
-    /// <para>Ninguna otra tabla puede referenciar un borrador: los gastos se ligan únicamente a una compra
-    /// confirmada (<c>ServicioDeGastos.ExigirCompraLigableAsync</c>, bajo <c>FOR SHARE</c> sobre este mismo
+    /// <para>Ninguna otra tabla puede referenciar un borrador: los pagos se ligan únicamente a una compra
+    /// confirmada (<c>ServicioDePagos.ExigirCompraLigableAsync</c>, bajo <c>FOR UPDATE</c> sobre este mismo
     /// encabezado), y los movimientos de stock y de cuenta corriente nacen en <c>EjecutarConfirmarAsync</c>,
     /// después de pasar el estado a confirmada, que nunca vuelve a borrador. Por eso no hay un rechazo
     /// previo por referencias y la baja no necesita un código propio para la FK.</para></summary>
@@ -702,8 +704,9 @@ public class ServicioDeCompras(
 
         // 2.b Resolución de lotes (etapa 12, slice 5; design decisión 3: lotes ANTES que stock) —
         // bajo el MISMO lock del header que el paso 1 ya tomó, antes del primer lock de stock del
-        // paso 3. Orden ascendente (id_articulo, codigo_lote) para que dos confirmaciones
-        // concurrentes que comparten códigos de lote tomen esas filas en el mismo orden.
+        // paso 3. Orden ascendente (id_articulo, código RESUELTO, ordinal) — el mismo código con el
+        // que ServicioDeLotes toma el lock, y el mismo orden de la edición — para que dos
+        // escritores concurrentes que comparten lotes tomen esas filas en el mismo orden.
         var idsArticulo = items.Select(i => i.IdArticulo!.Value).Distinct().ToList();
 
         // EsLoteEfectivo necesita controla_lote por artículo y lotes_habilitado de la empresa del
@@ -727,7 +730,7 @@ public class ServicioDeCompras(
         var itemsLoteEfectivos = items
             .Where(i => ReglaDeLotes.ControlEfectivo(controlaLotePorArticulo.GetValueOrDefault(i.IdArticulo!.Value), lotesHabilitado))
             .OrderBy(i => i.IdArticulo)
-            .ThenBy(i => i.CodigoLote);
+            .ThenBy(i => ServicioDeLotes.CodigoResuelto(i.CodigoLote, i.FechaVencimiento), StringComparer.Ordinal);
 
         foreach (var item in itemsLoteEfectivos)
         {
@@ -843,7 +846,7 @@ public class ServicioDeCompras(
         // se invirtiera, saldo_resultante dejaría de coincidir con el saldo post-UPDATE).
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, encabezado.IdProveedor, momento, encabezado.IdPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Compra, id, idGasto: null, encabezado.Total, nuevoSaldoProveedor, detalle: null, ct);
+            TipoMovimientoCcProveedor.Compra, id, idPago: null, encabezado.Total, nuevoSaldoProveedor, detalle: null, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -905,6 +908,12 @@ public class ServicioDeCompras(
 
         var idPuntoVenta = encabezadoAnulado.Value.IdPuntoVenta;
 
+        // 1.4. E3-S1b: las aplicaciones vivas de los pagos a esta compra se liberan en la misma transacción. El
+        // trigger diferido de aplicaciones_pago exige que una compra no confirmada no tenga ninguna viva y se evalúa
+        // en el commit. El header exclusivo de arriba ya serializa contra cualquier escritor de aplicaciones de la
+        // compra. Los pagos y sus movimientos no se tocan: lo liberado queda como crédito a favor.
+        await LiberarAplicacionesDeLaCompraAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
+
         // 1.5. Auditoría (stage-14-auditoria-trazabilidad, Slice 3; spec auditoria-de-operaciones;
         // design call site 8) — MISMA transacción cruda; id_punto_venta sale del RETURNING que
         // MarcarAnuladaAsync YA devuelve (sin cambios en ese método), nunca de una lectura extra.
@@ -936,15 +945,20 @@ public class ServicioDeCompras(
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
         // ServicioDeVentas.AnularAsync, mismo criterio acá). Orden ascendente (id_articulo,
         // id_lote) — etapa 12, slice 6, mismo criterio de lock que el confirmar (decisión 8/9).
-        var movimientosOriginales = await db.MovimientosStock
-            .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
-            .OrderBy(m => m.IdArticulo)
-            .ThenBy(m => m.IdLote)
-            .ToListAsync(ct);
+        var movimientosOriginales = (await db.MovimientosStock
+                .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
+                .Select(m => new { m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad })
+                .ToListAsync(ct))
+            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad))
+            .ToList();
 
-        foreach (var original in movimientosOriginales)
+        // E6: una compra editada tiene en su libro, además del movimiento de la confirmación, los de cada edición (con
+        // signo). La reversa es la NETA por (artículo, punto de venta, lote): revertir cada asiento por separado
+        // rechazaría con un falso stock negativo una compra cuyo libro tiene +10 y después −4 de la misma clave. La
+        // clave que ya netea a cero no se revierte. Orden ascendente, el de los locks de stock.
+        foreach (var original in CalculadorDeEdicionDeCompra.DiferenciasDeStock(movimientosOriginales, []))
         {
-            var inversa = -original.Cantidad;
+            var inversa = original.Delta;
 
             // Reversa EXACTA por lote (etapa 12, slice 6, reemplaza el guard interino de slice 5
             // FIX 4): el movimiento original ya trae su propio id_lote — la reversa lo copia
@@ -987,7 +1001,7 @@ public class ServicioDeCompras(
         }
 
         // 4. Informativo — la regla invertida (design decisión 6): NUNCA bloquea.
-        var gastosLigados = await db.Gastos.CountAsync(g => g.IdComprobanteCompra == id, ct);
+        var pagosLigados = await db.Pagos.CountAsync(g => g.IdComprobanteCompra == id, ct);
 
         // 5. El ledger ES la autoridad del importe a revertir (stage-15-cc-proveedores-ledger,
         // design decisión 6) — nunca recalculado desde items/total salvo el fallback explícito de
@@ -1007,22 +1021,44 @@ public class ServicioDeCompras(
               "proveedores; importe tomado del total del comprobante (no existe movimiento compra propio)."
             : null;
 
+        // 5.5. E4: el redondeo vigente de la compra (lo que se perdonó de su saldo) se revierte con otro movimiento de
+        // redondeo de signo opuesto: las aplicaciones se liberaron arriba, así que esa diferencia ya no tiene de qué
+        // depender. Sin esta reversa el contramovimiento de abajo dejaría el saldo del proveedor a favor por lo perdonado.
+        await RedondeoDeProveedor.RevertirDeLaCompraAsync(
+            db, conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, id, idPuntoVenta, idEmpleado,
+            momento, "anulación de la compra", ct);
+
         // 6. proveedores — ÚLTIMO lock de fila for update de esta transacción, igual que en
         // confirmar (design decisión 5/9, mutation target #19 — el mismo orden total aplica acá).
         var nuevoSaldoProveedor = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
             conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, -importeOriginal, ct);
 
         // 7. El ÚNICO movimiento `ajuste` reversor de esta anulación — solo la deuda se revierte,
-        // los pagos (`gastos`/movimientos `pago`) NUNCA se tocan ("sin motor de reversión de
-        // gastos" sobrevive verbatim, design decisión 5).
+        // los pagos (`pagos`/movimientos `pago`) NUNCA se tocan ("sin motor de reversión de
+        // pagos" sobrevive verbatim, design decisión 5).
         await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Ajuste, id, idGasto: null, -importeOriginal, nuevoSaldoProveedor, detalleAjuste, ct);
+            TipoMovimientoCcProveedor.Ajuste, id, idPago: null, -importeOriginal, nuevoSaldoProveedor, detalleAjuste, ct);
 
         await transaccion.CommitAsync(ct);
 
         var detalle = await ObtenerAsync(id, ct);
-        return new ResultadoAnulacion(detalle, gastosLigados);
+        return new ResultadoAnulacion(detalle, pagosLigados);
+    }
+
+    private static async Task LiberarAplicacionesDeLaCompraAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idCompra, int idTenant, DateTimeOffset momento,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE aplicaciones_pago SET deleted_at = $1, updated_at = $1 " +
+            "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND deleted_at IS NULL";
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     // ---- aplicar precio sugerido (design decisión 8) -----------------------------------------------
@@ -1229,7 +1265,7 @@ public class ServicioDeCompras(
     /// <summary>stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
     /// "Ligadura Invariant"; spec comprobantes-compra: "A Comprobante Compra MAY Carry A Linked
     /// Orden De Compra") — <c>SELECT ... FOR SHARE</c> crudo, MISMO shape que
-    /// <c>ServicioDeGastos.ExigirCompraLigableAsync</c> (<c>:224-267</c>): bajo la transacción de
+    /// <c>ServicioDePagos.ExigirCompraLigableAsync</c> (<c>:224-267</c>): bajo la transacción de
     /// <see cref="EjecutarActualizacionAsync"/> y de <see cref="EjecutarAltaDeBorradorAsync"/>
     /// es un guard TOCTOU real contra una anulación concurrente de la MISMA OC (la anulación toma su
     /// propio lock EXCLUSIVO como primer statement, slice 4): el <c>FOR SHARE</c> se sostiene hasta el
@@ -1318,17 +1354,26 @@ public class ServicioDeCompras(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
+    private static Task InsertarMovimientoStockAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
+        int? idLote, CancellationToken ct) =>
+        InsertarMovimientoStockAsync(
+            conexion, transaccion, idTenant, idArticulo, idPuntoVenta, cantidad, motivo, idComprobanteCompra, idEmpleado,
+            creadoEl, idLote, observaciones: null, ct);
+
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
-        int? idLote, CancellationToken ct)
+        int? idLote, string? observaciones, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
+            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote, " +
+            "observaciones) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
 
         ParametrosDeComando.Agregar(comando, idTenant);
         ParametrosDeComando.Agregar(comando, idArticulo);
@@ -1339,6 +1384,7 @@ public class ServicioDeCompras(
         ParametrosDeComando.Agregar(comando, idEmpleado);
         ParametrosDeComando.Agregar(comando, creadoEl);
         ParametrosDeComando.AgregarNulo(comando, idLote);
+        ParametrosDeComando.AgregarNulo(comando, observaciones);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -1747,7 +1793,8 @@ public class ServicioDeCompras(
     /// (<c>lote_input_incompleto</c>) que el backstop de esquema
     /// <c>ck_items_comprobante_compra_lote_input</c> traduce en <c>ManejadorDeErrores</c> por si
     /// algún camino futuro esquiva este guard.</summary>
-    private static void ValidarVencimientosDeRecepcion(IReadOnlyList<LineaDeCompraSolicitada> items, DateOnly hoy)
+    private static void ValidarVencimientosDeRecepcion(
+        IReadOnlyList<LineaDeCompraSolicitada> items, DateOnly hoy, Func<LineaDeCompraSolicitada, bool>? sinVerificarVencimiento = null)
     {
         foreach (var item in items)
         {
@@ -1760,7 +1807,11 @@ public class ServicioDeCompras(
                     400);
             }
 
-            if (item.FechaVencimiento is { } fecha && ReglaDeLotes.EstaVencido(fecha, hoy))
+            // E6: en la edición de una compra confirmada, la línea que conserva su lote ya entró al stock y no se
+            // vuelve a verificar contra "hoy" (puede haber vencido desde entonces); solo el código sin fecha de arriba
+            // sigue rechazándose en toda línea.
+            if (item.FechaVencimiento is { } fecha && ReglaDeLotes.EstaVencido(fecha, hoy)
+                && sinVerificarVencimiento?.Invoke(item) != true)
             {
                 throw new ErrorDominio(
                     "lote_vencido_en_recepcion",

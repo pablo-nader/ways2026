@@ -5,7 +5,7 @@ using Ways.Application.Exportacion;
 using Ways.Application.Listados;
 using Ways.Domain.Caja;
 using Ways.Domain.Common;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 namespace Ways.Application.Caja;
 
@@ -171,29 +171,32 @@ public class ServicioDeTesoreria(IWaysDbContext db)
 
     /// <summary>Proyección compartida de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> — dangling-fk-read-models: tanto
-    /// <c>NombrePuntoVenta</c> como <c>GastoCategoria</c>/<c>GastoConcepto</c> resuelven a
-    /// <c>null</c> tanto sin punto de venta/gasto como con uno dado de baja lógica (el filtro
+    /// <c>NombrePuntoVenta</c> como <c>PagoCategoria</c>/<c>PagoConcepto</c> resuelven a
+    /// <c>null</c> tanto sin punto de venta/pago como con uno dado de baja lógica (el filtro
     /// global de baja lógica de EF ya los deja invisibles), nunca excluyen ni rompen la fila —
-    /// mismo criterio que <c>ServicioDeGastos.ProyeccionDeAdministracion</c>.
+    /// mismo criterio que <c>ServicioDePagos.ProyeccionDeAdministracion</c>.
     ///
-    /// judgment-day PR5, hallazgo #4: <c>GastoCategoria</c>/<c>GastoConcepto</c> resolvían por DOS
-    /// subqueries correlacionadas separadas contra <see cref="IWaysDbContext.Gastos"/> (una por
+    /// judgment-day PR5, hallazgo #4: <c>PagoCategoria</c>/<c>PagoConcepto</c> resolvían por DOS
+    /// subqueries correlacionadas separadas contra <see cref="IWaysDbContext.Pagos"/> (una por
     /// campo) — un <c>let</c> las colapsa en UNA sola consulta (EF Core la traduce a un
     /// <c>OUTER APPLY</c>/<c>LEFT JOIN LATERAL</c> único), reusando su resultado para ambos
     /// campos.</summary>
     private IQueryable<Unido> Unir(IQueryable<MovimientoTesoreria> query) =>
         from m in query
-        let gasto = m.IdGasto == null
+        let pago = m.IdPago == null
             ? null
-            : db.Gastos.Where(g => g.Id == m.IdGasto).Select(g => new { g.Categoria, g.Concepto }).FirstOrDefault()
+            : db.Pagos.Where(g => g.Id == m.IdPago).Select(g => new { g.Categoria, g.Concepto }).FirstOrDefault()
         select new Unido
         {
             M = m,
             NombrePuntoVenta = m.IdPuntoVenta == null
                 ? null
                 : db.PuntosVenta.Where(pv => pv.Id == m.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
-            GastoCategoria = gasto == null ? null : (CategoriaGasto?)gasto.Categoria,
-            GastoConcepto = gasto == null ? null : gasto.Concepto,
+            PagoCategoria = pago == null ? null : (CategoriaPago?)pago.Categoria,
+            PagoConcepto = pago == null ? null : pago.Concepto,
+            PagoTextoVisible = m.IdPago == null
+                ? null
+                : db.Pagos.Where(g => g.Id == m.IdPago).Select(TextoVisibleDePago).FirstOrDefault(),
         };
 
     private static IQueryable<MovimientoTesoreriaListado> AListado(IQueryable<Unido> query) =>
@@ -205,9 +208,9 @@ public class ServicioDeTesoreria(IWaysDbContext db)
             x.M.Fecha,
             x.M.Tipo,
             x.M.IdTurnoCaja,
-            x.M.IdGasto,
-            x.GastoCategoria,
-            x.GastoConcepto,
+            x.M.IdPago,
+            x.PagoCategoria,
+            x.PagoConcepto,
             x.M.Concepto,
             x.M.Inicio,
             x.M.Ingreso,
@@ -219,9 +222,9 @@ public class ServicioDeTesoreria(IWaysDbContext db)
     /// orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. Es opt-in: cada fila
     /// conserva su <c>Inicio</c>/<c>Final</c> persistidos, así que bajo otro orden la cadena deja de
     /// leerse de fila a fila. El tipo ordena por el orden de declaración del enum de Postgres (ajuste,
-    /// deposito, gasto, retiro_caja), que coincide con el alfabético de los rótulos de la pantalla
-    /// (Ajuste, Depósito, Gasto, Retiro de caja). El concepto ordena por el
-    /// texto de la celda (<see cref="ConceptoVisible"/>: categoría y concepto del gasto, o el propio). Un
+    /// deposito, pago, retiro_caja), que coincide con el alfabético de los rótulos de la pantalla
+    /// (Ajuste, Depósito, Pago, Retiro de caja). El concepto ordena por el
+    /// texto de la celda (<see cref="ConceptoVisible"/>: categoría y concepto del pago, o el propio). Un
     /// movimiento sin punto de venta, o con uno que ya no resuelve, va al final en las dos
     /// direcciones.</summary>
     private static IOrderedQueryable<Unido> Ordenar(IQueryable<Unido> query, OrdenDeListado<ColumnaDeOrdenDeTesoreria>? orden)
@@ -267,26 +270,28 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         return ordenado.ThenBy(x => x.M.Id);
     }
 
-    /// <summary>El texto de la celda Concepto: "Etiqueta de categoría — concepto" cuando la fila tiene gasto de
+    /// <summary>El texto de la celda Concepto: "Etiqueta de categoría — concepto" cuando la fila tiene pago de
     /// origen, el concepto del movimiento en cualquier otro caso (mismo criterio que <c>conceptoEfectivo</c>
-    /// de <c>Tesoreria.tsx</c> y <c>ExportacionDeCaja.ConceptoEfectivo</c>). La etiqueta sale de
-    /// <see cref="EtiquetasDeCategoriaDeGasto"/>, armada como <c>CASE</c> sobre el enum.</summary>
-    private static readonly Expression<Func<Unido, string>> ConceptoVisible = ConstruirConceptoVisible();
+    /// de <c>Tesoreria.tsx</c> y <c>ExportacionDeCaja.ConceptoEfectivo</c>).</summary>
+    private static readonly Expression<Func<Unido, string>> ConceptoVisible =
+        x => x.PagoTextoVisible ?? x.M.Concepto;
 
-    private static Expression<Func<Unido, string>> ConstruirConceptoVisible()
+    /// <summary>"Etiqueta de categoría — concepto" del pago de origen como una sola columna de texto. Va en
+    /// una subconsulta escalar propia porque EF no traduce un <c>ORDER BY</c> sobre miembros de un objeto
+    /// proyectado con <c>FirstOrDefault</c>. La etiqueta sale de <see cref="EtiquetasDeCategoriaDePago"/>
+    /// como <c>CASE</c> sobre la columna del pago.</summary>
+    private static readonly Expression<Func<Pago, string>> TextoVisibleDePago = ConstruirTextoVisibleDePago();
+
+    private static Expression<Func<Pago, string>> ConstruirTextoVisibleDePago()
     {
-        var x = Expression.Parameter(typeof(Unido), "x");
-        var categoria = Expression.Property(x, nameof(Unido.GastoCategoria));
-        var concepto = Expression.Property(x, nameof(Unido.GastoConcepto));
-        var propio = Expression.Property(Expression.Property(x, nameof(Unido.M)), nameof(MovimientoTesoreria.Concepto));
-
-        var etiqueta = EtiquetaPorCaso.De(categoria, EtiquetasDeCategoriaDeGasto.Todas, Expression.Constant(string.Empty));
+        var g = Expression.Parameter(typeof(Pago), "g");
+        var etiqueta = EtiquetaPorCaso.De(
+            Expression.Property(g, nameof(Pago.Categoria)), EtiquetasDeCategoriaDePago.Todas, Expression.Constant(string.Empty));
         var concatenar = typeof(string).GetMethod(nameof(string.Concat), [typeof(string), typeof(string), typeof(string)])!;
-        var conGasto = Expression.Call(concatenar, etiqueta, Expression.Constant(" — "), concepto);
 
-        return Expression.Lambda<Func<Unido, string>>(
-            Expression.Condition(Expression.NotEqual(concepto, Expression.Constant(null, typeof(string))), conGasto, propio),
-            x);
+        return Expression.Lambda<Func<Pago, string>>(
+            Expression.Call(concatenar, etiqueta, Expression.Constant(" — "), Expression.Property(g, nameof(Pago.Concepto))),
+            g);
     }
 
     public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeTesoreria> ClavesDeOrden =
@@ -309,9 +314,11 @@ public class ServicioDeTesoreria(IWaysDbContext db)
 
         public string? NombrePuntoVenta { get; init; }
 
-        public CategoriaGasto? GastoCategoria { get; init; }
+        public CategoriaPago? PagoCategoria { get; init; }
 
-        public string? GastoConcepto { get; init; }
+        public string? PagoConcepto { get; init; }
+
+        public string? PagoTextoVisible { get; init; }
     }
 }
 

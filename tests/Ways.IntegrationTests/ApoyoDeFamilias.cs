@@ -168,7 +168,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         IdArea: e.Areas[0], IdCategoria: e.Categorias[0], IdGrupo: e.Grupos[0], IdProveedorHabitual: e.Proveedores[0],
         IdAlicuotaIva: e.Alicuotas[0], UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true,
         ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, CostoListaPor: CostoListaPor.Unidad,
-        CostoListaIncluyeIva: true, DescuentoProveedor: 10m, PorcentajeImpuestoInterno: 0m, CostoNominal: 45m);
+        CostoListaIncluyeIva: true, DescuentoProveedor: 10m, ImpuestoInterno: 0m, CostoNominal: 45m);
 
     /// <summary>Los dieciséis valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
     /// ningún id de catálogo: para las pruebas cuyos ids apuntan a filas vivas.</summary>
@@ -204,7 +204,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             },
             "descuento_proveedor" => @base with { DescuentoProveedor = 15m, CostoNominal = 42.5m },
             // La base lleva el costo de lista con IVA incluido: ahí la tasa no entra en el costo nominal.
-            "porcentaje_impuesto_interno" => @base with { PorcentajeImpuestoInterno = 5m },
+            "impuesto_interno" => @base with { ImpuestoInterno = 5m },
             _ => throw new ArgumentOutOfRangeException(nameof(columna), columna, "Columna compartida desconocida.")
         };
     }
@@ -214,7 +214,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     [
         "id_area", "id_categoria", "id_grupo", "id_proveedor_habitual", "id_alicuota_iva", "unidad_venta",
         "unidades_por_bulto", "es_producto", "controla_lote", "acumula_en_venta", "costo_lista", "costo_lista_por",
-        "costo_lista_incluye_iva", "descuento_proveedor", "porcentaje_impuesto_interno", "costo_nominal"
+        "costo_lista_incluye_iva", "descuento_proveedor", "impuesto_interno", "costo_nominal"
     ];
 
     /// <summary>Las columnas compartidas que un pedido puede cambiar por sí solas: todas menos
@@ -277,7 +277,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             CostoListaPor = compartidos.CostoListaPor,
             CostoListaIncluyeIva = compartidos.CostoListaIncluyeIva,
             DescuentoProveedor = compartidos.DescuentoProveedor,
-            PorcentajeImpuestoInterno = compartidos.PorcentajeImpuestoInterno,
+            ImpuestoInterno = compartidos.ImpuestoInterno,
             CostoNominal = compartidos.CostoNominal,
             TeclaAtajo = teclaAtajo,
             CreatedAt = ahora,
@@ -536,7 +536,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         DisponibleParaTodas: a.DisponibleParaTodas, IdsEmpresas: null, Activo: a.Activo,
         ControlaLote: a.ControlaLote, AcumulaEnVenta: a.AcumulaEnVenta, Alcance: alcance,
         CostoListaPor: a.CostoListaPor, CostoListaIncluyeIva: a.CostoListaIncluyeIva, TeclaAtajo: a.TeclaAtajo,
-        PorcentajeImpuestoInterno: a.PorcentajeImpuestoInterno);
+        ImpuestoInterno: a.ImpuestoInterno);
 
     /// <summary>Los campos compartidos de <paramref name="valores"/> que el pedido de edición lleva puestos en
     /// él. <c>costo_nominal</c> no viaja: el servidor lo calcula, y <see cref="ValoresConUnCampoCambiado"/> ya
@@ -550,7 +550,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             EsProducto = valores.EsProducto, ControlaLote = valores.ControlaLote,
             AcumulaEnVenta = valores.AcumulaEnVenta, CostoLista = valores.CostoLista,
             CostoListaPor = valores.CostoListaPor, CostoListaIncluyeIva = valores.CostoListaIncluyeIva,
-            DescuentoProveedor = valores.DescuentoProveedor, PorcentajeImpuestoInterno = valores.PorcentajeImpuestoInterno
+            DescuentoProveedor = valores.DescuentoProveedor, ImpuestoInterno = valores.ImpuestoInterno
         };
 
     public static Task<HttpResponseMessage> PutArticuloAsync(HttpClient admin, int id, EdicionArticulo edicion) =>

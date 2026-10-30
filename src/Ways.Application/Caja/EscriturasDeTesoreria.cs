@@ -8,15 +8,15 @@ namespace Ways.Application.Caja;
 /// <summary>
 /// stage-gastos-origen-fondos-pos (PR2): la ÚNICA autoridad de append a la cadena de tesorería de
 /// una empresa — extraída de <c>ServicioDeTurnos.InsertarArqueosYTesoreriaAsync</c> (el escritor
-/// original, PR1) para que <c>ServicioDeGastos</c> (un gasto de origen
-/// <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/>) reuse EXACTAMENTE el mismo
+/// original, PR1) para que <c>ServicioDePagos</c> (un pago de origen
+/// <see cref="Ways.Domain.Pagos.OrigenFondosPago.Tesoreria"/>) reuse EXACTAMENTE el mismo
 /// protocolo de lock+lectura+insert en vez de duplicar el SQL — mismo criterio de extracción que
 /// <see cref="Ways.Application.CuentaCorriente.EscriturasDeCuentaCorrienteProveedor"/>.
 ///
 /// <see cref="TomarLockDeEmpresaAsync"/> y <see cref="ApendearAsync"/> son DOS pasos separados a
 /// propósito (nunca un único método): el llamador decide DÓNDE, en su propia secuencia de locks,
 /// cae el advisory lock de la empresa — el cierre lo toma último (después del lock exclusivo del
-/// turno); el gasto también lo toma último (después del turno <c>FOR SHARE</c>, la compra ligada
+/// turno); el pago también lo toma último (después del turno <c>FOR SHARE</c>, la compra ligada
 /// <c>FOR SHARE</c> si aplica, y el pago a proveedor si aplica) — mismo orden relativo "locks de
 /// fila primero, advisory al final" en los dos escritores, así que nunca pueden formar un ciclo
 /// entre sí (single-read-under-lock regla 4).
@@ -46,7 +46,7 @@ public static class EscriturasDeTesoreria
     /// <c>ck_movimientos_tesoreria_cadena</c>).</summary>
     public static async Task<MovimientoTesoreria> ApendearAsync(
         IWaysDbContext db, int idTenant, int idEmpresa, int? idPuntoVenta, DateTimeOffset fecha,
-        TipoMovimientoTesoreria tipo, int? idTurnoCaja, int? idGasto, string concepto, decimal ingreso,
+        TipoMovimientoTesoreria tipo, int? idTurnoCaja, int? idPago, string concepto, decimal ingreso,
         decimal egreso, int idEmpleado, CancellationToken ct)
     {
         var inicio = await db.MovimientosTesoreria
@@ -63,7 +63,7 @@ public static class EscriturasDeTesoreria
             Fecha = fecha,
             Tipo = tipo,
             IdTurnoCaja = idTurnoCaja,
-            IdGasto = idGasto,
+            IdPago = idPago,
             Concepto = concepto,
             Inicio = inicio,
             Ingreso = ingreso,

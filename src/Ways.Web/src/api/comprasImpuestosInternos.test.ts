@@ -110,34 +110,33 @@ describe('aSolicitudDeCompra — impuestos internos', () => {
       cantidad: '10',
       importe: 100,
       idAlicuotaIva: 3,
-      porcentajeImpuestoInterno: 8,
+      impuestoInternoPorUnidad: 8,
       ...sobrescribir,
     }
   }
 
   it('envía el sugerido mientras la línea está en automático y el tipeado cuando lo hay', () => {
-    const automatica = aSolicitudDeCompra(encabezado(), [lineaDeFormulario()], true, true, { 3: 21 })
-    const manual = aSolicitudDeCompra(encabezado(), [lineaDeFormulario({ impuestoInterno: 75.5 })], true, true, { 3: 21 })
+    const automatica = aSolicitudDeCompra(encabezado(), [lineaDeFormulario()], true, true)
+    const manual = aSolicitudDeCompra(encabezado(), [lineaDeFormulario({ impuestoInterno: 75.5 })], true, true)
 
     expect(automatica.items[0].impuestoInterno).toBe(80)
     expect(manual.items[0].impuestoInterno).toBe(75.5)
   })
 
   it('envía 0 cuando el comprobante no discrimina IVA o la línea es un concepto', () => {
-    const sinDiscriminar = aSolicitudDeCompra(encabezado(), [lineaDeFormulario({ impuestoInterno: 5 })], false, true, { 3: 21 })
-    const concepto = aSolicitudDeCompra(encabezado(), [lineaDeFormulario({ idArticulo: '', impuestoInterno: 5 })], true, true, { 3: 21 })
+    const sinDiscriminar = aSolicitudDeCompra(encabezado(), [lineaDeFormulario({ impuestoInterno: 5 })], false, true)
+    const concepto = aSolicitudDeCompra(encabezado(), [lineaDeFormulario({ idArticulo: '', impuestoInterno: 5 })], true, true)
 
     expect(sinDiscriminar.items[0].impuestoInterno).toBe(0)
     expect(concepto.items[0].impuestoInterno).toBe(0)
   })
 
-  it('con precios con IVA incluido sugiere sobre el neto', () => {
+  it('con precios con IVA incluido el sugerido es el mismo: no depende del costo', () => {
     const solicitud = aSolicitudDeCompra(
       encabezado({ preciosIncluyenIva: true }),
       [lineaDeFormulario({ cantidad: '1', importe: 121 })],
       true,
       true,
-      { 3: 21 },
     )
 
     expect(solicitud.items[0].impuestoInterno).toBe(8)

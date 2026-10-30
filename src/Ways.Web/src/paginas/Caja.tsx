@@ -4,9 +4,9 @@ import { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoVal
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import {
-  CATEGORIAS_GASTO,
+  CATEGORIAS_PAGO,
   TIPOS_MOVIMIENTO_CAJA,
-  type CategoriaGasto,
+  type CategoriaPago,
   type MedioPagoAlta,
   type MedioPagoListado,
   type ResumenDeTurno,
@@ -30,8 +30,8 @@ function formatearFechaHora(iso: string): string {
   return fechaHoraATexto(iso)
 }
 
-function etiquetaCategoriaGasto(categoria: CategoriaGasto): string {
-  return CATEGORIAS_GASTO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
+function etiquetaCategoriaPago(categoria: CategoriaPago): string {
+  return CATEGORIAS_PAGO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
 }
 
 type PropsFormularioApertura = {
@@ -517,12 +517,13 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
                   columnaNombre="Categoría"
                   filas={resumen.egresos.porCategoria.map((e) => ({
                     clave: e.categoria,
-                    nombre: etiquetaCategoriaGasto(e.categoria),
+                    nombre: etiquetaCategoriaPago(e.categoria),
                     total: e.total,
                   }))}
                   filaFija={{ nombre: 'Retiros', total: resumen.egresos.retiros }}
                   textoVacio="Todavía no hay egresos en este turno."
                 />
+
               </div>
 
               <div className="col-6">

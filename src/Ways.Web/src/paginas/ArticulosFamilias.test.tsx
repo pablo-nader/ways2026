@@ -70,7 +70,7 @@ const referencia: ValoresCompartidosDeLaFamilia = {
   costoListaPor: 'Unidad',
   costoListaIncluyeIva: true,
   descuentoProveedor: 5,
-  porcentajeImpuestoInterno: 0,
+  impuestoInterno: 0,
   costoNominal: 120,
 }
 
@@ -2775,7 +2775,7 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
     descuentoProveedor: null,
-    porcentajeImpuestoInterno: 0,
+    impuestoInterno: 0,
     costoNominal: null,
   }
 

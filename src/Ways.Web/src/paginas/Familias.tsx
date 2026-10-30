@@ -8,6 +8,14 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { CAMPOS_PROPIOS, cantidadDeArticulos } from './articulos/familia'
 import { mensajeDeFalloDeEscritura } from './familias/mensajes'
 import { ModalDeFamilia, type FormularioDeFamilia } from './familias/ModalDeFamilia'
@@ -15,6 +23,28 @@ import { ModalDeNuevaFamilia } from './familias/ModalDeNuevaFamilia'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_DISOLUCION = 'Se disolvió, pero no se pudo actualizar la vista. Recargá la pantalla.'
+
+const OPCIONES_DE_ESTADO = [
+  { valor: 'Activa', etiqueta: 'Activa' },
+  { valor: 'Inactiva', etiqueta: 'Inactiva' },
+]
+
+const textoDeEstado = (familia: FamiliaListado) => (familia.activo ? 'Activa' : 'Inactiva')
+
+const ORDENABLES: ColumnasOrdenables<FamiliaListado> = {
+  nombre: { valor: (familia) => familia.nombre },
+  articulos: { valor: (familia) => familia.cantidadArticulos },
+  estado: { valor: textoDeEstado },
+}
+
+const FILTRABLES: ColumnasFiltrables<FamiliaListado> = {
+  nombre: { etiqueta: 'Nombre', valor: (familia) => familia.nombre },
+  articulos: { etiqueta: 'Artículos', valor: (familia) => familia.cantidadArticulos },
+  estado: { etiqueta: 'Estado', valor: textoDeEstado, opciones: OPCIONES_DE_ESTADO },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['nombre', 'articulos', 'estado', null]
 
 /** Lo que la puerta de la disolución dice que pasa con los artículos: sus valores y sus precios no se tocan. */
 function notaDeDisolucion(familia: FamiliaListado): string {
@@ -40,6 +70,8 @@ function notaDeDisolucion(familia: FamiliaListado): string {
  */
 export function Familias() {
   const [items, setItems] = useState<FamiliaListado[]>([])
+  /** Solo la primera lectura reemplaza la tabla por "Cargando…": los refrescos la dejan montada para que los filtros conserven lo escrito y el foco. */
+  const [cargada, setCargada] = useState(false)
   const [cargando, setCargando] = useState(true)
   // Un slot por fuente (react-async-state regla 14): el fallo de la lectura y el rechazo de una escritura no se pisan.
   const [errorDeCarga, setErrorDeCarga] = useState('')
@@ -61,8 +93,8 @@ export function Familias() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo": dos clics en el mismo tick pasan la guarda de estado. */
   const ocupadoRef = useRef(false)
-  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (la tabla se reemplaza por "Cargando…"
-   * durante el refresco): el botón de alta, que es estable. */
+  /** Destino de foco al cerrar un modal cuya fila disparadora ya no existe (durante el
+   * refresco las filas se reemplazan por "Cargando…"): el botón de alta, que es estable. */
   const nuevaRef = useRef<HTMLButtonElement>(null)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
@@ -77,7 +109,10 @@ export function Familias() {
       if (propagar) throw e
       setErrorDeCarga(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las familias.')
     } finally {
-      if (generacion.current === token) setCargando(false)
+      if (generacion.current === token) {
+        setCargando(false)
+        setCargada(true)
+      }
     }
   }, [])
 
@@ -213,6 +248,9 @@ export function Familias() {
    * fondo ya deja inerte el resto, y los disparadores tienen que seguir habilitados para recibir el foco al cerrarlo. */
   const bloqueado = guardando || ocupadoDisolucion !== null || disolucion !== null
 
+  const { filas: filtradas, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(items, FILTRABLES)
+  const { filas: visibles, orden, alternar } = useOrdenamiento(filtradas, ORDENABLES)
+
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
       <button ref={nuevaRef} type="button" className="btn btn-sm btn-success text-nowrap" disabled={bloqueado} onClick={abrirAlta}>
@@ -262,27 +300,51 @@ export function Familias() {
 
         {creando && <ModalDeNuevaFamilia focoDeReserva={nuevaRef} onCancelar={() => setCreando(false)} />}
 
-        {cargando ? (
+        {!cargada ? (
           <Cargando />
         ) : (
           <div className="table-responsive">
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Nombre</th>
-                  <th className="text-end">Artículos</th>
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="articulos" orden={orden} onAlternar={alternar} className="text-end">
+                    Artículos
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={CELDAS_DE_FILTROS}
+                  columnas={FILTRABLES}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {items.map((familia) => (
+                {cargando && (
+                  <tr>
+                    <td colSpan={4}>
+                      <Cargando />
+                    </td>
+                  </tr>
+                )}
+                {!cargando && visibles.map((familia) => (
                   <tr key={familia.id}>
                     <td>{familia.nombre}</td>
                     <td className="text-end">{familia.cantidadArticulos}</td>
                     <td>
                       <span className={`badge ${familia.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
-                        {familia.activo ? 'Activa' : 'Inactiva'}
+                        {textoDeEstado(familia)}
                       </span>
                     </td>
                     <td className="text-end text-nowrap">
@@ -315,10 +377,10 @@ export function Familias() {
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && errorDeCarga === '' && (
+                {!cargando && visibles.length === 0 && (items.length > 0 || errorDeCarga === '') && (
                   <tr>
                     <td colSpan={4} className="text-center text-muted py-4">
-                      Todavía no hay familias.
+                      {items.length === 0 ? 'Todavía no hay familias.' : 'Ningún registro coincide con los filtros.'}
                     </td>
                   </tr>
                 )}

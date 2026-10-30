@@ -18,20 +18,24 @@ computed over their whole net price; `ImpTrib = 0` stays correct).
 ## Decisions (owner, 2026-10-27)
 
 - Impuestos internos are discriminated **per purchase line** (amount as printed on the invoice).
-- Articles must allow loading them: the article gets a rate (percentage over the net cost) used
-  to compute its cost from a list cost without IVA and to prefill the purchase line amount.
-  The printed per-line amount always wins.
+- Articles must allow loading them: the article gets an AMOUNT net of IVA, per the list-cost base
+  (unidad or bulto), used to compute its cost from a list cost without IVA and to prefill the
+  purchase line amount. The printed per-line amount always wins. (Superseded on 2026-10-28: #487
+  shipped a percentage; the owner said excises never come as a percentage — T3.)
 - Sales and ARCA invoicing are out of scope (reseller assumption).
 
 ## Model summary (evidence for the DB change)
 
-- `articulos.porcentaje_impuesto_interno numeric(7,4) NOT NULL DEFAULT 0` — rate over the net
-  cost. Category/scope follows `articulos` (no new table, no new RLS).
+- `articulos.impuesto_interno numeric(14,2) NOT NULL DEFAULT 0` — amount net of IVA per the
+  `costo_lista_por` base, family-shared (T3, replaces `porcentaje_impuesto_interno numeric(7,4)`
+  shipped in #487). Category/scope follows `articulos` (no new table, no new RLS).
 - `items_comprobantes_compra.impuesto_interno numeric(14,2) NOT NULL DEFAULT 0` — amount for the
   whole line, as printed. Not part of the IVA base.
 - `comprobantes_compra.impuestos_internos numeric(14,2) NOT NULL DEFAULT 0` — sum of the lines,
   part of `total`.
-- Defaults make the migration backfill-free (existing rows = 0).
+- #487 was backfill-free (defaults). T3 backfills under `SET LOCAL app.acceso = 'plataforma'`:
+  `impuesto_interno = round(costo_lista × pct / 100, 2)` where the list cost exists and is without
+  IVA; any other percentage becomes 0, then the old column is dropped.
 
 ## Rules
 
@@ -39,8 +43,8 @@ computed over their whole net price; `ImpTrib = 0` stays correct).
   `PreciosIncluyenIva`). The excise is added on top, never inside it, and never enters the IVA
   base: invoice total = subtotal − descuento + IVA + impuestos internos + percepciones.
 - Effective unit cost (with IVA) = (line amount with IVA + impuesto interno) / cantidad.
-- Article nominal cost from a list cost **without** IVA = neto + neto × %II + neto × %IVA (the
-  IVA never applies over the excise). A list cost **with** IVA is taken as final (already
+- Article nominal cost from a list cost **without** IVA = porUnidad × (1 + %IVA) + II por unidad,
+  both divided by unidades_por_bulto when the base is bulto (the IVA never applies over the excise). A list cost **with** IVA is taken as final (already
   includes everything) — unchanged.
 - A non-zero line excise on an invoice that does not discriminate IVA is rejected (400).
 - Negative amounts/rates are rejected.
@@ -50,7 +54,7 @@ computed over their whole net price; `ImpTrib = 0` stays correct).
 - Backend: domain fields, EF config + migration, `CalculadorDeCompra` (total, costo efectivo),
   `CalculadorDeCostoNominal`, purchase and article contracts/services, Libro IVA compras column,
   MCP `crear_borrador_de_compra` line field, docs 10 §03/§05 and §11 (conector MCP).
-- Web: purchase line column (prefilled from article rate, editable), invoice totals, article
+- Web: purchase line column (prefilled from the article amount, editable), invoice totals, article
   form field, Libro IVA column.
 
 ## Delivery strategy
@@ -64,6 +68,16 @@ would let a web save of an MCP draft drop its excise, so T1 and T2 ship together
   Route: delegated (2+ non-trivial files).
 - [x] T2 — Web: purchase line, totals, article form, Libro IVA column + tests.
   Route: delegated (2+ non-trivial files).
+- [x] T3 — Article excise as an AMOUNT, not a percentage (owner, 2026-10-28: excises never come as a
+  percentage, they come as a price). Replace `articulos.porcentaje_impuesto_interno` with
+  `articulos.impuesto_interno numeric(14,2) NOT NULL DEFAULT 0`: amount per the same base as the list
+  cost (`costo_lista_por`: unidad or bulto), net of IVA, family-shared. The migration converts existing
+  rates where possible (`round(costo_lista × pct / 100, 2)` when the list cost is without IVA, else 0).
+  Nominal cost from a list cost without IVA = (lista + II) + lista × %IVA, then the supplier discount as
+  today; a list cost with IVA stays final. Purchase line prefill = II per unit × units. Web: article
+  field "Impuestos internos ($)"; line auto amount, prefill strip and family field follow the amount.
+  Route: delegated (2+ non-trivial files). Separate PR (#487 already merged). Branch
+  `pnader/impuestos-internos-importe`.
 
 ## Progress
 
@@ -110,12 +124,25 @@ would let a web save of an MCP draft drop its excise, so T1 and T2 ship together
   IVA strips it when the invoice discriminates IVA) and keeps it when the invoice does not discriminate (nominal and list-without-IVA
   paths); stale "quince" shared-field comments now say "dieciséis". Tests: grid focus/Tab and typed-value cases, mode x origin matrix.
 
+- 2026-10-28: T3 done by a delegated writer (commits a7c12140 backend, 132cd22a web). Evidence: `dotnet build` 0 errors; Domain.Tests 1910 ok;
+  Application.Tests 1113 ok; `npx tsc -b` 0 errors; `oxlint` 0 errors; full `npx vitest run` 261 files / 8273 tests ok (after fixing one
+  stale family-detail assertion). Mutation: dropping the excise from the server nominal fails 3 domain tests; removing the bulto division
+  fails 1; the line auto amount without the quantity fails 11 web tests; the web nominal without the bulto division fails 2. NOT RUN:
+  `Ways.IntegrationTests` (Docker engine unavailable on the host), including the new `ImpuestoInternoDelArticuloMigracionTests`
+  (conversion + ways_app backfill, reads `SqlDelBackfill` from the migration) and the adapted `ArticulosImpuestoInternoTests`.
+  Decisions: error code `impuesto_interno_articulo_invalido` (the line keeps `impuesto_interno_invalido`); the line carries
+  `impuestoInternoPorUnidad` (article amount / unidades_por_bulto when the list cost is por bulto); the suggestion is
+  `round(porUnidad x units, 2)` and no longer depends on cost, discount or price mode; prefill = list/nominal minus the per-unit excise
+  (discriminating) and untouched (non-discriminating).
+
 ## Next step
 
-PR open with auto-merge. Judgment-day: APPROVED after two fix rounds (39f30689 backend decimals +
-comments; 0d3ececb web tab-freeze, list-with-IVA double count, non-discriminating prefill, comments).
+#487 (T1+T2) merged. T3: judgment-day APPROVED in round 1 (only confirmed finding: this document was
+stale, fixed). Single-judge notes kept as info: the backfill zeroes percentages of articles whose list
+cost includes IVA or is missing; the migration test's rounding case does not round; the integration and
+migration tests run only in CI (local Docker down), and auto-merge waits for them.
 
 Follow-ups (not in this PR):
-- Editing only the rate (or the IVA alícuota, pre-existing) on an article without list cost recomputes
+- Editing only the excise amount (or the IVA alícuota, pre-existing) on an article without list cost recomputes
   `costo_nominal` to null, losing the purchase-derived cost (Judge A, single-judge suspect).
 - A reopened draft shows its saved excise as manual; it does not rescale with later quantity changes.

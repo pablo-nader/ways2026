@@ -12,7 +12,7 @@ import type {
   ArticuloListado,
   CompraDetalle,
   CompraDuplicada,
-  GastoDeAdministracionListado,
+  PagoDeAdministracionListado,
   ItemDeCompra,
   ListaPrecioListado,
   ProveedorListado,
@@ -559,7 +559,7 @@ describe('CompraEditor — compra confirmada', () => {
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
   })
 
-  it('anular: reporta honestamente los gastos ligados colgados, y un doble click manda un solo POST', async () => {
+  it('anular: reporta honestamente los pagos ligados colgados, y un doble click manda un solo POST', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
     let resolverAnular: (valor: ResultadoAnulacion) => void = () => {}
     apiPostMock.mockImplementation((ruta: string) => {
@@ -582,7 +582,7 @@ describe('CompraEditor — compra confirmada', () => {
     expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
 
     resolverAnular({ compra: compraFixture({ estado: 'Anulada' }), gastosLigados: 2 })
-    expect(await screen.findByText(/Quedan 2 gasto\(s\) ligado\(s\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/Quedan 2 pago\(s\) ligado\(s\)/)).toBeInTheDocument()
 
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/anular')
     expect(llamadas).toHaveLength(1)
@@ -679,7 +679,7 @@ describe('CompraEditor — compra confirmada', () => {
       await userEvent.click(within(dialogo).getByLabelText(/Confirmo que quiero anular esta compra/))
       await userEvent.click(within(dialogo).getByRole('button', { name: 'Anular' }))
 
-      expect(await screen.findByText(/No había ningún gasto ligado/)).toBeInTheDocument()
+      expect(await screen.findByText(/No había ningún pago ligado/)).toBeInTheDocument()
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
   })
@@ -962,30 +962,30 @@ describe('CompraEditor — compra nueva', () => {
     expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras/99/confirmar')).toHaveLength(2)
   })
 
-  it('con una compra nueva que viene de un gasto, Guardar la confirma y la vincula al gasto de origen', async () => {
+  it('con una compra nueva que viene de un pago, Guardar la confirma y la vincula al pago de origen', async () => {
     mockearReferencia((ruta) => {
-      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture({ idProveedor: 1 }))
+      if (ruta === '/pagos/administracion/5') return Promise.resolve(pagoFixture({ idProveedor: 1 }))
       if (ruta === '/compras/99') return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [] }))
       return undefined
     })
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras') return Promise.resolve(compraFixture({ id: 99 }))
       if (ruta === '/compras/99/confirmar') return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [] }))
-      if (ruta === '/gastos/5/vincular-compra') return Promise.resolve(compraFixture())
+      if (ruta === '/pagos/5/vincular-compra') return Promise.resolve(compraFixture())
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
     const usuario = userEvent.setup()
 
-    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
-    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    renderEditorEnRuta('/compras/nueva?desdePago=5')
+    await screen.findByText('Se vinculará al pago #5 al confirmar.')
     await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
     await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
     await cargarConcepto(usuario, '1500', 'Mercadería')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
-    expect(apiPostMock).toHaveBeenCalledWith('/gastos/5/vincular-compra', { idComprobanteCompra: 99 })
+    expect(await screen.findByText('Vinculada al pago #5.')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/5/vincular-compra', { idComprobanteCompra: 99 })
   })
 })
 
@@ -1927,10 +1927,10 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
   })
 })
 
-// stage-gasto-a-compra (PR4): pre-carga desde `?desdeGasto=` — "Crear compra" de Gastos.tsx navega
-// acá con el gasto en la URL; a diferencia de `?idOrdenCompra=`, el vínculo real se dispara recién
+// stage-gasto-a-compra (PR4): pre-carga desde `?desdePago=` — "Crear compra" de Pagos.tsx navega
+// acá con el pago en la URL; a diferencia de `?idOrdenCompra=`, el vínculo real se dispara recién
 // al CONFIRMAR (nunca al crear el borrador), así que el id sobrevive el remontaje nuevo→existente.
-function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}): GastoDeAdministracionListado {
+function pagoFixture(sobrescribir: Partial<PagoDeAdministracionListado> = {}): PagoDeAdministracionListado {
   return {
     id: 5,
     // Mediodía UTC, no medianoche: evita que el offset local (este runner corre en
@@ -1958,13 +1958,13 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
   }
 }
 
-describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
-  it('precarga proveedor/PV/fecha/número/observaciones desde el gasto y muestra el banner de vínculo pendiente', async () => {
-    mockearReferencia((ruta) => (ruta === '/gastos/administracion/5' ? Promise.resolve(gastoFixture({ idProveedor: 1 })) : undefined))
+describe('CompraEditor — pre-carga desde un pago (?desdePago=)', () => {
+  it('precarga proveedor/PV/fecha/número/observaciones desde el pago y muestra el banner de vínculo pendiente', async () => {
+    mockearReferencia((ruta) => (ruta === '/pagos/administracion/5' ? Promise.resolve(pagoFixture({ idProveedor: 1 })) : undefined))
 
-    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
+    renderEditorEnRuta('/compras/nueva?desdePago=5')
 
-    expect(await screen.findByText('Se vinculará al gasto #5 al confirmar.')).toBeInTheDocument()
+    expect(await screen.findByText('Se vinculará al pago #5 al confirmar.')).toBeInTheDocument()
     await waitFor(() => {
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
@@ -1975,51 +1975,59 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
     expect(screen.getByLabelText('Observaciones')).toHaveValue('Pago de mercadería')
   })
 
-  it('sin ?desdeGasto= no dispara ningún fetch a /gastos/administracion ni muestra el banner', async () => {
+  it('el parámetro anterior ?desdeGasto= de un borrador ya abierto conserva el vínculo pendiente', async () => {
+    mockearReferencia((ruta) => (ruta === '/pagos/administracion/5' ? Promise.resolve(pagoFixture({ idProveedor: 1 })) : undefined))
+
+    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
+
+    expect(await screen.findByText('Se vinculará al pago #5 al confirmar.')).toBeInTheDocument()
+  })
+
+  it('sin ?desdePago= no dispara ningún fetch a /pagos/administracion ni muestra el banner', async () => {
     mockearReferencia()
     renderEditor('nueva')
 
     await screen.findByLabelText('Proveedor')
-    expect(screen.queryByText(/Se vinculará al gasto/)).not.toBeInTheDocument()
-    expect(apiGetMock.mock.calls.some((c: unknown[]) => (c[0] as string).startsWith('/gastos/administracion'))).toBe(false)
+    expect(screen.queryByText(/Se vinculará al pago/)).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.some((c: unknown[]) => (c[0] as string).startsWith('/pagos/administracion'))).toBe(false)
   })
 
-  it('al confirmar, vincula automáticamente al gasto de origen', async () => {
+  it('al confirmar, vincula automáticamente al pago de origen', async () => {
     mockearReferencia((ruta) => {
-      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture())
+      if (ruta === '/pagos/administracion/5') return Promise.resolve(pagoFixture())
       if (ruta === '/compras/1') return Promise.resolve(compraFixture({ idProveedor: 1 }))
       return undefined
     })
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras/1/confirmar') return Promise.resolve(compraFixture({ estado: 'Confirmada' }))
-      if (ruta === '/gastos/5/vincular-compra') return Promise.resolve(compraFixture())
+      if (ruta === '/pagos/5/vincular-compra') return Promise.resolve(compraFixture())
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
     apiPutMock.mockResolvedValue(compraFixture({ idProveedor: 1 }))
     const usuario = userEvent.setup()
 
-    renderEditorEnRuta('/compras/1?desdeGasto=5')
-    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    renderEditorEnRuta('/compras/1?desdePago=5')
+    await screen.findByText('Se vinculará al pago #5 al confirmar.')
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/5/vincular-compra', { idComprobanteCompra: 1 }))
-    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/5/vincular-compra', { idComprobanteCompra: 1 }))
+    expect(await screen.findByText('Vinculada al pago #5.')).toBeInTheDocument()
   })
 
   it('si el vínculo automático falla, la compra queda confirmada y se puede reintentar', async () => {
     mockearReferencia((ruta) => {
-      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture())
+      if (ruta === '/pagos/administracion/5') return Promise.resolve(pagoFixture())
       if (ruta === '/compras/1') return Promise.resolve(compraFixture({ idProveedor: 1 }))
       return undefined
     })
     let intentos = 0
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras/1/confirmar') return Promise.resolve(compraFixture({ estado: 'Confirmada' }))
-      if (ruta === '/gastos/5/vincular-compra') {
+      if (ruta === '/pagos/5/vincular-compra') {
         intentos += 1
         return intentos === 1
-          ? Promise.reject(new ErrorApi(409, 'gasto_ya_vinculado', 'El gasto ya está vinculado a una compra.'))
+          ? Promise.reject(new ErrorApi(409, 'gasto_ya_vinculado', 'El pago ya está vinculado a una compra.'))
           : Promise.resolve(compraFixture())
       }
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -2027,19 +2035,19 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
     apiPutMock.mockResolvedValue(compraFixture({ idProveedor: 1 }))
     const usuario = userEvent.setup()
 
-    renderEditorEnRuta('/compras/1?desdeGasto=5')
-    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    renderEditorEnRuta('/compras/1?desdePago=5')
+    await screen.findByText('Se vinculará al pago #5 al confirmar.')
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     // La compra queda confirmada IGUAL — el fallo del vínculo nunca la revierte.
     expect(await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')).toBeInTheDocument()
-    expect(await screen.findByText('El gasto ya está vinculado a una compra.')).toBeInTheDocument()
+    expect(await screen.findByText('El pago ya está vinculado a una compra.')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Reintentar vínculo' }))
 
     await waitFor(() => expect(intentos).toBe(2))
-    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
+    expect(await screen.findByText('Vinculada al pago #5.')).toBeInTheDocument()
   })
 })
 
@@ -2505,9 +2513,9 @@ describe('CompraEditor — pagar una compra confirmada', () => {
   it('pagar manda el POST de la compra, cierra el modal, avisa y actualiza el saldo sin recargar', async () => {
     mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 0, saldoPendiente: 1149.5 }))
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/compras/1/pagos') {
+      if (ruta === '/pagos/de-compra/1') {
         return Promise.resolve({
-          gasto: { id: 50, importe: 1149.5 },
+          pago: { id: 50, importe: 1149.5 },
           pagado: 1149.5,
           saldoPendiente: 0,
         })
@@ -2519,7 +2527,7 @@ describe('CompraEditor — pagar una compra confirmada', () => {
     renderEditor()
     await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
     await screen.findByRole('option', { name: 'Efectivo' })
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     expect(await screen.findByText('Pago registrado: $ 1.149,50.')).toBeInTheDocument()
@@ -2527,11 +2535,102 @@ describe('CompraEditor — pagar una compra confirmada', () => {
     expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
     expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
 
-    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos')
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/pagos/de-compra/1')
     expect(llamadas).toHaveLength(1)
-    expect(llamadas[0][1]).toMatchObject({ importe: 1149.5, idMedioPago: 1, concepto: null })
+    expect(llamadas[0][1]).toMatchObject({ lineas: [{ idMedioPago: 1, importe: 1149.5, referencia: null }], concepto: null })
     // El detalle se pidió una sola vez: el pago no dispara una segunda lectura.
     expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1')).toHaveLength(1)
+  })
+})
+
+describe('CompraEditor — ajustar el redondeo de una compra confirmada', () => {
+  function mockearCompra(compra: CompraDetalle, tolerancia: number | null = 500) {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compra)
+      if (ruta === '/compras/1/pagos-aplicables') {
+        return Promise.resolve(tolerancia === null ? { pagos: [] } : { pagos: [], toleranciaRedondeo: tolerancia })
+      }
+      return undefined
+    })
+  }
+
+  it('ofrece Ajustar redondeo cuando el saldo entra en la tolerancia', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    renderEditor()
+
+    expect(await screen.findByRole('button', { name: 'Ajustar redondeo' })).toBeEnabled()
+  })
+
+  it('no lo ofrece si el saldo supera la tolerancia, si no hay saldo o si la tolerancia no llega', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 0, saldoPendiente: 1149.5 }), 10)
+    const { unmount } = renderEditor()
+    await screen.findByRole('button', { name: 'Pagar' })
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/compras/1/pagos-aplicables'))
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    unmount()
+
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1149.5, saldoPendiente: 0 }))
+    const segundo = renderEditor()
+    await screen.findByRole('button', { name: 'Anular compra' })
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    segundo.unmount()
+
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }), null)
+    const lecturasAntes = apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos-aplicables').length
+    renderEditor()
+    await screen.findByRole('button', { name: 'Pagar' })
+    await waitFor(() =>
+      expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos-aplicables').length).toBeGreaterThan(
+        lecturasAntes,
+      ),
+    )
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+  })
+
+  it('un rol sin escritura no pide la tolerancia ni ve el botón', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    renderEditor()
+
+    await screen.findByText('Fideos 500g')
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos-aplicables')).toHaveLength(0)
+  })
+
+  it('ajustar manda un solo POST aunque se haga doble click, avisa y deja la compra pagada sin recargarla', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    let resolver: (valor: unknown) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1/ajuste-de-redondeo') return new Promise((resolve) => (resolver = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    const boton = await screen.findByRole('button', { name: 'Ajustar redondeo' })
+    await usuario.dblClick(boton)
+
+    // Toda la pantalla queda inerte mientras la escritura está en vuelo.
+    expect(screen.getByRole('button', { name: 'Anular compra' })).toBeDisabled()
+
+    resolver({ idCompra: 1, redondeo: 3.5, pagado: 1149.5, saldoPendiente: 0 })
+    expect(await screen.findByText(/Redondeo aplicado: se perdonaron \$\s3,50/)).toBeInTheDocument()
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
+    expect(screen.queryByRole('button', { name: 'Ajustar redondeo' })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/ajuste-de-redondeo')).toHaveLength(1)
+    expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1')).toHaveLength(1)
+  })
+
+  it('un rechazo del servidor se muestra tal cual y deja reintentar', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1146, saldoPendiente: 3.5 }))
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'redondeo_excede_tolerancia', 'La diferencia supera la tolerancia.'))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await usuario.click(await screen.findByRole('button', { name: 'Ajustar redondeo' }))
+
+    expect(await screen.findByText('La diferencia supera la tolerancia.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ajustar redondeo' })).toBeEnabled()
   })
 })
 
@@ -3207,5 +3306,236 @@ describe('CompraEditor — aviso de número duplicado', () => {
     })
 
     expect(llamadasADuplicados()).toHaveLength(0)
+  })
+})
+
+describe('CompraEditor — editar una compra confirmada (E6-W1)', () => {
+  const confirmada = (sobrescribir: Partial<CompraDetalle> = {}) =>
+    compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-02T10:00:00Z', pagado: 400, saldoPendiente: 749.5, ...sobrescribir })
+
+  function mockearConfirmada(detalle: CompraDetalle = confirmada()) {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(detalle) : undefined))
+  }
+
+  async function renderizarConfirmada(detalle: CompraDetalle = confirmada()) {
+    mockearConfirmada(detalle)
+    renderEditor()
+    return screen.findByRole('button', { name: 'Editar compra' })
+  }
+
+  async function entrarEnEdicion(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(await screen.findByRole('button', { name: 'Editar compra' }))
+    await screen.findByRole('button', { name: 'Guardar cambios' })
+  }
+
+  it('un Admin ve "Editar compra" en una confirmada, y la pantalla sigue de solo lectura hasta que lo pulsa', async () => {
+    await renderizarConfirmada()
+
+    expect(screen.getByRole('button', { name: 'Editar compra' })).toBeEnabled()
+    expect(screen.queryByLabelText(/^Cantidad, línea \d+$/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Observaciones')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Guardar cambios' })).not.toBeInTheDocument()
+  })
+
+  it.each(['Borrador', 'Anulada'] as const)('no se ofrece en una compra %s', async (estado) => {
+    mockearConfirmada(compraFixture({ estado }))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.queryByRole('button', { name: 'Editar compra' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [ROL.Supervisor, 'Supervisor'],
+    [ROL.Vendedor, 'Vendedor'],
+  ] as const)('no se ofrece a un %s, que no escribe compras', async (rolId, rol) => {
+    usuarioActual = usuarioFixture({ rolId, rol })
+    mockearConfirmada()
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.queryByRole('button', { name: 'Editar compra' })).not.toBeInTheDocument()
+  })
+
+  it('en edición habilita el encabezado y la grilla, muestra el aviso de efectos y quita las demás acciones', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    await entrarEnEdicion(usuario)
+
+    await waitFor(() => expect(screen.getByLabelText('Proveedor')).toBeEnabled())
+    expect(screen.getByLabelText('Observaciones')).toBeEnabled()
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled()
+    expect(
+      screen.getByText(
+        'Los cambios ajustan el stock, la cuenta del proveedor y los costos por diferencia. Si el total baja de lo pagado, se liberan pagos aplicados (vuelven a quedar a cuenta). Si cambia el total, se revierte el redondeo.',
+      ),
+    ).toBeInTheDocument()
+
+    for (const nombre of ['Anular compra', 'Ajustar redondeo', 'Pagar', 'Aplicar', 'Editar compra', 'Guardar', 'Guardar borrador', 'Descartar borrador']) {
+      expect(screen.queryByRole('button', { name: nombre })).not.toBeInTheDocument()
+    }
+  })
+
+  it('Guardar cambios manda un PUT con los items editados, sale de la edición y muestra el detalle devuelto', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    apiPutMock.mockResolvedValue(
+      confirmada({ items: [itemFixture({ cantidad: 7 })], total: 800, pagado: 800, saldoPendiente: 0 }),
+    )
+    await entrarEnEdicion(usuario)
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+
+    const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
+    await usuario.clear(cantidad)
+    await usuario.type(cantidad, '7')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    const [ruta, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(ruta).toBe('/compras/1')
+    expect(cuerpo.items).toHaveLength(1)
+    expect(cuerpo.items[0]).toMatchObject({ idArticulo: 10, unidades: 7 })
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    // Salió de la edición: vuelve la vista de solo lectura con el pagado y el saldo del detalle devuelto.
+    expect(await screen.findByRole('button', { name: 'Editar compra' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Guardar cambios' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Cantidad, línea \d+$/)).not.toBeInTheDocument()
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
+  })
+
+  it('un doble click síncrono en Guardar cambios manda un solo PUT y deja todo inerte mientras está en vuelo', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    let resolverPut: (valor: CompraDetalle) => void = () => {}
+    apiPutMock.mockImplementation(() => new Promise((resolve) => (resolverPut = resolve)))
+    await entrarEnEdicion(usuario)
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+
+    const guardar = screen.getByRole('button', { name: 'Guardar cambios' })
+    act(() => {
+      guardar.click()
+      guardar.click()
+    })
+
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeDisabled()
+
+    await act(async () => {
+      resolverPut(confirmada())
+    })
+    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+  })
+
+  it('Cancelar descarta lo tipeado, sale de la edición y vuelve a pedir la compra', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    await entrarEnEdicion(usuario)
+    const observaciones = screen.getByLabelText('Observaciones')
+    await waitFor(() => expect(observaciones).toBeEnabled())
+    await usuario.type(observaciones, 'cambio que se descarta')
+    const lecturasAntes = apiGetMock.mock.calls.filter((c) => c[0] === '/compras/1').length
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByRole('button', { name: 'Editar compra' })).toBeEnabled()
+    await waitFor(() => expect(apiGetMock.mock.calls.filter((c) => c[0] === '/compras/1').length).toBe(lecturasAntes + 1))
+    expect(apiPutMock).not.toHaveBeenCalled()
+
+    // Al volver a editar, el campo trae lo del servidor y no lo tipeado.
+    await usuario.click(screen.getByRole('button', { name: 'Editar compra' }))
+    expect(await screen.findByLabelText('Observaciones')).toHaveValue('')
+  })
+
+  it('si la recarga al cancelar falla, conserva lo último conocido y lo avisa', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    await entrarEnEdicion(usuario)
+    let lecturas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1') {
+        lecturas += 1
+        return Promise.reject(new Error('sin red'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByText(/No se pudo recargar la compra/)).toBeInTheDocument()
+    expect(lecturas).toBe(1)
+    expect(screen.getByRole('button', { name: 'Editar compra' })).toBeEnabled()
+  })
+
+  it('Editar borra el aviso de éxito anterior', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    apiPutMock.mockResolvedValue(confirmada())
+    await entrarEnEdicion(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    expect(await screen.findByText(/Cambios guardados/)).toBeInTheDocument()
+
+    await usuario.click(await screen.findByRole('button', { name: 'Editar compra' }))
+
+    expect(screen.queryByText(/Cambios guardados/)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [
+      'compra_edicion_stock_negativo',
+      'El artículo Fideos 500g (lote L-1) quedaría con stock negativo.',
+      'El artículo Fideos 500g (lote L-1) quedaría con stock negativo.',
+    ],
+    [
+      'compra_cambio_concurrente',
+      'La compra cambió de estado mientras se editaba. Recargala y volvé a intentar.',
+      'La compra cambió mientras la editabas; recargala.',
+    ],
+    ['compra_duplicada', 'Ya existe una compra confirmada con ese número.', 'Ya existe una compra confirmada con ese número.'],
+    ['lote_vencido_en_recepcion', 'El lote L-1 ya está vencido.', 'El lote L-1 ya está vencido.'],
+  ])('el rechazo %s se muestra legible y se queda en edición', async (codigo, mensajeDelServidor, esperado) => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    apiPutMock.mockRejectedValue(new ErrorApi(409, codigo, mensajeDelServidor))
+    await entrarEnEdicion(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(esperado)
+    expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeEnabled()
+  })
+
+  it('en edición consulta duplicados excluyendo esta misma compra', async () => {
+    const usuario = userEvent.setup()
+    await renderizarConfirmada()
+    const llamadas = () =>
+      apiGetMock.mock.calls.map((c) => c[0] as string).filter((ruta) => ruta.startsWith('/compras/duplicados'))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 600))
+    })
+    expect(llamadas()).toHaveLength(0)
+
+    await entrarEnEdicion(usuario)
+
+    await waitFor(() => expect(llamadas()).toHaveLength(1), { timeout: 3000 })
+    const parametros = new URLSearchParams(llamadas()[0].split('?')[1])
+    expect(parametros.get('numeroExterno')).toBe('0003-00012345')
+    expect(parametros.get('excluirId')).toBe('1')
+  })
+
+  it('"Editar compra" se deshabilita con el modal de pago abierto', async () => {
+    const usuario = userEvent.setup()
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(confirmada())
+      if (ruta === '/compras/1/pagos-aplicables') return Promise.resolve({ pagos: [] })
+      return undefined
+    })
+    renderEditor()
+    await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
+
+    expect(screen.getByRole('button', { name: 'Editar compra' })).toBeDisabled()
   })
 })

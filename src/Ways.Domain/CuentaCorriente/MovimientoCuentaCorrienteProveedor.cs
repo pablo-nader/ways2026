@@ -44,8 +44,8 @@ public class MovimientoCuentaCorrienteProveedor
     /// (opcional). <c>NULL</c> siempre en 'apertura'.</summary>
     public int? IdComprobanteCompra { get; set; }
 
-    /// <summary>El gasto que materializó el pago — poblado únicamente en 'pago'.</summary>
-    public int? IdGasto { get; set; }
+    /// <summary>El pago que materializó el pago — poblado únicamente en 'pago'.</summary>
+    public int? IdPago { get; set; }
 
     /// <summary>Con signo: positivo aumenta la deuda ('apertura' con saldo a favor exceptuado,
     /// 'compra'), negativo la reduce ('pago', 'ajuste').</summary>

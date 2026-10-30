@@ -76,7 +76,7 @@ public static class ProveedoresEndpoints
         // JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple, que había movido
         // TODO el grupo (incluida la proyección completa de ProveedorListado — margen, cuit,
         // domicilio, contactos) a OperacionDePos para que el selector de proveedor del formulario
-        // de gastos pudiera listar. El listado admin-only vuelve al shape anterior; el selector
+        // de pagos pudiera listar. El listado admin-only vuelve al shape anterior; el selector
         // usa la ruta mínima de abajo, mismo criterio de least-privilege que el saldo — mapeada
         // TOP-LEVEL sobre `app`, nunca sobre `grupo`: apilarla ahí compondría con
         // GestionDeCatalogo (AND) y dejaría afuera al Vendedor que el selector necesita habilitar.
@@ -98,7 +98,7 @@ public static class ProveedoresEndpoints
             servicio.ObtenerAsync(id, ct))
         .WithTags("Proveedores")
         .RequireAuthorization(Politicas.OperacionDePos)
-        .WithSummary("Saldo derivado del proveedor: compras confirmadas menos gastos ligados.");
+        .WithSummary("Saldo derivado del proveedor: compras confirmadas menos pagos ligados.");
 
         return app;
     }

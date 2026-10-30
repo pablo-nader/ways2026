@@ -13,7 +13,7 @@ namespace Ways.Domain.Caja;
 public static class CalculadorDeArqueo
 {
     /// <summary>Por medio con <c>Comportamiento ≠ CuentaCorriente</c>: <c>importe_esperado(m) =
-    /// pagos(m) − gastos(m) + [m = ancla] × (fondo + refuerzos − retiros − vueltosTotales)</c>
+    /// pagos(m) − pagos(m) + [m = ancla] × (fondo + refuerzos − retiros − vueltosTotales)</c>
     /// (design decisiones 2 y 9). <c>vueltosTotales</c> se deriva acá sumando
     /// <see cref="ActividadDeMedio.Vueltos"/> de TODOS los medios — el cambio sale físicamente
     /// del cajón sin importar con qué medio pagó el cliente, así que solo la línea del ancla lo
@@ -51,7 +51,7 @@ public static class CalculadorDeArqueo
                 continue;
             }
 
-            var importeEsperado = actividad.Pagos - actividad.Gastos;
+            var importeEsperado = actividad.Pagos - actividad.PagosDeCaja;
             if (esAncla)
             {
                 importeEsperado += insumos.FondoInicial + insumos.Refuerzos - insumos.Retiros - vueltosTotales;

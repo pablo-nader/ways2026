@@ -5,7 +5,7 @@ type Props = {
 }
 
 /** Marca "Recalculado" de un arqueo que un administrador recalculó tras editar o eliminar un
- * gasto de un turno cerrado. Sin recálculo no renderiza nada. */
+ * pago de un turno cerrado. Sin recálculo no renderiza nada. */
 export function InsigniaDeRecalculo({ fechaRecalculo }: Props) {
   if (fechaRecalculo === null) return null
 

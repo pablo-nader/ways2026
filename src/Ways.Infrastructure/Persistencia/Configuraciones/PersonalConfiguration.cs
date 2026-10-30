@@ -11,7 +11,13 @@ public class PersonalConfiguration : IEntityTypeConfiguration<Personal>
 {
     public void Configure(EntityTypeBuilder<Personal> builder)
     {
-        builder.ToTable("personal", tabla => tabla.HasCheckConstraint("ck_personal_valor_hora", "valor_hora >= 0"));
+        builder.ToTable("personal", tabla =>
+        {
+            tabla.HasCheckConstraint("ck_personal_valor_hora", "valor_hora >= 0");
+            tabla.HasCheckConstraint(
+                "ck_personal_horario_habitual",
+                "horario_habitual IS NULL OR (cardinality(horario_habitual) = 7 AND array_position(horario_habitual, NULL) IS NULL AND 0 <= ALL (horario_habitual) AND 24 >= ALL (horario_habitual))");
+        });
 
         builder.HasKey(p => p.Id);
 
@@ -47,6 +53,11 @@ public class PersonalConfiguration : IEntityTypeConfiguration<Personal>
             .HasColumnType("numeric(14,2)")
             .HasDefaultValue(0m)
             .IsRequired();
+
+        // numeric(4,2)[] nativo de Npgsql, sin converter (como ofertas.dias_semana).
+        builder.Property(p => p.HorarioHabitual)
+            .HasColumnName("horario_habitual")
+            .HasColumnType("numeric(4,2)[]");
 
         builder.Property(p => p.Saldo)
             .HasColumnName("saldo")

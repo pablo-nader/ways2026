@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
+using Ways.Application.Pagos;
 using Ways.Domain.Compras;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
@@ -54,7 +55,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
             .Take(tamanio)
             .Select(m => new
             {
-                m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteCompra, m.IdGasto
+                m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteCompra, m.IdPago
             })
             .ToListAsync(ct);
 
@@ -65,20 +66,65 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
                 .ToList(),
             ct);
 
+        // E6: una compra editada tiene varios asientos `compra` (el de la confirmación y uno por cada edición que cambió
+        // su total). El saldo pendiente es de la compra, no de cada asiento: se muestra solo en el más nuevo de cada una.
+        var idsDeLosAsientosMasNuevos = await LeerAsientosMasNuevosDeComprasAsync(
+            filas.Where(f => f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra != null)
+                .Select(f => f.IdComprobanteCompra!.Value)
+                .Distinct()
+                .ToList(),
+            ct);
+
+        var disponiblePorPago = await LectorDeDisponiblePorPago.LeerDisponibleAsync(
+            db,
+            filas.Where(f => f.Tipo == TipoMovimientoCcProveedor.Pago && f.IdPago != null)
+                .Select(f => f.IdPago!.Value)
+                .Distinct()
+                .ToList(),
+            ct);
+
         var items = filas
             .Select(f => new MovimientoDeCuentaDeProveedor(
-                f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteCompra, f.IdGasto,
+                f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteCompra, f.IdPago,
                 f.Tipo == TipoMovimientoCcProveedor.Ajuste
                     ? CalculadorDeEstadoDeCuentaDeProveedor.EtiquetarAjuste(f.IdComprobanteCompra)
                     : null,
                 f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra is { } idCompra
+                    && idsDeLosAsientosMasNuevos.Contains(f.Id)
                     ? saldosPendientes.GetValueOrDefault(idCompra)
+                    : null,
+                f.Tipo == TipoMovimientoCcProveedor.Pago && f.IdPago is { } idPago && disponiblePorPago.TryGetValue(idPago, out var disponible)
+                    ? disponible
                     : null))
             .ToList();
 
-        var header = new EstadoDeCuentaDeProveedorHeader(idProveedor, saldo);
+        var disponibleEnPagos = await LectorDeDisponiblePorPago.LeerDisponibleDelProveedorAsync(db, idProveedor, ct);
+        var header = new EstadoDeCuentaDeProveedorHeader(idProveedor, saldo, Math.Max(0m, -saldo), disponibleEnPagos);
         return new PaginaDeEstadoDeCuentaDeProveedor(
             header, items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);
+    }
+
+    /// <summary>El id del asiento <c>compra</c> más nuevo, del proveedor actual de la compra, de cada compra de <paramref name="idsCompras"/>, sin importar si
+    /// cae dentro de la página que se está leyendo: el saldo pendiente se muestra en ese y no en los anteriores.</summary>
+    private async Task<HashSet<int>> LeerAsientosMasNuevosDeComprasAsync(
+        IReadOnlyCollection<int> idsCompras, CancellationToken ct)
+    {
+        if (idsCompras.Count == 0)
+        {
+            return [];
+        }
+
+        // Solo los asientos del proveedor ACTUAL de la compra: tras un cambio de proveedor, la reversa del anterior puede
+        // ser la fila más nueva y no debe llevar el saldo pendiente.
+        var ids = await db.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Compra && m.IdComprobanteCompra != null
+                && idsCompras.Contains(m.IdComprobanteCompra.Value)
+                && db.ComprobantesCompra.Any(c => c.Id == m.IdComprobanteCompra.Value && c.IdProveedor == m.IdProveedor))
+            .GroupBy(m => m.IdComprobanteCompra!.Value)
+            .Select(grupo => grupo.Max(m => m.Id))
+            .ToListAsync(ct);
+
+        return [.. ids];
     }
 
     /// <summary>Saldo pendiente de las compras de una página, con UNA consulta de total/estado y una
@@ -183,7 +229,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         await ResolverSaldoDeProveedorAsync(idProveedor, ct);
 
         // 3. Punto de venta — provenance, no autoridad (design decisión 14); 404 ANTES de la
-        // transacción sin turno (mismo orden que ServicioDeGastos.cs:28-31 / ServicioDeCuentaCorriente,
+        // transacción sin turno (mismo orden que ServicioDePagos.cs:28-31 / ServicioDeCuentaCorriente,
         // cliente: un PV apócrifo tiene que dar 404, nunca abrir una transacción para nada).
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
@@ -206,22 +252,22 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         var nuevoSaldo = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
             conexion, transaccionCruda, idTenant, idProveedor, importe, ct);
 
-        // 2. Movimiento — id_comprobante_compra e id_gasto NULL (marca estructural: es un ajuste
+        // 2. Movimiento — id_comprobante_compra e id_pago NULL (marca estructural: es un ajuste
         // manual, nunca un contramovimiento de anulación ni un pago).
         var idMovimiento = await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
             conexion, transaccionCruda, idTenant, idProveedor, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idGasto: null, importe, nuevoSaldo,
+            TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idPago: null, importe, nuevoSaldo,
             detalle, ct);
 
         await transaccion.CommitAsync(ct);
 
         return new MovimientoDeCuentaDeProveedor(
             idMovimiento, momento, TipoMovimientoCcProveedor.Ajuste, importe, nuevoSaldo, detalle,
-            IdComprobanteCompra: null, IdGasto: null, Etiqueta: EtiquetaDeAjuste.Manual);
+            IdComprobanteCompra: null, IdPago: null, Etiqueta: EtiquetaDeAjuste.Manual);
     }
 
     /// <summary>ADR-8: mismo 404 para "no existe" y "es de otro tenant" — mismo criterio que
-    /// <c>ServicioDeGastos.ResolverPuntoVentaAsync</c>/<c>ServicioDeCuentaCorriente.ResolverPuntoVentaAsync</c>
+    /// <c>ServicioDePagos.ResolverPuntoVentaAsync</c>/<c>ServicioDeCuentaCorriente.ResolverPuntoVentaAsync</c>
     /// (cliente).</summary>
     private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
         await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
@@ -243,7 +289,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
         contexto.IdTenant
             // OperacionDePos/SupervisionDeCuentaDeProveedor (capa de API) ya exigen un actor de
             // tenant — un actor de plataforma (root) nunca llega hasta acá. Defensa en
-            // profundidad, mismo criterio que ServicioDeGastos.ExigirTenantDeLaSesion.
+            // profundidad, mismo criterio que ServicioDePagos.ExigirTenantDeLaSesion.
             ?? throw new InvalidOperationException(
                 "ServicioDeCuentaCorrienteDeProveedor requiere un actor de tenant; las policies de este servicio no admiten plataforma.");
 }

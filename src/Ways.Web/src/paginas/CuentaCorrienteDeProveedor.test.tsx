@@ -194,6 +194,35 @@ describe('CuentaCorrienteDeProveedor — header y ledger', () => {
     expect(screen.getByText('-$ 200,00 (saldo a favor)')).toBeInTheDocument()
   })
 
+  it('el header muestra lo disponible en pagos sin aplicar solo cuando es mayor a cero', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(
+          paginaFixture({ header: { idProveedor: 1, saldo: 500, saldoAFavor: 0, disponibleEnPagos: 120 } }),
+        )
+      }
+      return undefined
+    })
+    renderPantalla(1, { proveedor: proveedorFixture() })
+
+    expect(await screen.findByText('Disponible en pagos sin aplicar: $ 120,00')).toBeInTheDocument()
+  })
+
+  it('un header sin crédito en pagos no muestra la línea de disponible', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(
+          paginaFixture({ header: { idProveedor: 1, saldo: 500, saldoAFavor: 0, disponibleEnPagos: 0 } }),
+        )
+      }
+      return undefined
+    })
+    renderPantalla(1, { proveedor: proveedorFixture() })
+
+    expect(await screen.findByText('$ 500,00')).toBeInTheDocument()
+    expect(screen.queryByText(/Disponible en pagos sin aplicar/)).not.toBeInTheDocument()
+  })
+
   it('un período sin movimientos muestra el estado vacío', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.includes('/cuenta-corriente')) {
@@ -529,8 +558,8 @@ describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => 
     usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
     mockearConFilas([movimientoFixture({ saldoPendienteDeLaCompra: 120 })])
     apiPostMock.mockImplementation((ruta: string) =>
-      ruta === '/compras/10/pagos'
-        ? Promise.resolve({ gasto: { id: 9, importe: 120 }, pagado: 300, saldoPendiente: 0 })
+      ruta === '/pagos/de-compra/10'
+        ? Promise.resolve({ pago: { id: 9, importe: 120 }, pagado: 300, saldoPendiente: 0 })
         : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
     )
     const usuario = userEvent.setup()
@@ -539,14 +568,14 @@ describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => 
     await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
 
     expect(await screen.findByRole('dialog', { name: 'Pagar compra #10' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Importe')).toHaveValue('120,00')
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('120,00')
     await screen.findByRole('option', { name: 'Efectivo' })
-    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.selectOptions(screen.getByLabelText('Medio de la línea 1'), 'Efectivo')
     await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     expect(await screen.findByText('Pago registrado: $ 120,00.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(apiPostMock).toHaveBeenCalledWith('/compras/10/pagos', expect.objectContaining({ importe: 120, idMedioPago: 1 }))
+    expect(apiPostMock).toHaveBeenCalledWith('/pagos/de-compra/10', expect.objectContaining({ lineas: [{ idMedioPago: 1, importe: 120, referencia: null }] }))
     const lecturasDelEstado = apiGetMock.mock.calls.filter((call: unknown[]) => String(call[0]).includes('/cuenta-corriente'))
     expect(lecturasDelEstado).toHaveLength(2)
   })

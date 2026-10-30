@@ -5,12 +5,12 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
@@ -27,7 +27,7 @@ namespace Ways.IntegrationTests;
 /// Los pagos/gastos/movimientos de cada turno se siembran DIRECTO por EF (sin pasar por el
 /// checkout completo, que no es parte de esta slice — Slice 5 lo conecta) — mismo criterio que
 /// <c>VentasStockYCuentaCorrienteRlsTests</c>: la derivación solo lee <c>pagos_comprobante</c> +
-/// <c>comprobantes_venta.{id_turno_caja,estado}</c> + <c>gastos</c> + <c>movimientos_caja</c>,
+/// <c>comprobantes_venta.{id_turno_caja,estado}</c> + <c>pagos</c> + <c>movimientos_caja</c>,
 /// nunca <c>items_comprobante_venta</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -156,12 +156,12 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
-    private static async Task RegistrarGastoAsync(Contexto ctx, int idMedioPago, decimal importe)
+    private static async Task RegistrarPagoAsync(Contexto ctx, int idMedioPago, decimal importe)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(
-                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
+            new SolicitudDePago(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
@@ -169,17 +169,17 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
     // ---- task 4.13/derivación: resumen y feliz camino de cierre ---------------------------------
 
     [Fact]
-    public async Task ElResumenParcialDerivaFondoPagosVueltoGastosRetiroYRefuerzo()
+    public async Task ElResumenParcialDerivaFondoPagosVueltoPagosDeCajaRetiroYRefuerzo()
     {
-        var ctx = await PrepararAsync(nameof(ElResumenParcialDerivaFondoPagosVueltoGastosRetiroYRefuerzo));
+        var ctx = await PrepararAsync(nameof(ElResumenParcialDerivaFondoPagosVueltoPagosDeCajaRetiroYRefuerzo));
         var turno = await AbrirTurnoAsync(ctx, fondoInicial: 500m);
 
         await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 1000m, vuelto: 50m);
         await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioTarjeta, importe: 300m);
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Retiro, 100m, "retiro de prueba");
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Refuerzo, 50m, "refuerzo de prueba");
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 80m);
-        await RegistrarGastoAsync(ctx, ctx.IdMedioTarjeta, 20m);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 80m);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioTarjeta, 20m);
 
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno.Id}/resumen", OpcionesJson);
         Assert.NotNull(resumen);
@@ -520,7 +520,7 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var primerTurno = await AbrirTurnoAsync(ctx);
         await RegistrarMovimientoAsync(ctx, primerTurno.Id, TipoMovimientoCaja.Retiro, 100m, "retiro de prueba");
-        await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 40m);
+        await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 40m);
         // El importe esperado derivado da negativo (fondo 0 + retiro > pagos), pero un conteo
         // FÍSICO nunca puede serlo (fix judgment-day, conteo_invalido) — se declara 0m, que no
         // afecta la cadena de tesorería (ésta depende de insumos.Retiros/gastos, no del conteo).
@@ -530,7 +530,7 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(HttpStatusCode.OK, primerCierre.StatusCode);
 
         // El esperado derivado negativo (faltante real) fluye sin clamping hasta el arqueo y la
-        // columna generada diferencia: -140 = 0 pagos - 40 gastos + (0 fondo - 100 retiro).
+        // columna generada diferencia: -140 = 0 pagos - 40 pagos + (0 fondo - 100 retiro).
         var cuerpoPrimerCierre = await primerCierre.Content.ReadAsStringAsync();
         var arqueosPrimerCierre = JsonSerializer.Deserialize<TurnoConArqueos>(cuerpoPrimerCierre, OpcionesJson)!;
         var arqueoEfectivo = arqueosPrimerCierre.Arqueos.Single(a => a.IdMedioPago == ctx.IdMedioEfectivo);
@@ -540,7 +540,7 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
             // stage-gastos-origen-fondos-pos (PR2): Egreso pasa a ser SIEMPRE 0 en la fila del
-            // cierre — el gasto de 40 (origen caja_turno por default) ya descontó el efectivo del
+            // cierre — el pago de 40 (origen caja_turno por default) ya descontó el efectivo del
             // cajón (ver el -140 de arriba), restarlo de nuevo acá lo descontaría dos veces.
             var fila = await db.MovimientosTesoreria.Where(m => m.IdTurnoCaja == primerTurno.Id).SingleAsync();
             Assert.Equal(0m, fila.Inicio);

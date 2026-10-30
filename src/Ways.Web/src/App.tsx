@@ -37,13 +37,14 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
+import { CargaSemanalDeHoras } from './paginas/CargaSemanalDeHoras'
 import { CuentaDePersonal } from './paginas/CuentaDePersonal'
 import { Personal } from './paginas/Personal'
 import { CuentasTesoreria } from './paginas/CuentasTesoreria'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
-import { Gastos } from './paginas/Gastos'
+import { Pagos } from './paginas/Pagos'
 import { LibroIva } from './paginas/LibroIva'
 import { Remito } from './paginas/Remito'
 import { Remitos } from './paginas/Remitos'
@@ -84,7 +85,7 @@ export function App() {
             <Route path="/" element={<Inicio />} />
 
             {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition, spec tablero):
-                G1 parity — ventas y gastos de los últimos 7 días por defecto, ticket promedio.
+                G1 parity — ventas y pagos de los últimos 7 días por defecto, ticket promedio.
                 Politicas.LecturaDeReportes del lado del servidor: Supervisor + Admin, ni
                 Vendedor ni Root. */}
             <Route
@@ -333,6 +334,17 @@ export function App() {
               }
             />
 
+            {/* Carga semanal de horas: mismas políticas que la carga de horas de la cuenta (Admin y Supervisor).
+                Va antes que `/personal/:id/cuenta` solo por lectura: React Router rankea por especificidad. */}
+            <Route
+              path="/personal/horas"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <CargaSemanalDeHoras />
+                </RutaProtegida>
+              }
+            />
+
             {/* Cuenta del empleado: se llega desde el enlace "Cuenta" del listado, sin entrada de menú propia.
                 Lectura y escrituras de Admin y Supervisor (Politicas.LecturaDePersonal y
                 GestionDeCuentaDePersonal); pagar de la tesorería es solo del Admin. */}
@@ -429,15 +441,17 @@ export function App() {
               }
             />
 
+            <Route path="/gastos" element={<Navigate to="/pagos" replace />} />
+
             {/* stage-gastos-admin-retroactivos (PR3, owner's use case 2): árbol propio, admin-only
                 end a end — mismo gate que /proveedores (Politicas.GestionDeCatalogo del lado del
-                servidor): el gasto administrativo mueve la tesorería de la empresa sin pasar por
-                un turno, a diferencia de "Gastos del turno" (POS, Politicas.OperacionDePos). */}
+                servidor): el pago administrativo mueve la tesorería de la empresa sin pasar por
+                un turno, a diferencia de "Pagos del turno" (POS, Politicas.OperacionDePos). */}
             <Route
-              path="/gastos"
+              path="/pagos"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
-                  <Gastos />
+                  <Pagos />
                 </RutaProtegida>
               }
             />
