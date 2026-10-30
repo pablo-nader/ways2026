@@ -5,6 +5,7 @@ import {
   clienteDeCompras,
   diferenciaDelPago,
   fechaDeHoyParaPago,
+  pagosAplicablesVisibles,
   prepararPagoDeCompra,
   sePuedeCerrarEnCero,
 } from '../api/compras'
@@ -63,6 +64,7 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
   const [cerrarEnCero, setCerrarEnCero] = useState(false)
   // idPago -> importe a aplicar; la presencia de la clave es el tilde.
   const [seleccion, setSeleccion] = useState<Record<number, number | null>>({})
+  const [incluirSinProveedor, setIncluirSinProveedor] = useState(false)
 
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => [lineaDePagoVacia(CLAVE_DE_LA_LINEA_PRECARGADA, saldoPendiente)])
   // Mientras quien paga no edite el importe de la línea precargada, ese importe sigue a lo que resta de pagar.
@@ -123,6 +125,9 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
       vigente = false
     }
   }, [idCompra])
+
+  const hayPagosSinProveedor = (aplicables ?? []).some((p) => p.idProveedor === null)
+  const visibles = pagosAplicablesVisibles(aplicables ?? [], incluirSinProveedor, seleccion)
 
   const totalAplicado = redondearImporte(Object.values(seleccion).reduce<number>((suma, importe) => suma + (importe ?? 0), 0))
   const restante = Math.max(0, redondearImporte(saldoPendiente - totalAplicado))
@@ -211,7 +216,7 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
   )
 
   return (
-    <Modal titulo={`Pagar compra ${etiquetaDeLaCompra}`} ocupado={pagando} pie={pie} onCerrar={onCerrar}>
+    <Modal titulo={`Pagar compra ${etiquetaDeLaCompra}`} tamano="xl" desplazable ocupado={pagando} pie={pie} onCerrar={onCerrar}>
       {(error || errorMedios) && <div className="alert alert-danger py-2 px-3 small">{error || errorMedios}</div>}
 
       <div className="small text-muted mb-3">
@@ -250,42 +255,84 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
 
         {aplicables !== null && aplicables.length > 0 && (
           <div className="col-12">
-            <div className="fw-semibold mb-1">Usar pagos a cuenta</div>
-            <div className="d-flex flex-column gap-1">
-              {aplicables.map((pago) => {
-                const marcado = pago.idPago in seleccion
-                return (
-                  <div key={pago.idPago} className="row g-2 align-items-center">
-                    <div className="col-md-8">
-                      <div className="form-check">
-                        <input
-                          id={`pago-a-cuenta-${pago.idPago}`}
-                          type="checkbox"
-                          className="form-check-input"
-                          checked={marcado}
-                          disabled={!marcado && restante === 0}
-                          onChange={(e) => alternarPago(pago, e.target.checked)}
-                        />
-                        <label className="form-check-label" htmlFor={`pago-a-cuenta-${pago.idPago}`}>
-                          {`Usar el pago #${pago.idPago}`}
-                          <span className="text-muted small">
-                            {` · ${pago.concepto} · disponible ${formatearImporte(pago.disponible, { simbolo: true })}`}
-                          </span>
-                        </label>
-                      </div>
-                    </div>
-                    <div className="col-md-4">
-                      <CampoImporte
-                        aria-label={`Importe a aplicar del pago ${pago.idPago}`}
-                        className="form-control"
-                        valor={marcado ? seleccion[pago.idPago] : null}
-                        disabled={!marcado}
-                        onChange={(importe) => setSeleccion((prev) => ({ ...prev, [pago.idPago]: importe }))}
-                      />
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
+              <div className="fw-semibold">Usar pagos a cuenta</div>
+              {hayPagosSinProveedor && (
+                <div className="form-check mb-0">
+                  <input
+                    id="pago-compra-incluir-sin-proveedor"
+                    type="checkbox"
+                    className="form-check-input"
+                    checked={incluirSinProveedor}
+                    onChange={(e) => setIncluirSinProveedor(e.target.checked)}
+                  />
+                  <label className="form-check-label" htmlFor="pago-compra-incluir-sin-proveedor">
+                    Incluir pagos sin proveedor
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="table-responsive border rounded" style={{ maxHeight: 'min(18rem, 35vh)', overflowY: 'auto' }}>
+              <table className="table table-sm table-hover align-middle mb-0">
+                <thead className="sticky-top">
+                  <tr>
+                    <th scope="col" style={{ width: '2.5rem' }}>
+                      <span className="visually-hidden">Usar</span>
+                    </th>
+                    <th scope="col">Pago</th>
+                    <th scope="col">Fecha</th>
+                    <th scope="col">Concepto</th>
+                    <th scope="col" className="text-end">
+                      Disponible
+                    </th>
+                    <th scope="col" style={{ width: '11rem' }}>
+                      A aplicar
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibles.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-muted small">
+                        No hay pagos a cuenta de este proveedor.
+                      </td>
+                    </tr>
+                  )}
+                  {visibles.map((pago) => {
+                    const marcado = pago.idPago in seleccion
+                    return (
+                      <tr key={pago.idPago}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            className="form-check-input"
+                            aria-label={`Usar el pago #${pago.idPago}`}
+                            checked={marcado}
+                            disabled={!marcado && restante === 0}
+                            onChange={(e) => alternarPago(pago, e.target.checked)}
+                          />
+                        </td>
+                        <td className="text-nowrap">#{pago.idPago}</td>
+                        <td className="text-nowrap">{new Date(pago.fecha).toLocaleDateString('es-AR')}</td>
+                        <td>
+                          {pago.concepto}
+                          {pago.idProveedor === null && <span className="badge text-bg-secondary ms-2">Sin proveedor</span>}
+                        </td>
+                        <td className="text-end text-nowrap">{formatearImporte(pago.disponible, { simbolo: true })}</td>
+                        <td>
+                          <CampoImporte
+                            aria-label={`Importe a aplicar del pago ${pago.idPago}`}
+                            className="form-control form-control-sm"
+                            valor={marcado ? seleccion[pago.idPago] : null}
+                            disabled={!marcado}
+                            onChange={(importe) => setSeleccion((prev) => ({ ...prev, [pago.idPago]: importe }))}
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
             {totalAplicado > 0 && (
               <div className="form-text">

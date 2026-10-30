@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   diferenciaDelPago,
   fechaDeHoyParaPago,
+  pagosAplicablesVisibles,
   prepararPagoDeCompra,
   sePuedeAjustarElRedondeo,
   sePuedeCerrarEnCero,
@@ -251,5 +252,22 @@ describe('fechaDeHoyParaPago', () => {
   it('formatea el día local con mes y día de dos dígitos', () => {
     expect(fechaDeHoyParaPago(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')
     expect(fechaDeHoyParaPago(new Date(2026, 9, 3, 0, 1))).toBe('2026-10-03')
+  })
+})
+
+describe('pagosAplicablesVisibles', () => {
+  const delProveedor = { idPago: 1, fecha: '2026-10-01T03:00:00Z', concepto: 'A', importe: 10, disponible: 10, idProveedor: 4 }
+  const sinProveedor = { idPago: 2, fecha: '2026-10-02T03:00:00Z', concepto: 'B', importe: 10, disponible: 10, idProveedor: null }
+
+  it('por defecto muestra solo los pagos del proveedor', () => {
+    expect(pagosAplicablesVisibles([delProveedor, sinProveedor], false, {})).toEqual([delProveedor])
+  })
+
+  it('con incluir sin proveedor muestra todos', () => {
+    expect(pagosAplicablesVisibles([delProveedor, sinProveedor], true, {})).toEqual([delProveedor, sinProveedor])
+  })
+
+  it('un pago sin proveedor ya tildado sigue visible aunque se oculten los demás', () => {
+    expect(pagosAplicablesVisibles([delProveedor, sinProveedor], false, { 2: 5 })).toEqual([delProveedor, sinProveedor])
   })
 })

@@ -27,6 +27,7 @@ import type {
   OrigenCompra,
   EstadoPago,
   PaginaDeCompras,
+  PagoAplicable,
   PagosAplicables,
   ResultadoDeRedondeoDeCompra,
   PercepcionSolicitada,
@@ -545,6 +546,17 @@ export type PagoDeCompraFormulario = {
   aplicaciones?: AplicacionDePagoSolicitada[]
   /** Cerrar en cero la diferencia con el saldo (dentro de la tolerancia de redondeo). */
   cerrarEnCero?: boolean
+}
+
+/** Pagos a cuenta que muestra la grilla del pago de una compra: por defecto solo los del proveedor; los sin proveedor
+ * aparecen al pedirlos o si ya están tildados, para que nunca quede aplicado un pago que no se ve. */
+export function pagosAplicablesVisibles(
+  pagos: PagoAplicable[],
+  incluirSinProveedor: boolean,
+  seleccion: Record<number, unknown>,
+): PagoAplicable[] {
+  if (incluirSinProveedor) return pagos
+  return pagos.filter((p) => p.idProveedor !== null || p.idPago in seleccion)
 }
 
 /** Texto del aviso con el que quien abrió el modal confirma el pago: sin pago nuevo solo se aplicaron pagos a cuenta,
