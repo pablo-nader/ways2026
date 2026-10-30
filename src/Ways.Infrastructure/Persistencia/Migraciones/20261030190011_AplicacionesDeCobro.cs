@@ -27,8 +27,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         /// aplicaciones falla al comitear) y en el UPDATE de <c>importe</c>/<c>vuelto</c>/<c>id_medio_pago</c>/
         /// <c>id_comprobante_venta</c>/<c>deleted_at</c> o el DELETE de <c>cobros</c>. El INSERT de cobros no dispara: los
         /// cobros de un comprobante nacen en la transacción que lo crea, y una aplicación escrita en esa misma transacción
-        /// se valida al comitear con todos los cobros ya insertados. Sin backfill: los recibos anteriores quedan sin
-        /// aplicar.</summary>
+        /// se valida al comitear con todos los cobros ya insertados. Sin backfill acá: los recibos anteriores los aplica
+        /// <c>AplicarCobrosHistoricosPorAntiguedad</c>.</summary>
         public const string SqlDeLosTriggers =
             """
             CREATE FUNCTION fn_aplicaciones_cobro_exigir_cobro(p_id_comprobante integer, p_id_tenant integer) RETURNS void

@@ -50,6 +50,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_punto_venta", new[] { "escritorio", "web" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_facturacion", new[] { "cupo_alcanzado", "forzada", "medio_exige_factura", "no_requerida" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_stock", new[] { "ajuste", "anulacion", "compra", "decomiso", "inventario", "reclasificacion", "remito", "transferencia", "venta" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_aplicacion_cobro", new[] { "historial", "manual" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_aplicacion_pago", new[] { "aplicacion", "migracion", "pago_de_compra" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_compra", new[] { "asistente", "manual" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "origen_fondos_pago", new[] { "caja_turno", "tesoreria" });
@@ -5121,6 +5122,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<decimal>("Importe")
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("importe");
+
+                    b.Property<OrigenAplicacionCobro>("Origen")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("origen_aplicacion_cobro")
+                        .HasColumnName("origen")
+                        .HasDefaultValueSql("'manual'::origen_aplicacion_cobro");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")

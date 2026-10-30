@@ -66,9 +66,11 @@ public sealed record VentaPendienteDeCobro(
     int Id, string CodigoTipo, string? Letra, long Numero, string NumeroVisible, DateTimeOffset Fecha,
     decimal ParteEnCuentaCorriente, decimal Cobrado, decimal SaldoPendiente);
 
-/// <summary>Una aplicación viva de un recibo, con el número visible de la venta a la que se aplicó.</summary>
+/// <summary>Una aplicación viva de un recibo, con el número visible de la venta a la que se aplicó y su origen (hecha en el
+/// sistema o armada por la migración de recibos históricos).</summary>
 public sealed record AplicacionDeReciboListada(
-    int Id, int IdComprobanteVenta, string NumeroVisibleDeVenta, decimal Importe, DateTimeOffset Fecha);
+    int Id, int IdComprobanteVenta, string NumeroVisibleDeVenta, decimal Importe, DateTimeOffset Fecha,
+    OrigenAplicacionCobro Origen);
 
 /// <summary>Un recibo no anulado del cliente (<c>GET …/recibos</c>): lo cobrado neto de vuelto, lo aplicado a ventas y lo
 /// disponible para aplicar, con sus aplicaciones vivas.</summary>

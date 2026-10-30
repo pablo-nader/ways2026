@@ -104,8 +104,8 @@ que hoy, pero auditable.
 El cobro de un cliente es el recibo `RC` de pago a cuenta (con sus `cobros` y su único movimiento `pago`, negativo). Un
 recibo se aplica por partes a una o más ventas en cuenta corriente del mismo cliente, y una venta recibe partes de varios
 recibos; lo que un recibo no tiene aplicado queda a favor del cliente. Aplicar no mueve `clientes.saldo` ni escribe
-movimientos: el saldo ya bajó al registrar el recibo, la aplicación solo dice qué ventas cancela. Los recibos anteriores
-quedan sin aplicar (sin backfill) y no hay redondeo del lado de las ventas.
+movimientos: el saldo ya bajó al registrar el recibo, la aplicación solo dice qué ventas cancela. Los recibos anteriores a
+E7 los aplicó una migración por antigüedad (ver **Recibos históricos** abajo) y no hay redondeo del lado de las ventas.
 
 ```sql
 aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id_tenant únicamente]
@@ -113,6 +113,7 @@ aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id
     id_comprobante_cobro integer NOT NULL,   -- el recibo RC: FK compuesta (id_comprobante_cobro, id_tenant) → comprobantes_venta, RESTRICT
     id_comprobante_venta integer NOT NULL,   -- la venta:     FK compuesta (id_comprobante_venta, id_tenant) → comprobantes_venta, RESTRICT
     importe numeric(14,2) NOT NULL,
+    origen origen_aplicacion_cobro NOT NULL DEFAULT 'manual',  -- enum: manual | historial (E7-S4)
     id_empleado integer NOT NULL,            -- FK simple a usuarios (quién aplicó)
     fecha timestamptz NOT NULL,
     created_at, updated_at, deleted_at,
@@ -165,11 +166,35 @@ aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id
 > registra el pago a cuenta (cualquier rol con `OperacionDePos`, incluido el Vendedor); aplicar o liberar después, con
 > `POST /api/cobros/{idRecibo}/aplicaciones` y `DELETE /api/cobros/{idRecibo}/aplicaciones/{idAplicacion}`, exige
 > Supervisor o Admin;
-> `GET …/cuenta-corriente/ventas-pendientes` y `GET …/cuenta-corriente/recibos[?conDisponible=true]` listan.
+> `GET …/cuenta-corriente/ventas-pendientes` y `GET …/cuenta-corriente/recibos[?conDisponible=true]` listan. Cada
+> aplicación del listado de recibos trae su `origen` (`Manual` o `Historial`).
+>
+> **Recibos históricos** (E7-S4, decisión del dueño 2026-10-30; migración `AplicarCobrosHistoricosPorAntiguedad`). Por
+> tenant y cliente, los recibos `RC` emitidos que no son espejo fiscal, ordenados por `(fecha, id)`, con su disponible
+> (neto cobrado de los cobros vivos menos lo ya aplicado), se aplican a las ventas en cuenta corriente del mismo cliente
+> (signo positivo, no `RC`, emitidas, no espejo fiscal), ordenadas igual, con su saldo (parte en cuenta corriente, con la
+> misma definición que los triggers y `LectorDeAplicacionesDeCobro`, menos lo ya aplicado): el recibo más viejo con
+> disponible paga la venta más vieja con saldo, partiendo importes, hasta que se acaba uno de los dos lados. Es SQL por
+> conjuntos: los dos lados se ponen en fila como tramos acumulados y cada par recibe el largo de la superposición de sus
+> tramos. Las filas llevan `origen = 'historial'`, `fecha` = la más tardía entre la del recibo y la de la venta,
+> `id_empleado` = quien emitió el recibo y `created_at`/`updated_at` = el momento de la migración; se desaplican como
+> cualquier otra (`DELETE …/aplicaciones/{id}`). Sin filas de auditoría: es una migración. Las aplicaciones manuales que
+> ya existan descuentan de los dos lados. Un recibo que ya tiene una aplicación manual viva (S3 puede desplegarse antes
+> que S4) queda fuera del reparto por completo: alguien ya lo manejó y conserva su saldo como crédito, así que ningún
+> par generado puede colisionar con una aplicación viva. Sumar a mano a
+> una aplicación existente la deja en `origen = 'manual'`. El `Down` borra solo las filas `historial` y después quita la
+> columna y el enum: una fila histórica a la que alguien le sumó a mano pasó a manual y sobrevive al retroceso. La
+> migración deja los constraint triggers de `aplicaciones_cobro` otra vez en `DEFERRED` al terminar, en el `Up` y en el
+> `Down`.
 >
 > **Límite conocido.** La parte en cuenta corriente de una venta no descuenta las notas de crédito asociadas
 > (`id_comprobante_asociado` = la venta) ni los deltas de una reliquidación: una venta con una nota de crédito sigue
-> admitiendo aplicaciones por su parte en cuenta corriente original.
+> admitiendo aplicaciones por su parte en cuenta corriente original. Vale también para el reparto de los recibos
+> históricos: una venta con nota de crédito o reliquidada puede quedar aplicada por más de lo que hoy debe. Tampoco
+> distingue qué dedujo el pago de un recibo histórico: un recibo que canceló deudas de cuenta corriente sin respaldo en
+> cobros de ventas (ajustes, actualización de precios, descuento personal, saldos de apertura) se reparte igual sobre las
+> ventas. El costo del reparto es O(recibos × ventas en cuenta corriente) por cliente, dentro de la transacción del
+> despliegue.
 
 ### 8b. Cuenta corriente de proveedores
 

@@ -385,6 +385,7 @@ public class AplicacionesEntreEmpresasMigracionTests(WaysApiFixture fixture) : I
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
                     npgsql.MapEnum<OrigenFondosPago>("origen_fondos_pago");
                     npgsql.MapEnum<OrigenAplicacionPago>("origen_aplicacion_pago");
+                    npgsql.MapEnum<OrigenAplicacionCobro>("origen_aplicacion_cobro");
                 })
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
                 .Options;

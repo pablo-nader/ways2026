@@ -558,10 +558,14 @@ public class CobrosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         {
             await db.ComprobantesVenta.Where(c => c.Id == anulado)
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.Estado, EstadoComprobante.Anulado));
+            // La del recibo agotado pasa a histórica: el listado tiene que leer el origen de cada fila.
+            await db.AplicacionesCobro.Where(a => a.IdComprobanteCobro == agotado)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.Origen, OrigenAplicacionCobro.Historial));
         }
 
         var todos = (await LeerAsync(await ctx.Admin.GetAsync($"/api/clientes/{idCliente}/cuenta-corriente/recibos"))).EnumerateArray().ToList();
         Assert.Equal(new[] { agotado, parcial }, todos.Select(r => r.GetProperty("id").GetInt32()));
+        Assert.Equal("Historial", Assert.Single(todos[0].GetProperty("aplicaciones").EnumerateArray()).GetProperty("origen").GetString());
         var filaParcial = todos[1];
         Assert.Equal(60m, filaParcial.GetProperty("netoCobrado").GetDecimal());
         Assert.Equal(10m, filaParcial.GetProperty("aplicado").GetDecimal());
@@ -569,6 +573,7 @@ public class CobrosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var aplicacion = Assert.Single(filaParcial.GetProperty("aplicaciones").EnumerateArray());
         Assert.Equal(venta, aplicacion.GetProperty("idComprobanteVenta").GetInt32());
         Assert.False(string.IsNullOrEmpty(aplicacion.GetProperty("numeroVisibleDeVenta").GetString()));
+        Assert.Equal("Manual", aplicacion.GetProperty("origen").GetString());
 
         var conDisponible = (await LeerAsync(await ctx.Admin.GetAsync(
             $"/api/clientes/{idCliente}/cuenta-corriente/recibos?conDisponible=true"))).EnumerateArray().ToList();
@@ -576,6 +581,32 @@ public class CobrosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         using var vendedor = await CrearClienteConRolAsync(ctx, RolConocido.Vendedor, "vendedor-rec");
         Assert.Equal(HttpStatusCode.OK, (await vendedor.GetAsync($"/api/clientes/{idCliente}/cuenta-corriente/recibos")).StatusCode);
+    }
+
+    [Fact]
+    public async Task SumarAMano_AUnaAplicacionHistorica_LaDejaUnicaConElImporteSumadoYOrigenManual()
+    {
+        var ctx = await PrepararAsync(nameof(SumarAMano_AUnaAplicacionHistorica_LaDejaUnicaConElImporteSumadoYOrigenManual));
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente suma historial");
+        var venta = await SembrarVentaEnCuentaCorrienteAsync(ctx, idCliente, 100m);
+        var idRecibo = await RegistrarReciboAsync(ctx, idCliente, 80m);
+        Assert.Equal(HttpStatusCode.OK, (await ctx.Admin.PostAsJsonAsync($"/api/cobros/{idRecibo}/aplicaciones", Aplicaciones((venta, 30m)))).StatusCode);
+        await using (var db = ContextoDelTenant(ctx.IdTenant))
+        {
+            await db.AplicacionesCobro.Where(a => a.IdComprobanteCobro == idRecibo)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.Origen, OrigenAplicacionCobro.Historial));
+        }
+        using var supervisor = await CrearClienteConRolAsync(ctx, RolConocido.Supervisor, "supervisor-suma");
+
+        var respuesta = await supervisor.PostAsJsonAsync($"/api/cobros/{idRecibo}/aplicaciones", Aplicaciones((venta, 20m)));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var recibos = (await LeerAsync(await ctx.Admin.GetAsync($"/api/clientes/{idCliente}/cuenta-corriente/recibos"))).EnumerateArray().ToList();
+        var fila = Assert.Single(recibos, r => r.GetProperty("id").GetInt32() == idRecibo);
+        var aplicacion = Assert.Single(fila.GetProperty("aplicaciones").EnumerateArray());
+        Assert.Equal(venta, aplicacion.GetProperty("idComprobanteVenta").GetInt32());
+        Assert.Equal(50m, aplicacion.GetProperty("importe").GetDecimal());
+        Assert.Equal("Manual", aplicacion.GetProperty("origen").GetString());
     }
 
     [Fact]

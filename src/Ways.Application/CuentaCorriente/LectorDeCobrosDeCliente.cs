@@ -70,7 +70,7 @@ public static class LectorDeCobrosDeCliente
         var aplicaciones = await db.AplicacionesCobro
             .Where(a => ids.Contains(a.IdComprobanteCobro))
             .OrderBy(a => a.Id)
-            .Select(a => new { a.Id, a.IdComprobanteCobro, a.IdComprobanteVenta, a.Importe, a.Fecha })
+            .Select(a => new { a.Id, a.IdComprobanteCobro, a.IdComprobanteVenta, a.Importe, a.Fecha, a.Origen })
             .ToListAsync(ct);
 
         var idsVentas = aplicaciones.Select(a => a.IdComprobanteVenta).Distinct().ToList();
@@ -90,7 +90,7 @@ public static class LectorDeCobrosDeCliente
                 aplicaciones
                     .Where(a => a.IdComprobanteCobro == x.Recibo.Id)
                     .Select(a => new AplicacionDeReciboListada(
-                        a.Id, a.IdComprobanteVenta, numerosDeVentas[a.IdComprobanteVenta], a.Importe, a.Fecha))
+                        a.Id, a.IdComprobanteVenta, numerosDeVentas[a.IdComprobanteVenta], a.Importe, a.Fecha, a.Origen))
                     .ToList()))
             .ToList();
     }

@@ -30,6 +30,12 @@ public class AplicacionCobroConfiguration : IEntityTypeConfiguration<AplicacionC
         builder.Property(a => a.IdComprobanteCobro).HasColumnName("id_comprobante_cobro").IsRequired();
         builder.Property(a => a.IdComprobanteVenta).HasColumnName("id_comprobante_venta").IsRequired();
         builder.Property(a => a.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
+        builder.Property(a => a.Origen)
+            .HasColumnName("origen")
+            .HasColumnType("origen_aplicacion_cobro")
+            .HasDefaultValueSql("'manual'::origen_aplicacion_cobro")
+            .IsRequired();
+
         builder.Property(a => a.IdEmpleado).HasColumnName("id_empleado").IsRequired();
         builder.Property(a => a.Fecha).HasColumnName("fecha").IsRequired();
 

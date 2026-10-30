@@ -2430,7 +2430,13 @@ export type AplicacionDeCobroSolicitada = { idComprobanteVenta: number; importe:
 export type SolicitudDeAplicacionesDeCobro = { aplicaciones: AplicacionDeCobroSolicitada[] }
 
 /** Una aplicación viva de un recibo (espejo de `AplicacionDeCobroListada`). */
-export type AplicacionDeCobroListada = { id: number; idComprobanteVenta: number; importe: number; fecha: string }
+export type AplicacionDeCobroListada = {
+  id: number
+  idComprobanteVenta: number
+  importe: number
+  fecha: string
+  origen: OrigenAplicacionCobro
+}
 
 /** Respuesta de aplicar y de desaplicar: lo cobrado neto de vuelto, lo aplicado, lo disponible y las aplicaciones vivas
  * del recibo (espejo de `EstadoDeCobro`). */
@@ -2460,6 +2466,10 @@ export type VentaPendienteDeCobro = {
   saldoPendiente: number
 }
 
+/** Cómo nació una aplicación de cobro (espejo de `OrigenAplicacionCobro`): `Historial` la armó la migración de los
+ * recibos anteriores, aplicando cada uno a las ventas más viejas del cliente. */
+export type OrigenAplicacionCobro = 'Manual' | 'Historial'
+
 /** Una aplicación viva de un recibo con el número visible de su venta (espejo de `AplicacionDeReciboListada`). */
 export type AplicacionDeReciboListada = {
   id: number
@@ -2467,6 +2477,7 @@ export type AplicacionDeReciboListada = {
   numeroVisibleDeVenta: string
   importe: number
   fecha: string
+  origen: OrigenAplicacionCobro
 }
 
 /** Un recibo no anulado del cliente con lo cobrado, aplicado y disponible (espejo de `ReciboDeCliente`). */
