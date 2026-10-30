@@ -205,7 +205,7 @@ public class LectoresDeComprobantesVentaEstructuralesTests
     private sealed record Lectura(string Archivo, string Linea, string Sentencia);
 
     private static readonly Regex LecturaLinq = new(
-        @"\b(?:ComprobantesVenta|ItemsComprobanteVenta|(?<=\.)Cobros)\b(?!\s*\.\s*(?:Add|AddRange)\()"
+        @"\b(?:ComprobantesVenta|ItemsComprobanteVenta|(?<!"")Cobros)\b(?!\s*\.\s*(?:Add|AddRange)\()"
         + @"|\bSet\s*<\s*(?:ComprobanteVenta|ItemComprobanteVenta|Cobro)\s*>\s*\(",
         RegexOptions.Compiled);
 
@@ -426,6 +426,7 @@ public class LectoresDeComprobantesVentaEstructuralesTests
     [InlineData("var x = await db.ComprobantesVenta.Where(c => c.Total > 0).ToListAsync(ct);")]
     [InlineData("var x = await db.ItemsComprobanteVenta.ToListAsync(ct);")]
     [InlineData("var x = await db.Cobros.ToListAsync(ct);")]
+    [InlineData("var x = await Cobros.ToListAsync(ct);")]
     [InlineData("var x = await db.Set<ComprobanteVenta>().ToListAsync(ct);")]
     [InlineData("var x = await db.Set<ItemComprobanteVenta>().ToListAsync(ct);")]
     [InlineData("var x = await db.Set<Cobro>().ToListAsync(ct);")]
