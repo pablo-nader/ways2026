@@ -2133,6 +2133,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
 
   it('al abrir con un cliente ya elegido (no Consumidor Final), muestra su saldo sin pedir que se busque de nuevo', async () => {
     mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
       }
@@ -2151,6 +2152,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
   it('registra un pago con dos medios y refresca el saldo mostrado con la respuesta más reciente', async () => {
     let llamadasEstado = 0
     mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         llamadasEstado += 1
         // Primera carga: saldo 500. Después del pago, el refetch trae el saldo ya actualizado —
@@ -2214,6 +2216,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
         const pagina: PaginaDe<ClienteListado> = { items: [clienteAlLimite], total: 1, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
       }
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         llamadasEstado += 1
         return Promise.resolve<EstadoDeCuenta>(
@@ -2425,6 +2428,7 @@ describe('Pos — saldo confirmado de la venta a un cliente identificado', () =>
     let lecturas = 0
     mockearApiGet((ruta) => {
       if (ruta === '/clientes/2') return lecturas++ === 0 ? Promise.resolve(juan) : RECHAZO_DE_RED()
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
       if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [juan], total: 1, pagina: 1, tamanio: 25 })
       return undefined
@@ -2511,6 +2515,7 @@ describe('Pos — recibo del pago a cuenta en el escritorio', () => {
     let llamadasEstado = 0
     mockearApiGet((ruta) => {
       if (ruta === '/clientes/2') return Promise.resolve({ ...otroCliente, saldo: 500 })
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         llamadasEstado += 1
         if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
@@ -11199,7 +11204,7 @@ describe('Pos — ergonomía del carrito', () => {
     })
 
     it('con otro modal abierto (cuenta corriente), F10 no abre la confirmación de vaciado', async () => {
-      mockearApiGet((ruta) => (ruta.startsWith('/clientes/2/cuenta-corriente') ? Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture()) : undefined))
+      mockearApiGet((ruta) => (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes' ? Promise.resolve([]) : ruta.startsWith('/clientes/2/cuenta-corriente') ? Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture()) : undefined))
       renderPos()
       await esperarAlConsumidorFinal()
       await escanearYEsperar('7790001234567', 'Coca Cola 1L', 1)

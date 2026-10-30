@@ -869,6 +869,7 @@ describe('ShellPos — recibo del pago a cuenta', () => {
         const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal, clienteConDeuda], total: 2, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
       }
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         consultas += 1
         const saldo = consultas === 1 ? 500 : 200
