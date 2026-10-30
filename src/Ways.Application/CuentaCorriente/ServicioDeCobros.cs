@@ -11,7 +11,8 @@ using Ways.Domain.Ventas;
 namespace Ways.Application.CuentaCorriente;
 
 /// <summary>Una aplicación viva de un recibo.</summary>
-public sealed record AplicacionDeCobroListada(int Id, int IdComprobanteVenta, decimal Importe, DateTimeOffset Fecha);
+public sealed record AplicacionDeCobroListada(
+    int Id, int IdComprobanteVenta, decimal Importe, DateTimeOffset Fecha, OrigenAplicacionCobro Origen);
 
 /// <summary>Estado de un recibo después de aplicar o desaplicar: lo cobrado, lo aplicado, lo disponible y sus
 /// aplicaciones vivas.</summary>
@@ -163,7 +164,10 @@ public class ServicioDeCobros(
             var existente = aplicaciones.FirstOrDefault(a => a.IdComprobanteVenta == pedida.IdComprobanteVenta);
             if (existente is not null)
             {
+                // Lo sumado a mano pasa a ser manual: el Down de la migración borra solo lo histórico y no debe llevarse
+                // plata que una persona aplicó.
                 existente.Importe += pedida.Importe;
+                existente.Origen = OrigenAplicacionCobro.Manual;
                 existente.UpdatedAt = momento;
                 continue;
             }
@@ -193,7 +197,7 @@ public class ServicioDeCobros(
 
         return aplicaciones
             .OrderBy(a => a.Id)
-            .Select(a => new AplicacionDeCobroListada(a.Id, a.IdComprobanteVenta, a.Importe, a.Fecha))
+            .Select(a => new AplicacionDeCobroListada(a.Id, a.IdComprobanteVenta, a.Importe, a.Fecha, a.Origen))
             .ToList();
     }
 
@@ -269,7 +273,7 @@ public class ServicioDeCobros(
         var aplicaciones = await db.AplicacionesCobro
             .Where(a => a.IdComprobanteCobro == idRecibo)
             .OrderBy(a => a.Id)
-            .Select(a => new AplicacionDeCobroListada(a.Id, a.IdComprobanteVenta, a.Importe, a.Fecha))
+            .Select(a => new AplicacionDeCobroListada(a.Id, a.IdComprobanteVenta, a.Importe, a.Fecha, a.Origen))
             .ToListAsync(ct);
 
         return new EstadoDeCobro(idRecibo, disponible.NetoCobrado, disponible.Aplicado, disponible.Disponible, aplicaciones);

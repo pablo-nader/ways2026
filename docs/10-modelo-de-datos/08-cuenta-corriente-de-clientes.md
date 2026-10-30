@@ -180,13 +180,21 @@ aplicaciones_cobro (         -- [operativa, hija de comprobantes_venta: scope id
 > `id_empleado` = quien emitió el recibo y `created_at`/`updated_at` = el momento de la migración; se desaplican como
 > cualquier otra (`DELETE …/aplicaciones/{id}`). Sin filas de auditoría: es una migración. Las aplicaciones manuales que
 > ya existan descuentan de los dos lados; si el reparto cae sobre un par que ya tiene una aplicación viva, ese par se
-> saltea (índice único parcial) y lo suyo queda sin aplicar. Sumar a mano a una aplicación existente no cambia su
-> `origen`. El `Down` borra las filas `historial` y después quita la columna y el enum.
+> saltea (índice único parcial) y lo suyo queda sin aplicar. Un recibo que ya tiene una aplicación manual viva (S3 puede
+> desplegarse antes que S4) queda fuera del reparto: alguien ya lo manejó y conserva su saldo como crédito. Sumar a mano a
+> una aplicación existente la deja en `origen = 'manual'`. El `Down` borra solo las filas `historial` y después quita la
+> columna y el enum: una fila histórica a la que alguien le sumó a mano pasó a manual y sobrevive al retroceso. La
+> migración deja los constraint triggers de `aplicaciones_cobro` otra vez en `DEFERRED` al terminar, en el `Up` y en el
+> `Down`.
 >
 > **Límite conocido.** La parte en cuenta corriente de una venta no descuenta las notas de crédito asociadas
 > (`id_comprobante_asociado` = la venta) ni los deltas de una reliquidación: una venta con una nota de crédito sigue
 > admitiendo aplicaciones por su parte en cuenta corriente original. Vale también para el reparto de los recibos
-> históricos: una venta con nota de crédito o reliquidada puede quedar aplicada por más de lo que hoy debe.
+> históricos: una venta con nota de crédito o reliquidada puede quedar aplicada por más de lo que hoy debe. Tampoco
+> distingue qué dedujo el pago de un recibo histórico: un recibo que canceló deudas de cuenta corriente sin respaldo en
+> cobros de ventas (ajustes, actualización de precios, descuento personal, saldos de apertura) se reparte igual sobre las
+> ventas. El costo del reparto es O(recibos × ventas en cuenta corriente) por cliente, dentro de la transacción del
+> despliegue.
 
 ### 8b. Cuenta corriente de proveedores
 

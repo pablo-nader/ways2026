@@ -41,7 +41,7 @@ public class PagoACuentaRegistradoTests
     public void DeCopiaCadaCampoDelComprobanteYAgregaLasAplicaciones()
     {
         var comprobante = Recibo();
-        var aplicaciones = new[] { new AplicacionDeCobroListada(5, 9, 40m, comprobante.Fecha) };
+        var aplicaciones = new[] { new AplicacionDeCobroListada(5, 9, 40m, comprobante.Fecha, Ways.Domain.Ventas.OrigenAplicacionCobro.Manual) };
 
         var registrado = PagoACuentaRegistrado.De(comprobante, aplicaciones);
 

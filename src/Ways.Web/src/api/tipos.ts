@@ -2430,7 +2430,13 @@ export type AplicacionDeCobroSolicitada = { idComprobanteVenta: number; importe:
 export type SolicitudDeAplicacionesDeCobro = { aplicaciones: AplicacionDeCobroSolicitada[] }
 
 /** Una aplicación viva de un recibo (espejo de `AplicacionDeCobroListada`). */
-export type AplicacionDeCobroListada = { id: number; idComprobanteVenta: number; importe: number; fecha: string }
+export type AplicacionDeCobroListada = {
+  id: number
+  idComprobanteVenta: number
+  importe: number
+  fecha: string
+  origen: OrigenAplicacionCobro
+}
 
 /** Respuesta de aplicar y de desaplicar: lo cobrado neto de vuelto, lo aplicado, lo disponible y las aplicaciones vivas
  * del recibo (espejo de `EstadoDeCobro`). */

@@ -17,7 +17,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         /// superposición de sus tramos. Es el reparto «el recibo más viejo con disponible paga la venta más vieja con saldo»
         /// hecho de una vez, hasta que se acaba uno de los dos lados del cliente. Las aplicaciones manuales que ya existan
         /// descuentan de los dos lados; si el reparto cae sobre un par que ya tiene una aplicación viva, ese par se saltea
-        /// (índice único parcial) y lo suyo queda sin aplicar.
+        /// (índice único parcial) y lo suyo queda sin aplicar. Un recibo que ya tiene una aplicación manual viva queda
+        /// fuera del reparto (alguien ya lo manejó, por ejemplo si S3 se desplegó antes que S4): conserva su saldo como crédito.
         /// Valores: <c>origen = 'historial'</c>; <c>fecha</c> = la más tardía de las fechas del recibo y de la venta (el
         /// primer momento en que existían los dos); <c>id_empleado</c> = quien emitió el recibo; <c>created_at</c> y
         /// <c>updated_at</c> = el momento de la migración. Sin filas de auditoría: es una migración.
@@ -63,6 +64,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 JOIN neto_por_recibo n ON n.id_tenant = c.id_tenant AND n.id_comprobante = c.id_comprobante_venta
                 LEFT JOIN aplicado_por_recibo a ON a.id_tenant = c.id_tenant AND a.id_comprobante = c.id_comprobante_venta
                 WHERE t.codigo = 'RC' AND c.estado = 'emitido' AND c.id_venta_origen IS NULL AND c.id_cliente IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM aplicaciones_cobro m
+                      WHERE m.id_tenant = c.id_tenant AND m.id_comprobante_cobro = c.id_comprobante_venta
+                        AND m.deleted_at IS NULL AND m.origen = 'manual')
             ),
             ventas AS (
                 SELECT c.id_tenant, c.id_cliente, c.id_comprobante_venta AS id_venta, c.fecha,
@@ -103,6 +108,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             FROM pares
             ORDER BY id_tenant, id_recibo, id_venta
             ON CONFLICT (id_comprobante_cobro, id_comprobante_venta, id_tenant) WHERE deleted_at IS NULL DO NOTHING;
+            SET CONSTRAINTS tg_aplicaciones_cobro_no_excede_cobro, tg_aplicaciones_cobro_no_excede_venta DEFERRED;
             """;
 
         /// <summary>Retira lo que escribió <see cref="SqlDelBackfill"/> antes de quitar la columna: sin <c>origen</c>, las
@@ -114,6 +120,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             -- trigger pendientes sobre la tabla.
             SET CONSTRAINTS tg_aplicaciones_cobro_no_excede_cobro, tg_aplicaciones_cobro_no_excede_venta IMMEDIATE;
             DELETE FROM aplicaciones_cobro WHERE origen = 'historial';
+            SET CONSTRAINTS tg_aplicaciones_cobro_no_excede_cobro, tg_aplicaciones_cobro_no_excede_venta DEFERRED;
             """;
 
         /// <inheritdoc />
@@ -189,7 +196,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 table: "aplicaciones_cobro",
                 type: "origen_aplicacion_cobro",
                 nullable: false,
-                defaultValue: OrigenAplicacionCobro.Manual);
+                defaultValueSql: "'manual'::origen_aplicacion_cobro");
 
             migrationBuilder.Sql(SqlDelBackfill);
         }

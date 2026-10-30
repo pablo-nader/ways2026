@@ -63,8 +63,9 @@ public class AplicarCobrosHistoricosMigracionTests(WaysApiFixture fixture) : ICl
                 owner,
                 "SELECT count(*) FROM information_schema.columns WHERE table_name = 'aplicaciones_cobro' AND column_name = 'origen'"));
         Assert.Equal(0L, await EscalarAsync<long>(owner, "SELECT count(*) FROM pg_type WHERE typname = 'origen_aplicacion_cobro'"));
+        // Quedan solo las dos manuales vivas (R2-V3 y R6-V7): el Down no se lleva lo que una persona aplicó.
         Assert.Equal(
-            1L, await EscalarAsync<long>(owner, "SELECT count(*) FROM aplicaciones_cobro WHERE deleted_at IS NULL"));
+            2L, await EscalarAsync<long>(owner, "SELECT count(*) FROM aplicaciones_cobro WHERE deleted_at IS NULL"));
         Assert.Equal(
             1L, await EscalarAsync<long>(
                 owner,
@@ -175,10 +176,13 @@ public class AplicarCobrosHistoricosMigracionTests(WaysApiFixture fixture) : ICl
     /// (día 1, 150 con 20 de vuelto y un cobro dado de baja), R2 (día 2, 60) y R3 (día 5, 200). Se insertan en otro orden
     /// que el de las fechas, así que ordenar por id daría otro reparto. Quedan fuera: la venta solo en efectivo, la venta y
     /// el recibo anulados, los espejos fiscales de una venta y de un recibo y la nota de crédito, todos del día 0 (los más
-    /// viejos: si entraran, cambiarían todo el reparto). El reparto cae una vez sobre el par R2-V3, que ya tiene la
-    /// aplicación manual: se saltea y esos 20 quedan sin aplicar de los dos lados. El cliente 2 del tenant A y el cliente
+    /// viejos: si entraran, cambiarían todo el reparto). R2 ya tiene una aplicación manual viva (20 sobre V3): queda fuera
+    /// del reparto y conserva sus 60 como crédito, pero esos 20 siguen descontando del saldo de V3 (60 pendientes). Entran
+    /// R1 (130 netos) y R3 (200): R1 paga V1 (100) y 30 de V2, y R3 paga los 20 que le faltan a V2, V3 (60) y V4 (40); a R3
+    /// le sobran 80. Sin la exclusión, R2 se habría repartido primero y el reparto habría sido otro. El cliente 2 del tenant A y el cliente
     /// del tenant B (con el MISMO id de cliente que el cliente 1) tienen recibos del día 0: si se mezclaran con el cliente 1,
-    /// correrían su reparto.
+    /// correrían su reparto. El cliente 3 tiene un recibo con una aplicación manual viva: queda fuera del reparto, así que
+    /// conserva su saldo y la venta V8 sigue sin aplicar.
     /// </summary>
     private static async Task<Sembrado> SembrarAsync(NpgsqlConnection owner)
     {
@@ -251,7 +255,18 @@ public class AplicarCobrosHistoricosMigracionTests(WaysApiFixture fixture) : ICl
         var v6 = await Comprobante(idTenantB, idTx, cliente1, cajeroB, 0);
         await Cobro(idTenantB, v6, cuentaB, 70m);
 
+        // Cliente 3: R6 (100) ya tiene una aplicación manual viva (10 sobre V7). Aunque le sobra disponible y V8 tiene saldo,
+        // el reparto no lo toca: alguien ya manejó ese recibo (S3 pudo desplegarse antes que S4).
+        const int cliente3 = 1003;
+        var r6 = await Comprobante(idTenantA, idRc, cliente3, cajeroA, 0);
+        await Cobro(idTenantA, r6, efectivoA, 100m);
+        var v7 = await Comprobante(idTenantA, idTx, cliente3, vendedorA, 1);
+        await Cobro(idTenantA, v7, cuentaA, 40m);
+        var v8 = await Comprobante(idTenantA, idTx, cliente3, vendedorA, 2);
+        await Cobro(idTenantA, v8, cuentaA, 50m);
+
         var fechaManual = T0.AddDays(3);
+        await AplicacionManualAsync(owner, idTenantA, r6, v7, 10m, vendedorA, fechaManual, baja: false);
         await AplicacionManualAsync(owner, idTenantA, r2, v3, 20m, vendedorA, fechaManual, baja: false);
         var idManualDadaDeBaja = await AplicacionManualAsync(owner, idTenantA, r1, v1, 10m, vendedorA, fechaManual, baja: true);
 
@@ -264,12 +279,13 @@ public class AplicarCobrosHistoricosMigracionTests(WaysApiFixture fixture) : ICl
             [
                 Historica(r1, v1, 100m, cajeroA, 1),
                 Historica(r1, v2, 30m, cajeroA, 2),
-                Historica(r2, v2, 20m, cajeroA, 2),
                 manual,
-                Historica(r3, v3, 40m, cajeroA, 5),
+                Historica(r3, v2, 20m, cajeroA, 5),
+                Historica(r3, v3, 60m, cajeroA, 5),
                 Historica(r3, v4, 40m, cajeroA, 5),
                 Historica(r4, v5, 30m, cajeroA, 1),
                 Historica(r5, v6, 70m, cajeroB, 0),
+                new Aplicacion(r6, v7, 10m, "manual", vendedorA, fechaManual.UtcDateTime),
             ],
             manual,
             idManualDadaDeBaja);

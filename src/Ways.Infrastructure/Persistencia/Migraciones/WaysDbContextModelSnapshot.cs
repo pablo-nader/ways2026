@@ -5126,8 +5126,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<OrigenAplicacionCobro>("Origen")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("origen_aplicacion_cobro")
-                        .HasDefaultValue(OrigenAplicacionCobro.Manual)
-                        .HasColumnName("origen");
+                        .HasColumnName("origen")
+                        .HasDefaultValueSql("'manual'::origen_aplicacion_cobro");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
