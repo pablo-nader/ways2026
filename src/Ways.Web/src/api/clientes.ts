@@ -4,9 +4,54 @@
  * para el selector del formulario — no un ABM de `listas_precio` (sin ABM propio esta etapa).
  */
 import { api } from './cliente'
+import { construirQueryDePadron, type ConsultaDePadron } from './padron'
 import type { AltaCliente, ClienteListado, EdicionCliente, ListaPrecioAsignable, PaginaDe } from './tipos'
 
+/** Claves de `orden` que acepta `GET /api/clientes`: una por cada columna de datos de la grilla. */
+export const COLUMNAS_ORDENABLES_DE_CLIENTES = [
+  'numero',
+  'nombre',
+  'documento',
+  'telefono',
+  'email',
+  'estado',
+] as const
+
+export type ColumnaOrdenableDeClientes = (typeof COLUMNAS_ORDENABLES_DE_CLIENTES)[number]
+
+export function esColumnaOrdenableDeClientes(columna: string): columna is ColumnaOrdenableDeClientes {
+  return (COLUMNAS_ORDENABLES_DE_CLIENTES as readonly string[]).includes(columna)
+}
+
+/** Lo que muestran los controles de filtro; cada clave es un parámetro de `GET /api/clientes`. `busqueda` es la caja
+ * general; `activo` es `'true'`, `'false'` o vacío. */
+export type FiltrosDeClientes = {
+  busqueda: string
+  numero: string
+  nombre: string
+  documento: string
+  telefono: string
+  email: string
+  activo: string
+}
+
+export const FILTROS_DE_CLIENTES_VACIOS: FiltrosDeClientes = {
+  busqueda: '',
+  numero: '',
+  nombre: '',
+  documento: '',
+  telefono: '',
+  email: '',
+  activo: '',
+}
+
+export type ConsultaDeClientes = ConsultaDePadron<FiltrosDeClientes, ColumnaOrdenableDeClientes>
+
 export const clienteDeClientes = {
+  /** El padrón: filtra, ordena y pagina en el servidor. */
+  listarGrilla: (consulta: ConsultaDeClientes) =>
+    api.get<PaginaDe<ClienteListado>>(`/clientes${construirQueryDePadron(consulta)}`),
+  /** Buscador de clientes de las demás pantallas (POS, cuenta corriente): sin filtros por columna. */
   listar: (busqueda: string, incluirEliminados: boolean) => {
     const parametros = new URLSearchParams()
     if (busqueda) parametros.set('busqueda', busqueda)

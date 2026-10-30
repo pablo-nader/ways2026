@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
+using Ways.Application.Listados;
 using Ways.Application.Usuarios;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -25,8 +26,14 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
         string? busqueda = null,
         int pagina = 1,
         int tamanio = 25,
+        FiltrosDePersonal? filtros = null,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        // Antes de leer nada: una clave o dirección de orden desconocida es un pedido inválido aunque no haya filas.
+        var ordenPedido = OrdenDePersonal.Interpretar(orden, direccion);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -38,14 +45,178 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
             query = query.Where(p => Coincide(p.Nombre, patron) || Coincide(p.Documento, patron));
         }
 
-        var total = await query.CountAsync(ct);
+        var necesitaLosVinculos =
+            FiltrosDeListado.PatronONulo(filtros?.Usuario) is not null ||
+            FiltrosDeListado.PatronONulo(filtros?.Cliente) is not null ||
+            ordenPedido is { Columna: ColumnaDeOrdenDePersonal.Usuario or ColumnaDeOrdenDePersonal.Cliente };
 
-        var filas = await Proyectar(query.OrderBy(p => p.Nombre).ThenBy(p => p.Id))
+        if (!necesitaLosVinculos)
+        {
+            // Filtros y orden de columnas propias: el total y el orden no tocan los vínculos, que se unen recién
+            // para las filas de la página (el orden previo al join se conserva).
+            if (filtros is not null)
+            {
+                query = FiltrarPropias(query, filtros);
+            }
+
+            var totalPropio = await query.CountAsync(ct);
+            var filasPropias = await Proyectar(OrdenarPropias(query, ordenPedido))
+                .Skip((pagina - 1) * tamanio)
+                .Take(tamanio)
+                .ToListAsync(ct);
+
+            return new PaginaDe<PersonalListado>(filasPropias.Select(Armar).ToList(), totalPropio, pagina, tamanio);
+        }
+
+        // Un solo LEFT JOIN alimenta filtros, total y orden: usuario y cliente se filtran y ordenan por el nombre
+        // que la celda muestra, y un vínculo dado de baja llega como null (no coincide ni se ordena antes que nada).
+        var unidas = Proyectar(query);
+        if (filtros is not null)
+        {
+            unidas = Filtrar(unidas, filtros);
+        }
+
+        var total = await unidas.CountAsync(ct);
+
+        var filas = await Ordenar(unidas, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .ToListAsync(ct);
 
         return new PaginaDe<PersonalListado>(filas.Select(Armar).ToList(), total, pagina, tamanio);
+    }
+
+    private static IQueryable<Personal> FiltrarPropias(IQueryable<Personal> personal, FiltrosDePersonal filtros)
+    {
+        if (FiltrosDeListado.PatronONulo(filtros.Nombre) is { } nombre)
+        {
+            personal = personal.Where(p => Coincide(p.Nombre, nombre) || Coincide(p.Documento, nombre));
+        }
+
+        if (filtros.ValorHoraDesde is decimal valorDesde)
+        {
+            personal = personal.Where(p => p.ValorHora >= valorDesde);
+        }
+
+        if (filtros.ValorHoraHasta is decimal valorHasta)
+        {
+            personal = personal.Where(p => p.ValorHora <= valorHasta);
+        }
+
+        if (filtros.SaldoDesde is decimal saldoDesde)
+        {
+            personal = personal.Where(p => p.Saldo >= saldoDesde);
+        }
+
+        if (filtros.SaldoHasta is decimal saldoHasta)
+        {
+            personal = personal.Where(p => p.Saldo <= saldoHasta);
+        }
+
+        return personal;
+    }
+
+    private static IOrderedQueryable<Personal> OrdenarPropias(
+        IQueryable<Personal> personal, OrdenDeListado<ColumnaDeOrdenDePersonal>? orden)
+    {
+        var desc = orden is { Descendente: true };
+        var ordenadas = orden?.Columna switch
+        {
+            ColumnaDeOrdenDePersonal.ValorHora => desc
+                ? personal.OrderByDescending(p => p.ValorHora)
+                : personal.OrderBy(p => p.ValorHora),
+            ColumnaDeOrdenDePersonal.Saldo => desc
+                ? personal.OrderByDescending(p => p.Saldo)
+                : personal.OrderBy(p => p.Saldo),
+            _ => desc ? personal.OrderByDescending(p => p.Nombre) : personal.OrderBy(p => p.Nombre),
+        };
+
+        return ordenadas.ThenBy(p => p.Id);
+    }
+
+    private static IQueryable<FilaDePersonal> Filtrar(IQueryable<FilaDePersonal> filas, FiltrosDePersonal filtros)
+    {
+        if (FiltrosDeListado.PatronONulo(filtros.Nombre) is { } nombre)
+        {
+            // La celda muestra el nombre y, debajo, el documento: el filtro mira los dos.
+            filas = filas.Where(f => Coincide(f.Personal.Nombre, nombre) || Coincide(f.Personal.Documento, nombre));
+        }
+
+        if (filtros.ValorHoraDesde is decimal valorDesde)
+        {
+            filas = filas.Where(f => f.Personal.ValorHora >= valorDesde);
+        }
+
+        if (filtros.ValorHoraHasta is decimal valorHasta)
+        {
+            filas = filas.Where(f => f.Personal.ValorHora <= valorHasta);
+        }
+
+        if (filtros.SaldoDesde is decimal saldoDesde)
+        {
+            filas = filas.Where(f => f.Personal.Saldo >= saldoDesde);
+        }
+
+        if (filtros.SaldoHasta is decimal saldoHasta)
+        {
+            filas = filas.Where(f => f.Personal.Saldo <= saldoHasta);
+        }
+
+        if (FiltrosDeListado.PatronONulo(filtros.Usuario) is { } usuario)
+        {
+            filas = filas.Where(f => Coincide(f.NombreUsuario, usuario));
+        }
+
+        if (FiltrosDeListado.PatronONulo(filtros.Cliente) is { } cliente)
+        {
+            // El mismo texto que NombreDeCliente, escrito inline porque EF no traduce una llamada a un método propio.
+            filas = filas.Where(f => f.ClienteVivo != null && Coincide(
+                !string.IsNullOrWhiteSpace(f.ClienteVivo.RazonSocial)
+                    ? f.ClienteVivo.RazonSocial
+                    : (f.ClienteVivo.Nombre + " " + (f.ClienteVivo.Apellido ?? string.Empty)).Trim(),
+                cliente));
+        }
+
+        return filas;
+    }
+
+    /// <summary>Orden de SQL, aplicado antes de paginar. Sin orden pedido: nombre. Una celda vacía (sin vincular, o
+    /// vinculada a un registro dado de baja) va al final en las dos direcciones.</summary>
+    private static IOrderedQueryable<FilaDePersonal> Ordenar(
+        IQueryable<FilaDePersonal> filas, OrdenDeListado<ColumnaDeOrdenDePersonal>? orden)
+    {
+        if (orden is null)
+        {
+            return filas.OrderBy(f => f.Personal.Nombre).ThenBy(f => f.Personal.Id);
+        }
+
+        var desc = orden.Value.Descendente;
+        var ordenadas = orden.Value.Columna switch
+        {
+            ColumnaDeOrdenDePersonal.ValorHora => desc
+                ? filas.OrderByDescending(f => f.Personal.ValorHora)
+                : filas.OrderBy(f => f.Personal.ValorHora),
+            ColumnaDeOrdenDePersonal.Saldo => desc
+                ? filas.OrderByDescending(f => f.Personal.Saldo)
+                : filas.OrderBy(f => f.Personal.Saldo),
+            ColumnaDeOrdenDePersonal.Usuario => desc
+                ? filas.OrderBy(f => f.NombreUsuario == null).ThenByDescending(f => f.NombreUsuario)
+                : filas.OrderBy(f => f.NombreUsuario == null).ThenBy(f => f.NombreUsuario),
+            ColumnaDeOrdenDePersonal.Cliente => desc
+                ? filas.OrderBy(f => f.ClienteVivo == null).ThenByDescending(f =>
+                    f.ClienteVivo == null ? null
+                    : !string.IsNullOrWhiteSpace(f.ClienteVivo.RazonSocial) ? f.ClienteVivo.RazonSocial
+                    : (f.ClienteVivo.Nombre + " " + (f.ClienteVivo.Apellido ?? string.Empty)).Trim())
+                : filas.OrderBy(f => f.ClienteVivo == null).ThenBy(f =>
+                    f.ClienteVivo == null ? null
+                    : !string.IsNullOrWhiteSpace(f.ClienteVivo.RazonSocial) ? f.ClienteVivo.RazonSocial
+                    : (f.ClienteVivo.Nombre + " " + (f.ClienteVivo.Apellido ?? string.Empty)).Trim()),
+            _ => desc
+                ? filas.OrderByDescending(f => f.Personal.Nombre)
+                : filas.OrderBy(f => f.Personal.Nombre),
+        };
+
+        return ordenadas.ThenBy(f => f.Personal.Id);
     }
 
     public async Task<PersonalListado> ObtenerAsync(int id, CancellationToken ct = default)
@@ -146,8 +317,16 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
     private static ErrorDominio SinPersonal(int id) =>
         ErrorDominio.NoEncontrado($"No existe el personal {id}.");
 
-    private record FilaDePersonal(
-        Personal Personal, int? IdUsuarioVivo, string? NombreUsuario, Cliente? ClienteVivo);
+    /// <summary>Se arma con inicializador de objeto y no con constructor posicional: EF resuelve
+    /// <c>fila.Personal.Nombre</c> de un inicializador, y no de un constructor, al filtrar y ordenar por encima del
+    /// join.</summary>
+    private sealed class FilaDePersonal
+    {
+        public required Personal Personal { get; init; }
+        public int? IdUsuarioVivo { get; init; }
+        public string? NombreUsuario { get; init; }
+        public Cliente? ClienteVivo { get; init; }
+    }
 
     /// <summary>LEFT JOIN: un usuario o cliente dado de baja deja de ser visible para el join y la
     /// fila se devuelve igual, sin ese vínculo.</summary>
@@ -157,7 +336,13 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, Guard
         from u in usuarios.DefaultIfEmpty()
         join c in db.Clientes on p.IdCliente equals c.Id into clientes
         from c in clientes.DefaultIfEmpty()
-        select new FilaDePersonal(p, u == null ? null : u.Id, u == null ? null : u.NombreUsuario, c);
+        select new FilaDePersonal
+        {
+            Personal = p,
+            IdUsuarioVivo = u == null ? null : u.Id,
+            NombreUsuario = u == null ? null : u.NombreUsuario,
+            ClienteVivo = c,
+        };
 
     private static PersonalListado Armar(FilaDePersonal fila)
     {

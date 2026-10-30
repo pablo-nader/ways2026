@@ -267,7 +267,15 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     })
 
     await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
-    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    // La tabla no se desmonta durante el refresco (sus filtros conservan el foco): las filas de antes quedan atenuadas
+    // y sus acciones siguen inertes hasta que el refresco aterrice.
+    expect(screen.getAllByRole('rowgroup')[1]).toHaveStyle({ opacity: '0.6' })
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
 
     await act(async () => {
       resolverRefresco(paginaFixture([otro]))
@@ -378,6 +386,8 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
 })
 
 const CONDICION_RI = { id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true }
+
+const BUSCADOR = 'Buscar por razón social, nombre de fantasía o CUIT…'
 
 function mockearConCondicion(items: ProveedorListado[] = [proveedorFixture()]) {
   mockearRutasBase((ruta) => {
@@ -819,7 +829,7 @@ describe('Proveedores — lectura en vuelo al guardar y término aplicado', () =
     expect(screen.getByText('Proveedor Uno SA')).toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `terminoVigente` en el refresco posterior a la escritura. El texto tipeado
+  /** Cláusula bajo prueba: `consultaRef` en el refresco posterior a la escritura. El texto tipeado
    * y todavía no enviado no viaja; el último término enviado, sí. */
   it.each([
     { enviado: '', tipeado: 'zzz', esperada: '/proveedores' },
@@ -835,12 +845,12 @@ describe('Proveedores — lectura en vuelo al guardar y término aplicado', () =
     renderProveedores()
     await screen.findByText('Proveedor Uno SA')
     if (enviado) {
-      await usuario.type(screen.getByRole('searchbox'), enviado)
+      await usuario.type(screen.getByPlaceholderText(BUSCADOR), enviado)
       await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
       await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(esperada))
     }
-    await usuario.clear(screen.getByRole('searchbox'))
-    await usuario.type(screen.getByRole('searchbox'), tipeado)
+    await usuario.clear(screen.getByPlaceholderText(BUSCADOR))
+    await usuario.type(screen.getByPlaceholderText(BUSCADOR), tipeado)
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByRole('option', { name: 'Responsable Inscripto' })
     await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')

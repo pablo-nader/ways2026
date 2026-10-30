@@ -40,13 +40,18 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
         int pagina = 1,
         int tamanio = 25,
         string? cuit = null,
+        FiltrosDeProveedores? filtros = null,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        // Antes de leer nada: un cuit que no tiene 11 dígitos es un pedido inválido aunque no haya filas.
+        // Antes de leer nada: un cuit que no tiene 11 dígitos o un orden desconocido es un pedido inválido aunque
+        // no haya filas.
         var digitosDelCuit = cuit is null ? null : ExigirDigitosDeCuit(cuit);
+        var ordenPedido = OrdenDeProveedores.Interpretar(orden, direccion);
 
         var query = db.Proveedores.AsQueryable();
 
@@ -72,10 +77,14 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
             query = ConCuit(query, digitosDelCuit);
         }
 
+        if (filtros is not null)
+        {
+            query = OrdenDeProveedores.Filtrar(query, filtros);
+        }
+
         var total = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderBy(p => p.RazonSocial)
+        var items = await OrdenDeProveedores.Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(p => Proyectar(p))

@@ -17,9 +17,29 @@ public static class ClientesEndpoints
             bool? incluirEliminados,
             int? pagina,
             int? tamanio,
+            int? numero,
+            string? nombre,
+            string? documento,
+            string? telefono,
+            string? email,
+            bool? activo,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(busqueda, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista clientes con búsqueda y paginado.");
+            servicio.ListarAsync(
+                busqueda,
+                incluirEliminados ?? false,
+                pagina ?? 1,
+                tamanio ?? 25,
+                new FiltrosDeClientes(numero, nombre, documento, telefono, email, activo),
+                orden,
+                direccion,
+                ct))
+        .WithSummary(
+            "Lista clientes con búsqueda, filtros por columna (numero y activo exactos; nombre, documento, " +
+            "telefono y email contienen el texto) y paginado. orden (numero, nombre, documento, telefono, " +
+            "email, estado) y direccion (ascendente, descendente) ordenan todo el resultado antes de paginar; " +
+            "un valor desconocido responde 400 orden_invalido o direccion_invalida.");
 
         grupo.MapGet("/{id:int}", (ServicioDeClientes servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))

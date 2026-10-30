@@ -1,8 +1,10 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Listados;
 using Ways.Application.Organizacion;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
@@ -56,9 +58,17 @@ public class ServicioDeUsuarios(
         bool incluirEliminados = false,
         int pagina = 1,
         int tamanio = 25,
+        FiltrosDeUsuarios? filtros = null,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
         ExigirPermisoDeGestion();
+
+        // Antes de leer nada: un pedido inválido lo es aunque no haya filas.
+        var ordenPedido = OrdenDeUsuarios.Interpretar(orden, direccion, Actor.EsDePlataforma);
+        var filtroDeEstado = ExigirEstadoDelFiltro(filtros?.Estado);
+        var filtroDeTenant = ExigirTenantDelFiltro(filtros?.Tenant);
 
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
@@ -80,10 +90,14 @@ public class ServicioDeUsuarios(
                 Coincide(u.NombreUsuario, patron) || Coincide(u.Mail, patron));
         }
 
+        if (filtros is not null)
+        {
+            query = Filtrar(query, filtros, filtroDeEstado, filtroDeTenant);
+        }
+
         var total = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderBy(u => u.RolId).ThenBy(u => u.NombreUsuario)
+        var items = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(u => new UsuarioListado(
@@ -103,6 +117,148 @@ public class ServicioDeUsuarios(
             .ToListAsync(ct);
 
         return new PaginaDe<UsuarioListado>(items, total, pagina, tamanio);
+    }
+
+    private readonly record struct FiltroDeTenant(bool SinTenant, int IdTenant);
+
+    private static EstadoUsuario? ExigirEstadoDelFiltro(string? estado)
+    {
+        if (string.IsNullOrWhiteSpace(estado))
+        {
+            return null;
+        }
+
+        // Los nombres exactos del enum (los que la web muestra y manda): "1" o "activo" no son estados.
+        return Enum.GetValues<EstadoUsuario>().Where(e => e.ToString() == estado).Cast<EstadoUsuario?>().FirstOrDefault()
+            ?? throw new ErrorDominio(
+                "estado_invalido",
+                $"estado '{estado}' no es válido; valores posibles: {string.Join(", ", Enum.GetNames<EstadoUsuario>())}.",
+                400);
+    }
+
+    /// <summary>El filtro por tenant es del actor de plataforma: para un actor de tenant la columna ni se muestra y
+    /// el listado ya está acotado a su tenant, así que aceptarlo y no aplicarlo sería un filtro que miente.</summary>
+    private FiltroDeTenant? ExigirTenantDelFiltro(string? tenant)
+    {
+        if (string.IsNullOrWhiteSpace(tenant))
+        {
+            return null;
+        }
+
+        if (!Actor.EsDePlataforma)
+        {
+            throw new ErrorDominio(
+                "filtro_tenant_no_permitido", "El rol actual no puede filtrar por tenant.", 400);
+        }
+
+        if (tenant == OrdenDeUsuarios.ValorSinTenant)
+        {
+            return new FiltroDeTenant(true, 0);
+        }
+
+        if (int.TryParse(tenant, NumberStyles.None, CultureInfo.InvariantCulture, out var id))
+        {
+            return new FiltroDeTenant(false, id);
+        }
+
+        throw new ErrorDominio(
+            "tenant_invalido",
+            $"tenant '{tenant}' no es válido; valores posibles: el id de un tenant o {OrdenDeUsuarios.ValorSinTenant}.",
+            400);
+    }
+
+    private IQueryable<Usuario> Filtrar(
+        IQueryable<Usuario> query, FiltrosDeUsuarios filtros, EstadoUsuario? estado, FiltroDeTenant? tenant)
+    {
+        if (filtros.Id is int id)
+        {
+            query = query.Where(u => u.Id == id);
+        }
+
+        if (FiltrosDeListado.PatronONulo(filtros.Usuario) is { } usuario)
+        {
+            query = query.Where(u => Coincide(u.NombreUsuario, usuario));
+        }
+
+        if (FiltrosDeListado.PatronONulo(filtros.Mail) is { } mail)
+        {
+            query = query.Where(u => Coincide(u.Mail, mail));
+        }
+
+        if (tenant is { SinTenant: true })
+        {
+            query = query.Where(u => u.IdTenant == null);
+        }
+        else if (tenant is { } porId)
+        {
+            // Solo un tenant visible: el id de uno dado de baja no coincide con nada, igual que en cualquier otro
+            // filtro por referencia. El `DeletedAt == null` va explícito porque `incluirEliminados` apaga el filtro.
+            var idTenant = porId.IdTenant;
+            query = query.Where(u =>
+                u.IdTenant == idTenant && db.Tenants.Any(t => t.Id == idTenant && t.DeletedAt == null));
+        }
+
+        if (filtros.RolId is int rolId)
+        {
+            query = query.Where(u => u.RolId == rolId);
+        }
+
+        if (estado is { } porEstado)
+        {
+            query = query.Where(u => u.Estado == porEstado);
+        }
+
+        if (filtros.Conectado is bool conectado)
+        {
+            query = query.Where(u => (u.UltimaConexion != null) == conectado);
+        }
+
+        return query;
+    }
+
+    /// <summary>Orden de SQL, aplicado antes de paginar. Sin orden pedido: rol y luego usuario. Una celda vacía (sin
+    /// última conexión) va al final en las dos direcciones. Tenant, rol y estado ordenan por el texto que muestra la
+    /// celda: la cuenta sin tenant es "Plataforma" y la de un tenant dado de baja "—".</summary>
+    private IOrderedQueryable<Usuario> Ordenar(
+        IQueryable<Usuario> query, OrdenDeListado<ColumnaDeOrdenDeUsuarios>? orden)
+    {
+        if (orden is null)
+        {
+            // `usuario` es único por tenant y no global: sin el id, dos cuentas de tenants distintos empatan y la
+            // paginación puede repetir o saltear filas.
+            return query.OrderBy(u => u.RolId).ThenBy(u => u.NombreUsuario).ThenBy(u => u.Id);
+        }
+
+        var desc = orden.Value.Descendente;
+        var ordenado = orden.Value.Columna switch
+        {
+            ColumnaDeOrdenDeUsuarios.Id => desc ? query.OrderByDescending(u => u.Id) : query.OrderBy(u => u.Id),
+            ColumnaDeOrdenDeUsuarios.Usuario => desc
+                ? query.OrderByDescending(u => u.NombreUsuario)
+                : query.OrderBy(u => u.NombreUsuario),
+            ColumnaDeOrdenDeUsuarios.Mail => desc ? query.OrderByDescending(u => u.Mail) : query.OrderBy(u => u.Mail),
+            ColumnaDeOrdenDeUsuarios.Tenant => desc
+                ? query.OrderByDescending(u => u.IdTenant == null
+                    ? OrdenDeUsuarios.EtiquetaPlataforma
+                    : db.Tenants.Where(t => t.Id == u.IdTenant && t.DeletedAt == null).Select(t => t.Nombre).FirstOrDefault()
+                        ?? OrdenDeUsuarios.EtiquetaSinDuenio)
+                : query.OrderBy(u => u.IdTenant == null
+                    ? OrdenDeUsuarios.EtiquetaPlataforma
+                    : db.Tenants.Where(t => t.Id == u.IdTenant && t.DeletedAt == null).Select(t => t.Nombre).FirstOrDefault()
+                        ?? OrdenDeUsuarios.EtiquetaSinDuenio),
+            ColumnaDeOrdenDeUsuarios.Rol => desc
+                ? query.OrderByDescending(u => u.Rol!.Nombre)
+                : query.OrderBy(u => u.Rol!.Nombre),
+            ColumnaDeOrdenDeUsuarios.Estado => desc
+                ? query.OrderByDescending(OrdenDeUsuarios.EtiquetaDeEstado)
+                : query.OrderBy(OrdenDeUsuarios.EtiquetaDeEstado),
+            ColumnaDeOrdenDeUsuarios.UltimaConexion => desc
+                ? query.OrderBy(u => u.UltimaConexion == null).ThenByDescending(u => u.UltimaConexion)
+                : query.OrderBy(u => u.UltimaConexion == null).ThenBy(u => u.UltimaConexion),
+            _ => query.OrderBy(u => u.RolId),
+        };
+
+        return ordenado.ThenBy(u => u.Id);
     }
 
     public async Task<UsuarioListado> ObtenerAsync(int id, CancellationToken ct = default)

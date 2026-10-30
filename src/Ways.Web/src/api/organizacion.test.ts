@@ -33,6 +33,16 @@ function filaPv(
   return { idTenant, nombreTenant, idEmpresa, razonSocialEmpresa }
 }
 
+/** `GET /api/usuarios` ordena la columna Tenant por estos dos textos (`OrdenDeUsuarios.EtiquetaPlataforma` y
+ * `EtiquetaSinDuenio`); el test de `ServicioDeUsuariosOrden` del lado del servidor
+ * (`LasEtiquetasDeEstadoSonLosNombresDelEnumQueLaWebMuestra`) fija los mismos literales. Cambiar uno sin el otro rompe el orden. */
+describe('las etiquetas de tenant que el servidor repite para ordenar', () => {
+  it('son los literales Plataforma y —', () => {
+    expect(ETIQUETA_PLATAFORMA).toBe('Plataforma')
+    expect(ETIQUETA_SIN_DUENIO).toBe('—')
+  })
+})
+
 describe('etiquetaDeTenant', () => {
   it('rinde el literal "Plataforma" cuando idTenant es null', () => {
     expect(etiquetaDeTenant(fila(null, null))).toBe(ETIQUETA_PLATAFORMA)
