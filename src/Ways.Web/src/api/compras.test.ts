@@ -4,7 +4,9 @@ import {
   calcularTotalesDeCompra,
   costoDeLineaIncluyeIva,
   construirQueryDeCompras,
+  claseDeBadgeDeEstadoPagoDeLista,
   construirQueryDeDuplicados,
+  etiquetaDeEstadoPagoDeLista,
   esBorradorCargadoPorElAsistente,
   etiquetaDeEstadoCompra,
   filtrosDeComprasVacios,
@@ -283,6 +285,48 @@ describe('esBorradorCargadoPorElAsistente', () => {
 
   it('sin compra cargada no hay aviso', () => {
     expect(esBorradorCargadoPorElAsistente(null)).toBe(false)
+  })
+})
+
+describe('construirQueryDeCompras — filtros de la grilla', () => {
+  it('sin filtros nuevos no manda ninguno de sus parámetros', () => {
+    const query = construirQueryDeCompras(filtrosDeComprasVacios())
+    for (const clave of ['numero', 'idTipoComprobante', 'estadoPago', 'fechaComprobante']) expect(query).not.toContain(clave)
+  })
+
+  it('numero, tipo y estado de pago viajan tal cual; el número se recorta', () => {
+    const params = new URLSearchParams(
+      construirQueryDeCompras({ ...filtrosDeComprasVacios(), numero: '  0003-1 ', idTipoComprobante: 5, estadoPago: 'pendiente' }),
+    )
+    expect(params.get('numero')).toBe('0003-1')
+    expect(params.get('idTipoComprobante')).toBe('5')
+    expect(params.get('estadoPago')).toBe('pendiente')
+  })
+
+  it('un número en blanco no se manda', () => {
+    expect(construirQueryDeCompras({ ...filtrosDeComprasVacios(), numero: '   ' })).not.toContain('numero')
+  })
+
+  it('la fecha del comprobante viaja como fecha de calendario, sin offset horario', () => {
+    const params = new URLSearchParams(
+      construirQueryDeCompras({ ...filtrosDeComprasVacios(), fechaComprobanteDesde: '2026-07-01', fechaComprobanteHasta: '2026-07-31' }),
+    )
+    expect(params.get('fechaComprobanteDesde')).toBe('2026-07-01')
+    expect(params.get('fechaComprobanteHasta')).toBe('2026-07-31')
+    expect(params.has('desde')).toBe(false)
+  })
+})
+
+describe('etiquetas del estado de pago de la lista', () => {
+  it('Pagada se muestra Pagado en verde y Pendiente en ámbar, con textos distintos', () => {
+    expect(etiquetaDeEstadoPagoDeLista('Pagada')).toBe('Pagado')
+    expect(etiquetaDeEstadoPagoDeLista('Pendiente')).toBe('Pendiente')
+    expect(claseDeBadgeDeEstadoPagoDeLista('Pagada')).toBe('text-bg-success')
+    expect(claseDeBadgeDeEstadoPagoDeLista('Pendiente')).toBe('text-bg-warning')
+  })
+
+  it('una compra sin estado de pago no tiene etiqueta', () => {
+    expect(etiquetaDeEstadoPagoDeLista(null)).toBeNull()
   })
 })
 
