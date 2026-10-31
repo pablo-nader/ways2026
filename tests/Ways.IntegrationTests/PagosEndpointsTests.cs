@@ -16,8 +16,8 @@ using Ways.Infrastructure.Multitenancy;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// stage-6-turnos-caja, Slice 3 (tasks 3.2, 3.3, 3.5): <c>POST /api/gastos</c>, <c>GET
-/// /api/gastos</c> punta a punta — captura contra el turno abierto resuelto server-side
+/// stage-6-turnos-caja, Slice 3 (tasks 3.2, 3.3, 3.5): <c>POST /api/pagos</c>, <c>GET
+/// /api/pagos</c> punta a punta — captura contra el turno abierto resuelto server-side
 /// (<c>ServicioDeTurnos.ResolverTurnoAbiertoAsync</c> compartido), importe positivo y
 /// autorización <c>OperacionDePos</c> (spec: pagos).
 /// </summary>
@@ -95,19 +95,19 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Servicios, null, null, "Internet del local", null,
                 ctx.IdMedioPago, null, 300m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
-        var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
+        var pago = JsonSerializer.Deserialize<PagoConLineas>(cuerpo, OpcionesJson)!;
         Assert.Equal(CategoriaPago.Servicios, pago.Categoria);
-        Assert.Equal(ctx.IdMedioPago, pago.IdMedioPago);
+        Assert.Equal([(ctx.IdMedioPago, 300m)], pago.Lineas.Select(l => (l.IdMedioPago, l.Importe)));
         Assert.Equal(300m, pago.Importe);
         // spec: Pago succeeds with an open turno — id_turno_caja resuelto server-side, nunca
-        // client-supplied (SolicitudDePago no tiene ese campo).
+        // client-supplied (SolicitudDePagoConLineas no tiene ese campo).
         Assert.Equal(turno.Id, pago.IdTurnoCaja);
 
         // E2-S1: escritura doble, exactamente un ítem con el medio y el importe de la cabecera.
@@ -123,8 +123,8 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var ctx = await PrepararAsync(nameof(UnPagoSinTurnoAbiertoSeRechaza));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto sin turno", null,
                 ctx.IdMedioPago, null, 100m));
 
@@ -139,8 +139,8 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var ctx = await PrepararAsync(nameof(UnPagoContraUnPuntoDeVentaInexistenteDevuelve404));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 999999, CategoriaPago.Otros, null, null, "Gasto contra PV apócrifo", null,
                 ctx.IdMedioPago, null, 100m));
 
@@ -156,14 +156,14 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto en cero", null,
                 ctx.IdMedioPago, null, 0m));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("gasto_importe_invalido", problema.GetProperty("codigo").GetString());
+        Assert.Equal("pago_linea_importe_invalido", problema.GetProperty("codigo").GetString());
     }
 
     // ---- concepto obligatorio (mutation-proof-tests: ExigirConceptoValido) -----------------------
@@ -178,8 +178,8 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "   ", null,
                 ctx.IdMedioPago, null, 100m));
 
@@ -191,20 +191,18 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     // ---- pre-checks de FK: referencias inválidas nunca llegan como 500 --------------------------
 
     [Fact]
-    public async Task UnPagoConMedioDePagoInexistenteEsRechazadoCon400()
+    public async Task UnPagoConMedioDePagoInexistenteEsRechazadoConNoEncontrado()
     {
-        var ctx = await PrepararAsync(nameof(UnPagoConMedioDePagoInexistenteEsRechazadoCon400));
+        var ctx = await PrepararAsync(nameof(UnPagoConMedioDePagoInexistenteEsRechazadoConNoEncontrado));
         await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Medio de pago apócrifo", null,
                 999999, null, 100m));
 
-        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
-        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
     // stage-gasto-a-compra (PR4), judgment-day PR3 follow-up: antes de este chequeo, un
@@ -221,8 +219,8 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, 999999, null, "Proveedor apócrifo", null,
                 ctx.IdMedioPago, null, 100m));
 
@@ -239,8 +237,8 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await AbrirTurnoAsync(vendedor, ctx.IdPuntoVenta);
 
         var respuesta = await vendedor.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Viaticos, null, null, "Viáticos de reparto", null,
                 ctx.IdMedioPago, null, 150m));
 
@@ -259,15 +257,15 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var respuesta = await root.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Intento de root", null,
                 ctx.IdMedioPago, null, 100m));
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
-    // ---- historial paginado (GET /api/gastos) ------------------------------------------------------
+    // ---- historial paginado (GET /api/pagos) ------------------------------------------------------
 
     [Fact]
     public async Task ElHistorialPaginaYFiltraPorPuntoDeVenta()
@@ -278,15 +276,15 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         foreach (var importe in new[] { 100m, 200m })
         {
             var respuesta = await ctx.Admin.PostAsJsonAsync(
-                "/api/gastos",
-                new SolicitudDePago(
+                "/api/pagos",
+                PagoDeUnMedio.Pos(
                     ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de historial", null,
                     ctx.IdMedioPago, null, importe));
             Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         }
 
         var pagina = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>(
-            $"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
+            $"/api/pagos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
         Assert.NotNull(pagina);
         Assert.Equal(2, pagina!.Total);
         Assert.All(pagina.Items, item => Assert.Equal(ctx.IdPuntoVenta, item.IdPuntoVenta));
@@ -301,7 +299,7 @@ public class PagosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     {
         using var cliente = fixture.CreateClient();
 
-        var respuesta = await cliente.GetAsync("/api/gastos?idPuntoVenta=1");
+        var respuesta = await cliente.GetAsync("/api/pagos?idPuntoVenta=1");
 
         Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
     }

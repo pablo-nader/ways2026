@@ -127,11 +127,11 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         Contexto ctx, decimal importe, int? idComprobanteCompra, CategoriaPago categoria = CategoriaPago.Proveedor,
         int? idProveedor = null, int? idEmpresa = null, int? idPuntoVenta = null)
     {
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), idEmpresa ?? ctx.IdEmpresa, idPuntoVenta ?? ctx.IdPuntoVenta, categoria,
             idProveedor ?? (categoria == CategoriaPago.Proveedor ? ctx.IdProveedor : null), null,
             "Pago de prueba", null, ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -140,9 +140,10 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
     private static async Task<string> CodigoDeErrorAsync(HttpResponseMessage respuesta) =>
         JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement.GetProperty("codigo").GetString()!;
 
-    private static SolicitudDeEdicionDePago Edicion(
+    private static SolicitudDeEdicionDePagoConLineas Edicion(
         Contexto ctx, decimal importe, int? idProveedor = null) =>
-        new(CategoriaPago.Proveedor, idProveedor ?? ctx.IdProveedor, null, "Concepto editado", null,
+        PagoDeUnMedio.Edicion(
+            CategoriaPago.Proveedor, idProveedor ?? ctx.IdProveedor, null, "Concepto editado", null,
             ctx.IdMedioEfectivo, null, importe);
 
     private async Task<List<AplicacionPago>> AplicacionesDelPagoAsync(Contexto ctx, int idPago)
@@ -195,8 +196,8 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(HttpStatusCode.Created, turno.StatusCode);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago del POS", null,
                 ctx.IdMedioEfectivo, null, 120m, compra.Id));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -235,7 +236,7 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         var sinCompra = await AltaAdminAsync(ctx, 500m, idComprobanteCompra: null);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{sinCompra.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{sinCompra.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
 
         var aplicacion = Assert.Single(await AplicacionesDelPagoAsync(ctx, sinCompra.Id));
@@ -274,10 +275,10 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var (idOtraEmpresa, idOtroPuntoVenta) = await SembrarOtraEmpresaAsync(ctx);
 
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), idOtraEmpresa, idOtroPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
             "Pago de otra empresa", null, ctx.IdMedioEfectivo, null, 100m, compra.Id);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.Equal("compra_de_otra_empresa", await CodigoDeErrorAsync(respuesta));
@@ -354,7 +355,7 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var pago = await AltaAdminAsync(ctx, 300m, compra.Id);
 
-        var respuesta = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{pago.Id}");
+        var respuesta = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{pago.Id}");
         Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
 
         var aplicacion = Assert.Single(await AplicacionesDelPagoAsync(ctx, pago.Id));
@@ -371,7 +372,7 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
 
     private static async Task EditarOkAsync(Contexto ctx, int idPago, decimal importe)
     {
-        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{idPago}", Edicion(ctx, importe));
+        var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/pagos/administracion/{idPago}", Edicion(ctx, importe));
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
     }
 
@@ -478,7 +479,7 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
 
     private static async Task BajaOkAsync(Contexto ctx, int idPago)
     {
-        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{idPago}");
         Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
     }
 
@@ -577,10 +578,10 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         await AplicarPagoOkAsync(ctx, pago.Id, compra.Id, 200m);
 
         var otroProveedor = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{pago.Id}", Edicion(ctx, 300m, idProveedor: ctx.IdProveedor2));
+            $"/api/pagos/administracion/{pago.Id}", Edicion(ctx, 300m, idProveedor: ctx.IdProveedor2));
         var otraCategoria = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{pago.Id}",
-            new SolicitudDeEdicionDePago(
+            $"/api/pagos/administracion/{pago.Id}",
+            PagoDeUnMedio.Edicion(
                 CategoriaPago.Otros, null, null, "Concepto editado", null, ctx.IdMedioEfectivo, null, 300m));
 
         Assert.Equal(HttpStatusCode.BadRequest, otroProveedor.StatusCode);
@@ -665,7 +666,7 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
         var pago = await AltaAdminAsync(ctx, 300m, compra.Id);
 
         var respuesta = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{pago.Id}", Edicion(ctx, 300m, idProveedor: ctx.IdProveedor2));
+            $"/api/pagos/administracion/{pago.Id}", Edicion(ctx, 300m, idProveedor: ctx.IdProveedor2));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.Equal("proveedor_no_coincide_con_la_compra", await CodigoDeErrorAsync(respuesta));
@@ -687,8 +688,8 @@ public class AplicacionesDePagoEscritoresTests(WaysApiFixture fixture) : IClassF
             {
                 puerta.SignalAndWait(TimeSpan.FromSeconds(10));
                 return await ctx.Admin.PostAsJsonAsync(
-                    "/api/gastos/administracion",
-                    new SolicitudDePagoDeAdministracion(
+                    "/api/pagos/administracion",
+                    PagoDeUnMedio.Administracion(
                         FechaDelNegocio.Hoy(), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor,
                         null, "Pago concurrente", null, ctx.IdMedioEfectivo, null, importe, compra.Id));
             })));

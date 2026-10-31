@@ -19,7 +19,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// stage-gastos-origen-fondos-pos (PR2): <c>SolicitudDePago.OrigenFondos</c> punta a punta —
+/// stage-gastos-origen-fondos-pos (PR2): <c>SolicitudDePagoConLineas.OrigenFondos</c> punta a punta —
 /// <see cref="OrigenFondosPago.Tesoreria"/> escribe su propio <see cref="MovimientoTesoreria"/>
 /// encadenado (mismo protocolo que el cierre, vía <see cref="EscriturasDeTesoreria"/>), queda
 /// EXCLUIDO de todo cálculo de arqueo, y el cierre deja de restar pagos de la tesorería (spec:
@@ -82,10 +82,10 @@ public class PagosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFix
         Contexto ctx, int idMedioPago, decimal importe, OrigenFondosPago origenFondos, string concepto = "Gasto de prueba")
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, concepto, null, idMedioPago, null, importe,
-                IdComprobanteCompra: null, OrigenFondos: origenFondos));
+                idComprobanteCompra: null, origenFondos: origenFondos));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -100,8 +100,8 @@ public class PagosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFix
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Sin origen explícito", null,
                 ctx.IdMedioEfectivo, null, 100m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -286,7 +286,7 @@ public class PagosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFix
         await RegistrarPagoAsync(ctx, ctx.IdMedioEfectivo, 70m, OrigenFondosPago.Tesoreria);
 
         var pagina = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>(
-            $"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
+            $"/api/pagos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
         Assert.NotNull(pagina);
         Assert.Equal(2, pagina!.Total);
         Assert.Contains(pagina.Items, i => i.Importe == 50m && i.OrigenFondos == OrigenFondosPago.CajaTurno);
@@ -352,10 +352,10 @@ public class PagosOrigenFondosTesoreriaTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(HttpStatusCode.OK, loginPausado.StatusCode);
 
         var tareaPago = clientePausado.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de tesorería concurrente", null,
-                ctx.IdMedioEfectivo, null, 60m, IdComprobanteCompra: null, OrigenFondos: OrigenFondosPago.Tesoreria));
+                ctx.IdMedioEfectivo, null, 60m, idComprobanteCompra: null, origenFondos: OrigenFondosPago.Tesoreria));
 
         await transaccionIniciada.Task;
 

@@ -155,9 +155,6 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     private static ComandoDeEdicionDePago Edicion(params LineaDePago[] lineas) =>
         new(CategoriaPago.Otros, null, null, "Concepto editado", null, lineas, null);
 
-    private static async Task<string> CodigoAsync(HttpResponseMessage respuesta) =>
-        JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement.GetProperty("codigo").GetString()!;
-
     private static async Task<List<ItemPago>> ItemsVivosAsync(WaysDbContext db, int idPago) =>
         await db.ItemsPago.Where(i => i.IdPago == idPago).OrderBy(i => i.Id).ToListAsync();
 
@@ -354,40 +351,6 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(1, JsonDocument.Parse(auditoria[1].ValorNuevo).RootElement.GetProperty("lineas").GetArrayLength());
     }
 
-    // ---- compatibilidad de las rutas actuales ------------------------------------------------------
-
-    /// <summary>Las rutas actuales solo conocen un medio: editar por ahí un pago de dos ítems responde 409 y no cambia
-    /// nada (ni cabecera, ni ítems, ni ajustes), en vez de colapsar las líneas.</summary>
-    [Fact]
-    public async Task LaRutaActualNoEditaUnPagoConVariosMediosYNoCambiaNada()
-    {
-        var ctx = await PrepararAsync(nameof(LaRutaActualNoEditaUnPagoConVariosMediosYNoCambiaNada));
-        await AbrirTurnoAsync(ctx, 1000m);
-
-        PagoRegistrado pago;
-        await using (var db = Db(ctx))
-        {
-            pago = await ConServicioAsync(ctx, db, s => s.RegistrarAsync(ComandoPos(
-                ctx, new LineaDePago(ctx.IdEfectivo, 60m, null), new LineaDePago(ctx.IdElectronico, 40m, null))));
-        }
-
-        var edicion = new SolicitudDeEdicionDePago(CategoriaPago.Otros, null, null, "Otro concepto", null, ctx.IdEfectivo, null, 100m);
-        foreach (var ruta in new[] { $"/api/gastos/{pago.Id}", $"/api/gastos/administracion/{pago.Id}" })
-        {
-            var respuesta = await ctx.Admin.PutAsJsonAsync(ruta, edicion);
-            Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
-            Assert.Equal("gasto_con_varios_medios", await CodigoAsync(respuesta));
-        }
-
-        await using var lectura = Db(ctx);
-        var cabecera = await lectura.Pagos.SingleAsync(p => p.Id == pago.Id);
-        Assert.Equal(("Gasto con líneas", 100m), (cabecera.Concepto, cabecera.Importe));
-        Assert.Equal(
-            [(ctx.IdEfectivo, 60m), (ctx.IdElectronico, 40m)],
-            (await ItemsVivosAsync(lectura, pago.Id)).Select(i => (i.IdMedioPago, i.Importe)));
-        Assert.Empty(await lectura.Auditoria.Where(a => a.Accion == "pago.edicion" && a.IdEntidad == pago.Id).ToListAsync());
-    }
-
     // ---- E2-S3b: el medio vive solo en los ítems ---------------------------------------------
 
     /// <summary>El detalle del turno y el historial siguen exponiendo un solo medio por pago (el de la primera línea, el ítem
@@ -412,7 +375,7 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var detalle = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/caja/turnos/{idTurno}/detalle");
         var enElDetalle = detalle.GetProperty("gastos").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
 
-        var historial = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}");
+        var historial = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/pagos?idPuntoVenta={ctx.IdPuntoVenta}");
         var enElHistorial = historial.GetProperty("items").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
 
         await using var lectura = Db(ctx);
@@ -449,9 +412,9 @@ public class PagosConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             idPago = pago.Id;
         }
 
-        var listado = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}");
+        var listado = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/pagos/administracion?idEmpresa={ctx.IdEmpresa}");
         var enLaLista = listado.GetProperty("items").EnumerateArray().Single(g => g.GetProperty("id").GetInt32() == idPago);
-        var porId = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/gastos/administracion/{idPago}");
+        var porId = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/pagos/administracion/{idPago}");
 
         await using var lectura = Db(ctx);
         var idsDeItems = (await ItemsVivosAsync(lectura, idPago)).Select(i => i.Id).ToList();
