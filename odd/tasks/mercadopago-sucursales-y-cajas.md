@@ -124,5 +124,13 @@ nullable, no RLS or backfill impact) and a doc 10 section 07 update, contrary to
 
 ## Next step
 
-T2 waits for #557 and T3+ depend on T2, so nothing else starts before #557 lands. After this fix commit the T1 delta goes to a scoped
-judgment-day re-judgment (frozen findings plus the fix delta).
+T2 waits for #557 and T3+ depend on T2, so nothing else starts before #557 lands.
+
+## Judgment-day T1 verdict
+
+- 2026-10-31: **APPROVED** after round one. Both judges confirmed E2T1-1 (no renewal backoff) and E2T1-2 (unguarded
+  error-body read); fixed in afa5bf5a; the scoped re-judgment of the delta came back clean from both. RDD is off.
+- Suspect (judge A only, not auto-fixed): a stale 401 whose guarded wipe touches nothing (a renewal already rotated the
+  token) still answers `mercadopago_requiere_reconexion` on a healthy connection; it should retry once with the fresh
+  token or answer `mercadopago_no_disponible`. Pick it up in T3, where the first write calls appear.
+- Info: a non-GET call without an idempotency key is allowed; T3/T4 must always pass one.
