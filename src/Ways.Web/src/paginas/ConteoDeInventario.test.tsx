@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConteoDeInventario } from './ConteoDeInventario'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoConteo, StockActual, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoConteo, StockActual, SucursalListado, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -47,6 +47,18 @@ vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
+function sucursalFixture(sobrescribir: Partial<SucursalListado> = {}): SucursalListado {
+  return {
+    id: 7,
+    idTenant: 1,
+    idEmpresa: 1,
+    nombre: 'Sucursal Central',
+    razonSocialEmpresa: 'Empresa Demo',
+    cantidadPuntosVenta: 1,
+    ...sobrescribir,
+  }
+}
+
 function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaListado {
   return {
     id: 1,
@@ -62,6 +74,8 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
     nombreTenant: 'Tenant Demo',
     razonSocialEmpresa: 'Empresa Demo',
     modo: 'Web',
+    idSucursal: 7,
+    nombreSucursal: 'Sucursal Central',
     ...sobrescribir,
   }
 }
@@ -124,6 +138,7 @@ function renderConteoProtegido() {
 function mockearBase(stockActual: StockActual, sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+    if (ruta === '/sucursales') return Promise.resolve([sucursalFixture()])
     if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
     if (ruta.startsWith('/stock?')) return Promise.resolve(stockActual)
     const propia = sobrescribirGet?.(ruta)
@@ -159,6 +174,7 @@ function mockearBaseConLote(
 ) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+    if (ruta === '/sucursales') return Promise.resolve([sucursalFixture()])
     if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
     if (ruta.startsWith('/stock?')) return Promise.resolve(stockActual)
     if (ruta.startsWith('/stock/lotes?')) return Promise.resolve(lotes)
@@ -167,8 +183,8 @@ function mockearBaseConLote(
   })
 }
 
-async function elegirPuntoVentaYArticulo(usuario: ReturnType<typeof userEvent.setup>) {
-  await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '1')
+async function elegirSucursalYArticulo(usuario: ReturnType<typeof userEvent.setup>) {
+  await usuario.selectOptions(screen.getByLabelText('Sucursal'), '7')
   await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'fideos')
   await screen.findByText('ART-10 — Fideos 500g')
   await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
@@ -181,7 +197,7 @@ beforeEach(() => {
 })
 
 describe('ConteoDeInventario — flujo feliz', () => {
-  it('muestra el stock actual al elegir punto de venta + artículo; doble click manda un solo POST y un conteo mayor produce un delta positivo', async () => {
+  it('muestra el stock actual al elegir sucursal + artículo; doble click manda un solo POST y un conteo mayor produce un delta positivo', async () => {
     mockearBase({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
     let resolverContar: (valor: ResultadoConteo) => void = () => {}
     apiPostMock.mockImplementation((ruta: string) => {
@@ -191,8 +207,8 @@ describe('ConteoDeInventario — flujo feliz', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
 
     await screen.findByText('40')
 
@@ -223,8 +239,8 @@ describe('ConteoDeInventario — flujo feliz', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('40')
 
     await usuario.type(screen.getByLabelText('Cantidad contada'), '40')
@@ -244,8 +260,8 @@ describe('ConteoDeInventario — flujo feliz', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('40')
 
     await usuario.type(screen.getByLabelText('Cantidad contada'), '33')
@@ -267,8 +283,8 @@ describe('ConteoDeInventario — flujo feliz', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('40')
 
     await usuario.type(screen.getByLabelText('Cantidad contada'), '40')
@@ -286,8 +302,8 @@ describe('ConteoDeInventario — validaciones', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await usuario.type(screen.getByLabelText('Cantidad contada'), '45')
 
     expect(screen.getByRole('button', { name: 'Contar' })).toBeDisabled()
@@ -298,8 +314,8 @@ describe('ConteoDeInventario — validaciones', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await usuario.type(screen.getByLabelText('Cantidad contada'), '-1')
     await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
 
@@ -308,6 +324,45 @@ describe('ConteoDeInventario — validaciones', () => {
 })
 
 describe('ConteoDeInventario — errores del servidor', () => {
+  it('un fallo al cargar sucursales muestra un aviso y bloquea el envío', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/sucursales') return Promise.reject(new Error('caído'))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+
+    renderConteo()
+
+    expect(await screen.findByText(/No se pudieron cargar las sucursales\./)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Contar' })).toBeDisabled()
+  })
+
+  it('el selector ofrece solo sucursales con cajas y cuenta contra la caja de referencia de la elegida', async () => {
+    const vacia = sucursalFixture({ id: 8, nombre: 'Depósito vacío', cantidadPuntosVenta: 0 })
+    const segunda = sucursalFixture({ id: 9, nombre: 'Sucursal Norte', cantidadPuntosVenta: 2 })
+    const cajaNorteTardia = puntoVentaFixture({ id: 22, nombre: 'Caja 2', idSucursal: 9, nombreSucursal: 'Sucursal Norte' })
+    const cajaNorte = puntoVentaFixture({ id: 21, nombre: 'Caja 1', idSucursal: 9, nombreSucursal: 'Sucursal Norte' })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture(), cajaNorteTardia, cajaNorte])
+      if (ruta === '/sucursales') return Promise.resolve([sucursalFixture(), vacia, segunda])
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/stock?')) return Promise.resolve({ idPuntoVenta: 21, idArticulo: 10, cantidad: 3 })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+    renderConteo()
+
+    const selector = await screen.findByLabelText('Sucursal')
+    await waitFor(() => expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Elegir…', 'Sucursal Central', 'Sucursal Norte']))
+
+    await usuario.selectOptions(selector, '9')
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'fideos')
+    await usuario.click(await screen.findByText('ART-10 — Fideos 500g'))
+
+    // La caja de referencia es la de menor id de la sucursal, no la primera que devuelve el listado.
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/stock?idPuntoVenta=21&idArticulo=10'))
+  })
+
   it('un fallo al cargar puntos de venta muestra un aviso y bloquea el envío', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/puntos-venta') return Promise.reject(new Error('caído'))
@@ -340,8 +395,8 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
 
     await screen.findByText('2026-08-20')
     expect(screen.getByText('2026-09-01')).toBeInTheDocument()
@@ -354,8 +409,8 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('2026-08-20')
 
     await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento por lote')
@@ -370,8 +425,8 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('2026-08-20')
 
     expect(screen.getByText('2 lote(s) sin contar — no se van a incluir en el conteo.')).toBeInTheDocument()
@@ -401,8 +456,8 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('2026-08-20')
 
     await usuario.type(screen.getByLabelText('Contada del lote 2026-08-20'), '22')
@@ -427,8 +482,8 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
 
     expect(screen.queryByText('Conteo por lote')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Cantidad contada')).toBeInTheDocument()
@@ -448,8 +503,8 @@ describe('ConteoDeInventario — control efectivo de lote (judgment-day fix, ron
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
 
     // el AND con `lotes_habilitado=false` cae al agregado: nunca la grilla por lote, aunque el
     // artículo tenga `controlaLote: true` — antes del fix, esto quedaba en un grid vacío sin
@@ -475,8 +530,8 @@ describe('ConteoDeInventario — control efectivo de lote (judgment-day fix, ron
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
 
     await screen.findByText('2026-08-20')
     expect(screen.queryByLabelText('Cantidad contada')).not.toBeInTheDocument()
@@ -486,6 +541,7 @@ describe('ConteoDeInventario — control efectivo de lote (judgment-day fix, ron
     // `mockearBaseConLote` con la ruta de `lotes_habilitado` sobrescrita a un reject.
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/sucursales') return Promise.resolve([sucursalFixture()])
       if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
       if (ruta.startsWith('/stock?')) return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
       if (ruta.startsWith('/parametros/lotes_habilitado')) return Promise.reject(new Error('caído'))
@@ -494,8 +550,8 @@ describe('ConteoDeInventario — control efectivo de lote (judgment-day fix, ron
     const usuario = userEvent.setup()
 
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
 
     // Fetch fallido → `lotesHabilitado` se queda en `null` → default agregado (honesto, mismo
     // default que el servidor), nunca un dead-end.
@@ -508,6 +564,7 @@ describe('ConteoDeInventario — cantidad contada según la unidad de venta', ()
   function mockearConArticulo(unidadVenta: 'Unidad' | 'Peso') {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/sucursales') return Promise.resolve([sucursalFixture()])
       if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ unidadVenta })], total: 1, pagina: 1, tamanio: 25 })
       if (ruta.startsWith('/stock?')) return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -518,8 +575,8 @@ describe('ConteoDeInventario — cantidad contada según la unidad de venta', ()
     mockearConArticulo('Unidad')
     const usuario = userEvent.setup()
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('40')
 
     const contada = screen.getByLabelText('Cantidad contada')
@@ -540,8 +597,8 @@ describe('ConteoDeInventario — cantidad contada según la unidad de venta', ()
     mockearConArticulo('Peso')
     const usuario = userEvent.setup()
     renderConteo()
-    await screen.findByLabelText('Punto de venta')
-    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByLabelText('Sucursal')
+    await elegirSucursalYArticulo(usuario)
     await screen.findByText('40')
 
     const contada = screen.getByLabelText('Cantidad contada')

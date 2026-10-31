@@ -533,6 +533,10 @@ export type PuntoVentaListado = {
   /** Las ventas nuevas del POS arrancan con "Con envío" tildado. El servidor siempre lo envía;
    * es opcional en el tipo solo para no obligar a cada fixture de pruebas a declararlo. */
   envioPorDefecto?: boolean
+  /** La sucursal de la caja (tenant → empresa → sucursal → punto de venta). El servidor siempre la envía; es
+   * opcional en el tipo por el mismo motivo que `envioPorDefecto`. */
+  idSucursal?: number
+  nombreSucursal?: string | null
 }
 
 /** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el
@@ -564,11 +568,33 @@ export type PuntoVentaAlta = {
   instagram: string | null
   facebook: string | null
   web: string | null
+  /** Opcional: con valor, la caja nace en esa sucursal (viva y de su misma empresa); sin valor, nace con una
+   * sucursal propia que lleva su nombre. */
+  idSucursal?: number | null
 }
 
 /** Cuerpo de `POST /api/puntos-venta/{id}/modo` — espejo de
  * `Ways.Application.Organizacion.PuntoVentaModoEdicion`. */
 export type PuntoVentaModoEdicion = { modo: ModoPuntoVenta }
+
+/** Fila de `GET /api/sucursales` — espejo de `Ways.Application.Organizacion.SucursalListado`. */
+export type SucursalListado = {
+  id: number
+  idTenant: number
+  idEmpresa: number
+  nombre: string
+  razonSocialEmpresa: string | null
+  cantidadPuntosVenta: number
+}
+
+/** Cuerpo de `POST /api/sucursales` — espejo de `SucursalAlta`. */
+export type SucursalAlta = { idEmpresa: number; nombre: string }
+
+/** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre es lo único editable. */
+export type SucursalEdicion = { nombre: string }
+
+/** Cuerpo de `POST /api/puntos-venta/{id}/sucursal` — espejo de `PuntoVentaSucursalEdicion`. */
+export type PuntoVentaSucursalEdicion = { idSucursal: number }
 
 // --- Clientes (stage-2-clientes-proveedores, ADR-8) ---
 // Entidad dedicada, no la máquina genérica de catálogos (design decision 1): `numero` lo
@@ -2941,10 +2967,14 @@ export type ConteoDeLote = { idLote: number; contada: number }
 export type LineaDeTransferencia = { idArticulo: number; cantidad: number; idLote?: number | null }
 
 /** Cuerpo de `POST /api/stock/transferencias` (espejo de `SolicitudDeTransferencia`).
- * `observaciones` es obligatoria, mismo criterio que el ajuste manual. */
+ * `observaciones` es obligatoria, mismo criterio que el ajuste manual. El origen y el destino van de UNA de dos
+ * formas, nunca mezcladas: los dos puntos de venta (el POS empaquetado) o las dos sucursales (la web de back
+ * office); el servidor responde 400 `transferencia_origen_destino_invalido` en cualquier otra combinación. */
 export type SolicitudDeTransferencia = {
-  idPuntoVentaOrigen: number
-  idPuntoVentaDestino: number
+  idPuntoVentaOrigen?: number
+  idPuntoVentaDestino?: number
+  idSucursalOrigen?: number
+  idSucursalDestino?: number
   observaciones: string
   lineas: LineaDeTransferencia[]
 }
@@ -2959,6 +2989,8 @@ export type LineaTransferida = { idArticulo: number; idLote: number | null; cant
 export type ResultadoTransferencia = {
   idPuntoVentaOrigen: number
   idPuntoVentaDestino: number
+  idSucursalOrigen?: number
+  idSucursalDestino?: number
   lineas: LineaTransferida[]
 }
 

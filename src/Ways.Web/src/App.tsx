@@ -43,6 +43,7 @@ import { Personal } from './paginas/Personal'
 import { CuentasTesoreria } from './paginas/CuentasTesoreria'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
+import { Sucursales } from './paginas/Sucursales'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
 import { Pagos } from './paginas/Pagos'
 import { LibroIva } from './paginas/LibroIva'
@@ -671,6 +672,14 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
                   <PuntosVenta />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/sucursales"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
+                  <Sucursales />
                 </RutaProtegida>
               }
             />

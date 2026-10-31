@@ -11,10 +11,11 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOrganizacion } from '../api/organizacion'
+import { cajaDeReferenciaDeSucursal, clienteDeOrganizacion, etiquetaDeSucursal } from '../api/organizacion'
 import { clienteDeParametros } from '../api/parametros'
 import type { ArticuloListado, PuntoVentaListado, ResultadoConteo } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { useSucursales } from '../componentes/useSucursales'
 
 // ---- Selector de artículo por búsqueda — duplicado de Transferencias.tsx/CompraEditor.tsx: no
 // hay un módulo compartido de selectores todavía. ------------------------------------------------
@@ -149,9 +150,15 @@ export function ConteoDeInventario() {
     }
   }, [])
 
-  const referenciaOk = puntosVenta !== null && errorPuntosVenta === ''
+  const { sucursales, error: errorSucursales } = useSucursales()
+  const referenciaOk = puntosVenta !== null && errorPuntosVenta === '' && sucursales !== null && errorSucursales === ''
 
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | ''>('')
+  // Se cuenta el stock de una sucursal. El conteo y las lecturas de lotes todavía se piden contra un punto de venta:
+  // la caja de referencia de la sucursal elegida, que lee y escribe el mismo stock que cualquier otra de la sucursal.
+  const [idSucursal, setIdSucursal] = useState<number | ''>('')
+  const idPuntoVenta = idSucursal === '' ? '' : (cajaDeReferenciaDeSucursal(puntosVenta ?? [], idSucursal)?.id ?? '')
+  const sucursalesConCajas = (sucursales ?? []).filter((s) => s.cantidadPuntosVenta > 0)
+  const variasEmpresas = new Set(sucursalesConCajas.map((s) => s.idEmpresa)).size > 1
   const [idArticulo, setIdArticulo] = useState<number | ''>('')
   const [descripcionArticulo, setDescripcionArticulo] = useState('')
   const [articuloSeleccionado, setArticuloSeleccionado] = useState<ArticuloListado | null>(null)
@@ -339,9 +346,9 @@ export function ConteoDeInventario() {
     <div className="container-fluid py-4">
       <Box titulo="Conteo de inventario" variante="inverse">
         {error && <div className="alert alert-danger">{error}</div>}
-        {errorPuntosVenta && (
+        {(errorPuntosVenta || errorSucursales) && (
           <div className="alert alert-warning py-1 px-2 small">
-            {errorPuntosVenta} No se pueden registrar conteos hasta que esto se resuelva.
+            {errorPuntosVenta || errorSucursales} No se pueden registrar conteos hasta que esto se resuelva.
           </div>
         )}
 
@@ -379,20 +386,20 @@ export function ConteoDeInventario() {
 
         <div className="row g-2 mb-3">
           <div className="col-md-3">
-            <label className="form-label" htmlFor="conteo-punto-venta">
-              Punto de venta
+            <label className="form-label" htmlFor="conteo-sucursal">
+              Sucursal
             </label>
             <select
-              id="conteo-punto-venta"
+              id="conteo-sucursal"
               className="form-select"
-              value={idPuntoVenta}
+              value={idSucursal}
               disabled={contando || !referenciaOk}
-              onChange={(e) => setIdPuntoVenta(e.target.value === '' ? '' : Number(e.target.value))}
+              onChange={(e) => setIdSucursal(e.target.value === '' ? '' : Number(e.target.value))}
             >
               <option value="">Elegir…</option>
-              {(puntosVenta ?? []).map((pv) => (
-                <option key={pv.id} value={pv.id}>
-                  {pv.nombre}
+              {sucursalesConCajas.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {etiquetaDeSucursal(s, variasEmpresas)}
                 </option>
               ))}
             </select>
@@ -454,7 +461,7 @@ export function ConteoDeInventario() {
             {cargandoLotes && lineasDeLote.length === 0 ? (
               <p className="text-muted small mt-2">Cargando lotes…</p>
             ) : lineasDeLote.length === 0 && !errorLotes ? (
-              <p className="text-muted small mt-2">Este artículo no tiene lotes cargados en este punto de venta.</p>
+              <p className="text-muted small mt-2">Este artículo no tiene lotes cargados en esta sucursal.</p>
             ) : (
               <div className="table-responsive mt-2">
                 <table className="table table-sm table-bordered align-middle">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  aSolicitudDeTransferencia,
+  aSolicitudDeTransferenciaPorSucursal,
   articulosRepetidosEnTransferencia,
   clienteDeStock,
   lineaDeTransferenciaVacia,
@@ -10,9 +10,10 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { atributosDeCampoDeCantidad, esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOrganizacion } from '../api/organizacion'
+import { cajaDeReferenciaDeSucursal, clienteDeOrganizacion, etiquetaDeSucursal } from '../api/organizacion'
 import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { useSucursales } from '../componentes/useSucursales'
 
 // ---- Selector de artículo por búsqueda (search-as-you-type) — duplicado de CompraEditor.tsx:
 // no hay un módulo compartido de selectores todavía (mismo criterio documentado en compras.ts
@@ -272,13 +273,15 @@ function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta
 }
 
 /**
- * Transferencia de stock entre puntos de venta (stage-8-compras-transferencias-inventario,
+ * Transferencia de stock entre sucursales (stage-8-compras-transferencias-inventario,
  * Slice 6, design: Web Composition; POST /api/stock/transferencias): origen/destino + una grilla
  * multi-línea, siempre con cantidades positivas — el signo por punto de venta lo decide el
  * servidor (design decisión 9). Ruta Admin-only end-to-end (`GestionDeCatalogo`, sin contraparte
  * de lectura: a diferencia de `/compras`, esta pantalla es puro formulario de escritura).
  */
 export function Transferencias() {
+  const { sucursales, error: errorSucursales } = useSucursales()
+  // Los lotes de un artículo todavía se piden contra un punto de venta: la caja de referencia de la sucursal de origen.
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
 
@@ -300,10 +303,12 @@ export function Transferencias() {
     }
   }, [])
 
-  const referenciaOk = puntosVenta !== null && errorPuntosVenta === ''
+  const referenciaOk = puntosVenta !== null && errorPuntosVenta === '' && sucursales !== null && errorSucursales === ''
 
-  const [idPuntoVentaOrigen, setIdPuntoVentaOrigen] = useState<number | ''>('')
-  const [idPuntoVentaDestino, setIdPuntoVentaDestino] = useState<number | ''>('')
+  const [idSucursalOrigen, setIdSucursalOrigen] = useState<number | ''>('')
+  const [idSucursalDestino, setIdSucursalDestino] = useState<number | ''>('')
+  const idPuntoVentaOrigen = idSucursalOrigen === '' ? '' : (cajaDeReferenciaDeSucursal(puntosVenta ?? [], idSucursalOrigen)?.id ?? '')
+  const variasEmpresas = new Set((sucursales ?? []).map((s) => s.idEmpresa)).size > 1
   const [observaciones, setObservaciones] = useState('')
   const proximaClaveRef = useRef(1)
   // Inicializador perezoso que consume el ref (mismo patrón que CuentaCorriente.tsx y Pos.tsx):
@@ -345,14 +350,14 @@ export function Transferencias() {
   const lineasIncompletas = lineas.length - lineasCompletas.length
   // Espejo de `transferencia_origen_igual_destino` (400) — feedback instantáneo, nunca
   // autoritativo: el servidor lo vuelve a validar.
-  const origenIgualDestino = idPuntoVentaOrigen !== '' && idPuntoVentaDestino !== '' && idPuntoVentaOrigen === idPuntoVentaDestino
+  const origenIgualDestino = idSucursalOrigen !== '' && idSucursalDestino !== '' && idSucursalOrigen === idSucursalDestino
 
   const puedeTransferir =
     referenciaOk &&
     !ocupado &&
     confirmado &&
-    idPuntoVentaOrigen !== '' &&
-    idPuntoVentaDestino !== '' &&
+    idSucursalOrigen !== '' &&
+    idSucursalDestino !== '' &&
     !origenIgualDestino &&
     observaciones.trim() !== '' &&
     lineasCompletas.length > 0 &&
@@ -368,7 +373,7 @@ export function Transferencias() {
     setError('')
 
     try {
-      const solicitud = aSolicitudDeTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, observaciones, lineas)
+      const solicitud = aSolicitudDeTransferenciaPorSucursal(idSucursalOrigen, idSucursalDestino, observaciones, lineas)
       const res = await clienteDeStock.transferir(solicitud)
       transfiriendoRef.current = false
       setTransfiriendo(false)
@@ -393,22 +398,23 @@ export function Transferencias() {
     }
   }
 
-  const nombrePuntoVenta = (id: number) => (puntosVenta ?? []).find((pv) => pv.id === id)?.nombre ?? `#${id}`
+  const nombreSucursal = (id: number | undefined) =>
+    (sucursales ?? []).find((s) => s.id === id)?.nombre ?? `#${id}`
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Transferencias de stock" variante="inverse">
         {error && <div className="alert alert-danger">{error}</div>}
-        {errorPuntosVenta && (
+        {(errorPuntosVenta || errorSucursales) && (
           <div className="alert alert-warning py-1 px-2 small">
-            {errorPuntosVenta} No se pueden registrar transferencias hasta que esto se resuelva.
+            {errorPuntosVenta || errorSucursales} No se pueden registrar transferencias hasta que esto se resuelva.
           </div>
         )}
 
         {resultado && (
           <div className="alert alert-success">
             <strong>
-              Transferencia registrada: {nombrePuntoVenta(resultado.idPuntoVentaOrigen)} → {nombrePuntoVenta(resultado.idPuntoVentaDestino)}
+              Transferencia registrada: {nombreSucursal(resultado.idSucursalOrigen)} → {nombreSucursal(resultado.idSucursalDestino)}
             </strong>
             <table className="table table-sm table-bordered mt-2 mb-0">
               <thead>
@@ -445,14 +451,14 @@ export function Transferencias() {
             <select
               id="transferencia-origen"
               className="form-select"
-              value={idPuntoVentaOrigen}
+              value={idSucursalOrigen}
               disabled={ocupado || !referenciaOk}
-              onChange={(e) => setIdPuntoVentaOrigen(e.target.value === '' ? '' : Number(e.target.value))}
+              onChange={(e) => setIdSucursalOrigen(e.target.value === '' ? '' : Number(e.target.value))}
             >
               <option value="">Elegir…</option>
-              {(puntosVenta ?? []).map((pv) => (
-                <option key={pv.id} value={pv.id}>
-                  {pv.nombre}
+              {(sucursales ?? []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {etiquetaDeSucursal(s, variasEmpresas)}
                 </option>
               ))}
             </select>
@@ -464,19 +470,19 @@ export function Transferencias() {
             <select
               id="transferencia-destino"
               className="form-select"
-              value={idPuntoVentaDestino}
+              value={idSucursalDestino}
               disabled={ocupado || !referenciaOk}
-              onChange={(e) => setIdPuntoVentaDestino(e.target.value === '' ? '' : Number(e.target.value))}
+              onChange={(e) => setIdSucursalDestino(e.target.value === '' ? '' : Number(e.target.value))}
             >
               <option value="">Elegir…</option>
-              {(puntosVenta ?? []).map((pv) => (
-                <option key={pv.id} value={pv.id}>
-                  {pv.nombre}
+              {(sucursales ?? []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {etiquetaDeSucursal(s, variasEmpresas)}
                 </option>
               ))}
             </select>
             {origenIgualDestino && (
-              <div className="small text-danger">El origen y el destino tienen que ser puntos de venta distintos.</div>
+              <div className="small text-danger">El origen y el destino tienen que ser sucursales distintas.</div>
             )}
           </div>
           <div className="col-md-4">

@@ -6,7 +6,7 @@ import { Transferencias } from './Transferencias'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia, SucursalListado, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -63,8 +63,21 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
     nombreTenant: 'Tenant Demo',
     razonSocialEmpresa: 'Empresa Demo',
     modo: 'Web',
+    // En estas pruebas cada caja es la única de su sucursal y comparten el id.
+    idSucursal: sobrescribir.id ?? 1,
     ...sobrescribir,
   }
+}
+
+function sucursalesDe(puntos: PuntoVentaListado[]): SucursalListado[] {
+  return puntos.map((p) => ({
+    id: p.idSucursal ?? p.id,
+    idTenant: p.idTenant,
+    idEmpresa: p.idEmpresa,
+    nombre: p.nombre,
+    razonSocialEmpresa: p.razonSocialEmpresa,
+    cantidadPuntosVenta: 1,
+  }))
 }
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
@@ -125,6 +138,7 @@ function renderTransferenciasProtegido() {
 function mockearPuntosVenta(puntos: PuntoVentaListado[] = [puntoVentaFixture({ id: 1, nombre: 'Casa Central' }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })]) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+    if (ruta === '/sucursales') return Promise.resolve(sucursalesDe(puntos))
     if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
@@ -152,6 +166,7 @@ function mockearPuntosVentaConLote(
   const puntos = [puntoVentaFixture({ id: 1, nombre: 'Casa Central' }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })]
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+    if (ruta === '/sucursales') return Promise.resolve(sucursalesDe(puntos))
     if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
     if (ruta.startsWith('/stock/lotes?')) return Promise.resolve(lotes)
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -197,6 +212,8 @@ describe('Transferencias — flujo feliz', () => {
     resolverTransferir({
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
+      idSucursalOrigen: 1,
+      idSucursalDestino: 2,
       lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
     })
 
@@ -210,8 +227,8 @@ describe('Transferencias — flujo feliz', () => {
     expect(llamadas).toHaveLength(1)
     const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
     expect(cuerpo).toEqual({
-      idPuntoVentaOrigen: 1,
-      idPuntoVentaDestino: 2,
+      idSucursalOrigen: 1,
+      idSucursalDestino: 2,
       observaciones: 'Reposición de sucursal',
       lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
@@ -286,6 +303,8 @@ describe('Transferencias — líneas incompletas', () => {
     resolverTransferir({
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
+      idSucursalOrigen: 1,
+      idSucursalDestino: 2,
       lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
     })
     await screen.findByText(/Transferencia registrada/)
@@ -294,8 +313,8 @@ describe('Transferencias — líneas incompletas', () => {
     expect(llamadas).toHaveLength(1)
     const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
     expect(cuerpo).toEqual({
-      idPuntoVentaOrigen: 1,
-      idPuntoVentaDestino: 2,
+      idSucursalOrigen: 1,
+      idSucursalDestino: 2,
       observaciones: 'obs',
       lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
@@ -313,7 +332,7 @@ describe('Transferencias — validaciones cliente', () => {
     await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
     await usuario.selectOptions(screen.getByLabelText('Destino'), '1')
 
-    expect(screen.getByText('El origen y el destino tienen que ser puntos de venta distintos.')).toBeInTheDocument()
+    expect(screen.getByText('El origen y el destino tienen que ser sucursales distintas.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Transferir' })).toBeDisabled()
   })
 
@@ -367,6 +386,19 @@ describe('Transferencias — errores del servidor', () => {
     expect(
       await screen.findByText('No hay stock suficiente del artículo 10 en el punto de venta de origen para transferir.'),
     ).toBeInTheDocument()
+  })
+
+  it('un fallo al cargar sucursales muestra un aviso y bloquea el envío', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/sucursales') return Promise.reject(new Error('caído'))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+
+    renderTransferencias()
+
+    expect(await screen.findByText(/No se pudieron cargar las sucursales\./)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Transferir' })).toBeDisabled()
   })
 
   it('un fallo al cargar puntos de venta muestra un aviso y bloquea el envío', async () => {
@@ -430,6 +462,8 @@ describe('Transferencias — picker de lote', () => {
     resolverTransferir({
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
+      idSucursalOrigen: 1,
+      idSucursalDestino: 2,
       lineas: [{ idArticulo: 10, idLote: 41, cantidadOrigen: 12, cantidadDestino: 13 }],
     })
     await screen.findByText(/Transferencia registrada/)
@@ -437,8 +471,8 @@ describe('Transferencias — picker de lote', () => {
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
     const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
     expect(cuerpo).toEqual({
-      idPuntoVentaOrigen: 1,
-      idPuntoVentaDestino: 2,
+      idSucursalOrigen: 1,
+      idSucursalDestino: 2,
       observaciones: 'obs',
       lineas: [{ idArticulo: 10, cantidad: 8, idLote: 41 }],
     })
@@ -491,6 +525,8 @@ describe('Transferencias — picker de lote', () => {
         return Promise.resolve({
           idPuntoVentaOrigen: 1,
           idPuntoVentaDestino: 2,
+          idSucursalOrigen: 1,
+          idSucursalDestino: 2,
           lineas: [
             { idArticulo: 10, idLote: 41, cantidadOrigen: 3, cantidadDestino: 4 },
             { idArticulo: 10, idLote: 42, cantidadOrigen: 7, cantidadDestino: 8 },
@@ -541,6 +577,7 @@ describe('Transferencias — lote explícito stale al cambiar Origen (judgment-d
     ]
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+      if (ruta === '/sucursales') return Promise.resolve(sucursalesDe(puntos))
       if (ruta.startsWith('/articulos'))
         return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
       if (ruta.startsWith('/stock/lotes?') && ruta.includes('idPuntoVenta=1'))
@@ -578,6 +615,8 @@ describe('Transferencias — lote explícito stale al cambiar Origen (judgment-d
     resolverTransferir({
       idPuntoVentaOrigen: 2,
       idPuntoVentaDestino: 1,
+      idSucursalOrigen: 2,
+      idSucursalDestino: 1,
       lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
     })
     await screen.findByText(/Transferencia registrada/)
@@ -586,8 +625,8 @@ describe('Transferencias — lote explícito stale al cambiar Origen (judgment-d
     const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
     // nunca viaja el idLote 42 (stale, del PV de origen anterior).
     expect(cuerpo).toEqual({
-      idPuntoVentaOrigen: 2,
-      idPuntoVentaDestino: 1,
+      idSucursalOrigen: 2,
+      idSucursalDestino: 1,
       observaciones: 'obs',
       lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
@@ -678,6 +717,7 @@ describe('Transferencias — cantidad según la unidad de venta', () => {
   function mockearConArticulo(unidadVenta: 'Unidad' | 'Peso') {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture({ id: 1 }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })])
+      if (ruta === '/sucursales') return Promise.resolve(sucursalesDe([puntoVentaFixture({ id: 1 }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })]))
       if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ unidadVenta })], total: 1, pagina: 1, tamanio: 25 })
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })

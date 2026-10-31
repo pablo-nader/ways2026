@@ -12,7 +12,7 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
-import type { EmpresaListado, PuntoVentaListado } from '../api/tipos'
+import type { EmpresaListado, PuntoVentaListado, SucursalListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
@@ -31,12 +31,15 @@ import {
 import { ModalDeAltaDePuntoVenta } from './organizacion/ModalDeAltaDePuntoVenta'
 import { ModalDeModoDePuntoVenta } from './organizacion/ModalDeModoDePuntoVenta'
 import { ModalDePuntoVenta } from './organizacion/ModalDePuntoVenta'
+import { ModalDeSucursalDePuntoVenta } from './organizacion/ModalDeSucursalDePuntoVenta'
 import {
   ALTA_VACIA,
   aFormularioDePuntoVenta,
+  aFormularioDeSucursalDePuntoVenta,
   type FormularioDeAltaDePuntoVenta,
   type FormularioDeModoDePuntoVenta,
   type FormularioDePuntoVenta,
+  type FormularioDeSucursalDePuntoVenta,
 } from './organizacion/puntoVentaFormulario'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -51,6 +54,7 @@ const OPCIONES_DE_MODO = [
 const textoDeId = (puntoVenta: PuntoVentaListado) => String(puntoVenta.id).padStart(4, '0')
 const textoDeEmpresa = (puntoVenta: PuntoVentaListado) => puntoVenta.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO
 const textoDeDomicilio = (puntoVenta: PuntoVentaListado) => puntoVenta.domicilio ?? '—'
+const textoDeSucursal = (puntoVenta: PuntoVentaListado) => puntoVenta.nombreSucursal ?? '—'
 const nombreDeTenant = (puntoVenta: PuntoVentaListado) => etiquetaDeTenant(puntoVenta)
 /** Un dueño dado de baja se rotula "—" en la celda, pero para filtrar y ordenar cuenta como vacío. */
 const sinMarcaDeDuenio = (texto: string) => (texto === ETIQUETA_SIN_DUENIO ? '' : texto)
@@ -59,6 +63,7 @@ const ORDENABLES_BASE: ColumnasOrdenables<PuntoVentaListado> = {
   id: { valor: (puntoVenta) => puntoVenta.id },
   empresa: { valor: (puntoVenta) => sinMarcaDeDuenio(textoDeEmpresa(puntoVenta)) },
   nombre: { valor: (puntoVenta) => puntoVenta.nombre },
+  sucursal: { valor: (puntoVenta) => puntoVenta.nombreSucursal ?? '' },
   domicilio: { valor: (puntoVenta) => puntoVenta.domicilio },
   modo: { valor: (puntoVenta) => puntoVenta.modo },
 }
@@ -66,6 +71,7 @@ const FILTRABLES_BASE: ColumnasFiltrables<PuntoVentaListado> = {
   id: { etiqueta: 'ID', valor: textoDeId },
   empresa: { etiqueta: 'Empresa', valor: (puntoVenta) => sinMarcaDeDuenio(textoDeEmpresa(puntoVenta)) },
   nombre: { etiqueta: 'Nombre', valor: (puntoVenta) => puntoVenta.nombre },
+  sucursal: { etiqueta: 'Sucursal', valor: (puntoVenta) => puntoVenta.nombreSucursal ?? '' },
   domicilio: { etiqueta: 'Domicilio', valor: textoDeDomicilio },
   modo: { etiqueta: 'Modo', valor: (puntoVenta) => puntoVenta.modo, opciones: OPCIONES_DE_MODO },
 }
@@ -80,8 +86,8 @@ const FILTRABLES_PLATAFORMA: ColumnasFiltrables<PuntoVentaListado> = {
 }
 
 /** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
-const CELDAS_BASE = ['id', 'empresa', 'nombre', 'domicilio', 'modo', null]
-const CELDAS_PLATAFORMA = ['id', 'tenant', 'empresa', 'nombre', 'domicilio', 'modo', null]
+const CELDAS_BASE = ['id', 'empresa', 'nombre', 'sucursal', 'domicilio', 'modo', null]
+const CELDAS_PLATAFORMA = ['id', 'tenant', 'empresa', 'nombre', 'sucursal', 'domicilio', 'modo', null]
 
 /**
  * Lectura/alta/edición/baja de puntos de venta — mismo patrón que <c>Empresas.tsx</c>. El alta
@@ -111,6 +117,11 @@ export function PuntosVenta() {
   /** Formulario del flip de modo — separado del de edición descriptiva: precondición y rastro de
    * auditoría propios (ver `organizacion.ts`, `actualizarModoPuntoVenta`). */
   const [formularioModo, setFormularioModo] = useState<FormularioDeModoDePuntoVenta | null>(null)
+  /** Formulario para mover la caja de sucursal: endpoint, precondiciones y rastro propios, como el modo. */
+  const [formularioSucursal, setFormularioSucursal] = useState<FormularioDeSucursalDePuntoVenta | null>(null)
+  /** Sucursales que ofrecen el alta y el movimiento; se piden al abrir cualquiera de los dos, por la misma razón que las empresas. */
+  const [sucursales, setSucursales] = useState<SucursalListado[] | null>(null)
+  const [errorSucursales, setErrorSucursales] = useState('')
   /** Rechazo del guardado de cualquiera de los tres modales. Solo hay uno abierto a la vez, así que
    * comparten el espacio; cada apertura lo vacía. Va aparte del `error` de la pantalla (carga y baja). */
   const [errorFormulario, setErrorFormulario] = useState('')
@@ -145,6 +156,8 @@ export function PuntosVenta() {
    * la lectura de empresas, y viceversa). Cerrar el formulario la acuña para descartar la respuesta
    * en vuelo. */
   const generacionEmpresas = useRef(0)
+  /** Generación PROPIA de la lectura de sucursales (alta y movimiento): ver `generacionEmpresas`. */
+  const generacionSucursales = useRef(0)
   /** Espejo SIEMPRE al día de `filtroTenant`. `cargar` es un `useCallback` sin dependencias, así
    * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
@@ -256,6 +269,7 @@ export function PuntosVenta() {
     setErrorFormulario('')
     setError('')
     setAviso('')
+    void cargarSucursales()
     try {
       const filas = await clienteDeOrganizacion.listarEmpresas()
       if (generacionEmpresas.current !== token) return
@@ -268,7 +282,23 @@ export function PuntosVenta() {
 
   function cerrarAlta() {
     generacionEmpresas.current++
+    generacionSucursales.current++
     setAlta(null)
+  }
+
+  async function cargarSucursales() {
+    const token = ++generacionSucursales.current
+    setSucursales(null)
+    setErrorSucursales('')
+    try {
+      const filas = await clienteDeOrganizacion.listarSucursales()
+      if (generacionSucursales.current !== token) return
+      setSucursales(filas)
+    } catch (e) {
+      if (generacionSucursales.current !== token) return
+      setSucursales([])
+      setErrorSucursales(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las sucursales.')
+    }
   }
 
   async function guardarAlta() {
@@ -297,6 +327,7 @@ export function PuntosVenta() {
       try {
         await clienteDeOrganizacion.crearPuntoVenta({
           idEmpresa: Number(datos.idEmpresa),
+          idSucursal: datos.idSucursal === '' ? null : Number(datos.idSucursal),
           nombre,
           modo: datos.modo,
           domicilio: datos.domicilio || null,
@@ -353,6 +384,48 @@ export function PuntosVenta() {
       ocupadoRef.current = false
       setOcupado(null)
     }
+  }
+
+  async function guardarSucursal() {
+    if (!formularioSucursal || ocupadoRef.current) return
+
+    const datos = formularioSucursal
+    if (datos.idSucursal === '' || Number(datos.idSucursal) === datos.idSucursalActual) return
+
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupado(datos.id)
+    setError('')
+    setErrorFormulario('')
+    setAviso('')
+    try {
+      // Sin comparar con la generación (ver `guardar`): el modal está inerte durante toda la escritura.
+      try {
+        await clienteDeOrganizacion.moverPuntoVentaDeSucursal(datos.id, { idSucursal: Number(datos.idSucursal) })
+      } catch (e) {
+        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo mover el punto de venta de sucursal.')
+
+        return
+      }
+
+      await refrescarTrasEscribir(token, `Se movió "${datos.nombre}" de sucursal.`, AVISO_REFRESCO_FALLIDO)
+      generacionSucursales.current++
+      setFormularioSucursal(null)
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(null)
+    }
+  }
+
+  function abrirSucursal(puntoVenta: PuntoVentaListado) {
+    setErrorFormulario('')
+    setFormularioSucursal(aFormularioDeSucursalDePuntoVenta(puntoVenta))
+    void cargarSucursales()
+  }
+
+  function cerrarSucursal() {
+    generacionSucursales.current++
+    setFormularioSucursal(null)
   }
 
   function abrirEdicion(puntoVenta: PuntoVentaListado) {
@@ -416,6 +489,7 @@ export function PuntosVenta() {
       // para el formulario de modo.
       setFormulario((prev) => (prev?.id === fila.id ? null : prev))
       setFormularioModo((prev) => (prev?.id === fila.id ? null : prev))
+      setFormularioSucursal((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Se dio de baja el punto de venta "${fila.nombre}".`,
@@ -502,6 +576,7 @@ export function PuntosVenta() {
               valor={alta}
               empresas={empresas}
               errorEmpresas={errorEmpresas}
+              sucursales={sucursales}
               esPlataforma={esPlataforma}
               guardando={ocupado !== null}
               bloqueado={bloqueado}
@@ -524,6 +599,21 @@ export function PuntosVenta() {
               onCambio={setFormulario}
               onGuardar={() => void guardar()}
               onCancelar={() => setFormulario(null)}
+            />
+          )}
+
+          {formularioSucursal && (
+            <ModalDeSucursalDePuntoVenta
+              valor={formularioSucursal}
+              sucursales={sucursales}
+              errorSucursales={errorSucursales}
+              guardando={ocupado !== null}
+              bloqueado={bloqueado}
+              error={errorFormulario}
+              focoDeReserva={nuevoRef}
+              onCambio={setFormularioSucursal}
+              onGuardar={() => void guardarSucursal()}
+              onCancelar={cerrarSucursal}
             />
           )}
 
@@ -609,6 +699,9 @@ export function PuntosVenta() {
                     <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
                       Nombre
                     </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="sucursal" orden={orden} onAlternar={alternar}>
+                      Sucursal
+                    </EncabezadoOrdenable>
                     <EncabezadoOrdenable columna="domicilio" orden={orden} onAlternar={alternar}>
                       Domicilio
                     </EncabezadoOrdenable>
@@ -632,7 +725,7 @@ export function PuntosVenta() {
                 <tbody>
                   {cargando && (
                     <tr>
-                      <td colSpan={esPlataforma ? 7 : 6}>
+                      <td colSpan={esPlataforma ? 8 : 7}>
                         <Cargando />
                       </td>
                     </tr>
@@ -643,9 +736,18 @@ export function PuntosVenta() {
                       {esPlataforma && <td>{nombreDeTenant(p)}</td>}
                       <td>{textoDeEmpresa(p)}</td>
                       <td>{p.nombre}</td>
+                      <td>{textoDeSucursal(p)}</td>
                       <td>{textoDeDomicilio(p)}</td>
                       <td>{p.modo}</td>
                       <td className="text-end text-nowrap">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary me-1"
+                          onClick={() => abrirSucursal(p)}
+                          disabled={bloqueado}
+                        >
+                          Sucursal
+                        </button>
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-secondary me-1"
@@ -670,7 +772,7 @@ export function PuntosVenta() {
                   ))}
                   {!cargando && visibles.length === 0 && (
                     <tr>
-                      <td colSpan={esPlataforma ? 7 : 6} className="text-center text-muted py-4">
+                      <td colSpan={esPlataforma ? 8 : 7} className="text-center text-muted py-4">
                         {items.length === 0 ? 'No hay puntos de venta cargados.' : 'Ningún registro coincide con los filtros.'}
                       </td>
                     </tr>
