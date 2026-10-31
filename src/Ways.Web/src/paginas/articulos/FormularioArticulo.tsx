@@ -19,6 +19,7 @@ import type {
 } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { IconoDeAyuda } from '../../componentes/IconoDeAyuda'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 import { formatearImporte } from '../../formato/importes'
 import { mapaDeNombres, type NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaCategoria } from './AltaRapidaCategoria'
@@ -531,7 +532,7 @@ export function FormularioArticulo({
             layout de columnas; border-0/p-0/m-0 neutralizan el estilo por defecto del fieldset. */}
         <fieldset disabled={bloqueado} className="row g-3 border-0 p-0 m-0">
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Identificación</strong>
+            <TituloDeSeccion>Identificación</TituloDeSeccion>
           </div>
 
           <div className="col-md-2">
@@ -627,7 +628,7 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Clasificación</strong>
+            <TituloDeSeccion>Clasificación</TituloDeSeccion>
           </div>
 
           <div className="col-md-3">
@@ -841,7 +842,7 @@ export function FormularioArticulo({
           {!valor.costosOcultos && (
             <>
             <div className="col-12">
-              <strong className="text-muted small text-uppercase">Costos</strong>
+              <TituloDeSeccion>Costos</TituloDeSeccion>
             </div>
 
             <div className="col-md-3">
@@ -945,7 +946,7 @@ export function FormularioArticulo({
           )}
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Disponibilidad</strong>
+            <TituloDeSeccion>Disponibilidad</TituloDeSeccion>
           </div>
 
           <div className="col-12">
@@ -958,7 +959,7 @@ export function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, disponibleParaTodas: e.target.checked })}
               />
               <label className="form-check-label" htmlFor="art-disponible-para-todas">
-                Disponible para todas las empresas del tenant
+                Disponible para todas las empresas
               </label>
             </div>
           </div>

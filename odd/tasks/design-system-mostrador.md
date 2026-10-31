@@ -55,12 +55,27 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
   `-soft` tones, `.box` header without the accent bar, navbar active item underline, modal
   radius and shadow.
 
+- [x] **T3 Shared components** (route: delegated writer). `TituloDeSeccion` heading component
+  replacing the 16 `<strong className="text-muted small text-uppercase">` section headers
+  (keeps id/ref/tabIndex for SeccionDeDisponibilidad focus); `pluralizar` helper and real plurals
+  in every "x(s)" UI string (~15 inline pagers, `PaginadorDePadron`, ~10 messages); "tenant"
+  removed from merchant-facing copy (platform-admin pages Tenants/Empresas/PuntosVenta/Dominios
+  keep it).
+- [ ] **T4 Artículos screen** (route: delegated writer). Header action as a text+icon
+  "Nuevo artículo" primary button; visible placeholders on the filter row (structure and
+  aria-labels unchanged); name column emphasized, code muted; empty state that distinguishes
+  "no articles yet" from "no match" and offers "Limpiar filtros"; baja confirmation with the
+  consequence and a "Dar de baja" button.
+
+Note: the Artículos grid is already sortable end to end (EncabezadoOrdenable + `orden`/`direccion`
+in the API); the critique's "no sorting" finding was stale.
+
 ## Follow-ups (not in this feature)
 
-- Shared components: section headings as real headings, FilterBar with visible labels, sortable
-  table headers, real plurals in pagers.
-- Screen-by-screen polish starting with Artículos (critique findings).
-- Print from the dark theme: contextual table/alert variables are not reset in @media print (judgment-day T1, inferential).
+- Grid filters, sort and page in the URL (Artículos first): needs a rewrite of the fetch effect,
+  debounce drafts and generation gating.
+- Visible labels in the shared `FilaDeFiltros` (ripples through ~15 pages and their tests).
+- Shared empty-state and pager components replacing the inline copies.
 - Desktop POS release (bump Ways.Desktop + tag `pos-v*`) so the cash registers get the new look.
 
 ## Acceptance criteria
@@ -79,3 +94,5 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
   Pre-paint: archivo externo `public/tema-inicial.js` porque la CSP de Tauri es `script-src 'self'`. Familia de fontsource = "… Variable": `publico.css` pide 'Bricolage Grotesque' a secas, se resuelve con `:root .publico { --pub-fuente-titulo }` en `tema.css` sin tocar `publico.css`.
 - 2026-10-31: T2 hecha en `1bc03677`. `componentes.css` nuevo, importado tras `tema.css` en las 4 entradas; `.box` en `template.css`; las reglas contextuales de tabla (solo oscuro) pasaron a tokens para ambos temas. RED: `componentes.test.ts` fallaba por falta del archivo; GREEN 6/6; mutacion (hex y token inexistente anadidos) mato 3 casos y se revirtio.
   `npm test` 283 archivos / 8922 tests OK (una corrida previa fallo `Pos.test` autofocus; pasa solo y en la repeticion: flaky por carga); `npm run build` OK; `npm run lint` sin errores.
+- 2026-10-31: T3 hecha en `4aa658a9` (TituloDeSeccion, 16 encabezados), `0e3b5dbf` (pluralizar en `formato/pluralizar.ts`, paginadores, PaginadorDePadron y mensajes) y `e9d9af5a` ("tenant" fuera del texto del comercio; ademas Descargar.tsx). RED: pluralizar.test.ts sin modulo, PaginadorDePadron 3 fallas y 11 fallas en los mensajes antes del codigo; GREEN despues. Ojo: los tests con regex `/x(s)/` negativos pasaban en vacio, se pasaron a `/xs? .../`.
+  `npm test` 285 archivos / 8942 tests OK; `npm run build` OK; `npm run lint` sin errores. Queda un "Historial" en mayusculas en EditorDePrecios.tsx (clases en otro orden, fuera de los 16).

@@ -31,6 +31,7 @@ import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { pluralizar } from '../formato/pluralizar'
 
 const OPCIONES_ESTADO: { valor: EstadoCompra | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -391,7 +392,7 @@ export function Compras() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} compra(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'compra')}
               </span>
               <div className="d-flex gap-2">
                 <button
