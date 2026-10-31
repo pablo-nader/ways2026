@@ -201,6 +201,14 @@ public class AltaDePuntoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal("Calle 1", fila.Domicilio);
         Assert.Equal("norte.fb", fila.Facebook);
 
+        // Sucursales (T1): el alta crea la sucursal propia del punto de venta, con su nombre ya
+        // recortado, en la misma transacción. Una sola sucursal nueva en la empresa.
+        var sucursal = await db.Sucursales.SingleAsync(x => x.Id == fila.IdSucursal);
+        Assert.Equal("Sucursal Norte", sucursal.Nombre);
+        Assert.Equal(s.Empresa.Id, sucursal.IdEmpresa);
+        Assert.Equal(s.Tenant.Id, sucursal.IdTenant);
+        Assert.Equal(2, await db.Sucursales.CountAsync(x => x.IdEmpresa == s.Empresa.Id));
+
         var rastro = await db.Auditoria.IgnoreQueryFilters()
             .SingleAsync(a => a.Accion == "pv.alta" && a.IdEntidad == creado.Id);
         Assert.Equal(s.Tenant.Id, rastro.IdTenant);

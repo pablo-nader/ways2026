@@ -708,6 +708,123 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         Assert.False(PorCascadaDe(fila.ValorNuevo));
     }
 
+    private async Task<Sucursal> LeerSucursalAsync(int id)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Sucursales.IgnoreQueryFilters().SingleAsync(s => s.Id == id);
+    }
+
+    /// <summary>
+    /// Sucursales (T1): dar de baja el ÚNICO punto de venta de una sucursal la da de baja en la misma
+    /// escritura y con el mismo instante. Mutación corrida: sacar el bloque que marca la sucursal de
+    /// <c>EliminarPuntoVentaAsync</c> deja <c>DeletedAt</c> en <c>null</c> y el assert cae.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDelUnicoPuntoDeVentaDeUnaSucursalLaDaDeBajaConElMismoInstante()
+    {
+        var sembrado = await AprovisionarAsync("baja-pv-sucursal");
+        var despues = sembrado.Ancla.AddMinutes(1);
+        var momento = despues.AddHours(1);
+
+        var segundo = await SembrarPuntoVentaAsync(sembrado.IdTenant, sembrado.IdEmpresa, "Local 2", despues);
+
+        await ConServicioAsync(null, s => s.EliminarPuntoVentaAsync(segundo.Id), momento);
+
+        var sucursal = await LeerSucursalAsync(segundo.IdSucursal);
+        Assert.Equal(momento, sucursal.DeletedAt);
+        Assert.Equal(momento, sucursal.UpdatedAt);
+
+        var sucursalDelPrimero = await LeerSucursalAsync((await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).IdSucursal);
+        Assert.Null(sucursalDelPrimero.DeletedAt);
+    }
+
+    /// <summary>
+    /// Sucursales (T1): si la sucursal conserva otro punto de venta vivo, la baja de uno no la toca.
+    /// Mutación corrida: sacar la guarda <c>quedanVivos</c> (dar de baja siempre) deja la sucursal dada
+    /// de baja con un punto de venta vivo colgando y el assert cae.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUnPuntoDeVentaNoTocaLaSucursalSiLeQuedaOtroVivo()
+    {
+        var sembrado = await AprovisionarAsync("baja-pv-hermano");
+        var despues = sembrado.Ancla.AddMinutes(1);
+        var momento = despues.AddHours(1);
+
+        var primero = await SembrarPuntoVentaAsync(sembrado.IdTenant, sembrado.IdEmpresa, "Caja A", despues);
+        await using (var db = ContextoDePlataforma())
+        {
+            db.PuntosVenta.Add(new PuntoVenta
+            {
+                IdTenant = sembrado.IdTenant,
+                IdEmpresa = sembrado.IdEmpresa,
+                IdSucursal = primero.IdSucursal,
+                Nombre = "Caja B",
+                CreatedAt = despues,
+                UpdatedAt = despues
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await ConServicioAsync(null, s => s.EliminarPuntoVentaAsync(primero.Id), momento);
+
+        Assert.Equal(momento, (await LeerPuntoVentaAsync(primero.Id)).DeletedAt);
+        Assert.Null((await LeerSucursalAsync(primero.IdSucursal)).DeletedAt);
+        Assert.Equal(2, await ContarSucursalesDeLaEmpresaAsync(sembrado.IdEmpresa));
+    }
+
+    private async Task<int> ContarSucursalesDeLaEmpresaAsync(int idEmpresa)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Sucursales.IgnoreQueryFilters().CountAsync(s => s.IdEmpresa == idEmpresa);
+    }
+
+    /// <summary>
+    /// Sucursales (T1): la baja de una empresa arrastra sus sucursales con el instante de la cascada y
+    /// deja intactas las de la hermana. Mutación corrida: sacar el <c>Marcar(sucursales, momento)</c> de
+    /// <c>EliminarEmpresaAsync</c> deja la sucursal viva con su empresa dada de baja.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUnaEmpresaArrastraSusSucursalesYNoLasDeLaHermana()
+    {
+        var sembrado = await AprovisionarAsync("cascada-sucursales-empresa");
+        var despues = sembrado.Ancla.AddMinutes(1);
+        var momento = despues.AddHours(1);
+
+        var segunda = await SembrarEmpresaAsync(sembrado.IdTenant, "Segunda SRL", despues);
+        var puntoDeLaSegunda = await SembrarPuntoVentaAsync(sembrado.IdTenant, segunda.Id, "Local de la segunda", despues);
+
+        await ConServicioAsync(null, s => s.EliminarEmpresaAsync(segunda.Id), momento);
+
+        var sucursal = await LeerSucursalAsync(puntoDeLaSegunda.IdSucursal);
+        Assert.Equal(momento, sucursal.DeletedAt);
+        Assert.Equal(momento, sucursal.UpdatedAt);
+
+        var sucursalDelPrimero = (await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).IdSucursal;
+        Assert.Null((await LeerSucursalAsync(sucursalDelPrimero)).DeletedAt);
+    }
+
+    /// <summary>
+    /// Sucursales (T1): la baja de un tenant recién aprovisionado (pristino: la sucursal comparte el instante del
+    /// ancla y no bloquea) arrastra su sucursal con el instante de la cascada y no la de un tenant hermano. Mutación
+    /// corrida: sacar el <c>Marcar(sucursales, momento)</c> de <c>EliminarTenantAsync</c> deja la sucursal viva.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUnTenantArrastraSusSucursalesYNoLasDelHermano()
+    {
+        var sembrado = await AprovisionarAsync("cascada-sucursales-tenant");
+        var hermano = await AprovisionarAsync("cascada-sucursales-hermano");
+        var momento = new DateTimeOffset(2026, 9, 6, 10, 0, 0, TimeSpan.Zero);
+
+        await ConServicioAsync(null, s => s.EliminarTenantAsync(sembrado.IdTenant), momento);
+
+        var sucursal = await LeerSucursalAsync((await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).IdSucursal);
+        Assert.Equal(momento, sucursal.DeletedAt);
+        Assert.Equal(momento, sucursal.UpdatedAt);
+
+        var sucursalDelHermano = await LeerSucursalAsync((await LeerPuntoVentaAsync(hermano.IdPuntoVenta)).IdSucursal);
+        Assert.Null(sucursalDelHermano.DeletedAt);
+    }
+
     /// <summary>
     /// C1, el lado negativo: una baja RECHAZADA no deja rastro. La fila de auditoría se encola en
     /// el mismo <c>SaveChangesAsync</c> de la transacción, así que el 409 del guard la lleva
