@@ -182,6 +182,17 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   pre-lectura trackeada en la baja de caja. Prueba de concurrencia: seis ventas en las dos cajas durante la fusión, sin
   deadlock y con la suma conservada (no determinista; el argumento de orden está en el comentario del servicio).
   Diferido: la baja de caja que se lleva su sucursal vacía no deja `sucursal.baja` (la marca sin rastro, desde T1).
+  Judgment-day ronda 1 (CRITICAL, los dos jueces): las reversas (anulación de venta, remito y compra; edición de compra
+  confirmada) asentaban en la sucursal guardada, que tras una fusión es el origen dado de baja, y no se serializaban con la
+  fusión. Corrección (f02d4102): modelo `sucursales.id_sucursal_fusion integer NULL` + FK compuesta `fk_sucursales_fusion`
+  `(id_sucursal_fusion, id_empresa, id_tenant)` → sucursales, migración `FusionDeSucursales`, sin backfill, sin mapeo 23503
+  nuevo (validación bajo lock + backstop genérico; SQLSTATE en `SucursalesEsquemaTests`). La fusión la fija al destino y
+  toma `FOR UPDATE` sobre las dos sucursales después de las cajas y antes del stock (lectura única después de los locks);
+  `EscritorDeStock.ResolverSucursalesDeReversaAsync` toma `FOR SHARE` de las cajas y después de cada sucursal de la cadena y
+  las cuatro reversas asientan en la resuelta (lotes bajo el mismo `id_lote`). Comentarios de orden de locks corregidos.
+  Pruebas: `ReversasTrasFusionDeSucursalesTests` (venta, cadena S1→S2→S3, remito, compra con lote, edición, carrera
+  determinista con lock del owner); mutantes muertos: sin resolución en cada reversa, cadena de un solo tramo, sin
+  `FOR UPDATE` de sucursales (deadlock → 503). Integración filtrada 2363 ✔.
 
 ## Next step
 
