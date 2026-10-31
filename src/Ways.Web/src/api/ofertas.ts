@@ -79,6 +79,7 @@ export type FormularioOferta = {
   horaHasta: string
   diasSemana: number[]
   cantidadMinima: string
+  soloMultiplos: boolean
   beneficio: BeneficioOferta
   precioUnitario: string
   porcentaje: string
@@ -107,6 +108,7 @@ export function formularioOfertaVacio(): FormularioOferta {
     horaHasta: '',
     diasSemana: [],
     cantidadMinima: '',
+    soloMultiplos: false,
     beneficio: 'Porcentaje',
     precioUnitario: '',
     porcentaje: '',
@@ -142,6 +144,7 @@ function horaOpcional(valor: string): string | null {
  * cambiar el radio.
  */
 export function aAltaOferta(f: FormularioOferta): AltaOferta {
+  const cantidadMinima = numeroOpcional(f.cantidadMinima)
   return {
     nombre: f.nombre.trim(),
     idEmpresa: f.idEmpresa === '' ? null : f.idEmpresa,
@@ -154,7 +157,8 @@ export function aAltaOferta(f: FormularioOferta): AltaOferta {
     horaDesde: horaOpcional(f.horaDesde),
     horaHasta: horaOpcional(f.horaHasta),
     diasSemana: f.diasSemana.length === 0 ? null : [...f.diasSemana].sort((a, b) => a - b),
-    cantidadMinima: numeroOpcional(f.cantidadMinima),
+    cantidadMinima,
+    soloMultiplos: cantidadMinima !== null && f.soloMultiplos,
     precioUnitario: f.beneficio === 'PrecioUnitario' ? numeroOpcional(f.precioUnitario) : null,
     porcentaje: f.beneficio === 'Porcentaje' ? numeroOpcional(f.porcentaje) : null,
     importeFijo: f.beneficio === 'ImporteFijo' ? numeroOpcional(f.importeFijo) : null,
@@ -195,6 +199,7 @@ export function aValoresOferta(o: OfertaListado): FormularioOferta {
     horaHasta: o.horaHasta ? o.horaHasta.slice(0, 5) : '',
     diasSemana: o.diasSemana,
     cantidadMinima: o.cantidadMinima === null ? '' : String(o.cantidadMinima),
+    soloMultiplos: o.soloMultiplos,
     beneficio,
     precioUnitario: o.precioUnitario === null ? '' : String(o.precioUnitario),
     porcentaje: o.porcentaje === null ? '' : String(o.porcentaje),
@@ -239,6 +244,11 @@ export function opcionesDeFamiliaDeOferta(familias: FamiliaListado[]): { valor: 
 /** Resumen de una sola línea del beneficio para la columna de listado — no persiste ni valida
  * nada, solo formatea lo que el servidor ya validó como exclusivo. */
 export function resumenDeBeneficio(o: OfertaListado): string {
+  const base = textoDeBeneficio(o)
+  return o.soloMultiplos && o.cantidadMinima !== null ? `${base} (solo múltiplos de ${o.cantidadMinima})` : base
+}
+
+function textoDeBeneficio(o: OfertaListado): string {
   if (o.porcentaje !== null) return `${o.porcentaje}% de descuento`
   if (o.importeFijo !== null) return `${formatearImporte(o.importeFijo, { simbolo: true })} fijo por unidad`
   if (o.precioUnitario !== null) return `Precio unitario ${formatearImporte(o.precioUnitario, { simbolo: true })}`

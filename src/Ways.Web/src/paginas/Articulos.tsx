@@ -330,6 +330,7 @@ export function Articulos() {
           <PreguntaDeAlcance
             contexto={articulo.decisionDeAlcance.contexto}
             cambios={articulo.decisionDeAlcance.campos}
+            cambioDeNominal={articulo.decisionDeAlcance.cambioDeNominal}
             ocupado={ocupado}
             onElegir={articulo.elegirAlcance}
             onCancelar={articulo.cancelarAlcance}

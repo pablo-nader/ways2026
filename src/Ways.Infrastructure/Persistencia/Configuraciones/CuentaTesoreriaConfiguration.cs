@@ -28,6 +28,10 @@ public class CuentaTesoreriaConfiguration : IEntityTypeConfiguration<CuentaTesor
         builder.HasAlternateKey(c => new { c.Id, c.IdTenant })
             .HasName("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant");
 
+        // Permite que conexiones_mercadopago referencie la cuenta incluyendo la empresa: la base rechaza una cuenta de otra empresa.
+        builder.HasAlternateKey(c => new { c.Id, c.IdEmpresa, c.IdTenant })
+            .HasName("ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant");
+
         builder.Property(c => c.Nombre)
             .HasColumnName("nombre")
             .HasColumnType("citext")
