@@ -58,7 +58,7 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
 - [x] T3 — Reads by sucursal: existencias/vencimientos/reposición/rotación, ficha de artículo, MCP
   `articulo_info`, sales grouped by sucursal, plus the T2 judgment-day carry-overs. Route: delegated.
   Commit 2087d350.
-- [ ] T4 — Web: sucursales ABM, PV form picks sucursal, stock screens and transfers by sucursal.
+- [x] T4 — Sucursales API + ABM, PV picks/moves sucursal, stock screens and transfers by sucursal.
   Route: delegated.
 - [ ] T5 — Merge two sucursales (move PVs, sum stock and lots with audited movements).
   Route: delegated. Conditional on the customer's current setup.
@@ -137,7 +137,27 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   (a by-caja read would be needed to fail it), and the compra edición aggregate-first lock has no
   observable effect besides lock order (raw ADO, no pause point), so it is fixed but not pinned.
 
+- 2026-10-31: T4 done. API: `GET /api/sucursales[?idEmpresa]` (LecturaDePuntosVenta, la usan los filtros de
+  stock), `POST|PUT|DELETE` (GestionDeOrganizacion); PV alta con `idSucursal` opcional (404 / 409
+  `sucursal_de_otra_empresa`); mover caja = `POST /api/puntos-venta/{id}/sucursal {idSucursal}`; si era la
+  última caja y la sucursal tiene uso: 409 `sucursal_en_uso` (mismo guard que la baja de la última caja, así que
+  mover la única caja de una sucursal con historia es la fusión de T5); sin uso, la sucursal cae (`sucursal.baja`
+  por cascada). Baja directa: 409 `sucursal_con_puntos_venta` / `sucursal_en_uso`. Audit: `sucursal.alta|edicion|baja`,
+  `pv.sucursal`. Sin migración ni constraints nuevas (el nombre no es único, igual que el de PV).
+  Locks: advisory del tenant + `FOR UPDATE` de la fila del PV; `EscritorDeStock.ResolverSucursalAsync` ahora lee
+  con `FOR SHARE`, y la baja del PV toma también el lock de fila (cierra el hueco que T2 dejó). Transferencias:
+  `idSucursalOrigen/Destino` alternativo a los PV (exactamente una forma, 400
+  `transferencia_origen_destino_invalido`); la caja de trazabilidad es la de menor id. Web: pantalla Sucursales
+  (`/organizacion/sucursales`), PV con selector en el alta y modal "Sucursal" para mover, Existencias / Vencimientos
+  / Reposición / Conteo / Transferencias por sucursal (las escrituras que aún piden PV usan la caja de referencia).
+  T3: cabecera de exports "Sucursal: <nombre>"; `TryGetValue` en ventas por sucursal.
+  Checks: build 0 errores; Domain 2110 ✔; Application 1476 ✔; integración filtrada 1313 ✔ + 1 guard
+  (`SuperficieDeAutorizacion`, allowlist) corregido y re-corrido ✔; web build ✔, vitest 8894 (un flake de
+  GrillaDeItemsDeCompra bajo carga, verde al re-correr). RED por mutación (código antes que tests). Mutantes
+  muertos: guard del movimiento, guard de uso y de cajas vivas de la baja, misma empresa (alta y movimiento),
+  cascada de baja de la sucursal vacía, `TryGetValue`. Diferido: los ajustes web de Tablero siguen por PV.
+
 ## Next step
 
-T4 — web: sucursales ABM, PV form picks its sucursal, stock screens and transfers by sucursal (switch
-the stock screens to `idSucursal`, header label "Sucursal").
+T5 (condicional a la instalación actual del cliente: fusión de dos sucursales con stock) o T6 (`parametros`
+por sucursal).
