@@ -14,11 +14,11 @@ namespace Ways.IntegrationTests;
 /// <summary><c>GET /api/reportes/cajas?orden=&amp;direccion=</c> contra Postgres. Posiciones (1 a 5, en orden de alta):
 /// <code>
 /// pos pv        apertura cierre esperado declarado diferencia
-///  1  Zeta      05-03    05-04  100      90        -10
-///  2  Alfa      05-01    05-09  300      310       10
+///  1  Zeta      05-03    05-04  100      90        10
+///  2  Alfa      05-01    05-09  300      310       -10
 ///  3  (baja)    05-02    05-05  50       50        0
 ///  4  (baja)    05-05    05-06  -        -         -        (sin arqueos: los tres totales son 0)
-///  5  Zeta      05-04    05-03  200      400       200
+///  5  Zeta      05-04    05-03  200      400       -200
 /// </code>
 /// Un turno cerrado exige fecha y empleado de cierre (CHECK de la tabla); un punto de venta dado de baja sigue ahí y
 /// el filtro global lo deja invisible, igual que a una FK colgante.</summary>
@@ -46,11 +46,11 @@ public class HistoricoDeCajasOrdenEndpointTests(WaysApiFixture fixture) : IClass
 
         (int Pv, DateTimeOffset Apertura, DateTimeOffset Cierre, (decimal Esperado, decimal Declarado, decimal Diferencia)? Arqueo)[] filas =
         [
-            (zeta.Id, SembradoDeDocumentos.Dia(5, 3), SembradoDeDocumentos.Dia(5, 4), (100m, 90m, -10m)),
-            (e.PvB, SembradoDeDocumentos.Dia(5, 1), SembradoDeDocumentos.Dia(5, 9), (300m, 310m, 10m)),
+            (zeta.Id, SembradoDeDocumentos.Dia(5, 3), SembradoDeDocumentos.Dia(5, 4), (100m, 90m, 10m)),
+            (e.PvB, SembradoDeDocumentos.Dia(5, 1), SembradoDeDocumentos.Dia(5, 9), (300m, 310m, -10m)),
             (baja.Id, SembradoDeDocumentos.Dia(5, 2), SembradoDeDocumentos.Dia(5, 5), (50m, 50m, 0m)),
             (baja.Id, SembradoDeDocumentos.Dia(5, 5), SembradoDeDocumentos.Dia(5, 6), null),
-            (zeta.Id, SembradoDeDocumentos.Dia(5, 4), SembradoDeDocumentos.Dia(5, 3), (200m, 400m, 200m)),
+            (zeta.Id, SembradoDeDocumentos.Dia(5, 4), SembradoDeDocumentos.Dia(5, 3), (200m, 400m, -200m)),
         ];
         var ids = new int[filas.Length];
         for (var i = 0; i < filas.Length; i++)
@@ -93,8 +93,8 @@ public class HistoricoDeCajasOrdenEndpointTests(WaysApiFixture fixture) : IClass
     [InlineData("esperado", "descendente", "2,5,1,3,4")]
     [InlineData("declarado", "ascendente", "4,3,1,2,5")]
     [InlineData("declarado", "descendente", "5,2,1,3,4")]
-    [InlineData("diferencia", "ascendente", "1,3,4,2,5")]
-    [InlineData("diferencia", "descendente", "5,2,3,4,1")]
+    [InlineData("diferencia", "ascendente", "5,2,3,4,1")]
+    [InlineData("diferencia", "descendente", "1,3,4,2,5")]
     public async Task LasPaginasConsecutivasContinuanElOrdenDeTodoElConjunto(string orden, string direccion, string esperado)
     {
         var (e, ids) = await SembrarAsync();
