@@ -31,6 +31,13 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+// La sección de Mercado Pago tiene sus propias pruebas (organizacion/SeccionMercadoPago.test.tsx): acá solo se prueba su cableado.
+vi.mock('./organizacion/SeccionMercadoPago', () => ({
+  SeccionMercadoPago: ({ empresas }: { empresas: readonly { id: number }[] }) => (
+    <div data-testid="seccion-mercadopago">{empresas.map((e) => e.id).join(',')}</div>
+  ),
+}))
+
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
     id: 9,
@@ -1070,3 +1077,25 @@ describe('Empresas — filtros por columna y orden', () => {
     expect(screen.getByLabelText('Filtrar por cuit')).toBeDisabled()
   })
 })
+
+describe('Empresas — sección de Mercado Pago', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  it('un Admin de tenant ve la sección con las empresas cargadas', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([empresaSur, empresaAnexo])
+
+    expect(await screen.findByTestId('seccion-mercadopago')).toHaveTextContent('10,11')
+  })
+
+  it('Root no ve la sección: los endpoints de Mercado Pago necesitan un tenant en la sesión', async () => {
+    montar([empresaSur])
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    expect(screen.queryByTestId('seccion-mercadopago')).not.toBeInTheDocument()
+  })
+})
+

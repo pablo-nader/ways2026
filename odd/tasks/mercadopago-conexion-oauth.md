@@ -48,9 +48,11 @@ own account without pasting secrets (OAuth), and Ways never holds the money.
 - `state`: a DataProtection-protected, time-limited (10 min) payload with tenant, empresa,
   treasury account, user, PKCE verifier and the origin to return to. The callback is anonymous
   (the redirect URI is one fixed host, where the tenant's session cookie may not exist) and
-  trusts only what the protected state says.
-- Endpoints: start (Admin, returns the authorization URL), callback (anonymous, exchanges the
-  code, stores the connection, redirects back to the tenant's web), read state (Admin, never
+  only reads the protected state to learn where to send the browser back (T3 changed this, see
+  "Decisions (T3)": it no longer exchanges anything).
+- Endpoints: start (Admin, returns the authorization URL), callback (anonymous, redirects back to
+  the tenant's web with `code` + `state` in the URL fragment), complete (Admin, exchanges the code
+  inside the session that started the flow and stores the connection), read state (Admin, never
   returns tokens), disconnect (Admin, wipes the token blobs).
 - Configuration: `Ways:MercadoPago:ClientId`, `ClientSecret`, `RedirectUri`, URLs of the
   authorization and API hosts, master keys.
@@ -92,7 +94,8 @@ heuristic because model + encryption + OAuth exchange are one coherent behavior.
   disconnect, unit + integration tests, doc 10 §07. Route: delegated (2+ non-trivial files).
 - [x] T2 — Renewal: background job that refreshes tokens before expiry, rotates the refresh
   token, marks the connection "reconnect needed" when refresh fails. Route: delegated.
-- [ ] T3 — Web: connect / state / disconnect UI with its tests. Route: delegated.
+- [x] T3 — Web: connect / state / disconnect UI with its tests, plus the login-CSRF fix (callback only redirects,
+  authenticated `POST .../completar` exchanges). Route: delegated.
 
 ## Progress
 
@@ -213,6 +216,51 @@ Doc 10 §07 updated.
   `TimeProvider` package is not referenced in the repo.
 - Several app instances each run the job; the row lock makes it safe, not efficient.
 
+## Decisions (T3)
+
+- Login-CSRF closed (T1 judgment-day WARNING, both judges). `GET /api/integraciones/mercadopago/callback` (still anonymous) no
+  longer exchanges: it unprotects the `state` only for origin + empresa and 302s to
+  `{origen}/organizacion/empresas#mercadopago=completar&empresa=<id>&code=<c>&state=<s>` (or `#mercadopago=cancelado&empresa=<id>`).
+  The FRAGMENT (not the query) keeps the code out of server logs and Referer. Invalid/expired state, or a return with neither `code`
+  nor `error`: plain 400 as before.
+- New `POST /api/empresas/{idEmpresa}/mercadopago/conexion/completar` `{ code, state }` (Admin, same group/policy as `/inicio`, passes
+  the non-GET allowlist guard). Order: 404 empresa -> 400 `solicitud_invalida` (empty / over 512 / over 2048) -> 400
+  `mercadopago_estado_invalido` -> 403 `mercadopago_estado_ajeno` (empresa and user of the state must equal the route and the session user;
+  nothing is exchanged. The tenant is not compared on its own: the route empresa is already resolved inside the session tenant, so matching
+  it binds the tenant. A tenant clause was tried and dropped because no test could kill it) -> 503 `mercadopago_no_configurado` -> exchange. Results: 200 read model, 409
+  `mercadopago_ya_conectada`, 409 `mercadopago_cuenta_en_uso`, 502 `mercadopago_intercambio_fallido` (every other failure of the
+  exchange: MP rejects, empresa/cuenta gone, deactivated cuenta). The 23505 backstops stay in the endpoint (`ResultadoDeCarrera`).
+- T1's `?mercadopago=<resultado>` return query is gone; the web reads only the fragment.
+- Web: section "Mercado Pago" BELOW the empresas grid (`SeccionMercadoPago`, one `ConexionMercadoPago` card per empresa), rendered only for
+  Admin (route also admits Root, but the endpoints need a tenant in the session). Not in the edit modal: the connection has its own
+  lifecycle (redirects, disconnect) and does not save with the empresa's "Guardar". Treasury accounts come from
+  `GET /api/cuentas-tesoreria`, filtered by empresa + `activo`; a single active account is preselected. Without accounts the card explains
+  one must be created and links to `/caja/cuentas-tesoreria`.
+- Hash flow: the section reads `location.hash` on mount, clears it with `history.replaceState` BEFORE the first await, then POSTs
+  `.../completar` and refreshes that empresa's card. No ref guard for StrictMode: the synchronous clear already makes the second effect run
+  a no-op, and a ref would be a guard no test can kill (mutation: removing the clear and the ref fails the StrictMode test with two POSTs).
+- "Conectar" does not release `ocupado` after a successful POST (the page navigates away); the URL is only followed when it is http(s).
+
+## Evidence (T3)
+
+- `dotnet build Ways.slnx -c Release`: 0 errors. Integration filter `MercadoPago|SuperficieDeAutorizacion|AislamientoDeTenant`: 76 passed
+  (re-run after dropping the tenant clause). `Ways.Application.Tests`: 1537 passed. Web: `npm run build` OK, `oxlint` 0 errors (only existing
+  warnings), full `vitest run`: 283 files / 8926 tests passed (a first run alongside the integration suite had one unrelated timeout in
+  `GrillaDeItemsDeCompra`, green alone and in the clean full run). RED was not observed first for the endpoint tests (they need the new DTO
+  to compile); mutation evidence replaces it.
+- Mutation evidence for the session-vs-state check (applied, test red, reverted): without the user clause ->
+  `UnStateIniciadoPorOtroUsuario...` red (200 instead of 403); without the empresa clause -> `UnStateDeOtraEmpresaDelMismoTenant...` red.
+  Without a tenant clause (the third mutant) all three stayed green, which is why that clause was removed. Web: `limpiarFragmento()` moved after the POST -> `borra el fragmento ANTES del POST` red; clear and ref removed -> the
+  StrictMode test and the seven mapped-message tests red.
+- Not covered by a test: a second Admin of the same tenant (an Admin cannot create Admins), so the user clause is proven with a `state`
+  forged through the protector with the same tenant/empresa and another user id.
+
+## Follow-ups (T3)
+
+- Login-CSRF follow-up from the T1 review: RESOLVED here.
+- Still open from T1: catch `NotSupportedException` from a non-JSON 2xx in `ClienteOAuthMercadoPago`; record who disconnected.
+- A 502 `mercadopago_intercambio_fallido` covers several causes (MP rejection, deactivated cuenta); the web shows one generic message.
+
 ## Next step
 
-Open the T2 PR (stacked on T1). Then T3 (web: connect / state / reconnect + the login-CSRF fix above).
+Open the T3 PR (stacked on T2) after judgment-day. Then E2 (stores/POS in Mercado Pago).

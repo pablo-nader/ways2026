@@ -311,7 +311,7 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > parciales, ambos `WHERE estado = 'activa'`: `ux_conexiones_mercadopago_empresa_activa` `(id_tenant, id_empresa)` y
 > `ux_conexiones_mercadopago_usuario_activa` `(id_usuario_mercadopago)`, SIN `id_tenant`: una cuenta de Mercado Pago está activa en
 > una sola empresa de todo el sistema (los webhooks resuelven la empresa desde ese id). `ManejadorDeErrores` traduce sus 23505 a
-> 409 `mercadopago_ya_conectada` y `mercadopago_cuenta_en_uso`; el callback anónimo los convierte en una redirección. Índices de
+> 409 `mercadopago_ya_conectada` y `mercadopago_cuenta_en_uso`; el endpoint autenticado `.../completar` los devuelve como tales. Índices de
 > soporte: `ix_conexiones_mercadopago_tenant`, `_empresa`, `_cuenta` y `_usuario_conecto`. RLS estándar.
 >
 > **Efecto sobre `cuentas_tesoreria`:** la baja lógica de una cuenta con cualquier conexión (activa o desconectada) falla con 409
@@ -323,9 +323,17 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > usuario, verificador y el origen del navegador). Orden: 404 de la empresa (inexistente, ajena o dada de baja), 503
 > `mercadopago_no_configurado` si faltan `ClientId`, `ClientSecret`, `RedirectUri` o la clave maestra, 400 `referencia_invalida`
 > (cuenta inexistente o de otro tenant), 409 `cuenta_tesoreria_de_otra_empresa`, 409 `cuenta_tesoreria_inactiva` y 409
-> `mercadopago_ya_conectada`. `GET /api/integraciones/mercadopago/callback?code=&state=` es anónimo: toma el tenant solo del `state`,
-> canjea el código y redirige a `{origen}/organizacion/empresas?mercadopago=<resultado>&empresa=<id>` con `conectado`, `cancelado`
-> (el usuario denegó), `error`, `cuenta_en_uso` o `ya_conectada`; un `state` inválido o vencido da 400 de texto plano, sin redirigir.
+> `mercadopago_ya_conectada`. `GET /api/integraciones/mercadopago/callback?code=&state=` es anónimo y **no canjea nada**: lee el
+> `state` solo para saber el origen y la empresa, y redirige a `{origen}/organizacion/empresas#mercadopago=completar&empresa=<id>&code=<code>&state=<state>`
+> (o `#mercadopago=cancelado&empresa=<id>` si el usuario denegó). Todo va en el **fragmento**, nunca en la consulta: el navegador no lo
+> manda al servidor ni en el `Referer`, así que el `code` no llega a ningún log. Un `state` inválido o vencido, o un retorno sin `code` ni
+> `error`, da 400 de texto plano. El canje lo hace `POST /api/empresas/{idEmpresa}/mercadopago/conexion/completar` con `{ code, state }`
+> (Admin; ambos campos obligatorios y acotados a 512 y 2048 caracteres; cualquier otro campo se ignora por el binding, no se guarda):
+> 404 de la empresa, 400 `solicitud_invalida` (cuerpo), 400 `mercadopago_estado_invalido` (alterado o vencido), 403
+> `mercadopago_estado_ajeno` si la empresa o el usuario del `state` no son los de la ruta y la sesión (la empresa ya se resolvió dentro del tenant de la sesión, así que ata el tenant) (no se llama a Mercado Pago),
+> 503 `mercadopago_no_configurado`, y recién entonces el canje: 200 con el estado de la conexión, 409 `mercadopago_ya_conectada`, 409
+> `mercadopago_cuenta_en_uso` o 502 `mercadopago_intercambio_fallido`. Cierra el login-CSRF: un enlace de autorización reenviado a otra
+> persona vuelve a una sesión que no es la que inició el flujo y se rechaza antes de canjear.
 > `GET /api/empresas/{idEmpresa}/mercadopago/conexion` devuelve `{ conectada, estado, idCuentaTesoreria, nombreCuenta,
 > idUsuarioMercadoPago, fechaConexion, accessTokenExpiraEn }` o `{ conectada: false }`. Sin activa, si la última conexión de la empresa quedó
 > en `requiere_reconexion` responde `{ conectada: false, estado: "requiere_reconexion", idCuentaTesoreria, nombreCuenta,
