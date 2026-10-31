@@ -1271,6 +1271,28 @@ public class ServicioDeArticulos(
             throw ErrorDominio.NoEncontrado($"No existe el artículo {idArticulo}.");
         }
 
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        // El vivo y la pertenencia al artículo van en el propio WHERE del lock: bajo READ COMMITTED
+        // Postgres los reevalúa sobre la versión que dejó el escritor que nos bloqueó, así que una
+        // baja concurrente no devuelve fila y sale el 404.
+        await using (var comando = conexion.CreateCommand())
+        {
+            comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+            comando.CommandText =
+                "SELECT 1 FROM codigos_proveedor " +
+                "WHERE id_codigo_proveedor = $1 AND id_articulo = $2 AND deleted_at IS NULL FOR UPDATE";
+            ParametrosDeComando.Agregar(comando, idCodigoProveedor);
+            ParametrosDeComando.Agregar(comando, idArticulo);
+
+            if (await comando.ExecuteScalarAsync(ct) is null)
+            {
+                throw ErrorDominio.NoEncontrado(
+                    $"No existe el código de proveedor {idCodigoProveedor} del artículo {idArticulo}.");
+            }
+        }
+
+        // Única lectura trackeada de la fila: nace después del lock.
         return await db.CodigosProveedor
             .FirstOrDefaultAsync(c => c.Id == idCodigoProveedor && c.IdArticulo == idArticulo, ct)
             ?? throw ErrorDominio.NoEncontrado(
