@@ -109,3 +109,11 @@ tests pass, and judgment-day returns APPROVED for each PR.
 ## Next step
 
 T2 (web follow-ups, delegated, stacked on this branch; uses the T1.3 `DELETE` for a `requiere_reconexion` card).
+
+## Judgment-day T1 verdict
+
+- 2026-10-31: **APPROVED** in round one, no CRITICAL. Shared point (B WARNING, A SUGGESTION "pre-existing"): a 2xx body cut
+  mid-read in `ClienteOAuthMercadoPago`; not reachable, since `PostAsJsonAsync` buffers the body (`ResponseContentRead`), so a cut
+  surfaces at the send, already mapped. Suspect (B only): disconnect also closes an older `requiere_reconexion` row that coexists with
+  a newer `activa` one, giving it the same actor and date; follow-up (close the old row when reconnecting). Suggestions: retry skipped
+  when the empresa reconnected in between (new `IdConexion`) or the expiry did not change; both fail safe (`requiere_reconexion`).
