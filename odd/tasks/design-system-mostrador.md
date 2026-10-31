@@ -71,6 +71,8 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
 
 ## Progress
 
+- 2026-10-31: PRs abiertos. #553 (T1, base main, auto-merge) y #554 (T2, base `pnader/ds-mostrador-t1`; reapuntar a main cuando #553 se mergee y recién ahí habilitar auto-merge). Judgment-day APPROVED en ambos; advertencias corregidas en b53c6521 (borde de controles, gitignore del POS) y ae347b95 (impresión en negro de estados, guard de nombres de color).
+
 - 2026-10-31: worktree `ds-mostrador`, branch `pnader/ds-mostrador-t1`; styling surface mapped.
 - 2026-10-31: T1 hecha en `7bfbeb51`. RED: `tema.test.ts` 58 de 59 fallaban contra el `tema.css` anterior; GREEN: 59/59. Mutación (ink-muted claro a `#b0aea8`) mató 4 casos y se revirtió.
   `npm test` 282 archivos / 8916 tests OK; `npm run build` OK (5 woff2 emitidos como archivos, sin `data:`); `npm run lint` sin errores (solo warnings previos).
