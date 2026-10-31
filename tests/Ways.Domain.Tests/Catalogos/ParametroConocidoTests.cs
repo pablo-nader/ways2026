@@ -17,11 +17,19 @@ public class ParametroConocidoTests
     [InlineData("dias_rotacion")]
     [InlineData("dias_cobertura_objetivo")]
     [InlineData("redondeo_sugerencia_precio")]
-    public void LasOnceClavesConocidasEstanRegistradas(string clave)
+    [InlineData("tolerancia_redondeo_pago_proveedor")]
+    public void LasDoceClavesConocidasEstanRegistradas(string clave)
     {
         var conocido = ParametroConocido.Buscar(clave);
 
         Assert.Equal(clave, conocido.Clave);
+    }
+
+    [Fact]
+    public void ToleranciaRedondeoPagoProveedorDeclaraElDefaultEn500()
+    {
+        Assert.Equal(typeof(decimal), ParametroConocido.ToleranciaRedondeoPagoProveedor.TipoClr);
+        Assert.Equal("500", ParametroConocido.ToleranciaRedondeoPagoProveedor.ValorPorDefecto);
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 using Ways.Application.Auditoria;
 using Ways.Application.Caja;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 
 namespace Ways.Application.Tests.Listados;
 
@@ -14,6 +14,13 @@ public class EtiquetasDeAccionTests
         ("precio.cambio", "Cambio de precio"),
         ("venta.anulacion", "Anulación de venta"),
         ("compra.anulacion", "Anulación de compra"),
+        ("compra.edicion", "Edición de compra"),
+        ("compra.redondeo", "Ajuste de redondeo de compra"),
+        ("pago.aplicacion", "Aplicación de pago a compras"),
+        ("pago.desaplicacion", "Desaplicación de pago de una compra"),
+        ("pago.redondeo", "Ajuste de redondeo de pago"),
+        ("cobro.aplicacion", "Aplicación de cobro a ventas"),
+        ("cobro.desaplicacion", "Desaplicación de cobro de una venta"),
         ("stock.ajuste", "Ajuste de stock"),
         ("stock.decomiso", "Decomiso de stock"),
         ("stock.conteo", "Conteo de inventario"),
@@ -37,8 +44,8 @@ public class EtiquetasDeAccionTests
     }
 }
 
-/// <summary>Espejo de este test: el de <c>CATEGORIAS_GASTO</c> en <c>Ways.Web/src/api/tipos.test.ts</c>.</summary>
-public class EtiquetasDeCategoriaDeGastoTests
+/// <summary>Espejo de este test: el de <c>CATEGORIAS_PAGO</c> en <c>Ways.Web/src/api/tipos.test.ts</c>.</summary>
+public class EtiquetasDeCategoriaDePagoTests
 {
     [Fact]
     public void LasEtiquetasDelServidorSonExactamenteLaListaFijada()
@@ -55,15 +62,15 @@ public class EtiquetasDeCategoriaDeGastoTests
 
         Assert.Equal(
             esperadas.ToList(),
-            EtiquetasDeCategoriaDeGasto.Todas.Select(p => (p.Key.ToString(), p.Value)).ToList());
+            EtiquetasDeCategoriaDePago.Todas.Select(p => (p.Key.ToString(), p.Value)).ToList());
     }
 
     [Fact]
     public void TodoValorDelEnumTieneEtiqueta()
     {
-        foreach (var categoria in Enum.GetValues<CategoriaGasto>())
+        foreach (var categoria in Enum.GetValues<CategoriaPago>())
         {
-            Assert.True(EtiquetasDeCategoriaDeGasto.Todas.ContainsKey(categoria), $"Falta la etiqueta de {categoria}.");
+            Assert.True(EtiquetasDeCategoriaDePago.Todas.ContainsKey(categoria), $"Falta la etiqueta de {categoria}.");
         }
     }
 }

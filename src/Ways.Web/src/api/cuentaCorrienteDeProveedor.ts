@@ -126,15 +126,17 @@ export function etiquetaDeTipoDeMovimiento(m: Pick<MovimientoDeCuentaDeProveedor
       return 'Pago'
     case 'Ajuste':
       return etiquetarAjuste(m.etiqueta)
+    case 'Redondeo':
+      return 'Redondeo'
   }
 }
 
-/** Columna "Comprobante/Gasto": el origen del movimiento, cuando lo tiene — un `pago` referencia
- * su `gasto`, un `compra`/contramovimiento de anulación referencia la compra, un `apertura` o un
+/** Columna "Comprobante/Pago": el origen del movimiento, cuando lo tiene — un `pago` referencia
+ * su `pago`, un `compra`/contramovimiento de anulación referencia la compra, un `apertura` o un
  * ajuste manual no referencian nada. */
 export function referenciaDeMovimiento(m: Pick<MovimientoDeCuentaDeProveedor, 'idComprobanteCompra' | 'idGasto'>): string {
   if (m.idComprobanteCompra !== null) return `Compra #${m.idComprobanteCompra}`
-  if (m.idGasto !== null) return `Gasto #${m.idGasto}`
+  if (m.idGasto !== null) return `Pago #${m.idGasto}`
   return '—'
 }
 

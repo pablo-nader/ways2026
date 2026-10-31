@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines `comprobantes_venta` + `items_comprobante_venta` + `pagos_comprobante`
+Defines `comprobantes_venta` + `items_comprobante_venta` + `cobros`
 (doc 10 §4): schema at rest, checkout as one all-or-nothing transaction,
 payment validation (legacy B6 parity, parametrized), snapshot immutability,
 devoluciones as NCX, anulación with inverse movements, and the numbering
@@ -19,7 +19,7 @@ server-side from the punto de venta's open turno and never client-supplied.
 Comprobantes emitted before this stage keep `id_turno_caja = NULL`
 permanently (decision 8: no backfill). `id_comprobante_asociado` nullable,
 `UNIQUE (id_punto_venta, id_tipo_comprobante, numero)`. `items_comprobante_venta`
-and `pagos_comprobante` MUST reference their comprobante via FK.
+and `cobros` MUST reference their comprobante via FK.
 `items_comprobante_venta` additionally carries `costo_unitario numeric(14,2)
 NULL` and `costo_es_estimado boolean NOT NULL DEFAULT false`, guarded by two
 CHECKs: `ck_items_comprobante_venta_costo_no_negativo`
@@ -542,7 +542,7 @@ letter resolution at all; 19a gives it a caller restricted to the fiscal path.)
 
 ### Requirement: Tenant and Punto de Venta Isolation
 
-`comprobantes_venta`, `items_comprobante_venta`, and `pagos_comprobante` MUST
+`comprobantes_venta`, `items_comprobante_venta`, and `cobros` MUST
 enforce the two-layer isolation guarantee (EF Core global query filter +
 Postgres RLS without `BYPASSRLS`) for `id_tenant`, and every checkout/read
 MUST require an explicit `idPuntoVenta` — there is no server-side "current

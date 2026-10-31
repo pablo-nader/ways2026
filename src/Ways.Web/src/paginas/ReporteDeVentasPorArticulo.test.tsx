@@ -163,6 +163,37 @@ describe('ReporteDeVentasPorArticulo', () => {
     expect(within(filaDos).getAllByText('Sin asignar')).toHaveLength(4)
   })
 
+  it('ordena por el total como número y deja la fila de totales al final', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-articulo?')) {
+        return Promise.resolve(
+          respuestaFixture({
+            articulos: [
+              { idArticulo: 1, codigo: 'A-1', descripcion: 'Alfa', area: null, grupo: null, categoria: null, cantidad: 1, total: 1500 },
+              { idArticulo: 2, codigo: 'Z-1', descripcion: 'Zeta', area: null, grupo: null, categoria: null, cantidad: 2, total: 900 },
+            ],
+          }),
+        )
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReporte()
+
+    await screen.findByRole('row', { name: /Alfa/ })
+    const cuerpo = () => screen.getAllByRole('row').slice(1).map((f) => f.textContent ?? '')
+
+    await usuario.click(screen.getByRole('button', { name: /Total/ }))
+    expect(screen.getByRole('columnheader', { name: /Total/ })).toHaveAttribute('aria-sort', 'ascending')
+    const ordenadas = cuerpo()
+    expect(ordenadas[0]).toContain('Zeta')
+    expect(ordenadas[1]).toContain('Alfa')
+    expect(ordenadas[2]).toMatch(/^Total/)
+
+    await usuario.click(screen.getByRole('button', { name: /Total/ }))
+    expect(cuerpo()[0]).toContain('Alfa')
+  })
+
   it('un resultado vacío muestra el estado vacío y no dibuja totales', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/ventas/por-articulo?')) {

@@ -40,7 +40,7 @@ namespace Ways.Application.Tests.Familias;
 /// patrones de <c>Set</c> piden un <c>.</c> delante, así que el contexto no figura como escritor y tampoco se vería
 /// una escritura hecha con esa forma dentro de una clase derivada de él. Tampoco ve la baja lógica de un
 /// artículo (<c>DeletedAt</c>), que cambia quién es miembro y no usa ninguna de estas formas, ni la asignación
-/// suelta de <c>IdArea</c>, <c>IdCategoria</c> e <c>IdGrupo</c>: son nombres que comparten ofertas y gastos, y las
+/// suelta de <c>IdArea</c>, <c>IdCategoria</c> e <c>IdGrupo</c>: son nombres que comparten ofertas y pagos, y las
 /// pruebas de <c>ValoresCompartidosDeFamilia</c> son las que anclan el mapeo de las dieciséis columnas. El quitador de
 /// comentarios no distingue los literales de cadena: un <c>//</c> dentro de uno le quita a la red el resto de esa
 /// línea, y un <c>/*</c>, todo el código hasta el siguiente <c>*/</c> —si lo hay—, aunque esté en otras

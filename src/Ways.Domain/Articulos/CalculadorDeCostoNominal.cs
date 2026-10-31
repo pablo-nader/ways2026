@@ -19,11 +19,11 @@ public static class CalculadorDeCostoNominal
         decimal? UnidadesPorBulto,
         decimal PorcentajeIva,
         decimal? DescuentoProveedor,
-        decimal PorcentajeImpuestoInterno = 0m);
+        decimal ImpuestoInterno = 0m);
 
     /// <summary><c>true</c> si alguna entrada que cuenta para el cálculo cambió: el costo de lista, su base, su IVA y
     /// el descuento siempre; las unidades por bulto solo mientras la base es bulto, antes o después; el porcentaje de la
-    /// alícuota y el porcentaje de impuestos internos solo mientras el costo se guarda sin IVA, antes o después. Si ninguna cambió, el costo nominal guardado
+    /// alícuota y el importe de impuestos internos solo mientras el costo se guarda sin IVA, antes o después. Si ninguna cambió, el costo nominal guardado
     /// se conserva: puede ser el efectivo que dejó una compra.</summary>
     public static bool CambiaAlgunaEntrada(Entradas anterior, Entradas nueva) =>
         anterior.CostoLista != nueva.CostoLista
@@ -33,12 +33,12 @@ public static class CalculadorDeCostoNominal
         || (anterior.UnidadesPorBulto != nueva.UnidadesPorBulto
             && (anterior.Por == CostoListaPor.Bulto || nueva.Por == CostoListaPor.Bulto))
         || ((anterior.PorcentajeIva != nueva.PorcentajeIva
-                || anterior.PorcentajeImpuestoInterno != nueva.PorcentajeImpuestoInterno)
+                || anterior.ImpuestoInterno != nueva.ImpuestoInterno)
             && (!anterior.IncluyeIva || !nueva.IncluyeIva));
 
     /// <summary>Costo por unidad, con IVA e impuestos internos incluidos y neto del descuento, redondeado a 2 decimales
-    /// (mitad lejos de cero). Un costo de lista sin IVA suma al neto el impuesto interno (<paramref name="porcentajeImpuestoInterno"/>
-    /// sobre el neto) y el IVA, que no grava al impuesto interno; uno con IVA ya lo trae todo y se toma tal cual. El descuento
+    /// (mitad lejos de cero). Un costo de lista sin IVA suma al neto el IVA y el impuesto interno (<paramref name="impuestoInterno"/>,
+    /// un importe sin IVA en la misma base que el costo de lista, que el IVA no grava); uno con IVA ya lo trae todo y se toma tal cual. El descuento
     /// del proveedor se aplica sobre ese total, igual que antes. <c>null</c> si no hay costo de lista. Con <see cref="CostoListaPor.Bulto"/> exige
     /// <paramref name="unidadesPorBulto"/> mayor que cero (ver <see cref="BultoSinUnidades"/>).</summary>
     public static decimal? Calcular(
@@ -48,7 +48,7 @@ public static class CalculadorDeCostoNominal
         decimal? unidadesPorBulto,
         decimal porcentajeIva,
         decimal? descuentoProveedor,
-        decimal porcentajeImpuestoInterno = 0m)
+        decimal impuestoInterno = 0m)
     {
         if (costoLista is not { } lista)
         {
@@ -62,7 +62,8 @@ public static class CalculadorDeCostoNominal
         }
 
         var porUnidad = por == CostoListaPor.Bulto ? lista / unidadesPorBulto!.Value : lista;
-        var conIva = incluyeIva ? porUnidad : porUnidad * (1 + (porcentajeImpuestoInterno + porcentajeIva) / 100m);
+        var impuestoPorUnidad = por == CostoListaPor.Bulto ? impuestoInterno / unidadesPorBulto!.Value : impuestoInterno;
+        var conIva = incluyeIva ? porUnidad : porUnidad * (1 + porcentajeIva / 100m) + impuestoPorUnidad;
         var neto = conIva * (1 - (descuentoProveedor ?? 0m) / 100m);
 
         return Math.Round(neto, 2, MidpointRounding.AwayFromZero);

@@ -151,7 +151,7 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         foreach (var (idMedioPago, importe, vuelto) in pagos)
         {
-            db.PagosComprobante.Add(new PagoComprobante
+            db.Cobros.Add(new Cobro
             {
                 IdTenant = ctx.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedioPago,
                 Importe = importe, Vuelto = vuelto, CreatedAt = ahora, UpdatedAt = ahora

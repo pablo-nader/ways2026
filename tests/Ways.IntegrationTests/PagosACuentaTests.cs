@@ -433,7 +433,7 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(-200m, movimiento.Importe);
         // consumo-cuenta-corriente / Pago snapshots the resulting saldo.
         Assert.Equal(300m, movimiento.SaldoResultante);
-        Assert.Null(movimiento.IdPagoComprobante);
+        Assert.Null(movimiento.IdCobro);
 
         var saldo = await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();
         Assert.Equal(300m, saldo);
@@ -459,7 +459,7 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
     /// <summary>Fault injection determinística — mismo criterio que
     /// <c>VentasAtomicidadYConcurrenciaTests.IntentarConPrivilegioRevocadoAsync</c>: REVOCA el
-    /// privilegio sobre <c>pagos_comprobante</c> (con <c>ways_owner</c>), fuerza el 500 DESPUÉS de
+    /// privilegio sobre <c>cobros</c> (con <c>ways_owner</c>), fuerza el 500 DESPUÉS de
     /// que <c>comprobantes_venta</c> ya insertó dentro de la MISMA transacción (spec: A failure
     /// after the comprobante insert rolls back everything), y restaura el privilegio.</summary>
     [Fact]
@@ -469,7 +469,7 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         await AbrirTurnoAsync(ctx);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente RC atomicidad", saldo: 500m);
 
-        await RevocarAsync("pagos_comprobante", "INSERT");
+        await RevocarAsync("cobros", "INSERT");
         HttpResponseMessage respuesta;
         try
         {
@@ -477,14 +477,14 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         }
         finally
         {
-            await RestaurarAsync("pagos_comprobante", "INSERT");
+            await RestaurarAsync("cobros", "INSERT");
         }
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
-        Assert.Equal(0, await db.PagosComprobante.CountAsync());
+        Assert.Equal(0, await db.Cobros.CountAsync());
         Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync());
         var saldo = await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();
         Assert.Equal(500m, saldo);
@@ -536,7 +536,7 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             .Where(m => m.IdComprobanteVenta == emitido.Id && m.Tipo == TipoMovimientoCc.Ajuste).ToListAsync();
         var contramovimiento = Assert.Single(contramovimientos);
         Assert.Equal(200m, contramovimiento.Importe);
-        Assert.Null(contramovimiento.IdPagoComprobante);
+        Assert.Null(contramovimiento.IdCobro);
     }
 
     [Fact]
@@ -783,7 +783,9 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             db, reloj, contexto, lector, new LectorDeResumenDeCierrePorRetiro(db, lector),
             new LectorDeRendicionDeDispositivos(db),
             new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto));
-        var servicio = new ServicioDeCuentaCorriente(db, reloj, contexto, servicioDeTurnos);
+        var servicio = new ServicioDeCuentaCorriente(
+            db, reloj, contexto, servicioDeTurnos,
+            new ServicioDeCobros(db, reloj, contexto, new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto)));
 
         var emitido = await servicio.RegistrarPagoAsync(idCliente, new SolicitudDePagoACuenta(ctx.IdPuntoVenta, pagos, null));
         Assert.False(emitido.Estado == EstadoComprobante.Anulado);

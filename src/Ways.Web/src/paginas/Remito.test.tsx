@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -259,26 +259,58 @@ describe('Remito — doble click en "Emitir" (react-async-state regla 9, tarea 8
   })
 })
 
-describe('Remito — doble click en "Anular"', () => {
-  it('dispara exactamente un POST', async () => {
-    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(detalleFixture()) : undefined))
+describe('Remito — Anular pide confirmación en un modal', () => {
+  const RUTA_ANULAR = '/remitos/30/anular'
 
+  function mockearDetalle(estado: 'Borrador' | 'Emitido' = 'Emitido') {
+    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(detalleFixture({ estado })) : undefined))
+  }
+
+  async function abrirConfirmacion() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Anular' }))
+    return screen.findByRole('alertdialog', { name: 'Confirmar anulación' })
+  }
+
+  it('abre un diálogo que nombra el remito y no llama a la API hasta confirmar', async () => {
+    mockearDetalle()
+    renderPantalla()
+
+    const dialogo = await abrirConfirmacion()
+
+    expect(within(dialogo).getByText(/¿Anular el remito 0009-00000012\?/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('Cancelar cierra el diálogo y no llama a la API', async () => {
+    mockearDetalle()
+    renderPantalla()
+
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('doble click en confirmar dispara exactamente un POST', async () => {
+    mockearDetalle()
     let resolverAnular: (v: RemitoDetalle) => void = () => {}
     const anularPendiente = new Promise<RemitoDetalle>((resolve) => {
       resolverAnular = resolve
     })
-    apiPostMock.mockImplementation((ruta: string) => (ruta === '/remitos/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+    apiPostMock.mockImplementation((ruta: string) => (ruta === RUTA_ANULAR ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
 
     renderPantalla()
-    const boton = await screen.findByRole('button', { name: 'Anular' })
+    const dialogo = await abrirConfirmacion()
+    const confirmar = within(dialogo).getByRole('button', { name: 'Confirmar anulación' })
 
     act(() => {
-      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      confirmar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
 
-    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/remitos/30/anular')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_ANULAR)).toHaveLength(1)
+    expect(within(dialogo).getByRole('button', { name: 'Anulando…' })).toBeDisabled()
 
     await act(async () => {
       resolverAnular(detalleFixture({ estado: 'Anulado' }))
@@ -286,29 +318,57 @@ describe('Remito — doble click en "Anular"', () => {
     })
   })
 
-  it('mientras "Anular" está en vuelo, "Emitir" también queda deshabilitado (misma ventana de ocupado, react-async-state regla 5)', async () => {
-    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(borradorFixture()) : undefined))
-
+  it('mientras la anulación está en vuelo, "Emitir" también queda deshabilitado (misma ventana de ocupado, react-async-state regla 5)', async () => {
+    mockearDetalle('Borrador')
     let resolverAnular: (v: RemitoDetalle) => void = () => {}
     const anularPendiente = new Promise<RemitoDetalle>((resolve) => {
       resolverAnular = resolve
     })
-    apiPostMock.mockImplementation((ruta: string) => (ruta === '/remitos/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+    apiPostMock.mockImplementation((ruta: string) => (ruta === RUTA_ANULAR ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
 
     renderPantalla()
-    const botonAnular = await screen.findByRole('button', { name: 'Anular' })
-    const botonEmitir = screen.getByRole('button', { name: 'Emitir' })
+    const botonEmitir = await screen.findByRole('button', { name: 'Emitir' })
     expect(botonEmitir).not.toBeDisabled()
 
-    await userEvent.click(botonAnular)
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
 
-    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Anulando…' })).toBeDisabled()
     expect(botonEmitir).toBeDisabled()
 
     await act(async () => {
       resolverAnular(detalleFixture({ estado: 'Anulado' }))
       await anularPendiente
     })
+  })
+
+  it('un rechazo muestra el motivo dentro del diálogo, que sigue abierto', async () => {
+    mockearDetalle()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'remito_facturado', 'El remito ya fue facturado.'))
+
+    renderPantalla()
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
+
+    expect(await within(dialogo).findByText('El remito ya fue facturado.')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('al salir bien cierra el diálogo, avisa y relee el detalle', async () => {
+    let anulado = false
+    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(detalleFixture({ estado: anulado ? 'Anulado' : 'Emitido' })) : undefined))
+    apiPostMock.mockImplementation(async () => {
+      anulado = true
+      return detalleFixture({ estado: 'Anulado' })
+    })
+
+    renderPantalla()
+    const dialogo = await abrirConfirmacion()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar anulación' }))
+
+    expect(await screen.findByText('Remito anulado.')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument())
   })
 })
 
@@ -365,6 +425,7 @@ describe('Remito — guard de stale en cargarDetalle tras dos escrituras en secu
     // `detalle` vigente — el GET #2 stale ni siquiera aterrizó). Al resolver, dispara SU propio
     // cargarDetalle (GET #3, discriminante: `observaciones` distinto del de arriba).
     await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmar anulación' }))
     await act(async () => {
       resolverAnular(detalleFixture({ estado: 'Anulado', observaciones: 'nuevo-anular' }))
       await anularPendiente

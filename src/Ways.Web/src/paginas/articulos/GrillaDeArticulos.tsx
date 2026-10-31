@@ -38,7 +38,8 @@ type Props = {
   /** El padre pide un refresco (post guardado/baja) incrementando este contador — la grilla
    * refetchea con los MISMOS `filtros`/página en curso, nunca los resetea. */
   pedidoDeRefresco: number
-  onEliminar: (fila: FilaDeGrillaDeArticulos) => void
+  /** `disparador` es el botón que se pulsó, capturado en su `onClick`: no depende de que el navegador lo enfoque. */
+  onEliminar: (fila: FilaDeGrillaDeArticulos, disparador: HTMLElement) => void
 }
 
 /**
@@ -343,7 +344,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       <BotonIcono
                         icono="eliminar"
                         disabled={ocupado}
-                        onClick={() => onEliminar(a)}
+                        onClick={(evento) => onEliminar(a, evento.currentTarget)}
                       />
                     </td>
                   </tr>

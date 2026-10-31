@@ -65,7 +65,7 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       { id: 1, numero: 1, numeroVisible: '0007-00000001', estado: 'Emitido', fecha: '2026-09-16T13:00:00Z', idPuntoVenta: 7, idCliente: 1, total: 750 },
     ],
     gastos: [
-      { id: 9, idPuntoVenta: 7, fecha: '2026-09-16T14:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 501, turnoAbierto: false, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
+      { id: 9, idPuntoVenta: 7, fecha: '2026-09-16T14:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 501, turnoAbierto: false, idProveedor: null, idArea: null, concepto: 'Pago', detalle: null, numeroFactura: null, idComprobanteCompra: null, idMovimientoPersonal: null },
     ],
     fechaRecalculo: null,
     idEmpleadoRecalculo: null,
@@ -147,7 +147,7 @@ beforeEach(() => {
 })
 
 describe('ModalDetalleDeTurno', () => {
-  it('muestra la cabecera del turno, el arqueo por medio con totales, y los tickets y gastos', async () => {
+  it('muestra la cabecera del turno, el arqueo por medio con totales, y los tickets y pagos', async () => {
     mockearRutas(rutasDe(501))
     render(<ModalDetalleDeTurno idTurno={501} onCerrar={vi.fn()} />)
 

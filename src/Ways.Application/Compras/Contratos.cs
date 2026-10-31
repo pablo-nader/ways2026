@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Ways.Domain.Compras;
 
 namespace Ways.Application.Compras;
@@ -164,9 +165,9 @@ public sealed record CompraDetalle(
     decimal ImpuestosInternos = 0m);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
-/// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve
+/// <c>ComprobanteListado</c>/<c>PagoListado</c>. <see cref="EstadoPago"/> lo resuelve
 /// <c>ServicioDeSaldoDeProveedor</c> (Slice 4) — <c>null</c> en esta slice. <see cref="SaldoPendiente"/>
-/// es lo que falta pagar de la compra (cero si no está confirmada): el selector de "vincular gasto
+/// es lo que falta pagar de la compra (cero si no está confirmada): el selector de "vincular pago
 /// a compra" lo muestra para no ofrecer una compra ya saldada como si debiera algo.</summary>
 public sealed record CompraListada(
     int Id,
@@ -190,13 +191,13 @@ public sealed record CompraDuplicada(
     OrigenCompra Origen);
 
 /// <summary>Página de resultados de <c>GET /api/compras</c> — mismo shape que
-/// <c>PaginaDeVentas</c>/<c>PaginaDeGastos</c>.</summary>
+/// <c>PaginaDeVentas</c>/<c>PaginaDePagos</c>.</summary>
 public sealed record PaginaDeCompras(IReadOnlyList<CompraListada> Items, int Total, int Pagina, int Tamanio);
 
-/// <summary>Respuesta de <c>POST /api/compras/{id}/anular</c> — <see cref="GastosLigados"/> es
-/// la regla invertida (design decisión 6): la anulación NUNCA bloquea por gastos ligados, solo
+/// <summary>Respuesta de <c>POST /api/compras/{id}/anular</c> — <see cref="PagosLigados"/> es
+/// la regla invertida (design decisión 6): la anulación NUNCA bloquea por pagos ligados, solo
 /// REPORTA cuántos pagos quedaron colgados de la compra anulada.</summary>
-public sealed record ResultadoAnulacion(CompraDetalle Compra, int GastosLigados);
+public sealed record ResultadoAnulacion(CompraDetalle Compra, [property: JsonPropertyName("gastosLigados")] int PagosLigados);
 
 /// <summary>Cuerpo de <c>POST /api/compras/{id}/precios</c> (design decisión 8) — la lista de
 /// precios es siempre explícita: una compra no tiene una lista propia asociada.</summary>

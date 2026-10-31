@@ -32,8 +32,8 @@ public class MovimientoCuentaCorriente
     public int? IdComprobanteVenta { get; set; }
 
     /// <summary>El pago con medio cuenta corriente que generó este movimiento — clave alterna
-    /// de <see cref="Ways.Domain.Ventas.PagoComprobante"/>.</summary>
-    public int? IdPagoComprobante { get; set; }
+    /// de <see cref="Ways.Domain.Ventas.Cobro"/>.</summary>
+    public int? IdCobro { get; set; }
 
     /// <summary>Con signo: positivo aumenta la deuda (consumo), negativo la reduce
     /// (contramovimiento de anulación).</summary>

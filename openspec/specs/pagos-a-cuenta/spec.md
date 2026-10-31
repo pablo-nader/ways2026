@@ -83,9 +83,9 @@ An RC targeting Consumidor Final MUST be rejected
 ### Requirement: RC Writes One Negative Pago Movement Atomically
 
 Emitting RC MUST, in the same transaction as the comprobante and its
-`pagos_comprobante`, insert exactly one `movimientos_cuenta_corriente` row
+`cobros`, insert exactly one `movimientos_cuenta_corriente` row
 (`tipo = pago`, negative `importe` equal in magnitude to the RC total,
-`id_comprobante_venta` set to the RC comprobante, `id_pago_comprobante NULL`)
+`id_comprobante_venta` set to the RC comprobante, `id_cobro NULL`)
 and update `Cliente.Saldo` by the same amount via the same
 `UPDATE ... RETURNING` pattern stage 5/6 use.
 
@@ -96,7 +96,7 @@ and update `Cliente.Saldo` by the same amount via the same
   `Cliente.Saldo = 300`, in the same transaction as the comprobante
 
 #### Scenario: A failure after the comprobante insert rolls back everything
-- GIVEN an RC checkout that fails while inserting `pagos_comprobante`
+- GIVEN an RC checkout that fails while inserting `cobros`
 - WHEN the transaction aborts
 - THEN no comprobante, Pago movement, or Saldo change is visible
 

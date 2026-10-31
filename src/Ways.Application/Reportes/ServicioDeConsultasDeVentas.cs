@@ -612,7 +612,7 @@ public class ServicioDeConsultasDeVentas(
         return elegido;
     }
 
-    /// <summary>Lo cobrado por medio de pago, NETO del vuelto: <c>pagos_comprobante.importe</c> guarda
+    /// <summary>Lo cobrado por medio de pago, NETO del vuelto: <c>cobros.importe</c> guarda
     /// lo entregado por el cliente y el vuelto va aparte, así que el efectivo realmente cobrado es
     /// <c>importe - vuelto</c>. Los mismos filtros de comprobante que el reporte de ventas (clase venta,
     /// no anulado, sin espejos fiscales, puntos de venta del alcance, fecha del rango) y el signo del
@@ -637,7 +637,7 @@ public class ServicioDeConsultasDeVentas(
                 db.TiposComprobante.Where(t => t.Clase == ClaseComprobante.Venta),
                 cv => cv.IdTipoComprobante, t => t.Id, (cv, t) => new { cv.Id, t.Signo })
             .Join(
-                db.PagosComprobante, cv => cv.Id, p => p.IdComprobanteVenta,
+                db.Cobros, cv => cv.Id, p => p.IdComprobanteVenta,
                 (cv, p) => new { cv.Signo, p.IdMedioPago, p.Importe, p.Vuelto })
             .GroupBy(x => x.IdMedioPago)
             .Select(g => new { Clave = g.Key, Neto = g.Sum(x => (x.Importe - x.Vuelto) * x.Signo), CantidadPagos = g.Count() })

@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
@@ -30,6 +30,11 @@ public class MovimientoCuentaCorrienteProveedorConfiguration
                 "ck_movimientos_cuenta_corriente_proveedor_apertura",
                 "(tipo = 'apertura' AND id_punto_venta IS NULL AND id_empleado IS NULL) "
                 + "OR (tipo <> 'apertura' AND id_punto_venta IS NOT NULL AND id_empleado IS NOT NULL)");
+
+            // E4: un redondeo perdona o absorbe una diferencia de UNA compra o de UN pago, nunca de las dos ni de ninguna.
+            t.HasCheckConstraint(
+                "ck_movimientos_cuenta_corriente_proveedor_redondeo_un_destino",
+                "tipo <> 'redondeo' OR num_nonnulls(id_comprobante_compra, id_pago) = 1");
         });
 
         builder.HasKey(m => m.Id).HasName("pk_movimientos_cuenta_corriente_proveedor");
@@ -53,7 +58,7 @@ public class MovimientoCuentaCorrienteProveedorConfiguration
             .IsRequired();
 
         builder.Property(m => m.IdComprobanteCompra).HasColumnName("id_comprobante_compra");
-        builder.Property(m => m.IdGasto).HasColumnName("id_gasto");
+        builder.Property(m => m.IdPago).HasColumnName("id_pago");
 
         builder.Property(m => m.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(m => m.SaldoResultante).HasColumnName("saldo_resultante").HasColumnType("numeric(14,2)").IsRequired();
@@ -82,8 +87,8 @@ public class MovimientoCuentaCorrienteProveedorConfiguration
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_cuenta_corriente_proveedor_empleado");
 
         // Índice 6 — soporte de FK 6.
-        builder.HasIndex(m => new { m.IdGasto, m.IdTenant })
-            .HasDatabaseName("ix_movimientos_cuenta_corriente_proveedor_gasto");
+        builder.HasIndex(m => new { m.IdPago, m.IdTenant })
+            .HasDatabaseName("ix_movimientos_cuenta_corriente_proveedor_pago");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -124,12 +129,12 @@ public class MovimientoCuentaCorrienteProveedorConfiguration
             .HasConstraintName("fk_movimientos_cuenta_corriente_proveedor_comprobante_compra")
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Requiere la clave alterna nueva de gastos (gate §D, GastoConfiguration).
-        builder.HasOne<Gasto>()
+        // Requiere la clave alterna nueva de pagos (gate §D, PagoConfiguration).
+        builder.HasOne<Pago>()
             .WithMany()
-            .HasForeignKey(m => new { m.IdGasto, m.IdTenant })
+            .HasForeignKey(m => new { m.IdPago, m.IdTenant })
             .HasPrincipalKey(g => new { g.Id, g.IdTenant })
-            .HasConstraintName("fk_movimientos_cuenta_corriente_proveedor_gasto")
+            .HasConstraintName("fk_movimientos_cuenta_corriente_proveedor_pago")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

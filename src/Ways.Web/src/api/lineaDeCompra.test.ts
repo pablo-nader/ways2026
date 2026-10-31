@@ -127,7 +127,7 @@ describe('lineaDeCompraVacia / lineaTieneDatos', () => {
       unidadesPorBulto: null,
       actualizaCosto: true,
       impuestoInterno: null,
-      porcentajeImpuestoInterno: 0,
+      impuestoInternoPorUnidad: 0,
       guardada: null,
     })
     expect(lineaTieneDatos(lineaDeCompraVacia(1))).toBe(false)

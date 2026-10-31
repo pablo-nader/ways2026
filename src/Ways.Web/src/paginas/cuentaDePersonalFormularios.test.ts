@@ -423,6 +423,7 @@ describe('etiquetas', () => {
   it('describe una línea del desglose con medio, importe, origen y referencia', () => {
     const base = {
       idGasto: 1,
+      idItem: 10,
       idMedioPago: 4,
       nombreMedioPago: 'Efectivo',
       importe: 1500,

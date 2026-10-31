@@ -67,8 +67,8 @@ items_comprobante_venta (
     total           numeric(14,2)            -- cantidad × precio − descuento + ajuste_manual
 );
 
-pagos_comprobante (
-    id_pago, id_comprobante_venta,
+cobros (                              -- antes pagos_comprobante (E7-S1)
+    id_cobro, id_comprobante_venta,
     id_medio_pago, importe numeric(14,2),
     referencia text NULL,                    -- cupón, nro de operación
     vuelto numeric(14,2) NOT NULL DEFAULT 0  -- solo medios que admiten vuelto
@@ -82,7 +82,7 @@ Cambios de fondo respecto del legacy:
 | `ventas.articulos` string serializado | `items_comprobante_venta` |
 | Descuento como línea fantasma `OF...` | `descuento` + `id_oferta` **en el item** |
 | Precio cambiado a mano en caja, sin rastro | `ajuste_manual_porcentaje` + `ajuste_manual` **en el item** |
-| Columnas `efectivo/tarjetas/c_corriente/vuelto` | N filas en `pagos_comprobante` |
+| Columnas `efectivo/tarjetas/c_corriente/vuelto` | N filas en `cobros` |
 | `tipo` 1/2 (venta/devolución) | `tipos_comprobante` con `signo` (ticket X / NC X) |
 | `tipo` 3/4/5 metidos en `ventas` | `movimientos_cuenta_corriente` (§8) |
 | `eliminado = 1` | `estado = anulado` + contramovimientos de stock auditados |

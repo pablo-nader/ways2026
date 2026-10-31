@@ -94,28 +94,53 @@ public class EscriturasSinReintentoEstructuralesTests
         // idempotencia; un reintento tras un commit ambiguo duplicaría el movimiento.
         { "Ways.Application/Plantel/ServicioDeCuentaDePersonal.cs", "EscribirAsync" },
 
+        // Carga semanal de horas: bloquea los personales, lee el libro del día y escribe los asientos de diferencia, el saldo
+        // y las jornadas sin clave de idempotencia; un reintento tras un commit ambiguo duplicaría los asientos.
+        { "Ways.Application/Plantel/ServicioDeCargaSemanalDeHoras.cs", "GuardarSemanaAsync" },
+
         // Pago de personal: mueve el saldo del personal y el del cliente, y escribe el asiento del libro, el
-        // descuento de cuenta corriente, los gastos de sueldos y el egreso de tesorería sin clave de idempotencia;
+        // descuento de cuenta corriente, los pagos de sueldos y el egreso de tesorería sin clave de idempotencia;
         // un reintento tras un commit ambiguo pagaría dos veces.
         { "Ways.Application/Plantel/ServicioDePagoDePersonal.cs", "PagarAsync" },
 
-        // stage-gasto-a-compra (PR4): vincular un gasto a una compra muta saldo de proveedor y
+        // stage-gasto-a-compra (PR4): vincular un pago a una compra muta saldo de proveedor y
         // ledger de CC sin ninguna clave de idempotencia — un reintento sobre un commit ambiguo
-        // podría re-imputar o re-descontar, mismo criterio que ServicioDeGastos.RegistrarAsync/
+        // podría re-imputar o re-descontar, mismo criterio que ServicioDePagos.RegistrarAsync/
         // RegistrarDeAdministracionAsync (que ya usan la fábrica, fuera de esta lista porque no
         // son parte del audit original de fix/retry-double-add).
-        { "Ways.Application/Gastos/ServicioDeGastos.cs", "VincularCompraAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.cs", "VincularCompraAsync" },
 
-        // Pagar una compra: crea gasto, pago de cuenta corriente y egreso de tesorería sin clave de
+        // Pagar una compra: crea pago, pago de cuenta corriente y egreso de tesorería sin clave de
         // idempotencia — un reintento sobre un commit ambiguo pagaría dos veces.
-        { "Ways.Application/Gastos/ServicioDeGastos.cs", "PagarCompraAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.cs", "PagarCompraAsync" },
 
-        // Edición y baja de gastos: ajustes de cuenta corriente y de tesorería, recálculo de arqueo y
+        // Edición y baja de pagos: ajustes de cuenta corriente y de tesorería, recálculo de arqueo y
         // auditoría sin clave de idempotencia — un reintento sobre un commit ambiguo los duplicaría
         // (y la baja reintentada respondería 404 a una baja que sí tuvo éxito).
-        { "Ways.Application/Gastos/ServicioDeGastos.cs", "EditarAsync" },
-        { "Ways.Application/Gastos/ServicioDeGastos.cs", "EditarDeAdministracionAsync" },
-        { "Ways.Application/Gastos/ServicioDeGastos.cs", "EliminarDeAdministracionAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.cs", "EditarAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.cs", "EditarDeAdministracionAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.cs", "EliminarDeAdministracionAsync" },
+
+        // Aplicar y desaplicar un pago: escriben aplicaciones, adoptan el proveedor y, en la adopción, el movimiento de
+        // cuenta corriente y el saldo del proveedor sin clave de idempotencia; un reintento tras un commit ambiguo
+        // duplicaría la adopción o releería aplicaciones ya liberadas.
+        { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "AplicarAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "DesaplicarAsync" },
+
+        // Pagar una compra con aplicaciones y con exceso: crea el pago, adopta pagos sin proveedor y escribe cuenta
+        // corriente y tesorería sin clave de idempotencia; un reintento sobre un commit ambiguo pagaría dos veces.
+        { "Ways.Application/Pagos/ServicioDePagos.Aplicaciones.cs", "PagarCompraConAplicacionesAsync" },
+
+        // Aplicar y desaplicar el cobro de un recibo a ventas (E7-S2): escriben aplicaciones y auditoría sin clave de
+        // idempotencia; un reintento tras un commit ambiguo aplicaría dos veces o respondería 404 a una desaplicación que sí
+        // tuvo éxito.
+        { "Ways.Application/CuentaCorriente/ServicioDeCobros.cs", "AplicarAsync" },
+        { "Ways.Application/CuentaCorriente/ServicioDeCobros.cs", "DesaplicarAsync" },
+
+        // Cierre en cero por redondeo: escribe un movimiento de cuenta corriente y mueve el saldo del proveedor sin clave de
+        // idempotencia; un reintento sobre un commit ambiguo perdonaría o absorbería la diferencia dos veces.
+        { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDeCompraAsync" },
+        { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDePagoAsync" },
 
         // Familias de artículos: editar el nombre y el estado de una familia lee la fila bajo su FOR UPDATE; un
         // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
@@ -174,6 +199,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // Descartar un borrador: toma el lock FOR UPDATE y borra el encabezado con sus hijos; un reintento tras un commit
         // ambiguo respondería 404 a un descarte que sí tuvo éxito.
         { "Ways.Application/Compras/ServicioDeCompras.cs", "DescartarBorradorAsync" },
+
+        // Editar una compra confirmada: asienta diferencias de stock y de cuenta corriente del proveedor y su auditoría sin
+        // clave de idempotencia; un reintento tras un commit ambiguo las asentaría dos veces (o respondería 409 a una
+        // edición que sí tuvo éxito).
+        { "Ways.Application/Compras/ServicioDeCompras.Edicion.cs", "ActualizarConfirmadaAsync" },
     };
 
     /// <summary>

@@ -17,9 +17,33 @@ public static class UsuariosEndpoints
             bool? incluirEliminados,
             int? pagina,
             int? tamanio,
+            int? id,
+            string? usuario,
+            string? mail,
+            string? tenant,
+            int? rolId,
+            string? estado,
+            bool? conectado,
+            string? orden,
+            string? direccion,
             CancellationToken ct) =>
-            servicio.ListarAsync(busqueda, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista usuarios con búsqueda y paginado.");
+            servicio.ListarAsync(
+                busqueda,
+                incluirEliminados ?? false,
+                pagina ?? 1,
+                tamanio ?? 25,
+                new FiltrosDeUsuarios(id, usuario, mail, tenant, rolId, estado, conectado),
+                orden,
+                direccion,
+                ct))
+        .WithSummary(
+            "Lista usuarios con búsqueda, filtros por columna y paginado. Filtros: usuario y mail contienen el " +
+            "texto; id, rolId y estado (Activo, Inactivo, Bloqueado) son exactos; conectado separa a quien alguna " +
+            "vez inició sesión; tenant (id o sin-tenant) es solo del actor de plataforma. orden (id, usuario, mail, " +
+            "tenant, rol, estado, ultimaConexion) y direccion (ascendente, descendente) ordenan todo el resultado " +
+            "antes de paginar. Respuestas 400: orden_invalido, direccion_invalida, direccion_sin_orden, " +
+            "orden_no_permitido (orden=tenant sin ser de plataforma), estado_invalido, tenant_invalido y " +
+            "filtro_tenant_no_permitido (tenant sin ser de plataforma).");
 
         grupo.MapGet("/{id:int}", (ServicioDeUsuarios servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))

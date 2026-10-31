@@ -9,12 +9,12 @@ namespace Ways.Domain.Auditoria;
 ///
 /// <c>dto-contract-honesty</c>: cada constante documenta el par exacto que su call site (design,
 /// tabla "Call sites") tiene permitido escribir — la convención del repo es usar siempre una de
-/// estas 23 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
+/// estas 27 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
 /// acá primero, nunca improvisar un <c>new AccionAuditada(...)</c> inline. El <c>record</c>
 /// posicional público SÍ genera un constructor público (<c>new AccionAuditada("x", "y")</c>
 /// compila): nada en el tipo lo impide, y la membresía al catálogo no se valida en runtime
 /// (design decisión 15 — una acción retirada deja filas consultables cuyo <c>accion</c> ya no
-/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 23" es de convención +
+/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 27" es de convención +
 /// test (<see cref="Ways.Domain.Tests.Auditoria.AccionAuditadaTests"/> congela el catálogo
 /// exacto), no del tipo.
 /// </summary>
@@ -114,14 +114,31 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>id_entidad</c> es el comprobante; el payload lleva cliente, saldos y límite.</summary>
     public static readonly AccionAuditada VentaExcedioLimiteSinValidar = new("venta.sobrelimite", "comprobante_venta");
 
-    /// <summary>Edición de un gasto ya registrado — <c>Gastos/ServicioDeGastos.cs</c>, los caminos
+    /// <summary>Edición de un pago ya registrado — <c>Pagos/ServicioDePagos.cs</c>, los caminos
     /// del POS (turno abierto) y de administración. <c>valor_anterior</c>/<c>valor_nuevo</c> llevan
     /// los campos editables más el importe.</summary>
-    public static readonly AccionAuditada GastoEdicion = new("gasto.edicion", "gasto");
+    public static readonly AccionAuditada PagoEdicion = new("pago.edicion", "pago");
 
-    /// <summary>Baja lógica administrativa de un gasto — <c>Gastos/ServicioDeGastos.cs</c>. Mismos
-    /// campos que <see cref="GastoEdicion"/> más <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
-    public static readonly AccionAuditada GastoBaja = new("gasto.baja", "gasto");
+    /// <summary>Baja lógica administrativa de un pago — <c>Pagos/ServicioDePagos.cs</c>. Mismos
+    /// campos que <see cref="PagoEdicion"/> más <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
+    public static readonly AccionAuditada PagoBaja = new("pago.baja", "pago");
+
+    /// <summary>Aplicación de lo disponible de un pago a una o más compras (y adopción del proveedor de un pago sin
+    /// proveedor) — <c>Pagos/ServicioDePagos.Aplicaciones.cs</c>. El <c>id_entidad</c> es el pago.</summary>
+    public static readonly AccionAuditada PagoAplicacion = new("pago.aplicacion", "pago");
+
+    /// <summary>Desaplicación de un pago de una compra — <c>Pagos/ServicioDePagos.Aplicaciones.cs</c>. El
+    /// <c>id_entidad</c> es el pago.</summary>
+    public static readonly AccionAuditada PagoDesaplicacion = new("pago.desaplicacion", "pago");
+
+    /// <summary>Cierre en cero de una compra por redondeo (<c>POST /api/compras/{id}/ajuste-de-redondeo</c> y el pago de una
+    /// compra con <c>cerrarEnCero</c>) — <c>Pagos/ServicioDePagos.Redondeo.cs</c>. El <c>id_entidad</c> es la compra.</summary>
+    public static readonly AccionAuditada CompraRedondeo = new("compra.redondeo", "comprobante_compra");
+
+    /// <summary>Cierre en cero de lo que queda disponible de un pago por redondeo (<c>POST /api/pagos/{id}/ajuste-de-redondeo</c> y
+    /// el pago de una compra con <c>cerrarEnCero</c> que paga de más) — <c>Pagos/ServicioDePagos.Redondeo.cs</c>. El
+    /// <c>id_entidad</c> es el pago.</summary>
+    public static readonly AccionAuditada PagoRedondeo = new("pago.redondeo", "pago");
 
     /// <summary>Alta de un punto de venta sobre una empresa existente —
     /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearPuntoVentaAsync</c>. Mismo dominio
@@ -129,11 +146,24 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// crea su primer punto de venta sin pasar por acá.</summary>
     public static readonly AccionAuditada PuntoVentaAlta = new("pv.alta", "punto_venta");
 
-    /// <summary>Las 23 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
+    /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
+    public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
+
+    /// <summary>Aplicación de lo disponible de un cobro (recibo <c>RC</c>) a una o más ventas en cuenta corriente —
+    /// <c>CuentaCorriente/ServicioDeCobros.cs</c>. El <c>id_entidad</c> es el recibo.</summary>
+    public static readonly AccionAuditada CobroAplicacion = new("cobro.aplicacion", "comprobante_venta");
+
+    /// <summary>Desaplicación de un cobro de una venta, a mano o porque se anuló el recibo o la venta —
+    /// <c>CuentaCorriente/ServicioDeCobros.cs</c> y <c>Ventas/ServicioDeVentas.cs</c>. El <c>id_entidad</c> es el
+    /// recibo.</summary>
+    public static readonly AccionAuditada CobroDesaplicacion = new("cobro.desaplicacion", "comprobante_venta");
+
+    /// <summary>Las 30 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
-    /// validarlo y la edición/baja de gastos y el alta de puntos de venta, más el descarte de un borrador de compra) — usada por el catálogo genérico de tests (naming
+    /// validarlo y la edición/baja de pagos y el alta de puntos de venta, más el descarte de un borrador de compra, los cierres por redondeo, la edición de una compra confirmada y la aplicación/desaplicación de cobros) — usada por el catálogo genérico de tests (naming
     /// <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier consumidor que
     /// necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
@@ -158,8 +188,15 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         VentaDiscrepanciaDePrecio,
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
-        GastoEdicion,
-        GastoBaja,
-        PuntoVentaAlta
+        PagoEdicion,
+        PagoBaja,
+        PagoAplicacion,
+        PagoDesaplicacion,
+        CompraRedondeo,
+        PagoRedondeo,
+        PuntoVentaAlta,
+        CompraEdicion,
+        CobroAplicacion,
+        CobroDesaplicacion
     ];
 }

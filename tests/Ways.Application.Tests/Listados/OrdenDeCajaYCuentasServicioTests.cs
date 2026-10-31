@@ -253,7 +253,7 @@ public class OrdenDeCuentaDeProveedorServicioTests : OrdenDeDocumentosBase
             // El saldo resultante es el guardado de cada fila, a propósito sin relación con los importes: ordenar jamás
             // puede recalcularlo. Los movimientos 4 y 5 son ajustes: el 4 lleva compra (contramovimiento de una anulación),
             // el 5 es manual.
-            (DateTimeOffset Fecha, TipoMovimientoCcProveedor Tipo, int? Compra, int? Gasto, decimal Importe, decimal Saldo, string? Detalle)[] filas =
+            (DateTimeOffset Fecha, TipoMovimientoCcProveedor Tipo, int? Compra, int? Pago, decimal Importe, decimal Saldo, string? Detalle)[] filas =
             [
                 (Dia(5, 3), TipoMovimientoCcProveedor.Compra, 10, null, 100m, 100m, "b"),
                 (Dia(5, 1), TipoMovimientoCcProveedor.Apertura, null, null, 0m, 0m, null),
@@ -268,7 +268,7 @@ public class OrdenDeCuentaDeProveedorServicioTests : OrdenDeDocumentosBase
                 var movimiento = new MovimientoCuentaCorrienteProveedor
                 {
                     IdTenant = IdTenant, IdProveedor = idProveedor, Fecha = f.Fecha, Tipo = f.Tipo,
-                    IdComprobanteCompra = f.Compra, IdGasto = f.Gasto, Importe = f.Importe, SaldoResultante = f.Saldo,
+                    IdComprobanteCompra = f.Compra, IdPago = f.Pago, Importe = f.Importe, SaldoResultante = f.Saldo,
                     Detalle = f.Detalle
                 };
                 siembra.MovimientosCuentaCorrienteProveedor.Add(movimiento);

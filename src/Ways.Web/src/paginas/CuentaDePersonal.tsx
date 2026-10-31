@@ -20,7 +20,7 @@ import type {
   MedioPagoAlta,
   MedioPagoListado,
   MovimientoDePersonal,
-  OrigenFondosGasto,
+  OrigenFondosPago,
   PaginaDeCuentaDePersonal,
   PersonalListado,
 } from '../api/tipos'
@@ -82,7 +82,7 @@ type Operacion = {
   descripcion: string
   mensajeOk: string
   /** Origen de fondos enviado, o `null` si la escritura no lleva dinero. */
-  origenDelPago: OrigenFondosGasto | null
+  origenDelPago: OrigenFondosPago | null
 }
 
 function SinEmpleado() {
@@ -111,7 +111,7 @@ function SinEmpleado() {
  * fallido nunca convierte en error una escritura ya confirmada.
  *
  * Las escrituras no llevan clave de idempotencia: reintentar a ciegas una que quizá se hizo puede registrar
- * dos veces el mismo pago (y sus gastos, el egreso de caja o tesorería y el descuento al cliente). Por eso un
+ * dos veces el mismo pago (y sus pagos, el egreso de caja o tesorería y el descuento al cliente). Por eso un
  * resultado incierto (red cortada, cualquier 5xx) cierra la modal y descarta el formulario, relee la cuenta,
  * el saldo y la deuda, y agrega una entrada a `avisosInciertos` (su propio estado: cada una es una precondición
  * vigente). Ninguna otra escritura, refresco, paginado ni filtro las borra: solo las quita el "Ya lo revisé"
@@ -566,7 +566,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
                               <li>Descuento de cuenta corriente: {moneda(m.desglose.descuentoDeCuentaCorriente)}</li>
                             )}
                             {m.desglose.lineas.map((l) => (
-                              <li key={l.idGasto}>{textoDeLineaDeDesglose(l)}</li>
+                              <li key={l.idItem}>{textoDeLineaDeDesglose(l)}</li>
                             ))}
                           </ul>
                         )}

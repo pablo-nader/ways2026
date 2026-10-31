@@ -70,7 +70,7 @@ const MODELO: EntradaDelModelo[] = [
           // stage-gastos-admin-retroactivos (PR3): admin-only (a diferencia de sus dos hermanas
           // de arriba) — mismo gate que Proveedores, la pantalla entera vive bajo
           // Politicas.GestionDeCatalogo del lado del servidor.
-          enlace(puedeGestionarCatalogos, 'Gastos', '/gastos'),
+          enlace(puedeGestionarCatalogos, 'Pagos', '/pagos'),
         ],
       },
     ],
@@ -125,6 +125,7 @@ const MODELO: EntradaDelModelo[] = [
           // Lectura de Admin y Supervisor (Politicas.LecturaDePersonal): el Supervisor ve la pantalla
           // en solo lectura, sin el resto de Administración.
           enlace(puedeVerPersonal, 'Personal', '/personal'),
+          enlace(puedeVerPersonal, 'Carga semanal de horas', '/personal/horas'),
         ],
       },
       {
@@ -150,7 +151,7 @@ const MODELO: EntradaDelModelo[] = [
           enlace(puedeGestionarCatalogos, 'Equipos POS', '/organizacion/equipos-pos'),
           enlace(rootOAdmin, 'Vitrina', '/organizacion/vitrina'),
           enlace(puedeAprovisionarTenants, 'Tenants', '/organizacion/tenants'),
-          enlace(puedeAprovisionarTenants, 'Nuevo tenant', '/organizacion/nuevo-tenant'),
+          enlace(puedeAprovisionarTenants, 'Nuevo tenant', '/organizacion/tenants?nuevo=1'),
           enlace(puedeAprovisionarTenants, 'Dominios', '/organizacion/dominios'),
         ],
       },

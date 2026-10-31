@@ -93,7 +93,7 @@ public static class ReportesEndpoints
         grupo.MapGet("/gastos/resumen", (
             ServicioDeReportesDeEgresos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
             Granularidad granularidad, CancellationToken ct) =>
-            servicio.ObtenerGastosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct))
+            servicio.ObtenerPagosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct))
         .WithSummary("Gastos bucketeados por la zona horaria del punto de venta, con desglose por categoría.");
 
         grupo.MapGet("/gastos/resumen/export", async (
@@ -104,7 +104,7 @@ public static class ReportesEndpoints
         {
             FormatoDeExportacion.Parsear(formato);
 
-            var resumen = await servicio.ObtenerGastosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct);
+            var resumen = await servicio.ObtenerPagosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct);
 
             var ctx = ContextoDeExportacionHttp.Construir(
                 usuario, reloj, idEmpresa, idPuntoVenta, desde, hasta, resumen.ZonaHoraria);
@@ -362,7 +362,7 @@ public static class ReportesEndpoints
             ServicioDeReportesDeVentas servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
             CancellationToken ct) =>
             servicio.ObtenerPorMedioPagoAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
-        .WithSummary("Ventas netas del período agrupadas por medio de pago (pagos_comprobante.id_medio_pago).");
+        .WithSummary("Ventas netas del período agrupadas por medio de pago (cobros.id_medio_pago).");
 
         grupo.MapGet("/ventas/por-medio-pago/export", async (
             ServicioDeReportesDeVentas servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,

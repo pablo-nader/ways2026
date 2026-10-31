@@ -22,6 +22,9 @@ parametros (                  -- [operativa a nivel punto de venta, con fallback
 -- importe_envio: importe de la línea "Envío" de una venta con envío (decimal, default 0; de 0 a
 --   999999999999.99 con hasta 2 decimales, 400 `parametro_importe_envio_invalido`)
 -- redondeo_sugerencia_precio: múltiplo al que se redondea el precio sugerido (decimal, default 100)
+-- tolerancia_redondeo_pago_proveedor: diferencia máxima que se perdona/absorbe al cerrar en cero una compra o un pago de
+--   proveedor (decimal, default 500, de 0 a 999999999999.99 con hasta 2 decimales, 400 `parametro_tolerancia_redondeo_invalida`;
+--   se resuelve con el punto de venta de la compra; no es la `tolerancia_pago` de ventas; ver §5, E4)
 ```
 
 > **`vuelto_maximo` eliminado (decisión del dueño, 2026-09-16):** dejó de ser consumido por

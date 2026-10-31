@@ -1,4 +1,5 @@
-using Ways.Domain.Gastos;
+using System.Text.Json.Serialization;
+using Ways.Domain.Pagos;
 using Ways.Domain.Plantel;
 
 namespace Ways.Application.Plantel;
@@ -29,9 +30,9 @@ public record MovimientoDePersonal(
     DesgloseDePago? Desglose = null);
 
 /// <summary>Cuerpo de <c>POST /api/personal/{id}/pagos</c>. <see cref="Fecha"/> es obligatoria: es el día del
-/// asiento en el libro del personal y, con origen tesorería, la fecha de negocio de los gastos (puede ser
+/// asiento en el libro del personal y, con origen tesorería, la fecha de negocio de los pagos (puede ser
 /// retroactiva, nunca futura). <see cref="DescuentoDeCuentaCorriente"/> baja la deuda del cliente vinculado al
-/// personal y no mueve dinero. <see cref="Lineas"/> son las entregas de dinero, cada una un gasto de sueldos;
+/// personal y no mueve dinero. <see cref="Lineas"/> son las entregas de dinero, cada una un pago de sueldos;
 /// <see cref="OrigenFondos"/> es obligatorio con líneas y se rechaza sin ellas. <see cref="IdEmpresa"/> solo se
 /// indica con origen tesorería; <see cref="IdPuntoVenta"/> es obligatorio con el cajón o con descuento.
 /// <see cref="Detalle"/> queda en el asiento del personal.</summary>
@@ -39,24 +40,25 @@ public record SolicitudDePagoDePersonal(
     DateOnly? Fecha,
     int? IdEmpresa,
     int? IdPuntoVenta,
-    OrigenFondosGasto? OrigenFondos,
+    OrigenFondosPago? OrigenFondos,
     decimal? DescuentoDeCuentaCorriente,
     IReadOnlyList<LineaDeSolicitudDePago>? Lineas,
     string? Detalle);
 
-/// <summary><see cref="Referencia"/> (cupón u operación) queda en el detalle del gasto de la línea.</summary>
+/// <summary><see cref="Referencia"/> (cupón u operación) queda en el detalle del pago de la línea.</summary>
 public record LineaDeSolicitudDePago(int IdMedioPago, decimal Importe, string? Referencia);
 
-/// <summary>Composición de un pago: el descuento de cuenta corriente (si hubo) y una línea por cada gasto
-/// generado. <see cref="LineaDeDesglose.NombreMedioPago"/> sale en <c>null</c> si el medio se dio de baja.</summary>
+/// <summary>Composición de un pago: el descuento de cuenta corriente (si hubo) y una línea por cada ítem de
+/// cada pago generado. <see cref="LineaDeDesglose.NombreMedioPago"/> sale en <c>null</c> si el medio se dio de baja.</summary>
 public record DesgloseDePago(decimal? DescuentoDeCuentaCorriente, IReadOnlyList<LineaDeDesglose> Lineas);
 
 public record LineaDeDesglose(
-    int IdGasto,
+    [property: JsonPropertyName("idGasto")] int IdPago,
+    int IdItem,
     int IdMedioPago,
     string? NombreMedioPago,
     decimal Importe,
-    OrigenFondosGasto OrigenFondos,
+    OrigenFondosPago OrigenFondos,
     string? Referencia);
 
 /// <summary><see cref="Saldo"/> sale de <c>personal.saldo</c>, nunca de la suma de la página.</summary>

@@ -298,6 +298,7 @@ app.MapearProveedores();
 app.MapearPersonal();
 app.MapearCuentasTesoreria();
 app.MapearCuentaDePersonal();
+app.MapearCargaSemanalDeHoras();
 app.MapearArticulos();
 // Familias de artículos (doc 10 §3): gestión, solo admin.
 app.MapearFamilias();
@@ -309,8 +310,10 @@ app.MapearVentas();
 app.MapearPos();
 app.MapearStock();
 app.MapearCaja();
-app.MapearGastos();
+app.MapearPagos();
 app.MapearCuentaCorriente();
+// E7-S3: aplicar y liberar cobros de recibos a ventas en cuenta corriente.
+app.MapearCobros();
 app.MapearCompras();
 // stage-16-ordenes-de-compra, Slice 2: borrador CRUD + enviar (numeración propia, serie 'OC').
 app.MapearOrdenesDeCompra();

@@ -171,7 +171,7 @@ public class AjustesDeCuentaCorrienteTests(WaysApiFixture fixture) : IClassFixtu
         // spec: A manual ajuste carries no comprobante link.
         Assert.Equal(TipoMovimientoCc.Ajuste, movimiento.Tipo);
         Assert.Null(movimiento.IdComprobanteVenta);
-        Assert.Null(movimiento.IdPagoComprobante);
+        Assert.Null(movimiento.IdCobro);
         Assert.Equal("Ajuste manual de prueba", movimiento.Detalle);
         Assert.Equal(ctx.IdPuntoVenta, movimiento.IdPuntoVenta);
     }

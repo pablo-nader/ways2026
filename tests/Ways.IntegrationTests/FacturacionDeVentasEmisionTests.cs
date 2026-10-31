@@ -577,12 +577,12 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
                 c, venta.Id, 1, "Producto A", c.IdAlicuota21, 21m, 2m, 60.50m, 121m, costo: 50m));
             db.ItemsComprobanteVenta.Add(NuevoItem(
                 c, venta.Id, 2, "Producto B", c.IdAlicuota105, 10.5m, 1m, 110m, 110m, costo: 70m));
-            db.PagosComprobante.Add(new PagoComprobante
+            db.Cobros.Add(new Ways.Domain.Ventas.Cobro
             {
                 IdTenant = c.IdTenant, IdComprobanteVenta = venta.Id, IdMedioPago = c.IdEfectivo, Importe = 120m,
                 Vuelto = 20m, CreatedAt = ahora, UpdatedAt = ahora
             });
-            db.PagosComprobante.Add(new PagoComprobante
+            db.Cobros.Add(new Ways.Domain.Ventas.Cobro
             {
                 IdTenant = c.IdTenant, IdComprobanteVenta = venta.Id, IdMedioPago = c.IdTransferencia,
                 Importe = ImporteTransferencia, Referencia = "OP-1", CreatedAt = ahora, UpdatedAt = ahora
@@ -757,8 +757,8 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
             c,
             "SELECT estado::text, total, subtotal, numero, id_turno_caja, fecha, updated_at, factura_forzada, " +
             "facturacion_decidida_en, " +
-            "(SELECT count(*) FROM pagos_comprobante WHERE id_comprobante_venta = $1), " +
-            "(SELECT COALESCE(sum(importe), 0) FROM pagos_comprobante WHERE id_comprobante_venta = $1), " +
+            "(SELECT count(*) FROM cobros WHERE id_comprobante_venta = $1), " +
+            "(SELECT COALESCE(sum(importe), 0) FROM cobros WHERE id_comprobante_venta = $1), " +
             "(SELECT count(*) FROM items_comprobante_venta WHERE id_comprobante_venta = $1), " +
             "(SELECT COALESCE(sum(total), 0) FROM items_comprobante_venta WHERE id_comprobante_venta = $1), " +
             "(SELECT count(*) FROM movimientos_stock WHERE id_comprobante_venta = $1), " +
@@ -778,7 +778,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
     {
         var fila = Assert.Single(await ConsultarAsync(
             c,
-            "SELECT (SELECT count(*) FROM pagos_comprobante WHERE id_comprobante_venta = $1), " +
+            "SELECT (SELECT count(*) FROM cobros WHERE id_comprobante_venta = $1), " +
             "(SELECT count(*) FROM movimientos_stock WHERE id_comprobante_venta = $1), " +
             "(SELECT count(*) FROM movimientos_cuenta_corriente WHERE id_comprobante_venta = $1)",
             l => ((int)l.GetInt64(0), (int)l.GetInt64(1), (int)l.GetInt64(2)),
@@ -1847,7 +1847,7 @@ public partial class FacturacionDeVentasEmisionTests(WaysApiFixture fixture) : I
     {
         var fila = Assert.Single(await ConsultarAsync(
             c,
-            "SELECT (SELECT count(*) FROM pagos_comprobante), (SELECT count(*) FROM movimientos_stock), " +
+            "SELECT (SELECT count(*) FROM cobros), (SELECT count(*) FROM movimientos_stock), " +
             "(SELECT count(*) FROM movimientos_cuenta_corriente), (SELECT count(*) FROM turnos_caja)",
             l => (l.GetInt64(0), l.GetInt64(1), l.GetInt64(2), l.GetInt64(3))));
         return fila;

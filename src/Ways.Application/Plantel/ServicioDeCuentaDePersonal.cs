@@ -195,9 +195,33 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
                 conexion, transaccionCruda, idTenant, idPersonal, importe, ct)
                 ?? throw SinPersonal(idPersonal);
 
+            // El UPDATE de arriba ya tomó el lock de la fila del personal: el total del día se lee recién ahora.
+            decimal? totalDelDia = null;
+            if (tipo == TipoMovimientoPersonal.Horas)
+            {
+                var delDia = await EscriturasDePersonal.LeerAsientosDeHorasAsync(
+                    conexion, transaccionCruda, idTenant, idPersonal, [fecha], ct);
+                var acreditadas = delDia.TryGetValue(fecha, out var asientos) ? asientos.Sum(a => a.Horas) : 0m;
+
+                totalDelDia = acreditadas + horas!.Value;
+                if (totalDelDia > ReglaDeMovimientoDePersonal.HorasMaximas)
+                {
+                    throw new ErrorDominio(
+                        "horas_del_dia_excedidas",
+                        $"El día {fecha:yyyy-MM-dd} ya tiene {acreditadas:0.##} horas cargadas y no puede superar las {ReglaDeMovimientoDePersonal.HorasMaximas:0}.",
+                        400);
+                }
+            }
+
             var idMovimiento = await EscriturasDePersonal.InsertarMovimientoAsync(
                 conexion, transaccionCruda, idTenant, idPersonal, idEmpleado, fecha, tipo, horas, valorHora,
                 importe, nuevoSaldo, detalle, ahora, ct);
+
+            if (totalDelDia is { } total)
+            {
+                await EscriturasDePersonal.UpsertarJornadaAsync(
+                    conexion, transaccionCruda, idTenant, idPersonal, idEmpleado, fecha, total, ahora, ct);
+            }
 
             await transaccion.CommitAsync(ct);
 

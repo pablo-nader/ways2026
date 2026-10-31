@@ -85,7 +85,7 @@ public class EstadoDeCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         db.MovimientosCuentaCorriente.Add(new MovimientoCuentaCorriente
         {
             IdTenant = ctx.IdTenant, IdCliente = idCliente, Fecha = fecha, IdPuntoVenta = ctx.IdPuntoVenta,
-            IdEmpleado = ctx.IdEmpleadoAdmin, Tipo = tipo, IdComprobanteVenta = null, IdPagoComprobante = null,
+            IdEmpleado = ctx.IdEmpleadoAdmin, Tipo = tipo, IdComprobanteVenta = null, IdCobro = null,
             Importe = importe, SaldoResultante = saldoResultante, Detalle = tipo == TipoMovimientoCc.Ajuste ? "Ajuste de prueba" : null
         });
         await db.SaveChangesAsync();

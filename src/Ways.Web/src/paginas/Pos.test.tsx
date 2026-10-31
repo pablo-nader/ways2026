@@ -495,7 +495,7 @@ vi.mock('../pos/facturacionAlCobrar', async (importarOriginal) => {
   }
 })
 
-const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false }))
+const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false, colgarLectura: false, fallarQuitarDeRechazada: false }))
 vi.mock('../pos/outboxOffline', async (importarOriginal) => {
   const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
   return {
@@ -506,6 +506,8 @@ vi.mock('../pos/outboxOffline', async (importarOriginal) => {
         : controlDeOutbox.fallarLectura
           ? Promise.reject(new Error('almacén caído'))
           : real.leerOutbox(almacen),
+    quitarDeRechazada: (almacen: Parameters<typeof real.quitarDeRechazada>[0], idLocal: string) =>
+      controlDeOutbox.fallarQuitarDeRechazada ? Promise.reject(new Error('almacén caído')) : real.quitarDeRechazada(almacen, idLocal),
   }
 })
 
@@ -606,6 +608,7 @@ beforeEach(async () => {
   establecerTokenDeSesionBearer(null)
   controlDeOutbox.fallarLectura = false
   controlDeOutbox.colgarLectura = false
+  controlDeOutbox.fallarQuitarDeRechazada = false
   controlDeFactura.esperaMs = 60_000
 })
 
@@ -2130,6 +2133,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
 
   it('al abrir con un cliente ya elegido (no Consumidor Final), muestra su saldo sin pedir que se busque de nuevo', async () => {
     mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
       }
@@ -2148,6 +2152,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
   it('registra un pago con dos medios y refresca el saldo mostrado con la respuesta más reciente', async () => {
     let llamadasEstado = 0
     mockearApiGet((ruta) => {
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         llamadasEstado += 1
         // Primera carga: saldo 500. Después del pago, el refetch trae el saldo ya actualizado —
@@ -2211,6 +2216,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
         const pagina: PaginaDe<ClienteListado> = { items: [clienteAlLimite], total: 1, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
       }
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         llamadasEstado += 1
         return Promise.resolve<EstadoDeCuenta>(
@@ -2422,6 +2428,7 @@ describe('Pos — saldo confirmado de la venta a un cliente identificado', () =>
     let lecturas = 0
     mockearApiGet((ruta) => {
       if (ruta === '/clientes/2') return lecturas++ === 0 ? Promise.resolve(juan) : RECHAZO_DE_RED()
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
       if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [juan], total: 1, pagina: 1, tamanio: 25 })
       return undefined
@@ -2508,6 +2515,7 @@ describe('Pos — recibo del pago a cuenta en el escritorio', () => {
     let llamadasEstado = 0
     mockearApiGet((ruta) => {
       if (ruta === '/clientes/2') return Promise.resolve({ ...otroCliente, saldo: 500 })
+      if (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes') return Promise.resolve([])
       if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
         llamadasEstado += 1
         if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
@@ -8249,19 +8257,98 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('Sin sincronizar: 1')
     })
 
-    it('"Descartar" exige confirmación explícita que nombra la venta — "Cancelar" no cambia nada', async () => {
+    it('"Descartar" abre un modal de confirmación que nombra la venta y deja el foco en Cancelar — "Cancelar" no cambia nada', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      const disparador = screen.getByRole('button', { name: 'Descartar' })
+      await userEvent.click(disparador)
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      expect(within(dialogo).getByText(/¿Descartar la venta 0007-00000500\?/)).toBeInTheDocument()
+      // La opción segura es la que tiene el foco: un Enter de más nunca descarta una venta real.
+      expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+
+      await userEvent.keyboard('{Enter}')
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      // Nunca se descartó en silencio: sigue "necesitando atención" y bloqueando el cierre.
+      expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
+      expect(disparador).toHaveFocus()
+    })
+
+    it('Escape cierra la confirmación sin descartar', async () => {
       await prepararVentaRechazada()
       renderPos()
       await esperarAlConsumidorFinal()
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
-      expect(await screen.findByText(/¿Descartar la venta 0007-00000500\?/)).toBeInTheDocument()
+      await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      await userEvent.keyboard('{Escape}')
 
-      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
-      expect(screen.queryByText(/¿Descartar la venta 0007-00000500\?/)).not.toBeInTheDocument()
-      // Nunca se descartó en silencio: sigue "necesitando atención" y bloqueando el cierre.
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
       expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F9 no abre el cobro por detrás (y sin ella sí lo abre)', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      fireEvent.keyDown(document, { key: 'F9' })
+      expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F9' })
+      expect(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })).toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F2 y F4 no abren los buscadores por detrás (y sin ella sí)', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      fireEvent.keyDown(document, { key: 'F2' })
+      fireEvent.keyDown(document, { key: 'F4' })
+      expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F2' })
+      expect(await screen.findByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
+    })
+
+    it('si la venta sale de "necesita atención" con la confirmación abierta, el modal se cierra y el foco vuelve al código', async () => {
+      await prepararVentaRechazada()
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      // Otro camino la saca de la lista mientras el modal está abierto (aquí, "Reintentar" desde detrás).
+      fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+      await waitFor(() => expect(screen.queryByText('1 venta necesita atención')).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toHaveFocus())
     })
 
     it('"Confirmar descarte" la saca de "necesita atención" para siempre y deja cerrar la caja', async () => {
@@ -8271,13 +8358,30 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
-      await screen.findByText(/¿Descartar la venta 0007-00000500\?/)
+      await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
       await userEvent.click(screen.getByRole('button', { name: 'Confirmar descarte' }))
 
       await waitFor(() => expect(screen.queryByText('1 venta necesita atención')).not.toBeInTheDocument())
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
       expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+    })
+
+    it('si el almacén falla al descartar, el error se ve dentro del modal, que sigue abierto, y la venta sigue pendiente', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      controlDeOutbox.fallarQuitarDeRechazada = true
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Confirmar descarte' }))
+
+      expect(await within(dialogo).findByText(/No se pudo descartar la venta/)).toBeInTheDocument()
+      expect(screen.getByRole('alertdialog', { name: 'Confirmar descarte' })).toBeInTheDocument()
+      expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
     })
   })
 
@@ -10326,6 +10430,39 @@ describe('Pos — artículos por importe', () => {
       expect(screen.queryByRole('button', { name: /^Fiambrería/ })).not.toBeInTheDocument()
     })
 
+    it('con la confirmación de descarte abierta, F5 no agrega la línea por detrás (y sin ella sí)', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture(), fiambreriaDeInstantanea()] }),
+        bloque: { desde: 600, hasta: 699, proximo: 600 },
+      })
+      await agregarARechazada(almacen, {
+        idLocal: 'rechazada-1',
+        numeroPreasignado: 500,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+        mensaje: 'La venta 0007-00000500 no se pudo sincronizar: rechazo del servidor.',
+      })
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+      await screen.findByText('1 venta necesita atención')
+      await userEvent.type(campoDeCodigo(), '150')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      const dialogo = await screen.findByRole('alertdialog', { name: 'Confirmar descarte' })
+      fireEvent.keyDown(document, { key: 'F5' })
+
+      expect(lineasDeFiambreria()).toHaveLength(0)
+      expect(campoDeCodigo()).toHaveValue('150')
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F5' })
+      await screen.findByText('Fiambrería', { selector: 'td' })
+      expect(campoDeCodigo()).toHaveValue('')
+    })
+
     it('F5 con el importe en el campo agrega la línea del artículo asignado y limpia el campo', async () => {
       await montarConInstantanea()
       await userEvent.type(campoDeCodigo(), '150')
@@ -11067,7 +11204,7 @@ describe('Pos — ergonomía del carrito', () => {
     })
 
     it('con otro modal abierto (cuenta corriente), F10 no abre la confirmación de vaciado', async () => {
-      mockearApiGet((ruta) => (ruta.startsWith('/clientes/2/cuenta-corriente') ? Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture()) : undefined))
+      mockearApiGet((ruta) => (ruta === '/clientes/2/cuenta-corriente/ventas-pendientes' ? Promise.resolve([]) : ruta.startsWith('/clientes/2/cuenta-corriente') ? Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture()) : undefined))
       renderPos()
       await esperarAlConsumidorFinal()
       await escanearYEsperar('7790001234567', 'Coca Cola 1L', 1)

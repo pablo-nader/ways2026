@@ -23,6 +23,7 @@ import type {
   PuntoVentaListado,
 } from '../api/tipos'
 import { puedeGestionarCatalogos, puedeSupervisarCuentaDeProveedor } from '../api/tipos'
+import { textoDePagoRegistrado } from '../api/compras'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
@@ -233,7 +234,7 @@ function PantallaCuentaCorrienteDeProveedor({
 
   const { usuario } = useAuth()
   const esSupervisorOAdmin = usuario !== null && puedeSupervisarCuentaDeProveedor(usuario.rolId)
-  // Pagar crea un gasto de tesorería: el servidor lo exige con `GestionDeCatalogo` (Admin).
+  // Pagar crea un pago de tesorería: el servidor lo exige con `GestionDeCatalogo` (Admin).
   const puedePagar = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
 
   // regla 2: cada cambio de filtro/página dispara una nueva consulta — una respuesta
@@ -343,6 +344,11 @@ function PantallaCuentaCorrienteDeProveedor({
               <div className="col-md-4">
                 <div className="small text-muted">Saldo</div>
                 <div className="fs-5">{formatearSaldoConEtiqueta(pagina.header.saldo)}</div>
+                {!!pagina.header.disponibleEnPagos && pagina.header.disponibleEnPagos > 0 && (
+                  <div className="small text-muted">
+                    Disponible en pagos sin aplicar: {formatearMoneda(pagina.header.disponibleEnPagos)}
+                  </div>
+                )}
               </div>
               {esSupervisorOAdmin && (
                 <div className="col-md-8 text-md-end">
@@ -416,7 +422,7 @@ function PantallaCuentaCorrienteDeProveedor({
                       Tipo
                     </EncabezadoOrdenable>
                     <EncabezadoOrdenable columna="referencia" orden={orden} onAlternar={alternarOrden}>
-                      Comprobante/Gasto
+                      Comprobante/Pago
                     </EncabezadoOrdenable>
                     <EncabezadoOrdenable columna="detalle" orden={orden} onAlternar={alternarOrden}>
                       Detalle
@@ -503,7 +509,7 @@ function PantallaCuentaCorrienteDeProveedor({
           onCerrar={() => setCompraAPagar(null)}
           onPagado={(resultado) => {
             setCompraAPagar(null)
-            setAviso(`Pago registrado: ${formatearMoneda(resultado.gasto.importe)}.`)
+            setAviso(textoDePagoRegistrado(resultado, formatearMoneda))
             cargar()
           }}
         />

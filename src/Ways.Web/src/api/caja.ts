@@ -101,8 +101,8 @@ export const clienteDeCaja = {
   listarCerrados: (idPuntoVenta: number, pagina: number, tamanio: number, orden: OrdenDeCierres = null) =>
     api.get<PaginaDeTurnos>(`/caja/turnos${construirQueryDeCierres(idPuntoVenta, pagina, tamanio, orden)}`),
   /** `GET /api/caja/turnos/{id}/detalle` (stage-11-exportacion-reportes, Slice 5a/6b, spec
-   * historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Gasto Listings) — el
-   * Z-report: mismo `ResumenDeTurno` que `/resumen` más los tickets y gastos del turno. Mismo
+   * historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Pago Listings) — el
+   * Z-report: mismo `ResumenDeTurno` que `/resumen` más los tickets y pagos del turno. Mismo
    * gate `OperacionDePos` que `/resumen`: el cajero puede leer su propio cierre. */
   obtenerDetalle: (idTurnoCaja: number) => api.get<DetalleDeTurno>(`/caja/turnos/${idTurnoCaja}/detalle`),
 }

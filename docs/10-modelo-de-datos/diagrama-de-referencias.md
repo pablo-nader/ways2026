@@ -30,8 +30,8 @@ erDiagram
     comprobantes_venta }o--|| tipos_comprobante : ""
     comprobantes_venta }o--|| clientes : ""
     comprobantes_venta ||--o{ items_comprobante_venta : ""
-    comprobantes_venta ||--o{ pagos_comprobante : ""
-    pagos_comprobante }o--|| medios_pago : ""
+    comprobantes_venta ||--o{ cobros : ""
+    cobros }o--|| medios_pago : ""
     comprobantes_compra }o--|| proveedores : ""
     comprobantes_compra ||--o{ items_comprobante_compra : ""
     comprobantes_compra ||--o{ alicuotas_comprobante_compra : ""
@@ -46,4 +46,6 @@ erDiagram
     movimientos_stock }o--o| comprobantes_venta : ""
     movimientos_stock }o--o| comprobantes_compra : ""
     movimientos_cuenta_corriente }o--|| clientes : ""
+    comprobantes_venta ||--o{ aplicaciones_cobro : "recibo"
+    comprobantes_venta ||--o{ aplicaciones_cobro : "venta"
 ```

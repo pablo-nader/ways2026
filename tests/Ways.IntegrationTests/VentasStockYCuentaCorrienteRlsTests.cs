@@ -18,7 +18,7 @@ namespace Ways.IntegrationTests;
 /// Isolation): mismo patrón que <c>OfertasRlsTests</c> — SQL crudo, independiente de EF, 0
 /// filas para SELECT/UPDATE cross-tenant, 42501 para el INSERT que viola <c>WITH CHECK</c>, más
 /// un proof a nivel EF (LINQ) por tabla. Cubre las cinco tablas con columna <c>id_x</c> propia
-/// (<c>comprobantes_venta</c>, <c>items_comprobante_venta</c>, <c>pagos_comprobante</c>,
+/// (<c>comprobantes_venta</c>, <c>items_comprobante_venta</c>, <c>cobros</c>,
 /// <c>movimientos_stock</c>, <c>movimientos_cuenta_corriente</c>); <c>stock</c> (PK compuesta
 /// sin columna <c>id</c> propia) tiene su propia suite dedicada, <see cref="StockRlsTests"/>,
 /// mismo criterio que <c>NumeracionesComprobanteRlsTests</c>.
@@ -30,7 +30,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
     {
         { "comprobantes_venta", "id_comprobante_venta" },
         { "items_comprobante_venta", "id_item" },
-        { "pagos_comprobante", "id_pago" },
+        { "cobros", "id_cobro" },
         { "movimientos_stock", "id_movimiento" },
         { "movimientos_cuenta_corriente", "id_movimiento" }
     };
@@ -181,7 +181,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
         db.ItemsComprobanteVenta.Add(item);
         await db.SaveChangesAsync();
 
-        var pago = new PagoComprobante
+        var pago = new Cobro
         {
             IdTenant = tenant.Id,
             IdComprobanteVenta = comprobante.Id,
@@ -191,7 +191,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
-        db.PagosComprobante.Add(pago);
+        db.Cobros.Add(pago);
         await db.SaveChangesAsync();
 
         var movimientoStock = new MovimientoStock
@@ -217,7 +217,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
             IdEmpleado = usuario.Id,
             Tipo = TipoMovimientoCc.Consumo,
             IdComprobanteVenta = comprobante.Id,
-            IdPagoComprobante = pago.Id,
+            IdCobro = pago.Id,
             Importe = 100m,
             SaldoResultante = 100m
         };
@@ -234,7 +234,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
     {
         "comprobantes_venta" => escenario.IdComprobanteVenta,
         "items_comprobante_venta" => escenario.IdItem,
-        "pagos_comprobante" => escenario.IdPago,
+        "cobros" => escenario.IdPago,
         "movimientos_stock" => escenario.IdMovimientoStock,
         "movimientos_cuenta_corriente" => escenario.IdMovimientoCc,
         _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
@@ -337,7 +337,7 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
         {
             "comprobantes_venta" => await sesionB.ComprobantesVenta.AnyAsync(c => c.Id == escenario.IdComprobanteVenta),
             "items_comprobante_venta" => await sesionB.ItemsComprobanteVenta.AnyAsync(i => i.Id == escenario.IdItem),
-            "pagos_comprobante" => await sesionB.PagosComprobante.AnyAsync(p => p.Id == escenario.IdPago),
+            "cobros" => await sesionB.Cobros.AnyAsync(p => p.Id == escenario.IdPago),
             "movimientos_stock" => await sesionB.MovimientosStock.AnyAsync(m => m.Id == escenario.IdMovimientoStock),
             "movimientos_cuenta_corriente" => await sesionB.MovimientosCuentaCorriente.AnyAsync(m => m.Id == escenario.IdMovimientoCc),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
@@ -399,8 +399,8 @@ public class VentasStockYCuentaCorrienteRlsTests(WaysApiFixture fixture) : IClas
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdAlicuotaIva });
                     c.Parameters.Add(new NpgsqlParameter { Value = ahora });
                 }),
-            "pagos_comprobante" => (
-                "INSERT INTO pagos_comprobante (id_tenant, id_comprobante_venta, id_medio_pago, importe, vuelto, " +
+            "cobros" => (
+                "INSERT INTO cobros (id_tenant, id_comprobante_venta, id_medio_pago, importe, vuelto, " +
                 "created_at, updated_at) VALUES ($1, $2, $3, 10, 0, $4, $4)",
                 c =>
                 {

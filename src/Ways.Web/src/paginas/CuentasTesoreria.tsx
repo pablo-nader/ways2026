@@ -26,10 +26,45 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
+import {
+  EncabezadoOrdenable,
+  FilaDeFiltros,
+  useFiltrosDeColumna,
+  useOrdenamiento,
+  type ColumnasFiltrables,
+  type ColumnasOrdenables,
+} from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
 import { formatearImporte } from '../formato/importes'
 
 const ID_FORMULARIO = 'formulario-cuenta-tesoreria'
+const SIN_CUENTAS: readonly CuentaTesoreriaListado[] = []
+
+const OPCIONES_DE_ESTADO = [
+  { valor: 'Activa', etiqueta: 'Activa' },
+  { valor: 'Inactiva', etiqueta: 'Inactiva' },
+]
+
+const textoDeEstado = (cuenta: CuentaTesoreriaListado) => (cuenta.activo ? 'Activa' : 'Inactiva')
+
+const ORDENABLES: ColumnasOrdenables<CuentaTesoreriaListado> = {
+  nombre: { valor: (cuenta) => cuenta.nombre },
+  empresa: { valor: (cuenta) => cuenta.nombreEmpresa },
+  saldoActual: { valor: (cuenta) => cuenta.saldoActual },
+  saldoInicial: { valor: (cuenta) => cuenta.saldoInicial },
+  estado: { valor: textoDeEstado },
+}
+
+const FILTRABLES: ColumnasFiltrables<CuentaTesoreriaListado> = {
+  nombre: { etiqueta: 'Nombre', valor: (cuenta) => cuenta.nombre },
+  empresa: { etiqueta: 'Empresa', valor: (cuenta) => cuenta.nombreEmpresa },
+  saldoActual: { etiqueta: 'Saldo actual', valor: (cuenta) => formatearMoneda(cuenta.saldoActual) },
+  saldoInicial: { etiqueta: 'Saldo inicial', valor: (cuenta) => formatearMoneda(cuenta.saldoInicial) },
+  estado: { etiqueta: 'Estado', valor: textoDeEstado, opciones: OPCIONES_DE_ESTADO },
+}
+
+/** Una entrada por columna del encabezado, en su orden; `null` es Acciones. */
+const CELDAS_DE_FILTROS = ['nombre', 'empresa', 'saldoActual', 'saldoInicial', 'estado', null]
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -249,6 +284,12 @@ export function CuentasTesoreria() {
   /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera. */
   const bloqueado = guardando || ocupadoBaja !== null || baja !== null
 
+  const { filas: cuentasFiltradas, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(
+    cuentas ?? SIN_CUENTAS,
+    FILTRABLES,
+  )
+  const { filas: cuentasVisibles, orden, alternar } = useOrdenamiento(cuentasFiltradas, ORDENABLES)
+
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
       <BotonIcono
@@ -292,9 +333,9 @@ export function CuentasTesoreria() {
           />
         )}
 
-        {cargando ? (
-          <Cargando />
-        ) : (
+        {cargando && <Cargando />}
+
+        {cargando && cuentas === null ? null : (
           <div className="table-responsive">
             <p className="small text-muted mb-2">
               El saldo actual es el de la última operación de la cuenta; sin operaciones, es el saldo inicial.
@@ -302,16 +343,37 @@ export function CuentasTesoreria() {
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Nombre</th>
-                  <th>Empresa</th>
-                  <th className="text-end">Saldo actual</th>
-                  <th className="text-end">Saldo inicial</th>
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="nombre" orden={orden} onAlternar={alternar}>
+                    Nombre
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="empresa" orden={orden} onAlternar={alternar}>
+                    Empresa
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="saldoActual" orden={orden} onAlternar={alternar} className="text-end">
+                    Saldo actual
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="saldoInicial" orden={orden} onAlternar={alternar} className="text-end">
+                    Saldo inicial
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={orden} onAlternar={alternar}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltros
+                  celdas={CELDAS_DE_FILTROS}
+                  columnas={FILTRABLES}
+                  filtros={filtros}
+                  onCambio={cambiarFiltro}
+                  onLimpiar={limpiarFiltros}
+                  hayFiltros={hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
               <tbody>
-                {cuentas?.map((cuenta) => (
+                {cuentasVisibles.map((cuenta) => (
                   <tr key={cuenta.id}>
                     <td>{cuenta.nombre}</td>
                     <td>{cuenta.nombreEmpresa ?? <span className="text-muted fst-italic">sin empresa</span>}</td>
@@ -341,6 +403,13 @@ export function CuentasTesoreria() {
                     </td>
                   </tr>
                 ))}
+                {cuentas !== null && cuentas.length > 0 && cuentasVisibles.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="text-center text-muted py-4">
+                      Ningún registro coincide con los filtros.
+                    </td>
+                  </tr>
+                )}
                 {cuentas?.length === 0 && (
                   <tr>
                     <td colSpan={6} className="text-center text-muted py-4">

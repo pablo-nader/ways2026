@@ -56,6 +56,11 @@ function rutasHoja(entradas: EntradaDeMenu[]): string[] {
   )
 }
 
+/** La ruta de un enlace sin su query: lo que `esRutaActiva` ve de verdad en `pathname`. */
+function sinQuery(ruta: string): string {
+  return ruta.split('?')[0]
+}
+
 const VENDER: Resumen = ['Vender', '/pos']
 const CAJA: Resumen = ['Caja', '/caja']
 const VENTAS: Resumen = {
@@ -81,7 +86,7 @@ const COMPRAS: Resumen = {
     },
   ],
 }
-// stage-gastos-admin-retroactivos (PR3): "Gastos" es Admin-only (puedeGestionarCatalogos) dentro
+// stage-gastos-admin-retroactivos (PR3): "Pagos" es Admin-only (puedeGestionarCatalogos) dentro
 // del MISMO grupo "Compras" que Vendedor/Supervisor sí ven — por eso es un fixture aparte, no un
 // campo agregado a COMPRAS de arriba.
 const COMPRAS_DE_ADMIN: Resumen = {
@@ -91,7 +96,7 @@ const COMPRAS_DE_ADMIN: Resumen = {
       enlaces: [
         ['Compras', '/compras'],
         ['Órdenes de compra', '/ordenes-compra'],
-        ['Gastos', '/gastos'],
+        ['Pagos', '/pagos'],
       ],
     },
   ],
@@ -161,6 +166,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
         ['Clientes', '/clientes'],
         ['Proveedores', '/proveedores'],
         ['Personal', '/personal'],
+        ['Carga semanal de horas', '/personal/horas'],
       ],
     },
     {
@@ -192,7 +198,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
 // Personal es de lectura para Supervisor: es lo único de Administración que ve.
 const ADMINISTRACION_DE_SUPERVISOR: Resumen = {
   grupo: 'Administración',
-  secciones: [{ titulo: 'Terceros', enlaces: [['Personal', '/personal']] }],
+  secciones: [{ titulo: 'Terceros', enlaces: [['Personal', '/personal'], ['Carga semanal de horas', '/personal/horas']] }],
 }
 const ADMINISTRACION_DE_ROOT: Resumen = {
   grupo: 'Administración',
@@ -205,7 +211,7 @@ const ADMINISTRACION_DE_ROOT: Resumen = {
         ['Puntos de venta', '/organizacion/puntos-venta'],
         ['Vitrina', '/organizacion/vitrina'],
         ['Tenants', '/organizacion/tenants'],
-        ['Nuevo tenant', '/organizacion/nuevo-tenant'],
+        ['Nuevo tenant', '/organizacion/tenants?nuevo=1'],
         ['Dominios', '/organizacion/dominios'],
       ],
     },
@@ -301,6 +307,7 @@ describe('esRutaActiva', () => {
     ['/familias/nueva', ['Administración']],
     ['/personal', ['Administración']],
     ['/personal/3/cuenta', ['Administración']],
+    ['/personal/horas', ['Administración']],
     ['/', []],
     ['/cajas', []],
   ]
@@ -309,12 +316,20 @@ describe('esRutaActiva', () => {
     expect(activas(pathname)).toEqual(esperado)
   })
 
+  // "Nuevo tenant" apunta al listado con `?nuevo=1`, que `esRutaActiva` nunca ve (mira `pathname`): la pantalla activa
+  // Administración por "Tenants", que reclama la misma ruta.
+  it('Root: la pantalla de tenants, con o sin el parámetro del alta, activa Administración', () => {
+    const menuDeRoot = construirMenu(usuarioConRol(ROL.Root))
+
+    expect(menuDeRoot.filter((entrada) => esRutaActiva('/organizacion/tenants', entrada)).map((entrada) => entrada.etiqueta)).toEqual(['Administración'])
+  })
+
   it.each(TODOS_LOS_ROLES)('%s: cada ruta del menú activa exactamente una entrada de primer nivel', (_nombre, rolId) => {
     const menu = construirMenu(usuarioConRol(rolId))
     const rutas = rutasHoja(menu)
 
     expect(rutas.length).toBeGreaterThan(0)
-    for (const ruta of rutas) {
+    for (const ruta of rutas.map(sinQuery)) {
       const entradasActivas = menu.filter((entrada) => esRutaActiva(ruta, entrada)).map((entrada) => entrada.etiqueta)
       expect(entradasActivas, ruta).toHaveLength(1)
     }

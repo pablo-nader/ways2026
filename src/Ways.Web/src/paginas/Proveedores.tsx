@@ -3,11 +3,23 @@ import { ErrorApi } from '../api/cliente'
 import { copiaDeFalloDeBaja } from '../api/bajas'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { claseDeBadgeDeEstadoPago, clienteDeCompras, etiquetaDeEstadoPago } from '../api/compras'
-import { clienteDeProveedores } from '../api/proveedores'
+import { ultimaPaginaDePadron } from '../api/padron'
+import {
+  clienteDeProveedores,
+  esColumnaOrdenableDeProveedores,
+  FILTROS_DE_PROVEEDORES_VACIOS,
+  type ColumnaOrdenableDeProveedores,
+  type ConsultaDeProveedores,
+  type FiltrosDeProveedores,
+} from '../api/proveedores'
 import type { CondicionFiscalListado, PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { FilaDeFiltrosDePadron, type CeldaDeFiltroDePadron } from '../componentes/padron/FilaDeFiltrosDePadron'
+import { PaginadorDePadron } from '../componentes/padron/PaginadorDePadron'
+import { usePadronEnServidor } from '../componentes/padron/usePadronEnServidor'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -17,6 +29,24 @@ import { aAlta, aFormulario, formularioVacio, type Formulario } from './proveedo
 import { atributosDeCampoDecimal } from '../formato/numeros'
 
 const ID_FORMULARIO_PROVEEDOR = 'formulario-proveedor'
+
+const CELDAS_DE_FILTRO: readonly CeldaDeFiltroDePadron<FiltrosDeProveedores>[] = [
+  { tipo: 'texto', clave: 'razonSocial', etiqueta: 'razón social' },
+  { tipo: 'texto', clave: 'cuitContiene', etiqueta: 'CUIT' },
+  { tipo: 'texto', clave: 'telefono', etiqueta: 'teléfono' },
+  { tipo: 'texto', clave: 'email', etiqueta: 'email' },
+  { tipo: 'rango', claveDesde: 'margenDesde', claveHasta: 'margenHasta', etiqueta: 'Margen' },
+  {
+    tipo: 'opciones',
+    clave: 'activo',
+    etiqueta: 'estado',
+    opciones: [
+      { valor: 'true', etiqueta: 'Activo' },
+      { valor: 'false', etiqueta: 'Inactivo' },
+    ],
+  },
+  { tipo: 'acciones' },
+]
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -144,8 +174,11 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
 export function Proveedores() {
   const [pagina, setPagina] = useState<PaginaDe<ProveedorListado> | null>(null)
   const [condiciones, setCondiciones] = useState<CondicionFiscalListado[]>([])
-  const [busqueda, setBusqueda] = useState('')
+  /** Texto de la caja de búsqueda general, que se aplica con Enter o con Buscar. */
+  const [textoDeBusqueda, setTextoDeBusqueda] = useState('')
   const [cargando, setCargando] = useState(true)
+  /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
+  const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
   const [errorFormulario, setErrorFormulario] = useState('')
   const [aviso, setAviso] = useState('')
@@ -165,31 +198,58 @@ export function Proveedores() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo" — la ÚNICA guarda de re-entrancia válida. */
   const ocupadoRef = useRef(false)
-  /** Último término que el usuario pidió buscar (o `''` al entrar): el refresco posterior a una
-   * escritura recarga con ese, nunca con el texto tipeado en la caja y todavía no enviado. */
-  const terminoVigente = useRef('')
+  /** Espejo de `bloqueado` (una escritura en vuelo o la puerta de baja abierta) para el temporizador de los filtros, que no lee el render: un filtro tipeado antes espera a que termine. */
+  const bloqueadoRef = useRef(false)
 
-  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
-    terminoVigente.current = termino
-    setCargando(true)
-    try {
-      const resultado = await clienteDeProveedores.listar(termino, false)
-      if (generacion.current !== token) return
-      setPagina(resultado)
-      setError('')
-    } catch (e) {
-      if (generacion.current !== token) return
-      if (propagar) throw e
-      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los proveedores.')
-    } finally {
-      if (generacion.current === token) setCargando(false)
-    }
-  }, [])
+  /** La consulta aplicada (filtros, orden, página y tamaño) vive en el hook: el refresco posterior a una escritura
+   * recarga `consultaRef`, nunca el texto tipeado en un filtro y todavía no aplicado. */
+  const padron = usePadronEnServidor<FiltrosDeProveedores, ColumnaOrdenableDeProveedores>(
+    FILTROS_DE_PROVEEDORES_VACIOS,
+    { esColumnaOrdenable: esColumnaOrdenableDeProveedores, ocupado: () => ocupadoRef.current || bloqueadoRef.current },
+  )
+  const { irAPagina } = padron
+
+  const cargar = useCallback(
+    async (token: number, consulta: ConsultaDeProveedores, propagar = false) => {
+      setCargando(true)
+      try {
+        const resultado = await clienteDeProveedores.listarGrilla(consulta)
+        if (generacion.current !== token) return
+
+        // Una baja puede vaciar la última página: se pide la última válida en vez de mostrar "Página 3 de 2".
+        const ultima = ultimaPaginaDePadron(resultado.total, resultado.tamanio)
+        if (resultado.pagina > ultima) {
+          irAPagina(ultima)
+
+          return
+        }
+
+        setPagina(resultado)
+        setError('')
+      } catch (e) {
+        if (generacion.current !== token) return
+        if (propagar) throw e
+        // Sin filas: el encabezado ya declara el orden pedido y no puede quedar sobre las del orden anterior.
+        setPagina(null)
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los proveedores.')
+      } finally {
+        if (generacion.current === token) {
+          setCargando(false)
+          setIniciando(false)
+        }
+      }
+    },
+    [irAPagina],
+  )
+
+  // Se vuelve a pedir el listado cada vez que cambia la consulta aplicada (filtros, orden, página o tamaño).
+  useEffect(() => {
+    void cargar(++generacion.current, padron.consulta)
+  }, [cargar, padron.consulta])
 
   useEffect(() => {
-    void cargar(++generacion.current, '')
     clienteDeCatalogosFiscales.condicionesFiscales().then(setCondiciones).catch(() => setCondiciones([]))
-  }, [cargar])
+  }, [])
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). */
@@ -198,7 +258,7 @@ export function Proveedores() {
 
     setAviso(mensajeOk)
     try {
-      await cargar(token, terminoVigente.current, true)
+      await cargar(token, padron.consultaRef.current, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
     }
@@ -228,7 +288,7 @@ export function Proveedores() {
       } catch (e) {
         if (generacion.current === token) {
           setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, terminoVigente.current)
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current)
         }
 
         return
@@ -316,6 +376,9 @@ export function Proveedores() {
   /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera: ver
    * `Empresas.tsx`. */
   const bloqueado = guardando || ocupadoBaja !== null || baja !== null
+  useEffect(() => {
+    bloqueadoRef.current = bloqueado
+  })
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -323,15 +386,15 @@ export function Proveedores() {
         type="search"
         className="form-control form-control-sm"
         placeholder="Buscar por razón social, nombre de fantasía o CUIT…"
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && cargar(++generacion.current, busqueda)}
+        value={textoDeBusqueda}
+        onChange={(e) => setTextoDeBusqueda(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && padron.cambiarFiltros({ busqueda: textoDeBusqueda }, true)}
         disabled={bloqueado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-secondary"
-        onClick={() => cargar(++generacion.current, busqueda)}
+        onClick={() => padron.cambiarFiltros({ busqueda: textoDeBusqueda }, true)}
         disabled={bloqueado}
       >
         Buscar
@@ -385,23 +448,49 @@ export function Proveedores() {
           />
         )}
 
-        {cargando ? (
+        {iniciando ? (
           <Cargando />
         ) : (
+          <>
           <div className="table-responsive">
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Razón social</th>
-                  <th>CUIT</th>
-                  <th>Teléfono</th>
-                  <th>Email</th>
-                  <th>Margen</th>
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
+                  <EncabezadoOrdenable columna="razonSocial" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Razón social
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="cuit" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    CUIT
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="telefono" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Teléfono
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="email" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Email
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="margen" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Margen
+                  </EncabezadoOrdenable>
+                  <EncabezadoOrdenable columna="estado" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                    Estado
+                  </EncabezadoOrdenable>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
+                <FilaDeFiltrosDePadron
+                  celdas={CELDAS_DE_FILTRO}
+                  valores={padron.borrador}
+                  onCambio={padron.cambiarFiltros}
+                  onLimpiar={() => {
+                    setTextoDeBusqueda('')
+                    padron.limpiar()
+                  }}
+                  hayFiltros={padron.hayFiltros}
+                  deshabilitado={bloqueado}
+                />
               </thead>
-              <tbody>
+              <tbody style={cargando ? { opacity: 0.6 } : undefined}>
                 {pagina?.items.map((p) => (
                   <tr key={p.id}>
                     <td>
@@ -443,13 +532,25 @@ export function Proveedores() {
                 {pagina?.items.length === 0 && (
                   <tr>
                     <td colSpan={7} className="text-center text-muted py-4">
-                      No hay proveedores que coincidan con la búsqueda.
+                      No hay proveedores que coincidan con los filtros.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          {pagina && (
+            <PaginadorDePadron
+              pagina={pagina.pagina}
+              tamanio={pagina.tamanio}
+              total={pagina.total}
+              unidad="proveedor(es)"
+              deshabilitado={cargando || bloqueado}
+              onCambiarPagina={padron.cambiarPagina}
+              onCambiarTamanio={padron.cambiarTamanio}
+            />
+          )}
+          </>
         )}
       </Box>
     </div>

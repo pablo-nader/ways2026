@@ -8,14 +8,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
-using Ways.Application.Gastos;
+using Ways.Application.Pagos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
-using Ways.Domain.Gastos;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
@@ -26,7 +26,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// <c>POST /api/compras/{id}/pagos</c>: pagar una compra confirmada desde su detalle o su cuenta
-/// corriente. Un pago es UN gasto administrativo (categoría proveedor, origen tesorería) más el
+/// corriente. Un pago es UN pago administrativo (categoría proveedor, origen tesorería) más el
 /// movimiento <c>pago</c> de cuenta corriente imputado a la compra y el egreso de tesorería, todo en
 /// una transacción, con el importe acotado por el saldo pendiente de ESA compra.
 /// </summary>
@@ -167,14 +167,14 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
     private WaysDbContext ContextoDelTenant(Contexto ctx) =>
         fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
-    private sealed record Huella(decimal Saldo, int Gastos, int MovimientosDeCc, int MovimientosDeTesoreria);
+    private sealed record Huella(decimal Saldo, int Pagos, int MovimientosDeCc, int MovimientosDeTesoreria);
 
     private async Task<Huella> HuellaAsync(Contexto ctx)
     {
         await using var db = ContextoDelTenant(ctx);
         return new Huella(
             await db.Proveedores.Where(p => p.Id == ctx.IdProveedor).Select(p => p.Saldo).SingleAsync(),
-            await db.Gastos.CountAsync(),
+            await db.Pagos.CountAsync(),
             await db.MovimientosCuentaCorrienteProveedor.CountAsync(),
             await db.MovimientosTesoreria.CountAsync());
     }
@@ -182,9 +182,9 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
     // ---- camino feliz ------------------------------------------------------------------------
 
     [Fact]
-    public async Task PagarElTotalDeLaCompraCreaElGastoElPagoDeCuentaCorrienteYElEgresoDeTesoreria()
+    public async Task PagarElTotalDeLaCompraCreaElPagoElPagoDeCuentaCorrienteYElEgresoDeTesoreria()
     {
-        var ctx = await PrepararAsync(nameof(PagarElTotalDeLaCompraCreaElGastoElPagoDeCuentaCorrienteYElEgresoDeTesoreria));
+        var ctx = await PrepararAsync(nameof(PagarElTotalDeLaCompraCreaElPagoElPagoDeCuentaCorrienteYElEgresoDeTesoreria));
         var compra = await CrearCompraAsync(ctx, confirmar: true);
         Assert.Equal(1210m, compra.Total);
         Assert.Equal(0m, compra.Pagado);
@@ -195,30 +195,33 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
         Assert.Equal(1210m, resultado.Pagado);
         Assert.Equal(0m, resultado.SaldoPendiente);
-        var gastoCreado = resultado.Gasto;
-        Assert.Equal(CategoriaGasto.Proveedor, gastoCreado.Categoria);
-        Assert.Equal(OrigenFondosGasto.Tesoreria, gastoCreado.OrigenFondos);
-        Assert.Equal(ctx.IdProveedor, gastoCreado.IdProveedor);
-        Assert.Equal(ctx.IdPuntoVenta, gastoCreado.IdPuntoVenta);
-        Assert.Equal(compra.Id, gastoCreado.IdComprobanteCompra);
-        Assert.Null(gastoCreado.IdTurnoCaja);
-        Assert.Equal("Pago Factura A de compra 00001-00000001", gastoCreado.Concepto);
-        Assert.Equal(fechaDeNegocio, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(gastoCreado.Fecha, ZonaDelNegocio).DateTime));
+        var pagoCreado = resultado.Pago;
+        Assert.Equal(CategoriaPago.Proveedor, pagoCreado.Categoria);
+        Assert.Equal(OrigenFondosPago.Tesoreria, pagoCreado.OrigenFondos);
+        Assert.Equal(ctx.IdProveedor, pagoCreado.IdProveedor);
+        Assert.Equal(ctx.IdPuntoVenta, pagoCreado.IdPuntoVenta);
+        Assert.Equal(compra.Id, pagoCreado.IdComprobanteCompra);
+        Assert.Null(pagoCreado.IdTurnoCaja);
+        Assert.Equal("Pago Factura A de compra 00001-00000001", pagoCreado.Concepto);
+        Assert.Equal(fechaDeNegocio, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(pagoCreado.Fecha, ZonaDelNegocio).DateTime));
 
         await using var db = ContextoDelTenant(ctx);
-        var gasto = await db.Gastos.SingleAsync(g => g.Id == gastoCreado.Id);
-        Assert.Equal(1210m, gasto.Importe);
-        Assert.Equal(ctx.IdEmpresa, gasto.IdEmpresa);
-        Assert.Equal(ctx.IdMedioEfectivo, gasto.IdMedioPago);
+        var pago = await db.Pagos.SingleAsync(g => g.Id == pagoCreado.Id);
+        Assert.Equal(1210m, pago.Importe);
+        Assert.Equal(ctx.IdEmpresa, pago.IdEmpresa);
 
-        var pago = await db.MovimientosCuentaCorrienteProveedor
-            .SingleAsync(m => m.Tipo == TipoMovimientoCcProveedor.Pago && m.IdGasto == gasto.Id);
-        Assert.Equal(compra.Id, pago.IdComprobanteCompra);
-        Assert.Equal(-1210m, pago.Importe);
-        Assert.Equal(0m, pago.SaldoResultante);
+        // E2-S1: escritura doble, exactamente un ítem con el medio y el importe de la cabecera.
+        var item = await db.ItemsPago.SingleAsync(i => i.IdPago == pago.Id);
+        Assert.Equal((ctx.IdMedioEfectivo, 1210m), (item.IdMedioPago, item.Importe));
 
-        var egreso = await db.MovimientosTesoreria.SingleAsync(m => m.IdGasto == gasto.Id);
-        Assert.Equal(TipoMovimientoTesoreria.Gasto, egreso.Tipo);
+        var movimiento = await db.MovimientosCuentaCorrienteProveedor
+            .SingleAsync(m => m.Tipo == TipoMovimientoCcProveedor.Pago && m.IdPago == pago.Id);
+        Assert.Equal(compra.Id, movimiento.IdComprobanteCompra);
+        Assert.Equal(-1210m, movimiento.Importe);
+        Assert.Equal(0m, movimiento.SaldoResultante);
+
+        var egreso = await db.MovimientosTesoreria.SingleAsync(m => m.IdPago == pago.Id);
+        Assert.Equal(TipoMovimientoTesoreria.Pago, egreso.Tipo);
         Assert.Equal(1210m, egreso.Egreso);
         Assert.Equal(ctx.IdEmpresa, egreso.IdEmpresa);
 
@@ -243,7 +246,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var segundo = await PagarOkAsync(ctx.Admin, compra.Id, 810m, ctx.IdMedioEfectivo, concepto: "  Saldo final  ");
         Assert.Equal(1210m, segundo.Pagado);
         Assert.Equal(0m, segundo.SaldoPendiente);
-        Assert.Equal("Saldo final", segundo.Gasto.Concepto);
+        Assert.Equal("Saldo final", segundo.Pago.Concepto);
 
         var tercero = await PagarAsync(ctx.Admin, compra.Id, 1m, ctx.IdMedioEfectivo);
         Assert.Equal(HttpStatusCode.Conflict, tercero.StatusCode);
@@ -254,7 +257,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(1210m, intacta.SaldoPendiente);
 
         await using var db = ContextoDelTenant(ctx);
-        Assert.Equal(2, await db.Gastos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
+        Assert.Equal(2, await db.Pagos.CountAsync(g => g.IdComprobanteCompra == compra.Id));
         Assert.Equal(1210m, await db.Proveedores.Where(p => p.Id == ctx.IdProveedor).Select(p => p.Saldo).SingleAsync());
     }
 
@@ -302,9 +305,9 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
     }
 
     [Fact]
-    public async Task LasValidacionesDelGastoAdministrativoTambienRigenElPago()
+    public async Task LasValidacionesDelPagoAdministrativoTambienRigenElPago()
     {
-        var ctx = await PrepararAsync(nameof(LasValidacionesDelGastoAdministrativoTambienRigenElPago));
+        var ctx = await PrepararAsync(nameof(LasValidacionesDelPagoAdministrativoTambienRigenElPago));
         var compra = await CrearCompraAsync(ctx, confirmar: true);
         var antes = await HuellaAsync(ctx);
 
@@ -393,7 +396,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
     // ---- atomicidad y reintento -----------------------------------------------------------------
 
-    /// <summary>Se rompe el egreso de tesorería, la ÚLTIMA escritura de la transacción: el gasto, el
+    /// <summary>Se rompe el egreso de tesorería, la ÚLTIMA escritura de la transacción: el pago, el
     /// pago de cuenta corriente y el saldo del proveedor ya estaban escritos y tienen que
     /// deshacerse. <c>Intentos == 1</c> es el valor discriminante: bajo la estrategia reintentable el
     /// segundo intento comitearía un pago aunque el primero ya hubiera dejado un commit
@@ -423,16 +426,16 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
         var despues = await HuellaAsync(ctx);
         Assert.Equal(antes.Saldo - 300m, despues.Saldo);
-        Assert.Equal(antes.Gastos + 1, despues.Gastos);
+        Assert.Equal(antes.Pagos + 1, despues.Pagos);
         Assert.Equal(antes.MovimientosDeCc + 1, despues.MovimientosDeCc);
         Assert.Equal(antes.MovimientosDeTesoreria + 1, despues.MovimientosDeTesoreria);
     }
 
     // ---- concurrencia ---------------------------------------------------------------------------
 
-    /// <summary>Pausa el INSERT del gasto de la primera request: en ese punto el pago A ya tomó el
+    /// <summary>Pausa el INSERT del pago de la primera request: en ese punto el pago A ya tomó el
     /// lock de la compra y leyó el saldo, y todavía no escribió nada.</summary>
-    private sealed class InterceptorQuePausaElInsertDelGasto(
+    private sealed class InterceptorQuePausaElInsertDelPago(
         TaskCompletionSource llegoAlInsert, TaskCompletionSource liberar) : DbCommandInterceptor
     {
         private int pausas;
@@ -441,7 +444,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
-            if (command.CommandText.Contains("INSERT INTO gastos", StringComparison.Ordinal)
+            if (command.CommandText.Contains("INSERT INTO pagos", StringComparison.Ordinal)
                 && Interlocked.Increment(ref pausas) == 1)
             {
                 llegoAlInsert.TrySetResult();
@@ -465,7 +468,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
         var llegoAlInsert = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var interceptor = new InterceptorQuePausaElInsertDelGasto(llegoAlInsert, liberar);
+        var interceptor = new InterceptorQuePausaElInsertDelPago(llegoAlInsert, liberar);
 
         await using var factory = fixture.WithWebHostBuilder(builder =>
             builder.ConfigureServices(services =>
@@ -490,7 +493,7 @@ public class PagoDeCompraEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal("pago_excede_saldo_pendiente", await CodigoDeErrorAsync(respuestaB));
 
         await using var db = ContextoDelTenant(ctx);
-        Assert.Equal(importe, await db.Gastos.Where(g => g.IdComprobanteCompra == compra.Id).SumAsync(g => g.Importe));
+        Assert.Equal(importe, await db.Pagos.Where(g => g.IdComprobanteCompra == compra.Id).SumAsync(g => g.Importe));
         Assert.Equal(1210m - importe, await db.Proveedores.Where(p => p.Id == ctx.IdProveedor).Select(p => p.Saldo).SingleAsync());
     }
 }

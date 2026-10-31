@@ -188,17 +188,23 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     [Fact]
-    public async Task UnaCompraConfirmadaRechazaLaEdicionDeItems()
+    public async Task UnaCompraConfirmadaSeEditaYUnPutSinCambiosNoAsientaNada()
     {
-        var ctx = await PrepararAsync(nameof(UnaCompraConfirmadaRechazaLaEdicionDeItems));
+        // E6: la confirmada ya no responde 409 compra_no_editable; el PUT la edita por diferencia. Con el mismo contenido
+        // la diferencia es cero: no hay movimientos nuevos de stock ni de cuenta (la edición con cambios está en
+        // ComprasEdicionConfirmadaTests).
+        var ctx = await PrepararAsync(nameof(UnaCompraConfirmadaSeEditaYUnPutSinCambiosNoAsientaNada));
         var creada = await CrearBorradorAsync(ctx);
         await ConfirmarAsync(ctx, creada.Id);
 
         var respuesta = await ctx.Admin.PutAsJsonAsync($"/api/compras/{creada.Id}", SolicitudSimple(ctx));
 
-        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
-        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("compra_no_editable", problema.GetProperty("codigo").GetString());
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var editada = (await respuesta.Content.ReadFromJsonAsync<CompraDetalle>(OpcionesJson))!;
+        Assert.Equal(EstadoCompra.Confirmada, editada.Estado);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(1, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id));
     }
 
     [Fact]

@@ -49,7 +49,7 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
     /// (<c>PUT /api/catalogos/medios-pago/{id}</c>): sin el pin, un turno cerrado hace tiempo
     /// puede terminar leyendo la fila de <c>arqueos_turno</c> equivocada (o ninguna, diferencia
     /// fantasma <c>0</c>) si el medio efectivo cambió desde el cierre — mismo motivo por el que
-    /// <c>ventasEnEfectivoNetas</c>/<c>gastosEnEfectivo</c> (derivados por <see
+    /// <c>ventasEnEfectivoNetas</c>/<c>pagosEnEfectivo</c> (derivados por <see
     /// cref="CalculadorDeCierrePorRetiro"/> a partir de este MISMO <c>idAncla</c>) también
     /// quedarían mal derivados sin el pin. Solo cae al catálogo actual (<see
     /// cref="ResolvedorDeMedioDeCajaFisica.Resolver"/>) para un turno LEGADO cerrado antes de esta
@@ -145,7 +145,7 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
             retiros,
             resultado.TotalRetiros,
             resultado.VentasEnEfectivoNetas,
-            resultado.GastosEnEfectivo,
+            resultado.PagosEnEfectivo,
             resultado.Refuerzos,
             diferencia);
     }

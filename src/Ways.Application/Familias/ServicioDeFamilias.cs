@@ -82,7 +82,7 @@ public class ServicioDeFamilias(
                 a.CostoListaPor,
                 a.CostoListaIncluyeIva,
                 a.DescuentoProveedor,
-                a.PorcentajeImpuestoInterno,
+                a.ImpuestoInterno,
                 a.CostoNominal
             })
             .ToListAsync(ct);
@@ -125,7 +125,7 @@ public class ServicioDeFamilias(
             CostoListaPor: referencia.CostoListaPor,
             CostoListaIncluyeIva: referencia.CostoListaIncluyeIva,
             DescuentoProveedor: referencia.DescuentoProveedor,
-            PorcentajeImpuestoInterno: referencia.PorcentajeImpuestoInterno,
+            ImpuestoInterno: referencia.ImpuestoInterno,
             CostoNominal: referencia.CostoNominal);
 
         return new FamiliaDetalle(

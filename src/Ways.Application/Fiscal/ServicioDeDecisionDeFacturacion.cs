@@ -458,7 +458,7 @@ public class ServicioDeDecisionDeFacturacion(
         comando.Transaction = transaccion;
         comando.CommandText =
             "SELECT p.id_medio_pago, p.importe - p.vuelto, m.porcentaje_facturacion " +
-            "FROM pagos_comprobante p " +
+            "FROM cobros p " +
             "JOIN medios_pago m ON m.id_medio_pago = p.id_medio_pago " +
             "WHERE p.id_comprobante_venta = $1 AND p.deleted_at IS NULL";
         ParametrosDeComando.Agregar(comando, idComprobanteVenta);

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useLocation } from 'react-router'
+import { Link, MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tenants } from './Tenants'
 import { ErrorApi } from '../api/cliente'
@@ -56,25 +56,24 @@ const tenantDos: TenantListado = {
   cantidadUsuarios: 7,
 }
 
-/** Sonda de la ruta actual: es la única forma de ver si el `<Link>` "Nuevo tenant" navegó, que es
- * lo que la clase `disabled` de Bootstrap NO impide (solo apaga el hit-testing del puntero). */
-function SondaDeRuta() {
-  const { pathname } = useLocation()
+/** Sonda de la búsqueda de la URL: el `?nuevo=1` que abre el modal de alta se consume al llegar. */
+function SondaDeBusqueda() {
+  const { search } = useLocation()
 
-  return <span data-testid="ruta">{pathname}</span>
+  return <span data-testid="busqueda">{search}</span>
 }
 
-function montar(items: TenantListado[] = [tenantUno, tenantDos]) {
-  apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/plataforma/tenants') return Promise.resolve(items)
+function montar(items: TenantListado[] = [tenantUno, tenantDos], ruta = '/organizacion/tenants') {
+  apiGetMock.mockImplementation((rutaApi: string) => {
+    if (rutaApi === '/plataforma/tenants') return Promise.resolve(items)
 
-    return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    return Promise.reject(new Error(`ruta inesperada: ${rutaApi}`))
   })
 
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[ruta]}>
       <Tenants />
-      <SondaDeRuta />
+      <SondaDeBusqueda />
     </MemoryRouter>,
   )
 }
@@ -116,7 +115,10 @@ describe('Tenants (stage-20, slice 2 — contadores de hijos)', () => {
     montar()
 
     return waitFor(() => {
-      const encabezados = screen.getAllByRole('columnheader').map((h) => h.textContent)
+      const encabezados = screen
+        .getAllByRole('columnheader')
+        .slice(0, 8)
+        .map((h) => h.textContent?.replace('↕', ''))
       expect(encabezados).toEqual([
         'ID',
         'Nombre',
@@ -386,19 +388,6 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
 
 // stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1, C2, C4 y C8).
 
-/** El `<form>` de edición, que es el único disparador de escritura que sigue existiendo en el DOM
- * con la puerta abierta (sus controles están inertes, pero el elemento sigue ahí). Sirve de
- * palanca POR DEBAJO del confound (`mutation-proof-tests` regla 3): ningún operador puede llegar
- * acá con la puerta abierta —no hay campo ni botón habilitado que dispare el submit implícito—,
- * y por eso mismo es la única forma de acuñar una generación en esa ventana y ver qué hace el
- * token de la escritura. */
-function formularioDeEdicion(contenedor: HTMLElement) {
-  const form = contenedor.querySelector('form')
-  if (!form) throw new Error('no hay formulario de edición abierto')
-
-  return form
-}
-
 describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña al confirmar)', () => {
   beforeEach(() => {
     apiGetMock.mockReset()
@@ -422,9 +411,6 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     montar()
     await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
 
-    await usuario.click(
-      within(screen.getByRole('row', { name: /Comercio Sur/ })).getByRole('button', { name: 'Editar' }),
-    )
     await usuario.click(botonDeBaja('Almacén Este'))
 
     const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
@@ -433,12 +419,10 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
       ...screen.getAllByRole('button', { name: 'Eliminar' }),
       ...screen.getAllByRole('button', { name: 'Suspender' }),
       ...screen.getAllByRole('button', { name: 'Reactivar' }),
-      ...screen.getAllByRole('button', { name: 'Guardar' }),
     ]) {
       expect(boton).toBeDisabled()
     }
-    expect(screen.getByLabelText('Nombre')).toBeDisabled()
-    expect(screen.getByRole('link', { name: 'Nuevo tenant' })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toBeDisabled()
 
     // La puerta misma sigue viva: es lo único que el operador puede tocar.
     expect(within(puerta).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
@@ -458,17 +442,10 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
   })
 
   /**
-   * Cláusula bajo prueba (ronda 2, R2-4): el `if (bloqueado) evento.preventDefault()` del `<Link>`
-   * "Nuevo tenant". Un `<a>` no admite `disabled`: la clase `disabled` de Bootstrap solo apaga
-   * `pointer-events` —hit-testing del puntero, puro CSS— y `tabIndex={-1}` solo lo saca del
-   * recorrido de tabulación. Ninguna de las dos cancela una activación que no pase por ahí (Enter
-   * sobre un `<a>` enfocado por programa, un click sintético, una extensión), así que la puerta
-   * modal se podía abandonar navegando a otra pantalla con el DELETE todavía sin decidir.
-   *
-   * El test mide la NAVEGACIÓN, no el atributo: `aria-disabled` ya se afirma en el test de arriba
-   * y no impide nada por sí solo.
+   * Cláusula bajo prueba: `disabled={bloqueado}` del botón "Nuevo tenant". Con la puerta abierta no puede abrir el modal
+   * de alta encima: el operador no abandona a medias la decisión de la baja.
    */
-  it('con la puerta abierta, activar "Nuevo tenant" no navega', async () => {
+  it('con la puerta abierta, activar "Nuevo tenant" no abre el alta', async () => {
     const usuario = userEvent.setup()
     montar()
     await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
@@ -476,84 +453,11 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     await usuario.click(botonDeBaja('Almacén Este'))
     expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('link', { name: 'Nuevo tenant' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
 
-    expect(screen.getByTestId('ruta').textContent).toBe('/')
+    expect(screen.queryByRole('dialog', { name: 'Nuevo tenant' })).not.toBeInTheDocument()
     // Y la puerta sigue ahí: no se abandonó la decisión a medio tomar.
     expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
-  })
-
-  /**
-   * Cláusula bajo prueba (ronda 2, R2-5): el `setEdicion((prev) => (prev?.id === fila.id ? null :
-   * prev))` posterior al 204. El formulario de edición sobrevivía a la baja de la fila que estaba
-   * editando: quedaba abierto, con los datos de una entidad que ya no existe, y "Guardar" mandaba
-   * un PUT contra un id dado de baja. El updater se arma desde `prev` y compara el id, así que la
-   * baja de OTRA fila no se lleva puesta una edición en curso.
-   */
-  it('la baja de la fila que se está editando cierra su formulario', async () => {
-    const usuario = userEvent.setup()
-    montar()
-    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
-
-    await usuario.click(
-      within(screen.getByRole('row', { name: /Comercio Sur/ })).getByRole('button', { name: 'Editar' }),
-    )
-    expect(screen.getByText('Editando tenant 1')).toBeInTheDocument()
-
-    await usuario.click(botonDeBaja('Comercio Sur'))
-    apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantDos])
-
-      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
-    })
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
-
-    await waitFor(() => expect(screen.queryByText('Comercio Sur')).not.toBeInTheDocument())
-    expect(apiDeleteMock).toHaveBeenCalledWith('/plataforma/tenants/1')
-    expect(screen.queryByText('Editando tenant 1')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Nombre')).not.toBeInTheDocument()
-  })
-
-  /**
-   * Cláusula bajo prueba: `const token = ++generacion.current` como PRIMERA sentencia síncrona de
-   * `darDeBaja`, y la ausencia del chequeo de generación posterior a la red. Con el token acuñado
-   * al ABRIR la puerta, una generación acuñada en el medio lo dejaba viejo: el DELETE salía igual,
-   * el 204 volvía, y el `if (generacion.current !== token) return` se lo tragaba — la fila seguía
-   * listada, la puerta seguía abierta y cada click repetía un DELETE silencioso.
-   *
-   * El submit se dispara sobre el `<form>` mismo, POR DEBAJO del confound: hoy `bloqueado` deja el
-   * formulario inerte, así que este camino no es alcanzable a mano — y esa es exactamente la razón
-   * por la que el test tiene que bajar hasta acá para ver el token.
-   */
-  it('una generación acuñada entre abrir y confirmar no se traga el 204', async () => {
-    const usuario = userEvent.setup()
-    const { container } = montar()
-    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
-
-    await usuario.click(
-      within(screen.getByRole('row', { name: /Comercio Sur/ })).getByRole('button', { name: 'Editar' }),
-    )
-    await usuario.click(botonDeBaja('Almacén Este'))
-
-    await act(async () => {
-      fireEvent.submit(formularioDeEdicion(container))
-    })
-    await waitFor(() => expect(screen.getByText('Se actualizó el tenant "Comercio Sur".')).toBeInTheDocument())
-    expect(apiPutMock).toHaveBeenCalledTimes(1)
-
-    apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantUno])
-
-      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
-    })
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
-
-    await waitFor(() =>
-      expect(screen.getByText('Se dio de baja el tenant "Almacén Este".')).toBeInTheDocument(),
-    )
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
-    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
   /**
@@ -658,5 +562,683 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
 
     await waitFor(() => expect(screen.getByText('Tenant "Almacén Este" reactivado.')).toBeInTheDocument())
     expect(apiPostMock).toHaveBeenCalledWith('/plataforma/tenants/2/reactivar')
+  })
+})
+
+function diferida<T>() {
+  let resolver!: (valor: T) => void
+  let rechazar!: (motivo: unknown) => void
+  const promesa = new Promise<T>((resolve, reject) => {
+    resolver = resolve
+    rechazar = reject
+  })
+
+  return { promesa, resolver, rechazar }
+}
+
+function botonEditar(nombre: string) {
+  return within(screen.getByRole('row', { name: new RegExp(nombre) })).getByRole('button', { name: 'Editar' })
+}
+
+function lecturasDelListado() {
+  return apiGetMock.mock.calls.filter((c) => c[0] === '/plataforma/tenants').length
+}
+
+describe('Tenants — el renombrado es un modal', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPutMock.mockResolvedValue(undefined)
+  })
+
+  async function abrirEdicion(nombre = 'Comercio Sur') {
+    montar()
+    await waitFor(() => expect(screen.getByText(nombre)).toBeInTheDocument())
+    await userEvent.click(botonEditar(nombre))
+  }
+
+  it('"Editar" abre un modal con el nombre del tenant; "Cancelar" lo descarta sin escribir y devuelve el foco', async () => {
+    await abrirEdicion()
+
+    const dialogo = screen.getByRole('dialog', { name: 'Editando tenant 1' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Comercio Sur')
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' 2')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(botonEditar('Comercio Sur')).toHaveFocus()
+    await userEvent.click(botonEditar('Comercio Sur'))
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Comercio Sur')
+  })
+
+  it('Escape cierra el modal sin escribir y devuelve el foco al botón que lo abrió', async () => {
+    await abrirEdicion()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(botonEditar('Comercio Sur')).toHaveFocus()
+  })
+
+  it('guardar manda el nombre, refresca el listado y cierra el modal con el foco en "Nuevo tenant" (la fila se reemplazó)', async () => {
+    await abrirEdicion()
+    await userEvent.clear(screen.getByLabelText('Nombre'))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Comercio Norte')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Se actualizó el tenant "Comercio Norte".')).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/plataforma/tenants/1', { nombre: 'Comercio Norte' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(lecturasDelListado()).toBe(2)
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toHaveFocus()
+  })
+
+  it('un rechazo del servidor queda adentro del modal, que sigue abierto con lo tipeado y se puede reintentar', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'tenant_duplicado', 'Ya existe un tenant con ese nombre.'))
+    await abrirEdicion()
+    await userEvent.clear(screen.getByLabelText('Nombre'))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Almacén Este')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Editando tenant 1' })
+    expect(await within(dialogo).findByText('Ya existe un tenant con ese nombre.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Almacén Este')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+    expect(screen.queryByText(/Se actualizó el tenant/)).not.toBeInTheDocument()
+    // Cerrar y volver a abrir no arrastra el rechazo.
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+    await userEvent.click(botonEditar('Comercio Sur'))
+    expect(screen.queryByText('Ya existe un tenant con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `setErrorDeEdicion('')` al empezar `guardarNombre`: el rechazo del intento anterior no puede
+   * seguir en pantalla mientras el nuevo PUT está en vuelo. */
+  it('guardar de nuevo borra el rechazo del intento anterior apenas empieza', async () => {
+    const segundo = diferida<undefined>()
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'tenant_duplicado', 'Ya existe un tenant con ese nombre.')).mockReturnValueOnce(segundo.promesa)
+    await abrirEdicion()
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Ya existe un tenant con ese nombre.')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(apiPutMock).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Ya existe un tenant con ese nombre.')).not.toBeInTheDocument()
+    await act(async () => {
+      segundo.resolver(undefined)
+    })
+  })
+
+  it('mientras guarda el modal queda inerte y no se cierra, y un doble clic sincrónico emite un solo PUT', async () => {
+    const escritura = diferida<undefined>()
+    apiPutMock.mockReturnValue(escritura.promesa)
+    await abrirEdicion()
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    expect(screen.getByLabelText('Nombre')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Editando tenant 1' })).toBeInTheDocument()
+
+    await act(async () => {
+      escritura.resolver(undefined)
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  /** Cláusula bajo prueba: el refresco aislado del try/catch de la escritura (react-async-state regla 6). */
+  it('un refresco fallido después de guardar no reporta el guardado como fallido y el modal se cierra igual', async () => {
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+    apiGetMock.mockImplementation(() => Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó el refresco.')))
+    await userEvent.click(botonEditar('Comercio Sur'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(
+      await screen.findByText('Se actualizó el tenant "Comercio Sur". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.queryByText(/No se pudo guardar/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Tenants — el alta es un modal', () => {
+  const creado = { idTenant: 9, idEmpresa: 10, idPuntoVenta: 11, idUsuarioAdmin: 12, passwordTemporal: 'Temp-1234' }
+
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(creado)
+  })
+
+  async function abrirAlta() {
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
+    await screen.findByRole('dialog', { name: 'Nuevo tenant' })
+  }
+
+  async function completar() {
+    await userEvent.type(screen.getByLabelText('Nombre del tenant'), 'Kiosco Oeste')
+    await userEvent.type(screen.getByLabelText('Razón social de la empresa'), 'Kiosco Oeste SRL')
+    await userEvent.type(screen.getByLabelText('Nombre del punto de venta'), 'Caja 1')
+    await userEvent.type(screen.getByLabelText('Mail del admin del tenant'), 'admin@kiosco.com')
+  }
+
+  it('"Nuevo tenant" abre el modal de alta con sus campos', async () => {
+    await abrirAlta()
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo tenant' })
+    for (const etiqueta of ['Nombre del tenant', 'Razón social de la empresa', 'Nombre del punto de venta', 'Mail del admin del tenant', 'Modo del punto de venta']) {
+      expect(within(dialogo).getByLabelText(etiqueta)).toBeInTheDocument()
+    }
+    expect(within(dialogo).getByLabelText('Modo del punto de venta')).toHaveValue('Web')
+  })
+
+  it('aprovisionar manda el pedido, muestra la contraseña temporal SIN cerrar el modal, vacía el formulario y refresca el listado', async () => {
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    expect(await screen.findByText('Temp-1234')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledExactlyOnceWith('/plataforma/tenants', {
+      nombreTenant: 'Kiosco Oeste',
+      razonSocialEmpresa: 'Kiosco Oeste SRL',
+      nombrePuntoVenta: 'Caja 1',
+      mailAdmin: 'admin@kiosco.com',
+      modo: 'Web',
+    })
+    expect(screen.getByText(/Tenant #9 creado: empresa #10, punto de venta #11, usuario admin #12\./)).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Nuevo tenant' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre del tenant')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Aprovisionar tenant' })).toBeEnabled()
+    await waitFor(() => expect(lecturasDelListado()).toBe(2))
+  })
+
+  it('"Cerrar" después de un alta cierra el modal, descarta la contraseña y devuelve el foco a "Nuevo tenant"', async () => {
+    await abrirAlta()
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+    await screen.findByText('Temp-1234')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Temp-1234')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toHaveFocus()
+  })
+
+  it('un rechazo del servidor queda adentro del modal, con lo tipeado, y no se pierde nada', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'mail_duplicado', 'Ese mail ya está en uso.'))
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo tenant' })
+    expect(await within(dialogo).findByText('Ese mail ya está en uso.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre del tenant')).toHaveValue('Kiosco Oeste')
+    expect(within(dialogo).getByLabelText('Mail del admin del tenant')).toHaveValue('admin@kiosco.com')
+    expect(within(dialogo).getByRole('button', { name: 'Aprovisionar tenant' })).toBeEnabled()
+    expect(lecturasDelListado()).toBe(1)
+  })
+
+  it('un fallo que no es del servidor rinde el mensaje genérico', async () => {
+    apiPostMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    expect(await screen.findByText('No se pudo aprovisionar el tenant.')).toBeInTheDocument()
+  })
+
+  it('"Cancelar" descarta lo tipeado y devuelve el foco al botón; al reabrir arranca vacío', async () => {
+    await abrirAlta()
+    await userEvent.type(screen.getByLabelText('Nombre del tenant'), 'Kiosco')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toHaveFocus()
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
+    expect(screen.getByLabelText('Nombre del tenant')).toHaveValue('')
+  })
+
+  it('Escape cierra el modal sin escribir y devuelve el foco al botón que lo abrió', async () => {
+    await abrirAlta()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toHaveFocus()
+  })
+
+  /** Cláusula bajo prueba: `enviandoRef`, el espejo sincrónico (react-async-state regla 11), y la ventana inerte del POST:
+   * dos clics en el mismo tick no aprovisionan dos tenants, y el modal no se cierra con el POST en vuelo. */
+  it('un doble clic sincrónico emite un solo POST y mientras tanto el modal queda inerte y no se cierra', async () => {
+    const escritura = diferida<typeof creado>()
+    apiPostMock.mockReturnValue(escritura.promesa)
+    await abrirAlta()
+    await completar()
+    const enviar = screen.getByRole('button', { name: 'Aprovisionar tenant' })
+
+    await act(async () => {
+      enviar.click()
+      enviar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Aprovisionando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cerrar ventana' })).toBeDisabled()
+    expect(screen.getByLabelText('Nombre del tenant')).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nuevo tenant' })).toBeInTheDocument()
+
+    await act(async () => {
+      escritura.resolver(creado)
+    })
+    expect(await screen.findByText('Temp-1234')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `setResultado(null)` al empezar `enviar`: la contraseña del alta anterior no puede seguir en
+   * pantalla mientras la siguiente está en vuelo. */
+  it('aprovisionar de nuevo borra el resultado del alta anterior apenas empieza', async () => {
+    await abrirAlta()
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+    await screen.findByText('Temp-1234')
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    expect(apiPostMock).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Temp-1234')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Aprovisionando…' })).toBeDisabled()
+  })
+
+  it('"Copiar" manda la contraseña al portapapeles y lo dice', async () => {
+    const escribir = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: escribir }, configurable: true })
+    await abrirAlta()
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+    await screen.findByText('Temp-1234')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copiar' }))
+
+    expect(escribir).toHaveBeenCalledExactlyOnceWith('Temp-1234')
+    expect(await screen.findByRole('button', { name: 'Copiada' })).toBeInTheDocument()
+  })
+
+  it('`?nuevo=1` abre el modal de alta al llegar y se consume: la URL queda limpia', async () => {
+    montar([tenantUno, tenantDos], '/organizacion/tenants?nuevo=1')
+
+    expect(await screen.findByRole('dialog', { name: 'Nuevo tenant' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('busqueda').textContent).toBe(''))
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Sin un clic previo no hay disparador: el foco cae en el botón de alta.
+    expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toHaveFocus()
+  })
+
+  /** Cláusula bajo prueba: el efecto del parámetro abre el modal también con la pantalla ya montada: el enlace del menú
+   * ("Nuevo tenant") vuelve a `/organizacion/tenants` con `?nuevo=1` sin desmontarla. */
+  it('`?nuevo=1` abre el modal también con el listado ya montado', async () => {
+    apiGetMock.mockImplementation(() => Promise.resolve([tenantUno, tenantDos]))
+    render(
+      <MemoryRouter initialEntries={['/organizacion/tenants']}>
+        <Link to="/organizacion/tenants?nuevo=1">Menú: nuevo tenant</Link>
+        <Tenants />
+        <SondaDeBusqueda />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('link', { name: 'Menú: nuevo tenant' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Nuevo tenant' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('busqueda').textContent).toBe(''))
+  })
+
+  /** Cláusulas bajo prueba: los efectos que llevan el foco tras el envío (el botón enviado queda deshabilitado y el foco
+   * caería en `<body>`): al mensaje del rechazo, o a la contraseña temporal si salió bien. */
+  it('tras un rechazo el foco queda en el mensaje', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'mail_duplicado', 'Ese mail ya está en uso.'))
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    const alerta = await screen.findByRole('alert')
+    await waitFor(() => expect(alerta.parentElement).toHaveFocus())
+  })
+
+  it('tras un alta que salió bien el foco queda en la contraseña temporal', async () => {
+    await abrirAlta()
+    await completar()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    const bloque = (await screen.findByText('Temp-1234')).closest('.alert') as HTMLElement
+    await waitFor(() => expect(bloque).toHaveFocus())
+  })
+
+  it('tras un rechazo del renombrado el foco queda en el mensaje', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'tenant_duplicado', 'Ya existe un tenant con ese nombre.'))
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+    await userEvent.click(botonEditar('Comercio Sur'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await screen.findByRole('alert')
+    await waitFor(() => expect(alerta.parentElement).toHaveFocus())
+  })
+
+  it('sin el parámetro la pantalla no abre ningún modal', async () => {
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('abrir el alta borra el aviso de la escritura anterior', async () => {
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+    await userEvent.click(botonEditar('Comercio Sur'))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Se actualizó el tenant "Comercio Sur".')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Nuevo tenant' })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
+
+    expect(screen.queryByText(/Se actualizó el tenant/)).not.toBeInTheDocument()
+  })
+})
+
+// Filtros por columna y orden por encabezado (grillas, slice S5b2).
+
+const tenantZeta: TenantListado = {
+  id: 9,
+  nombre: 'Zeta',
+  estado: 'Activo',
+  createdAt: '2026-12-01T10:00:00-03:00',
+  cantidadEmpresas: 1500,
+  cantidadPuntosVenta: 20,
+  cantidadUsuarios: 3,
+}
+const tenantAlfa: TenantListado = {
+  id: 100,
+  nombre: 'Alfa',
+  estado: 'Suspendido',
+  createdAt: '2026-03-05T10:00:00-03:00',
+  cantidadEmpresas: 900,
+  cantidadPuntosVenta: 7,
+  cantidadUsuarios: 30,
+}
+const tenantMedio: TenantListado = {
+  id: 20,
+  nombre: 'Medio',
+  estado: 'Activo',
+  createdAt: '2026-11-20T10:00:00-03:00',
+  cantidadEmpresas: 20,
+  cantidadPuntosVenta: 100,
+  cantidadUsuarios: 4,
+}
+/** El orden del servidor (Zeta, Alfa, Medio) no coincide con ningún orden por columna. */
+const ENTREGADOS = [tenantZeta, tenantAlfa, tenantMedio]
+
+function columnaVisible(indice: number) {
+  return screen
+    .getAllByRole('row')
+    .slice(2)
+    .map((f) => within(f).getAllByRole('cell')[indice]?.textContent ?? '')
+}
+
+function esperarFilas() {
+  return waitFor(() => expect(screen.getByText('Zeta')).toBeInTheDocument())
+}
+
+describe('Tenants — filtros por columna y orden', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiDeleteMock.mockResolvedValue(undefined)
+  })
+
+  /** Mutación registrada: pasar `filtrados` sin ordenar a la tabla deja el orden del servidor y rompe las aserciones. */
+  it('ordena cada columna por su valor: números como números, la fecha cronológica y el tercer clic vuelve al orden original', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(1)).toEqual(['Alfa', 'Medio', 'Zeta'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio', 'Alfa'])
+    await usuario.click(screen.getByRole('button', { name: 'Nombre' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio'])
+
+    // Como texto "100" < "20" < "9"; como número, 9 < 20 < 100.
+    await usuario.click(screen.getByRole('button', { name: 'ID' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio', 'Alfa'])
+
+    // 20 < 900 < 1500 (como texto: "1500" < "20" < "900").
+    await usuario.click(screen.getByRole('button', { name: 'Empresas' }))
+    expect(columnaVisible(3)).toEqual(['20', '900', '1500'])
+    await usuario.click(screen.getByRole('button', { name: 'Empresas' }))
+    expect(columnaVisible(3)).toEqual(['1500', '900', '20'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Puntos de venta' }))
+    expect(columnaVisible(4)).toEqual(['7', '20', '100'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Usuarios' }))
+    expect(columnaVisible(5)).toEqual(['3', '4', '30'])
+
+    await usuario.click(screen.getByRole('button', { name: 'Estado' }))
+    expect(columnaVisible(2)).toEqual(['Activo', 'Activo', 'Suspendido'])
+
+    // "1/12/2026" < "20/11/2026" < "5/3/2026" como texto; cronológicamente: marzo, noviembre, diciembre.
+    await usuario.click(screen.getByRole('button', { name: 'Creado' }))
+    expect(columnaVisible(1)).toEqual(['Alfa', 'Medio', 'Zeta'])
+    await usuario.click(screen.getByRole('button', { name: 'Creado' }))
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio', 'Alfa'])
+  })
+
+  /** Mutación registrada: pasar `items` en vez de `filtrados` a `useOrdenamiento` deja todas las filas con un filtro puesto. */
+  it('filtra cada columna de datos, con selector para el estado, y combina los filtros con Y', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'MED')
+    expect(columnaVisible(1)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por nombre'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por id'), '0100')
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+    await usuario.clear(screen.getByLabelText('Filtrar por id'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por empresas'), '1500')
+    expect(columnaVisible(1)).toEqual(['Zeta'])
+    await usuario.clear(screen.getByLabelText('Filtrar por empresas'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por puntos de venta'), '100')
+    expect(columnaVisible(1)).toEqual(['Medio'])
+    await usuario.clear(screen.getByLabelText('Filtrar por puntos de venta'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por usuarios'), '30')
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+    await usuario.clear(screen.getByLabelText('Filtrar por usuarios'))
+
+    await usuario.type(screen.getByLabelText('Filtrar por creado'), new Date(tenantAlfa.createdAt).toLocaleDateString('es-AR'))
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+    await usuario.clear(screen.getByLabelText('Filtrar por creado'))
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activo')
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Medio'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Suspendido')
+    expect(columnaVisible(1)).toEqual(['Alfa'])
+
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por estado'), 'Activo')
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    expect(columnaVisible(1)).toEqual(['Zeta'])
+  })
+
+  it('"Limpiar filtros" restaura las filas; sin coincidencias el estado vacío lo dice y sin tenants dice otra cosa', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'no existe')
+    expect(screen.getByText('Ningún registro coincide con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay tenants cargados.')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio'])
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+  })
+
+  it('sin tenants dice que no hay', async () => {
+    montar([])
+
+    expect(await screen.findByText('No hay tenants cargados.')).toBeInTheDocument()
+  })
+
+  it('la fila de filtros tiene una celda por encabezado', async () => {
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    const filas = screen.getAllByRole('row')
+    expect(within(filas[0]).getAllByRole('columnheader')).toHaveLength(8)
+    expect(within(filas[1]).getAllByRole('columnheader')).toHaveLength(8)
+  })
+
+  /** Mutación registrada: volver a `cargando ? <Cargando /> : <table>` desmonta la fila de filtros durante el refresco. */
+  it('los filtros siguen montados, con lo escrito, mientras el refresco está en vuelo y quedan inertes', async () => {
+    const usuario = userEvent.setup()
+    let resolverRefresco!: (items: TenantListado[]) => void
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/plataforma/tenants') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(ENTREGADOS)
+
+      return new Promise<TenantListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    render(
+      <MemoryRouter>
+        <Tenants />
+      </MemoryRouter>,
+    )
+    await esperarFilas()
+
+    const filtro = screen.getByLabelText('Filtrar por nombre')
+    await usuario.type(filtro, 'zet')
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Se dio de baja el tenant "Zeta".')
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(filtro.isConnected).toBe(true)
+    expect(filtro).toHaveValue('zet')
+    expect(filtro).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
+
+    await act(async () => {
+      resolverRefresco(ENTREGADOS)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled())
+    expect(screen.getByLabelText('Filtrar por nombre')).toBe(filtro)
+    expect(columnaVisible(1)).toEqual(['Zeta'])
+  })
+
+  /** Mutación registrada: quitar `limpiarFiltros()` de `onCreado` deja el filtro por nombre puesto y el tenant nuevo oculto; falla. */
+  it('tras aprovisionar un tenant se limpian los filtros por columna para que la fila nueva se vea', async () => {
+    const usuario = userEvent.setup()
+    const nuevo: TenantListado = { ...tenantMedio, id: 300, nombre: 'Kiosco Oeste' }
+    let lecturas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/plataforma/tenants') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      lecturas += 1
+
+      return Promise.resolve(lecturas === 1 ? ENTREGADOS : [...ENTREGADOS, nuevo])
+    })
+    apiPostMock.mockResolvedValue({ idTenant: 300, idEmpresa: 1, idPuntoVenta: 2, idUsuarioAdmin: 3, passwordTemporal: 'Temp-1234' })
+    render(
+      <MemoryRouter>
+        <Tenants />
+      </MemoryRouter>,
+    )
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    expect(screen.queryByText('Alfa')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo tenant' }))
+    await usuario.type(await screen.findByLabelText('Nombre del tenant'), 'Kiosco Oeste')
+    await usuario.type(screen.getByLabelText('Razón social de la empresa'), 'Kiosco Oeste SRL')
+    await usuario.type(screen.getByLabelText('Nombre del punto de venta'), 'Caja 1')
+    await usuario.type(screen.getByLabelText('Mail del admin del tenant'), 'admin@kiosco.com')
+    await usuario.click(screen.getByRole('button', { name: 'Aprovisionar tenant' }))
+
+    await screen.findByText('Temp-1234')
+    await usuario.click(screen.getByRole('button', { name: 'Cerrar' }))
+    await waitFor(() => expect(screen.getByText('Kiosco Oeste')).toBeInTheDocument())
+    expect(screen.getByLabelText('Filtrar por nombre')).toHaveValue('')
+    expect(columnaVisible(1)).toEqual(['Zeta', 'Alfa', 'Medio', 'Kiosco Oeste'])
+  })
+
+  it('los filtros quedan inertes con la puerta de suspensión abierta y vuelven a habilitarse al cancelar', async () => {
+    const usuario = userEvent.setup()
+    montar(ENTREGADOS)
+    await esperarFilas()
+
+    await usuario.type(screen.getByLabelText('Filtrar por nombre'), 'zet')
+    await usuario.click(screen.getByRole('button', { name: 'Suspender' }))
+
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar suspensión' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por usuarios')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.getByLabelText('Filtrar por nombre')).toBeEnabled()
   })
 })
