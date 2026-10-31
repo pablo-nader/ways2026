@@ -49,7 +49,7 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 - [x] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest. Also the online
   POS cart preview (`api/ventas.ts` `previaDeLinea`) must use `descuentoDeLinea` when present (judge A: 3 units
   preview 11250 while the server charges 11500).
-- [ ] T4 — Engine follow-ups from judgment-day T1 (WARNING, both judges): base selection among non-acumulable
+- [x] T4 — Engine follow-ups from judgment-day T1 (WARNING, both judges): base selection among non-acumulable
   offers of equal priority ranks by per-unit discount and ignores strict coverage; combo detection compares
   against the full per-unit discount (conservative, judge A). Rank by the line discount at the actual quantity.
 
@@ -57,6 +57,16 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 
 `JUDGMENT: APPROVED` — no CRITICAL from either judge. Warnings recorded as T3/T4 above; family offer reported as
 applied with 0 covered units when another base wins on some lines (judge B, SUGGESTION) stays informational.
+
+## Judgment-day T4 (2026-10-31)
+
+`JUDGMENT: APPROVED` — no CRITICAL from either judge, no finding confirmed by both. Integration filter
+(Ofertas|Instantanea|Offline) 246/246. Informational follow-ups (all over-charge, never under-charge):
+- Equal-discount strict vs common with the strict at lower id has no finite breakpoints → fallback, so the offline
+  device charges list price where the server applies the common offer (judge A, WARNING).
+- Family strict ranks by proportional share; a later line can get less than the common offer it beat (judge B, WARNING).
+- Family grid cells are a cartesian product (up to ~1024 per article/list); fallback drops the whole competing tier
+  (judge A, SUGGESTION).
 
 ## Route per task
 
