@@ -123,3 +123,60 @@
 .icono-de-ayuda__texto[data-lado='abajo']::before {
   bottom: 100%;
 }
+
+/* MarcaDeOfertas: misma mecánica que IconoDeAyuda (el componente fija `data-visible`, `data-lado`, `top` y `left`). */
+.marca-de-ofertas {
+  display: inline-flex;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.marca-de-ofertas__boton {
+  border: 0;
+}
+
+.marca-de-ofertas__boton:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
+.marca-de-ofertas__texto {
+  position: fixed;
+  z-index: 2000;
+  width: max-content;
+  transform: translate(-50%, -100%);
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--bs-border-radius);
+  background: var(--bs-body-color);
+  color: var(--bs-body-bg);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.marca-de-ofertas__texto[data-lado='abajo'] {
+  transform: translate(-50%, 0);
+}
+
+.marca-de-ofertas__texto[data-visible='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.marca-de-ofertas__texto::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--marca-de-ofertas-separacion);
+}
+
+.marca-de-ofertas__texto[data-lado='arriba']::before {
+  top: 100%;
+}
+
+.marca-de-ofertas__texto[data-lado='abajo']::before {
+  bottom: 100%;
+}
