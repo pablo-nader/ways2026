@@ -4,8 +4,9 @@ import { ErrorApi } from '../../api/cliente'
 import { clienteDeFamilias } from '../../api/familias'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
-import { CAMPOS_COMPARTIDOS, CAMPOS_PROPIOS } from '../articulos/familia'
+import { CAMPOS_COMPARTIDOS, CAMPOS_PROPIOS, CLAVES_DE_COMPOSICION } from '../articulos/familia'
 import { avisoDeCreacion, LIMITE_DE_ARTICULOS } from './agrupacion'
+import { AYUDA_DE_DESGLOSAR_COSTO, ETIQUETA_DE_DESGLOSAR_COSTO } from './edicion'
 import { ListaDeElegidos } from './ListaDeElegidos'
 import { mensajeDeFalloDeEscritura } from './mensajes'
 import { SelectorDeArticulos, type ArticuloElegido } from './SelectorDeArticulos'
@@ -51,6 +52,7 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
   const navegar = useNavigate()
   const catalogos = useCatalogosDeFamilias()
   const [nombre, setNombre] = useState('')
+  const [permiteDesglosarCosto, setPermiteDesglosarCosto] = useState(false)
   const [referencia, setReferencia] = useState<ArticuloElegido | null>(null)
   const [elegidos, setElegidos] = useState<ArticuloElegido[]>([])
   const [selector, setSelector] = useState<'referencia' | 'otros' | null>(null)
@@ -75,6 +77,9 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
   const sinProblemas = previsualizacion !== null && previsualizacion.problemas.length === 0 && !referenciaConFamilia
   const listoParaCrear = listaParaCrear(referencia, sinProblemas, nombre)
 
+  const camposAlineados = CAMPOS_COMPARTIDOS.filter((c) => !(permiteDesglosarCosto && CLAVES_DE_COMPOSICION.includes(c.clave)))
+  // En un alta apagada y ausente son lo mismo: la marca viaja solo cuando está encendida.
+  const conMarca = permiteDesglosarCosto ? { permiteDesglosarCosto: true } : {}
   const articulosPorId = new Map<number, ArticuloElegido>(elegidos.map((a) => [a.id, a]))
 
   function elegirReferencia(elegidosEnElSelector: ArticuloElegido[]) {
@@ -89,6 +94,13 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
     invalidar()
     setErrorDeCreacion('')
     setSelector(null)
+  }
+
+  /** La marca cambia qué campos se alinean con la referencia: lo previsualizado ya no habla de lo elegido. */
+  function cambiarDesglose(permite: boolean) {
+    setPermiteDesglosarCosto(permite)
+    invalidar()
+    setErrorDeCreacion('')
   }
 
   function quitarReferencia() {
@@ -109,7 +121,7 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
       ? undefined
       : () => {
           setErrorDeCreacion('')
-          void previsualizar({ idArticuloReferencia: referencia.id, idsArticulos: elegidos.map((a) => a.id) })
+          void previsualizar({ idArticuloReferencia: referencia.id, idsArticulos: elegidos.map((a) => a.id), ...conMarca })
         }
 
   async function crear() {
@@ -123,6 +135,7 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
         nombre: nombre.trim(),
         idArticuloReferencia: referencia.id,
         idsArticulos: elegidos.map((a) => a.id),
+        ...conMarca,
       })
       // Quien se fue mientras tanto (el menú, el Atrás) no vuelve a una pantalla que no pidió.
       if (!montado.current) return
@@ -156,13 +169,34 @@ export function ModalDeNuevaFamilia({ focoDeReserva, onCancelar }: Props) {
     <Modal titulo="Nueva familia" tamano="xl" desplazable ocupado={creando} focoDeReserva={focoDeReserva} pie={pie} onCerrar={onCancelar}>
       <div className="alert alert-info">
         Todos los artículos de la familia toman del artículo de referencia sus campos compartidos (
-        {CAMPOS_COMPARTIDOS.map((c) => etiquetaEnMinuscula(c.etiqueta)).join(', ')}) y el precio de cada lista de precios fija: los que ya
-        tengan otros valores o precios pasan a tener los de la referencia. Son propios de cada artículo: {CAMPOS_PROPIOS}.
+        {camposAlineados.map((c) => etiquetaEnMinuscula(c.etiqueta)).join(', ')}) y el precio de cada lista de precios fija: los que ya
+        tengan otros valores o precios pasan a tener los de la referencia. Son propios de cada artículo: {CAMPOS_PROPIOS}
+        {permiteDesglosarCosto && ', y la composición del costo (costo de lista, su base, descuento e impuesto interno)'}.
       </div>
 
       {catalogos.aviso && <div className="alert alert-warning">{catalogos.aviso}</div>}
       <div ref={errorRef} tabIndex={-1}>
         <ErrorDeFormulario mensaje={errorDeCreacion} />
+      </div>
+
+      <div className="mb-3">
+        <div className="form-check">
+          <input
+            id="nf-desglosar-costo"
+            type="checkbox"
+            className="form-check-input"
+            checked={permiteDesglosarCosto}
+            disabled={bloqueado}
+            aria-describedby="nf-desglosar-costo-ayuda"
+            onChange={(e) => cambiarDesglose(e.target.checked)}
+          />
+          <label className="form-check-label" htmlFor="nf-desglosar-costo">
+            {ETIQUETA_DE_DESGLOSAR_COSTO}
+          </label>
+        </div>
+        <div id="nf-desglosar-costo-ayuda" className="form-text">
+          {AYUDA_DE_DESGLOSAR_COSTO}
+        </div>
       </div>
 
       <form

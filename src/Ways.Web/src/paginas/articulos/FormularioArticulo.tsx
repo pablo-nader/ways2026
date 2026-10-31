@@ -35,6 +35,8 @@ import {
 import { EditorDePrecios } from './EditorDePrecios'
 import {
   altaConFamiliaLista,
+  composicionDistintaDeLaFamilia,
+  desglosaCostoLaFamilia,
   familiaDelArticulo,
   type AccionesDeFamiliaDelFormulario,
   type EstadoDeFamiliaDelFormulario,
@@ -363,6 +365,10 @@ export function FormularioArticulo({
   // elige, aunque sus valores todavía se estén cargando. Al editar un miembro no se bloquean: el alcance se
   // pregunta al guardar.
   const bloqueoDeFamilia = esNuevo && valor.idFamilia !== ''
+  // Con la marca "permite desglosar costo" la composición del costo es propia de cada miembro: sus campos no se bloquean
+  // (el costo nominal sigue siendo el de la familia y el servidor rechaza un alta que dé otro).
+  const desglosaCosto = bloqueoDeFamilia && desglosaCostoLaFamilia(valor.idFamilia, familia.detalle)
+  const bloqueoDeComposicion = bloqueoDeFamilia && !desglosaCosto
   // Solo un alta depende de que la familia elegida esté cargada: un miembro que se edita se guarda aunque su
   // familia no haya cargado, y el servidor frena un cambio compartido sin alcance con `alcance_requerido`.
   const altaLista = !esNuevo || altaConFamiliaLista(valor.idFamilia, familia)
@@ -460,7 +466,11 @@ export function FormularioArticulo({
     valor.costoListaIncluyeIva,
     porcentajeIva,
   )
-  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva, bloqueoDeFamilia)
+  // Con la composición propia el nominal se calcula desde que se la toca; sin tocarla es el de la familia, que puede ser el
+  // efectivo de una compra y no coincidir con el que daría la composición.
+  const composicionTocada =
+    desglosaCosto && familia.detalle?.valores != null && composicionDistintaDeLaFamilia(valor, familia.detalle.valores).length > 0
+  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva, bloqueoDeFamilia && !composicionTocada)
   const bultoSinUnidadesPorBulto = bultoSinUnidades(
     valor.costoListaPor,
     parsearNumeroDecimal(valor.unidadesPorBulto),
@@ -835,40 +845,40 @@ export function FormularioArticulo({
             </div>
 
             <div className="col-md-3">
-              <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeFamilia}>
+              <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeComposicion}>
                 Costo de lista sin IVA
               </Etiqueta>
               <CampoImporte
                 id="art-costo-lista-sin-iva"
                 className="form-control"
                 valor={costoDeLista.sinIva}
-                disabled={bloqueoDeFamilia}
+                disabled={bloqueoDeComposicion}
                 onChange={(n) => cargarCostoDeLista(n, false, costoDeLista.sinIva)}
               />
             </div>
 
             <div className="col-md-3">
-              <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeFamilia}>
+              <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeComposicion}>
                 Costo de lista con IVA
               </Etiqueta>
               <CampoImporte
                 id="art-costo-lista-con-iva"
                 className="form-control"
                 valor={costoDeLista.conIva}
-                disabled={bloqueoDeFamilia}
+                disabled={bloqueoDeComposicion}
                 onChange={(n) => cargarCostoDeLista(n, true, costoDeLista.conIva)}
               />
             </div>
 
             <div className="col-md-2">
-              <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeFamilia}>
+              <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeComposicion}>
                 Costo por
               </Etiqueta>
               <select
                 id="art-costo-lista-por"
                 className="form-select"
                 value={valor.costoListaPor}
-                disabled={bloqueoDeFamilia}
+                disabled={bloqueoDeComposicion}
                 onChange={(e) => onCambio({ ...valor, costoListaPor: e.target.value as CostoListaPor })}
               >
                 {COSTOS_LISTA_POR.map((c) => (
@@ -880,7 +890,7 @@ export function FormularioArticulo({
             </div>
 
             <div className="col-md-2">
-              <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
+              <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeComposicion}>
                 Descuento (%)
               </Etiqueta>
               <input
@@ -888,13 +898,13 @@ export function FormularioArticulo({
                 {...atributosDeCampoDecimal({ decimales: 2 })}
                 className="form-control"
                 value={valor.descuentoProveedor}
-                disabled={bloqueoDeFamilia}
+                disabled={bloqueoDeComposicion}
                 onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
               />
             </div>
 
             <div className="col-md-2">
-              <Etiqueta htmlFor="art-impuesto-interno" deFamilia={bloqueoDeFamilia}>
+              <Etiqueta htmlFor="art-impuesto-interno" deFamilia={bloqueoDeComposicion}>
                 Impuestos internos ($)
               </Etiqueta>
               <input
@@ -902,7 +912,7 @@ export function FormularioArticulo({
                 {...atributosDeCampoDecimal({ decimales: 2 })}
                 className="form-control"
                 value={valor.impuestoInterno}
-                disabled={bloqueoDeFamilia}
+                disabled={bloqueoDeComposicion}
                 onChange={(e) => onCambio({ ...valor, impuestoInterno: e.target.value })}
               />
             </div>
