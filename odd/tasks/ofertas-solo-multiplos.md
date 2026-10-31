@@ -49,7 +49,7 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 - [x] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest. Also the online
   POS cart preview (`api/ventas.ts` `previaDeLinea`) must use `descuentoDeLinea` when present (judge A: 3 units
   preview 11250 while the server charges 11500).
-- [ ] T4 — Engine follow-ups from judgment-day T1 (WARNING, both judges): base selection among non-acumulable
+- [x] T4 — Engine follow-ups from judgment-day T1 (WARNING, both judges): base selection among non-acumulable
   offers of equal priority ranks by per-unit discount and ignores strict coverage; combo detection compares
   against the full per-unit discount (conservative, judge A). Rank by the line discount at the actual quantity.
 
@@ -58,11 +58,22 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 `JUDGMENT: APPROVED` — no CRITICAL from either judge. Warnings recorded as T3/T4 above; family offer reported as
 applied with 0 covered units when another base wins on some lines (judge B, SUGGESTION) stays informational.
 
+## Judgment-day T4 (2026-10-31)
+
+`JUDGMENT: APPROVED` — no CRITICAL from either judge, no finding confirmed by both. Integration filter
+(Ofertas|Instantanea|Offline) 246/246. Informational follow-ups (all over-charge, never under-charge):
+- Equal-discount strict vs common with the strict at lower id has no finite breakpoints → fallback, so the offline
+  device charges list price where the server applies the common offer (judge A, WARNING).
+- Family strict ranks by proportional share; a later line can get less than the common offer it beat (judge B, WARNING).
+- Family grid cells are a cartesian product (up to ~1024 per article/list); fallback drops the whole competing tier
+  (judge A, SUGGESTION).
+
 ## Route per task
 
 - T1: delegated direct (writer trigger: 2+ non-trivial files).
 - T2: delegated direct (writer trigger).
 - T3: delegated direct (writer trigger).
+- T4: delegated direct (writer trigger: domain engine + escalones + tests in C# and TS).
 
 ## Acceptance
 
@@ -155,7 +166,8 @@ applied with 0 covered units when another base wins on some lines (judge B, SUGG
 
 ## Next step
 
-T3 (web admin + cart preview).
+Judgment-day over the T4 slice (`5d824fb0`, `88508a1b`), then the PR. Reaching the cash registers needs a POS release
+(owner's call); the device code did not change, only the snapshot steps.
 
 ## Judgment-day T2 (2026-10-30)
 
@@ -177,3 +189,48 @@ totals `precio × cantidad` with the price shown on the card; it does not resolv
 ## Judgment-day T3
 
 `JUDGMENT: APPROVED` — polished: page-level edit tests (checkbox checked from the saved offer, emptied minimum sends `soloMultiplos: false`), `aria-describedby` and a "requires cantidad mínima" hint on the checkbox, `descuentoDeLinea` JSDoc aligned with the code, and `previaDeLinea` cases (combo, return, zero discount).
+
+## T4 evidence and decisions (2026-10-30)
+
+- Route: delegated direct (writer). Commits: `5d824fb0` feat(ofertas) (engine + escalones + domain tests), `88508a1b`
+  test(ofertas) (application, integration and TS parity tests, docs/10 parts 03 and 09.3), plus this doc.
+- Ranking (decision): among non-acumulables of the highest priority, the line discount per line unit at the gate
+  quantity Q (line quantity, or `CantidadDeFamilia` for family offers): common `d`, strict `d × N × floor(Q/N) / Q`.
+  For article/group/category this is exactly the line discount ÷ q; for family it is the proportional share of the
+  family discount (the real split stays in `CoberturaDeOfertas`). Compared exactly by cross-multiplication
+  (`FraccionDeDescuento`). Ties: per-unit discount, then lowest id. Combos and family pooling are not anticipated. Using
+  `d × Qf` literally for family offers was rejected: it would reorder common family offers against common article
+  offers, changing existing behaviour. A matched strict offer always covers ≥ N units at the gate quantity (its minimum
+  is the group size), so "0 coverage" only arises from combos/family pooling, by decision not anticipated.
+- Breakpoints (`EscalonesDeCantidad.DescubrirPuntosDeQuiebre`): for each same-priority pair (strict, other) the
+  multiples kN and the closed-form key crossings inside each interval. Termination: dS > dO stable from
+  `dS × N / (dS − dO)`; dS < dO never wins; dS = dO against a common with lower strict id alternates forever (null).
+  Rounding (decision): a crossing between grid points goes to the next 0.001; one exactly on the grid ties there
+  (per-unit, then id decides) so that point AND the next are added. Every point is resolved by the real engine and
+  collapsed, so the device choice equals the server at every 3-decimal quantity ≥ the line quantity.
+- Cap and fallback (decision): 64 breakpoints per curve, or per grid summing both axes (one pair with a common ≥ 5 %
+  below never reaches it). Over the cap, non-terminating, or (grid only) a family strict against a non-family strict of
+  the same priority (non-separable): steps above the line quantity (cells, plus a row at Qf0 + 0.001) resolve without
+  every non-acumulable of priority ≤ the competing one. Device = server when a higher priority wins, else no base:
+  never undercharges. Dropping only the strict offer was rejected (promotes a lower-priority base with more discount).
+- Family grid: family-strict breakpoints → rows (family quantity), non-family strict → columns. Grid stays empty
+  without family offers. Legacy fields: a step where the common wins carries it in the legacy fields without
+  `aplicadasCompletas`; where the strict wins the legacy fields keep only that resolution's commons → old POS never
+  undercharges (application + TS tests).
+- Device: no new logic, only more steps (TS parity test with the server's escalones and totals).
+- RED: `BaseConSoloMultiplosTests` 3 red on the old ranking (3 units, family 2/3, two stricts); application curve test
+  and integration test written against the new curve (old engine produced a single escalón at 2).
+- Mutation evidence (each reverted, green after): line-key clause skipped → 6 domain tests red; per-unit tie clause
+  skipped → `ConElMismoDescuentoDeLineaGanaElMayorDescuentoUnitario` red; family gate quantity forced to the line
+  quantity → 3 red; `Math.Ceiling` → `Math.Floor` in crossing rounding → 8 red (7 parity cases +
+  `UnCruceEntreDosCantidadesSeLlevaALaSiguiente`); on-grid "+0.001" dropped → 7 red; curve fallback step dropped →
+  `PasadoElTopeElDispositivoNuncaCobraMenosQueElServidor` red; grid fallback row dropped → both grid fallback cases red;
+  fallback keeping lower priorities (remove only strict) → both fallback tests red; family breakpoints not added to
+  rows → 2 grid tests red; TS `elegirEscalon` `<=` → `<` → 2 TS parity tests red.
+- Checks: `dotnet build` 0 errors; Domain 2109/2109; Application 1378/1378 (structural guards included); web `tsc -b`
+  clean, `npm run lint` exit 0 (pre-existing warnings), `vitest run src/pos` 968/968, full `vitest run` 8761/8761.
+  Integration filter (OfertasSoloMultiplos incl. the new `ConUnaComunEnCompetencia…`, OfertasResolucion,
+  OfertasEndpoints, InstantaneaDePosEndpoints, CombosInstantanea, CombosVenta, VentaOfflinePrecio,
+  CatalogoPublicoOfertas, EtiquetasEndpoints, SuperficieDeAutorizacion, AislamientoDeTenant): PENDING — another
+  session kept the Docker daemon busy for over an hour; not run concurrently by rule. T4 stays unticked until it passes.
+- Pre-existing limit kept: below the snapshot line quantity (1) the flat price rules, as for any fractional minimum < 1.

@@ -571,7 +571,8 @@ public class ServicioDeOfertas(
     /// <summary>
     /// Igual que <see cref="ResolverDocumentoAsync"/> (mismo contexto, mismas consultas, mismo resultado
     /// plano por línea) más la CURVA de precio por cantidad de cada línea: un
-    /// <see cref="EscalonDeCantidad"/> por cada <c>cantidad_minima</c> mayor a la cantidad pedida
+    /// <see cref="EscalonDeCantidad"/> por cada <c>cantidad_minima</c> (o punto de quiebre de una oferta "solo
+    /// múltiplos" en competencia, <see cref="EscalonesDeCantidad.DescubrirPuntosDeQuiebre"/>) mayor a la cantidad pedida
     /// que efectivamente cambia el resultado, ascendente, ya resuelto por el motor real
     /// (<see cref="EscalonesDeCantidad"/> → <see cref="ResolvedorDeOfertas"/>).
     ///
