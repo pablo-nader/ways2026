@@ -377,3 +377,116 @@ describe('CierresDeCaja — reimpresión', () => {
     expect(screen.queryByText('No se pudo obtener el ticket de cierre.')).not.toBeInTheDocument()
   })
 })
+
+describe('CierresDeCaja — orden en el servidor', () => {
+  const llamadasALaLista = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((ruta) => ruta.startsWith('/caja/turnos?'))
+
+  function mockearLista(propia?: (ruta: string) => Promise<unknown> | undefined) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      const respuesta = propia?.(ruta)
+      if (respuesta) return respuesta
+      return Promise.resolve(paginaFixture([turnoFixture()]))
+    })
+  }
+
+  it('sin clic el pedido no lleva orden y el clic en un encabezado recorre ascendente, descendente y el orden de siempre', async () => {
+    mockearLista()
+    const usuario = userEvent.setup()
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    await screen.findByRole('row', { name: /#501/ })
+    expect(llamadasALaLista()).toEqual([RUTA_LISTA])
+
+    await usuario.click(screen.getByRole('button', { name: /^Cierre/ }))
+    await waitFor(() => expect(llamadasALaLista().at(-1)).toContain('orden=cierre&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Cierre/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /^Cierre/ }))
+    await waitFor(() => expect(llamadasALaLista().at(-1)).toContain('orden=cierre&direccion=descendente'))
+
+    await usuario.click(screen.getByRole('button', { name: /^Cierre/ }))
+    await waitFor(() => expect(llamadasALaLista().at(-1)).toBe(RUTA_LISTA))
+  })
+
+  it.each([
+    ['Turno', 'turno'],
+    ['Apertura', 'apertura'],
+    ['Cierre', 'cierre'],
+  ])('la columna %s ordena por la clave %s y conserva el punto de venta y el estado', async (titulo, clave) => {
+    mockearLista()
+    const usuario = userEvent.setup()
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    await screen.findByRole('row', { name: /#501/ })
+
+    await usuario.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => {
+      const ultima = llamadasALaLista().at(-1)!
+      expect(ultima).toContain(`orden=${clave}&direccion=ascendente`)
+      expect(ultima).toContain('idPuntoVenta=7')
+      expect(ultima).toContain('estado=Cerrado')
+    })
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1', async () => {
+    mockearLista((ruta) =>
+      Promise.resolve(paginaFixture([turnoFixture()], { total: 30, pagina: ruta.includes('pagina=2') ? 2 : 1 })),
+    )
+    const usuario = userEvent.setup()
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    await screen.findByText(/Página 1 de 3/)
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 3/)
+
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
+
+    await waitFor(() => {
+      const ultima = llamadasALaLista().at(-1)!
+      expect(ultima).toContain('orden=apertura&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+    })
+    await screen.findByText(/Página 1 de 3/)
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
+    let resolverPorCierre: (v: PaginaDeTurnos) => void = () => {}
+    let promesaPorCierre: Promise<PaginaDeTurnos> = Promise.resolve(paginaFixture([]))
+    mockearLista((ruta) => {
+      if (ruta.includes('orden=cierre')) {
+        promesaPorCierre = new Promise((resolve) => (resolverPorCierre = resolve))
+        return promesaPorCierre
+      }
+      if (ruta.includes('orden=apertura')) return Promise.resolve(paginaFixture([turnoFixture({ id: 600 })]))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    await screen.findByRole('row', { name: /#501/ })
+
+    await usuario.click(screen.getByRole('button', { name: /^Cierre/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Apertura/ }))
+    await screen.findByRole('row', { name: /#600/ })
+
+    await act(async () => {
+      resolverPorCierre(paginaFixture([turnoFixture({ id: 700 })]))
+      await promesaPorCierre
+    })
+
+    expect(screen.getByRole('row', { name: /#600/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /#700/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Apertura/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
+    mockearLista((ruta) => (ruta.includes('orden=cierre') ? Promise.reject(new Error('caída')) : undefined))
+    const usuario = userEvent.setup()
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    await screen.findByRole('row', { name: /#501/ })
+
+    await usuario.click(screen.getByRole('button', { name: /^Cierre/ }))
+
+    await screen.findByText('No se pudieron cargar los cierres de caja.')
+    expect(screen.queryByRole('columnheader', { name: /Cierre/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /#501/ })).not.toBeInTheDocument()
+  })
+})

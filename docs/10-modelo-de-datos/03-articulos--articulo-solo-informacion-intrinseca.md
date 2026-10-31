@@ -96,14 +96,18 @@ codigos_proveedor (id_codigo_proveedor, id_articulo, id_proveedor, codigo citext
 familias (                    -- [tenant-wide: id_tenant, SIN id_empresa]
     id_familia,
     nombre citext NOT NULL,                  -- hasta 150 caracteres, como articulos.nombre
-    activo boolean NOT NULL DEFAULT true
+    activo boolean NOT NULL DEFAULT true,
+    permite_desglosar_costo boolean NOT NULL DEFAULT false  -- con la marca, la composición del costo
+                                             -- (costo_lista, costo_lista_por, costo_lista_incluye_iva,
+                                             -- descuento_proveedor, impuesto_interno) es propia de cada miembro y
+                                             -- solo costo_nominal es común (docs/10 §3, "Familias de artículos")
 );
 -- ux_familias_nombre UNIQUE (id_tenant, nombre) WHERE deleted_at IS NULL.
 -- ak_familias_id_familia_id_tenant UNIQUE (id_familia, id_tenant): destino de la FK compuesta.
 -- articulos.fk_articulos_familia (id_familia, id_tenant) → familias, MATCH SIMPLE (NULL = sin
 -- familia), RESTRICT. ix_articulos_familia (id_familia, id_tenant) WHERE id_familia IS NOT NULL.
 -- RLS estándar (HabilitarRlsDeTenant) — sin desvío. Sin backfill: todo artículo existente
--- queda con id_familia NULL.
+-- queda con id_familia NULL, y toda familia existente con permite_desglosar_costo = false.
 ```
 
 El artículo **no tiene precio de venta**: el precio vive en las listas. Se acabaron

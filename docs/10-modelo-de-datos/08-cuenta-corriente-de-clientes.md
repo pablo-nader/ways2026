@@ -364,7 +364,7 @@ jornadas_personal (                       -- [operativa — mutable, sin baja l�
 > confirma todos los días. Responde `{ movimientosCreados, jornadasConfirmadas }`.
 >
 > **Pago de personal** (`POST /api/personal/{id}/pagos`, `GestionDeCuentaDePersonal`: Admin y Supervisor).
-> **Pagar de la tesorería es solo de Admin**, como el alta administrativa de pagos (`/api/gastos/administracion`,
+> **Pagar de la tesorería es solo de Admin**, como el alta administrativa de pagos (`/api/pagos/administracion`,
 > `GestionDeCatalogo`): un Supervisor que manda `origenFondos = Tesoreria` recibe 403 `prohibido`, decidido
 > después del 404 del personal y antes de cualquier otro 400 del cuerpo y de cualquier escritura. El Supervisor
 > sí paga del cajón (`CajaTurno`) y descuenta de la cuenta corriente. El asiento `pago` es la cabecera: no hay tabla de cabecera aparte. En UNA transacción sin reintento
@@ -393,8 +393,8 @@ jornadas_personal (                       -- [operativa — mutable, sin baja l�
 > escribe solo al insertar. **Un pago con `id_movimiento_personal` es inmutable:** la edición del POS,
 > la edición y la baja administrativas y la vinculación posterior a una compra lo rechazan con 409
 > `gasto_de_pago_de_personal`, después del 404, porque tocarlo desalinearía los cuatro libros del pago.
-> Para que un cliente sepa de antemano qué pagos responderán así, los listados del POS (`GET /api/gastos`, el
-> detalle del turno) y de administración (`GET /api/gastos/administracion` y su detalle) traen
+> Para que un cliente sepa de antemano qué pagos responderán así, los listados del POS (`GET /api/pagos`, el
+> detalle del turno) y de administración (`GET /api/pagos/administracion` y su detalle) traen
 > `idMovimientoPersonal` (nulo en un pago común) y el web deshabilita en esos pagos la edición, la baja y la
 > vinculación a una compra. Anular o revertir un pago todavía no existe. El estado de cuenta (`GET /api/personal/{id}/cuenta`) trae
 > en cada movimiento `pago` su `desglose`: el descuento y una línea por pago (medio, importe, origen,

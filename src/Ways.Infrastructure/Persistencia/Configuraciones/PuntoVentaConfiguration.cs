@@ -30,6 +30,10 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
             .HasColumnName("id_empresa")
             .IsRequired();
 
+        builder.Property(p => p.IdSucursal)
+            .HasColumnName("id_sucursal")
+            .IsRequired();
+
         // Por si el día de mañana algo cuelga de un punto_venta con FK compuesta.
         builder.HasAlternateKey(p => new { p.Id, p.IdTenant })
             .HasName("ak_puntos_venta_id_punto_venta_id_tenant");
@@ -79,6 +83,15 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
             .HasForeignKey(p => new { p.IdEmpresa, p.IdTenant })
             .HasPrincipalKey(e => new { e.Id, e.IdTenant })
             .HasConstraintName("fk_puntos_venta_empresa")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // FK compuesta (id_sucursal, id_empresa, id_tenant) → sucursales: además de aislar por
+        // tenant, la sucursal tiene que ser de la MISMA empresa que el punto de venta.
+        builder.HasOne(p => p.Sucursal)
+            .WithMany()
+            .HasForeignKey(p => new { p.IdSucursal, p.IdEmpresa, p.IdTenant })
+            .HasPrincipalKey(sucursal => new { sucursal.Id, sucursal.IdEmpresa, sucursal.IdTenant })
+            .HasConstraintName("fk_puntos_venta_sucursal")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(p => p.IdTenant).HasDatabaseName("ix_puntos_venta_tenant");

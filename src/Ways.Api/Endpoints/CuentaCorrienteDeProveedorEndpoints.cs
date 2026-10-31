@@ -24,10 +24,14 @@ public static class CuentaCorrienteDeProveedorEndpoints
 
         grupo.MapGet("/", async (
             ServicioDeCuentaCorrienteDeProveedor servicio, int idProveedor, DateTimeOffset? desde,
-            DateTimeOffset? hasta, bool? historico, int? pagina, int? tamanio, CancellationToken ct) =>
+            DateTimeOffset? hasta, bool? historico, int? pagina, int? tamanio, string? orden, string? direccion,
+            CancellationToken ct) =>
             Results.Ok(await servicio.ObtenerEstadoDeCuentaAsync(
-                idProveedor, desde, hasta, historico ?? false, pagina ?? 1, tamanio ?? 25, ct)))
-        .WithSummary("Estado de cuenta del proveedor: header + movimientos paginados con saldo corrido.");
+                idProveedor, desde, hasta, historico ?? false, pagina ?? 1, tamanio ?? 25, orden, direccion, ct)))
+        .WithSummary(
+            "Estado de cuenta del proveedor: header + movimientos paginados con saldo corrido. orden (fecha, tipo, " +
+            "referencia, detalle, importe, saldoResultante) y direccion (ascendente, descendente) ordenan los " +
+            "movimientos del rango antes de paginar; sin ellos, fecha descendente; 400 si no son válidos.");
 
         // Slice 5 (task 5.5, mutation target #27): TOP-LEVEL sobre `app`, bajo
         // SupervisionDeCuentaDeProveedor SOLA — una policy, un gate, sin composición que razonar.

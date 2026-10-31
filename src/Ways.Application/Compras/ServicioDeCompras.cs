@@ -105,7 +105,14 @@ public partial class ServicioDeCompras(
             .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m, c.Origen))
             .ToListAsync(ct);
 
-        return new PaginaDeCompras(await ConSaldoPendienteAsync(items, ct), total, pagina, tamanio);
+        var conSaldo = await ConSaldoPendienteAsync(items, ct);
+        var proveedores = await ReferenciasDeListado.ProveedoresVisiblesAsync(
+            db, contexto, conSaldo.Select(c => c.IdProveedor).ToList(), ct);
+        var conProveedor = conSaldo
+            .Select(c => c with { NombreProveedor = proveedores.GetValueOrDefault(c.IdProveedor) })
+            .ToList();
+
+        return new PaginaDeCompras(conProveedor, total, pagina, tamanio);
     }
 
     /// <summary>Sin orden pedido: <c>Id</c> descendente (el orden de siempre del listado y de su export). Con

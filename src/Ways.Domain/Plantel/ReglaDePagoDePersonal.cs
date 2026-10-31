@@ -18,7 +18,7 @@ public sealed record PlanDePagoDePersonal(
 /// <summary>
 /// Combinaciones legales de un pago de personal y su total, sin base de datos. Un pago tiene un descuento
 /// de la cuenta corriente del cliente vinculado (a lo sumo uno, no mueve dinero), líneas de dinero (cero o
-/// más, cada una un pago) o ambos, pero no puede estar vacío. El origen de los fondos solo existe cuando
+/// más, cada una un ítem del pago de sueldos) o ambos, pero no puede estar vacío. El origen de los fondos solo existe cuando
 /// hay líneas de dinero. Los límites de importe son los de <c>numeric(14,2)</c>.
 /// </summary>
 public static class ReglaDePagoDePersonal

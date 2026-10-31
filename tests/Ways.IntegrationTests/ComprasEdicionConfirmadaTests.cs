@@ -877,8 +877,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
 
         var altaPago = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
                 "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
         var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
@@ -886,7 +886,7 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
 
         var vincular = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+            $"/api/pagos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
         Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
 
         await EditarConExitoAsync(
@@ -900,8 +900,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         }
 
         var edicion = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{idPago}",
-            new SolicitudDeEdicionDePago(
+            $"/api/pagos/administracion/{idPago}",
+            PagoDeUnMedio.Edicion(
                 CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 700m));
         Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
 
@@ -918,7 +918,7 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(idPago, desvinculado.GetProperty("id_pago").GetInt32());
         Assert.Equal(ctx.IdPuntoVenta, desvinculado.GetProperty("id_punto_venta_heredado").GetInt32());
 
-        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{idPago}");
         Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
 
         await using var contexto = Db(ctx);
@@ -956,8 +956,8 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
 
         var altaPago = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
                 "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
         var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
@@ -965,7 +965,7 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
 
         var vincular = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+            $"/api/pagos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
         Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
 
         await EditarConExitoAsync(
@@ -983,12 +983,12 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(ctx.IdPuntoVenta, desvinculado.GetProperty("id_punto_venta_heredado").GetInt32());
 
         var edicion = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{idPago}",
-            new SolicitudDeEdicionDePago(
+            $"/api/pagos/administracion/{idPago}",
+            PagoDeUnMedio.Edicion(
                 CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdEfectivo, null, 700m));
         Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
 
-        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{idPago}");
         Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
 
         await using var contexto = Db(ctx);
@@ -1324,15 +1324,15 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
         var creada = await CrearYConfirmarAsync(ctx, Solicitud(ctx, ctx.IdArticulo, 10m));
 
         var altaPago = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
                 "Pago sin punto de venta", null, ctx.IdEfectivo, null, 500m));
         var cuerpoPago = await altaPago.Content.ReadAsStringAsync();
         Assert.True(altaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
         var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
         var vincular = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
+            $"/api/pagos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(creada.Id));
         Assert.True(vincular.StatusCode == HttpStatusCode.OK, await vincular.Content.ReadAsStringAsync());
 
         await EditarConExitoAsync(
@@ -1343,7 +1343,7 @@ public class ComprasEdicionConfirmadaTests(WaysApiFixture fixture) : IClassFixtu
             await db.Pagos.Where(p => p.Id == idPago).ExecuteUpdateAsync(p => p.SetProperty(x => x.IdPuntoVenta, (int?)null));
         }
 
-        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idPago}");
+        var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{idPago}");
         Assert.True(baja.StatusCode == HttpStatusCode.NoContent, await baja.Content.ReadAsStringAsync());
 
         await using var contexto = Db(ctx);

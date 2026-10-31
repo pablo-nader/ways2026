@@ -27,4 +27,10 @@ public class Familia : EntidadTenant
     public required string Nombre { get; set; }
 
     public bool Activo { get; set; } = true;
+
+    /// <summary>Con la marca activa, la composición del costo (costo de lista, por unidad o bulto, con o sin IVA,
+    /// descuento del proveedor e impuesto interno) es propia de cada miembro y solo el <c>costo_nominal</c> es común
+    /// (<see cref="ValoresCompartidosDeFamilia"/>). Apagarla exige que todos los miembros vivos tengan la misma
+    /// composición.</summary>
+    public bool PermiteDesglosarCosto { get; set; }
 }

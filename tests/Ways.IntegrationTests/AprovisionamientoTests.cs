@@ -64,6 +64,14 @@ public class AprovisionamientoTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.NotNull(puntoVenta);
         Assert.Equal(resultado.IdTenant, puntoVenta!.IdTenant);
 
+        // El aprovisionamiento deja una sola sucursal, con el nombre del punto de venta y el mismo
+        // instante de alta (no bloquea la baja de un tenant recién aprovisionado).
+        var sucursal = await db.Sucursales.SingleAsync(s => s.IdTenant == resultado.IdTenant);
+        Assert.Equal(sucursal.Id, puntoVenta.IdSucursal);
+        Assert.Equal("Local 1", sucursal.Nombre);
+        Assert.Equal(resultado.IdEmpresa, sucursal.IdEmpresa);
+        Assert.Equal(puntoVenta.CreatedAt, sucursal.CreatedAt);
+
         var areas = await db.Areas.Where(a => a.IdTenant == resultado.IdTenant).ToListAsync();
         Assert.Single(areas);
         Assert.Equal(PlantillaDeAprovisionamiento.V1.Area, areas[0].Nombre);
@@ -104,6 +112,7 @@ public class AprovisionamientoTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var tenantsAntes = await db.Tenants.CountAsync();
+        var sucursalesAntes = await db.Sucursales.IgnoreQueryFilters().CountAsync();
 
         // El mail del admin ya está en uso (ux_usuarios_mail es global, ADR-7): el último paso
         // de la transacción (crear el usuario admin) falla — todo lo anterior en esa MISMA
@@ -125,6 +134,9 @@ public class AprovisionamientoTests(WaysApiFixture fixture) : IClassFixture<Ways
         var tenantHuerfano = await db.Tenants.AnyAsync(
             t => t.Nombre == nameof(UnaFallaAMitadDeCaminoNoDejaNadaCreado) + "-2");
         Assert.False(tenantHuerfano);
+
+        // La sucursal del punto de venta también viaja en la transacción que se revierte.
+        Assert.Equal(sucursalesAntes, await db.Sucursales.IgnoreQueryFilters().CountAsync());
     }
 
     [Fact]

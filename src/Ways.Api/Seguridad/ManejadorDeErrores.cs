@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Ways.Application.Abstracciones;
+using Ways.Application.Familias;
 using Ways.Domain.Common;
 
 namespace Ways.Api.Seguridad;
@@ -135,16 +136,23 @@ public class ManejadorDeErrores(
 
         contexto.Response.StatusCode = estado;
 
+        var problema = new ProblemDetails
+        {
+            Status = estado,
+            Title = titulo,
+            Extensions = { ["codigo"] = codigo }
+        };
+
+        if (excepcion is ErrorDominioConDatos { Datos.Count: > 0 } conDatos)
+        {
+            problema.Extensions["datos"] = conDatos.Datos;
+        }
+
         return await problemDetails.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = contexto,
             Exception = excepcion,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = estado,
-                Title = titulo,
-                Extensions = { ["codigo"] = codigo }
-            }
+            ProblemDetails = problema
         });
     }
 
@@ -181,6 +189,15 @@ public class ManejadorDeErrores(
             // antes de ClasificarUnicidad.
             { SqlState: "23505", ConstraintName: "ux_cuentas_tesoreria_nombre_empresa" } =>
                 (StatusCodes.Status409Conflict, "Ya existe una cuenta de tesorería con ese nombre en esta empresa.", "cuenta_tesoreria_duplicada"),
+
+            // Backstops de la conexión con Mercado Pago: el pre-chequeo de `ServicioDeConexionMercadoPago` es una cortesía y los dos
+            // índices únicos parciales son el contrato. El callback anónimo traduce estos códigos a una redirección, no a un
+            // ProblemDetails. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_conexiones_mercadopago_empresa_activa" } =>
+                (StatusCodes.Status409Conflict, "La empresa ya tiene Mercado Pago conectado.", "mercadopago_ya_conectada"),
+
+            { SqlState: "23505", ConstraintName: "ux_conexiones_mercadopago_usuario_activa" } =>
+                (StatusCodes.Status409Conflict, "Esa cuenta de Mercado Pago ya está conectada a otra empresa.", "mercadopago_cuenta_en_uso"),
 
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde

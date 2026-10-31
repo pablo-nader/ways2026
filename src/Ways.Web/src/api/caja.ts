@@ -6,6 +6,7 @@
  * validar todo (mismo criterio que `pagos.ts`, stage-5).
  */
 import { api } from './cliente'
+import { agregarOrdenAlQuery, type OrdenDeServidor } from './reportes'
 import type {
   DetalleDeTurno,
   MovimientoRegistrado,
@@ -30,6 +31,34 @@ export function tieneDesgloseDeCierre(resumen: ResumenDeCierrePorRetiro): boolea
   return [resumen.totalDigitales, resumen.totalEfectivo, resumen.ventasACuentaCorriente].every(
     (valor) => typeof valor === 'number' && Number.isFinite(valor),
   )
+}
+
+/** Claves de `orden` que acepta `GET /api/caja/turnos`: una por cada columna de datos de "Cierres de caja". */
+export const COLUMNAS_ORDENABLES_DE_CIERRES = ['turno', 'apertura', 'cierre'] as const
+
+export type ColumnaOrdenableDeCierres = (typeof COLUMNAS_ORDENABLES_DE_CIERRES)[number]
+
+export type OrdenDeCierres = OrdenDeServidor<ColumnaOrdenableDeCierres>
+
+export function esColumnaOrdenableDeCierres(columna: string): columna is ColumnaOrdenableDeCierres {
+  return (COLUMNAS_ORDENABLES_DE_CIERRES as readonly string[]).includes(columna)
+}
+
+/** Query de los cierres de un punto de venta: sin `orden` no viajan ni `orden` ni `direccion` y el servidor
+ * responde con el más reciente primero. */
+export function construirQueryDeCierres(
+  idPuntoVenta: number,
+  pagina: number,
+  tamanio: number,
+  orden: OrdenDeCierres = null,
+): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idPuntoVenta', String(idPuntoVenta))
+  parametros.set('estado', 'Cerrado')
+  agregarOrdenAlQuery(parametros, orden)
+  parametros.set('pagina', String(pagina))
+  parametros.set('tamanio', String(tamanio))
+  return `?${parametros.toString()}`
 }
 
 export const clienteDeCaja = {
@@ -68,9 +97,9 @@ export const clienteDeCaja = {
   /** `GET /api/caja/turnos/{id}` — el turno con su estado y sus arqueos persistidos; el detalle del Z no los trae. */
   obtenerTurno: (idTurnoCaja: number) => api.get<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}`),
   /** `GET /api/caja/turnos?idPuntoVenta=&estado=Cerrado` — turnos cerrados de UN punto de venta,
-   * el más reciente primero; ambos filtros los aplica el servidor. */
-  listarCerrados: (idPuntoVenta: number, pagina: number, tamanio: number) =>
-    api.get<PaginaDeTurnos>(`/caja/turnos?idPuntoVenta=${idPuntoVenta}&estado=Cerrado&pagina=${pagina}&tamanio=${tamanio}`),
+   * el más reciente primero salvo que se pida un `orden`; ambos filtros y el orden los aplica el servidor. */
+  listarCerrados: (idPuntoVenta: number, pagina: number, tamanio: number, orden: OrdenDeCierres = null) =>
+    api.get<PaginaDeTurnos>(`/caja/turnos${construirQueryDeCierres(idPuntoVenta, pagina, tamanio, orden)}`),
   /** `GET /api/caja/turnos/{id}/detalle` (stage-11-exportacion-reportes, Slice 5a/6b, spec
    * historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Pago Listings) — el
    * Z-report: mismo `ResumenDeTurno` que `/resumen` más los tickets y pagos del turno. Mismo

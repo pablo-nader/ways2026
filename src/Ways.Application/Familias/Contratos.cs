@@ -5,8 +5,10 @@ namespace Ways.Application.Familias;
 
 /// <summary>Fila de <c>GET /api/familias</c>: una familia viva del tenant. <see cref="CantidadArticulos"/> cuenta
 /// solo los miembros vivos (<c>id_familia = F</c> y sin baja lógica), la misma definición de miembro que usan los
-/// escritores (doc 10 §3, "Familias de artículos").</summary>
-public sealed record FamiliaListado(int Id, string Nombre, bool Activo, int CantidadArticulos);
+/// escritores (doc 10 §3, "Familias de artículos"). <see cref="PermiteDesglosarCosto"/> es la marca de la familia:
+/// con ella, la composición del costo es propia de cada miembro y solo el costo nominal es común.</summary>
+public sealed record FamiliaListado(
+    int Id, string Nombre, bool Activo, int CantidadArticulos, bool PermiteDesglosarCosto = false);
 
 /// <summary>
 /// Cuerpo de <c>PUT /api/familias/{id}</c>: lo único de una familia que se edita. Los dos campos son obligatorios y
@@ -16,8 +18,13 @@ public sealed record FamiliaListado(int Id, string Nombre, bool Activo, int Cant
 /// gobierna si la familia admite miembros nuevos: el alta de un artículo con <c>idFamilia</c> rechaza una familia
 /// inactiva (<c>409 familia_inactiva</c>). El nombre es único entre las familias vivas del tenant sin distinguir
 /// mayúsculas (<c>409 familia_nombre_duplicado</c>).
+///
+/// <para><see cref="PermiteDesglosarCosto"/> es opcional: ausente (<c>null</c>) conserva el valor guardado, así que un
+/// cliente que no lo conoce no lo apaga en silencio. <c>true</c> lo enciende sin ninguna condición. <c>false</c> lo
+/// apaga solo si todos los miembros vivos tienen la misma composición del costo; si no, <c>409 composicion_distinta</c>
+/// y no cambia nada (ni siquiera el nombre).</para>
 /// </summary>
-public sealed record EdicionFamilia(string? Nombre, bool? Activo);
+public sealed record EdicionFamilia(string? Nombre, bool? Activo, bool? PermiteDesglosarCosto = null);
 
 /// <summary>Un miembro vivo de una familia. <see cref="IdMarca"/> es <c>null</c> cuando el artículo no tiene
 /// marca o la que tiene está dada de baja: un id colgante nunca se expone (el mismo criterio que la grilla de
@@ -78,7 +85,8 @@ public sealed record FamiliaDetalle(
     bool Activo,
     IReadOnlyList<MiembroDeFamilia> Articulos,
     ValoresCompartidosDeLaFamilia? Valores,
-    IReadOnlyList<EstadoDePreciosDeLista> Precios);
+    IReadOnlyList<EstadoDePreciosDeLista> Precios,
+    bool PermiteDesglosarCosto = false);
 
 /// <summary>
 /// Cuerpo de <c>POST /api/familias/previsualizacion</c>: qué pasaría si se agruparan <see cref="IdsArticulos"/> con
@@ -87,8 +95,11 @@ public sealed record FamiliaDetalle(
 /// propia referencia no cuentan, y se admiten como máximo 100 además de ella y, entre todos, como máximo 1000 pares
 /// artículo-lista fija: <see cref="Ways.Domain.Articulos.ReglaDeAgrupacion"/>). Si la referencia ya es miembro de una
 /// familia, la agrupación sería sumar los artículos a ESA familia; si no tiene familia, sería crear una nueva.
+/// <see cref="PermiteDesglosarCosto"/> solo cuenta cuando la referencia no tiene familia (la nueva se crearía con esa marca,
+/// <c>null</c> es <c>false</c>): si ya es miembro de una, manda la marca de ESA familia y el campo se ignora.
 /// </summary>
-public sealed record SolicitudDePrevisualizacion(int IdArticuloReferencia, IReadOnlyList<int>? IdsArticulos);
+public sealed record SolicitudDePrevisualizacion(
+    int IdArticuloReferencia, IReadOnlyList<int>? IdsArticulos, bool? PermiteDesglosarCosto = null);
 
 /// <summary>El cambio de UNA lista fija para un artículo que se alinea: su estado de precios actual y el de la
 /// referencia, al que pasa.</summary>
@@ -150,9 +161,12 @@ public sealed record PrevisualizacionDeAgrupacion(
 /// además de ella y, entre todos, como máximo 1000 pares artículo-lista fija). La referencia y los artículos tienen que
 /// existir y no pertenecer a ninguna familia: agrupar no mueve a nadie de la que ya tiene. Los catálogos de la
 /// referencia (el área, la categoría, el grupo, el proveedor habitual y la alícuota de IVA) tienen que existir: los
-/// copian los demás.
+/// copian los demás. <see cref="PermiteDesglosarCosto"/> (<c>null</c> es <c>false</c>) crea la familia con esa marca: con
+/// ella, la alineación copia solo los once campos que siguen compartidos y no toca la composición del costo de los
+/// artículos (ver <see cref="ValoresCompartidosDeFamilia"/>); el costo nominal se alinea igual.
 /// </summary>
-public sealed record AltaDeFamilia(string? Nombre, int IdArticuloReferencia, IReadOnlyList<int>? IdsArticulos);
+public sealed record AltaDeFamilia(
+    string? Nombre, int IdArticuloReferencia, IReadOnlyList<int>? IdsArticulos, bool? PermiteDesglosarCosto = null);
 
 /// <summary>
 /// Cuerpo de <c>POST /api/familias/{id}/articulos</c>: suma <see cref="IdsArticulos"/> a la familia, alineados con su

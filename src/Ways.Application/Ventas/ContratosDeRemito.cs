@@ -82,7 +82,9 @@ public sealed record RemitoListado(
     DateTimeOffset FechaEmision,
     decimal Total,
     EstadoRemito Estado,
-    int? IdComprobanteVenta);
+    int? IdComprobanteVenta,
+    int? NumeroCliente = null,
+    string? NombreCliente = null);
 
 /// <summary>Mismo shape que <c>PaginaDePresupuestos</c>: <c>CountAsync</c> + <c>Skip/Take</c> sobre
 /// el mismo <c>ConstruirQuery</c> que el <c>COUNT</c>.</summary>

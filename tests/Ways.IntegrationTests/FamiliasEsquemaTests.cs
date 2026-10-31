@@ -148,7 +148,7 @@ public class FamiliasEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var porColumna = filas.ToDictionary(f => f[0]);
 
         Assert.Equal(
-            ["activo", "created_at", "deleted_at", "id_familia", "id_tenant", "nombre", "updated_at"],
+            ["activo", "created_at", "deleted_at", "id_familia", "id_tenant", "nombre", "permite_desglosar_costo", "updated_at"],
             porColumna.Keys.Order(StringComparer.Ordinal));
 
         // columna -> (tipo, es_nulable, default)
@@ -156,6 +156,7 @@ public class FamiliasEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(["int4", "NO", "<null>", "NO", "<null>"], porColumna["id_tenant"][1..]);
         Assert.Equal(["citext", "NO", "<null>", "NO", "<null>"], porColumna["nombre"][1..]);
         Assert.Equal(["bool", "NO", "true", "NO", "<null>"], porColumna["activo"][1..]);
+        Assert.Equal(["bool", "NO", "false", "NO", "<null>"], porColumna["permite_desglosar_costo"][1..]);
         Assert.Equal(["timestamptz", "NO", "<null>", "NO", "<null>"], porColumna["created_at"][1..]);
         Assert.Equal(["timestamptz", "NO", "<null>", "NO", "<null>"], porColumna["updated_at"][1..]);
         Assert.Equal(["timestamptz", "YES", "<null>", "NO", "<null>"], porColumna["deleted_at"][1..]);

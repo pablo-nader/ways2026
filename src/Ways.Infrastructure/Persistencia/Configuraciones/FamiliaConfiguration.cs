@@ -43,6 +43,11 @@ public class FamiliaConfiguration : IEntityTypeConfiguration<Familia>
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.Property(f => f.PermiteDesglosarCosto)
+            .HasColumnName("permite_desglosar_costo")
+            .HasDefaultValue(false)
+            .IsRequired();
+
         builder.Property(f => f.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(f => f.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(f => f.DeletedAt).HasColumnName("deleted_at");

@@ -143,10 +143,10 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    private static SolicitudDePago SolicitudDePagoLigado(
+    private static SolicitudDePagoConLineas SolicitudDePagoLigado(
         Contexto ctx, int idComprobanteCompra, decimal importe = 1000m, int? idProveedor = null,
         CategoriaPago categoria = CategoriaPago.Proveedor) =>
-        new(
+        PagoDeUnMedio.Pos(
             ctx.IdPuntoVenta, categoria, idProveedor, null, "Pago de compra", null, ctx.IdMedioEfectivo, null,
             importe, idComprobanteCompra);
 
@@ -160,7 +160,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, importe: 500m));
+            "/api/pagos", SolicitudDePagoLigado(ctx, compra.Id, importe: 500m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
@@ -181,10 +181,10 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         // Ni turno abierto ni una compra real: si el chequeo de categoría no corriera ANTES de
         // tocar la base, la respuesta sería 409 turno_no_abierto (o 404), nunca este 400.
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Servicios, null, null, "Gasto mal categorizado", null,
-                ctx.IdMedioEfectivo, null, 100m, IdComprobanteCompra: 999999));
+                ctx.IdMedioEfectivo, null, 100m, idComprobanteCompra: 999999));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -198,7 +198,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         var compra = await CrearYConfirmarCompraAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id));
+            "/api/pagos", SolicitudDePagoLigado(ctx, compra.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -214,7 +214,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, idComprobanteCompra: 999999));
+            "/api/pagos", SolicitudDePagoLigado(ctx, idComprobanteCompra: 999999));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -228,7 +228,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctxA);
 
         var respuesta = await ctxA.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctxA, compraDeB.Id));
+            "/api/pagos", SolicitudDePagoLigado(ctxA, compraDeB.Id));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -242,7 +242,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, borrador.Id));
+            "/api/pagos", SolicitudDePagoLigado(ctx, borrador.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -259,7 +259,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id));
+            "/api/pagos", SolicitudDePagoLigado(ctx, compra.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -276,7 +276,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, idProveedor: null));
+            "/api/pagos", SolicitudDePagoLigado(ctx, compra.Id, idProveedor: null));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
@@ -292,7 +292,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, idProveedor: ctx.IdProveedor2));
+            "/api/pagos", SolicitudDePagoLigado(ctx, compra.Id, idProveedor: ctx.IdProveedor2));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -324,7 +324,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
         var login = await clientePago.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        var tareaPago = clientePago.PostAsJsonAsync("/api/gastos", SolicitudDePagoLigado(ctx, compra.Id));
+        var tareaPago = clientePago.PostAsJsonAsync("/api/pagos", SolicitudDePagoLigado(ctx, compra.Id));
 
         await transaccionIniciada.Task;
 
@@ -377,7 +377,7 @@ public class PagosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         await transaccionIniciada.Task;
 
-        var respuestaPago = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePagoLigado(ctx, compra.Id, importe: 750m));
+        var respuestaPago = await ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePagoLigado(ctx, compra.Id, importe: 750m));
         var cuerpoPago = await respuestaPago.Content.ReadAsStringAsync();
         Assert.True(respuestaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
 

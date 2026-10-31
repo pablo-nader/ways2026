@@ -6,8 +6,8 @@ Hoy (en el sistema legacy) las compras se cargan como gastos sin detalle; esta e
 
 > **Vocabulario (etapa E1):** lo que antes se llamaba *gasto* es un **pago** (grupos del dueño: Compras, Ventas,
 > Pagos, Cobros). La tabla es `pagos` (`id_pago`, enums `categoria_pago` y `origen_fondos_pago`) y el código usa
-> `Pago` (`Ways.Domain.Pagos`, `ServicioDePagos`). Solo el contrato HTTP conserva el nombre viejo hasta la etapa
-> E2: las rutas `/api/gastos…`, los nombres JSON (`idGasto`, `gastos`, …) y los códigos de error `gasto_*`.
+> `Pago` (`Ways.Domain.Pagos`, `ServicioDePagos`). Solo el contrato HTTP conserva el nombre viejo en parte:
+> los nombres JSON (`idGasto`, `gastos`, …) y los códigos de error `gasto_*`. Las rutas `/api/gastos…` se quitaron en E2-L; las del pago son `/api/pagos…`.
 
 ```sql
 comprobantes_compra (         -- [operativa]
@@ -356,12 +356,12 @@ van a `movimientos_caja` (§7).
 > que alimentan el arqueo/cierre (`LectorDeMovimientosDelTurno`, `LectorDeContenidoDeResumen`)
 > filtran `origen_fondos = 'caja_turno'`: un pago `tesoreria` nunca resta de ningún medio ni lo
 > vuelve arqueable — ya se descontó de tesorería en el momento en que se registró. El Z-report/
-> historial (`LectorDeLineasDelTurno.LeerPagosAsync`, `GET /api/gastos`) sigue listando los dos
+> historial (`LectorDeLineasDelTurno.LeerPagosAsync`, `GET /api/pagos`) sigue listando los dos
 > orígenes sin filtrar (informativo, expone `OrigenFondos` para que la UI etiquete "Caja
 > general").
 >
 > **Estado (stage-gasto-a-compra, PR4 — RESUELTO):** `pagos.id_comprobante_compra` deja de
-> poblarse solo al crear el pago — `POST /api/gastos/{id}/vincular-compra`
+> poblarse solo al crear el pago — `POST /api/pagos/{id}/vincular-compra`
 > (`ServicioDePagos.VincularCompraAsync`) liga un pago YA EXISTENTE (POS o administración) a una
 > compra confirmada, sin cambio de esquema. Si el pago ya es `categoria = proveedor` con
 > `id_proveedor` coincidente, el vínculo es solo trazabilidad: se imputa la compra en el movimiento
@@ -421,15 +421,17 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > por posición (orden de id), los sobrantes se dan de baja lógica y las líneas nuevas se agregan, todo en
 > el mismo guardado que la cabecera y bajo el lock `FOR UPDATE` del pago.
 >
-> **Compatibilidad de las rutas actuales.** `/api/gastos*` y `POST /api/compras/{id}/pagos` conservan su
-> forma `{idMedioPago, importe}` y la mapean a UNA línea. Editar por ellas un pago con más de un ítem vivo
-> responde `409 gasto_con_varios_medios` y no cambia nada; con un solo ítem conserva su `referencia` (salvo que la edición cambie el medio: entonces la
-> referencia se limpia). Estas rutas redondean el importe a 2 decimales con el mismo criterio que
-> aplicaba Postgres al persistir (`numeric(14,2)`, mitad lejos de cero): `10.005` se guarda como
-> `10.01` y no responde `pago_linea_importe_invalido`, que es solo del contrato con líneas. Un importe
-> que redondea a 0 o menos responde `400 gasto_importe_invalido`, y uno mayor que `999999999999.99`
-> responde `400 valor_fuera_de_rango` (la traducción de `22003`), como antes. Un id inexistente
-> responde `404` antes de validar el cuerpo.
+> **Ruta de un solo medio que sigue viva.** `POST /api/compras/{id}/pagos` conserva su forma `{idMedioPago, importe}` y la
+> mapea a UNA línea. Redondea el importe a 2 decimales con el mismo criterio que aplicaba Postgres al persistir
+> (`numeric(14,2)`, mitad lejos de cero): `10.005` se guarda como `10.01` y no responde `pago_linea_importe_invalido`, que es
+> solo del contrato con líneas. Un importe que redondea a 0 o menos responde `400 gasto_importe_invalido`, y uno mayor que
+> `999999999999.99` responde `400 valor_fuera_de_rango` (la traducción de `22003`), como antes.
+>
+> **Rutas `/api/gastos` quitadas (E2-L).** Los POS instalados (`pos-v0.16.0` en adelante) solo llaman a `/api/pagos`, así
+> que las rutas de compatibilidad `/api/gastos` y `/api/gastos/administracion`, sus solicitudes de un solo medio y el
+> `409 gasto_con_varios_medios` dejaron de existir. En el contrato con líneas los importes con más de 2 decimales se
+> rechazan (`400 pago_linea_importe_invalido`) en vez de redondearse, y el alta del POS valida cada medio contra el servidor.
+> Un id inexistente responde `404` antes de validar el cuerpo.
 >
 > **Medio de compatibilidad (E2-S3b).** Los listados y respuestas que todavía muestran UN medio por pago
 > (`idMedioPago` del historial, del detalle del turno y de las respuestas de alta, el nombre en el historial de
@@ -439,12 +441,11 @@ items_pago (                 -- [operativa, hija de pagos: scope id_tenant únic
 > `QuitarMedioDeLaCabeceraDelPago` eliminó `pagos.id_medio_pago`, `fk_pagos_medio_pago` e `ix_pagos_medio_pago`; su
 > `Down` los recrea y rellena la columna con ese mismo medio (o el del ítem de menor id si no quedan ítems vivos).
 > Dar de baja un medio usado por un pago sigue bloqueado, ahora solo por la FK `fk_items_pago_medio_pago`
-> (rótulo "gastos"). El pago de personal con varias líneas sigue siendo **un pago por línea de dinero**, cada uno con
-> su único ítem (la referencia se repite en `pagos.detalle` y en el ítem) y su propio movimiento de tesorería: el POS
-> instalado no lee `lineas`, y fusionarlas en un solo pago lo mostraría como una sola fila bajo el primer medio. La
-> fusión (un pago con un ítem por línea y un egreso por el total) queda para después del release del POS (E2-P).
-> El desglose lista una línea por ítem, con `idGasto` por pago e `idItem` por ítem. El historial de administración
-> (`/api/gastos/administracion` y `/{id}`) agrega `lineas` con la misma forma que `PagoListado`.
+> (rótulo "gastos"). El pago de personal con varias líneas es **UN pago** con un ítem por línea de dinero
+> (E2-P): la cabecera suma el total y no lleva `detalle`, la `referencia` de cada línea vive en su ítem, y con origen
+> tesorería hay un único movimiento de tesorería por el total. El arqueo del turno lee los importes por medio de los
+> ítems. El desglose lista una línea por ítem, con `idGasto` (el mismo para todas) e `idItem` por ítem. El historial de administración
+> (`/api/pagos/administracion` y `/{id}`) agrega `lineas` con la misma forma que `PagoListado`.
 
 ### Aplicaciones de pagos a compras: `aplicaciones_pago` (E3-S1a)
 
@@ -582,7 +583,7 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 > - Desaplicar no toca `pagos.id_comprobante_compra`: es la «compra de origen» (historia) y la imputación del movimiento
 >   `pago` de la cuenta corriente; los ajustes de un pago sin punto de venta propio toman el de esa compra. El vínculo no
 >   genera aplicación por sí mismo, así que la desaplicación libera de verdad.
-> - `vincular-compra` (`/api/gastos/{id}` y `/api/pagos/{id}`) es una aplicación de `min(disponible, saldo)` a esa compra:
+> - `vincular-compra` (`/api/pagos/{id}`) es una aplicación de `min(disponible, saldo)` a esa compra:
 >   conserva `gasto_ya_vinculado` y `compra_de_otra_empresa` (los vínculos NUEVOS siguen exigiendo la misma empresa) y suma
 >   `409 pago_sin_disponible` cuando el pago no tiene nada sin aplicar. Su conversión de un pago sin proveedor es la misma
 >   adopción.
@@ -594,7 +595,7 @@ aplicaciones_pago (          -- [operativa, hija de pagos: scope id_tenant únic
 >   pagos, los más antiguos primero: el resto se alcanza aplicando y volviendo a consultar.
 >
 > **Pagar una compra con pagos a cuenta y con más de lo que se debe (E3-S4).** `POST /api/pagos/de-compra/{idCompra}` (contrato
-> nuevo; `POST /api/compras/{id}/pagos` y `/api/gastos` conservan `409 pago_excede_saldo_pendiente`):
+> nuevo; `POST /api/compras/{id}/pagos` conserva `409 pago_excede_saldo_pendiente`):
 > - Cuerpo `{fecha, concepto?, lineas: [..0..20], aplicaciones?: [{idPago, importe}..0..20]}`; al menos una de las dos listas
 >   no vacía (`400 pago_sin_lineas`). Primero se aplica lo existente y después se crea el pago nuevo por el TOTAL de sus líneas.
 > - Cada `aplicaciones[i].importe` ≤ disponible de ese pago (`409 aplicacion_excede_disponible`) y la suma ≤ saldo de la compra

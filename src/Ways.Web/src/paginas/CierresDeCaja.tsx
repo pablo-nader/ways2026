@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { clienteDeCaja } from '../api/caja'
+import { clienteDeCaja, esColumnaOrdenableDeCierres, type OrdenDeCierres } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
 import type { PaginaDeTurnos, ResumenDeCierrePorRetiro } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { ModalDetalleDeTurno } from '../componentes/ModalDetalleDeTurno'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -35,6 +37,9 @@ export function CierresDeCaja({ alReimprimir }: Props) {
   const idPuntoVenta = puntoVenta?.id ?? null
 
   const [pagina, setPagina] = useState(1)
+  // `null` = el orden de siempre (más reciente primero). Si una consulta falla, la tabla desaparece junto con su
+  // encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeCierres>(null)
   const [datos, setDatos] = useState<PaginaDeTurnos | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
@@ -54,7 +59,7 @@ export function CierresDeCaja({ alReimprimir }: Props) {
     setErrorReimprimir('')
 
     clienteDeCaja
-      .listarCerrados(idPuntoVenta, pagina, TAMANIO_DE_PAGINA)
+      .listarCerrados(idPuntoVenta, pagina, TAMANIO_DE_PAGINA, orden)
       .then((respuesta) => {
         if (generacionRef.current !== miGeneracion) return
         setDatos(respuesta)
@@ -68,7 +73,18 @@ export function CierresDeCaja({ alReimprimir }: Props) {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [idPuntoVenta, pagina])
+  }, [idPuntoVenta, pagina, orden])
+
+  // Ascendente → descendente → orden de siempre. Cambiar el orden vuelve a la página 1; los dos setState se agrupan
+  // en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeCierres(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setPagina(1)
+  }
 
   async function reimprimir(idTurno: number) {
     if (reimprimiendoRef.current) return
@@ -112,9 +128,15 @@ export function CierresDeCaja({ alReimprimir }: Props) {
               <table className="table table-sm table-striped align-middle">
                 <thead>
                   <tr>
-                    <th>Turno</th>
-                    <th>Apertura</th>
-                    <th>Cierre</th>
+                    <EncabezadoOrdenable columna="turno" orden={orden} onAlternar={alternarOrden}>
+                      Turno
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="apertura" orden={orden} onAlternar={alternarOrden}>
+                      Apertura
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="cierre" orden={orden} onAlternar={alternarOrden}>
+                      Cierre
+                    </EncabezadoOrdenable>
                     <th />
                   </tr>
                 </thead>

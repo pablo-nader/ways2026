@@ -103,7 +103,9 @@ public sealed record PresupuestoListado(
     bool Vencido,
     bool Convertible,
     decimal Total,
-    EstadoPresupuesto Estado);
+    EstadoPresupuesto Estado,
+    int? NumeroCliente = null,
+    string? NombreCliente = null);
 
 /// <summary>Mismo shape que <c>PaginaDeOrdenesDeCompra</c>: <c>CountAsync</c> +
 /// <c>Skip/Take</c> sobre el mismo <c>ConstruirQuery</c> que el <c>COUNT</c>.</summary>

@@ -57,7 +57,7 @@ html {
   width: 4px;
   margin: 10px 0 10px 12px;
   border-radius: 2px;
-  background: var(--ways-naranja);
+  background: var(--ws-brand);
 }
 
 .box > header .icons,
@@ -102,7 +102,7 @@ html {
 .box.primary > header {
   background: var(--bs-primary);
   border-bottom-color: var(--bs-primary);
-  color: #1d1d1f;
+  color: var(--ws-on-brand);
 }
 
 .box.success > header {
@@ -114,7 +114,7 @@ html {
 .box.warning > header {
   background: var(--bs-warning);
   border-bottom-color: var(--bs-warning);
-  color: #1d1d1f;
+  color: var(--ws-on-brand);
 }
 
 .box.danger > header {

@@ -44,7 +44,9 @@ public class BajasEstructuralesTests
 
     /// <summary>Los cuatro DbSet de organización: nada de lo que esta etapa toca puede aparecer
     /// como receptor de un borrado físico.</summary>
-    private static readonly string[] TablasDeOrganizacion = ["Tenants", "Empresas", "PuntosVenta", "Usuarios"];
+    // Sucursales entra con la etapa 1 de sucursales: las tres bajas la marcan en cascada y ninguna
+    // tabla operativa del orden total del programa cuelga de ella todavía.
+    private static readonly string[] TablasDeOrganizacion = ["Tenants", "Empresas", "Sucursales", "PuntosVenta", "Usuarios"];
 
     /// <summary>
     /// Los únicos archivos con derecho a contener <c>DELETE FROM</c>, congelados por ruta

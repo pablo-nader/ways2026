@@ -52,7 +52,9 @@ public static class FamiliasEndpoints
             ServicioDeFamilias servicio, int id, EdicionFamilia datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
         .WithSummary(
-            "Cambia el nombre y el estado (activo) de la familia. Una familia inactiva no admite artículos nuevos.");
+            "Cambia el nombre, el estado (activo) y la marca permiteDesglosarCosto de la familia (ausente la conserva; "
+                + "apagarla exige la misma composición del costo en todos los miembros, 409 composicion_distinta). "
+                + "Una familia inactiva no admite artículos nuevos.");
 
         grupo.MapDelete("/{id:int}/articulos/{idArticulo:int}", async (
             ServicioDeFamilias servicio, int id, int idArticulo, CancellationToken ct) =>

@@ -43,7 +43,7 @@ parte apuntan a la sección `N` de este índice.
 
 | Sección | Archivo | KB | Tablas |
 |---|---|---|---|
-| 1. Padrones auxiliares | [01-padrones-auxiliares.md](10-modelo-de-datos/01-padrones-auxiliares.md) | 24 | `dominios`, `vitrinas`, `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante`, `empresas`, `medios_pago` |
+| 1. Padrones auxiliares | [01-padrones-auxiliares.md](10-modelo-de-datos/01-padrones-auxiliares.md) | 24 | `dominios`, `vitrinas`, `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante`, `empresas`, `sucursales`, `medios_pago` |
 | 2. Entidades comerciales | [02-entidades-comerciales.md](10-modelo-de-datos/02-entidades-comerciales.md) | 3 | `clientes`, `proveedores`, `personal` |
 | 3. Artículos, listas de precio y ofertas — Artículo: solo información intrínseca | [03-articulos--articulo-solo-informacion-intrinseca.md](10-modelo-de-datos/03-articulos--articulo-solo-informacion-intrinseca.md) | 7 | `articulos`, `articulos_empresas`, `familias` |
 | 3. Artículos, listas de precio y ofertas — Tienda online | [03-articulos--tienda-online.md](10-modelo-de-datos/03-articulos--tienda-online.md) | 13 | `imagenes_articulo` |
@@ -54,7 +54,7 @@ parte apuntan a la sección `N` de este índice.
 | 4. Comprobantes de venta | [04-comprobantes-de-venta.md](10-modelo-de-datos/04-comprobantes-de-venta.md) | 34 | `comprobantes_venta`, `items_comprobante_venta`, `cobros`, `certificados_fiscales`, `numeraciones_fiscales`, `facturaciones_de_venta`, `acumulados_de_facturacion`, `presupuestos`, `items_presupuesto`, `remitos`, `items_remito` |
 | 5. Comprobantes de compra | [05-comprobantes-de-compra.md](10-modelo-de-datos/05-comprobantes-de-compra.md) | 28 | `comprobantes_compra`, `alicuotas_comprobante_compra`, `percepciones_comprobante_compra`, `items_comprobante_compra`, `pagos`, `items_pago`, `aplicaciones_pago`, `ordenes_compra`, `items_orden_compra` |
 | 6. Stock | [06-stock.md](10-modelo-de-datos/06-stock.md) | 8 | `stock`, `movimientos_stock`, `lotes`, `stock_lotes` |
-| 7. Caja: turnos, arqueos y tesorería | [07-caja-turnos-arqueos-y-tesoreria.md](10-modelo-de-datos/07-caja-turnos-arqueos-y-tesoreria.md) | 23 | `turnos_caja`, `movimientos_caja`, `arqueos_turno`, `movimientos_tesoreria`, `cuentas_tesoreria`, `movimientos_cuenta` |
+| 7. Caja: turnos, arqueos y tesorería | [07-caja-turnos-arqueos-y-tesoreria.md](10-modelo-de-datos/07-caja-turnos-arqueos-y-tesoreria.md) | 29 | `turnos_caja`, `movimientos_caja`, `arqueos_turno`, `movimientos_tesoreria`, `cuentas_tesoreria`, `movimientos_cuenta`, `conexiones_mercadopago` |
 | 8. Cuenta corriente de clientes | [08-cuenta-corriente-de-clientes.md](10-modelo-de-datos/08-cuenta-corriente-de-clientes.md) | 23 | `movimientos_cuenta_corriente`, `aplicaciones_cobro`, `movimientos_cuenta_corriente_proveedor`, `movimientos_personal`, `jornadas_personal` |
 | 9. Parámetros operativos | [09-parametros-operativos.md](10-modelo-de-datos/09-parametros-operativos.md) | 1 | `parametros` |
 | 10. Auditoría | [10-auditoria.md](10-modelo-de-datos/10-auditoria.md) | 4 | `auditoria` |

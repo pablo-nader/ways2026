@@ -3,8 +3,8 @@
 ## 7. Caja: turnos, arqueos y tesorería
 
 > **Vocabulario (etapa E1):** el *gasto* pasa a llamarse **pago**: tabla `pagos`, columna `id_pago` y tipo de
-> movimiento de tesorería `pago`. Las rutas HTTP siguen siendo `/api/gastos…` (y el valor JSON `Gasto` del tipo de
-> movimiento) hasta el contrato nuevo de la etapa E2.
+> movimiento de tesorería `pago`. Las rutas HTTP pasaron a `/api/pagos…` en E2 y las `/api/gastos…` se quitaron en E2-L (el valor JSON `Gasto` del tipo de
+> movimiento sigue).
 
 ```sql
 turnos_caja (                 -- [operativa]
@@ -273,3 +273,58 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 >   cuando el cuerpo no los envía, y rechaza con 400 si los envía con valor.
 > - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
 > - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
+
+### Conexiones con Mercado Pago
+
+```sql
+conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa NOT NULL] una por vez activa
+    id_conexion_mercadopago, id_tenant, id_empresa,
+    id_cuenta_tesoreria,                     -- cuenta de la MISMA empresa que representa la cuenta de Mercado Pago
+    id_usuario_mercadopago bigint NOT NULL,  -- user_id del vendedor, devuelto al canjear el código
+    access_token_cifrado bytea NULL, access_token_nonce bytea NULL, access_token_tag bytea NULL,
+    refresh_token_cifrado bytea NULL, refresh_token_nonce bytea NULL, refresh_token_tag bytea NULL,
+    id_clave_maestra varchar(30) NOT NULL,   -- versión de la clave maestra de Ways:MercadoPago que los cifró
+    access_token_expira_en timestamptz NOT NULL,
+    estado text NOT NULL,                    -- 'activa' | 'desconectada' (texto con CHECK, sin enum nativo)
+    id_usuario_conecto,                      -- usuario de Ways que inició la conexión
+    fecha_conexion timestamptz NOT NULL, fecha_desconexion NULL, fecha_ultima_renovacion NULL,
+    created_at, updated_at, deleted_at
+);
+```
+
+> **Estado (conexión OAuth, etapa E1):** una empresa conecta su cuenta de Mercado Pago con OAuth; Ways guarda los dos tokens
+> cifrados con AES-256-GCM (nonce de 12 bytes y tag de 16 por token) y nunca los devuelve ni los registra. La clave maestra sale de
+> `Ways:MercadoPago:ClaveMaestraActual` y `Ways:MercadoPago:ClavesMaestras:<id>` (32 bytes en base64), propias y distintas de las
+> fiscales. El AAD de cada blob es `v1|id_tenant|id_empresa|id_conexion|access` o `...|refresh`: un blob movido a otra conexión,
+> empresa, tenant o al otro token falla la autenticación. `id_clave_maestra` queda fuera del AAD, como en `certificados_fiscales`.
+> El id de la conexión se reserva de la secuencia (`nextval`) antes de cifrar, para que el AAD lo incluya.
+>
+> Constraints: FK `fk_conexiones_mercadopago_tenant` (simple), `fk_conexiones_mercadopago_empresa` (compuesta
+> `(id_empresa, id_tenant)`), `fk_conexiones_mercadopago_cuenta_tesoreria` (compuesta `(id_cuenta_tesoreria, id_empresa,
+> id_tenant)` contra la clave alterna nueva `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant`: la base rechaza una
+> cuenta de otra empresa) y `fk_conexiones_mercadopago_usuario_conecto` (simple a `usuarios`); todas RESTRICT. CHECK
+> `ck_conexiones_mercadopago_estado` (solo `activa` o `desconectada`), `ck_conexiones_mercadopago_activa` (activa implica los seis
+> campos de cifrado presentes con nonce de 12 bytes, tag de 16 y blob no vacío, y `fecha_desconexion` nula) y
+> `ck_conexiones_mercadopago_desconectada` (desconectada implica `fecha_desconexion` y los seis campos en `NULL`). Únicos
+> parciales, ambos `WHERE estado = 'activa'`: `ux_conexiones_mercadopago_empresa_activa` `(id_tenant, id_empresa)` y
+> `ux_conexiones_mercadopago_usuario_activa` `(id_usuario_mercadopago)`, SIN `id_tenant`: una cuenta de Mercado Pago está activa en
+> una sola empresa de todo el sistema (los webhooks resuelven la empresa desde ese id). `ManejadorDeErrores` traduce sus 23505 a
+> 409 `mercadopago_ya_conectada` y `mercadopago_cuenta_en_uso`; el callback anónimo los convierte en una redirección. Índices de
+> soporte: `ix_conexiones_mercadopago_tenant`, `_empresa`, `_cuenta` y `_usuario_conecto`. RLS estándar.
+>
+> **Efecto sobre `cuentas_tesoreria`:** la baja lógica de una cuenta con cualquier conexión (activa o desconectada) falla con 409
+> `cuenta_tesoreria_en_uso`, porque la guarda de referencias recorre las FK del modelo. El inventario de dependientes de las bajas de
+> empresa, tenant y usuario también cuenta estas filas como uso (`inventario-de-dependientes.txt`).
+>
+> **Endpoints (solo Admin salvo el callback).** `POST /api/empresas/{idEmpresa}/mercadopago/conexion/inicio` con `{ idCuentaTesoreria }`
+> devuelve `{ urlAutorizacion }` (PKCE S256, `state` protegido con vencimiento de 10 minutos que lleva tenant, empresa, cuenta,
+> usuario, verificador y el origen del navegador). Orden: 404 de la empresa (inexistente, ajena o dada de baja), 503
+> `mercadopago_no_configurado` si faltan `ClientId`, `ClientSecret`, `RedirectUri` o la clave maestra, 400 `referencia_invalida`
+> (cuenta inexistente o de otro tenant), 409 `cuenta_tesoreria_de_otra_empresa`, 409 `cuenta_tesoreria_inactiva` y 409
+> `mercadopago_ya_conectada`. `GET /api/integraciones/mercadopago/callback?code=&state=` es anónimo: toma el tenant solo del `state`,
+> canjea el código y redirige a `{origen}/organizacion/empresas?mercadopago=<resultado>&empresa=<id>` con `conectado`, `cancelado`
+> (el usuario denegó), `error`, `cuenta_en_uso` o `ya_conectada`; un `state` inválido o vencido da 400 de texto plano, sin redirigir.
+> `GET /api/empresas/{idEmpresa}/mercadopago/conexion` devuelve `{ conectada, estado, idCuentaTesoreria, nombreCuenta,
+> idUsuarioMercadoPago, fechaConexion, accessTokenExpiraEn }` o `{ conectada: false }`. `DELETE` del mismo recurso pasa la conexión a
+> `desconectada` y borra los seis campos de cifrado en un solo `UPDATE` guardado por estado (404 si no hay una activa); no llama a
+> Mercado Pago porque la API de OAuth no documenta una revocación.

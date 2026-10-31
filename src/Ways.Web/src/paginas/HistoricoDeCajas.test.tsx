@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -315,5 +315,134 @@ describe('HistoricoDeCajas — role gating (spec historico-de-cajas: Role Split)
 
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Histórico de cajas')).not.toBeInTheDocument())
+  })
+})
+
+describe('HistoricoDeCajas — orden en el servidor', () => {
+  const llamadasAlListado = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => c[0] as string).filter((ruta) => ruta.startsWith('/reportes/cajas?'))
+
+  it('el clic en un encabezado pide el orden al servidor, recorre ascendente, descendente y el orden de siempre', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderHistoricoDeCajas()
+    await screen.findByText('#100')
+    expect(llamadasAlListado().every((ruta) => !ruta.includes('orden='))).toBe(true)
+
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=esperado&direccion=ascendente'))
+    expect(screen.getByRole('columnheader', { name: /Esperado/ })).toHaveAttribute('aria-sort', 'ascending')
+
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=esperado&direccion=descendente'))
+
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).not.toContain('orden='))
+  })
+
+  it.each([
+    ['Turno', 'turno'],
+    ['Punto de venta', 'puntoVenta'],
+    ['Apertura', 'apertura'],
+    ['Cierre', 'cierre'],
+    ['Esperado', 'esperado'],
+    ['Declarado', 'declarado'],
+    ['Diferencia', 'diferencia'],
+  ])('la columna %s ordena por la clave %s', async (titulo, clave) => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderHistoricoDeCajas()
+    await screen.findByText('#100')
+
+    await usuario.click(screen.getByRole('button', { name: new RegExp(`^${titulo}`) }))
+
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain(`orden=${clave}&direccion=ascendente`))
+  })
+
+  it('cambiar el orden desde la página 2 vuelve a la página 1 y conserva los filtros', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/reportes/cajas?')
+        ? Promise.resolve(paginaFixture([filaFixture()], { total: 50, pagina: ruta.includes('pagina=2') ? 2 : 1 }))
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderHistoricoDeCajas()
+    await screen.findByText(/Página 1 de 2/)
+    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    await screen.findByText(/Página 1 de 2/)
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 2/)
+
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+
+    await waitFor(() => {
+      const ultima = llamadasAlListado().at(-1)!
+      expect(ultima).toContain('orden=esperado&direccion=ascendente')
+      expect(ultima).toContain('pagina=1')
+      expect(ultima).toContain('idPuntoVenta=11')
+    })
+    await screen.findByText(/Página 1 de 2/)
+  })
+
+  it('una respuesta stale de un orden anterior no pisa la del orden más nuevo', async () => {
+    let resolverPorEsperado: (v: PaginaDeHistoricoDeCajas) => void = () => {}
+    let promesaPorEsperado: Promise<PaginaDeHistoricoDeCajas> = Promise.resolve(paginaFixture())
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=esperado')) {
+        promesaPorEsperado = new Promise((resolve) => (resolverPorEsperado = resolve))
+        return promesaPorEsperado
+      }
+      if (ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=declarado')) {
+        return Promise.resolve(paginaFixture([filaFixture({ idTurnoCaja: 200 })]))
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderHistoricoDeCajas()
+    await screen.findByText('#100')
+
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await usuario.click(screen.getByRole('button', { name: /^Declarado/ }))
+    await screen.findByText('#200')
+
+    await act(async () => {
+      resolverPorEsperado(paginaFixture([filaFixture({ idTurnoCaja: 300 })]))
+      await promesaPorEsperado
+    })
+
+    expect(screen.getByText('#200')).toBeInTheDocument()
+    expect(screen.queryByText('#300')).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Declarado/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('si la consulta con orden falla, la tabla y su encabezado desaparecen: nunca queda un orden que las filas no tienen', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/reportes/cajas?') && ruta.includes('orden=esperado') ? Promise.reject(new Error('caída')) : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderHistoricoDeCajas()
+    await screen.findByText('#100')
+
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+
+    await screen.findByText('No se pudo cargar el histórico de cajas.')
+    expect(screen.queryByRole('columnheader', { name: /Esperado/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('#100')).not.toBeInTheDocument()
+  })
+
+  it('la descarga no lleva el orden: la exportación conserva el suyo', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderHistoricoDeCajas()
+    await screen.findByText('#100')
+    await usuario.click(screen.getByRole('button', { name: /^Esperado/ }))
+    await waitFor(() => expect(llamadasAlListado().at(-1)).toContain('orden=esperado'))
+
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    await waitFor(() => expect(apiDescargarMock).toHaveBeenCalled())
+    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/cajas\/export\?/)
+    expect(apiDescargarMock.mock.calls[0][0]).not.toContain('orden')
+    expect(apiDescargarMock.mock.calls[0][0]).not.toContain('direccion')
   })
 })

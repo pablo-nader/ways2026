@@ -116,10 +116,10 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
 
     private static async Task<PagoRegistrado> AltaAdminAsync(Contexto ctx, decimal importe, int? idComprobanteCompra)
     {
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null,
             "Pago de prueba", null, ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -135,7 +135,7 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
 
     private static async Task<IReadOnlyList<PagoDeAdministracionListado>> ListadoDeAdministracionAsync(Contexto ctx)
     {
-        var respuesta = await ctx.Admin.GetAsync($"/api/gastos/administracion?idProveedor={ctx.IdProveedor}&tamanio=200");
+        var respuesta = await ctx.Admin.GetAsync($"/api/pagos/administracion?idProveedor={ctx.IdProveedor}&tamanio=200");
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
         return JsonSerializer.Deserialize<PaginaDePagosDeAdministracion>(cuerpo, OpcionesJson)!.Items;
@@ -177,7 +177,7 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(0m, (await DetalleAsync(ctx, compra.Id)).Pagado);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{sinCompra.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{sinCompra.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
 
         Assert.Equal(555m, (await DetalleAsync(ctx, compra.Id)).Pagado);
@@ -210,9 +210,9 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
         var pago = await AltaAdminAsync(ctx, 800m, compra.Id);
 
         // Se edita hacia arriba por encima del total: el vínculo legado queda sobre-imputado y la aplicación se corta.
-        var edicion = new SolicitudDeEdicionDePago(
+        var edicion = PagoDeUnMedio.Edicion(
             CategoriaPago.Proveedor, ctx.IdProveedor, null, "Concepto editado", null, ctx.IdMedioEfectivo, null, 5000m);
-        var editar = await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{pago.Id}", edicion);
+        var editar = await ctx.Admin.PutAsJsonAsync($"/api/pagos/administracion/{pago.Id}", edicion);
         Assert.True(editar.StatusCode == HttpStatusCode.OK, await editar.Content.ReadAsStringAsync());
 
         var detalle = await DetalleAsync(ctx, compra.Id);
@@ -232,7 +232,7 @@ public class AplicacionesDePagoLectoresTests(WaysApiFixture fixture) : IClassFix
         await AltaAdminAsync(ctx, 100m, compra.Id);
         Assert.Equal(400m, (await DetalleAsync(ctx, compra.Id)).Pagado);
 
-        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{queSeDaDeBaja.Id}");
+        var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{queSeDaDeBaja.Id}");
         Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
 
         // Mutation-proof: si el lector contara también las aplicaciones liberadas, daría 400 y no 100.

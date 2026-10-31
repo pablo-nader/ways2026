@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
+using Ways.Application.Listados;
 using Ways.Domain.Caja;
 
 namespace Ways.Application.Caja;
@@ -23,8 +24,12 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
         DateTimeOffset? hasta = null,
         int pagina = 1,
         int tamanio = 25,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -32,8 +37,7 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
 
         var total = await query.CountAsync(ct);
 
-        var turnosDeLaPagina = await query
-            .OrderByDescending(t => t.FechaCierre)
+        var turnosDeLaPagina = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre, t.FechaRecalculo, t.IdEmpleadoRecalculo))
@@ -43,6 +47,53 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
 
         return new PaginaDeHistoricoDeCajas(items, total, pagina, tamanio);
     }
+
+    /// <summary>Sin orden pedido: cierre descendente (el orden de siempre del listado; el export sigue con él). Con
+    /// orden: la columna pedida y SIEMPRE <c>Id</c> ascendente como desempate. El punto de venta ordena por su
+    /// nombre y uno dado de baja o con FK colgante llega vacío (<c>db.PuntosVenta</c> ya excluye las bajas) y va al
+    /// final; esperado, declarado y diferencia, por la misma suma de arqueos persistidos que muestra la fila (un
+    /// turno sin arqueos es 0, como la celda).</summary>
+    private IOrderedQueryable<TurnoCaja> Ordenar(
+        IQueryable<TurnoCaja> query, OrdenDeListado<ColumnaDeOrdenDeHistoricoDeCajas>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(t => t.FechaCierre);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeHistoricoDeCajas.Turno => OrdenarPor.Clave(query, t => t.Id, desc),
+            ColumnaDeOrdenDeHistoricoDeCajas.PuntoVenta => OrdenarPor.ClaveConVacios(
+                query,
+                t => db.PuntosVenta.Where(pv => pv.Id == t.IdPuntoVenta).Select(pv => pv.Nombre).FirstOrDefault(),
+                desc),
+            ColumnaDeOrdenDeHistoricoDeCajas.Apertura => OrdenarPor.Clave(query, t => t.FechaApertura, desc),
+            ColumnaDeOrdenDeHistoricoDeCajas.Cierre => OrdenarPor.Clave(query, t => t.FechaCierre, desc),
+            ColumnaDeOrdenDeHistoricoDeCajas.Esperado => OrdenarPor.Clave(
+                query, t => db.ArqueosTurno.Where(a => a.IdTurnoCaja == t.Id).Sum(a => a.ImporteEsperado), desc),
+            ColumnaDeOrdenDeHistoricoDeCajas.Declarado => OrdenarPor.Clave(
+                query, t => db.ArqueosTurno.Where(a => a.IdTurnoCaja == t.Id).Sum(a => a.ImporteDeclarado), desc),
+            ColumnaDeOrdenDeHistoricoDeCajas.Diferencia => OrdenarPor.Clave(
+                query, t => db.ArqueosTurno.Where(a => a.IdTurnoCaja == t.Id).Sum(a => a.Diferencia), desc),
+            _ => query.OrderByDescending(t => t.FechaCierre),
+        };
+
+        return ordenado.ThenBy(t => t.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeHistoricoDeCajas> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeHistoricoDeCajas>(StringComparer.Ordinal)
+        {
+            ["turno"] = ColumnaDeOrdenDeHistoricoDeCajas.Turno,
+            ["puntoVenta"] = ColumnaDeOrdenDeHistoricoDeCajas.PuntoVenta,
+            ["apertura"] = ColumnaDeOrdenDeHistoricoDeCajas.Apertura,
+            ["cierre"] = ColumnaDeOrdenDeHistoricoDeCajas.Cierre,
+            ["esperado"] = ColumnaDeOrdenDeHistoricoDeCajas.Esperado,
+            ["declarado"] = ColumnaDeOrdenDeHistoricoDeCajas.Declarado,
+            ["diferencia"] = ColumnaDeOrdenDeHistoricoDeCajas.Diferencia,
+        };
 
     /// <summary>
     /// Export sibling (stage-11-exportacion-reportes, Slice 5b) — a diferencia del resto de

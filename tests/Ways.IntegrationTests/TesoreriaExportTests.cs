@@ -127,9 +127,9 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         // idPuntoVenta = ctx.IdPuntoVenta (no null): LlamarExportAsync de esta clase siempre
         // filtra por ctx.IdPuntoVenta (ConstruirQuery no admite "Todos" acá) — una fila sin punto
         // de venta quedaría afuera del export y este test nunca vería la celda.
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             dia, ctx.IdEmpresa, ctx.IdPuntoVenta, categoria, null, null, concepto, null, idMedioEfectivo, null, importe);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
