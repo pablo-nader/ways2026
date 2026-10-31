@@ -147,8 +147,30 @@ lista. La instantánea la representa sin cambiar el significado de los campos qu
   (`LineaParaCalcular.DescuentoDeOfertaDeLinea`, un solo redondeo al peso del neto) y la discrepancia compara contra el
   descuento de línea que resuelve hoy para las mismas unidades (cantidad menos las que consumió el combo que detecta el
   servidor). El ticket sintético y el payload salen de la misma resolución (`resolverDocumentoOffline`). La vista previa del carrito
-  recibe `descuentoDeLinea` en esa misma resolución, pero `previaDeLinea` todavía calcula con el descuento unitario
-  (pendiente, igual que en la vista previa online).
+  usa el `descuentoDeLinea` de esa misma resolución (T3).
+- **Puntos de quiebre (T4).** Como la base se elige por descuento de línea (§ ofertas), la ganadora entre una "solo
+  múltiplos" y otra no acumulable de la misma prioridad puede cambiar entre dos `cantidad_minima` (con 4000, "2 x 7500"
+  estricta y una común de 3800: estricta en 2, común en 3, estricta en 4). `EscalonesDeCantidad.DescubrirPuntosDeQuiebre`
+  agrega esas cantidades a la curva: los múltiplos `kN` y los cruces de las dos claves dentro de cada tramo, en forma
+  cerrada. Un cruce entre dos cantidades del punto de venta va a la siguiente de tres decimales; uno justo en una cantidad
+  empata ahí (gana el mayor descuento unitario, después el menor id) y va esa y la siguiente. Cada punto se resuelve con el
+  motor real y el colapso saca los que no cambian nada, así que en cada cantidad de tres decimales el escalón que elige
+  el dispositivo es la resolución del servidor (probado cantidad por cantidad en `PuntosDeQuiebreSoloMultiplosTests`). El
+  dispositivo no cambia: solo recibe más escalones. En la grilla de familia los puntos de una "solo múltiplos" de familia
+  son filas (cantidad de familia) y los de una de otro alcance columnas (cantidad propia).
+- **Tope y recurso.** Una curva, o una grilla sumando sus dos ejes, agrega como mucho 64 puntos
+  (`MaximoDePuntosDeQuiebre`; con un solo par y una común a un 5 % o más por debajo nunca se llega). Si se pasa,
+  si la competencia no termina (mismo descuento unitario y la estricta con menor id: gana justo en cada múltiplo) o si en
+  la grilla una "solo múltiplos" de familia compite con una de otro alcance (depende de las dos cantidades a la vez), los
+  escalones por encima de la cantidad de la línea (y las celdas, con una fila desde la cantidad de familia siguiente) se
+  resuelven sin las no acumulables de la prioridad en competencia ni de las menores. El dispositivo cobra entonces igual
+  que el servidor si gana una de mayor prioridad, o sin base: nunca menos, y la auditoría de discrepancias lo registra.
+  Sacar solo la estricta no alcanzaba: subiría una base de menor prioridad con más descuento.
+- **POS anterior con T4.** Un escalón donde gana la común la lleva en los campos de siempre (sin `aplicadasCompletas`);
+  donde gana la estricta los campos de siempre siguen con solo las comunes de esa resolución. Un POS anterior cobra lista
+  o la común del escalón, nunca menos que el servidor.
+- Límite que no cambia: por debajo de la cantidad de la línea de la instantánea (1) rige el precio plano, como para
+  cualquier `cantidad_minima` fraccionaria menor a 1.
 
 **Venta con envío offline (`SolicitudDeVenta.ImporteEnvio`).** Con `NumeroPreasignado` y `ConEnvio`, el dispositivo manda
 el importe del envío que cobró (el de la instantánea, `importeEnvio`): el servidor lo graba tal cual en la línea "Envío" en vez

@@ -1106,6 +1106,7 @@ export type OfertaListado = {
   horaHasta: string | null
   diasSemana: number[]
   cantidadMinima: number | null
+  soloMultiplos: boolean
   precioUnitario: number | null
   porcentaje: number | null
   importeFijo: number | null
@@ -1133,6 +1134,7 @@ export type AltaOferta = {
   horaHasta: string | null
   diasSemana: number[] | null
   cantidadMinima: number | null
+  soloMultiplos: boolean
   precioUnitario: number | null
   porcentaje: number | null
   importeFijo: number | null
