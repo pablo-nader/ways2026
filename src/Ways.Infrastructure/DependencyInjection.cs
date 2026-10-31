@@ -23,9 +23,11 @@ using Ways.Application.CatalogoOnline;
 using Ways.Application.Dominios;
 using Ways.Application.Exportacion;
 using Ways.Application.Fiscal;
+using Ways.Application.MercadoPago;
 using Ways.Application.Vitrinas;
 using Ways.Infrastructure.Exportacion;
 using Ways.Infrastructure.Fiscal;
+using Ways.Infrastructure.MercadoPago;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
@@ -141,6 +143,19 @@ public static class DependencyInjection
         // commiteado (verify criterion 8 lo cubre para el hostname de ARCA; la clave maestra en sí
         // no tiene default alguno acá, así que ausente es el estado de base honesto en 19a).
         services.AddScoped<IAlmacenDeClavesFiscales, CifradoDeClavesFiscales>();
+
+        // Conexión OAuth con Mercado Pago: Ways:MercadoPago (ClientId, ClientSecret, RedirectUri, URLs) y sus propias claves
+        // maestras (Ways:MercadoPago:ClaveMaestraActual / ClavesMaestras:<id>). Sin ningún valor por defecto de credencial: ausente
+        // deja el inicio de la conexión en 503 mercadopago_no_configurado.
+        services.Configure<OpcionesDeMercadoPago>(configuration.GetSection(OpcionesDeMercadoPago.Seccion));
+        services.AddSingleton<IAlmacenDeTokensMercadoPago, CifradoDeTokensMercadoPago>();
+        services.AddSingleton<IProtectorDeEstadoOAuth, ProtectorDeEstadoOAuth>();
+        services.AddHttpClient<IClienteOAuthMercadoPago, ClienteOAuthMercadoPago>((sp, http) =>
+        {
+            var url = sp.GetRequiredService<IOptions<OpcionesDeMercadoPago>>().Value.UrlApi;
+            http.BaseAddress = new Uri(url.TrimEnd('/') + "/");
+            http.Timeout = TimeSpan.FromSeconds(15);
+        });
 
         // stage-19a-slice5: el orquestador end-to-end — OpcionesFiscales bindable (Ways:Fiscal,
         // solo la clave Ambiente en 19a; ver el doc-comment de OpcionesFiscales sobre el default).
