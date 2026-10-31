@@ -475,3 +475,14 @@
     animation: none;
   }
 }
+
+/* ----- Título de sección ----- */
+
+.titulo-de-seccion {
+  font-family: var(--ws-font-display);
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 650;
+  color: var(--ws-ink);
+  margin: 0 0 var(--ws-space-2);
+}

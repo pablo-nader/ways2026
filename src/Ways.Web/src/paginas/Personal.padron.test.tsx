@@ -385,15 +385,15 @@ describe('Personal — paginación en el servidor', () => {
     renderPersonal()
     await screen.findByText('Ana Gómez')
 
-    expect(screen.getByText('Página 1 de 3 — 60 persona(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 3 — 60 personas')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?pagina=2'))
-    expect(await screen.findByText('Página 2 de 3 — 60 persona(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 3 — 60 personas')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
-    expect(await screen.findByText('Página 3 de 3 — 60 persona(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 3 de 3 — 60 personas')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
 
     await usuario.click(screen.getByRole('button', { name: 'Anterior' }))
@@ -406,7 +406,7 @@ describe('Personal — paginación en el servidor', () => {
     await screen.findByText('Ana Gómez')
 
     expect(screen.queryByText(/Refiná la búsqueda/)).toBeNull()
-    expect(screen.getByText('Página 1 de 10 — 250 persona(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 10 — 250 personas')).toBeInTheDocument()
   })
 
   it('el tamaño de página viaja y vuelve a la página 1', async () => {
@@ -420,7 +420,7 @@ describe('Personal — paginación en el servidor', () => {
     await usuario.selectOptions(screen.getByLabelText('Filas por página'), '50')
 
     await waitFor(() => expect(rutasDelListado().at(-1)).toBe('/personal?tamanio=50'))
-    expect(await screen.findByText('Página 1 de 2 — 60 persona(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 1 de 2 — 60 personas')).toBeInTheDocument()
   })
 
   it('con una página fuera de rango pide la última válida en vez de mostrar una página vacía', async () => {
@@ -435,9 +435,9 @@ describe('Personal — paginación en el servidor', () => {
 
     renderPersonal()
 
-    expect(await screen.findByText('Página 2 de 2 — 50 persona(s)')).toBeInTheDocument()
+    expect(await screen.findByText('Página 2 de 2 — 50 personas')).toBeInTheDocument()
     expect(rutasDelListado()).toEqual(['/personal', '/personal?pagina=2'])
-    expect(screen.queryByText('Página 3 de 2 — 50 persona(s)')).toBeNull()
+    expect(screen.queryByText('Página 3 de 2 — 50 personas')).toBeNull()
   })
 })
 
