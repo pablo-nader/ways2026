@@ -17,6 +17,7 @@ using Ways.Domain.Common;
 using Ways.Domain.Compras;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Pagos;
 using Ways.Domain.Combos;
 using Ways.Domain.Ofertas;
@@ -197,6 +198,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // (AsignadorDeNumeroFiscal, slice 4) recibe el WaysDbContext concreto por parámetro y opera
     // con ADO.NET crudo, no un DbSet de la interfaz.
     public DbSet<CertificadoFiscal> CertificadosFiscales => Set<CertificadoFiscal>();
+    public DbSet<ConexionMercadoPago> ConexionesMercadoPago => Set<ConexionMercadoPago>();
     public DbSet<NumeracionFiscal> NumeracionesFiscales => Set<NumeracionFiscal>();
 
     // Facturación por medio de pago: la decisión por venta (operativa, expuesta en IWaysDbContext) y el

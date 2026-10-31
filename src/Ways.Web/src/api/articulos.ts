@@ -123,6 +123,13 @@ export const clienteDeArticulos = {
    * si lo tiene otro artículo del mismo proveedor. */
   asociarCodigoProveedor: (idArticulo: number, datos: AltaCodigoProveedor) =>
     api.post<CodigoProveedorListado>(`/articulos/${idArticulo}/codigos-proveedor`, datos),
+  codigosProveedor: (idArticulo: number) =>
+    api.get<CodigoProveedorListado[]>(`/articulos/${idArticulo}/codigos-proveedor`),
+  /** 409 `codigo_proveedor_duplicado` si otro artículo del mismo proveedor ya tiene ese código. */
+  editarCodigoProveedor: (idArticulo: number, idCodigoProveedor: number, codigo: string) =>
+    api.put<CodigoProveedorListado>(`/articulos/${idArticulo}/codigos-proveedor/${idCodigoProveedor}`, { codigo }),
+  eliminarCodigoProveedor: (idArticulo: number, idCodigoProveedor: number) =>
+    api.delete(`/articulos/${idArticulo}/codigos-proveedor/${idCodigoProveedor}`),
   eliminarCodigoBarra: (id: number, idCodigoBarra: number) =>
     api.delete(`/articulos/${id}/codigos-barra/${idCodigoBarra}`),
   /** Solo lectura: propone, nunca persiste un precio por sí sola (spec: Margin-Based Price

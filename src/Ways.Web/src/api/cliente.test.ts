@@ -299,6 +299,56 @@ describe('ErrorDeRed (stage-pos-venta-offline-backend, Parte C: "el servidor dij
   })
 })
 
+describe('ErrorApi.datos (datos estructurados del ProblemDetails)', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('expone los datos objeto que el servidor adjunta a un 409', async () => {
+    fetchMock.mockResolvedValue(
+      respuestaMock({
+        status: 409,
+        ok: false,
+        json: () =>
+          Promise.resolve({
+            title: 'El costo nominal pasa de $ 10 a $ 12.',
+            codigo: 'alcance_requerido',
+            datos: { costoNominalAnterior: 10, costoNominalNuevo: 12 },
+          }),
+      }),
+    )
+
+    const error = (await api.put('/algo', {}).catch((e: unknown) => e)) as InstanceType<typeof ErrorApi>
+
+    expect(error).toBeInstanceOf(ErrorApi)
+    expect(error.datos).toEqual({ costoNominalAnterior: 10, costoNominalNuevo: 12 })
+    expect(error.codigo).toBe('alcance_requerido')
+  })
+
+  it.each([[null], ['texto'], [[1, 2]], [7]])('descarta datos que no son un objeto (%j)', async (datos) => {
+    fetchMock.mockResolvedValue(
+      respuestaMock({ status: 409, ok: false, json: () => Promise.resolve({ codigo: 'x', title: 'No.', datos }) }),
+    )
+
+    const error = (await api.put('/algo', {}).catch((e: unknown) => e)) as InstanceType<typeof ErrorApi>
+
+    expect(error.datos).toBeUndefined()
+  })
+
+  it('sin datos en el cuerpo, o sin cuerpo JSON, quedan undefined', async () => {
+    fetchMock.mockResolvedValueOnce(respuestaMock({ status: 409, ok: false, json: () => Promise.resolve({ codigo: 'x' }) }))
+    fetchMock.mockResolvedValueOnce(respuestaMock({ status: 500, ok: false, json: () => Promise.reject(new Error('sin json')) }))
+
+    const conCodigo = (await api.put('/algo', {}).catch((e: unknown) => e)) as InstanceType<typeof ErrorApi>
+    const sinCuerpo = (await api.put('/algo', {}).catch((e: unknown) => e)) as InstanceType<typeof ErrorApi>
+
+    expect(conCodigo.datos).toBeUndefined()
+    expect(sinCuerpo.datos).toBeUndefined()
+  })
+})
+
 describe('URL base y credentials bajo Tauri (slice 3: pos.html local, cross-site respecto de la API)', () => {
   beforeEach(() => {
     fetchMock.mockReset()

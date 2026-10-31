@@ -12,6 +12,7 @@ using Ways.Domain.Combos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Dispositivos;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Pagos;
 using Ways.Domain.Ofertas;
@@ -176,6 +177,9 @@ public interface IWaysDbContext
     // sigue sin exponerse acá (ver el comentario de WaysDbContext): AsignadorDeNumeroFiscal
     // (slice 4) recibe el IWaysDbContext concreto por parámetro y opera con ADO.NET crudo.
     DbSet<CertificadoFiscal> CertificadosFiscales { get; }
+
+    // Conexión OAuth de cada empresa con Mercado Pago; los tokens van cifrados y no salen del servicio.
+    DbSet<ConexionMercadoPago> ConexionesMercadoPago { get; }
 
     // Decisión de facturar una venta (facturación por medio de pago). El acumulado por medio y mes NO se
     // expone: su único escritor es un upsert crudo, como numeraciones_fiscales.

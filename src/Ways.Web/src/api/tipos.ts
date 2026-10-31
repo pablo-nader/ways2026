@@ -947,7 +947,15 @@ export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: stri
 // menor id.
 
 /** Fila de `GET /api/familias`: `cantidadArticulos` cuenta solo los miembros vivos. */
-export type FamiliaListado = { id: number; nombre: string; activo: boolean; cantidadArticulos: number }
+export type FamiliaListado = {
+  id: number
+  nombre: string
+  activo: boolean
+  cantidadArticulos: number
+  /** Con la marca, cada miembro tiene su propia composición del costo; el costo nominal sigue siendo el mismo. El
+   * servidor siempre lo manda; ausente se lee como `false`. */
+  permiteDesglosarCosto?: boolean
+}
 
 /** Miembro vivo de una familia. `idMarca` viaja `null` cuando el artículo no tiene marca o la suya está
  * dada de baja: el servidor nunca expone un id colgante. */
@@ -992,19 +1000,29 @@ export type FamiliaDetalle = {
   id: number
   nombre: string
   activo: boolean
+  /** Ver `FamiliaListado.permiteDesglosarCosto`. */
+  permiteDesglosarCosto?: boolean
   articulos: MiembroDeFamilia[]
   valores: ValoresCompartidosDeLaFamilia | null
   precios: EstadoDePreciosDeLista[]
 }
 
-/** Cuerpo de `PUT /api/familias/{id}`: lo único de una familia que se edita. Los dos campos son obligatorios: el
- * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas. */
-export type EdicionFamilia = { nombre: string; activo: boolean }
+/** Cuerpo de `PUT /api/familias/{id}`: lo que de una familia se edita. `nombre` y `activo` son obligatorios: el
+ * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas.
+ * `permiteDesglosarCosto` ausente conserva la marca; `false` la apaga solo si todos los miembros tienen la misma
+ * composición del costo (409 `composicion_distinta`) y toma un lock exclusivo aunque ya esté apagada, así que solo
+ * se manda cuando el usuario la cambió. */
+export type EdicionFamilia = { nombre: string; activo: boolean; permiteDesglosarCosto?: boolean }
 
 /** Cuerpo de `POST /api/familias/previsualizacion`: qué pasaría si se agruparan `idsArticulos` con
  * `idArticuloReferencia` como modelo. Se admiten hasta 100 destinos además de la referencia. Si la referencia ya es
  * miembro de una familia, agrupar sería sumar los artículos a ESA familia; si no, crear una nueva. */
-export type SolicitudDePrevisualizacion = { idArticuloReferencia: number; idsArticulos: number[] }
+export type SolicitudDePrevisualizacion = {
+  idArticuloReferencia: number
+  idsArticulos: number[]
+  /** Solo cuenta si la referencia no tiene familia: con la marca, `campos` no incluye la composición del costo. */
+  permiteDesglosarCosto?: boolean
+}
 
 /** El cambio de UNA lista fija para un artículo que se alinea: su estado de precios actual y el de la referencia. */
 export type CambioDePreciosDeLista = { idListaPrecio: number; actual: EstadoDePrecios; nuevo: EstadoDePrecios }
@@ -1038,7 +1056,7 @@ export type PrevisualizacionDeAgrupacion = {
 
 /** Cuerpo de `POST /api/familias`: crea la familia con la referencia, que es siempre miembro aunque no figure en
  * `idsArticulos`, y los artículos, que se alinean con ella. Ninguno puede pertenecer ya a una familia. */
-export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[] }
+export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[]; permiteDesglosarCosto?: boolean }
 
 /** Cuerpo de `POST /api/familias/{id}/articulos`: suma artículos a la familia, alineados con su referencia. */
 export type AgregadoDeArticulos = { idsArticulos: number[] }
