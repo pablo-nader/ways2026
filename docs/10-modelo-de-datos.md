@@ -43,7 +43,7 @@ parte apuntan a la sección `N` de este índice.
 
 | Sección | Archivo | KB | Tablas |
 |---|---|---|---|
-| 1. Padrones auxiliares | [01-padrones-auxiliares.md](10-modelo-de-datos/01-padrones-auxiliares.md) | 24 | `dominios`, `vitrinas`, `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante`, `empresas`, `medios_pago` |
+| 1. Padrones auxiliares | [01-padrones-auxiliares.md](10-modelo-de-datos/01-padrones-auxiliares.md) | 24 | `dominios`, `vitrinas`, `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante`, `empresas`, `sucursales`, `medios_pago` |
 | 2. Entidades comerciales | [02-entidades-comerciales.md](10-modelo-de-datos/02-entidades-comerciales.md) | 3 | `clientes`, `proveedores`, `personal` |
 | 3. Artículos, listas de precio y ofertas — Artículo: solo información intrínseca | [03-articulos--articulo-solo-informacion-intrinseca.md](10-modelo-de-datos/03-articulos--articulo-solo-informacion-intrinseca.md) | 7 | `articulos`, `articulos_empresas`, `familias` |
 | 3. Artículos, listas de precio y ofertas — Tienda online | [03-articulos--tienda-online.md](10-modelo-de-datos/03-articulos--tienda-online.md) | 13 | `imagenes_articulo` |

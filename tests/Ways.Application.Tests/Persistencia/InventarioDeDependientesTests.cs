@@ -30,7 +30,7 @@ public class InventarioDeDependientesTests
 {
     private static readonly Type[] Anclas =
     [
-        typeof(Tenant), typeof(Empresa), typeof(PuntoVenta), typeof(Usuario),
+        typeof(Tenant), typeof(Empresa), typeof(Sucursal), typeof(PuntoVenta), typeof(Usuario),
         typeof(Area), typeof(Categoria), typeof(Marca), typeof(Grupo), typeof(MedioPago),
         typeof(ListaPrecio), typeof(Proveedor), typeof(Familia),
         typeof(Personal)
@@ -56,7 +56,7 @@ public class InventarioDeDependientesTests
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las trece anclas (las cuatro de
+    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las catorce anclas (las cuatro de
     /// organización, más las siete de fix/bajas-catalogos-guarda-de-uso: los 6 catálogos de
     /// tenant y proveedores, más la familia que usa su disolución). Las tres imposibilidades mecánicas (tipo sin tabla mapeada, tipo
     /// <c>Marcado</c> sin <c>created_at</c> resoluble, clave principal no legible desde el ancla)
@@ -68,6 +68,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(Tenant))]
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
+    [InlineData(typeof(Sucursal))]
     [InlineData(typeof(Usuario))]
     [InlineData(typeof(Area))]
     [InlineData(typeof(Categoria))]
@@ -78,7 +79,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(Proveedor))]
     [InlineData(typeof(Familia))]
     [InlineData(typeof(Personal))]
-    public void N1_ConstruirNoTiraParaNingunaDeLasTreceAnclas(Type ancla)
+    public void N1_ConstruirNoTiraParaNingunaDeLasCatorceAnclas(Type ancla)
     {
         using var db = CrearContexto();
 
@@ -102,6 +103,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(Tenant))]
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
+    [InlineData(typeof(Sucursal))]
     [InlineData(typeof(Usuario))]
     [InlineData(typeof(Area))]
     [InlineData(typeof(Categoria))]
@@ -167,6 +169,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(Tenant))]
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
+    [InlineData(typeof(Sucursal))]
     [InlineData(typeof(Usuario))]
     [InlineData(typeof(Area))]
     [InlineData(typeof(Categoria))]
@@ -277,6 +280,7 @@ public class InventarioDeDependientesTests
     {
         { typeof(Tenant), ["id_tenant"] },
         { typeof(Empresa), ["id_empresa"] },
+        { typeof(Sucursal), ["id_sucursal"] },
         { typeof(PuntoVenta), ["id_punto_venta", "id_punto_venta_destino"] },
         {
             typeof(Usuario),

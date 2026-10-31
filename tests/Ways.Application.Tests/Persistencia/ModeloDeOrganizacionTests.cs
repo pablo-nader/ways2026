@@ -53,6 +53,50 @@ public class ModeloDeOrganizacionTests
             fk.Properties.Select(p => p.Name));
     }
 
+    /// <summary>La sucursal es de la misma empresa que su punto de venta POR CONSTRUCCIÓN: la FK
+    /// del punto de venta incluye <c>id_empresa</c> y apunta a una clave alternativa que también la
+    /// incluye. Mutación corrida: sacar <c>IdEmpresa</c> de la FK deja pasar una sucursal de otra
+    /// empresa del mismo tenant y esta aserción cae.</summary>
+    [Fact]
+    public void ElPuntoDeVentaReferenciaSuSucursalIncluyendoLaEmpresa()
+    {
+        using var db = CrearContexto();
+
+        var puntoVenta = db.Model.FindEntityType(typeof(PuntoVenta))!;
+
+        var fk = puntoVenta.GetForeignKeys().Single(f => f.PrincipalEntityType.ClrType == typeof(Sucursal));
+        Assert.Equal(
+            [nameof(PuntoVenta.IdSucursal), nameof(PuntoVenta.IdEmpresa), nameof(PuntoVenta.IdTenant)],
+            fk.Properties.Select(p => p.Name));
+        Assert.Equal(
+            [nameof(Sucursal.Id), nameof(Sucursal.IdEmpresa), nameof(Sucursal.IdTenant)],
+            fk.PrincipalKey.Properties.Select(p => p.Name));
+        Assert.False(puntoVenta.FindProperty(nameof(PuntoVenta.IdSucursal))!.IsColumnNullable());
+    }
+
+    [Fact]
+    public void LaSucursalCuelgaDeLaEmpresaPorFkCompuestaYExponeLasClavesQueHabilitanASusHijos()
+    {
+        using var db = CrearContexto();
+
+        var sucursal = db.Model.FindEntityType(typeof(Sucursal))!;
+
+        Assert.Equal("sucursales", sucursal.GetTableName());
+        Assert.Equal("id_sucursal", sucursal.FindProperty(nameof(Sucursal.Id))!.GetColumnName());
+
+        var fk = sucursal.GetForeignKeys().Single(f => f.PrincipalEntityType.ClrType == typeof(Empresa));
+        Assert.Equal(
+            [nameof(Sucursal.IdEmpresa), nameof(Sucursal.IdTenant)],
+            fk.Properties.Select(p => p.Name));
+
+        var clavesAlternativas = sucursal.GetKeys()
+            .Where(k => !k.IsPrimaryKey())
+            .Select(k => string.Join(',', k.Properties.Select(p => p.Name)))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        Assert.Equal(["Id,IdEmpresa,IdTenant", "Id,IdTenant"], clavesAlternativas);
+    }
+
     [Fact]
     public void EmpresaTieneLaClaveAlternativaCompuestaQueHabilitaLasFksDeSusHijos()
     {

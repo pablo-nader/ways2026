@@ -123,7 +123,9 @@ public sealed record RamaDeUso(
 /// de <see cref="EntidadTenant"/> y está mapeada a la columna de alcance <c>id_tenant</c>, el mismo
 /// idioma por reflexión que ya usa <c>WaysDbContext.AplicarFiltroDeTenant</c> para el query
 /// filter.</item>
-/// <item>Solo para el ancla <see cref="Ways.Domain.Organizacion.Empresa"/>: el inventario
+/// <item>Solo para las anclas <see cref="Ways.Domain.Organizacion.Empresa"/> y
+/// <see cref="Ways.Domain.Organizacion.Sucursal"/> (tenant → empresa → sucursal → punto de venta;
+/// ambas suben por el punto de venta, que referencia a las dos): el inventario
 /// ejecutable del ancla <see cref="Ways.Domain.Organizacion.PuntoVenta"/>, PUENTEADO por
 /// <c>puntos_venta</c>. El uso sube por la jerarquía estructural, y ninguna tabla operativa lleva
 /// <c>id_empresa</c>: ventas, pagos, stock, caja y tesorería se cuelgan todas del punto de
@@ -347,7 +349,12 @@ public static class InventarioDeDependientes
     private static void AgregarRamasPuenteadasPorPuntoDeVenta(
         IEntityType ancla, Type tipoAncla, List<RamaDeUso> ramas)
     {
-        if (tipoAncla != typeof(Ways.Domain.Organizacion.Empresa))
+        // La jerarquía estructural es tenant → empresa → sucursal → punto de venta, y el punto de
+        // venta lleva la FK hacia la empresa Y hacia la sucursal: ambas anclas suben por él. Cuando
+        // una etapa cuelgue tablas operativas directamente de la sucursal, la sucursal pasa a ser
+        // un segundo puente de la empresa.
+        if (tipoAncla != typeof(Ways.Domain.Organizacion.Empresa)
+            && tipoAncla != typeof(Ways.Domain.Organizacion.Sucursal))
         {
             return;
         }
