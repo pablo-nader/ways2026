@@ -6,12 +6,15 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
+using Ways.Application.Caja;
 using Ways.Application.Compras;
 using Ways.Application.Exportacion;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
+using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Pagos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Infrastructure.Multitenancy;
@@ -170,8 +173,8 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
         // el test de igualdad de abajo solo lee celdas por posición.
         const int filaDeEncabezados = 6;
         Assert.Equal(
-            ["Comprobante", "Proveedor", "Fecha de recepción", "Estado", "Total"],
-            Enumerable.Range(1, 5).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+            ["Comprobante", "Proveedor", "Nombre del proveedor", "Fecha del comprobante", "Fecha de carga", "Estado", "Estado de pago", "Total"],
+            Enumerable.Range(1, 8).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
 
         var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
@@ -181,9 +184,12 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
             var fila = hoja.Row(primeraFilaDeDatos + i);
             Assert.Equal(item.NumeroExterno, fila.Cell(1).GetString());
             Assert.Equal(item.IdProveedor, fila.Cell(2).GetValue<int>());
-            Assert.Equal(TimeZoneInfo.ConvertTime(item.FechaRecepcion!.Value, zona).DateTime, fila.Cell(3).GetValue<DateTime>());
-            Assert.Equal(item.Estado.ToString(), fila.Cell(4).GetString());
-            Assert.Equal(item.Total, fila.Cell(5).GetValue<decimal>());
+            Assert.Equal(item.NombreProveedor, fila.Cell(3).GetString());
+            Assert.Equal(item.FechaComprobante!.Value.ToDateTime(TimeOnly.MinValue), fila.Cell(4).GetValue<DateTime>());
+            Assert.Equal(TimeZoneInfo.ConvertTime(item.FechaRecepcion!.Value, zona).DateTime, fila.Cell(5).GetValue<DateTime>());
+            Assert.Equal(item.Estado.ToString(), fila.Cell(6).GetString());
+            Assert.Equal(item.EstadoPago, fila.Cell(7).GetString());
+            Assert.Equal(item.Total, fila.Cell(8).GetValue<decimal>());
         }
     }
 
@@ -292,5 +298,227 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
             Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
         }
         Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
+    }
+
+    // ---- lista de compras: filtros, proveedor por fantasía y estado de pago --------------------
+
+    private sealed record Escenario(
+        int IdPagadaTotal, int IdParcial, int IdPagadaPorRedondeo, int IdSinPagos, int IdBorrador, int IdTipoCFB);
+
+    private async Task<int> CrearProveedorAsync(Contexto ctx, string razonSocial, string? fantasia, bool deBaja = false)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idCondicion = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync();
+        var proveedor = new Proveedor
+        {
+            IdTenant = ctx.IdTenant, RazonSocial = razonSocial, NombreFantasia = fantasia, IdCondicionFiscal = idCondicion,
+            CreatedAt = ahora, UpdatedAt = ahora, DeletedAt = deBaja ? ahora : null
+        };
+        db.Proveedores.Add(proveedor);
+        await db.SaveChangesAsync();
+        return proveedor.Id;
+    }
+
+    private async Task<int> SembrarCompraAsync(
+        Contexto ctx, int idProveedor, int idTipo, string? numero, DateOnly? fechaComprobante, decimal total,
+        EstadoCompra estado = EstadoCompra.Confirmada)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var compra = new ComprobanteCompra
+        {
+            IdTenant = ctx.IdTenant, IdProveedor = idProveedor, IdTipoComprobante = idTipo, NumeroExterno = numero,
+            FechaComprobante = fechaComprobante,
+            FechaRecepcion = estado == EstadoCompra.Confirmada ? ahora : null,
+            IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
+            Subtotal = total, DescuentoTotal = 0m, Total = total, Estado = estado, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.ComprobantesCompra.Add(compra);
+        await db.SaveChangesAsync();
+        return compra.Id;
+    }
+
+    private async Task AplicarPagoAsync(Contexto ctx, int idTurno, int idCompra, int idProveedor, decimal importe)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
+        var idMedio = await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
+        var pago = new Pago
+        {
+            IdTenant = ctx.IdTenant, Fecha = ahora, IdEmpresa = idEmpresa, IdPuntoVenta = ctx.IdPuntoVenta, IdTurnoCaja = idTurno,
+            IdEmpleado = ctx.IdEmpleadoAdmin, Categoria = CategoriaPago.Proveedor, OrigenFondos = OrigenFondosPago.CajaTurno,
+            IdProveedor = idProveedor, Concepto = "Pago de prueba del listado", Importe = importe, IdComprobanteCompra = idCompra,
+            CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Pagos.Add(pago);
+        await db.SaveChangesAsync();
+        db.ItemsPago.Add(new ItemPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdMedioPago = idMedio, Importe = importe, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        db.AplicacionesPago.Add(new AplicacionPago
+        {
+            IdTenant = ctx.IdTenant, IdPago = pago.Id, IdComprobanteCompra = idCompra, Importe = importe,
+            Origen = OrigenAplicacionPago.Migracion, IdEmpleado = ctx.IdEmpleadoAdmin, Fecha = ahora,
+            CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task PerdonarPorRedondeoAsync(Contexto ctx, int idCompra, int idProveedor, decimal perdonado)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        db.MovimientosCuentaCorrienteProveedor.Add(new MovimientoCuentaCorrienteProveedor
+        {
+            IdTenant = ctx.IdTenant, IdProveedor = idProveedor, Fecha = DateTimeOffset.UtcNow, IdPuntoVenta = ctx.IdPuntoVenta,
+            IdEmpleado = ctx.IdEmpleadoAdmin, Tipo = TipoMovimientoCcProveedor.Redondeo, IdComprobanteCompra = idCompra,
+            Importe = -perdonado, SaldoResultante = 0m
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Cinco compras con un estado de pago distinto cada una: pagada exacta, parcial, saldada por redondeo,
+    /// sin pagos y un borrador. El proveedor de la última confirmada está dado de baja.</summary>
+    private async Task<Escenario> SembrarEscenarioAsync(Contexto ctx)
+    {
+        var turno = await ctx.Admin.PostAsJsonAsync("/api/caja/turnos", new SolicitudDeApertura(ctx.IdPuntoVenta, 0m, "Apertura"));
+        Assert.Equal(HttpStatusCode.Created, turno.StatusCode);
+        var idTurno = JsonSerializer.Deserialize<TurnoResumen>(await turno.Content.ReadAsStringAsync(), OpcionesJson)!.Id;
+
+        int idCFB;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            idCFB = await db.TiposComprobante.Where(t => t.Codigo == "C-FB").Select(t => t.Id).SingleAsync();
+        }
+
+        var conFantasia = await CrearProveedorAsync(ctx, "Razon Con Fantasia SA", "  Fantasia Uno  ");
+        var sinFantasia = await CrearProveedorAsync(ctx, "Razon Sin Fantasia SA", "   ");
+        var deBaja = await CrearProveedorAsync(ctx, "Razon De Baja SA", "Fantasia De Baja", deBaja: true);
+
+        var pagada = await SembrarCompraAsync(ctx, conFantasia, ctx.IdTipoCFA, "0001-00000101", new DateOnly(2026, 8, 1), 1000m);
+        await AplicarPagoAsync(ctx, idTurno, pagada, conFantasia, 1000m);
+
+        var parcial = await SembrarCompraAsync(ctx, conFantasia, ctx.IdTipoCFA, "0001-00000102", new DateOnly(2026, 8, 10), 1000m);
+        await AplicarPagoAsync(ctx, idTurno, parcial, conFantasia, 400m);
+
+        var porRedondeo = await SembrarCompraAsync(ctx, sinFantasia, idCFB, "0002-00000103", new DateOnly(2026, 8, 20), 1000m);
+        await AplicarPagoAsync(ctx, idTurno, porRedondeo, sinFantasia, 600m);
+        await PerdonarPorRedondeoAsync(ctx, porRedondeo, sinFantasia, 400m);
+
+        var sinPagos = await SembrarCompraAsync(ctx, deBaja, idCFB, "ABC-9", new DateOnly(2026, 9, 1), 500m);
+        var borrador = await SembrarCompraAsync(
+            ctx, conFantasia, ctx.IdTipoCFA, "0001-00000105", new DateOnly(2026, 8, 5), 700m, EstadoCompra.Borrador);
+
+        return new Escenario(pagada, parcial, porRedondeo, sinPagos, borrador, idCFB);
+    }
+
+    private static async Task<PaginaDeCompras> ListarAsync(HttpClient cliente, string consulta, int tamanio = 200)
+    {
+        var respuesta = await cliente.GetAsync($"/api/compras?tamanio={tamanio}&{consulta}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        return JsonSerializer.Deserialize<PaginaDeCompras>(cuerpo, OpcionesJson)!;
+    }
+
+    private static IReadOnlyList<int> Ids(PaginaDeCompras pagina) => pagina.Items.Select(i => i.Id).Order().ToList();
+
+    [Fact]
+    public async Task ElListadoTraeElProveedorPorFantasiaFechaDelComprobanteYEstadoDePago()
+    {
+        var ctx = await PrepararAsync(nameof(ElListadoTraeElProveedorPorFantasiaFechaDelComprobanteYEstadoDePago), fixture);
+        var e = await SembrarEscenarioAsync(ctx);
+
+        var pagina = await ListarAsync(ctx.Admin, "");
+        var porId = pagina.Items.ToDictionary(i => i.Id);
+
+        Assert.Equal("Fantasia Uno", porId[e.IdPagadaTotal].NombreProveedor);
+        Assert.Equal("Razon Sin Fantasia SA", porId[e.IdPagadaPorRedondeo].NombreProveedor);
+        Assert.Null(porId[e.IdSinPagos].NombreProveedor);
+        Assert.Equal(new DateOnly(2026, 8, 1), porId[e.IdPagadaTotal].FechaComprobante);
+
+        Assert.Equal("Pagada", porId[e.IdPagadaTotal].EstadoPago);
+        Assert.Equal("Pendiente", porId[e.IdParcial].EstadoPago);
+        Assert.Equal("Pagada", porId[e.IdPagadaPorRedondeo].EstadoPago);
+        Assert.Equal("Pendiente", porId[e.IdSinPagos].EstadoPago);
+        Assert.Null(porId[e.IdBorrador].EstadoPago);
+    }
+
+    [Fact]
+    public async Task ElFiltroPorEstadoDePagoCoincideConLaFilaYElTotalEsElDelFiltro()
+    {
+        var ctx = await PrepararAsync(nameof(ElFiltroPorEstadoDePagoCoincideConLaFilaYElTotalEsElDelFiltro), fixture);
+        var e = await SembrarEscenarioAsync(ctx);
+
+        var pagadas = await ListarAsync(ctx.Admin, "estadoPago=pagada");
+        var pendientes = await ListarAsync(ctx.Admin, "estadoPago=pendiente");
+
+        Assert.Equal([e.IdPagadaTotal, e.IdPagadaPorRedondeo], Ids(pagadas));
+        Assert.Equal([e.IdParcial, e.IdSinPagos], Ids(pendientes));
+        Assert.Equal(2, pagadas.Total);
+        Assert.Equal(2, pendientes.Total);
+        Assert.All(pagadas.Items, i => Assert.Equal("Pagada", i.EstadoPago));
+        Assert.All(pendientes.Items, i => Assert.Equal("Pendiente", i.EstadoPago));
+
+        var paginada = await ListarAsync(ctx.Admin, "estadoPago=pendiente", tamanio: 1);
+        Assert.Equal(2, paginada.Total);
+        Assert.Single(paginada.Items);
+    }
+
+    [Fact]
+    public async Task UnEstadoDePagoInvalidoEsUn400()
+    {
+        var ctx = await PrepararAsync(nameof(UnEstadoDePagoInvalidoEsUn400), fixture);
+
+        var respuesta = await ctx.Admin.GetAsync("/api/compras?estadoPago=parcial");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task LosFiltrosDeNumeroTipoYFechaDelComprobanteAcotanElListado()
+    {
+        var ctx = await PrepararAsync(nameof(LosFiltrosDeNumeroTipoYFechaDelComprobanteAcotanElListado), fixture);
+        var e = await SembrarEscenarioAsync(ctx);
+
+        var porNumero = await ListarAsync(ctx.Admin, "numero=abc");
+        Assert.Equal([e.IdSinPagos], Ids(porNumero));
+        Assert.Equal(1, porNumero.Total);
+
+        var porNumeroParcial = await ListarAsync(ctx.Admin, "numero=00000102");
+        Assert.Equal([e.IdParcial], Ids(porNumeroParcial));
+
+        var porTipo = await ListarAsync(ctx.Admin, $"idTipoComprobante={e.IdTipoCFB}");
+        Assert.Equal([e.IdPagadaPorRedondeo, e.IdSinPagos], Ids(porTipo));
+
+        var porRango = await ListarAsync(ctx.Admin, "fechaComprobanteDesde=2026-08-10&fechaComprobanteHasta=2026-08-20");
+        Assert.Equal([e.IdParcial, e.IdPagadaPorRedondeo], Ids(porRango));
+
+        var soloDesde = await ListarAsync(ctx.Admin, "fechaComprobanteDesde=2026-08-21");
+        Assert.Equal([e.IdSinPagos], Ids(soloDesde));
+
+        var soloHasta = await ListarAsync(ctx.Admin, "fechaComprobanteHasta=2026-08-01");
+        Assert.Equal([e.IdPagadaTotal], Ids(soloHasta));
+    }
+
+    [Fact]
+    public async Task ElExportRespetaLosNuevosFiltros()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportRespetaLosNuevosFiltros), fixture);
+        await SembrarEscenarioAsync(ctx);
+
+        var respuesta = await ctx.Admin.GetAsync(
+            "/api/compras/export?formato=xlsx&desde=2000-01-01T00:00:00-03:00&hasta=2100-01-01T00:00:00-03:00&estadoPago=pagada");
+        var cuerpo = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+        var filas = Enumerable.Range(7, 5).Select(r => hoja.Row(r)).Where(f => !f.IsEmpty()).ToList();
+
+        Assert.Equal(2, filas.Count);
+        Assert.All(filas, f => Assert.Equal("Pagada", f.Cell(7).GetString()));
+        Assert.Contains(filas, f => f.Cell(3).GetString() == "Fantasia Uno");
     }
 }
