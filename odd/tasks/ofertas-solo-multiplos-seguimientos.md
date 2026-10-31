@@ -103,3 +103,12 @@ Close the four informational follow-ups left by `ofertas-solo-multiplos` (judgme
   coverage keeps the previous display. Covered units are derived from `descuentoDeLinea`; a non-integer result
   (a family line under the F2 pro-rata split, e.g. 166 / 250) keeps the previous display by design.
 - docs/10 updated by the parent: family split, tie-break, non-terminating case, grid collapse and cap.
+
+## Judgment-day (2026-10-31)
+
+`JUDGMENT: APPROVED` over 7e951e5f..41cfb5db — no CRITICAL from either judge; F1–F3 traced with no under-charge and no
+C#/TS divergence. Informational (display only, the charged amount comes from `descuentoDeLinea`):
+- Two strict offers of different N on one line: the cart split assumes one coverage tier and could print a wrong
+  integer split (both judges, WARNING/SUGGESTION).
+- A strict unit discount with more than 2 decimals hides the split; combo-consumed units and the manual adjustment are
+  not reflected in the split text (one judge each).
