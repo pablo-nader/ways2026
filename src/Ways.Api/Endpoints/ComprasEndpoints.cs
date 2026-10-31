@@ -34,10 +34,21 @@ public static class ComprasEndpoints
             int? tamanio,
             string? orden,
             string? direccion,
+            string? numero,
+            int? idTipoComprobante,
+            string? estadoPago,
+            DateOnly? fechaComprobanteDesde,
+            DateOnly? fechaComprobanteHasta,
             CancellationToken ct) =>
             servicio.ListarAsync(
-                idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, origen, orden, direccion, ct))
+                new FiltrosDeListadoDeCompras(
+                    idProveedor, estado, desde, hasta, idEmpresa, origen, numero, idTipoComprobante, estadoPago,
+                    fechaComprobanteDesde, fechaComprobanteHasta),
+                pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
         .WithSummary(
+            "numero (contiene, sin distinguir mayúsculas), idTipoComprobante, estadoPago (pagada o pendiente; " +
+            "solo compras confirmadas, 400 estado_pago_invalido si es otro valor) y fechaComprobanteDesde/Hasta " +
+            "(yyyy-MM-dd, inclusivos) filtran antes de paginar; desde/hasta siguen acotando la fecha de carga. " +
             "orden (numero, proveedor, tipo, estado, fechaRecepcion, total) y direccion (ascendente, " +
             "descendente) ordenan todo el conjunto filtrado antes de paginar; 400 si no son válidos. " +
             "Lista comprobantes de compra con filtros y paginado. idEmpresa (stage-tesoreria-por-" +
@@ -56,12 +67,16 @@ public static class ComprasEndpoints
             ServicioDeCompras servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
             IContextoDeUsuario usuario, IRelojDelSistema reloj,
             int? idProveedor, EstadoCompra? estado, DateTimeOffset desde, DateTimeOffset hasta, int? idEmpresa,
-            OrigenCompra? origen, string formato, CancellationToken ct) =>
+            OrigenCompra? origen, string formato, string? numero, int? idTipoComprobante, string? estadoPago,
+            DateOnly? fechaComprobanteDesde, DateOnly? fechaComprobanteHasta, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
-                idProveedor, estado, desde, hasta, opciones.Value.TopeDeFilas, idEmpresa, origen, ct);
+                new FiltrosDeListadoDeCompras(
+                    idProveedor, estado, desde, hasta, idEmpresa, origen, numero, idTipoComprobante, estadoPago,
+                    fechaComprobanteDesde, fechaComprobanteHasta),
+                opciones.Value.TopeDeFilas, ct);
 
             var zona = TimeZoneInfo.FindSystemTimeZoneById(AlcanceDeListadoHttp.ZonaPorDefecto);
             var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);

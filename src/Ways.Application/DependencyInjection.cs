@@ -15,6 +15,7 @@ using Ways.Application.Dominios;
 using Ways.Application.Etiquetas;
 using Ways.Application.Familias;
 using Ways.Application.Fiscal;
+using Ways.Application.MercadoPago;
 using Ways.Application.Pagos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -228,6 +229,9 @@ public static class DependencyInjection
         // IAlmacenDeClavesFiscales se registra del lado de Infrastructure (DependencyInjection.cs),
         // que es donde vive la implementación concreta del cifrado (CifradoDeClavesFiscales).
         services.AddScoped<ServicioDeCertificados>();
+
+        // Conexión OAuth de cada empresa con Mercado Pago; el cliente HTTP, el cifrado y el protector del state viven en Infrastructure.
+        services.AddScoped<ServicioDeConexionMercadoPago>();
 
         return services;
     }

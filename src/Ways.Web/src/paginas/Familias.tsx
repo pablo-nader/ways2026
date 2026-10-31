@@ -18,6 +18,7 @@ import {
 } from '../componentes/grilla'
 import { CAMPOS_PROPIOS, cantidadDeArticulos } from './articulos/familia'
 import { mensajeDeFalloDeEscritura } from './familias/mensajes'
+import { AYUDA_DE_DESGLOSAR_COSTO, cuerpoDeEdicionDeFamilia } from './familias/edicion'
 import { ModalDeFamilia, type FormularioDeFamilia } from './familias/ModalDeFamilia'
 import { ModalDeNuevaFamilia } from './familias/ModalDeNuevaFamilia'
 
@@ -158,7 +159,7 @@ export function Familias() {
     setErrorDeFormulario('')
     try {
       try {
-        await clienteDeFamilias.actualizar(datos.id, { nombre, activo: datos.activo })
+        await clienteDeFamilias.actualizar(datos.id, cuerpoDeEdicionDeFamilia(datos))
       } catch (e) {
         const mensaje = mensajeDeFalloDeEscritura(e, 'guardar la familia')
         if (!(e instanceof ErrorApi && e.estado === 404)) {
@@ -232,7 +233,8 @@ export function Familias() {
   }
 
   function abrirEdicion(familia: FamiliaListado) {
-    setFormulario({ id: familia.id, nombre: familia.nombre, activo: familia.activo })
+    const permite = familia.permiteDesglosarCosto === true
+    setFormulario({ id: familia.id, nombre: familia.nombre, activo: familia.activo, permiteDesglosarCosto: permite, permiteDesglosarCostoInicial: permite })
     setAviso('')
     setError('')
     setErrorDeFormulario('')
@@ -340,7 +342,14 @@ export function Familias() {
                 )}
                 {!cargando && visibles.map((familia) => (
                   <tr key={familia.id}>
-                    <td>{familia.nombre}</td>
+                    <td>
+                      {familia.nombre}
+                      {familia.permiteDesglosarCosto === true && (
+                        <span className="badge text-bg-info ms-2" title={AYUDA_DE_DESGLOSAR_COSTO}>
+                          Desglosa costo
+                        </span>
+                      )}
+                    </td>
                     <td className="text-end">{familia.cantidadArticulos}</td>
                     <td>
                       <span className={`badge ${familia.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>

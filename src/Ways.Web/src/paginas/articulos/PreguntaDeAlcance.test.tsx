@@ -87,4 +87,17 @@ describe('PreguntaDeAlcance', () => {
     expect(onElegir).not.toHaveBeenCalled()
     expect(onCancelar).not.toHaveBeenCalled()
   })
+
+  it('con un cambio de nominal lo dice antes de las respuestas; sin él no habla del nominal', () => {
+    montar({ cambioDeNominal: { anterior: 100, nuevo: 120 } })
+
+    expect(screen.getByText(/El costo nominal pasa de \$ 100,00 a \$ 120,00/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Toda la familia' })).toBeInTheDocument()
+  })
+
+  it('sin cambio de nominal no aparece la línea del nominal', () => {
+    montar({ cambioDeNominal: null })
+
+    expect(screen.queryByText(/costo nominal pasa/)).not.toBeInTheDocument()
+  })
 })
