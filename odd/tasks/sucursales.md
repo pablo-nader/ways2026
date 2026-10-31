@@ -55,12 +55,9 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   docs 09/10. Route: delegated (2+ non-trivial files). Commit b3c906fe.
 - [x] T2 — Stock tables re-keyed to `id_sucursal`; single upsert helper used by ventas, remitos,
   compras, stock, lotes; transfers between sucursales; lock order. Route: delegated (opus writer).
-- [ ] T3 — Reads by sucursal: existencias/vencimientos/reposición, ficha de artículo, MCP
-  `articulo_info`, sales grouped by sucursal. Route: delegated. Carries the T2 judgment-day
-  suggestions: MCP copy "punto de venta" → sucursal, stale comments (`ix_stock_punto_venta`,
-  `stock_duplicado` message, "único escritor" vs the mínimos upsert, aggregate-before-lots in
-  compra edición), a unit test pinning `EscritorDeStock.EnOrdenDeLocks`, and moving the
-  `transferencia_misma_sucursal` check before lot resolution.
+- [x] T3 — Reads by sucursal: existencias/vencimientos/reposición/rotación, ficha de artículo, MCP
+  `articulo_info`, sales grouped by sucursal, plus the T2 judgment-day carry-overs. Route: delegated.
+  Commit 2087d350.
 - [ ] T4 — Web: sucursales ABM, PV form picks sucursal, stock screens and transfers by sucursal.
   Route: delegated.
 - [ ] T5 — Merge two sucursales (move PVs, sum stock and lots with audited movements).
@@ -112,6 +109,35 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   duration (deploy off-hours), Down() lossy once PVs share a sucursal, items carried to T3.
   Deferred to T5: `ResolverSucursalAsync` takes no lock on `puntos_venta`.
 
+- 2026-10-31: T3 done (commit 2087d350). Stock report routes take `idSucursal` or the legacy
+  `idPuntoVenta` (resolved to its sucursal; exactly one, else 400 `alcance_de_stock_requerido` /
+  `alcance_de_stock_ambiguo`); responses carry `idSucursal` + `nombreSucursal` and drop `idPuntoVenta`
+  (the web only read it as a type; TS types and fixtures updated, no screen redesign). Zone and
+  alert/rotation days still resolve per caja: with `idSucursal`, from the lowest-id caja (moves to the
+  sucursal in T6). Export files are `existencias_sucursal{id}_…`; the shared exporter header still
+  prints "Punto de venta: Sucursal N" (its label lives outside T3's surface, fix with T4). Soft-deleted
+  sucursal, decided per surface: stock reports treat it as nonexistent (404, also via the caja that
+  still references it); ficha and `ventas_agrupadas` keep the row labelled `(sucursal id N)` so totals
+  do not lose stock or amount. Ficha already read stock by sucursal (T2): only the copy and the
+  `StockDeFicha.Sucursal` field changed. New `sucursal` dimension in `ventas_agrupadas`. Carry-overs:
+  stale comments and the `stock_duplicado` message now say sucursal; `EscritorDeStock` comment now
+  states it is the only writer of movements and quantities (the mínimos upsert only creates a row at
+  0); same-sucursal transfer check moved before article/lot resolution (kept again in the
+  transaction for a caja moved between the two reads); compra edición takes the aggregate `stock`
+  row before the lots even when the group nets to zero.
+  Checks: build 0 errors; Domain 2109 ✔; Application 1476 ✔ (guards included); integration filter
+  (stock, lote, reporte, ficha, mcp, venta, sucursal, reposicion, existencia, compra, vencimiento,
+  rotacion, manejador de errores, SuperficieDeAutorizacion) 2576 ✔ (49 min); web build ✔, vitest
+  8857 ✔ (one unrelated CompraEditor flake on the first run, green on rerun).
+  RED came from mutations (code was written before tests). Mutants killed: no sucursal filter in
+  existencias, vencimientos, reposición and rotación; `IgnoreQueryFilters` on both sucursal lookups
+  (soft-deleted); caja+sucursal both accepted; export name by caja; sales grouped by caja id; sales
+  ignoring the chosen caja; transfer check after article resolution; the four `EnOrdenDeLocks` keys
+  (sucursal, artículo, lote.HasValue, lote). Not mutation-covered: the ficha two-cajas test is weak
+  (a by-caja read would be needed to fail it), and the compra edición aggregate-first lock has no
+  observable effect besides lock order (raw ADO, no pause point), so it is fixed but not pinned.
+
 ## Next step
 
-T3 — reads by sucursal.
+T4 — web: sucursales ABM, PV form picks its sucursal, stock screens and transfers by sucursal (switch
+the stock screens to `idSucursal`, header label "Sucursal").
