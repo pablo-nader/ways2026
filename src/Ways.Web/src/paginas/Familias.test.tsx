@@ -1169,3 +1169,71 @@ describe('Familias — filtros por columna y orden', () => {
     expect(screen.getByLabelText('Filtrar por estado')).toBeDisabled()
   })
 })
+
+
+describe('Familias — permite desglosar costo', () => {
+  const desglosa: FamiliaListado = { id: 9, nombre: 'Bebidas', activo: true, cantidadArticulos: 4, permiteDesglosarCosto: true }
+
+  it('marca con una insignia las familias que desglosan el costo, y solo ésas', async () => {
+    await montarYEsperar([sabores, desglosa])
+
+    expect(within(fila('Bebidas')).getByText('Desglosa costo')).toBeInTheDocument()
+    expect(within(fila('Sabores')).queryByText('Desglosa costo')).not.toBeInTheDocument()
+  })
+
+  it('el formulario de edición muestra la casilla con la marca de la familia y su ayuda', async () => {
+    await montarYEsperar([sabores, desglosa])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+
+    const casilla = screen.getByRole('checkbox', { name: 'Permite desglosar costo' })
+    expect(casilla).toBeChecked()
+    expect(casilla).toHaveAccessibleDescription('Cada artículo puede tener su propio costo de lista e impuesto interno; el costo nominal es el mismo para todos.')
+  })
+
+  it('guardar sin tocar la casilla no manda la marca', async () => {
+    apiPutMock.mockResolvedValueOnce(desglosa)
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/familias/9', { nombre: 'Bebidas', activo: true }))
+  })
+
+  it('encenderla manda true', async () => {
+    apiPutMock.mockResolvedValueOnce(sabores)
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/familias/7', { nombre: 'Sabores', activo: true, permiteDesglosarCosto: true }))
+  })
+
+  it('apagarla manda false', async () => {
+    apiPutMock.mockResolvedValueOnce(desglosa)
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/familias/9', { nombre: 'Bebidas', activo: true, permiteDesglosarCosto: false }))
+  })
+
+  it('un 409 composicion_distinta explica qué hay que igualar y deja el formulario abierto', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'composicion_distinta', 'Los artículos de la familia tienen composiciones del costo distintas.'))
+    await montarYEsperar([sabores, desglosa])
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Bebidas' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Permite desglosar costo' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText(/Para apagarlo, todos los artículos tienen que tener la misma composición del costo/)).toBeInTheDocument()
+    expect(screen.getByText(/composiciones del costo distintas/)).toBeInTheDocument()
+    expect(screen.getByText('Editando familia 9')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+})
