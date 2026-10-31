@@ -98,6 +98,7 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
     horaHasta: null,
     diasSemana: [],
     cantidadMinima: null,
+    soloMultiplos: false,
     precioUnitario: null,
     porcentaje: 10,
     importeFijo: null,
@@ -413,6 +414,56 @@ describe('Ofertas — multi-select de listas', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(apiPostMock).toHaveBeenCalledWith('/ofertas', expect.objectContaining({ idsListas: [3] }))
+  })
+})
+
+describe('Ofertas — solo múltiplos de la cantidad mínima', () => {
+  it('la casilla está deshabilitada sin cantidad mínima, se habilita con ella y se desmarca al vaciarla', async () => {
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    const casilla = screen.getByLabelText('Solo múltiplos de la cantidad')
+
+    expect(casilla).toBeDisabled()
+    await userEvent.type(screen.getByLabelText('Cantidad mínima'), '2')
+    expect(casilla).toBeEnabled()
+    await userEvent.click(casilla)
+    expect(casilla).toBeChecked()
+
+    await userEvent.clear(screen.getByLabelText('Cantidad mínima'))
+    expect(casilla).toBeDisabled()
+    expect(casilla).not.toBeChecked()
+  })
+
+  it('al guardar manda soloMultiplos true junto con la cantidad mínima', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture())
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await userEvent.type(screen.getByLabelText('Cantidad mínima'), '2')
+    await userEvent.click(screen.getByLabelText('Solo múltiplos de la cantidad'))
+    await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o código interno…'), 'coca')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await userEvent.selectOptions(await screen.findByRole('listbox'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(apiPostMock).toHaveBeenCalledWith('/ofertas', expect.objectContaining({ cantidadMinima: 2, soloMultiplos: true }))
+  })
+
+  it('sin tocar la casilla manda soloMultiplos false', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture())
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o código interno…'), 'coca')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await userEvent.selectOptions(await screen.findByRole('listbox'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(apiPostMock).toHaveBeenCalledWith('/ofertas', expect.objectContaining({ soloMultiplos: false }))
   })
 })
 

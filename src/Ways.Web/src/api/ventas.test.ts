@@ -151,6 +151,20 @@ describe('previaDeLinea', () => {
     expect(previaDeLinea(linea, resultado)).toEqual({ precioUnitario: 90, descuentoUnitario: 10, total: 270, ajusteManual: 0, ahorroDeCombo: 0 })
   })
 
+  it('con descuentoDeLinea (oferta "solo múltiplos") el total es unidades × precio − ese descuento, no el unitario por cantidad', () => {
+    const linea = lineaFixture({ cantidad: 3 })
+    const resultado = resultadoFixture({ precioOriginal: 4000, precioFinal: 3750, descuentoUnitario: 250, descuentoDeLinea: 500 })
+
+    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 11500, ajusteManual: 0 })
+  })
+
+  it('con descuentoDeLinea el ajuste manual se aplica sobre el neto de línea', () => {
+    const linea = lineaFixture({ cantidad: 3, ajusteManualPorcentaje: -10 })
+    const resultado = resultadoFixture({ precioOriginal: 4000, precioFinal: 3750, descuentoUnitario: 250, descuentoDeLinea: 500 })
+
+    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 10350, ajusteManual: -1150 })
+  })
+
   it('un descuento manual es negativo y se resta del neto', () => {
     const linea = lineaFixture({ cantidad: 3, ajusteManualPorcentaje: -10 })
     const resultado = resultadoFixture({ precioOriginal: 100, precioFinal: 90, descuentoUnitario: 10 })
