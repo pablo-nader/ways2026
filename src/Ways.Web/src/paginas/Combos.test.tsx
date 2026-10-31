@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Combos } from './Combos'
+import { Toaster } from '../toasts/Toaster'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloListado, ComboListado, EmpresaListado, FamiliaListado, PaginaDe } from '../api/tipos'
 
@@ -137,7 +138,7 @@ async function cambiarCantidad(n: number, cantidad: string) {
 }
 
 async function abrirNuevo() {
-  render(<Combos />)
+  render(<><Combos /><Toaster /></>)
   await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
   await screen.findByRole('dialog')
 }
@@ -164,7 +165,7 @@ describe('Combos — listado', () => {
       ],
     })
 
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     const filaActiva = (await screen.findByText('Pancho y Coca')).closest('tr')!
     expect(within(filaActiva).getByText('C12')).toBeInTheDocument()
@@ -191,7 +192,7 @@ describe('Combos — listado', () => {
       ],
     })
 
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     await screen.findByText('En la tienda')
     const posicion = within(screen.getAllByRole('row')[0]).getAllByRole('columnheader').map((c) => c.textContent?.replace('↕', '')).indexOf('Online')
@@ -217,7 +218,7 @@ describe('Combos — listado', () => {
       ],
     })
 
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     const marcada = (await screen.findByText('Pancho y Coca')).closest('tr')!
     expect(within(marcada).getByText('1 × Artículo #5 (no disponible) + 1 × Pancho')).toBeInTheDocument()
@@ -226,7 +227,7 @@ describe('Combos — listado', () => {
   })
 
   it('sin combos lo dice', async () => {
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     expect(await screen.findByText('No hay combos cargados.')).toBeInTheDocument()
   })
@@ -234,7 +235,7 @@ describe('Combos — listado', () => {
   it('si la lectura falla muestra el mensaje del servidor y no la fila de vacío', async () => {
     mockearApiGet({ combos: () => Promise.reject(new ErrorApi(500, 'error_interno', 'Falló el servidor.')) })
 
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     expect(await screen.findByText('Falló el servidor.')).toBeInTheDocument()
     expect(screen.queryByText('No hay combos cargados.')).not.toBeInTheDocument()
@@ -243,7 +244,7 @@ describe('Combos — listado', () => {
   it('si la lectura falla sin respuesta usa el texto genérico', async () => {
     mockearApiGet({ combos: () => Promise.reject(new Error('sin red')) })
 
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     expect(await screen.findByText('No se pudieron cargar los combos.')).toBeInTheDocument()
   })
@@ -251,7 +252,7 @@ describe('Combos — listado', () => {
   it('si no cargan las familias o las empresas avisa y la pantalla sigue andando', async () => {
     mockearApiGet({ combos: [comboFixture()], familias: null, empresas: null })
 
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
 
     expect(await screen.findByText('Pancho y Coca')).toBeInTheDocument()
     expect(await screen.findByText(/No se pudieron cargar las familias/)).toBeInTheDocument()
@@ -270,7 +271,7 @@ describe('Combos — listado', () => {
       },
     })
     apiPostMock.mockResolvedValue(creado)
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await llenarAltaValida()
 
@@ -502,7 +503,7 @@ describe('Combos — alta', () => {
   })
 
   it('al abrir el foco queda en el nombre y cancelar lo devuelve al botón que abrió el modal', async () => {
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     const abrir = await screen.findByRole('button', { name: 'Agregar' })
 
     await usuario.click(abrir)
@@ -833,7 +834,7 @@ describe('Combos — componentes por peso', () => {
     })
     mockearApiGet({ combos: [combo], articulos: ARTICULOS })
     apiPutMock.mockResolvedValue(combo)
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     expect(await screen.findByText('0,2 kg × Jamón cocido + 0,2 kg × Queso por kilo')).toBeInTheDocument()
     await usuario.click(screen.getByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog', { name: 'Editar combo' })
@@ -853,7 +854,7 @@ describe('Combos — edición', () => {
   it('abre con los valores del combo, explica que el código vacío conserva el actual y manda el PUT completo con activo', async () => {
     mockearApiGet({ combos: [comboFixture()], articulos: ARTICULOS })
     apiPutMock.mockResolvedValue(comboFixture())
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog', { name: 'Editar combo' })
 
@@ -888,7 +889,7 @@ describe('Combos — edición', () => {
   it('un combo no disponible online abre desmarcado y el PUT reenvía el valor, también cuando se lo marca', async () => {
     mockearApiGet({ combos: [comboFixture({ disponibleOnline: false })], articulos: ARTICULOS })
     apiPutMock.mockResolvedValue(comboFixture({ disponibleOnline: false }))
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog', { name: 'Editar combo' })
     await screen.findByRole('option', { name: 'Línea Coca 500' })
@@ -911,7 +912,7 @@ describe('Combos — edición', () => {
   it('un combo de otra empresa que no está en el selector conserva su empresa', async () => {
     mockearApiGet({ combos: [comboFixture({ idEmpresa: 9 })], empresas: [empresa] })
     apiPutMock.mockResolvedValue(comboFixture())
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('option', { name: 'Alsina SA' })
 
@@ -936,7 +937,7 @@ describe('Combos — edición', () => {
       ],
     })
     apiPutMock.mockResolvedValue(comboFixture())
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog')
 
@@ -968,7 +969,7 @@ describe('Combos — edición', () => {
       ],
     })
     apiPutMock.mockResolvedValue(comboFixture())
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog')
 
@@ -986,13 +987,13 @@ describe('Combos — edición', () => {
   it('un 404 al guardar cierra el formulario, lo avisa y vuelve a leer el listado', async () => {
     mockearApiGet({ combos: [comboFixture()] })
     apiPutMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el combo 4.'))
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog')
 
     await usuario.click(guardar())
 
-    expect(await screen.findByText('El combo ya no existe. Se actualizó el listado.')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('El combo ya no existe. Se actualizó el listado.')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await waitFor(() => expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/combos')).toHaveLength(2))
   })
@@ -1003,7 +1004,7 @@ describe('Combos — escritura en vuelo', () => {
     const respuesta = diferida<ComboListado>()
     apiPostMock.mockReturnValue(respuesta.promesa)
     mockearApiGet({ combos: [comboFixture()], articulos: ARTICULOS })
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await screen.findByText('Pancho y Coca')
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
     await llenarAltaValida()
@@ -1042,7 +1043,8 @@ describe('Combos — escritura en vuelo', () => {
     await usuario.click(guardar())
 
     expect(await screen.findByText('Combo "Pancho y Coca" creado.')).toBeInTheDocument()
-    expect(await screen.findByText('No se pudo actualizar el listado. Volvé a entrar para ver el cambio.')).toBeInTheDocument()
+    const advertencia = await screen.findByText('No se pudo actualizar el listado. Volvé a entrar para ver el cambio.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
@@ -1050,7 +1052,7 @@ describe('Combos — escritura en vuelo', () => {
 describe('Combos — baja', () => {
   async function pedirBaja() {
     mockearApiGet({ combos: [comboFixture()] })
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     const disparador = await screen.findByRole('button', { name: 'Dar de baja Pancho y Coca' })
     await usuario.click(disparador)
     await screen.findByRole('alertdialog')
@@ -1082,7 +1084,8 @@ describe('Combos — baja', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(await screen.findByText('Combo "Pancho y Coca" dado de baja.')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Combo "Pancho y Coca" dado de baja.')
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(apiDeleteMock).toHaveBeenCalledWith('/combos/4')
     expect(await screen.findByText('No hay combos cargados.')).toBeInTheDocument()
   })
@@ -1109,7 +1112,7 @@ describe('Combos — baja', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(await screen.findByText('El combo ya no existe. Se actualizó el listado.')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('El combo ya no existe. Se actualizó el listado.')
     expect(screen.queryByText(/otra persona/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/combos')).toHaveLength(2))
@@ -1318,7 +1321,7 @@ describe('Combos — buscador de artículo asincrónico', () => {
   it('una respuesta que llega después de cerrar el modal no rompe nada ni aparece al reabrirlo', async () => {
     const errores = vi.spyOn(console, 'error').mockImplementation(() => {})
     const pendientes = mockearBusquedasDiferidas()
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
     await screen.findByRole('dialog')
     await buscarConBoton(1, 'uno')
@@ -1486,7 +1489,7 @@ describe('Combos — alta con resultado incierto', () => {
   it('un combo del mismo nombre que ya estaba antes del intento no cuenta como creado', async () => {
     mockearApiGet({ articulos: ARTICULOS, combos: [comboFixture({ id: 4, nombre: 'Pancho y Coca' })] })
     apiPostMock.mockRejectedValue(sinRespuesta())
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await screen.findByText('C12')
     await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByRole('dialog')
@@ -1560,7 +1563,7 @@ describe('Combos — alta con resultado incierto', () => {
   it('en una edición el 5xx sigue igual: aviso en el formulario, sin releer el listado', async () => {
     mockearApiGet({ combos: [comboFixture()] })
     apiPutMock.mockRejectedValue(sinRespuesta())
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
     await screen.findByRole('dialog')
 
@@ -1574,7 +1577,7 @@ describe('Combos — alta con resultado incierto', () => {
 
 describe('Combos — rótulo de una empresa o familia que falta', () => {
   async function abrirEdicionDe(combo: ComboListado) {
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await usuario.click(await screen.findByRole('button', { name: `Editar ${combo.nombre}` }))
     await screen.findByRole('dialog')
   }
@@ -1637,7 +1640,7 @@ describe('Combos — orden y filtros por columna', () => {
 
   async function montarConCombos() {
     mockearApiGet({ combos })
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await screen.findByText('Zeta')
   }
 
@@ -1747,7 +1750,7 @@ describe('Combos — orden y filtros por columna', () => {
     const refresco = diferida<ComboListado[]>()
     let lecturas = 0
     mockearApiGet({ combos: () => (++lecturas === 1 ? Promise.resolve(combos) : refresco.promesa) })
-    render(<Combos />)
+    render(<><Combos /><Toaster /></>)
     await screen.findByText('Zeta')
     apiDeleteMock.mockResolvedValue(undefined)
     await usuario.type(screen.getByRole('searchbox', { name: 'Filtrar por nombre' }), 'm')

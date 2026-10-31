@@ -44,6 +44,7 @@ import {
 } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
 import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
+import { toast } from '../toasts/toasts'
 
 const ID_FORMULARIO_OFERTA = 'formulario-oferta'
 
@@ -110,7 +111,7 @@ const CELDAS_DE_FILTROS = ['nombre', 'alcance', 'beneficio', 'prioridad', 'acumu
  * en el detalle, después de `obtener`.
  *
  * El alta y la edición viven en un `Modal` (mismo criterio que `Pagos.tsx`): un guardado exitoso
- * lo cierra y el aviso queda en la pantalla; los errores que ocurren con el modal abierto se
+ * lo cierra y el resultado se avisa con un toast; los errores que ocurren con el modal abierto se
  * muestran adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo.
  */
 export function Ofertas() {
@@ -123,7 +124,6 @@ export function Ofertas() {
   const [avisosCatalogos, setAvisosCatalogos] = useState<string[]>([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [errorFormulario, setErrorFormulario] = useState('')
   /** Cuenta los rechazos de validación: el mensaje puede repetirse sin cambiar el estado. */
   const [rechazosDeValidacion, setRechazosDeValidacion] = useState(0)
@@ -255,7 +255,6 @@ export function Ofertas() {
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario(formularioOfertaVacio())
-    setAviso('')
     setError('')
     setErrorFormulario('')
   }
@@ -290,7 +289,6 @@ export function Ofertas() {
       if (tokenEdicionRef.current !== token) return
       setFormulario({ ...aValoresOferta(detalle), nombreArticulo })
       setGuardando(false)
-      setAviso('')
       setErrorFormulario('')
     } catch (e) {
       if (tokenEdicionRef.current !== token) return
@@ -314,7 +312,6 @@ export function Ofertas() {
     setGuardando(true)
     setError('')
     setErrorFormulario('')
-    setAviso('')
 
     try {
       if (formulario.id === null) {
@@ -322,25 +319,25 @@ export function Ofertas() {
         // La oferta nueva puede caer fuera de los filtros vigentes: se limpian para que la fila creada se vea.
         limpiarFiltros()
         if (tokenEdicionRef.current === token) {
-          setAviso(`Oferta "${formulario.nombre}" creada.`)
+          toast.exito(`Oferta "${formulario.nombre}" creada.`)
           setFormulario(null)
         }
       } else {
         await clienteDeOfertas.actualizar(formulario.id, aAltaOferta(formulario))
         if (tokenEdicionRef.current === token) {
-          setAviso(`Oferta "${formulario.nombre}" actualizada.`)
+          toast.exito(`Oferta "${formulario.nombre}" actualizada.`)
           setFormulario(null)
         }
       }
 
       // El refresco de la tabla no pertenece al token de edición: un fallo acá es solo de
       // vista, el guardado ya tuvo éxito (mismo criterio que Articulos.tsx). El modal ya se
-      // cerró, así que el aviso va a la pantalla.
+      // cerró, así que el aviso va como toast.
       try {
         await cargar({ relanzarError: true })
       } catch {
         if (tokenEdicionRef.current === token) {
-          setError('La oferta se guardó, pero no se pudo actualizar el listado. Volvé a entrar para verla.')
+          toast.advertencia('La oferta se guardó, pero no se pudo actualizar el listado. Volvé a entrar para verla.')
         }
       }
     } catch (e) {
@@ -371,7 +368,6 @@ export function Ofertas() {
 
     invalidarEdicionEnCurso()
     setError('')
-    setAviso('')
     setErrorDeBaja('')
     setEliminando(true)
     try {
@@ -382,13 +378,13 @@ export function Ofertas() {
         return
       }
 
-      setAviso(`Oferta "${o.nombre}" dada de baja.`)
+      toast.exito(`Oferta "${o.nombre}" dada de baja.`)
       setBaja(null)
       if (formulario?.id === o.id) setFormulario(null)
       try {
         await cargar({ relanzarError: true })
       } catch {
-        setError('La oferta se dio de baja, pero no se pudo actualizar el listado. Volvé a entrar para verla.')
+        toast.advertencia('La oferta se dio de baja, pero no se pudo actualizar el listado. Volvé a entrar para verla.')
       }
     } finally {
       eliminandoRef.current = false
@@ -406,7 +402,6 @@ export function Ofertas() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Ofertas" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {avisosCatalogos.length > 0 && (
           <div className="alert alert-warning">{avisosCatalogos.join(' ')}</div>
         )}
