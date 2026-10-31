@@ -45,7 +45,17 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
   presupuestos, catalog, labels, snapshot, `SuperficieDeAutorizacionTests`, `AislamientoDeTenantTests`), 22 m.
 - [ ] T2 — Offline: snapshot representation of strict components (escalones + family grid), TS engine
   (`instantaneaOffline.ts`, ticket synthesis, combos motor), server discrepancy check. Tests + parity.
-- [ ] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest.
+- [ ] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest. Also the online
+  POS cart preview (`api/ventas.ts` `previaDeLinea`) must use `descuentoDeLinea` when present (judge A: 3 units
+  preview 11250 while the server charges 11500).
+- [ ] T4 — Engine follow-ups from judgment-day T1 (WARNING, both judges): base selection among non-acumulable
+  offers of equal priority ranks by per-unit discount and ignores strict coverage; combo detection compares
+  against the full per-unit discount (conservative, judge A). Rank by the line discount at the actual quantity.
+
+## Judgment-day T1 (2026-10-30)
+
+`JUDGMENT: APPROVED` — no CRITICAL from either judge. Warnings recorded as T3/T4 above; family offer reported as
+applied with 0 covered units when another base wins on some lines (judge B, SUGGESTION) stays informational.
 
 ## Route per task
 
