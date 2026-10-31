@@ -26,6 +26,10 @@ const AYUDA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
   ],
   ['demasiados_articulos', 'Elegí menos artículos y agrupá en más de un paso.'],
   ['familia_nombre_duplicado', 'Elegí otro nombre.'],
+  [
+    'composicion_distinta',
+    'Para apagarlo, todos los artículos tienen que tener la misma composición del costo (costo de lista, base, IVA incluido, descuento e impuesto interno).',
+  ],
   ['familia_inactiva', 'Activala desde el listado de familias para poder sumarle artículos.'],
   ['familia_sin_articulos', 'Una familia sin artículos vivos no tiene referencia: disolvela desde el listado o creá una nueva.'],
 ])

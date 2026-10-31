@@ -1,12 +1,14 @@
 import type { Ref } from 'react'
 import type { AlcanceDeFamilia } from '../../api/tipos'
-import { CAMPOS_PROPIOS, PREGUNTA_DE_ALCANCE } from './familia'
+import { CAMPOS_PROPIOS, PREGUNTA_DE_ALCANCE, textoDeCambioDeNominal, type CambioDeNominal } from './familia'
 
 type Props = {
   /** Con qué se abre la pregunta: la familia del artículo si se la conoce, o el texto del servidor. */
   contexto: string
   /** Etiquetas de los campos compartidos que cambian. Vacío cuando lo que se escribe es un precio. */
   cambios?: string[]
+  /** Solo en una familia que desglosa el costo: el nominal que el cambio dejaría en toda la familia. */
+  cambioDeNominal?: CambioDeNominal | null
   /** `true` mientras la escritura está en vuelo: las tres respuestas quedan inertes. */
   ocupado: boolean
   /** El botón "Cancelar", la respuesta que no escribe nada: a quien aloja la pregunta le sirve para enfocarlo al abrirla. */
@@ -24,12 +26,18 @@ const EXPLICACION =
  * contenido: el formulario de artículo lo aloja en un `Modal` y el editor de precios en el panel de la
  * lista, así que la pregunta y sus tres respuestas son las mismas en los dos.
  */
-export function PreguntaDeAlcance({ contexto, cambios = [], ocupado, refDeCancelar, onElegir, onCancelar }: Props) {
+export function PreguntaDeAlcance({ contexto, cambios = [], cambioDeNominal = null, ocupado, refDeCancelar, onElegir, onCancelar }: Props) {
   return (
     <div>
       <p className="mb-2">
         {contexto} <strong>{PREGUNTA_DE_ALCANCE}</strong>
       </p>
+      {cambioDeNominal !== null && (
+        <p className="mb-2">
+          {textoDeCambioDeNominal(cambioDeNominal)}. Con "Toda la familia" todos los artículos pasan al costo nominal nuevo y cada uno
+          conserva su composición del costo.
+        </p>
+      )}
       {cambios.length > 0 && <p className="mb-2">Campos compartidos que cambian: {cambios.join(', ')}.</p>}
       <p className="small text-body-secondary mb-3">
         {cambios.length > 0 ? `${EXPLICACION} Los campos propios (${CAMPOS_PROPIOS}) se guardan siempre solo en este artículo.` : EXPLICACION}
