@@ -52,6 +52,10 @@ public class ConexionMercadoPago : EntidadTenant
 
     public DateTimeOffset? FechaUltimaRenovacion { get; set; }
 
+    /// <summary>Cuándo falló el último intento de renovar el token (falla de Mercado Pago, credenciales rechazadas o rotación perdida).
+    /// La renovación previa al uso la respeta como backoff para no repetir la llamada fallida en cada pedido.</summary>
+    public DateTimeOffset? FechaUltimoIntentoRenovacion { get; set; }
+
     /// <summary>Cuándo la renovación automática la marcó como <see cref="EstadoConexionMercadoPago.RequiereReconexion"/>.</summary>
     public DateTimeOffset? FechaRequiereReconexion { get; set; }
 }

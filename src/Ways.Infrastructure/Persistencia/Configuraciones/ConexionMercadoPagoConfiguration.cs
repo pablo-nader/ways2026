@@ -78,6 +78,7 @@ public class ConexionMercadoPagoConfiguration : IEntityTypeConfiguration<Conexio
         builder.Property(c => c.FechaConexion).HasColumnName("fecha_conexion").IsRequired();
         builder.Property(c => c.FechaDesconexion).HasColumnName("fecha_desconexion");
         builder.Property(c => c.FechaUltimaRenovacion).HasColumnName("fecha_ultima_renovacion");
+        builder.Property(c => c.FechaUltimoIntentoRenovacion).HasColumnName("fecha_ultimo_intento_renovacion");
         builder.Property(c => c.FechaRequiereReconexion).HasColumnName("fecha_requiere_reconexion");
 
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();

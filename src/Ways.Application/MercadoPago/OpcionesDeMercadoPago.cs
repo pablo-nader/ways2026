@@ -37,6 +37,16 @@ public class OpcionesDeMercadoPago
     /// ventana de 30 días de la renovación en segundo plano. Un valor no positivo vuelve al valor por defecto.</summary>
     public int HorasDeMargenDelToken { get; set; } = HorasDeMargenDelTokenPorDefecto;
 
+    public const int MinutosDeBackoffDeRenovacionPorDefecto = 15;
+
+    /// <summary>Tras una renovación previa al uso que falló, no se vuelve a intentar antes de estos minutos mientras el token
+    /// guardado siga siendo utilizable. Un valor no positivo vuelve al valor por defecto.</summary>
+    public int MinutosDeBackoffDeRenovacion { get; set; } = MinutosDeBackoffDeRenovacionPorDefecto;
+
+    public TimeSpan BackoffDeRenovacion =>
+        TimeSpan.FromMinutes(
+            MinutosDeBackoffDeRenovacion > 0 ? MinutosDeBackoffDeRenovacion : MinutosDeBackoffDeRenovacionPorDefecto);
+
     public TimeSpan MargenDelToken =>
         TimeSpan.FromHours(HorasDeMargenDelToken > 0 ? HorasDeMargenDelToken : HorasDeMargenDelTokenPorDefecto);
 

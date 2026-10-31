@@ -9,7 +9,7 @@ namespace Ways.Application.MercadoPago;
 
 /// <summary>
 /// Entrega el access token del vendedor para llamar a la API de Mercado Pago. No toma locks ni escribe: lee la conexión sin
-/// rastrearla, y si el token está por vencer delega en <see cref="ServicioDeRenovacionDeConexionesMercadoPago.RenovarConexionAsync"/>,
+/// rastrearla, y si el token está por vencer delega en <see cref="ServicioDeRenovacionDeConexionesMercadoPago.RenovarAntesDeUsarAsync"/>,
 /// que ya bloquea la fila, rota los dos tokens y clasifica el rechazo. Después de renovar (con éxito o no) lee la fila de nuevo, así
 /// ve la renovación de otro proceso y el estado que haya dejado un rechazo.
 ///
@@ -17,6 +17,11 @@ namespace Ways.Application.MercadoPago;
 /// <see cref="HolguraDeUso"/>; si no, <see cref="CodigosDeErrorDeMercadoPago.NoDisponible"/>. Un token vencido no se entrega nunca. Una
 /// falla transitoria dentro del margen no corta las llamadas mientras el token siga vigente, y como el margen (1 día) es mucho menor
 /// que la ventana del proceso en segundo plano (30 días), una falla pasajera casi nunca llega a vencerlo.
+///
+/// Para no repetir en cada llamada una renovación que falla, el intento fallido queda anotado en la fila
+/// (<c>fecha_ultimo_intento_renovacion</c>) y, mientras el token guardado siga siendo utilizable, no se vuelve a intentar antes de
+/// <see cref="OpcionesDeMercadoPago.BackoffDeRenovacion"/>. La renovación previa al uso tampoco espera el lock: si otra la tiene en curso
+/// se usa el token guardado. Un token ya no utilizable ignora el backoff y siempre intenta renovar.
 /// </summary>
 public class ProveedorDeTokenMercadoPago(
     IWaysDbContext db,
@@ -46,20 +51,15 @@ public class ProveedorDeTokenMercadoPago(
 
         if (NecesitaRenovarse(conexion.AccessTokenExpiraEn, ahora, opciones.Value.MargenDelToken))
         {
-            var resultado = await renovacion.RenovarConexionAsync(conexion.Id, conexion.IdTenant, ahora, ct);
-            if (resultado == ResultadoDeRenovacion.RequiereReconexion)
+            var backoff = opciones.Value.BackoffDeRenovacion;
+            var enBackoff = EsUsable(conexion.AccessTokenExpiraEn, ahora)
+                && ServicioDeRenovacionDeConexionesMercadoPago.EstaEnBackoff(conexion.FechaUltimoIntentoRenovacion, ahora, backoff);
+
+            if (!enBackoff)
             {
-                throw RequiereReconexion();
+                conexion = await RenovarAntesDeUsarAsync(conexion, idEmpresa, ahora, backoff, ct);
             }
 
-            if (resultado is not (ResultadoDeRenovacion.Renovada or ResultadoDeRenovacion.Omitida))
-            {
-                log.LogWarning(
-                    "La renovación previa al uso de la conexión {IdConexion} de Mercado Pago terminó en {Resultado}.",
-                    conexion.Id, resultado);
-            }
-
-            conexion = ExigirActiva(await LeerAsync(idEmpresa, ct));
             if (!EsUsable(conexion.AccessTokenExpiraEn, ahora))
             {
                 throw NoDisponible();
@@ -78,6 +78,42 @@ public class ProveedorDeTokenMercadoPago(
         }
 
         return new TokenDelVendedorMercadoPago(conexion.Id, conexion.IdUsuarioMercadoPago, acceso, conexion.AccessTokenExpiraEn);
+    }
+
+    /// <summary>Intenta renovar sin esperar a otra renovación en curso y sin dejar escapar una falla inesperada: lo que pase se
+    /// resuelve con la fila releída y la regla del token utilizable.</summary>
+    private async Task<ConexionMercadoPago> RenovarAntesDeUsarAsync(
+        ConexionMercadoPago conexion, int idEmpresa, DateTimeOffset ahora, TimeSpan backoff, CancellationToken ct)
+    {
+        ResultadoDeRenovacion? resultado = null;
+        try
+        {
+            resultado = await renovacion.RenovarAntesDeUsarAsync(conexion.Id, conexion.IdTenant, ahora, backoff, ct);
+        }
+        catch (Exception error) when (!ct.IsCancellationRequested)
+        {
+            log.LogError(
+                error, "Falló la renovación previa al uso de la conexión {IdConexion} de Mercado Pago; se usa el token guardado si todavía sirve.",
+                conexion.Id);
+        }
+
+        if (resultado == ResultadoDeRenovacion.RequiereReconexion)
+        {
+            throw RequiereReconexion();
+        }
+
+        if (resultado is ResultadoDeRenovacion.Ocupada or ResultadoDeRenovacion.EnEspera)
+        {
+            log.LogDebug(
+                "La renovación previa al uso de la conexión {IdConexion} de Mercado Pago no se intentó: {Resultado}.", conexion.Id, resultado);
+        }
+        else if (resultado is not (null or ResultadoDeRenovacion.Renovada or ResultadoDeRenovacion.Omitida))
+        {
+            log.LogWarning(
+                "La renovación previa al uso de la conexión {IdConexion} de Mercado Pago terminó en {Resultado}.", conexion.Id, resultado);
+        }
+
+        return ExigirActiva(await LeerAsync(idEmpresa, ct));
     }
 
     public Task<bool> MarcarTokenRechazadoAsync(TokenDelVendedorMercadoPago token, CancellationToken ct = default) =>

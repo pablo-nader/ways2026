@@ -324,7 +324,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         DateTimeOffset FechaConexion,
         DateTimeOffset? FechaDesconexion,
         DateTimeOffset? FechaUltimaRenovacion,
-        DateTimeOffset? FechaRequiereReconexion);
+        DateTimeOffset? FechaRequiereReconexion,
+        DateTimeOffset? FechaUltimoIntentoRenovacion = null);
 
     public async Task<List<FilaDeConexion>> FilasAsync(int? idEmpresa = null)
     {
@@ -335,7 +336,7 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
             "SELECT id_conexion_mercadopago, id_tenant, id_empresa, id_cuenta_tesoreria, id_usuario_mercadopago, estado, " +
             "access_token_cifrado, access_token_nonce, access_token_tag, refresh_token_cifrado, refresh_token_nonce, " +
             "refresh_token_tag, id_clave_maestra, access_token_expira_en, id_usuario_conecto, fecha_conexion, fecha_desconexion, " +
-            "fecha_ultima_renovacion, fecha_requiere_reconexion " +
+            "fecha_ultima_renovacion, fecha_requiere_reconexion, fecha_ultimo_intento_renovacion " +
             "FROM conexiones_mercadopago WHERE ($1::int IS NULL OR id_empresa = $1) ORDER BY id_conexion_mercadopago";
         comando.Parameters.Add(new NpgsqlParameter<int?> { TypedValue = idEmpresa });
 
@@ -357,7 +358,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
                 lector.GetFieldValue<DateTimeOffset>(15),
                 lector.IsDBNull(16) ? null : lector.GetFieldValue<DateTimeOffset>(16),
                 lector.IsDBNull(17) ? null : lector.GetFieldValue<DateTimeOffset>(17),
-                lector.IsDBNull(18) ? null : lector.GetFieldValue<DateTimeOffset>(18)));
+                lector.IsDBNull(18) ? null : lector.GetFieldValue<DateTimeOffset>(18),
+                lector.IsDBNull(19) ? null : lector.GetFieldValue<DateTimeOffset>(19)));
         }
 
         return filas;

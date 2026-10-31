@@ -327,7 +327,9 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
         }
 
         Assert.Equal(1, Llamadas(ctx, conectada.Refresco));
-        AfirmarSinCambios(conectada.Fila, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)));
+        var trasLaFalla = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        AfirmarSinCambios(conectada.Fila, trasLaFalla);
+        Assert.Equal(ahora, trasLaFalla.FechaUltimoIntentoRenovacion);
 
         var (acceso2, refresco2) = ($"APP_USR-{Etiqueta()}-nuevo", $"TG-{Etiqueta()}-nuevo");
         ctx.MercadoPago.Responder = new Guion()
@@ -473,6 +475,8 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(0, Llamadas(a, queNoSeAlcanzan.Refresco));
         AfirmarSinCambios(queRechazan.Fila, Assert.Single(await _apoyo.FilasAsync(a.IdEmpresa)));
         AfirmarSinCambios(queNoSeAlcanzan.Fila, Assert.Single(await _apoyo.FilasAsync(b.IdEmpresa)));
+        Assert.Equal(ahora, Assert.Single(await _apoyo.FilasAsync(a.IdEmpresa)).FechaUltimoIntentoRenovacion);
+        Assert.Null(Assert.Single(await _apoyo.FilasAsync(b.IdEmpresa)).FechaUltimoIntentoRenovacion);
 
         var errores = ErroresDelServicio(logs);
         var unico = Assert.Single(errores);
@@ -501,7 +505,9 @@ public class MercadoPagoRenovacionTests(WaysApiFixture fixture) : IClassFixture<
         }
 
         Assert.Equal(1, Llamadas(ctx, conectada.Refresco));
-        AfirmarSinCambios(conectada.Fila, Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)));
+        var trasLaPerdida = Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa));
+        AfirmarSinCambios(conectada.Fila, trasLaPerdida);
+        Assert.Equal(ahora, trasLaPerdida.FechaUltimoIntentoRenovacion);
 
         var unico = Assert.Single(ErroresDelServicio(logs));
         Assert.Contains("rotación se perdió", unico);

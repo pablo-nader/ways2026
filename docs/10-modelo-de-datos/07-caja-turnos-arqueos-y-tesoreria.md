@@ -289,6 +289,7 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
     id_usuario_conecto,                      -- usuario de Ways que inició la conexión
     fecha_conexion timestamptz NOT NULL, fecha_desconexion NULL, fecha_ultima_renovacion NULL,
     fecha_requiere_reconexion timestamptz NULL,  -- cuándo la renovación automática la marcó 'requiere_reconexion'
+    fecha_ultimo_intento_renovacion timestamptz NULL,  -- último intento de renovar el token que falló (backoff de la renovación previa al uso)
     created_at, updated_at, deleted_at
 );
 ```
@@ -353,3 +354,13 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > de red no toca nada y se reintenta en la próxima corrida. `requiere_reconexion` no es `activa`: no ocupa los índices únicos
 > parciales y la empresa puede volver a conectar (el inicio solo bloquea ante una `activa`); la fila queda como historia. Sin
 > `ClientId`/`ClientSecret`/`RedirectUri`, o con `Ways:MercadoPago:RenovacionAutomatica` en `false`, el job se registra una vez y no hace nada.
+>
+> **Renovación previa al uso (etapa E2, T1).** Antes de cada llamada a la API de Mercado Pago, un token al que le quedan
+> `Ways:MercadoPago:HorasDeMargenDelToken` (24) horas o menos se renueva primero. Esa renovación **no espera el lock**: toma la fila con
+> `FOR UPDATE SKIP LOCKED` y, si otra renovación la tiene, se usa el token guardado cuando todavía le queda más de un minuto. Un intento que
+> falla (falla de Mercado Pago o de red, credenciales de la aplicación rechazadas, material ilegible o rotación perdida) anota
+> `fecha_ultimo_intento_renovacion`; mientras el token guardado siga siendo utilizable, las llamadas siguientes no vuelven a intentarlo
+> antes de `Ways:MercadoPago:MinutosDeBackoffDeRenovacion` (15; releído bajo el lock). Un token que ya no es utilizable ignora el backoff y
+> reintenta, y si no logra renovarlo responde 503 `mercadopago_no_disponible`. La corrida en segundo plano no respeta el backoff, pero sí lo
+> anota cuando falla. Una excepción inesperada de la renovación previa al uso se registra (sin tokens) y no corta la llamada si el token
+> guardado todavía sirve.

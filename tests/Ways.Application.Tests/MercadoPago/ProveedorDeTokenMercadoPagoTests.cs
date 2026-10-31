@@ -74,6 +74,59 @@ public class ProveedorDeTokenMercadoPagoTests
     }
 
     [Fact]
+    public void SinConfigurarElBackoffDeLaRenovacionEsDeQuinceMinutos()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(15), new OpcionesDeMercadoPago().BackoffDeRenovacion);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void UnBackoffNoPositivoVuelveAlPorDefecto(int minutos)
+    {
+        Assert.Equal(
+            TimeSpan.FromMinutes(15), new OpcionesDeMercadoPago { MinutosDeBackoffDeRenovacion = minutos }.BackoffDeRenovacion);
+    }
+
+    [Fact]
+    public void ElBackoffConfiguradoSeRespeta()
+    {
+        Assert.Equal(
+            TimeSpan.FromMinutes(3), new OpcionesDeMercadoPago { MinutosDeBackoffDeRenovacion = 3 }.BackoffDeRenovacion);
+    }
+
+    [Theory]
+    [InlineData(-1, true)]
+    [InlineData(-14, true)]
+    [InlineData(-15, false)]
+    [InlineData(-16, false)]
+    [InlineData(5, false)]
+    public void UnIntentoFallidoFrenaElSiguienteSoloHastaQuePaseElBackoffYUnoFechadoEnElFuturoNoFrena(int minutosDesdeAhora, bool esperado)
+    {
+        var backoff = TimeSpan.FromMinutes(15);
+
+        Assert.Equal(
+            esperado,
+            ServicioDeRenovacionDeConexionesMercadoPago.EstaEnBackoff(Ahora.AddMinutes(minutosDesdeAhora), Ahora, backoff));
+    }
+
+    [Fact]
+    public void SinIntentoPreviamenteAnotadoNoHayBackoff()
+    {
+        Assert.False(ServicioDeRenovacionDeConexionesMercadoPago.EstaEnBackoff(null, Ahora, TimeSpan.FromMinutes(15)));
+    }
+
+    [Fact]
+    public void ElLimiteDelBackoffEsExclusivoYUnTickAntesTodaviaFrena()
+    {
+        var backoff = TimeSpan.FromMinutes(15);
+        var intento = Ahora - backoff;
+
+        Assert.False(ServicioDeRenovacionDeConexionesMercadoPago.EstaEnBackoff(intento, Ahora, backoff));
+        Assert.True(ServicioDeRenovacionDeConexionesMercadoPago.EstaEnBackoff(intento.AddTicks(1), Ahora, backoff));
+    }
+
+    [Fact]
     public void ElTokenDelVendedorNoImprimeElAccessTokenAlConvertirseEnTexto()
     {
         var token = new TokenDelVendedorMercadoPago(3, 99, "APP_USR-secreto", Ahora);

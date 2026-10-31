@@ -30,6 +30,8 @@ public class ClienteApiMercadoPagoTests
     {
         public Exception? Falla { get; set; }
 
+        public Exception? FallaAlMarcar { get; set; }
+
         public List<TokenDelVendedorMercadoPago> Rechazados { get; } = [];
 
         public Task<TokenDelVendedorMercadoPago> ObtenerAccessTokenAsync(int idEmpresa, CancellationToken ct = default) =>
@@ -40,9 +42,63 @@ public class ClienteApiMercadoPagoTests
         public Task<bool> MarcarTokenRechazadoAsync(TokenDelVendedorMercadoPago token, CancellationToken ct = default)
         {
             Rechazados.Add(token);
-            return Task.FromResult(true);
+            return FallaAlMarcar is null ? Task.FromResult(true) : Task.FromException<bool>(FallaAlMarcar);
         }
     }
+
+    /// <summary>Flujo que sirve <paramref name="total"/> bytes en tandas; con <paramref name="falla"/> se corta apenas arranca la
+    /// lectura y con <paramref name="colgar"/> no responde nunca.</summary>
+    private sealed class FlujoContado(int total, Exception? falla = null, bool colgar = false) : Stream
+    {
+        public int Servidos { get; private set; }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Leer(buffer.AsSpan(offset, count));
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (colgar)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return falla is null ? Leer(buffer.Span) : throw falla;
+        }
+
+        private int Leer(Span<byte> destino)
+        {
+            var n = Math.Min(Math.Min(destino.Length, 4096), total - Servidos);
+            destino[..n].Fill((byte)'x');
+            Servidos += n;
+            return n;
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private static HttpResponseMessage ConFlujo(HttpStatusCode estado, Stream flujo) =>
+        new(estado) { Content = new StreamContent(flujo) };
 
     private sealed class RegistroDeLogs : ILogger<ClienteApiMercadoPago>
     {
@@ -61,13 +117,17 @@ public class ClienteApiMercadoPagoTests
         new(estado) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
     private static (ClienteApiMercadoPago Cliente, ManejadorFalso Manejador, ProveedorFalso Proveedor, RegistroDeLogs Logs) Crear(
-        Func<HttpRequestMessage, string, HttpResponseMessage> responder)
+        Func<HttpRequestMessage, string, HttpResponseMessage> responder, TimeSpan? plazoDeLectura = null)
     {
         var manejador = new ManejadorFalso(responder);
         var proveedor = new ProveedorFalso();
         var logs = new RegistroDeLogs();
         var http = new HttpClient(manejador) { BaseAddress = new Uri("https://api.mp.test/") };
-        return (new ClienteApiMercadoPago(http, proveedor, logs), manejador, proveedor, logs);
+        var cliente = new ClienteApiMercadoPago(http, proveedor, logs)
+        {
+            PlazoDeLecturaDelCuerpo = plazoDeLectura ?? TimeSpan.FromSeconds(15)
+        };
+        return (cliente, manejador, proveedor, logs);
     }
 
     private sealed record Eco(long Id, string? NombreCompleto);
@@ -208,6 +268,99 @@ public class ClienteApiMercadoPagoTests
         Assert.Equal(200, error.MensajeMercadoPago!.Length);
     }
 
+    [Fact]
+    public async Task UnErrorDeLecturaDelCuerpoDeUnCuatroXxPorTiempoAgotadoEsNoDisponible()
+    {
+        var (cliente, _, proveedor, logs) = Crear(
+            (_, _) => ConFlujo(HttpStatusCode.BadRequest, new FlujoContado(10, new TaskCanceledException("timeout"))));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, error.Codigo);
+        Assert.Equal(503, error.EstadoHttp);
+        Assert.Empty(proveedor.Rechazados);
+        Assert.All(logs.Mensajes, m => Assert.DoesNotContain(Token, m));
+    }
+
+    [Fact]
+    public async Task UnCuerpoDeUnCuatroXxQueNuncaTerminaDeLlegarSeCortaPorElPlazoYEsNoDisponible()
+    {
+        var (cliente, _, _, _) = Crear(
+            (_, _) => ConFlujo(HttpStatusCode.BadRequest, new FlujoContado(10, colgar: true)), TimeSpan.FromMilliseconds(50));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, error.Codigo);
+    }
+
+    [Theory]
+    [InlineData(typeof(HttpRequestException))]
+    [InlineData(typeof(IOException))]
+    public async Task UnCuerpoDeUnCuatroXxCortadoPorLaRedEsNoDisponible(Type tipo)
+    {
+        var (cliente, _, _, _) = Crear(
+            (_, _) => ConFlujo(HttpStatusCode.Conflict, new FlujoContado(10, (Exception)Activator.CreateInstance(tipo, "sin red")!)));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, error.Codigo);
+        Assert.IsNotType<ErrorDeApiMercadoPago>(error);
+    }
+
+    [Fact]
+    public async Task UnaCancelacionDelLlamadorLeyendoElCuerpoDeUnCuatroXxSigueSiendoCancelacion()
+    {
+        using var cancelado = new CancellationTokenSource();
+        await cancelado.CancelAsync();
+        var (cliente, _, _, _) = Crear(
+            (_, _) => ConFlujo(HttpStatusCode.BadRequest, new FlujoContado(10, new TaskCanceledException("cancelado"))));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos", ct: cancelado.Token));
+    }
+
+    [Fact]
+    public async Task ElCuerpoDeUnErrorSeInterpretaAcotadoYUnoMasLargoQueElTopeQuedaSinCodigoNiMensaje()
+    {
+        var relleno = new string(' ', 4 * ClienteApiMercadoPago.LargoMaximoDelCuerpoDeError);
+        var cuerpo = "{\"error\":\"bad_request\",\"message\":\"corto\"," + relleno + "\"status\":400}";
+        var (cliente, _, _, _) = Crear((_, _) => Json(HttpStatusCode.BadRequest, cuerpo));
+
+        var error = await Assert.ThrowsAsync<ErrorDeApiMercadoPago>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos"));
+
+        Assert.Equal(400, error.EstadoMercadoPago);
+        Assert.Null(error.CodigoMercadoPago);
+        Assert.Null(error.MensajeMercadoPago);
+    }
+
+    [Fact]
+    public async Task UnCuerpoDeErrorQueEntraEnElTopeSeInterpretaCompleto()
+    {
+        var relleno = new string(' ', ClienteApiMercadoPago.LargoMaximoDelCuerpoDeError / 2);
+        var cuerpo = "{\"error\":\"bad_request\"," + relleno + "\"message\":\"corto\"}";
+        var (cliente, _, _, _) = Crear((_, _) => Json(HttpStatusCode.BadRequest, cuerpo));
+
+        var error = await Assert.ThrowsAsync<ErrorDeApiMercadoPago>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos"));
+
+        Assert.Equal("bad_request", error.CodigoMercadoPago);
+        Assert.Equal("corto", error.MensajeMercadoPago);
+    }
+
+    [Fact]
+    public async Task SiLaMarcaDelRechazoFallaElLlamadorIgualRecibeRequiereReconexionYElTokenNoSale()
+    {
+        var (cliente, _, proveedor, logs) = Crear((_, _) => Json(HttpStatusCode.Unauthorized, """{"message":"invalid token"}"""));
+        proveedor.FallaAlMarcar = new InvalidOperationException("la base no responde");
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Get, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.RequiereReconexion, error.Codigo);
+        Assert.Equal(409, error.EstadoHttp);
+        Assert.Single(proveedor.Rechazados);
+        Assert.Contains(logs.Mensajes, m => m.Contains("la base no responde"));
+        Assert.All(logs.Mensajes, m => Assert.DoesNotContain(Token, m));
+    }
+
     // ---- Reintentables ----------------------------------------------------------------------------------------------
 
     [Theory]
@@ -226,6 +379,19 @@ public class ClienteApiMercadoPagoTests
         Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, error.Codigo);
         Assert.IsNotType<ErrorDeApiMercadoPago>(error);
         Assert.Empty(proveedor.Rechazados);
+    }
+
+    [Theory]
+    [InlineData(typeof(HttpRequestException))]
+    [InlineData(typeof(IOException))]
+    public async Task UnDosXxCortadoALaMitadDeLaLecturaEsNoDisponible(Type tipo)
+    {
+        var (cliente, _, _, _) = Crear(
+            (_, _) => ConFlujo(HttpStatusCode.OK, new FlujoContado(10, (Exception)Activator.CreateInstance(tipo, "sin red")!)));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Get, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, error.Codigo);
     }
 
     [Fact]

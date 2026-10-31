@@ -23,6 +23,13 @@ public sealed class ClienteApiMercadoPago(
 
     private const int LargoMaximoDelDetalle = 200;
 
+    /// <summary>Tope de bytes que se leen del cuerpo de un error de Mercado Pago: más allá no hay nada que interpretar.</summary>
+    public const int LargoMaximoDelCuerpoDeError = 16 * 1024;
+
+    /// <summary>Plazo para leer el cuerpo de una respuesta una vez recibidos los encabezados: <see cref="HttpClient.Timeout"/> solo
+    /// cubre hasta ahí, porque el cuerpo se lee en streaming.</summary>
+    public TimeSpan PlazoDeLecturaDelCuerpo { get; init; } = TimeSpan.FromSeconds(15);
+
     public static readonly JsonSerializerOptions OpcionesJson = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -54,7 +61,7 @@ public sealed class ClienteApiMercadoPago(
         HttpResponseMessage respuesta;
         try
         {
-            respuesta = await http.SendAsync(pedido, ct);
+            respuesta = await http.SendAsync(pedido, HttpCompletionOption.ResponseHeadersRead, ct);
         }
         catch (HttpRequestException)
         {
@@ -81,7 +88,17 @@ public sealed class ClienteApiMercadoPago(
             if (respuesta.StatusCode == HttpStatusCode.Unauthorized)
             {
                 // El token se creía vigente: lo revocó el vendedor. La marca va guardada por la versión del token usado.
-                await tokens.MarcarTokenRechazadoAsync(token, CancellationToken.None);
+                try
+                {
+                    await tokens.MarcarTokenRechazadoAsync(token, CancellationToken.None);
+                }
+                catch (Exception error)
+                {
+                    log.LogError(
+                        error, "No se pudo dejar la conexión {IdConexion} de Mercado Pago en requiere_reconexion tras un 401.",
+                        token.IdConexion);
+                }
+
                 throw new ErrorDominio(
                     CodigosDeErrorDeMercadoPago.RequiereReconexion,
                     "Mercado Pago rechazó las credenciales de esta empresa: hay que reconectarla.",
@@ -90,7 +107,7 @@ public sealed class ClienteApiMercadoPago(
 
             if (estado is >= 400 and < 500 and not 408 and not 429)
             {
-                var (codigo, mensaje) = await LeerErrorAsync(respuesta, token.AccessToken, ct);
+                var (codigo, mensaje) = await LeerErrorAsync(respuesta, token.AccessToken, metodo, rutaSinConsulta, ct);
                 throw new ErrorDeApiMercadoPago(estado, codigo, mensaje);
             }
 
@@ -129,7 +146,9 @@ public sealed class ClienteApiMercadoPago(
     {
         try
         {
-            var texto = await respuesta.Content.ReadAsStringAsync(ct);
+            using var limite = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limite.CancelAfter(PlazoDeLecturaDelCuerpo);
+            var texto = await respuesta.Content.ReadAsStringAsync(limite.Token);
             var resultado = JsonSerializer.Deserialize<TRespuesta>(texto, OpcionesJson);
             if (resultado is not null)
             {
@@ -140,12 +159,12 @@ public sealed class ClienteApiMercadoPago(
         {
             // Se trata igual que un cuerpo vacío o nulo, sin volcar el contenido.
         }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             log.LogWarning("Mercado Pago agotó el tiempo leyendo la respuesta de {Metodo} {Ruta}.", metodo.Method, ruta);
             throw NoDisponible();
         }
-        catch (HttpRequestException)
+        catch (Exception error) when (error is HttpRequestException or IOException)
         {
             log.LogWarning("Se cortó la respuesta de Mercado Pago a {Metodo} {Ruta}.", metodo.Method, ruta);
             throw NoDisponible();
@@ -158,12 +177,14 @@ public sealed class ClienteApiMercadoPago(
 
     /// <summary>Código y mensaje del error de Mercado Pago, tolerando sus tres formas (<c>error</c>/<c>message</c>, <c>errors[]</c> y
     /// <c>cause[]</c>). Cualquier cuerpo que no se entienda deja ambos en <c>null</c>.</summary>
-    private static async Task<(string? Codigo, string? Mensaje)> LeerErrorAsync(
-        HttpResponseMessage respuesta, string token, CancellationToken ct)
+    private async Task<(string? Codigo, string? Mensaje)> LeerErrorAsync(
+        HttpResponseMessage respuesta, string token, HttpMethod metodo, string ruta, CancellationToken ct)
     {
         try
         {
-            using var json = JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync(ct));
+            using var limite = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limite.CancelAfter(PlazoDeLecturaDelCuerpo);
+            using var json = JsonDocument.Parse(await LeerCuerpoAcotadoAsync(respuesta.Content, limite.Token));
             var raiz = json.RootElement;
             if (raiz.ValueKind != JsonValueKind.Object)
             {
@@ -189,6 +210,36 @@ public sealed class ClienteApiMercadoPago(
         {
             return (null, null);
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            log.LogWarning("Mercado Pago agotó el tiempo leyendo el error de {Metodo} {Ruta}.", metodo.Method, ruta);
+            throw NoDisponible();
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException)
+        {
+            log.LogWarning("Se cortó el error de Mercado Pago a {Metodo} {Ruta}.", metodo.Method, ruta);
+            throw NoDisponible();
+        }
+    }
+
+    /// <summary>Lee a lo sumo <see cref="LargoMaximoDelCuerpoDeError"/> bytes: un cuerpo más largo queda truncado y se trata como ilegible.</summary>
+    private static async Task<byte[]> LeerCuerpoAcotadoAsync(HttpContent contenido, CancellationToken ct)
+    {
+        await using var flujo = await contenido.ReadAsStreamAsync(ct);
+        var buffer = new byte[LargoMaximoDelCuerpoDeError];
+        var leidos = 0;
+        while (leidos < buffer.Length)
+        {
+            var n = await flujo.ReadAsync(buffer.AsMemory(leidos), ct);
+            if (n == 0)
+            {
+                break;
+            }
+
+            leidos += n;
+        }
+
+        return buffer[..leidos];
     }
 
     private static string? Texto(JsonElement objeto, string propiedad) =>

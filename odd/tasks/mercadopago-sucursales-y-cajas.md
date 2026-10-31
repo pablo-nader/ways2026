@@ -91,6 +91,38 @@ QR charge) and E4 (Point charge) need to create orders. Builds on E1 (`odd/tasks
   the reference, not yet exercised against the live API (T5 must confirm it).
 - Not covered: the `RotacionPerdida` renewal outcome (needs a failing commit) falls in the same branch as the other failures.
 
+## Judgment-day T1 round 1
+
+Both blind judges agreed on two confirmed findings; both fixed in one fix commit (`fix(mercadopago): el token del vendedor no reintenta
+la renovación en cada llamada y los errores de lectura son 503`). T1 now includes a migration (`fecha_ultimo_intento_renovacion`,
+nullable, no RLS or backfill impact) and a doc 10 section 07 update, contrary to the "no migration, no model change" line above.
+
+- E2T1-1 (fixed): the pre-use renewal retried on every call inside the 24 h margin, taking `FOR UPDATE` and calling Mercado Pago with
+  the lock held. Now: column `conexiones_mercadopago.fecha_ultimo_intento_renovacion` set on `Fallida` / `CredencialesRechazadas` /
+  `RotacionPerdida` (the last one with a separate best-effort UPDATE, since its transaction is gone); option
+  `MinutosDeBackoffDeRenovacion` (default 15); `ServicioDeRenovacionDeConexionesMercadoPago.RenovarAntesDeUsarAsync` takes the row with
+  `FOR UPDATE SKIP LOCKED` (returns `Ocupada` instead of waiting) and re-checks the backoff under the lock (`EnEspera`). The provider
+  skips the renewal while the stored token is usable (> 1 min) and `EstaEnBackoff`; an unusable token ignores the backoff and always
+  retries, so a failing renewal still ends in 503 `mercadopago_no_disponible`. Any non-cancellation exception from the renewal is
+  logged (no tokens) and falls back to the stored token when it is usable. Background job: unchanged (still waits for the lock and does
+  not honor the backoff, so the next run still retries), but it now records the attempt time on failure.
+- E2T1-2 (fixed): `ClienteApiMercadoPago` sends with `ResponseHeadersRead`, reads the 4xx error body through the same guard as the 2xx
+  body (timeout / `HttpRequestException` / `IOException` -> 503 `mercadopago_no_disponible`, caller cancellation stays a cancellation),
+  with its own 15 s body timeout (`PlazoDeLecturaDelCuerpo`, since `HttpClient.Timeout` no longer covers the body) and at most 16 KB read
+  (longer is treated as unreadable: no code, no message). A failing `MarcarTokenRechazadoAsync` is logged and the caller still gets
+  409 `mercadopago_requiere_reconexion`.
+- Tests: unit (`EstaEnBackoff`, option defaults, error-read guard, bound, mark failure) and integration (backoff within / after /
+  expired token / holgura, concurrent call does not wait for an in-flight renewal using the fake MP handler's `AntesDeResponder`,
+  unexpected exception falls back, attempt recorded by the job and by lost rotation).
+- Mutation evidence (mutate, run, revert): backoff predicate `<` -> `<=` fails the boundary unit tests; dropping the future-date guard
+  fails the `+5 min` case; predicate -> `false` fails 3 unit tests and 4 integration tests (backoff x3 statuses and the retry-after-backoff
+  test); `SKIP LOCKED` -> plain `FOR UPDATE` fails both concurrent-call tests (they time out waiting for the lock); not recording the
+  attempt fails the 3 backoff integration cases. Error read: guards removed fails 4 unit tests (timeout, hang, both network cuts); no
+  16 KB bound fails the oversized-body test; unguarded mark fails the mark-failure test.
+- Known residual: an unexpected (non-`ErrorDominio`) exception rolls the transaction back, so no attempt time is recorded and the next
+  call retries; only expected failures are backed off.
+
 ## Next step
 
-T2 (waits for #557); T3 can start now on top of T1.
+T2 waits for #557 and T3+ depend on T2, so nothing else starts before #557 lands. After this fix commit the T1 delta goes to a scoped
+judgment-day re-judgment (frozen findings plus the fix delta).

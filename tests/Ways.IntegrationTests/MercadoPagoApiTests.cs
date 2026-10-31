@@ -333,6 +333,210 @@ public class MercadoPagoApiTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, (await FallaAsync(ctx)).Codigo);
     }
 
+    // ---- Backoff y espera del lock de la renovación previa ----------------------------------------------------------
+
+    private async Task AnotarIntentoHaceAsync(Conectada conectada, TimeSpan haceCuanto) =>
+        await EjecutarSqlAsync(
+            "UPDATE conexiones_mercadopago SET fecha_ultimo_intento_renovacion = $1 WHERE id_conexion_mercadopago = $2",
+            DateTimeOffset.UtcNow - haceCuanto, conectada.Fila.Id);
+
+    [Theory]
+    [InlineData(503)]
+    [InlineData(429)]
+    [InlineData(401)]
+    public async Task UnaRenovacionPreviaQueFallaNoSeRepiteEnLasLlamadasDentroDelBackoffYSigueEntregandoElTokenGuardado(int estado)
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-backoff");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(12));
+        Guionar(ctx, () => Json((HttpStatusCode)estado, """{"error":"invalid_client"}"""));
+
+        Assert.Equal(conectada.Acceso, (await ObtenerAsync(ctx)).AccessToken);
+        Assert.Equal(1, Renovaciones(ctx));
+        Assert.NotNull(Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).FechaUltimoIntentoRenovacion);
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.Equal(conectada.Acceso, (await ObtenerAsync(ctx)).AccessToken);
+        }
+
+        Assert.Equal(1, Renovaciones(ctx));
+        Assert.Equal("activa", Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).Estado);
+    }
+
+    [Fact]
+    public async Task PasadoElBackoffLaRenovacionPreviaSeReintentaYLaExitosaDejaDeFrenar()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-backoff-vence");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(12));
+        await AnotarIntentoHaceAsync(conectada, TimeSpan.FromMinutes(14));
+        Guionar(ctx, () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        Assert.Equal(conectada.Acceso, (await ObtenerAsync(ctx)).AccessToken);
+        Assert.Equal(0, Renovaciones(ctx));
+
+        await AnotarIntentoHaceAsync(conectada, TimeSpan.FromMinutes(16));
+        Assert.Equal(conectada.Acceso, (await ObtenerAsync(ctx)).AccessToken);
+        Assert.Equal(1, Renovaciones(ctx));
+
+        var acceso2 = $"APP_USR-{Etiqueta()}-nuevo";
+        await AnotarIntentoHaceAsync(conectada, TimeSpan.FromMinutes(20));
+        Guionar(ctx, () => Exitoso(acceso2, $"TG-{Etiqueta()}-nuevo", ctx.MercadoPago.IdUsuario));
+        Assert.Equal(acceso2, (await ObtenerAsync(ctx)).AccessToken);
+        Assert.Equal(2, Renovaciones(ctx));
+    }
+
+    [Fact]
+    public async Task ElBackoffNoOcultaUnTokenQueYaNoSirveSeReintentaYSiFallaEsNoDisponible()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-backoff-vencido");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(-2));
+        await AnotarIntentoHaceAsync(conectada, TimeSpan.FromMinutes(1));
+        Guionar(ctx, () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, (await FallaAsync(ctx)).Codigo);
+        Assert.Equal(1, Renovaciones(ctx));
+
+        var acceso2 = $"APP_USR-{Etiqueta()}-nuevo";
+        Guionar(ctx, () => Exitoso(acceso2, $"TG-{Etiqueta()}-nuevo", ctx.MercadoPago.IdUsuario));
+        Assert.Equal(acceso2, (await ObtenerAsync(ctx)).AccessToken);
+    }
+
+    [Fact]
+    public async Task UnTokenPorVencerEnMenosDeLaHolguraIgnoraElBackoffYNoSeEntregaSiLaRenovacionFalla()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-backoff-holgura");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromSeconds(20));
+        await AnotarIntentoHaceAsync(conectada, TimeSpan.FromMinutes(1));
+        Guionar(ctx, () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, (await FallaAsync(ctx)).Codigo);
+        Assert.Equal(1, Renovaciones(ctx));
+    }
+
+    [Fact]
+    public async Task UnaRenovacionExitosaNoAnotaIntento()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-backoff-exito");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(12));
+        Guionar(ctx, () => Exitoso($"APP_USR-{Etiqueta()}-nuevo", $"TG-{Etiqueta()}-nuevo", ctx.MercadoPago.IdUsuario));
+
+        await ObtenerAsync(ctx);
+
+        Assert.Null(Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa)).FechaUltimoIntentoRenovacion);
+    }
+
+    [Fact]
+    public async Task UnaLlamadaConcurrenteNoEsperaLaRenovacionEnCursoYUsaElTokenGuardado()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-concurrente");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(12));
+        var acceso2 = $"APP_USR-{Etiqueta()}-nuevo";
+        Guionar(ctx, () => Exitoso(acceso2, $"TG-{Etiqueta()}-nuevo", ctx.MercadoPago.IdUsuario));
+
+        var renovando = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.MercadoPago.AntesDeResponder = async () =>
+        {
+            renovando.TrySetResult();
+            await liberar.Task;
+        };
+
+        var primera = Task.Run(() => ObtenerAsync(ctx));
+        try
+        {
+            await renovando.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            var segunda = await ObtenerAsync(ctx).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(conectada.Acceso, segunda.AccessToken);
+            Assert.Equal(1, Renovaciones(ctx));
+        }
+        finally
+        {
+            liberar.TrySetResult();
+        }
+
+        Assert.Equal(acceso2, (await primera.WaitAsync(TimeSpan.FromSeconds(30))).AccessToken);
+        Assert.Equal(acceso2, Descifrar(Assert.Single(await _apoyo.FilasAsync(ctx.IdEmpresa))).Acceso);
+    }
+
+    [Fact]
+    public async Task UnaLlamadaConcurrenteConElTokenYaVencidoNoEsperaYEsNoDisponible()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-concurrente-vencido");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(-2));
+        Guionar(ctx, () => Exitoso($"APP_USR-{Etiqueta()}-nuevo", $"TG-{Etiqueta()}-nuevo", ctx.MercadoPago.IdUsuario));
+
+        var renovando = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liberar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.MercadoPago.AntesDeResponder = async () =>
+        {
+            renovando.TrySetResult();
+            await liberar.Task;
+        };
+
+        var primera = Task.Run(() => ObtenerAsync(ctx));
+        try
+        {
+            await renovando.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            var error = await Assert.ThrowsAsync<ErrorDominio>(() => ObtenerAsync(ctx).WaitAsync(TimeSpan.FromSeconds(10)));
+
+            Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, error.Codigo);
+            Assert.Equal(1, Renovaciones(ctx));
+        }
+        finally
+        {
+            liberar.TrySetResult();
+        }
+
+        await primera.WaitAsync(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task UnaExcepcionInesperadaDeLaRenovacionNoEscapaSiElTokenGuardadoSirveYSeRegistraSinTokens()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-inesperada");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(12));
+        ctx.MercadoPago.ResponderPedido = _ => throw new InvalidOperationException("falla inesperada");
+        var captura = new CapturaDeLogs();
+        var host = ctx.Host.WithWebHostBuilder(b => b.ConfigureServices(s => s.AddLogging(l => l.AddProvider(captura))));
+
+        var (alcance, suplantacion) = EnElTenant(host, ctx.IdTenant);
+        using (alcance)
+        using (suplantacion)
+        {
+            var token = await alcance.ServiceProvider.GetRequiredService<IProveedorDeTokenMercadoPago>()
+                .ObtenerAccessTokenAsync(ctx.IdEmpresa);
+            Assert.Equal(conectada.Acceso, token.AccessToken);
+        }
+
+        Assert.Contains(captura.Mensajes, m => m.Contains("falla inesperada") && m.Contains("renovación previa al uso"));
+        foreach (var secreto in new[] { conectada.Acceso, conectada.Refresco, ClientSecret })
+        {
+            Assert.All(captura.Mensajes, m => Assert.DoesNotContain(secreto, m));
+        }
+    }
+
+    [Fact]
+    public async Task UnaExcepcionInesperadaConElTokenYaVencidoEsNoDisponibleYNoUnaExcepcionCruda()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-api-inesperada-vencido");
+        var conectada = await ConectarAsync(ctx);
+        await VencerEnAsync(conectada, TimeSpan.FromHours(-2));
+        ctx.MercadoPago.ResponderPedido = _ => throw new InvalidOperationException("falla inesperada");
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.NoDisponible, (await FallaAsync(ctx)).Codigo);
+    }
+
     // ---- Cliente ----------------------------------------------------------------------------------------------------
 
     private const string Terminales =
