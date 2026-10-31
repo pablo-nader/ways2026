@@ -119,6 +119,44 @@ public class MercadoPagoEsquemaTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     [Fact]
+    public async Task UnaConexionQueRequiereReconexionExigeSuFechaYNingunBlobYNoOcupaElLugarDeLaActiva()
+    {
+        var ctx = await _apoyo.PrepararAsync("mp-check-reconexion");
+        var idUsuarioMp = NuevoIdUsuario();
+
+        var conBlobs = await ViolacionAsync(_apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", fechaRequiereReconexion: DateTimeOffset.UtcNow));
+        Assert.Equal("ck_conexiones_mercadopago_requiere_reconexion", conBlobs.ConstraintName);
+
+        var sinFecha = await ViolacionAsync(_apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", sinMaterial: true));
+        Assert.Equal("ck_conexiones_mercadopago_requiere_reconexion", sinFecha.ConstraintName);
+
+        var conFechaDeBaja = await ViolacionAsync(_apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", sinMaterial: true, fechaRequiereReconexion: DateTimeOffset.UtcNow,
+            fechaDesconexion: DateTimeOffset.UtcNow));
+        Assert.Equal("ck_conexiones_mercadopago_requiere_reconexion", conFechaDeBaja.ConstraintName);
+
+        // Una activa no puede llevar la marca de reconexión.
+        var activaMarcada = await ViolacionAsync(_apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin,
+            fechaRequiereReconexion: DateTimeOffset.UtcNow));
+        Assert.Equal("ck_conexiones_mercadopago_activa", activaMarcada.ConstraintName);
+
+        // La forma correcta entra, dos veces, y deja libres a la empresa y a la cuenta de Mercado Pago para una activa.
+        await _apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", sinMaterial: true, fechaRequiereReconexion: DateTimeOffset.UtcNow);
+        await _apoyo.InsertarAsync(
+            ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin,
+            estado: "requiere_reconexion", sinMaterial: true, fechaRequiereReconexion: DateTimeOffset.UtcNow);
+        await _apoyo.InsertarAsync(ctx.IdTenant, ctx.IdEmpresa, ctx.IdCuenta, idUsuarioMp, ctx.IdUsuarioAdmin);
+    }
+
+    [Fact]
     public async Task LaBaseRechazaUnaCuentaDeTesoreriaDeOtraEmpresaYDeOtroTenant()
     {
         var ctx = await _apoyo.PrepararAsync("mp-fk-cuenta");

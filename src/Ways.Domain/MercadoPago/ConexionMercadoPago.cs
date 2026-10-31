@@ -51,4 +51,7 @@ public class ConexionMercadoPago : EntidadTenant
     public DateTimeOffset? FechaDesconexion { get; set; }
 
     public DateTimeOffset? FechaUltimaRenovacion { get; set; }
+
+    /// <summary>Cuándo la renovación automática la marcó como <see cref="EstadoConexionMercadoPago.RequiereReconexion"/>.</summary>
+    public DateTimeOffset? FechaRequiereReconexion { get; set; }
 }
