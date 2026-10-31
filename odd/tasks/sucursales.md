@@ -50,9 +50,9 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
 
 ## Tasks
 
-- [ ] T1 — `sucursales` table (tenant + empresa scoped), `puntos_venta.id_sucursal NOT NULL`,
+- [x] T1 — `sucursales` table (tenant + empresa scoped), `puntos_venta.id_sucursal NOT NULL`,
   1:1 backfill, RLS, entity/config, PV alta creates its own sucursal, delete-guard bridge,
-  docs 09/10. Route: delegated (2+ non-trivial files).
+  docs 09/10. Route: delegated (2+ non-trivial files). Commit b3c906fe.
 - [ ] T2 — Stock tables re-keyed to `id_sucursal`; single upsert helper used by ventas, remitos,
   compras, stock, lotes; transfers between sucursales; lock order. Route: delegated.
 - [ ] T3 — Reads by sucursal: existencias/vencimientos/reposición, ficha de artículo, MCP
@@ -74,7 +74,21 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
 
 - 2026-10-30: plan approved (option A). Worktree `.claude/worktrees/sucursales-t1`,
   branch `pnader/sucursales-t1`.
+- 2026-10-31: T1 done (commit b3c906fe). Model: `sucursales` (`id_sucursal` identity, `id_tenant`,
+  `id_empresa`, `nombre citext(150)`, timestamps + `deleted_at`; FK `(id_empresa, id_tenant)` →
+  empresas; AKs `(id_sucursal, id_tenant)` and `(id_sucursal, id_empresa, id_tenant)`; RLS
+  `sucursales_tenant`). `puntos_venta.id_sucursal NOT NULL`, FK `(id_sucursal, id_empresa, id_tenant)`
+  so a PV cannot point at another empresa's sucursal. Migration `Sucursales` with idempotent 1:1
+  backfill under `ways_app`. New PVs get their sucursal from a `WaysDbContext.SaveChanges` hook
+  (skips `IdEmpresa == 0`, only reachable in InMemory tests). PV baja soft-deletes a sucursal left
+  without live PVs; empresa/tenant bajas cascade. `nombre` is citext(150) to mirror `puntos_venta`.
+  Checks: build 0 errors; Domain.Tests 2037 ✔; Application.Tests 1464 ✔ (structural guards
+  included); IntegrationTests filtered (PuntoVenta, Organizacion, Aprovisionamiento,
+  AislamientoDeTenant, Sucursal, Dispositivos, Migracion, Backfill, Rls) 442 ✔ + 1 fixed and
+  re-run green; full integration suite left to CI. Mutations: hook removed → 4/5 red; sibling
+  guard forced → red. judgment-day: APPROVED round 1, no findings from either judge.
+  RDD: assess pending (judgment-day is the project's PR gate).
 
 ## Next step
 
-T1.
+T2 — re-key stock to `id_sucursal`, stacked on T1.
