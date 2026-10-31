@@ -78,14 +78,33 @@ public class ServicioDeOfertas(
     /// afuera las eliminadas, y una oferta inactiva sigue siendo administrable desde el
     /// listado. <see cref="OfertaListado.IdsListas"/> vacío por fila (evita el N+1 de una
     /// query por oferta listada, mismo criterio que <c>ArticuloListado.IdsEmpresas</c>).</summary>
+    /// <summary>Con <paramref name="idArticulo"/> lista solo las ofertas que tocan a ese artículo: las de alcance
+    /// artículo propias y, si el artículo tiene familia, las de alcance esa familia. Un artículo inexistente, dado de baja
+    /// o de otro tenant rinde la lista vacía (no un 404: el filtro no distingue "sin ofertas" de "sin artículo").</summary>
     public async Task<IReadOnlyList<OfertaListado>> ListarAsync(
-        bool incluirEliminados = false, CancellationToken ct = default)
+        bool incluirEliminados = false, int? idArticulo = null, CancellationToken ct = default)
     {
         var query = db.Ofertas.AsQueryable();
 
         if (incluirEliminados)
         {
             query = query.IgnoreQueryFilters(["BajaLogica"]);
+        }
+
+        if (idArticulo is { } idPedido)
+        {
+            var articulo = await db.Articulos
+                .Where(a => a.Id == idPedido)
+                .Select(a => new { a.IdFamilia })
+                .FirstOrDefaultAsync(ct);
+
+            if (articulo is null)
+            {
+                return [];
+            }
+
+            var idFamilia = articulo.IdFamilia;
+            query = query.Where(o => o.IdArticulo == idPedido || (idFamilia != null && o.IdFamilia == idFamilia));
         }
 
         var items = await query.OrderBy(o => o.Nombre).ToListAsync(ct);
@@ -100,12 +119,97 @@ public class ServicioDeOfertas(
         return items
             .Select(o => Proyectar(o, Array.Empty<int>()) with
             {
-                NombreArticulo = o.IdArticulo is { } idArticulo && nombresDeArticulo.TryGetValue(idArticulo, out var nombre)
+                NombreArticulo = o.IdArticulo is { } idArticuloDeOferta && nombresDeArticulo.TryGetValue(idArticuloDeOferta, out var nombre)
                     ? nombre
                     : null
             })
             .ToList();
     }
+
+    private const int MaximoDeArticulosVigentes = 200;
+
+    /// <summary>
+    /// Las ofertas vivas de cada artículo pedido por cualquier alcance (artículo, grupo, categoría con sus ancestros,
+    /// familia), SIN mirar la cantidad: las ofertas por volumen salen con su <c>cantidad_minima</c> para que el POS las
+    /// muestre. Mismo filtro que la resolución —activa, empresa, lista objetivo, día, fechas y horas en la hora local del
+    /// servidor— porque comparte <see cref="CargarAlcancesAsync"/>, <see cref="CargarCandidatasAsync"/> y
+    /// <see cref="ResolvedorDeOfertas.CoincideSinCantidad"/>. Query-only: 4 consultas fijas, sin importar la cantidad de
+    /// artículos. Los artículos inexistentes y los que no tienen ofertas no aparecen.
+    /// </summary>
+    public async Task<IReadOnlyList<OfertasVigentesDeArticulo>> ListarVigentesAsync(
+        SolicitudDeVigentes? solicitud, CancellationToken ct = default)
+    {
+        var ids = solicitud?.IdsArticulos;
+        if (ids is null || ids.Count == 0)
+        {
+            throw new ErrorDominio("ids_articulos_requeridos", "El campo 'idsArticulos' es obligatorio.", 400);
+        }
+
+        if (ids.Count > MaximoDeArticulosVigentes)
+        {
+            throw new ErrorDominio(
+                "ids_articulos_excedidos",
+                $"Se pueden consultar hasta {MaximoDeArticulosVigentes} artículos por pedido.",
+                400);
+        }
+
+        if (ids.Any(id => id <= 0) || ids.Distinct().Count() != ids.Count)
+        {
+            throw new ErrorDominio(
+                "ids_articulos_invalidos", "Los ids de artículo tienen que ser positivos y no repetirse.", 400);
+        }
+
+        if (solicitud!.IdEmpresa <= 0)
+        {
+            throw new ErrorDominio("empresa_requerida", "El campo 'idEmpresa' es obligatorio.", 400);
+        }
+
+        var alcances = await CargarAlcancesAsync(ids, exigirTodos: false, ct);
+        var candidatas = await CargarCandidatasAsync(ids, alcances, [solicitud.IdEmpresa], ct);
+        var (fecha, hora, diaSemana) = DescomponerHoraLocal(solicitud.Momento ?? reloj.Ahora);
+        var idListaPrecio = solicitud.IdListaPrecio;
+
+        // La consulta de candidatas ya dejó solo las de todo el tenant y las de esta empresa.
+        var delEmpresa = candidatas.Select(c => c.Candidata).ToList();
+
+        var resultado = new List<OfertasVigentesDeArticulo>();
+        foreach (var idArticulo in ids)
+        {
+            if (!alcances.PorArticulo.TryGetValue(idArticulo, out var alcance))
+            {
+                continue;
+            }
+
+            // Sin cantidad ni precio que resolver: la línea solo lleva el alcance y el momento.
+            var linea = new LineaAResolver(
+                idArticulo, alcance.IdGrupo, alcance.IdsCategorias, idListaPrecio ?? 0, 1m, 0m,
+                fecha, hora, diaSemana, alcance.IdFamilia, 1m);
+
+            var ofertas = delEmpresa
+                .Where(c => ResolvedorDeOfertas.CoincideSinCantidad(linea, c, considerarLista: idListaPrecio is not null))
+                .OrderByDescending(c => c.Prioridad)
+                .ThenBy(c => c.Id)
+                .Select(ProyectarVigente)
+                .ToList();
+
+            if (ofertas.Count > 0)
+            {
+                resultado.Add(new OfertasVigentesDeArticulo(idArticulo, ofertas));
+            }
+        }
+
+        return resultado;
+    }
+
+    private static OfertaVigenteDto ProyectarVigente(OfertaCandidata c) => new(
+        c.Id, c.Nombre, NombreDeAlcance(c.Alcance), c.CantidadMinima, c.SoloMultiplos,
+        c.Beneficio.Porcentaje, c.Beneficio.PrecioUnitario, c.Beneficio.ImporteFijo, c.FechaHasta, c.Acumulable);
+
+    private static string NombreDeAlcance(AlcanceDeOferta alcance) =>
+        alcance.IdArticulo is not null ? "Articulo"
+        : alcance.IdGrupo is not null ? "Grupo"
+        : alcance.IdFamilia is not null ? "Familia"
+        : "Categoria";
 
     public async Task<OfertaListado> ObtenerAsync(int id, CancellationToken ct = default)
     {
@@ -686,39 +790,34 @@ public class ServicioDeOfertas(
     /// <summary>Modo y porcentaje de una lista de precios, lo único que una línea por importe necesita de ella.</summary>
     private sealed record ListaDeImporte(ModoLista Modo, decimal? Porcentaje);
 
-    /// <summary>
-    /// Presupuesto: 1 <c>articulos</c> + 1 <c>categorias</c> (mapa de ancestros completo del
-    /// tenant) + 1 <c>ofertas</c> (filtro grueso: <c>activo</c>, alcance por ids, <c>id_empresa</c>)
-    /// + 1 <c>ofertas_listas</c> + hasta 3 de <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/>
-    /// = 7, sin loop de una consulta por línea. Todas derivan de los ids DISTINTOS del lote, así
-    /// que el presupuesto no depende de la cantidad de líneas ni de si el llamador quiere
-    /// escalones. El resto del matching (ventana de vigencia, <c>cantidad_minima</c>, lista
-    /// objetivo, día de semana, alcance jerárquico de categoría) lo hace
-    /// <see cref="ResolvedorDeOfertas.Coincide"/> en memoria, por línea, sobre las mismas
-    /// <see cref="OfertaCandidata"/> ya materializadas.
-    /// </summary>
-    private async Task<ContextoDeResolucion> ConstruirContextoAsync(
-        IReadOnlyList<LineaDeResolucion> lineas, DateTimeOffset? momento, CancellationToken ct,
-        bool cargarListasDeLosImportes = false)
-    {
-        var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
-        var idsListaPrecio = lineas.Select(l => l.IdListaPrecio).Distinct().ToList();
+    /// <summary>Alcance de los artículos pedidos, más los conjuntos de categorías (con ancestros), grupos y familias que
+    /// podrían tener ofertas para ellos.</summary>
+    private sealed record AlcancesCargados(
+        Dictionary<int, AlcanceDeArticulo> PorArticulo,
+        HashSet<int> Categorias,
+        HashSet<int> Grupos,
+        HashSet<int> Familias);
 
-        // 1 consulta: alcance de los artículos pedidos (categoría/grupo/familia propios).
+    /// <summary>2 consultas: <c>articulos</c> (categoría/grupo/familia propios) y <c>categorias</c> (mapa de ancestros
+    /// completo del tenant, armado en memoria por artículo sin una consulta jerárquica por artículo). Con
+    /// <paramref name="exigirTodos"/> un artículo inexistente es 400 <c>referencia_invalida</c>; sin él, queda ausente.</summary>
+    private async Task<AlcancesCargados> CargarAlcancesAsync(
+        IReadOnlyList<int> idsArticulo, bool exigirTodos, CancellationToken ct)
+    {
         var articulos = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
             .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo, a.IdFamilia, a.UnidadVenta })
             .ToListAsync(ct);
 
-        var idsArticuloFaltantes = idsArticulo.Except(articulos.Select(a => a.Id)).ToList();
-        if (idsArticuloFaltantes.Count > 0)
+        if (exigirTodos)
         {
-            throw new ErrorDominio("referencia_invalida", $"No existe el artículo {idsArticuloFaltantes[0]}.", 400);
+            var idsArticuloFaltantes = idsArticulo.Except(articulos.Select(a => a.Id)).ToList();
+            if (idsArticuloFaltantes.Count > 0)
+            {
+                throw new ErrorDominio("referencia_invalida", $"No existe el artículo {idsArticuloFaltantes[0]}.", 400);
+            }
         }
 
-        // 1 consulta: mapa de ancestros de TODA la jerarquía de categorías del tenant — se arma
-        // en memoria por artículo, sin una consulta jerárquica por artículo (design: Batch
-        // Boundary — Categoria scope matching).
         var padrePorCategoria = await db.Categorias
             .Select(c => new { c.Id, c.IdCategoriaPadre })
             .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
@@ -748,15 +847,21 @@ public class ServicioDeOfertas(
             }
         }
 
-        var idsEmpresa = lineas
-            .Where(l => l.IdEmpresa is not null)
-            .Select(l => l.IdEmpresa!.Value)
-            .Distinct()
-            .ToList();
+        return new AlcancesCargados(alcancePorArticulo, todasLasCategoriasAlcanzables, idsGrupo, idsFamilia);
+    }
 
-        // 1 consulta: ofertas activas cuyo alcance (por id, superconjunto de las líneas pedidas)
-        // e id_empresa podrían aplicar a ALGUNA línea del lote — el matching fino por línea
-        // (incl. id_empresa exacto) corre después, en memoria.
+    /// <summary>2 consultas: ofertas activas cuyo alcance (por id, superconjunto de los artículos pedidos) e
+    /// <c>id_empresa</c> podrían aplicar a alguno de ellos, y el targeting de listas de esas ofertas. El matching fino
+    /// por artículo (incl. <c>id_empresa</c> exacto) corre después, en memoria. Candidatas materializadas UNA vez,
+    /// compartidas entre todas las líneas — <c>ReglaDeOfertas</c> ya validó estas guardas al escribir, así que proyectarlas
+    /// acá nunca debería lanzar; si lo hace, es una fila corrupta fuera de banda.</summary>
+    private async Task<List<CandidataConEmpresa>> CargarCandidatasAsync(
+        IReadOnlyList<int> idsArticulo, AlcancesCargados alcances, IReadOnlyList<int> idsEmpresa, CancellationToken ct)
+    {
+        var idsGrupo = alcances.Grupos;
+        var idsFamilia = alcances.Familias;
+        var todasLasCategoriasAlcanzables = alcances.Categorias;
+
         var ofertas = await db.Ofertas
             .Where(o => o.Activo &&
                 ((o.IdArticulo != null && idsArticulo.Contains(o.IdArticulo.Value)) ||
@@ -768,7 +873,6 @@ public class ServicioDeOfertas(
 
         var idsOferta = ofertas.Select(o => o.Id).ToList();
 
-        // 1 consulta: targeting de listas de las ofertas candidatas.
         var listasPorOferta = idsOferta.Count == 0
             ? new Dictionary<int, IReadOnlySet<int>>()
             : (await db.OfertasListas
@@ -778,11 +882,7 @@ public class ServicioDeOfertas(
                 .GroupBy(ol => ol.IdOferta)
                 .ToDictionary(g => g.Key, g => (IReadOnlySet<int>)g.Select(x => x.IdListaPrecio).ToHashSet());
 
-        // Candidatas materializadas UNA vez, compartidas entre todas las líneas — ReglaDeOfertas
-        // ya validó estas cinco guardas al escribir (Slice 2), así que proyectarlas acá nunca
-        // debería lanzar; si lo hace, es una fila corrupta fuera de banda (defensa en profundidad,
-        // no un camino alcanzable en operación normal).
-        var candidatas = ofertas.Select(o => new CandidataConEmpresa(
+        return [.. ofertas.Select(o => new CandidataConEmpresa(
             o.IdEmpresa,
             new OfertaCandidata(
                 o.Id, o.Nombre, o.Prioridad, o.Acumulable,
@@ -790,7 +890,39 @@ public class ServicioDeOfertas(
                 o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
                 ReglaDeOfertas.LeerDiasSemana(o.DiasSemana),
                 listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>(),
-                o.SoloMultiplos))).ToList();
+                o.SoloMultiplos)))];
+    }
+
+    /// <summary>
+    /// Presupuesto: 1 <c>articulos</c> + 1 <c>categorias</c> (mapa de ancestros completo del
+    /// tenant) + 1 <c>ofertas</c> (filtro grueso: <c>activo</c>, alcance por ids, <c>id_empresa</c>)
+    /// + 1 <c>ofertas_listas</c> + hasta 3 de <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/>
+    /// = 7, sin loop de una consulta por línea. Todas derivan de los ids DISTINTOS del lote, así
+    /// que el presupuesto no depende de la cantidad de líneas ni de si el llamador quiere
+    /// escalones. El resto del matching (ventana de vigencia, <c>cantidad_minima</c>, lista
+    /// objetivo, día de semana, alcance jerárquico de categoría) lo hace
+    /// <see cref="ResolvedorDeOfertas.Coincide"/> en memoria, por línea, sobre las mismas
+    /// <see cref="OfertaCandidata"/> ya materializadas.
+    /// </summary>
+    private async Task<ContextoDeResolucion> ConstruirContextoAsync(
+        IReadOnlyList<LineaDeResolucion> lineas, DateTimeOffset? momento, CancellationToken ct,
+        bool cargarListasDeLosImportes = false)
+    {
+        var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
+        var idsListaPrecio = lineas.Select(l => l.IdListaPrecio).Distinct().ToList();
+
+        // 2 consultas: alcance de los artículos pedidos y mapa de ancestros de categorías.
+        var alcances = await CargarAlcancesAsync(idsArticulo, exigirTodos: true, ct);
+
+        var idsEmpresa = lineas
+            .Where(l => l.IdEmpresa is not null)
+            .Select(l => l.IdEmpresa!.Value)
+            .Distinct()
+            .ToList();
+
+        // 2 consultas: ofertas candidatas y su targeting de listas.
+        var candidatas = await CargarCandidatasAsync(idsArticulo, alcances, idsEmpresa, ct);
+        var alcancePorArticulo = alcances.PorArticulo;
 
         // Hasta 3 consultas: precios vigentes en lote para el producto cartesiano de artículos ×
         // listas pedidas (design decision 5 — ServicioDePrecios.PreciosVigentesAsync/
