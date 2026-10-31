@@ -675,6 +675,327 @@ public class ArticulosCodigosProveedorTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
+    // ---- listado, edición y baja -------------------------------------------------------------
+
+    private static Task<HttpResponseMessage> ActualizarAsync(HttpClient cliente, int idArticulo, int idCodigo, string codigo) =>
+        cliente.PutAsJsonAsync(
+            $"/api/articulos/{idArticulo}/codigos-proveedor/{idCodigo}", new ActualizacionCodigoProveedor(codigo));
+
+    private static async Task<CodigoProveedorListado> AsociarOkAsync(
+        HttpClient cliente, int idArticulo, int idProveedor, string codigo)
+    {
+        var respuesta = await AsociarAsync(cliente, idArticulo, idProveedor, codigo);
+        Assert.True(respuesta.IsSuccessStatusCode);
+        return (await respuesta.Content.ReadFromJsonAsync<CodigoProveedorListado>())!;
+    }
+
+    private static async Task<string> CodigoDeErrorAsync(HttpResponseMessage respuesta) =>
+        (await respuesta.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString()!;
+
+    private async Task<HttpClient> CrearVendedorAsync(int idTenant, string nombre)
+    {
+        var hasheador = new HasheadorPbkdf2();
+        var mailVendedor = $"{nombre.ToLowerInvariant()}-vendedor@ways.test";
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            db.Usuarios.Add(new Usuario
+            {
+                IdTenant = idTenant,
+                NombreUsuario = "vendedor",
+                Mail = mailVendedor,
+                RolId = (int)RolConocido.Vendedor,
+                PasswordHash = hasheador.Hashear(PasswordVendedor),
+                PasswordAlgoritmo = hasheador.Algoritmo,
+                PasswordActualizadoEl = ahora,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        return await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+    }
+
+    [Fact]
+    public async Task ListarDevuelveSoloLosCodigosVivosDelArticuloOrdenadosPorId()
+    {
+        var c = await PrepararAsync(nameof(ListarDevuelveSoloLosCodigosVivosDelArticuloOrdenadosPorId));
+        using var _ = c.Admin;
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        var a = await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "A");
+        var baja = await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "BAJA");
+        var b = await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "B");
+        await AsociarOkAsync(c.Admin, dos.Id, c.IdProveedor, "OTRO-ARTICULO");
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await c.Admin.DeleteAsync($"/api/articulos/{uno.Id}/codigos-proveedor/{baja.IdCodigoProveedor}")).StatusCode);
+
+        var respuesta = await c.Admin.GetAsync($"/api/articulos/{uno.Id}/codigos-proveedor");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var cuerpo = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            ["codigo", "idArticulo", "idCodigoProveedor", "idProveedor"],
+            cuerpo[0].EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
+        var lista = JsonSerializer.Deserialize<List<CodigoProveedorListado>>(cuerpo.GetRawText(), OpcionesJson)!;
+        Assert.Equal([a.IdCodigoProveedor, b.IdCodigoProveedor], lista.Select(x => x.IdCodigoProveedor).ToArray());
+        Assert.Equal(["A", "B"], lista.Select(x => x.Codigo).ToArray());
+    }
+
+    [Fact]
+    public async Task ListarDevuelve404ConArticuloInexistenteDeBajaOAjeno()
+    {
+        var a = await PrepararAsync(nameof(ListarDevuelve404ConArticuloInexistenteDeBajaOAjeno) + "-A");
+        var b = await PrepararAsync(nameof(ListarDevuelve404ConArticuloInexistenteDeBajaOAjeno) + "-B");
+        using var _a = a.Admin;
+        using var _b = b.Admin;
+        var deA = await CrearArticuloAsync(a, "De A");
+        var deBaja = await CrearArticuloAsync(b, "De baja");
+        Assert.Equal(HttpStatusCode.NoContent, (await b.Admin.DeleteAsync($"/api/articulos/{deBaja.Id}")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.GetAsync("/api/articulos/999999/codigos-proveedor")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.GetAsync($"/api/articulos/{deA.Id}/codigos-proveedor")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.GetAsync($"/api/articulos/{deBaja.Id}/codigos-proveedor")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EditarUnCodigoDevuelve200ConElContratoYLoPersiste()
+    {
+        var c = await PrepararAsync(nameof(EditarUnCodigoDevuelve200ConElContratoYLoPersiste));
+        using var _ = c.Admin;
+        var articulo = await CrearArticuloAsync(c, "Clavo");
+        var codigo = await AsociarOkAsync(c.Admin, articulo.Id, c.IdProveedor, "VIEJO");
+
+        var respuesta = await ActualizarAsync(c.Admin, articulo.Id, codigo.IdCodigoProveedor, "  NUEVO ");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var cuerpo = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            ["codigo", "idArticulo", "idCodigoProveedor", "idProveedor"],
+            cuerpo.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(codigo.IdCodigoProveedor, cuerpo.GetProperty("idCodigoProveedor").GetInt32());
+        Assert.Equal(articulo.Id, cuerpo.GetProperty("idArticulo").GetInt32());
+        Assert.Equal(c.IdProveedor, cuerpo.GetProperty("idProveedor").GetInt32());
+        Assert.Equal("NUEVO", cuerpo.GetProperty("codigo").GetString());
+
+        var lista = await c.Admin.GetFromJsonAsync<List<CodigoProveedorListado>>(
+            $"/api/articulos/{articulo.Id}/codigos-proveedor", OpcionesJson);
+        Assert.Equal(["NUEVO"], lista!.Select(x => x.Codigo).ToArray());
+    }
+
+    /// <summary>Cláusula bajo prueba: el pre-chequeo de duplicado EXCLUYE la propia fila. Sin esa
+    /// exclusión, repetir el mismo valor o cambiar solo la capitalización (citext) daría 409.</summary>
+    [Fact]
+    public async Task EditarConElMismoValorOSoloCambiandoMayusculasDevuelve200()
+    {
+        var c = await PrepararAsync(nameof(EditarConElMismoValorOSoloCambiandoMayusculasDevuelve200));
+        using var _ = c.Admin;
+        var articulo = await CrearArticuloAsync(c, "Clavo");
+        var codigo = await AsociarOkAsync(c.Admin, articulo.Id, c.IdProveedor, "abc-1");
+
+        Assert.Equal(HttpStatusCode.OK, (await ActualizarAsync(c.Admin, articulo.Id, codigo.IdCodigoProveedor, "abc-1")).StatusCode);
+
+        var respuesta = await ActualizarAsync(c.Admin, articulo.Id, codigo.IdCodigoProveedor, "ABC-1");
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal("ABC-1", (await respuesta.Content.ReadFromJsonAsync<CodigoProveedorListado>())!.Codigo);
+    }
+
+    [Fact]
+    public async Task EditarConElCodigoVivoDeOtroDelMismoProveedorDevuelve409()
+    {
+        var c = await PrepararAsync(nameof(EditarConElCodigoVivoDeOtroDelMismoProveedorDevuelve409));
+        using var _ = c.Admin;
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "TOMADO");
+        var propio = await AsociarOkAsync(c.Admin, dos.Id, c.IdProveedor, "LIBRE");
+
+        var respuesta = await ActualizarAsync(c.Admin, dos.Id, propio.IdCodigoProveedor, "tomado");
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("codigo_proveedor_duplicado", await CodigoDeErrorAsync(respuesta));
+    }
+
+    [Fact]
+    public async Task EditarConElMismoCodigoDeOtroProveedorDevuelve200()
+    {
+        var c = await PrepararAsync(nameof(EditarConElMismoCodigoDeOtroProveedorDevuelve200));
+        using var _ = c.Admin;
+        var otroProveedor = await SembrarProveedorAsync(c.IdTenant, nameof(EditarConElMismoCodigoDeOtroProveedorDevuelve200) + "-otro");
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        await AsociarOkAsync(c.Admin, uno.Id, otroProveedor, "COMPARTIDO");
+        var propio = await AsociarOkAsync(c.Admin, dos.Id, c.IdProveedor, "LIBRE");
+
+        Assert.Equal(HttpStatusCode.OK, (await ActualizarAsync(c.Admin, dos.Id, propio.IdCodigoProveedor, "COMPARTIDO")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EditarConUnCodigoIgualAUnoDadoDeBajaDevuelve200()
+    {
+        var c = await PrepararAsync(nameof(EditarConUnCodigoIgualAUnoDadoDeBajaDevuelve200));
+        using var _ = c.Admin;
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        var dadoDeBaja = await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "FANTASMA");
+        var propio = await AsociarOkAsync(c.Admin, dos.Id, c.IdProveedor, "LIBRE");
+        await EjecutarComoPlataformaAsync(
+            "UPDATE codigos_proveedor SET deleted_at = now() WHERE id_codigo_proveedor = $1", dadoDeBaja.IdCodigoProveedor);
+
+        var respuesta = await ActualizarAsync(c.Admin, dos.Id, propio.IdCodigoProveedor, "FANTASMA");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task EditarConUnCodigoEnBlancoOMuyLargoDevuelve400()
+    {
+        var c = await PrepararAsync(nameof(EditarConUnCodigoEnBlancoOMuyLargoDevuelve400));
+        using var _ = c.Admin;
+        var articulo = await CrearArticuloAsync(c, "Clavo");
+        var codigo = await AsociarOkAsync(c.Admin, articulo.Id, c.IdProveedor, "ORIGINAL");
+
+        var vacio = await ActualizarAsync(c.Admin, articulo.Id, codigo.IdCodigoProveedor, "   ");
+        Assert.Equal(HttpStatusCode.BadRequest, vacio.StatusCode);
+        Assert.Equal("codigo_requerido", await CodigoDeErrorAsync(vacio));
+
+        var largo = await ActualizarAsync(c.Admin, articulo.Id, codigo.IdCodigoProveedor, new string('x', 51));
+        Assert.Equal(HttpStatusCode.BadRequest, largo.StatusCode);
+        Assert.Equal("codigo_muy_largo", await CodigoDeErrorAsync(largo));
+
+        var lista = await c.Admin.GetFromJsonAsync<List<CodigoProveedorListado>>(
+            $"/api/articulos/{articulo.Id}/codigos-proveedor", OpcionesJson);
+        Assert.Equal(["ORIGINAL"], lista!.Select(x => x.Codigo).ToArray());
+    }
+
+    /// <summary>Cláusula bajo prueba: el 404 precede a la validación del cuerpo y al pre-chequeo de
+    /// duplicado. Los primeros casos mandan un cuerpo inválido (400 si se validara primero) y el último
+    /// un valor que chocaría (409).</summary>
+    [Fact]
+    public async Task EditarUnCodigoQueNoSeVeDevuelve404AunConCuerpoInvalido()
+    {
+        var a = await PrepararAsync(nameof(EditarUnCodigoQueNoSeVeDevuelve404AunConCuerpoInvalido) + "-A");
+        var b = await PrepararAsync(nameof(EditarUnCodigoQueNoSeVeDevuelve404AunConCuerpoInvalido) + "-B");
+        using var _a = a.Admin;
+        using var _b = b.Admin;
+        var articuloA = await CrearArticuloAsync(a, "De A");
+        var codigoA = await AsociarOkAsync(a.Admin, articuloA.Id, a.IdProveedor, "CA");
+        var uno = await CrearArticuloAsync(b, "Uno");
+        var dos = await CrearArticuloAsync(b, "Dos");
+        var codigoDeDos = await AsociarOkAsync(b.Admin, dos.Id, b.IdProveedor, "CB");
+        var codigoDadoDeBaja = await AsociarOkAsync(b.Admin, uno.Id, b.IdProveedor, "BAJA");
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await b.Admin.DeleteAsync($"/api/articulos/{uno.Id}/codigos-proveedor/{codigoDadoDeBaja.IdCodigoProveedor}")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await ActualizarAsync(b.Admin, uno.Id, 999_999, "  ")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ActualizarAsync(b.Admin, 999_999, codigoDeDos.IdCodigoProveedor, "  ")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ActualizarAsync(b.Admin, articuloA.Id, codigoA.IdCodigoProveedor, "  ")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ActualizarAsync(b.Admin, uno.Id, codigoDeDos.IdCodigoProveedor, "  ")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ActualizarAsync(b.Admin, uno.Id, codigoDadoDeBaja.IdCodigoProveedor, "  ")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ActualizarAsync(b.Admin, uno.Id, codigoDeDos.IdCodigoProveedor, "CB")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EliminarDevuelve204LiberaElParYSaleDelListado()
+    {
+        var c = await PrepararAsync(nameof(EliminarDevuelve204LiberaElParYSaleDelListado));
+        using var _ = c.Admin;
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        var codigo = await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "LIBERAR");
+
+        var respuesta = await c.Admin.DeleteAsync($"/api/articulos/{uno.Id}/codigos-proveedor/{codigo.IdCodigoProveedor}");
+
+        Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
+        var lista = await c.Admin.GetFromJsonAsync<List<CodigoProveedorListado>>(
+            $"/api/articulos/{uno.Id}/codigos-proveedor", OpcionesJson);
+        Assert.Empty(lista!);
+        Assert.Equal(HttpStatusCode.Created, (await AsociarAsync(c.Admin, dos.Id, c.IdProveedor, "LIBERAR")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EliminarDosVecesOUnCodigoQueNoSeVeDevuelve404()
+    {
+        var a = await PrepararAsync(nameof(EliminarDosVecesOUnCodigoQueNoSeVeDevuelve404) + "-A");
+        var b = await PrepararAsync(nameof(EliminarDosVecesOUnCodigoQueNoSeVeDevuelve404) + "-B");
+        using var _a = a.Admin;
+        using var _b = b.Admin;
+        var articuloA = await CrearArticuloAsync(a, "De A");
+        var codigoA = await AsociarOkAsync(a.Admin, articuloA.Id, a.IdProveedor, "CA");
+        var uno = await CrearArticuloAsync(b, "Uno");
+        var dos = await CrearArticuloAsync(b, "Dos");
+        var codigoDeUno = await AsociarOkAsync(b.Admin, uno.Id, b.IdProveedor, "CU");
+
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.DeleteAsync($"/api/articulos/{dos.Id}/codigos-proveedor/{codigoDeUno.IdCodigoProveedor}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.DeleteAsync($"/api/articulos/{articuloA.Id}/codigos-proveedor/{codigoA.IdCodigoProveedor}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.DeleteAsync($"/api/articulos/999999/codigos-proveedor/{codigoDeUno.IdCodigoProveedor}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.DeleteAsync($"/api/articulos/{uno.Id}/codigos-proveedor/999999")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await b.Admin.DeleteAsync($"/api/articulos/{uno.Id}/codigos-proveedor/{codigoDeUno.IdCodigoProveedor}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.Admin.DeleteAsync($"/api/articulos/{uno.Id}/codigos-proveedor/{codigoDeUno.IdCodigoProveedor}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task UnVendedorNoPuedeEditarNiEliminarCodigosDeProveedor()
+    {
+        var c = await PrepararAsync(nameof(UnVendedorNoPuedeEditarNiEliminarCodigosDeProveedor));
+        using var _ = c.Admin;
+        var articulo = await CrearArticuloAsync(c, "Clavo");
+        var codigo = await AsociarOkAsync(c.Admin, articulo.Id, c.IdProveedor, "X");
+        using var vendedor = await CrearVendedorAsync(c.IdTenant, nameof(UnVendedorNoPuedeEditarNiEliminarCodigosDeProveedor));
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await ActualizarAsync(vendedor, articulo.Id, codigo.IdCodigoProveedor, "Y")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await vendedor.DeleteAsync($"/api/articulos/{articulo.Id}/codigos-proveedor/{codigo.IdCodigoProveedor}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await vendedor.GetAsync($"/api/articulos/{articulo.Id}/codigos-proveedor")).StatusCode);
+    }
+
+    [Fact]
+    public async Task DosEdicionesConcurrentesAlMismoValorDanExactamenteUnGanador()
+    {
+        var c = await PrepararAsync(nameof(DosEdicionesConcurrentesAlMismoValorDanExactamenteUnGanador));
+        using var _ = c.Admin;
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        var codigoUno = await AsociarOkAsync(c.Admin, uno.Id, c.IdProveedor, "ORIGEN-1");
+        var codigoDos = await AsociarOkAsync(c.Admin, dos.Id, c.IdProveedor, "ORIGEN-2");
+
+        var respuestas = await Task.WhenAll(
+            ActualizarAsync(c.Admin, uno.Id, codigoUno.IdCodigoProveedor, "RACE-PUT"),
+            ActualizarAsync(c.Admin, dos.Id, codigoDos.IdCodigoProveedor, "RACE-PUT"));
+
+        var estados = respuestas.Select(r => r.StatusCode).Order().ToList();
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], estados);
+        Assert.Equal("codigo_proveedor_duplicado", await CodigoDeErrorAsync(respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict)));
+    }
+
+    /// <summary>Carrera determinista del backstop en la edición: un INSERT crudo sin commitear bloquea el
+    /// índice; el UPDATE pasa el pre-chequeo, espera, y al comitear choca con 23505 → 409.</summary>
+    [Fact]
+    public async Task ElBackstopTraduceElChoqueDelIndiceUnicoEnLaEdicionA409()
+    {
+        var c = await PrepararAsync(nameof(ElBackstopTraduceElChoqueDelIndiceUnicoEnLaEdicionA409));
+        using var _ = c.Admin;
+        var uno = await CrearArticuloAsync(c, "Uno");
+        var dos = await CrearArticuloAsync(c, "Dos");
+        var propio = await AsociarOkAsync(c.Admin, dos.Id, c.IdProveedor, "PROPIO");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", c.IdTenant);
+        await using var transaccion = await cruda.BeginTransactionAsync();
+        await InsertarCodigoCrudoAsync(cruda, c.IdTenant, uno.Id, c.IdProveedor, "CARRERA-PUT");
+
+        var edicion = ActualizarAsync(c.Admin, dos.Id, propio.IdCodigoProveedor, "CARRERA-PUT");
+        await Task.Delay(1000);
+        Assert.False(edicion.IsCompleted, "la edición debía quedar esperando el índice único");
+
+        await transaccion.CommitAsync();
+        var respuesta = await edicion;
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("codigo_proveedor_duplicado", await CodigoDeErrorAsync(respuesta));
+    }
+
     // ---- backstop del índice único -----------------------------------------------------------
 
     /// <summary>Carrera real: un INSERT crudo sin commitear (invisible al pre-chequeo) bloquea el

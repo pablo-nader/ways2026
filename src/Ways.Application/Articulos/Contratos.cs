@@ -201,6 +201,8 @@ public record CodigoBarraListado(int Id, int IdArticulo, string Codigo, bool Act
 
 public record AltaCodigoProveedor(int IdProveedor, string Codigo);
 
+public record ActualizacionCodigoProveedor(string Codigo);
+
 public record CodigoProveedorListado(int IdCodigoProveedor, int IdArticulo, int IdProveedor, string Codigo);
 
 /// <summary><see cref="Creado"/> distingue el alta nueva (201) de la asociación idempotente de un
