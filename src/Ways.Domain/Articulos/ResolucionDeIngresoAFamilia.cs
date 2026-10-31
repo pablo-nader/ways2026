@@ -21,5 +21,10 @@ public enum ResolucionDeIngresoAFamilia
 
     /// <summary>Algún campo compartido del pedido difiere del miembro de referencia
     /// (<c>familia_valores_distintos</c>): un artículo no entra a una familia con valores propios.</summary>
-    ValoresDistintos
+    ValoresDistintos,
+
+    /// <summary>La familia permite desglosar el costo, todos los demás campos compartidos coinciden y la composición
+    /// del pedido da otro costo nominal que el de la familia (<c>costo_nominal_distinto_de_familia</c>): el miembro
+    /// nuevo hereda el costo nominal de la familia y no puede traer uno propio.</summary>
+    CostoNominalDistinto
 }

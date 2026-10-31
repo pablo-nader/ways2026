@@ -44,7 +44,8 @@ public class ServicioDeFamilias(
     public async Task<IReadOnlyList<FamiliaListado>> ListarAsync(CancellationToken ct = default) =>
         await db.Familias
             .OrderBy(f => f.Nombre)
-            .Select(f => new FamiliaListado(f.Id, f.Nombre, f.Activo, db.Articulos.Count(a => a.IdFamilia == f.Id)))
+            .Select(f => new FamiliaListado(
+                f.Id, f.Nombre, f.Activo, db.Articulos.Count(a => a.IdFamilia == f.Id), f.PermiteDesglosarCosto))
             .ToListAsync(ct);
 
     /// <summary>La familia, sus miembros vivos, los dieciséis valores compartidos del artículo de referencia (el
@@ -89,7 +90,8 @@ public class ServicioDeFamilias(
 
         if (articulos.Count == 0)
         {
-            return new FamiliaDetalle(familia.Id, familia.Nombre, familia.Activo, [], Valores: null, Precios: []);
+            return new FamiliaDetalle(
+                familia.Id, familia.Nombre, familia.Activo, [], Valores: null, Precios: [], familia.PermiteDesglosarCosto);
         }
 
         var referencia = articulos[0];
@@ -129,7 +131,8 @@ public class ServicioDeFamilias(
             CostoNominal: referencia.CostoNominal);
 
         return new FamiliaDetalle(
-            familia.Id, familia.Nombre, familia.Activo, miembros, valores, await EstadoDePreciosDeLaReferenciaAsync(referencia.Id, ct));
+            familia.Id, familia.Nombre, familia.Activo, miembros, valores, await EstadoDePreciosDeLaReferenciaAsync(referencia.Id, ct),
+            familia.PermiteDesglosarCosto);
     }
 
     /// <summary>
@@ -143,8 +146,12 @@ public class ServicioDeFamilias(
     /// autoridad. Una familia dada de baja mientras esta edición esperaba el lock ya no se encuentra y la respuesta es el
     /// <c>404</c>, sin escribir nada.
     ///
-    /// <para>No toma el lock de membresía ni bloquea ninguna fila de artículo: no cambia la pertenencia ni escribe
-    /// campos compartidos ni precios. Lo que la serializa con los escritores que toman la fila de la familia —el alta de
+    /// <para>Salvo cuando el pedido trae <c>permiteDesglosarCosto: false</c>, no toma el lock de membresía ni bloquea
+    /// ninguna fila de artículo: no cambia la pertenencia ni escribe campos compartidos ni precios. Con ese valor
+    /// toma, en el orden del protocolo, el lock de membresía EXCLUSIVO como primera sentencia, la fila de la familia
+    /// y, si la marca estaba encendida, las filas de los miembros vivos: apagarla es válido solo si todos tienen la
+    /// misma composición del costo (<c>409 composicion_distinta</c>), y ninguna edición de un artículo puede cambiar una
+    /// composición mientras tanto. Encenderla no necesita nada de eso: los miembros ya son idénticos. Lo que la serializa con los escritores que toman la fila de la familia —el alta de
     /// un artículo con <c>idFamilia</c> y agregar artículos, que la leen <c>FOR SHARE</c>, y la disolución, que la toma
     /// <c>FOR UPDATE</c>, todos bajo el lock de membresía— es el lock de la propia fila: toda escritura de la fila choca
     /// con ese <c>FOR SHARE</c> y con ese <c>FOR UPDATE</c>.</para>
@@ -170,16 +177,34 @@ public class ServicioDeFamilias(
 
         await NombreDeFamilia.ExigirDisponibleAsync(db, nombre, excluirId: id, ct);
 
+        // Pedir apagar la marca depende de la composición de TODOS los miembros: es la única edición que toma el lock de
+        // membresía (y las filas de los miembros), para no cruzarse con la edición de un artículo. Se decide por el
+        // pedido, antes de leer nada: el lock no se promueve después.
+        var pidioApagar = datos.PermiteDesglosarCosto == false;
+        var idTenant = pidioApagar ? ExigirTenantDeLaSesion() : 0;
+
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         // Antes de la primera lectura: lo que esta operación deje rastreado se suelta si falla.
         var yaRastreadas = RastreoDeEntidades.Instantanea(db);
+        var permiteDesglosarCosto = false;
 
         try
         {
             await estrategia.ExecuteAsync(async () =>
             {
                 await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+                DbConnection? conexion = null;
+                DbTransaction? transaccionCruda = null;
+
+                if (pidioApagar)
+                {
+                    conexion = await ObtenerConexionAbiertaAsync(ct);
+                    transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+                    await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);
+                }
 
                 await guarda.BloquearFilaAsync<Familia>(id, ct);
 
@@ -188,9 +213,16 @@ public class ServicioDeFamilias(
                 var familia = await db.Familias.FirstOrDefaultAsync(f => f.Id == id, ct)
                     ?? throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
 
+                if (pidioApagar && familia.PermiteDesglosarCosto)
+                {
+                    await ExigirComposicionIdenticaAsync(conexion!, transaccionCruda, familia, idTenant, ct);
+                }
+
                 familia.Nombre = nombre;
                 familia.Activo = activo;
+                familia.PermiteDesglosarCosto = datos.PermiteDesglosarCosto ?? familia.PermiteDesglosarCosto;
                 familia.UpdatedAt = reloj.Ahora;
+                permiteDesglosarCosto = familia.PermiteDesglosarCosto;
 
                 await db.SaveChangesAsync(ct);
                 await transaccion.CommitAsync(ct);
@@ -202,7 +234,37 @@ public class ServicioDeFamilias(
             throw;
         }
 
-        return new FamiliaListado(id, nombre, activo, await db.Articulos.CountAsync(a => a.IdFamilia == id, ct));
+        return new FamiliaListado(
+            id, nombre, activo, await db.Articulos.CountAsync(a => a.IdFamilia == id, ct), permiteDesglosarCosto);
+    }
+
+    /// <summary>
+    /// Apagar la marca deja de lado la composición propia de cada miembro: exige que los miembros vivos tengan todos la
+    /// misma (<see cref="ReglaDeFamilias.PuedeApagarElDesgloseDeCosto"/>), y si no, <c>409 composicion_distinta</c> sin
+    /// escribir nada. Bajo el lock de membresía exclusivo y la fila de la familia, bloquea las filas de los miembros
+    /// <c>FOR NO KEY UPDATE</c> ascendentes (paso (2) del protocolo) y recién entonces lee sus composiciones, una sola
+    /// vez, sin rastrearlas.
+    /// </summary>
+    private async Task ExigirComposicionIdenticaAsync(
+        DbConnection conexion, DbTransaction? transaccionCruda, Familia familia, int idTenant, CancellationToken ct)
+    {
+        var miembros = await MembresiaDeFamilias.BloquearMiembrosAsync(conexion, transaccionCruda, familia.Id, idTenant, ct);
+
+        var composiciones = await db.Articulos
+            .AsNoTracking()
+            .Where(a => miembros.Contains(a.Id))
+            .Select(a => new ComposicionDelCosto(
+                a.CostoLista, a.CostoListaPor, a.CostoListaIncluyeIva, a.DescuentoProveedor, a.ImpuestoInterno))
+            .ToListAsync(ct);
+
+        if (!ReglaDeFamilias.PuedeApagarElDesgloseDeCosto(composiciones))
+        {
+            throw ErrorDominio.Conflicto(
+                "composicion_distinta",
+                $"No se puede dejar de desglosar el costo en la familia \"{familia.Nombre}\": sus artículos tienen " +
+                "composiciones del costo distintas (costo de lista, base, IVA, descuento o impuesto interno). " +
+                "Hay que igualarlas o sacar de la familia a los que difieren.");
+        }
     }
 
     /// <summary>

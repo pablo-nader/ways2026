@@ -198,21 +198,65 @@ public class ServicioDeFamiliasPosicionDeLocksTests
     }
 
     /// <summary>La edición del nombre y del estado toma solo la fila de la familia: ni el lock de membresía ni la fila
-    /// de ningún artículo. Con una espera real lo prueba <c>FamiliasActualizacionTests</c>; acá, que el texto no los
-    /// nombra.</summary>
+    /// de ningún artículo. La única excepción es el pedido que apaga la marca de desglose de costo
+    /// (<c>pidioApagar</c>): ese toma el lock de membresía EXCLUSIVO —una sola vez, dentro de ese <c>if</c> y antes que
+    /// la fila de la familia— y las filas de los miembros solo en <c>ExigirComposicionIdenticaAsync</c>, que se llama
+    /// después de leer la familia y solo si el pedido apaga una marca encendida. Con una espera real lo prueba
+    /// <c>FamiliasActualizacionTests</c> y <c>FamiliasDesglosanCostoTests</c>; acá, que el texto no los nombra fuera de
+    /// esa rama.</summary>
     [Fact]
-    public void LaEdicionNoTomaElLockDeMembresiaNiBloqueaFilasDeArticulos()
+    public void LaEdicionSoloTomaLaMembresiaYLasFilasDeLosMiembrosCuandoPideApagarLaMarca()
     {
         var cuerpo = Metodo("ActualizarAsync");
 
-        foreach (var ajeno in new[]
-        {
-            "LockDeMembresiaDeFamilias", "BloquearMiembrosAsync", "BloquearFilaDelArticuloAsync", "db.Articulos.Where"
-        })
+        Assert.Equal("var pidioApagar = datos.PermiteDesglosarCosto == false;", ExtraerLinea(cuerpo, "var pidioApagar ="));
+
+        var rama = CuerpoDe(cuerpo, "if (pidioApagar)");
+        Assert.Equal(1, Contar(cuerpo, "LockDeMembresiaDeFamilias"));
+        Assert.Equal(1, Contar(rama, "LockDeMembresiaDeFamilias.TomarExclusivoAsync("));
+        Assert.DoesNotContain("TomarCompartidoAsync(", cuerpo, StringComparison.Ordinal);
+        Assert.True(
+            Posicion(cuerpo, "LockDeMembresiaDeFamilias.TomarExclusivoAsync(") < Posicion(cuerpo, "guarda.BloquearFilaAsync<Familia>("),
+            "El lock de membresía va antes que la fila de la familia.");
+
+        foreach (var ajeno in new[] { "BloquearMiembrosAsync", "BloquearFilaDelArticuloAsync", "db.Articulos.Where" })
         {
             Assert.DoesNotContain(ajeno, cuerpo, StringComparison.Ordinal);
         }
 
         Assert.Equal(1, Contar(cuerpo, "guarda.BloquearFilaAsync<Familia>("));
+        Assert.Equal(1, Contar(cuerpo, "db.Familias.FirstOrDefaultAsync("));
+        Assert.Equal(1, Contar(cuerpo, "ExigirComposicionIdenticaAsync("));
+        Assert.True(
+            Posicion(cuerpo, "db.Familias.FirstOrDefaultAsync(") < Posicion(cuerpo, "if (pidioApagar && familia.PermiteDesglosarCosto)"),
+            "La composición se exige DESPUÉS de leer la familia bajo el lock.");
+        Assert.True(
+            Posicion(cuerpo, "if (pidioApagar && familia.PermiteDesglosarCosto)") < Posicion(cuerpo, "familia.PermiteDesglosarCosto = "),
+            "La composición se exige ANTES de escribir la marca.");
+    }
+
+    /// <summary>Las filas de los miembros se bloquean —<c>FOR NO KEY UPDATE</c>, ascendentes— ANTES de leer sus
+    /// composiciones, y esa lectura no rastrea entidades.</summary>
+    [Fact]
+    public void ApagarLaMarcaBloqueaLasFilasDeLosMiembrosAntesDeLeerSusComposiciones()
+    {
+        var cuerpo = CuerpoDe(FuenteSinComentarios(), "private async Task ExigirComposicionIdenticaAsync(");
+
+        Assert.True(
+            Posicion(cuerpo, "MembresiaDeFamilias.BloquearMiembrosAsync(") < Posicion(cuerpo, "db.Articulos"),
+            "Las filas de los miembros se bloquean ANTES de leerlas.");
+        Assert.Equal(1, Contar(cuerpo, "db.Articulos"));
+        Assert.Contains(".AsNoTracking()", cuerpo, StringComparison.Ordinal);
+        Assert.True(
+            Posicion(cuerpo, "db.Articulos") < Posicion(cuerpo, "composicion_distinta"),
+            "La decisión se toma con lo leído bajo los locks.");
+    }
+
+    private static string ExtraerLinea(string texto, string marca)
+    {
+        var inicio = Posicion(texto, marca);
+        var fin = texto.IndexOf('\n', inicio);
+
+        return texto[inicio..(fin < 0 ? texto.Length : fin)].Trim();
     }
 }

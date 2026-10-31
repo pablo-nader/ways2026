@@ -37,6 +37,9 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
   baja no cuenta como miembro para ningún efecto.
 - La regla pura de qué es compartido y qué es propio vive en `ValoresCompartidosDeFamilia`
   (Domain): una columna nueva en `articulos` obliga a clasificarla.
+- **Excepción de composición:** en una familia con `permite_desglosar_costo`, cinco de las dieciséis columnas
+  (`costo_lista`, `costo_lista_por`, `costo_lista_incluye_iva`, `descuento_proveedor`, `impuesto_interno`) son propias de
+  cada miembro y solo el `costo_nominal` es común ("Familias que permiten desglosar el costo").
 
 **Precios con alcance de familia.** `POST /api/articulos/{id}/precios` y
 `POST /api/articulos/{id}/precios/programados` aceptan un `alcance` opcional (`Familia` o `SoloEste`):
@@ -149,6 +152,37 @@ sentencia, igual que con `idFamilia`; después los chequeos de catálogo; la fam
 `SaveChangesAsync`, que da el id) justo antes que el artículo. Una fila nueva no la puede bloquear nadie, así que no hay
 fila de familia que bloquear ni filas de miembros ni locks de par.
 
+**Familias que permiten desglosar el costo.** `familias.permite_desglosar_costo boolean NOT NULL DEFAULT false` (sin
+backfill: las familias existentes quedan como están). Con la marca encendida, la **composición del costo** —`costo_lista`,
+`costo_lista_por`, `costo_lista_incluye_iva`, `descuento_proveedor` e `impuesto_interno`— pasa a ser **propia de cada
+miembro**, porque bebidas de una misma familia traen impuestos internos distintos en la factura del proveedor y comparten,
+aun así, el costo final y el precio de venta. Los otros once campos siguen compartidos, incluidos `id_alicuota_iva`,
+`unidades_por_bulto` y `costo_nominal`, igual que el estado de precios de las listas fijas. La regla es pura
+(`ValoresCompartidosDeFamilia.ColumnasDeLaComposicion`, y el parámetro `permiteDesglosarCosto`/`conservarComposicion` de
+`CamposDistintos` y `AplicarA`); sin la marca el comportamiento es exactamente el de arriba.
+
+| Escritor | Con la marca encendida |
+|---|---|
+| **Edición de un miembro** (`PUT /api/articulos/{id}`) | la composición no cuenta como campo compartido: si la composición nueva da el **mismo `costo_nominal`** que la familia (y ningún otro campo compartido cambia), se guarda solo ese artículo y **no se pide alcance**, con o sin `alcance`. Si el nominal resultante es otro (o cambia cualquier otro campo compartido) rige la tabla de alcance de arriba: ausente → `409 alcance_requerido`; `Familia` → el nominal nuevo y los demás campos compartidos cambiados llegan a todos los miembros vivos y **cada uno conserva su composición**; `SoloEste` → el artículo sale de la familia con todo lo suyo |
+| **Alta dentro de la familia** (`idFamilia`) | el artículo trae su composición y **hereda el nominal de la familia**. Un pedido con costo de lista cuya composición da otro nominal es `409 costo_nominal_distinto_de_familia` (se evalúa después de `familia_valores_distintos`, que gana si además difiere otro campo compartido) y no escribe nada. Un pedido sin costo de lista no trae composición y hereda el nominal como siempre |
+| **Agrupar** (`POST /api/familias`, `POST /api/familias/{id}/articulos`) y su previsualización | la alineación con la referencia copia los once campos que siguen compartidos —el nominal incluido— y **no toca ni compara la composición**: `campos` no la nombra y `nuevo` lleva la composición que el destino ya tenía. La marca de una familia que ya existe es la suya; al crear una nueva, `permiteDesglosarCosto` del pedido (`null` es `false`); en la previsualización solo cuenta cuando la referencia no tiene familia |
+| **Compras** | sin cambios: escriben solo `costo_nominal`, uno por familia |
+
+`409 alcance_requerido` de la edición de un miembro de una familia con la marca lleva, además del mensaje —que nombra el costo
+nominal anterior y el nuevo—, `datos: { costoNominalAnterior, costoNominalNuevo }` en el ProblemDetails (iguales si lo que
+cambia es otro campo compartido). Sin la marca el error no trae `datos`. `409 costo_nominal_distinto_de_familia` lleva
+`datos: { costoNominalDeLaFamilia, costoNominalDelPedido }`. Lo produce `ErrorDominioConDatos` y lo escribe
+`ManejadorDeErrores`.
+
+**Encender y apagar la marca** (`PUT /api/familias/{id}` con `permiteDesglosarCosto`). Encenderla no necesita ninguna
+condición ni lock de membresía: los miembros ya son idénticos en los campos que pasan a ser propios. Apagarla exige que los
+miembros vivos tengan **todos la misma composición** (igualdad por valor; los dados de baja no cuentan): si no,
+`409 composicion_distinta` y no cambia nada, ni el nombre ni el estado del mismo pedido. Para que ninguna edición de un
+artículo cambie una composición mientras se decide, el pedido que apaga toma, en el orden del protocolo, el lock de
+membresía **exclusivo** como primera sentencia, la fila de la familia `FOR UPDATE` y las filas de los miembros vivos
+`FOR NO KEY UPDATE`, y recién entonces lee las composiciones. La edición de un miembro lee la marca bajo el lock de membresía
+(compartido o exclusivo), así que no puede verla pasar de `true` a `false` hasta el commit.
+
 **Compras y familias.** La confirmación de una compra (`ServicioDeCompras.ConfirmarAsync`) toma el lock de
 membresía **compartido** como primera sentencia de su transacción, antes que el `UPDATE` del encabezado:
 ningún alta ni salida de una familia puede intercalarse hasta el commit. El costo que escribe
@@ -251,7 +285,10 @@ no toman locks.
   incluyen dan `400 demasiados_articulos` después de resolver la familia).
 - `PUT /api/familias/{id}`: el nombre y el estado `activo`, los dos obligatorios (`400 nombre_requerido`,
   `400 nombre_muy_largo` —hasta 150 caracteres, sin espacios en los extremos— y `400 activo_requerido`: un `activo`
-  ausente se rechaza, no se lee como `false`). El nombre es único entre las familias vivas del tenant sin distinguir
+  ausente se rechaza, no se lee como `false`), y `permiteDesglosarCosto`, opcional (ausente conserva el valor
+  guardado; `false` solo se acepta si los miembros vivos tienen la misma composición del costo, si no `409
+  composicion_distinta`: "Familias que permiten desglosar el costo"). Las lecturas (`GET /api/familias`, el detalle, y la
+  respuesta de `PUT`) devuelven `permiteDesglosarCosto`. El nombre es único entre las familias vivas del tenant sin distinguir
   mayúsculas (`ux_familias_nombre`): `409 familia_nombre_duplicado`, que sostiene la restricción también en una
   carrera y que el chequeo previo adelanta con un mensaje que nombra el nombre pedido; el nombre de una familia dada de
   baja se puede reutilizar. Una familia inactiva no admite miembros nuevos, ni por el alta de un artículo con
@@ -259,7 +296,7 @@ no toman locks.
   familia no existe, está dada de baja o es de otro tenant: el servicio lo da antes de los tres `400` de arriba y del
   chequeo previo del nombre (`409 familia_nombre_duplicado`). Es una
   transacción sin reintento que lee la fila UNA vez, después de su `FOR UPDATE`; una familia dada de baja mientras
-  esperaba ese lock da `404` y no se escribe nada. No toma el lock de membresía ni bloquea filas de artículos. Escribe
+  esperaba ese lock da `404` y no se escribe nada. Salvo con `permiteDesglosarCosto: false`, no toma el lock de membresía ni bloquea filas de artículos. Escribe
   la fila de la familia, que el alta de un artículo con `idFamilia` y agregar artículos leen `FOR SHARE`: un cambio de
   `activo` en curso hace esperar a esa operación, que lo ve.
 - `DELETE /api/familias/{id}/articulos/{idArticulo}`: **saca** al artículo de la familia: queda sin familia

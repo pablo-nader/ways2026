@@ -91,7 +91,8 @@ public static class ReglaDeFamilias
     /// </code>
     /// </summary>
     public static ResolucionDeIngresoAFamilia ResolverIngreso(
-        bool familiaActiva, ValoresCompartidosDeFamilia? referencia, ValoresCompartidosDeFamilia pedidos)
+        bool familiaActiva, ValoresCompartidosDeFamilia? referencia, ValoresCompartidosDeFamilia pedidos,
+        bool permiteDesglosarCosto = false)
     {
         if (!familiaActiva)
         {
@@ -103,10 +104,28 @@ public static class ReglaDeFamilias
             return ResolucionDeIngresoAFamilia.FamiliaSinArticulos;
         }
 
-        return referencia.CamposDistintos(pedidos).Count > 0
-            ? ResolucionDeIngresoAFamilia.ValoresDistintos
-            : ResolucionDeIngresoAFamilia.Permitido;
+        var distintos = referencia.CamposDistintos(pedidos, permiteDesglosarCosto);
+
+        if (distintos.Count == 0)
+        {
+            return ResolucionDeIngresoAFamilia.Permitido;
+        }
+
+        // Con la composición propia de cada miembro, el costo nominal es lo único que el pedido puede traer distinto
+        // del resto sin tocar ningún otro campo compartido: se rechaza con su propio código.
+        return permiteDesglosarCosto && distintos is ["costo_nominal"]
+            ? ResolucionDeIngresoAFamilia.CostoNominalDistinto
+            : ResolucionDeIngresoAFamilia.ValoresDistintos;
     }
+
+    /// <summary>
+    /// <c>true</c> si una familia puede dejar de permitir desglosar el costo: los miembros vivos
+    /// (<paramref name="composiciones"/>, leídas bajo el lock de membresía exclusivo y las filas de los miembros) tienen
+    /// todos la misma composición del costo, o no hay ninguno. Con composiciones distintas apagar la marca dejaría a la
+    /// familia con miembros que ya no son idénticos en campos que vuelven a ser compartidos.
+    /// </summary>
+    public static bool PuedeApagarElDesgloseDeCosto(IEnumerable<ComposicionDelCosto> composiciones) =>
+        composiciones.Distinct().Count() <= 1;
 
     /// <summary>
     /// La decisión de AGREGAR artículos a una familia que ya existe (doc 10 §3): la regla de ingreso sin la comparación

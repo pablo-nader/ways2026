@@ -479,6 +479,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
 
+                    b.Property<bool>("PermiteDesglosarCosto")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("permite_desglosar_costo");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");

@@ -379,7 +379,7 @@ public class ServicioDeArticulos(
             if (datos.IdFamilia is { } idFamilia)
             {
                 var referencia = await ExigirIngresoALaFamiliaAsync(
-                    conexion, transaccionCruda, idFamilia, idTenant, datos, ct);
+                    conexion, transaccionCruda, idFamilia, idTenant, datos, costoNominal, ct);
                 idDeLaReferencia = referencia.Id;
                 costoNominalAGuardar = referencia.CostoNominal;
             }
@@ -648,17 +648,21 @@ public class ServicioDeArticulos(
             // el pedido significa "conservar el guardado": su valor sale de esa misma lectura, no de otra.
             var pedido = ValoresCompartidosDe(
                 datos, editado.AcumulaEnVenta, costoListaPor, costoListaIncluyeIva, impuestoInterno, costoNominal);
+            // Con la marca de desglose de costo, la composición del costo es propia del artículo y no cuenta como campo
+            // compartido: una composición nueva que da el mismo costo nominal que la familia se guarda sin pedir alcance.
+            var composicionPropia = bloqueados.PermiteDesglosarCosto;
             var resolucion = bloqueados.IdFamilia is null
                 ? ResolucionDeAlcanceDeFamilia.SoloElArticulo
                 : ReglaDeFamilias.ResolverEdicionDeMiembro(
-                    modo, cambiaCamposCompartidos: ValoresCompartidosDeFamilia.De(editado).CamposDistintos(pedido).Count > 0);
+                    modo,
+                    cambiaCamposCompartidos:
+                        ValoresCompartidosDeFamilia.De(editado).CamposDistintos(pedido, composicionPropia).Count > 0);
 
             if (resolucion == ResolucionDeAlcanceDeFamilia.AlcanceRequerido)
             {
-                throw await MembresiaDeFamilias.ErrorDeAlcanceRequeridoAsync(
-                    conexion, transaccionCruda, bloqueados.IdFamilia!.Value, idTenant,
-                    "la edición cambia campos compartidos y tiene que indicar si se aplican a toda la familia o solo a este artículo.",
-                    ct);
+                throw await ErrorDeAlcanceRequeridoDeLaEdicionAsync(
+                    conexion, transaccionCruda, bloqueados.IdFamilia!.Value, idTenant, composicionPropia,
+                    editado.CostoNominal, pedido.CostoNominal, ct);
             }
 
             // Artículo por importe (sobre el estado resultante, con lo leído bajo los locks): ninguna de estas
@@ -710,7 +714,9 @@ public class ServicioDeArticulos(
                     idsConControlDeLoteActivado.Add(objetivo.Id);
                 }
 
-                pedido.AplicarA(objetivo);
+                // A los demás miembros de una familia con composición propia solo les llegan los once campos que siguen
+                // compartidos; el editado recibe siempre su composición.
+                pedido.AplicarA(objetivo, conservarComposicion: composicionPropia && objetivo.Id != editado.Id);
                 objetivo.UpdatedAt = ahora;
             }
 
@@ -770,7 +776,8 @@ public class ServicioDeArticulos(
     /// <summary>Los artículos que una edición tiene bloqueados y leídos: el editado, todos los que ese
     /// pedido puede escribir (<see cref="Miembros"/>, ascendentes por id; es solo el editado cuando no se
     /// escribe a la familia) y la familia de la que es miembro (<c>null</c> ⇒ sin familia).</summary>
-    private sealed record ArticulosBloqueados(Articulo Editado, IReadOnlyList<Articulo> Miembros, int? IdFamilia);
+    private sealed record ArticulosBloqueados(
+        Articulo Editado, IReadOnlyList<Articulo> Miembros, int? IdFamilia, bool PermiteDesglosarCosto = false);
 
     /// <summary>
     /// Paso (2) del protocolo de locks de familias —las filas de <c>articulos</c>—, que sigue al lock de
@@ -813,6 +820,11 @@ public class ServicioDeArticulos(
             return new ArticulosBloqueados(suelto, [suelto], IdFamilia: null);
         }
 
+        // La marca de la familia, bajo el lock de membresía (compartido o exclusivo): apagarla toma el exclusivo, así que
+        // no puede cambiar de true a false hasta el commit. Una lectura escalar, no una entidad.
+        var permiteDesglosarCosto = await MembresiaDeFamilias.LeerPermiteDesglosarCostoAsync(
+            conexion, transaccion, familia, idTenant, ct);
+
         List<int> idsBloqueados;
 
         if (ReglaDeFamilias.ResolverAlcance(modo, esMiembro: true) == ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia)
@@ -837,7 +849,7 @@ public class ServicioDeArticulos(
         // las que quedaron bloqueadas: la baja lógica no pudo comitear después de ese bloqueo.
         var filas = await db.Articulos.Where(a => idsBloqueados.Contains(a.Id)).OrderBy(a => a.Id).ToListAsync(ct);
 
-        return new ArticulosBloqueados(filas.Single(a => a.Id == id), filas, familia);
+        return new ArticulosBloqueados(filas.Single(a => a.Id == id), filas, familia, permiteDesglosarCosto);
     }
 
     /// <summary>Las validaciones del alta dentro de una familia, bajo el lock de membresía exclusivo que el
@@ -851,7 +863,7 @@ public class ServicioDeArticulos(
     /// nombra las columnas que difieren, todos 409.</para></summary>
     private async Task<(int Id, decimal? CostoNominal)> ExigirIngresoALaFamiliaAsync(
         DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, AltaArticulo datos,
-        CancellationToken ct)
+        decimal? costoNominalDelPedido, CancellationToken ct)
     {
         var familia = await MembresiaDeFamilias.LeerFamiliaParaIngresarAsync(conexion, transaccion, idFamilia, idTenant, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la familia {idFamilia}.");
@@ -867,9 +879,17 @@ public class ServicioDeArticulos(
         // El costo nominal no es un campo del pedido y por sí solo nunca rechaza el alta: se compara con el de la
         // referencia, y si el resto de los campos compartidos coincide, el miembro nuevo hereda ese costo (el que haya
         // dejado una compra).
-        var pedidos = ValoresCompartidosDe(datos, referencia?.CostoNominal);
+        //
+        // Con la marca de desglose de costo, en cambio, el pedido con una composición (costo de lista cargado) trae su
+        // propio costo nominal, y una composición que da otro que el de la familia se rechaza: un pedido sin costo de
+        // lista no trae composición y hereda el de la familia, como siempre.
+        var nominalDelPedido = familia.PermiteDesglosarCosto && datos.CostoLista is not null
+            ? costoNominalDelPedido
+            : referencia?.CostoNominal;
+        var pedidos = ValoresCompartidosDe(datos, nominalDelPedido);
 
-        switch (ReglaDeFamilias.ResolverIngreso(familia.Activa, valoresDeLaReferencia, pedidos))
+        switch (ReglaDeFamilias.ResolverIngreso(
+            familia.Activa, valoresDeLaReferencia, pedidos, familia.PermiteDesglosarCosto))
         {
             case ResolucionDeIngresoAFamilia.Permitido:
                 return (referencia!.Id, referencia.CostoNominal);
@@ -889,12 +909,60 @@ public class ServicioDeArticulos(
                 throw ErrorDominio.Conflicto(
                     "familia_valores_distintos",
                     $"Los campos compartidos del artículo tienen que ser idénticos a los de la familia \"{familia.Nombre}\": " +
-                    $"difieren {string.Join(", ", valoresDeLaReferencia!.CamposDistintos(pedidos))}.");
+                    $"difieren {string.Join(", ", valoresDeLaReferencia!.CamposDistintos(pedidos, familia.PermiteDesglosarCosto))}.");
+
+            case ResolucionDeIngresoAFamilia.CostoNominalDistinto:
+                throw ErrorDominioConDatos.Conflicto(
+                    "costo_nominal_distinto_de_familia",
+                    $"La composición del costo da un costo nominal de {FormatearNominal(pedidos.CostoNominal)} y el de la familia " +
+                    $"\"{familia.Nombre}\" es {FormatearNominal(referencia!.CostoNominal)}: el artículo hereda el de la familia, " +
+                    "así que la composición tiene que dar el mismo.",
+                    new Dictionary<string, object?>
+                    {
+                        ["costoNominalDeLaFamilia"] = referencia.CostoNominal,
+                        ["costoNominalDelPedido"] = pedidos.CostoNominal
+                    });
 
             default:
                 throw new InvalidOperationException("Resolución de ingreso a la familia desconocida.");
         }
     }
+
+    /// <summary>El <c>409 alcance_requerido</c> de la edición de un miembro. En una familia que permite desglosar el
+    /// costo, el error lleva además los dos costos nominales (<c>datos.costoNominalAnterior</c> y
+    /// <c>datos.costoNominalNuevo</c>, iguales si lo que cambia es otro campo compartido) y el mensaje los nombra: es lo
+    /// que el cliente muestra al preguntar el alcance. Sin la marca, el error es el de siempre.</summary>
+    private static async Task<ErrorDominio> ErrorDeAlcanceRequeridoDeLaEdicionAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, bool permiteDesglosarCosto,
+        decimal? costoNominalAnterior, decimal? costoNominalNuevo, CancellationToken ct)
+    {
+        const string queHayQueIndicar = "tiene que indicar si se aplican a toda la familia o solo a este artículo.";
+
+        if (!permiteDesglosarCosto)
+        {
+            return await MembresiaDeFamilias.ErrorDeAlcanceRequeridoAsync(
+                conexion, transaccion, idFamilia, idTenant, $"la edición cambia campos compartidos y {queHayQueIndicar}", ct);
+        }
+
+        var cambioElNominal = costoNominalAnterior != costoNominalNuevo;
+        var queCambia = cambioElNominal
+            ? $"la edición cambia campos compartidos (el costo nominal pasa de {FormatearNominal(costoNominalAnterior)} " +
+              $"a {FormatearNominal(costoNominalNuevo)}) y "
+            : "la edición cambia campos compartidos y ";
+
+        return await MembresiaDeFamilias.ErrorDeAlcanceRequeridoAsync(
+            conexion, transaccion, idFamilia, idTenant, queCambia + queHayQueIndicar, ct,
+            new Dictionary<string, object?>
+            {
+                ["costoNominalAnterior"] = costoNominalAnterior,
+                ["costoNominalNuevo"] = costoNominalNuevo
+            });
+    }
+
+    private static string FormatearNominal(decimal? costoNominal) =>
+        costoNominal is { } valor
+            ? valor.ToString("0.00", CultureInfo.InvariantCulture).Replace('.', ',')
+            : "sin costo";
 
     /// <summary>Los dieciséis campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// alta. Un campo compartido nuevo no compila hasta que se lo pasa acá: el record es posicional.</summary>
