@@ -1,78 +1,189 @@
 /*
- * Tema de Ways: tokens de marca (naranja, gris del chevrón, casi negro) sobre los modos de
- * color nativos de Bootstrap 5.3 (`data-bs-theme` en <html>). El oscuro es el modo por defecto.
+ * Tema de Ways: el sistema Mostrador (ver DESIGN.md). Los colores viven en tokens `--ws-*` por tema
+ * y Bootstrap 5.3 (`data-bs-theme` en <html>) se apoya en ellos a través de sus variables `--bs-*`.
+ * El oscuro es el modo por defecto.
  *
- * `--bs-body-bg` es la superficie (tarjetas, tablas, inputs); el fondo de la página es
- * `--ways-fondo`. Las franjas por punto de venta (`.color_x`, ways.css) no se tocan.
+ * `--bs-body-bg` es la superficie de trabajo (tarjetas, tablas, inputs); el fondo de la página es
+ * `--ws-bg`. Las variables `--bs-*-rgb` repiten el valor del token porque Bootstrap las necesita
+ * como tripleta. Las franjas por punto de venta (`.color_x`, ways.css) no se tocan, y los alias
+ * `--ways-*` se conservan para el CSS que todavía los usa.
  */
 
 :root {
-  --ways-naranja: #f7941d;
-  --ways-gris: #c4c4ca;
-  --ways-negro: #0b0b0c;
-  --ways-fuente: 'Inter', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  --ws-font-display: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --ws-font-body: 'Instrument Sans Variable', 'Instrument Sans', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
 
-  --bs-font-sans-serif: var(--ways-fuente);
-  --bs-primary: #f7941d;
-  --bs-primary-rgb: 247, 148, 29;
-  --bs-border-radius-sm: 0.375rem;
-  --bs-border-radius: 0.5rem;
-  --bs-border-radius-lg: 0.75rem;
-  --bs-focus-ring-color: rgba(247, 148, 29, 0.35);
+  --ws-space-1: 4px;
+  --ws-space-2: 8px;
+  --ws-space-3: 12px;
+  --ws-space-4: 16px;
+  --ws-space-6: 24px;
+  --ws-space-8: 32px;
+
+  --ws-radius-sm: 4px;
+  --ws-radius-md: 6px;
+  --ws-radius-lg: 8px;
+  --ws-radius-xl: 12px;
+  --ws-radius-pill: 999px;
+
+  --ws-control-sm: 30px;
+  --ws-control: 36px;
+  --ws-control-lg: 48px;
+  --ws-row: 44px;
+  --ws-row-compact: 36px;
+
+  --ways-fuente: var(--ws-font-body);
+
+  --bs-font-sans-serif: var(--ws-font-body);
+  --bs-border-radius-sm: var(--ws-radius-sm);
+  --bs-border-radius: var(--ws-radius-md);
+  --bs-border-radius-lg: var(--ws-radius-lg);
+  --bs-border-radius-xl: var(--ws-radius-xl);
+  --bs-border-radius-pill: var(--ws-radius-pill);
 }
 
 [data-bs-theme='light'] {
   color-scheme: light;
-  --ways-fondo: #f6f6f8;
-  --ways-barra: #ffffff;
-  --ways-sombra: 0 1px 3px rgba(16, 16, 24, 0.08), 0 1px 2px rgba(16, 16, 24, 0.04);
+  --ws-bg: #f4f4f2;
+  --ws-surface: #ffffff;
+  --ws-surface-sunken: #efefec;
+  --ws-surface-raised: #ffffff;
+  --ws-line: #e2e1dd;
+  --ws-line-control: #86837c;
+  --ws-ink: #1c1b19;
+  --ws-ink-muted: #5f5d58;
+  --ws-brand: #f7941d;
+  --ws-brand-hover: #e8830c;
+  --ws-on-brand: #1c1208;
+  --ws-brand-soft: #fdebd3;
+  --ws-brand-ink: #9a5200;
+  --ws-brand-gray: #c4c4ca;
+  --ws-focus: #b85f00;
+  --ws-ok: #1d7442;
+  --ws-ok-soft: #ddf1e4;
+  --ws-warn: #835600;
+  --ws-warn-soft: #fbeec9;
+  --ws-danger: #b3302a;
+  --ws-danger-soft: #f8dcd9;
+  --ws-info: #2c5aa0;
+  --ws-info-soft: #dfe8f6;
+  --ws-overlay: rgba(20, 19, 17, 0.45);
+  --ws-shadow-panel: 0 1px 2px rgba(28, 27, 25, 0.06);
+  --ws-shadow-overlay: 0 12px 32px rgba(28, 27, 25, 0.18), 0 2px 6px rgba(28, 27, 25, 0.08);
 
-  --bs-body-color: #1d1d1f;
-  --bs-body-color-rgb: 29, 29, 31;
+  --ways-fondo: var(--ws-bg);
+  --ways-barra: var(--ws-surface);
+  --ways-sombra: var(--ws-shadow-panel);
+  --ways-naranja: var(--ws-brand);
+  --ways-gris: var(--ws-brand-gray);
+
+  --bs-body-color: #1c1b19;
+  --bs-body-color-rgb: 28, 27, 25;
   --bs-body-bg: #ffffff;
   --bs-body-bg-rgb: 255, 255, 255;
-  --bs-secondary-bg: #eeeef1;
-  --bs-secondary-bg-rgb: 238, 238, 241;
-  --bs-tertiary-bg: #f6f6f8;
-  --bs-tertiary-bg-rgb: 246, 246, 248;
-  --bs-border-color: #e6e6ea;
-  --bs-border-color-translucent: rgba(29, 29, 31, 0.1);
-
-  --bs-link-color: #c46a00;
-  --bs-link-color-rgb: 196, 106, 0;
+  --bs-secondary-color: #5f5d58;
+  --bs-secondary-color-rgb: 95, 93, 88;
+  --bs-secondary-bg: #efefec;
+  --bs-secondary-bg-rgb: 239, 239, 236;
+  --bs-tertiary-bg: #f4f4f2;
+  --bs-tertiary-bg-rgb: 244, 244, 242;
+  --bs-border-color: #e2e1dd;
+  --bs-border-color-translucent: rgba(28, 27, 25, 0.1);
+  --bs-focus-ring-color: #b85f00;
+  --bs-primary: #f7941d;
+  --bs-primary-rgb: 247, 148, 29;
+  --bs-link-color: #9a5200;
+  --bs-link-color-rgb: 154, 82, 0;
   --bs-link-hover-color: #9a5200;
   --bs-link-hover-color-rgb: 154, 82, 0;
+  --bs-primary-text-emphasis: #9a5200;
+  --bs-primary-bg-subtle: #fdebd3;
+  --bs-primary-border-subtle: color-mix(in srgb, var(--ws-brand) 40%, var(--ws-brand-soft));
 
-  --bs-primary-text-emphasis: #7a4300;
-  --bs-primary-bg-subtle: #feebd0;
-  --bs-primary-border-subtle: #fcd29c;
+  --bs-success-text-emphasis: #1d7442;
+  --bs-success-bg-subtle: #ddf1e4;
+  --bs-success-border-subtle: color-mix(in srgb, var(--ws-ok) 30%, var(--ws-ok-soft));
+  --bs-warning-text-emphasis: #835600;
+  --bs-warning-bg-subtle: #fbeec9;
+  --bs-warning-border-subtle: color-mix(in srgb, var(--ws-warn) 30%, var(--ws-warn-soft));
+  --bs-danger-text-emphasis: #b3302a;
+  --bs-danger-bg-subtle: #f8dcd9;
+  --bs-danger-border-subtle: color-mix(in srgb, var(--ws-danger) 30%, var(--ws-danger-soft));
+  --bs-info-text-emphasis: #2c5aa0;
+  --bs-info-bg-subtle: #dfe8f6;
+  --bs-info-border-subtle: color-mix(in srgb, var(--ws-info) 30%, var(--ws-info-soft));
 }
 
 [data-bs-theme='dark'] {
   color-scheme: dark;
-  --ways-fondo: #121214;
-  --ways-barra: #1a1a1d;
-  --ways-sombra: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --ws-bg: #121211;
+  --ws-surface: #1b1b1a;
+  --ws-surface-sunken: #161615;
+  --ws-surface-raised: #242422;
+  --ws-line: #31302d;
+  --ws-line-control: #6f6c66;
+  --ws-ink: #ecebe8;
+  --ws-ink-muted: #a6a39d;
+  --ws-brand: #f7941d;
+  --ws-brand-hover: #ffa53d;
+  --ws-on-brand: #1c1208;
+  --ws-brand-soft: #3a2606;
+  --ws-brand-ink: #f9ab4a;
+  --ws-brand-gray: #c4c4ca;
+  --ws-focus: #f9ab4a;
+  --ws-ok: #5ccb8a;
+  --ws-ok-soft: #14301f;
+  --ws-warn: #e9b955;
+  --ws-warn-soft: #352a10;
+  --ws-danger: #f27f74;
+  --ws-danger-soft: #3d1814;
+  --ws-info: #8fb6f2;
+  --ws-info-soft: #17253b;
+  --ws-overlay: rgba(0, 0, 0, 0.62);
+  --ws-shadow-panel: none;
+  --ws-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06);
 
-  --bs-body-color: #e8e8ea;
-  --bs-body-color-rgb: 232, 232, 234;
-  --bs-body-bg: #1a1a1d;
-  --bs-body-bg-rgb: 26, 26, 29;
-  --bs-secondary-bg: #222226;
-  --bs-secondary-bg-rgb: 34, 34, 38;
-  --bs-tertiary-bg: #1e1e21;
-  --bs-tertiary-bg-rgb: 30, 30, 33;
-  --bs-border-color: #2e2e33;
-  --bs-border-color-translucent: rgba(232, 232, 234, 0.12);
+  --ways-fondo: var(--ws-bg);
+  --ways-barra: var(--ws-surface);
+  --ways-sombra: var(--ws-shadow-panel);
+  --ways-naranja: var(--ws-brand);
+  --ways-gris: var(--ws-brand-gray);
 
+  --bs-body-color: #ecebe8;
+  --bs-body-color-rgb: 236, 235, 232;
+  --bs-body-bg: #1b1b1a;
+  --bs-body-bg-rgb: 27, 27, 26;
+  --bs-secondary-color: #a6a39d;
+  --bs-secondary-color-rgb: 166, 163, 157;
+  --bs-secondary-bg: #161615;
+  --bs-secondary-bg-rgb: 22, 22, 21;
+  --bs-tertiary-bg: #121211;
+  --bs-tertiary-bg-rgb: 18, 18, 17;
+  --bs-border-color: #31302d;
+  --bs-border-color-translucent: rgba(236, 235, 232, 0.12);
+  --bs-focus-ring-color: #f9ab4a;
+  --bs-primary: #f7941d;
+  --bs-primary-rgb: 247, 148, 29;
   --bs-link-color: #f9ab4a;
   --bs-link-color-rgb: 249, 171, 74;
-  --bs-link-hover-color: #fbc078;
-  --bs-link-hover-color-rgb: 251, 192, 120;
-
-  --bs-primary-text-emphasis: #fbc078;
+  --bs-link-hover-color: #f9ab4a;
+  --bs-link-hover-color-rgb: 249, 171, 74;
+  --bs-primary-text-emphasis: #f9ab4a;
   --bs-primary-bg-subtle: #3a2606;
-  --bs-primary-border-subtle: #6e4509;
+  --bs-primary-border-subtle: color-mix(in srgb, var(--ws-brand) 40%, var(--ws-brand-soft));
+
+  --bs-success-text-emphasis: #5ccb8a;
+  --bs-success-bg-subtle: #14301f;
+  --bs-success-border-subtle: color-mix(in srgb, var(--ws-ok) 30%, var(--ws-ok-soft));
+  --bs-warning-text-emphasis: #e9b955;
+  --bs-warning-bg-subtle: #352a10;
+  --bs-warning-border-subtle: color-mix(in srgb, var(--ws-warn) 30%, var(--ws-warn-soft));
+  --bs-danger-text-emphasis: #f27f74;
+  --bs-danger-bg-subtle: #3d1814;
+  --bs-danger-border-subtle: color-mix(in srgb, var(--ws-danger) 30%, var(--ws-danger-soft));
+  --bs-info-text-emphasis: #8fb6f2;
+  --bs-info-bg-subtle: #17253b;
+  --bs-info-border-subtle: color-mix(in srgb, var(--ws-info) 30%, var(--ws-info-soft));
 }
 
 /* La salida impresa es siempre negro sobre blanco, sea cual sea el tema elegido. */
@@ -83,6 +194,14 @@
     --ways-fondo: #ffffff;
     --ways-barra: #ffffff;
     --ways-sombra: none;
+    --ws-bg: #ffffff;
+    --ws-surface: #ffffff;
+    --ws-surface-sunken: #ffffff;
+    --ws-surface-raised: #ffffff;
+    --ws-ink: #000000;
+    --ws-ink-muted: #000000;
+    --ws-shadow-panel: none;
+    --ws-shadow-overlay: none;
     --bs-body-color: #000000;
     --bs-body-color-rgb: 0, 0, 0;
     --bs-body-bg: #ffffff;
@@ -113,76 +232,125 @@
 }
 
 body {
-  font-family: var(--ways-fuente);
-  background-color: var(--ways-fondo);
+  font-family: var(--ws-font-body);
+  background-color: var(--ws-bg);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.h1,
+.h2,
+.h3,
+.h4,
+.h5,
+.h6,
+.modal-title,
+.box > header .encabezado {
+  font-family: var(--ws-font-display);
+}
+
+/* ----- Foco ----- */
+
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
+.btn:focus-visible,
+.btn-check:focus-visible + .btn,
+.nav-link:focus-visible,
+.page-link:focus-visible,
+.dropdown-item:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible,
+.form-check-input:focus-visible {
+  outline: 2px solid var(--ws-focus);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.page-link:focus {
+  box-shadow: none;
+}
+
+/* publico.css pide 'Bricolage Grotesque' a secas y la familia de fontsource se llama "… Variable". */
+:root .publico {
+  --pub-fuente-titulo: var(--ws-font-display);
 }
 
 /* ----- Botones y formularios ----- */
 
 .btn-primary {
-  --bs-btn-color: #1d1d1f;
-  --bs-btn-bg: #f7941d;
-  --bs-btn-border-color: #f7941d;
-  --bs-btn-hover-color: #1d1d1f;
-  --bs-btn-hover-bg: #ffa83a;
-  --bs-btn-hover-border-color: #ffa83a;
-  --bs-btn-focus-shadow-rgb: 247, 148, 29;
-  --bs-btn-active-color: #1d1d1f;
-  --bs-btn-active-bg: #e0830f;
-  --bs-btn-active-border-color: #e0830f;
-  --bs-btn-disabled-color: #1d1d1f;
-  --bs-btn-disabled-bg: #f7941d;
-  --bs-btn-disabled-border-color: #f7941d;
+  --bs-btn-color: var(--ws-on-brand);
+  --bs-btn-bg: var(--ws-brand);
+  --bs-btn-border-color: var(--ws-brand);
+  --bs-btn-hover-color: var(--ws-on-brand);
+  --bs-btn-hover-bg: var(--ws-brand-hover);
+  --bs-btn-hover-border-color: var(--ws-brand-hover);
+  --bs-btn-active-color: var(--ws-on-brand);
+  --bs-btn-active-bg: var(--ws-brand-hover);
+  --bs-btn-active-border-color: var(--ws-brand-hover);
+  --bs-btn-disabled-color: var(--ws-on-brand);
+  --bs-btn-disabled-bg: var(--ws-brand);
+  --bs-btn-disabled-border-color: var(--ws-brand);
 }
 
 .btn-outline-primary {
-  --bs-btn-color: var(--bs-link-color);
-  --bs-btn-border-color: #f7941d;
-  --bs-btn-hover-color: #1d1d1f;
-  --bs-btn-hover-bg: #f7941d;
-  --bs-btn-hover-border-color: #f7941d;
-  --bs-btn-focus-shadow-rgb: 247, 148, 29;
-  --bs-btn-active-color: #1d1d1f;
-  --bs-btn-active-bg: #e0830f;
-  --bs-btn-active-border-color: #e0830f;
-  --bs-btn-disabled-color: var(--bs-link-color);
-  --bs-btn-disabled-border-color: #f7941d;
+  --bs-btn-color: var(--ws-brand-ink);
+  --bs-btn-border-color: var(--ws-brand);
+  --bs-btn-hover-color: var(--ws-on-brand);
+  --bs-btn-hover-bg: var(--ws-brand);
+  --bs-btn-hover-border-color: var(--ws-brand);
+  --bs-btn-active-color: var(--ws-on-brand);
+  --bs-btn-active-bg: var(--ws-brand-hover);
+  --bs-btn-active-border-color: var(--ws-brand-hover);
+  --bs-btn-disabled-color: var(--ws-brand-ink);
+  --bs-btn-disabled-border-color: var(--ws-brand);
+}
+
+.form-control,
+.form-select,
+.form-check-input {
+  border-color: var(--ws-line-control);
 }
 
 .form-check-input:checked {
-  background-color: var(--ways-naranja);
-  border-color: var(--ways-naranja);
+  background-color: var(--ws-brand);
+  border-color: var(--ws-brand);
 }
 
 .form-check-input:focus {
-  border-color: var(--ways-naranja);
-  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
+  border-color: var(--ws-focus);
+  box-shadow: none;
 }
 
 .dropdown-menu {
-  --bs-dropdown-link-active-bg: var(--ways-naranja);
-  --bs-dropdown-link-active-color: #1d1d1f;
+  --bs-dropdown-link-active-bg: var(--ws-brand);
+  --bs-dropdown-link-active-color: var(--ws-on-brand);
 }
 
 .pagination {
-  --bs-pagination-active-bg: var(--ways-naranja);
-  --bs-pagination-active-border-color: var(--ways-naranja);
-  --bs-pagination-active-color: #1d1d1f;
+  --bs-pagination-active-bg: var(--ws-brand);
+  --bs-pagination-active-border-color: var(--ws-brand);
+  --bs-pagination-active-color: var(--ws-on-brand);
 }
 
 .nav-pills {
-  --bs-nav-pills-link-active-bg: var(--ways-naranja);
-  --bs-nav-pills-link-active-color: #1d1d1f;
+  --bs-nav-pills-link-active-bg: var(--ws-brand);
+  --bs-nav-pills-link-active-color: var(--ws-on-brand);
 }
 
 .form-control:focus,
 .form-select:focus {
-  border-color: var(--ways-naranja);
-  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
+  border-color: var(--ws-focus);
+  box-shadow: none;
 }
 
 .text-bg-primary {
-  color: #1d1d1f !important;
+  color: var(--ws-on-brand) !important;
 }
 
 /* ----- Cierre de modales ----- */
@@ -213,8 +381,8 @@ body {
 
 .boton-cerrar-modal:focus-visible {
   opacity: 1;
-  outline: 0;
-  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.35);
+  outline: 2px solid var(--ws-focus);
+  outline-offset: 2px;
 }
 
 .boton-cerrar-modal:disabled {
@@ -231,8 +399,8 @@ body {
 
 .ways-navbar .navbar-nav {
   --bs-nav-link-color: var(--bs-body-color);
-  --bs-nav-link-hover-color: var(--ways-naranja);
-  --bs-navbar-active-color: var(--ways-naranja);
+  --bs-nav-link-hover-color: var(--ws-brand-ink);
+  --bs-navbar-active-color: var(--ws-brand-ink);
 }
 
 .ways-navbar .nav-link {
@@ -242,8 +410,8 @@ body {
 
 .ways-navbar .nav-link.active,
 .ways-navbar .nav-link.show {
-  background-color: rgba(247, 148, 29, 0.15);
-  color: var(--bs-link-color);
+  background-color: var(--ws-brand-soft);
+  color: var(--ws-brand-ink);
 }
 
 .ways-navbar .navbar-brand.ways-brand::after {
@@ -251,8 +419,8 @@ body {
   margin-left: 0.35em;
   font-size: 0.7em;
   letter-spacing: -0.1em;
-  font-family: var(--ways-fuente);
-  color: var(--ways-gris);
+  font-family: var(--ws-font-body);
+  color: var(--ws-brand-gray);
 }
 
 /* ----- Tablas ----- */
