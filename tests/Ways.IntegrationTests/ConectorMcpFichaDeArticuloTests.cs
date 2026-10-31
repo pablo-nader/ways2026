@@ -166,8 +166,8 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         "Gremio (derivada) | 165,00",
         "Mayorista | 120,00",
         "",
-        "Stock por punto de venta (solo los que tienen saldo registrado):",
-        conMinimo ? "punto de venta | cantidad | mínimo" : "punto de venta | cantidad",
+        "Stock por sucursal (solo las que tienen saldo registrado):",
+        conMinimo ? "sucursal | cantidad | mínimo" : "sucursal | cantidad",
         conMinimo ? "Local 1 | 12 | 5" : "Local 1 | 12",
         conMinimo ? "Depósito | 3,5 | -" : "Depósito | 3,5",
         conMinimo ? $"(sucursal id {idCerrado}) | 7 | -" : $"(sucursal id {idCerrado}) | 7",
@@ -305,7 +305,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         var ficha = await servicio.ObtenerAsync(new SolicitudDeFichaDeArticulo("COLA-2L", null, 5, true, true));
 
         Assert.Equal(a.IdCola, ficha.Id);
-        Assert.Equal(["Local 1", "Depósito", $"(sucursal id {a.IdSucursalCerrada})"], ficha.Stock.Select(s => s.PuntoVenta).ToArray());
+        Assert.Equal(["Local 1", "Depósito", $"(sucursal id {a.IdSucursalCerrada})"], ficha.Stock.Select(s => s.Sucursal).ToArray());
         Assert.Equal(4, ficha.Costos!.TotalDeCompras);
         Assert.DoesNotContain(ficha.Costos.Compras, c => c.Proveedor == "Proveedor Ajeno");
     }
@@ -510,5 +510,25 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         var esquema = herramienta.GetProperty("inputSchema");
         Assert.Equal(["articulo", "compras", "empresa"], esquema.GetProperty("properties").EnumerateObject().Select(p => p.Name).Order().ToArray());
         Assert.Equal(["articulo"], esquema.GetProperty("required").EnumerateArray().Select(r => r.GetString()!).ToArray());
+    }
+
+    /// <summary>Cláusula bajo prueba: el stock de la ficha sale de <c>stock</c> por sucursal, no por caja. Una segunda
+    /// caja reapuntada a la sucursal de Local 1 comparte esa fila: la ficha es la misma de siempre, sin una línea de
+    /// stock para la caja nueva ni una fila de Local 1 repetida.</summary>
+    [Fact]
+    public async Task DosCajasDeUnaSucursalMuestranUnaSolaLineaDeStockEnLaFicha()
+    {
+        var e = await SembrarEscenarioAsync(nameof(DosCajasDeUnaSucursalMuestranUnaSolaLineaDeStockEnLaFicha));
+        var cajaDos = await _apoyo.SembrarPuntoVentaAsync(e.Tenant, "Caja 2");
+        await using (var db = fixture.CrearContextoDeAplicacion(DeTenant(e.Tenant)))
+        {
+            await SucursalDePrueba.ReapuntarAsync(fixture, cajaDos, await SucursalDePrueba.DeAsync(db, e.Tenant.IdPuntoVenta));
+        }
+
+        var resultado = await LlamarComoAsync(e.Admin, new { articulo = "COLA-2L" });
+
+        Assert.False(resultado.EsError, resultado.Texto);
+        Assert.Equal(FichaDeColaEsperada(e.IdCola, e.IdSucursalCerrada), Lineas(resultado.Texto));
+        Assert.DoesNotContain("Caja 2", resultado.Texto);
     }
 }

@@ -33,7 +33,7 @@ public sealed class HerramientasDeFichaDeArticulo
         "clasificación actual del artículo (un dato sin asignar o dado de baja figura como '(sin …)'); el precio " +
         "vigente hoy en cada lista de precios activa (el que rige en este momento, nunca uno vencido ni uno " +
         "programado a futuro; en las listas derivadas es el de su lista base con el porcentaje de la lista, igual " +
-        "que en el POS); el stock de cada punto de venta que tiene saldo registrado (el mínimo, solo para Supervisor y Admin); y las ventas " +
+        "que en el POS); el stock de cada sucursal que tiene saldo registrado, que es el que comparten las cajas de esa sucursal (el mínimo, solo para Supervisor y Admin); y las ventas " +
         "de los últimos 30 días contando hoy (con el 'hoy' y la zona horaria de cada empresa), en unidades e " +
         "importe, igual que el reporte de ventas por artículo de la web. Las ventas son solo para Supervisor y " +
         "Admin; el Vendedor ve una línea que lo avisa. El costo nominal del artículo y las últimas compras son " +
@@ -87,16 +87,16 @@ public sealed class HerramientasDeFichaDeArticulo
         if (f.EsProducto)
         {
             HerramientasDeVentas.AgregarTabla(
-                lineas, "Stock por punto de venta (solo los que tienen saldo registrado)",
-                verMinimo ? ["punto de venta", "cantidad", "mínimo"] : ["punto de venta", "cantidad"],
+                lineas, "Stock por sucursal (solo las que tienen saldo registrado)",
+                verMinimo ? ["sucursal", "cantidad", "mínimo"] : ["sucursal", "cantidad"],
                 f.Stock.Select(s => verMinimo
                     ? new[]
                     {
-                        s.PuntoVenta,
+                        s.Sucursal,
                         HerramientasDeVentas.Cantidad(s.Cantidad),
                         s.Minimo is { } minimo ? HerramientasDeVentas.Cantidad(minimo) : "-"
                     }
-                    : [s.PuntoVenta, HerramientasDeVentas.Cantidad(s.Cantidad)]).ToList());
+                    : [s.Sucursal, HerramientasDeVentas.Cantidad(s.Cantidad)]).ToList());
         }
         else
         {

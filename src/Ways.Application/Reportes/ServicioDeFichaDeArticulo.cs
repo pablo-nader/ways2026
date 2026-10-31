@@ -13,7 +13,7 @@ public sealed record SolicitudDeFichaDeArticulo(string Articulo, string? Empresa
 
 public sealed record PrecioDeListaDeFicha(string Lista, bool EsDerivada, decimal? Precio);
 
-public sealed record StockDeFicha(string PuntoVenta, decimal Cantidad, decimal? Minimo);
+public sealed record StockDeFicha(string Sucursal, decimal Cantidad, decimal? Minimo);
 
 public sealed record VentasDeFicha(DateOnly Desde, DateOnly Hasta, IReadOnlyList<string> Zonas, decimal Cantidad, decimal Importe);
 
@@ -33,7 +33,7 @@ public sealed record FichaDeArticulo(
     IReadOnlyList<StockDeFicha> Stock, VentasDeFicha? Ventas, CostosDeFicha? Costos);
 
 /// <summary>
-/// Ficha de un artículo para el conector MCP: precios vigentes por lista, stock por punto de venta, ventas de los
+/// Ficha de un artículo para el conector MCP: precios vigentes por lista, stock por sucursal, ventas de los
 /// últimos 30 días y, solo si el pedido lo permite, costo y últimas compras. Los precios salen de
 /// <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/> (la misma regla que el POS y la grilla, derivadas
 /// incluidas) y las ventas de <see cref="ServicioDeConsultasDeVentas.VentasDeUnArticuloAsync"/>. Quién puede ver

@@ -663,7 +663,14 @@ public partial class ServicioDeCompras
             }
 
             var netoDelGrupo = grupo.Sum(d => d.Delta);
-            if (netoDelGrupo != 0m)
+            if (netoDelGrupo == 0m && grupo.Any(d => d.IdLote is not null))
+            {
+                // Un lote que sube y otro que baja netean cero en el agregado, pero los lotes se bloquean igual: la
+                // fila agregada se toma antes, como manda el orden de locks de EscritorDeStock.
+                await EscritorDeStock.BloquearYCrearSiFaltaAsync(
+                    conexion, transaccion, idTenant, grupo.Key.IdSucursal, grupo.Key.IdArticulo, ct);
+            }
+            else if (netoDelGrupo != 0m)
             {
                 var agregado = await EscritorDeStock.SumarAStockAsync(
                     conexion, transaccion, idTenant, grupo.Key.IdSucursal, grupo.Key.IdArticulo, netoDelGrupo, ct);

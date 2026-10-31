@@ -350,7 +350,15 @@ public class ServicioDeStock(
         // AjustarAsync): ResolverPuntoVentaAsync da el mismo 404 para "no existe" y "es de otro
         // tenant" (ADR-8), tanto para origen como para destino.
         var puntoVentaOrigen = await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaOrigen, ct);
-        await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaDestino, ct);
+        var puntoVentaDestino = await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaDestino, ct);
+
+        // Dos cajas de una misma sucursal comparten el stock: se rechaza antes de resolver lotes, que no tiene
+        // sentido hacer para un movimiento que no existe. EjecutarTransferenciaAsync repite la comparación con las
+        // sucursales leídas dentro de la transacción, por si una caja cambió de sucursal entre las dos lecturas.
+        if (puntoVentaOrigen.IdSucursal == puntoVentaDestino.IdSucursal)
+        {
+            throw ErrorTransferenciaMismaSucursal();
+        }
 
         var articuloPorId = new Dictionary<int, Articulo>();
         foreach (var idArticulo in lineas.Select(l => l.IdArticulo).Distinct())
@@ -383,13 +391,9 @@ public class ServicioDeStock(
         var idSucursalOrigen = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaOrigen, ct);
         var idSucursalDestino = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaDestino, ct);
 
-        // Dos cajas de una misma sucursal comparten el stock: entre ellas no hay nada que transferir.
         if (idSucursalOrigen == idSucursalDestino)
         {
-            throw new ErrorDominio(
-                "transferencia_misma_sucursal",
-                "El origen y el destino pertenecen a la misma sucursal y comparten el stock; no hay nada que transferir.",
-                409);
+            throw ErrorTransferenciaMismaSucursal();
         }
 
         // Un asiento por línea y por lado: el movimiento (con su lote) y los upserts del agregado y del lote.
@@ -459,6 +463,12 @@ public class ServicioDeStock(
 
         return new ResultadoTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado);
     }
+
+    private static ErrorDominio ErrorTransferenciaMismaSucursal() =>
+        new(
+            "transferencia_misma_sucursal",
+            "El origen y el destino pertenecen a la misma sucursal y comparten el stock; no hay nada que transferir.",
+            409);
 
     /// <summary>Línea de transferencia YA resuelta (design: "LineaResuelta") — <see cref="IdLote"/>
     /// es <c>null</c> para un artículo sin control de lote efectivo, o el lote explícito/FEFO-defaulted

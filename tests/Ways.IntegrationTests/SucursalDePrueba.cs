@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Ways.Application.Abstracciones;
 
 namespace Ways.IntegrationTests;
@@ -33,5 +34,29 @@ public static class SucursalDePrueba
 
         return Convert.ToInt32(await comando.ExecuteScalarAsync()
             ?? throw new InvalidOperationException($"No existe el punto de venta {idPuntoVenta}."));
+    }
+
+    /// <summary>Reapunta una caja a otra sucursal (como hará la fusión de T5) con el owner, sin pasar por la API.</summary>
+    public static async Task ReapuntarAsync(WaysApiFixture fixture, int idPuntoVenta, int idSucursal)
+    {
+        await using var owner = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await owner.OpenAsync();
+        await using var comando = owner.CreateCommand();
+        comando.CommandText = "UPDATE puntos_venta SET id_sucursal = $1 WHERE id_punto_venta = $2";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idSucursal });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+    }
+
+    /// <summary>Estampa <c>deleted_at</c> a la sucursal con el owner: las cajas y el stock que la referencian quedan
+    /// intactos, que es el dato heredado que las lecturas tienen que sobrevivir.</summary>
+    public static async Task DarDeBajaAsync(WaysApiFixture fixture, int idSucursal)
+    {
+        await using var owner = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await owner.OpenAsync();
+        await using var comando = owner.CreateCommand();
+        comando.CommandText = "UPDATE sucursales SET deleted_at = now() WHERE id_sucursal = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idSucursal });
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
     }
 }

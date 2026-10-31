@@ -94,7 +94,7 @@ function filaFixture(sobrescribir: Partial<FilaDeVencimiento> = {}): FilaDeVenci
 }
 
 function vencimientosFixture(filas: FilaDeVencimiento[] = [filaFixture()], idPuntoVenta = 10): VencimientosRespuesta {
-  return { idPuntoVenta, hoy: '2026-08-14', diasDeAlerta: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', hoy: '2026-08-14', diasDeAlerta: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
 }
 
 function renderVencimientos() {

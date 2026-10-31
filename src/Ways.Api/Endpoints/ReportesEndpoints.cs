@@ -432,12 +432,16 @@ public static class ReportesEndpoints
         // Gate): gate heredado del grupo, sin política propia. Sin idArticulo (a diferencia de
         // GET /api/stock) y sin idEmpresa (mismo criterio que /tesoreria): la ruta solo pide el
         // punto de venta.
-        grupo.MapGet("/stock/existencias", (
-            ServicioDeReportesDeStock servicio, int idPuntoVenta, CancellationToken ct) =>
-            servicio.ObtenerExistenciasAsync(idPuntoVenta, ct))
+        //
+        // sucursales-T3: el stock es de la sucursal. Todas las rutas /stock/* piden idSucursal o, por
+        // compatibilidad con la web y el POS empaquetado, idPuntoVenta (se resuelve a la sucursal de esa
+        // caja); exactamente uno de los dos.
+        grupo.MapGet("/stock/existencias", async (
+            ServicioDeReportesDeStock servicio, int? idPuntoVenta, int? idSucursal, CancellationToken ct) =>
+            await servicio.ObtenerExistenciasAsync(await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct), ct))
         .WithSummary(
-            "Existencias de un punto de venta: stock ⋈ articulos, sin idArticulo requerido — a " +
-            "diferencia de GET /api/stock, que exige el par completo.");
+            "Existencias de una sucursal (idSucursal, o idPuntoVenta que se resuelve a la suya): stock ⋈ " +
+            "articulos, sin idArticulo requerido — a diferencia de GET /api/stock, que exige el par completo.");
 
         // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes
         // por co-locación. AGREGADO (design decisión 6): la guarda corre sobre
@@ -447,24 +451,27 @@ public static class ReportesEndpoints
         // nombres" que el resto de NombreDeArchivo, adaptado a un reporte sin rango real.
         grupo.MapGet("/stock/existencias/export", async (
             ServicioDeReportesDeStock servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
-            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
-            int idPuntoVenta, string formato, CancellationToken ct) =>
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros,
+            int? idPuntoVenta, int? idSucursal, string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
-            var existencias = await servicio.ObtenerExistenciasAsync(idPuntoVenta, ct);
+            var alcance = await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct);
+            var existencias = await servicio.ObtenerExistenciasAsync(alcance, ct);
 
-            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var empresa = alcance.IdEmpresa.ToString();
+            var zonaId = await AlcanceDeListadoHttp.ResolverZonaParaEmpresaAsync(
+                parametros, alcance.IdEmpresa, alcance.IdPuntoVentaDeReferencia, ct);
             var hoy = DateOnly.FromDateTime(
                 TimeZoneInfo.ConvertTime(reloj.Ahora, TimeZoneInfo.FindSystemTimeZoneById(zonaId)).Date);
 
-            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, $"PV {idPuntoVenta}", hoy, hoy, zonaId);
+            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, $"Sucursal {alcance.IdSucursal}", hoy, hoy, zonaId);
             var tabla = ExportacionDeReportes.De(existencias, ctx);
 
             GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
 
             var bytes = exportador.Generar(tabla);
-            var nombre = NombreDeArchivo.Construir("existencias", $"pv{idPuntoVenta}", hoy, hoy);
+            var nombre = NombreDeArchivo.Construir("existencias", $"sucursal{alcance.IdSucursal}", hoy, hoy);
 
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })
@@ -477,20 +484,20 @@ public static class ReportesEndpoints
         // Export Sibling"): gate heredado del grupo (LecturaDeReportes). "hoy" y
         // dias_alerta_vencimiento se resuelven DENTRO del servicio (ResolverContextoAsync) —
         // gobiernan tanto este JSON como /resumen y /export, nunca solo un encabezado HTTP.
-        grupo.MapGet("/stock/vencimientos", (
-            ServicioDeReportesDeStock servicio, int idPuntoVenta, int? dias, CancellationToken ct) =>
-            servicio.ObtenerVencimientosAsync(idPuntoVenta, dias, ct))
+        grupo.MapGet("/stock/vencimientos", async (
+            ServicioDeReportesDeStock servicio, int? idPuntoVenta, int? idSucursal, int? dias, CancellationToken ct) =>
+            await servicio.ObtenerVencimientosAsync(await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct), dias, ct))
         .WithSummary(
-            "Lotes con saldo positivo de un punto de venta, clasificados vencido/por_vencer/" +
-            "vigente/sin_fecha en la zona horaria del punto de venta — dias por defecto: " +
+            "Lotes con saldo positivo de una sucursal, clasificados vencido/por_vencer/" +
+            "vigente/sin_fecha en la zona horaria de su caja de referencia — dias por defecto: " +
             "dias_alerta_vencimiento.");
 
         // Tile de Tablero (design: API Surface) — reusa la misma clasificación que el JSON de
         // arriba, nunca una segunda query de agregación (ObtenerResumenDeVencimientosAsync).
-        grupo.MapGet("/stock/vencimientos/resumen", (
-            ServicioDeReportesDeStock servicio, int idPuntoVenta, CancellationToken ct) =>
-            servicio.ObtenerResumenDeVencimientosAsync(idPuntoVenta, ct))
-        .WithSummary("Tile de Tablero: conteos de vencido/por_vencer/sin_fecha del punto de venta.");
+        grupo.MapGet("/stock/vencimientos/resumen", async (
+            ServicioDeReportesDeStock servicio, int? idPuntoVenta, int? idSucursal, CancellationToken ct) =>
+            await servicio.ObtenerResumenDeVencimientosAsync(await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct), ct))
+        .WithSummary("Tile de Tablero: conteos de vencido/por_vencer/sin_fecha de la sucursal.");
 
         // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes
         // por co-locación. LISTADO (design decisión 17): el tope de filas ya lo exige el servicio
@@ -501,22 +508,23 @@ public static class ReportesEndpoints
         // (vencimientos.ZonaHoraria), nunca una segunda resolución que pudiera divergir.
         grupo.MapGet("/stock/vencimientos/export", async (
             ServicioDeReportesDeStock servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
-            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
-            int idPuntoVenta, int? dias, string formato, CancellationToken ct) =>
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int? idPuntoVenta, int? idSucursal, int? dias, string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
+            var alcance = await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct);
             var vencimientos = await servicio.ObtenerVencimientosParaExportacionAsync(
-                idPuntoVenta, dias, opciones.Value.TopeDeFilas, ct);
+                alcance, dias, opciones.Value.TopeDeFilas, ct);
 
-            var (empresa, _) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var empresa = alcance.IdEmpresa.ToString();
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, empresa, $"PV {idPuntoVenta}", vencimientos.Hoy, vencimientos.Hoy, vencimientos.ZonaHoraria);
+                usuario, reloj, empresa, $"Sucursal {alcance.IdSucursal}", vencimientos.Hoy, vencimientos.Hoy, vencimientos.ZonaHoraria);
             var tabla = ExportacionDeReportes.De(vencimientos, ctx);
 
             var bytes = exportador.Generar(tabla);
-            var nombre = NombreDeArchivo.Construir("vencimientos", $"pv{idPuntoVenta}", vencimientos.Hoy, vencimientos.Hoy);
+            var nombre = NombreDeArchivo.Construir("vencimientos", $"sucursal{alcance.IdSucursal}", vencimientos.Hoy, vencimientos.Hoy);
 
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })
@@ -528,9 +536,9 @@ public static class ReportesEndpoints
         // "Reposición Report Is The Alert And The Purchase Suggestion..."): gate heredado del
         // grupo. Sin campos de rotación todavía (slice 5) — dias es opcional, mismo criterio que
         // vencimientos?dias=.
-        grupo.MapGet("/stock/reposicion", (
-            ServicioDeReportesDeStock servicio, int idPuntoVenta, int? dias, CancellationToken ct) =>
-            servicio.ObtenerReposicionAsync(idPuntoVenta, dias, ct))
+        grupo.MapGet("/stock/reposicion", async (
+            ServicioDeReportesDeStock servicio, int? idPuntoVenta, int? idSucursal, int? dias, CancellationToken ct) =>
+            await servicio.ObtenerReposicionAsync(await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct), dias, ct))
         .WithSummary(
             "Alerta y sugerencia de compra: stock ⋈ articulos ⟕ proveedores donde minimo IS NOT " +
             "NULL AND cantidad <= minimo, agrupable por proveedor habitual (Sin proveedor incluido, " +
@@ -543,23 +551,24 @@ public static class ReportesEndpoints
         // mismo ObtenerReposicionAsync respalda ambas rutas.
         grupo.MapGet("/stock/reposicion/export", async (
             ServicioDeReportesDeStock servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
-            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
-            int idPuntoVenta, int? dias, string formato, CancellationToken ct) =>
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int? idPuntoVenta, int? idSucursal, int? dias, string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
-            var reposicion = await servicio.ObtenerReposicionAsync(idPuntoVenta, dias, ct);
+            var alcance = await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct);
+            var reposicion = await servicio.ObtenerReposicionAsync(alcance, dias, ct);
 
-            var (empresa, _) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var empresa = alcance.IdEmpresa.ToString();
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, empresa, $"PV {idPuntoVenta}", reposicion.Hoy, reposicion.Hoy, reposicion.ZonaHoraria);
+                usuario, reloj, empresa, $"Sucursal {alcance.IdSucursal}", reposicion.Hoy, reposicion.Hoy, reposicion.ZonaHoraria);
             var tabla = ExportacionDeReportes.De(reposicion, ctx);
 
             GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
 
             var bytes = exportador.Generar(tabla);
-            var nombre = NombreDeArchivo.Construir("reposicion", $"pv{idPuntoVenta}", reposicion.Hoy, reposicion.Hoy);
+            var nombre = NombreDeArchivo.Construir("reposicion", $"sucursal{alcance.IdSucursal}", reposicion.Hoy, reposicion.Hoy);
 
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })
@@ -572,11 +581,11 @@ public static class ReportesEndpoints
         // reposicion-de-stock: "The Tablero Tile Reuses The Report Method, Never A Second
         // Aggregation Query"): gate heredado del grupo. Reusa la misma clasificación que el JSON
         // de arriba, nunca una segunda query de agregación (ObtenerResumenDeReposicionAsync).
-        grupo.MapGet("/stock/reposicion/resumen", (
-            ServicioDeReportesDeStock servicio, int idPuntoVenta, CancellationToken ct) =>
-            servicio.ObtenerResumenDeReposicionAsync(idPuntoVenta, ct))
+        grupo.MapGet("/stock/reposicion/resumen", async (
+            ServicioDeReportesDeStock servicio, int? idPuntoVenta, int? idSucursal, CancellationToken ct) =>
+            await servicio.ObtenerResumenDeReposicionAsync(await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct), ct))
         .WithSummary(
-            "Tile de Tablero: conteos de bajoMinimo/sinStock/sinProveedor del punto de venta — " +
+            "Tile de Tablero: conteos de bajoMinimo/sinStock/sinProveedor de la sucursal — " +
             "sinProveedor cuenta el grupo Sin proveedor, nunca conflado con sugerido ausente.");
 
         // stage-13-stock-inteligente, Slice 5 (design decisión 14, spec reposicion-de-stock:
@@ -585,9 +594,9 @@ public static class ReportesEndpoints
         // TODO el catálogo del PV (design decisión 12); un artículo sin movimiento calificado en
         // la ventana está AUSENTE, nunca una fila en cero. dias opcional, mismo criterio que
         // /stock/reposicion?dias=.
-        grupo.MapGet("/stock/rotacion", (
-            ServicioDeReportesDeStock servicio, int idPuntoVenta, int? dias, CancellationToken ct) =>
-            servicio.ObtenerRotacionAsync(idPuntoVenta, dias, ct))
+        grupo.MapGet("/stock/rotacion", async (
+            ServicioDeReportesDeStock servicio, int? idPuntoVenta, int? idSucursal, int? dias, CancellationToken ct) =>
+            await servicio.ObtenerRotacionAsync(await servicio.ResolverAlcanceAsync(idPuntoVenta, idSucursal, ct), dias, ct))
         .WithSummary(
             "Feed de minimoSugerido para el editor: una fila por artículo con al menos un " +
             "movimiento calificado (venta o su anulación, nunca la anulación de una compra) en " +

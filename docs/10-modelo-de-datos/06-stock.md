@@ -134,8 +134,22 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > edición de una compra revierten sobre la sucursal guardada en los movimientos originales, nunca la que la
 > caja tenga después. Una transferencia entre dos cajas de la misma sucursal se rechaza con `409
 > transferencia_misma_sucursal`. Migración `StockPorSucursal`: backfill desde `puntos_venta.id_sucursal` que
-> aborta si dos filas cayeran sobre la misma clave (no fusiona saldos en silencio). Los contratos HTTP siguen
-> hablando de punto de venta: un punto de venta lee el stock de su sucursal.
+> aborta si dos filas cayeran sobre la misma clave (no fusiona saldos en silencio). Los contratos HTTP de
+> escritura siguen hablando de punto de venta: un punto de venta escribe sobre el stock de su sucursal.
+
+> **Estado (sucursales, T3): las lecturas hablan de sucursal.** Los reportes de stock (`GET /api/reportes/stock/`
+> `existencias|vencimientos|vencimientos/resumen|reposicion|reposicion/resumen|rotacion` y los `/export`) piden
+> `idSucursal` o, por compatibilidad con la web y el POS empaquetado, `idPuntoVenta`, que se resuelve a la sucursal de
+> esa caja; exactamente uno de los dos (`400 alcance_de_stock_requerido` / `alcance_de_stock_ambiguo`). Las
+> respuestas devuelven `idSucursal` y `nombreSucursal` y ya no `idPuntoVenta`: dos cajas de una sucursal reciben la
+> misma respuesta, con una sola fila por artículo (o lote). La zona horaria y los días de alerta/rotación siguen
+> siendo parámetros por caja: con `idSucursal` se toman de la caja de menor id de la sucursal, hasta que esos
+> parámetros pasen a ser de la sucursal. Una sucursal dada de baja se trata como inexistente (`404`), también por la
+> caja que todavía la referencia. La ficha del artículo (`articulo_info`) lista el stock por sucursal; si una sucursal
+> dada de baja conserva saldo, la ficha lo sigue mostrando como `(sucursal id N)` en lugar de ocultarlo. Los
+> nombres de archivo de los export son `existencias_sucursal{id}_…`. Las ventas se pueden agrupar por sucursal
+> (`ventas_agrupadas` con `agruparPor = sucursal`, vía `ventas.id_punto_venta → puntos_venta.id_sucursal`); una
+> sucursal dada de baja con ventas conserva su fila como `(sucursal id N)`, para que el total no pierda importe.
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
