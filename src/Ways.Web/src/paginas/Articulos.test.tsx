@@ -1635,7 +1635,7 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     const confirmacion = await screen.findByRole('alertdialog')
     expect(confirmacion).toHaveTextContent('¿Dar de baja el artículo "Articulo Uno"?')
     expect(confirmacion).toHaveTextContent(
-      'Deja de aparecer en el POS y en la tienda online. Las ventas registradas no cambian.',
+      'Deja de aparecer en la tienda online y, en cada caja, desde su próxima sincronización. Las ventas registradas no cambian.',
     )
     expect(apiDeleteMock).not.toHaveBeenCalled()
   })

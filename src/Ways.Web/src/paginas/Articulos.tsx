@@ -354,7 +354,7 @@ export function Articulos() {
       {bajaPendiente !== null && (
         <ConfirmacionDeBaja
           titulo={`el artículo "${bajaPendiente.fila.nombre}"`}
-          nota="Deja de aparecer en el POS y en la tienda online. Las ventas registradas no cambian."
+          nota="Deja de aparecer en la tienda online y, en cada caja, desde su próxima sincronización. Las ventas registradas no cambian."
           etiquetaConfirmar="Dar de baja"
           ocupado={eliminando}
           disparador={bajaPendiente.disparador}
