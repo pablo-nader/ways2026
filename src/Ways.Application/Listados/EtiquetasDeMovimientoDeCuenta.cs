@@ -22,6 +22,7 @@ public static class EtiquetasDeMovimientoDeCuenta
             [TipoMovimientoCcProveedor.Compra] = "Compra",
             [TipoMovimientoCcProveedor.Pago] = "Pago",
             [TipoMovimientoCcProveedor.Ajuste] = AjusteManual,
+            [TipoMovimientoCcProveedor.Redondeo] = "Redondeo",
         };
 
     public static readonly IReadOnlyDictionary<TipoMovimientoPersonal, string> Personal =

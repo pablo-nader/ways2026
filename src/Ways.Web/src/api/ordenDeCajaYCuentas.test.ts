@@ -31,12 +31,14 @@ describe('etiquetas de la columna Tipo que el servidor replica para ordenar', ()
       ['Pago', etiquetaDeTipoDeMovimiento({ tipo: 'Pago', etiqueta: null })],
       ['Ajuste', etiquetaDeTipoDeMovimiento({ tipo: 'Ajuste', etiqueta: 'Manual' })],
       ['AjusteConCompra', etiquetaDeTipoDeMovimiento({ tipo: 'Ajuste', etiqueta: 'AnulacionContramovimiento' })],
+      ['Redondeo', etiquetaDeTipoDeMovimiento({ tipo: 'Redondeo', etiqueta: null })],
     ]).toEqual([
       ['Apertura', 'Apertura'],
       ['Compra', 'Compra'],
       ['Pago', 'Pago'],
       ['Ajuste', 'Ajuste manual'],
       ['AjusteConCompra', 'Contramov. de anulación'],
+      ['Redondeo', 'Redondeo'],
     ])
   })
 

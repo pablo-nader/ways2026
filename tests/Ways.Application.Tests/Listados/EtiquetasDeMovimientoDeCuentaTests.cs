@@ -13,7 +13,7 @@ public class EtiquetasDeMovimientoDeCuentaTests
     public void LasEtiquetasDeProveedorSonExactamenteLaListaFijada()
     {
         Assert.Equal(
-            [("Apertura", "Apertura"), ("Compra", "Compra"), ("Pago", "Pago"), ("Ajuste", "Ajuste manual")],
+            [("Apertura", "Apertura"), ("Compra", "Compra"), ("Pago", "Pago"), ("Ajuste", "Ajuste manual"), ("Redondeo", "Redondeo")],
             EtiquetasDeMovimientoDeCuenta.Proveedor.Select(p => (p.Key.ToString(), p.Value)).ToList());
         Assert.Equal("Contramov. de anulación", EtiquetasDeMovimientoDeCuenta.ContramovimientoDeAnulacion);
     }
