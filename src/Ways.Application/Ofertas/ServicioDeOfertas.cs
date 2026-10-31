@@ -77,8 +77,8 @@ public class ServicioDeOfertas(
     /// mismo criterio que <c>ArticuloListado</c>: el filtro global de baja lógica ya deja
     /// afuera las eliminadas, y una oferta inactiva sigue siendo administrable desde el
     /// listado. <see cref="OfertaListado.IdsListas"/> vacío por fila (evita el N+1 de una
-    /// query por oferta listada, mismo criterio que <c>ArticuloListado.IdsEmpresas</c>).</summary>
-    /// <summary>Con <paramref name="idArticulo"/> lista solo las ofertas que tocan a ese artículo: las de alcance
+    /// query por oferta listada, mismo criterio que <c>ArticuloListado.IdsEmpresas</c>).
+    /// Con <paramref name="idArticulo"/> lista solo las ofertas que tocan a ese artículo: las de alcance
     /// artículo propias y, si el artículo tiene familia, las de alcance esa familia. Un artículo inexistente, dado de baja
     /// o de otro tenant rinde la lista vacía (no un 404: el filtro no distingue "sin ofertas" de "sin artículo").</summary>
     public async Task<IReadOnlyList<OfertaListado>> ListarAsync(

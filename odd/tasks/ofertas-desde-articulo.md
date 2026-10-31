@@ -19,7 +19,7 @@ Out of scope: offline search (the F2 search is online-only today), new offer typ
 
 ## Contract
 
-- `GET /api/ofertas?idArticulo={id}` → `200 OfertaListado[]` with the live offers whose scope is that article, plus the ones whose scope is the article's family when it has one. Unknown, soft-deleted or other-tenant article → `200 []`. Without `idArticulo` the endpoint is unchanged. Policy unchanged (`OperacionDePos`).
+- `GET /api/ofertas?idArticulo={id}` → `200 OfertaListado[]` with the non-deleted offers (active or not, any validity) whose scope is that article, plus the ones whose scope is the article's family when it has one. Unknown, soft-deleted or other-tenant article → `200 []`. Without `idArticulo` the endpoint is unchanged. Policy unchanged (`OperacionDePos`).
 - `POST /api/ofertas/vigentes` body `{ idsArticulos: number[] (1..200, distinct), idEmpresa: number, idListaPrecio?: number, momento?: DateTimeOffset }` → `200 [{ idArticulo, ofertas: [{ idOferta, nombre, alcance: "Articulo"|"Grupo"|"Categoria"|"Familia", cantidadMinima?, soloMultiplos, porcentaje?, precioUnitario?, importeFijo?, fechaHasta?, acumulable }] }]`. Only active offers matching the article by any scope, the empresa (or tenant-wide), the list targeting (when `idListaPrecio` is given) and the moment (dates, hours, weekdays, in the empresa's zone), ignoring quantity. Articles with no offers are omitted. 400 on empty/oversized/invalid ids. Policy `OperacionDePos`.
 
 ## Data model
@@ -60,3 +60,7 @@ Forecast ~1500 authored lines: over budget; cached chain strategy `stacked-to-ma
 ## Next step
 
 T2 and T3 (web), both stacked on the T1 PR.
+
+## Judgment day
+
+- T1 (2026-10-31): `JUDGMENT: APPROVED` in round 1, no CRITICAL from either judge. Fixed as doc-only follow-up: duplicated `<summary>` on `ListarAsync` (both judges) and the contract wording "live" for `GET ?idArticulo` (it returns active and inactive, any validity: the section is an ABM). Info kept: with `incluirEliminados=true` and a soft-deleted article the filter still yields `[]` (judge A, suggestion).
