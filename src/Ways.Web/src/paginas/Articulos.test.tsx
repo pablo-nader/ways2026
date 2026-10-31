@@ -3177,7 +3177,7 @@ describe('Articulos — sección Costos', () => {
     for (const etiqueta of CONTROLES_DE_COSTO) {
       expect(screen.queryByLabelText(etiqueta), etiqueta).not.toBeInTheDocument()
     }
-    expect(screen.queryByText('Costos', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Costos' })).not.toBeInTheDocument()
     expect(screen.queryByText(/El costo nominal es el costo por unidad/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
 
@@ -3197,7 +3197,7 @@ describe('Articulos — sección Costos', () => {
     for (const etiqueta of CONTROLES_DE_COSTO) {
       expect(screen.getByLabelText(etiqueta), etiqueta).toBeInTheDocument()
     }
-    expect(screen.getByText('Costos', { selector: 'strong' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Costos' })).toBeInTheDocument()
   })
 })
 

@@ -213,7 +213,7 @@ export function Ofertas() {
       .catch(() => {
         setEmpresas([])
         agregarAvisoCatalogo(
-          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (la oferta se crea para todo el tenant).',
+          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (la oferta se crea para todas las empresas).',
         )
       })
     clienteDePrecios

@@ -285,9 +285,10 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
     refresh_token_cifrado bytea NULL, refresh_token_nonce bytea NULL, refresh_token_tag bytea NULL,
     id_clave_maestra varchar(30) NOT NULL,   -- versión de la clave maestra de Ways:MercadoPago que los cifró
     access_token_expira_en timestamptz NOT NULL,
-    estado text NOT NULL,                    -- 'activa' | 'desconectada' (texto con CHECK, sin enum nativo)
+    estado text NOT NULL,                    -- 'activa' | 'desconectada' | 'requiere_reconexion' (texto con CHECK, sin enum nativo)
     id_usuario_conecto,                      -- usuario de Ways que inició la conexión
     fecha_conexion timestamptz NOT NULL, fecha_desconexion NULL, fecha_ultima_renovacion NULL,
+    fecha_requiere_reconexion timestamptz NULL,  -- cuándo la renovación automática la marcó 'requiere_reconexion'
     created_at, updated_at, deleted_at
 );
 ```
@@ -303,9 +304,10 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > `(id_empresa, id_tenant)`), `fk_conexiones_mercadopago_cuenta_tesoreria` (compuesta `(id_cuenta_tesoreria, id_empresa,
 > id_tenant)` contra la clave alterna nueva `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant`: la base rechaza una
 > cuenta de otra empresa) y `fk_conexiones_mercadopago_usuario_conecto` (simple a `usuarios`); todas RESTRICT. CHECK
-> `ck_conexiones_mercadopago_estado` (solo `activa` o `desconectada`), `ck_conexiones_mercadopago_activa` (activa implica los seis
-> campos de cifrado presentes con nonce de 12 bytes, tag de 16 y blob no vacío, y `fecha_desconexion` nula) y
-> `ck_conexiones_mercadopago_desconectada` (desconectada implica `fecha_desconexion` y los seis campos en `NULL`). Únicos
+> `ck_conexiones_mercadopago_estado` (`activa`, `desconectada` o `requiere_reconexion`), `ck_conexiones_mercadopago_activa` (activa implica los seis
+> campos de cifrado presentes con nonce de 12 bytes, tag de 16 y blob no vacío, y `fecha_desconexion` y `fecha_requiere_reconexion` nulas),
+> `ck_conexiones_mercadopago_desconectada` (desconectada implica `fecha_desconexion` y los seis campos en `NULL`) y
+> `ck_conexiones_mercadopago_requiere_reconexion` (implica `fecha_requiere_reconexion`, `fecha_desconexion` nula y los seis campos en `NULL`). Únicos
 > parciales, ambos `WHERE estado = 'activa'`: `ux_conexiones_mercadopago_empresa_activa` `(id_tenant, id_empresa)` y
 > `ux_conexiones_mercadopago_usuario_activa` `(id_usuario_mercadopago)`, SIN `id_tenant`: una cuenta de Mercado Pago está activa en
 > una sola empresa de todo el sistema (los webhooks resuelven la empresa desde ese id). `ManejadorDeErrores` traduce sus 23505 a
@@ -325,6 +327,21 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > canjea el código y redirige a `{origen}/organizacion/empresas?mercadopago=<resultado>&empresa=<id>` con `conectado`, `cancelado`
 > (el usuario denegó), `error`, `cuenta_en_uso` o `ya_conectada`; un `state` inválido o vencido da 400 de texto plano, sin redirigir.
 > `GET /api/empresas/{idEmpresa}/mercadopago/conexion` devuelve `{ conectada, estado, idCuentaTesoreria, nombreCuenta,
-> idUsuarioMercadoPago, fechaConexion, accessTokenExpiraEn }` o `{ conectada: false }`. `DELETE` del mismo recurso pasa la conexión a
+> idUsuarioMercadoPago, fechaConexion, accessTokenExpiraEn }` o `{ conectada: false }`. Sin activa, si la última conexión de la empresa quedó
+> en `requiere_reconexion` responde `{ conectada: false, estado: "requiere_reconexion", idCuentaTesoreria, nombreCuenta,
+> idUsuarioMercadoPago, fechaConexion }` (sin vencimiento) para que la pantalla ofrezca reconectar; una desconexión posterior vuelve al
+> estado vacío. `DELETE` del mismo recurso pasa la conexión a
 > `desconectada` y borra los seis campos de cifrado en un solo `UPDATE` guardado por estado (404 si no hay una activa); no llama a
 > Mercado Pago porque la API de OAuth no documenta una revocación.
+>
+> **Renovación automática (etapa E1, T2).** `RenovacionDeConexionesMercadoPago` (BackgroundService, primera corrida al minuto del
+> arranque y después cada `Ways:MercadoPago:IntervaloRenovacionHoras`, 6 por defecto) llama a
+> `ServicioDeRenovacionDeConexionesMercadoPago`, que toma, en todos los tenants, las conexiones `activa` cuyo
+> `access_token_expira_en` cae dentro de `Ways:MercadoPago:DiasDeAnticipacionRenovacion` (30 por defecto) y renueva cada una en su
+> propia transacción con el contexto de su tenant: `FOR UPDATE`, una sola lectura después del lock (se omite si ya no está activa o ya
+> no le toca), llamada al endpoint de tokens con la fila bloqueada y, con la respuesta, ambos tokens se vuelven a cifrar con nonces
+> nuevos (AAD sin cambios) y se mueven el vencimiento y `fecha_ultima_renovacion`. Un 4xx de Mercado Pago, o un `user_id` distinto
+> del guardado, pasa la conexión a `requiere_reconexion` y borra el material cifrado; un 5xx, un 408/429, un tiempo agotado o un fallo
+> de red no toca nada y se reintenta en la próxima corrida. `requiere_reconexion` no es `activa`: no ocupa los índices únicos
+> parciales y la empresa puede volver a conectar (el inicio solo bloquea ante una `activa`); la fila queda como historia. Sin
+> `ClientId`/`ClientSecret`/`RedirectUri`, o con `Ways:MercadoPago:RenovacionAutomatica` en `false`, el job se registra una vez y no hace nada.

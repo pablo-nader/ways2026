@@ -15,6 +15,7 @@ import { AuthContext } from '../../auth/AuthContext'
 import { BotonIcono } from '../../componentes/BotonIcono'
 import { Cargando } from '../../componentes/Cargando'
 import { ConfirmacionDeBaja, NOTA_DE_BAJA_LOGICA } from '../../componentes/ConfirmacionDeBaja'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 import { cargarCatalogosDeOferta, type CatalogosDeOferta } from '../ofertas/catalogos'
 import { ModalDeOferta } from '../ofertas/ModalDeOferta'
 import { validarFormulario } from '../ofertas/validarFormulario'
@@ -269,7 +270,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
     <>
       <hr />
       <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }}>
-        <strong className="text-muted small text-uppercase">Ofertas</strong>
+        <TituloDeSeccion>Ofertas</TituloDeSeccion>
         {error && (
           <div role="alert" className="alert alert-danger py-1 px-2 small mt-2">
             {error}

@@ -51,7 +51,7 @@ describe('mensajeDeLoQueImpideGuardar', () => {
 
   it('una fila incompleta bloquea el borrador y dice cuántas', () => {
     expect(mensajeDeLoQueImpideGuardar(encabezado(), [completa(), incompleta(2), incompleta(3)], false)).toBe(
-      'Hay 2 línea(s) incompleta(s): complételas o quítelas antes de guardar.',
+      'Hay 2 líneas incompletas: complételas o quítelas antes de guardar.',
     )
   })
 
@@ -78,13 +78,13 @@ describe('mensajeDeLoQueImpideGuardar', () => {
 
   it('confirmar con todo completo y una fila incompleta sobrante igual se bloquea por la fila', () => {
     expect(mensajeDeLoQueImpideGuardar(encabezado(), [completa(), incompleta()], true)).toBe(
-      'Hay 1 línea(s) incompleta(s): complételas o quítelas antes de guardar.',
+      'Hay 1 línea incompleta: complétela o quítela antes de guardar.',
     )
   })
 
   it('confirmar suma las dos frases cuando falta algo del encabezado y además hay una fila incompleta', () => {
     expect(mensajeDeLoQueImpideGuardar(encabezado({ fechaComprobante: '' }), [completa(), incompleta()], true)).toBe(
-      'Para guardar y confirmar falta: la fecha del comprobante. Hay 1 línea(s) incompleta(s): complételas o quítelas antes de guardar.',
+      'Para guardar y confirmar falta: la fecha del comprobante. Hay 1 línea incompleta: complétela o quítela antes de guardar.',
     )
   })
 })
