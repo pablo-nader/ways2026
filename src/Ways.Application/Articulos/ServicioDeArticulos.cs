@@ -880,12 +880,18 @@ public class ServicioDeArticulos(
         // referencia, y si el resto de los campos compartidos coincide, el miembro nuevo hereda ese costo (el que haya
         // dejado una compra).
         //
-        // Con la marca de desglose de costo, en cambio, el pedido con una composición (costo de lista cargado) trae su
-        // propio costo nominal, y una composición que da otro que el de la familia se rechaza: un pedido sin costo de
-        // lista no trae composición y hereda el de la familia, como siempre.
-        var nominalDelPedido = familia.PermiteDesglosarCosto && datos.CostoLista is not null
-            ? costoNominalDelPedido
-            : referencia?.CostoNominal;
+        // Con la marca de desglose de costo, en cambio, el pedido con una composición DISTINTA a la de la referencia
+        // trae su propio costo nominal, y si da otro que el de la familia se rechaza: un pedido sin costo de lista, o con
+        // la composición de la referencia (el nominal guardado puede no ser el que ella da), hereda el de la familia.
+        var composicionDelPedido = datos.CostoLista is null
+            ? null
+            : new ComposicionDelCosto(
+                datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor, datos.ImpuestoInterno);
+        var nominalDelPedido = referencia is null
+            ? null
+            :ReglaDeFamilias.CostoNominalDelIngreso(
+                familia.PermiteDesglosarCosto, composicionDelPedido, ComposicionDelCosto.De(referencia),
+                costoNominalDelPedido, referencia.CostoNominal);
         var pedidos = ValoresCompartidosDe(datos, nominalDelPedido);
 
         switch (ReglaDeFamilias.ResolverIngreso(

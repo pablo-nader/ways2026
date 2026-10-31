@@ -278,6 +278,25 @@ public class FamiliasDesglosanCostoTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(45m, guardado.CostoNominal);
     }
 
+    /// <summary>El nominal guardado de la familia (el efectivo que dejó una compra) ya no es el que da la composición de
+    /// la referencia. Un alta que trae exactamente la composición de la referencia —lo que la web precarga— hereda ese
+    /// nominal sin recalcularlo ni compararlo.</summary>
+    [Fact]
+    public async Task UnAltaConLaComposicionDeLaReferenciaHeredaSuNominalGuardadoAunqueNoCoincidaConElCalculado()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnAltaConLaComposicionDeLaReferenciaHeredaSuNominalGuardadoAunqueNoCoincidaConElCalculado));
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Gaseosas", permiteDesglosarCosto: true);
+        await apoyo.SembrarArticuloAsync(e, "a1", ValoresBase(e) with { CostoNominal = 99m }, familia);
+
+        var respuesta = await PostArticuloAsync(e.Admin, Alta(ValoresBase(e), familia));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var guardado = await apoyo.LeerAsync((await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!.Id);
+        Assert.Equal(familia, guardado.IdFamilia);
+        Assert.Equal(50m, guardado.CostoLista);
+        Assert.Equal(99m, guardado.CostoNominal);
+    }
+
     [Fact]
     public async Task UnAltaCuyaComposicionDaOtroNominalDa409CostoNominalDistintoDeFamiliaYNoEscribeNada()
     {
