@@ -311,6 +311,12 @@ summary:focus-visible,
   --bs-btn-disabled-border-color: var(--ws-brand);
 }
 
+.form-control,
+.form-select,
+.form-check-input {
+  border-color: var(--ws-line-control);
+}
+
 .form-check-input:checked {
   background-color: var(--ws-brand);
   border-color: var(--ws-brand);
