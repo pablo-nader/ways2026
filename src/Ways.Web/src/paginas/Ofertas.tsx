@@ -237,7 +237,7 @@ export function Ofertas() {
       .catch(() => {
         setEmpresas([])
         agregarAvisoCatalogo(
-          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (la oferta se crea para todo el tenant).',
+          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (la oferta se crea para todas las empresas).',
         )
       })
     clienteDePrecios
@@ -670,7 +670,7 @@ function ModalDeOferta({
               value={valor.idEmpresa}
               onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value === '' ? '' : Number(e.target.value) })}
             >
-              <option value="">Todo el tenant</option>
+              <option value="">Todas las empresas</option>
               {empresas.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.razonSocial}
@@ -939,7 +939,7 @@ function ModalDeOferta({
 
           <div className="col-12">
             <div className="form-text mb-1">
-              Sin marcar ninguna lista, la oferta aplica a <strong>todas</strong> las listas del tenant.
+              Sin marcar ninguna lista, la oferta aplica a <strong>todas</strong> las listas de precio de la cuenta.
             </div>
             <div className="d-flex flex-wrap gap-3">
               {opcionesLista.map((o) => (

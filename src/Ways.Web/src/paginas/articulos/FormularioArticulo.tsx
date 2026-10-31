@@ -948,7 +948,7 @@ export function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, disponibleParaTodas: e.target.checked })}
               />
               <label className="form-check-label" htmlFor="art-disponible-para-todas">
-                Disponible para todas las empresas del tenant
+                Disponible para todas las empresas
               </label>
             </div>
           </div>

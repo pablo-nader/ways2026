@@ -554,7 +554,7 @@ describe('Articulos — alta: elegir una familia', () => {
   it('los campos propios del artículo siguen editables', async () => {
     await abrirAltaEnLaFamilia()
 
-    for (const etiqueta of ['Código interno', 'Nombre', 'Descripción', 'Marca', 'Activo', 'Disponible para todas las empresas del tenant']) {
+    for (const etiqueta of ['Código interno', 'Nombre', 'Descripción', 'Marca', 'Activo', 'Disponible para todas las empresas']) {
       expect(screen.getByLabelText(etiqueta), etiqueta).toBeEnabled()
     }
   })
