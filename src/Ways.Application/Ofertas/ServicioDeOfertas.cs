@@ -587,6 +587,10 @@ public class ServicioDeOfertas(
     /// ahí), resueltas en memoria a cada umbral. Un artículo sin ninguna candidata con umbral
     /// devuelve <see cref="ResultadoDeResolucionConEscalones.Escalones"/> vacío sin resolver nada
     /// de más.</para>
+    ///
+    /// <para>Las ofertas "solo múltiplos" entran a la curva como cualquier otra (su cantidad mínima es un umbral más);
+    /// cada escalón y celda las separa con <see cref="PrecioParaInstantanea.Separar"/>: los campos de siempre quedan con
+    /// las comunes y la resolución entera viaja en <c>AplicadasCompletas</c>.</para>
     /// </summary>
     public async Task<IReadOnlyList<ResultadoDeResolucionConEscalones>> ResolverConEscalonesAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
@@ -614,26 +618,30 @@ public class ServicioDeOfertas(
                 continue;
             }
 
-            // La curva le da al dispositivo un precio unitario por tramo de cantidad, y una oferta "solo múltiplos" no
-            // tiene un precio unitario único: cobra el de oferta solo en los grupos completos. Hasta que la instantánea
-            // sepa representarla, queda afuera de la curva y el dispositivo offline cobra a precio de lista; la venta
-            // se sincroniza con su precio y, si la cantidad completa un grupo, la auditoría la marca discrepante.
-            var candidatas = preparada.Candidatas.Where(c => !c.SoloMultiplos).ToList();
+            var candidatas = preparada.Candidatas;
             var curva = EscalonesDeCantidad.Construir(preparada.Linea, candidatas);
 
             var escalones = curva.Escalones
-                .Select(e => new EscalonDeCantidad(
-                    e.CantidadDesde, e.Resolucion.PrecioFinal, e.Resolucion.DescuentoUnitario,
-                    ProyectarAplicadas(e.Resolucion.Aplicadas)))
+                .Select(e =>
+                {
+                    var precio = ParaInstantanea(e.Resolucion);
+                    return new EscalonDeCantidad(
+                        e.CantidadDesde, precio.PrecioFinal, precio.DescuentoUnitario, precio.Aplicadas,
+                        precio.AplicadasCompletas);
+                })
                 .ToList();
 
             var celdas = EscalonesDeCantidad.ConstruirGrillaDeFamilia(preparada.Linea, candidatas);
             var escalonesDeFamilia = celdas.Count == 0
                 ? null
                 : celdas
-                    .Select(c => new EscalonDeFamilia(
-                        c.CantidadDeFamiliaDesde, c.CantidadDesde, c.Resolucion.PrecioFinal,
-                        c.Resolucion.DescuentoUnitario, ProyectarAplicadas(c.Resolucion.Aplicadas)))
+                    .Select(c =>
+                    {
+                        var precio = ParaInstantanea(c.Resolucion);
+                        return new EscalonDeFamilia(
+                            c.CantidadDeFamiliaDesde, c.CantidadDesde, precio.PrecioFinal, precio.DescuentoUnitario,
+                            precio.Aplicadas, precio.AplicadasCompletas);
+                    })
                     .ToList();
 
             resultado.Add(new ResultadoDeResolucionConEscalones(
@@ -924,6 +932,10 @@ public class ServicioDeOfertas(
     private static IReadOnlyList<OfertaAplicadaDto> ProyectarAplicadas(IReadOnlyList<OfertaAplicada> aplicadas) =>
         aplicadas.Select(a => new OfertaAplicadaDto(a.IdOferta, a.Nombre, a.DescuentoUnitario, a.MultiploDe, a.PorFamilia))
             .ToList();
+
+    private static PrecioParaInstantanea ParaInstantanea(in PrecioConOfertas resuelto) =>
+        PrecioParaInstantanea.Separar(
+            resuelto.PrecioOriginal, resuelto.PrecioFinal, resuelto.DescuentoUnitario, ProyectarAplicadas(resuelto.Aplicadas));
 
     /// <summary>
     /// El descuento de oferta de LÍNEA de cada resultado con una oferta "solo múltiplos" (<c>null</c> en los demás), por

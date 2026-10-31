@@ -122,6 +122,34 @@ dedicado, ESE es el momento de proponer las columnas y pedir la aprobación.
 consumidas por un combo, la parte del combo y el combo; el servidor los graba tal cual y audita la diferencia contra su
 propia detección. Contrato y decisiones en "Combos en el POS offline" (sección Combos).
 
+**Ofertas "solo múltiplos" offline (feature ofertas-solo-multiplos, T2).** Una oferta "solo múltiplos" (§ ofertas,
+`ofertas.solo_multiplos`) no tiene un precio unitario único: cobra la oferta en `N × floor(u / N)` unidades y el resto a
+lista. La instantánea la representa sin cambiar el significado de los campos que leen los POS ya instalados:
+
+- Cada precio plano, escalón y celda de familia en el que aplica una oferta "solo múltiplos" lleva `aplicadasCompletas`: la
+  resolución entera del servidor, en su orden, con `multiploDe` (y `porFamilia`) en las ofertas estrictas. En ese caso
+  `precioFinal`/`descuentoUnitario`/`aplicadas` llevan SOLO las ofertas comunes (con el tope del motor:
+  `PrecioParaInstantanea.Separar`). Sin ninguna oferta estricta la clave falta y el JSON es byte por byte el anterior, así
+  que la etiqueta de contenido de un tenant sin estas ofertas no cambia. El formato original (sin `?version=2`) usa los
+  mismos campos de siempre. Sin cambio de versión: la clave es aditiva y opcional.
+- **POS anterior (decisión explícita).** Un POS que no conoce `aplicadasCompletas` cobra las unidades de la oferta estricta
+  a precio de lista: nunca menos de lo que cobra el servidor (el cliente paga de más en las unidades que completan un
+  grupo hasta que la caja se actualice), y la auditoría de discrepancias lo registra. Se descartó plegar el beneficio en
+  los campos de siempre: un POS anterior lo cobraría en todas las unidades, también en el resto, y cobraría de menos.
+- El dispositivo no evalúa ofertas: elige el escalón o la celda como siempre, rearma la resolución entera con
+  `aplicadasCompletas` y calcula el descuento de oferta de la línea con el puerto de `CoberturaDeOfertas`
+  (`pos/coberturaDeOfertas.ts`, tabla de paridad con `CoberturaDeOfertasTests`): sobre las unidades que no consumió un combo,
+  y con los grupos de una oferta de familia contados sobre todas las líneas del documento que la llevan, con el resto en las
+  últimas. La detección de combos usa el descuento unitario de la resolución entera, como el servidor.
+- `LineaDeVenta.DescuentoDeOfertaDeLinea` es ese descuento como importe de línea: va en lugar de `descuentoUnitario`
+  (los dos juntos, en una línea por importe, negativo o mayor que el bruto de las unidades fuera de combo ⇒ 400
+  `precio_offline_invalido`; sin precio offline ⇒ 400 `precio_offline_incompleto`). El servidor lo graba tal cual
+  (`LineaParaCalcular.DescuentoDeOfertaDeLinea`, un solo redondeo al peso del neto) y la discrepancia compara contra el
+  descuento de línea que resuelve hoy para las mismas unidades (cantidad menos las que consumió el combo que detecta el
+  servidor). El ticket sintético y el payload salen de la misma resolución (`resolverDocumentoOffline`). La vista previa del carrito
+  recibe `descuentoDeLinea` en esa misma resolución, pero `previaDeLinea` todavía calcula con el descuento unitario
+  (pendiente, igual que en la vista previa online).
+
 **Venta con envío offline (`SolicitudDeVenta.ImporteEnvio`).** Con `NumeroPreasignado` y `ConEnvio`, el dispositivo manda
 el importe del envío que cobró (el de la instantánea, `importeEnvio`): el servidor lo graba tal cual en la línea "Envío" en vez
 de leer `importe_envio` (con 0 no hay línea). Es otro caso del precio que ya cobró la caja: sin `NumeroPreasignado` o sin

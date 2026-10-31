@@ -172,25 +172,65 @@ public class ResolucionSoloMultiplosTests
         Assert.Equal([0m, null, null], ServicioDeOfertas.DescuentosDeLineaSoloMultiplos(resultados, [1m, 3m, 3m]));
     }
 
+    /// <summary>La curva de la instantánea lleva la oferta "solo múltiplos" en <c>AplicadasCompletas</c> y los campos de
+    /// siempre quedan con las ofertas comunes (ninguna acá: precio de lista), así un POS anterior no la cobra en las
+    /// unidades que no completan un grupo. Una oferta común no cambia: sin <c>AplicadasCompletas</c>.</summary>
     [Fact]
-    public async Task LaCurvaDeLaInstantaneaDejaAfueraALaOfertaSoloMultiplos()
+    public async Task LaCurvaDeLaInstantaneaLlevaLaOfertaSoloMultiplosAparteDeLosCamposDeSiempre()
     {
         var nombreDeBase = Guid.NewGuid().ToString();
         var idLista = await SembrarListaAsync(nombreDeBase);
         var estricto = await SembrarArticuloAsync(nombreDeBase, idLista);
         var comun = await SembrarArticuloAsync(nombreDeBase, idLista);
         var deFamilia = await SembrarArticuloAsync(nombreDeBase, idLista, idFamilia: 7);
-        await SembrarOfertaAsync(nombreDeBase, soloMultiplos: true, idArticulo: estricto);
+        var idEstricta = await SembrarOfertaAsync(nombreDeBase, soloMultiplos: true, idArticulo: estricto);
         await SembrarOfertaAsync(nombreDeBase, soloMultiplos: false, idArticulo: comun);
-        await SembrarOfertaAsync(nombreDeBase, soloMultiplos: true, idFamilia: 7);
+        var idDeFamilia = await SembrarOfertaAsync(nombreDeBase, soloMultiplos: true, idFamilia: 7);
 
         var resolucion = await CrearServicio(nombreDeBase).ResolverConEscalonesAsync(
             Lineas(idLista, (estricto, 1m), (comun, 1m), (deFamilia, 1m)), momento: null);
 
-        Assert.Empty(resolucion[0].Escalones);
-        Assert.Equal(2m, Assert.Single(resolucion[1].Escalones).CantidadDesde);
-        Assert.Empty(resolucion[2].Escalones);
-        Assert.Null(resolucion[2].EscalonesDeFamilia);
+        var escalonEstricto = Assert.Single(resolucion[0].Escalones);
+        Assert.Equal(2m, escalonEstricto.CantidadDesde);
+        Assert.Equal(Lista, escalonEstricto.PrecioFinal);
+        Assert.Equal(0m, escalonEstricto.DescuentoUnitario);
+        Assert.Empty(escalonEstricto.Aplicadas);
+        var estricta = Assert.Single(escalonEstricto.AplicadasCompletas!);
+        Assert.Equal((idEstricta, 250m, 2m, false), (estricta.IdOferta, estricta.DescuentoUnitario, estricta.MultiploDe, estricta.PorFamilia));
+
+        var escalonComun = Assert.Single(resolucion[1].Escalones);
+        Assert.Equal((2m, 3750m, 250m), (escalonComun.CantidadDesde, escalonComun.PrecioFinal, escalonComun.DescuentoUnitario));
+        Assert.Null(escalonComun.AplicadasCompletas);
+
+        var celda = Assert.Single(resolucion[2].EscalonesDeFamilia!);
+        Assert.Equal((2m, 1m, Lista, 0m), (celda.CantidadDeFamiliaDesde, celda.CantidadDesde, celda.PrecioFinal, celda.DescuentoUnitario));
+        Assert.Empty(celda.Aplicadas);
+        var deLaFamilia = Assert.Single(celda.AplicadasCompletas!);
+        Assert.Equal((idDeFamilia, 2m, true), (deLaFamilia.IdOferta, deLaFamilia.MultiploDe, deLaFamilia.PorFamilia));
+        Assert.Equal(idDeFamilia, Assert.Single(Assert.Single(resolucion[2].Escalones).AplicadasCompletas!).IdOferta);
+    }
+
+    /// <summary>La parte común lleva el tope del motor (la suma entre cero y el precio original) y las completas conservan
+    /// el orden del servidor; sin ninguna "solo múltiplos" la resolución pasa tal cual.</summary>
+    [Fact]
+    public void SepararDejaEnLosCamposDeSiempreSoloLasOfertasComunes()
+    {
+        OfertaAplicadaDto[] aplicadas =
+        [
+            new(1, "estricta", 60m, MultiploDe: 2m),
+            new(2, "comun", 70m),
+            new(3, "acumulable", 50m),
+        ];
+
+        var separado = PrecioParaInstantanea.Separar(100m, 0m, 100m, aplicadas);
+
+        Assert.Equal((0m, 100m), (separado.PrecioFinal, separado.DescuentoUnitario));
+        Assert.Equal([2, 3], separado.Aplicadas.Select(a => a.IdOferta));
+        Assert.Equal([1, 2, 3], separado.AplicadasCompletas!.Select(a => a.IdOferta));
+
+        var sinEstricta = PrecioParaInstantanea.Separar(100m, 30m, 70m, [aplicadas[1]]);
+        Assert.Equal((30m, 70m), (sinEstricta.PrecioFinal, sinEstricta.DescuentoUnitario));
+        Assert.Null(sinEstricta.AplicadasCompletas);
     }
 
     private static AltaOferta Alta(int idArticulo, decimal? cantidadMinima, bool soloMultiplos) =>

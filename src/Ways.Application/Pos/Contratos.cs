@@ -29,6 +29,10 @@ namespace Ways.Application.Pos;
 /// oferta por volumen y repetir <c>"escalones":null</c> por artículo y por lista solo engorda el
 /// payload. Que llegue <c>null</c> y no <c>[]</c> lo garantiza
 /// <see cref="ArmadorDeInstantanea.ArmarArticulos"/>.
+///
+/// <see cref="AplicadasCompletas"/> (y la misma clave en cada escalón y celda) existe por las ofertas "solo múltiplos":
+/// los campos de siempre llevan solo las ofertas comunes y esta lista, la resolución entera en el orden del servidor
+/// (<see cref="PrecioParaInstantanea"/>). Falta cuando ninguna oferta aplicada es "solo múltiplos".
 /// </summary>
 public sealed record PrecioDeListaDeInstantanea(
     int IdListaPrecio,
@@ -39,7 +43,9 @@ public sealed record PrecioDeListaDeInstantanea(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<EscalonDeCantidad>? Escalones = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<EscalonDeFamilia>? EscalonesDeFamilia = null);
+    IReadOnlyList<EscalonDeFamilia>? EscalonesDeFamilia = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<OfertaAplicadaDto>? AplicadasCompletas = null);
 
 /// <summary>
 /// Un artículo dentro de <see cref="InstantaneaDePos"/>: identidad, códigos, IVA y su precio en

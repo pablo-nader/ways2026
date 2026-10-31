@@ -67,7 +67,7 @@ public static class ResolvedorDeOfertas
             .Select(a => new OfertaAplicada(
                 a.Candidata.Id, a.Candidata.Nombre, a.Descuento,
                 a.Candidata.SoloMultiplos ? a.Candidata.CantidadMinima : null,
-                a.Candidata.Alcance.IdFamilia is not null))
+                a.Candidata.SoloMultiplos && a.Candidata.Alcance.IdFamilia is not null))
             .ToList();
 
         return new PrecioConOfertas(linea.PrecioOriginal, precioFinal, descuentoTotal, reportadas);

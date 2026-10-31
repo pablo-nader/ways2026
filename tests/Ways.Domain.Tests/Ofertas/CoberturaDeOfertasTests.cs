@@ -122,6 +122,18 @@ public class CoberturaDeOfertasTests
     }
 
     [Fact]
+    public void UnaOfertaComunDeFamiliaNoSeInformaPorFamilia()
+    {
+        var resuelto = ResolvedorDeOfertas.Resolver(
+            Linea(2m, idFamilia: 7),
+            [Oferta(BeneficioDeOferta.DePrecioUnitario(3750m), alcance: AlcanceDeOferta.DeFamilia(7), soloMultiplos: false)]);
+
+        var aplicada = Assert.Single(resuelto.Aplicadas);
+        Assert.Null(aplicada.MultiploDe);
+        Assert.False(aplicada.PorFamilia);
+    }
+
+    [Fact]
     public void LaFamiliaCuentaLosGruposSobreElDocumentoYElRestoCaeEnLasUltimasLineas()
     {
         var aplicada = new OfertaAplicada(1, "familia", 250m, MultiploDe: 2m, PorFamilia: true);

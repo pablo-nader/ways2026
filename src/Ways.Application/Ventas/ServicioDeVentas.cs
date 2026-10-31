@@ -2273,7 +2273,8 @@ public class ServicioDeVentas(
             {
                 lineasParaCalcular.Add(new LineaParaCalcular(
                     cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m, linea.AjusteManualPorcentaje,
-                    linea.UnidadesConsumidasPorCombo ?? 0m, linea.AhorroDeCombo ?? 0m));
+                    linea.UnidadesConsumidasPorCombo ?? 0m, linea.AhorroDeCombo ?? 0m,
+                    linea.DescuentoDeOfertaDeLinea is { } descuentoCobrado ? Math.Sign(cantidadConSigno) * descuentoCobrado : null));
                 origenes.Add((i, null));
                 continue;
             }
@@ -2440,7 +2441,10 @@ public class ServicioDeVentas(
                 && resultado.PrecioOriginal is not null
                 && NetoDeLinea(
                         calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
-                        detectado.UnidadesConsumidas, detectado.Ahorro)
+                        detectado.UnidadesConsumidas, detectado.Ahorro,
+                        descuentosSoloMultiplos[i] is { } descuentoEsperado
+                            ? Math.Sign(calculado.Cantidad) * descuentoEsperado
+                            : null)
                     != calculado.Total - calculado.AjusteManual;
 
             items.Add(new LineaDelPlan(
@@ -2468,9 +2472,12 @@ public class ServicioDeVentas(
     }
 
     /// <summary>El descuento de línea de las ofertas "solo múltiplos" (<see cref="ServicioDeOfertas.DescuentosDeLineaSoloMultiplos"/>)
-    /// de las líneas que cobra el servidor con su resolución: las unidades son las de la línea menos las devueltas por
-    /// tramos de combo y menos las que consumió un combo. Las líneas que no se cobran así (con precio offline, por importe
-    /// en una venta offline) entran con cero unidades: no cubren nada ni suman a los grupos de una familia.</summary>
+    /// con la resolución del servidor: las unidades son las de la línea menos las devueltas por tramos de combo y menos
+    /// las que consumió un combo detectado por el servidor. En una línea con precio offline es lo que el servidor
+    /// ESPERA, que solo usa el diagnóstico de discrepancia (el descuento cobrado es el del dispositivo); como el precio
+    /// offline va en todas las líneas de lista o en ninguna, los grupos de familia nunca mezclan las dos clases de línea.
+    /// Una línea por importe en una venta offline entra con cero unidades: no cubre nada ni suma a los grupos de una
+    /// familia.</summary>
     private static IReadOnlyList<decimal?> DescuentosSoloMultiplosDeLaVenta(
         IReadOnlyList<LineaDeVenta> lineas,
         IReadOnlyList<ResultadoDeResolucion> resolucion,
@@ -2482,7 +2489,7 @@ public class ServicioDeVentas(
         for (var i = 0; i < lineas.Count; i++)
         {
             var linea = lineas[i];
-            if (linea.PrecioUnitario is not null || (ventaOffline && linea.Importe is not null))
+            if (ventaOffline && linea.Importe is not null)
             {
                 continue;
             }
@@ -2502,10 +2509,11 @@ public class ServicioDeVentas(
     /// <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste.</summary>
     private static decimal NetoDeLinea(
         decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario, decimal unidadesConsumidas,
-        decimal ahorroDeCombo) =>
+        decimal ahorroDeCombo, decimal? descuentoDeOfertaDeLinea) =>
         CalculadorDeTotales.Calcular(
             [new LineaParaCalcular(
-                cantidadConSigno, precioUnitario, descuentoUnitario, null, unidadesConsumidas, ahorroDeCombo)]).Total;
+                cantidadConSigno, precioUnitario, descuentoUnitario, null, unidadesConsumidas, ahorroDeCombo,
+                descuentoDeOfertaDeLinea)]).Total;
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que
     // AsignadorDeNumeroComprobante) --------------------------------------------------------------
@@ -2795,12 +2803,12 @@ public class ServicioDeVentas(
     /// igual al precio SÍ se admite (línea gratis, total 0, caso de negocio válido).</summary>
     private static void ExigirPreciosOfflineValidos(IReadOnlyList<LineaDeVenta> lineas, long? numeroPreasignado)
     {
-        if (lineas.Any(l => l.PrecioUnitario is null && l.DescuentoUnitario is not null))
+        if (lineas.Any(l => l.PrecioUnitario is null && (l.DescuentoUnitario is not null || l.DescuentoDeOfertaDeLinea is not null)))
         {
             throw new ErrorDominio(
                 "precio_offline_incompleto",
-                "descuentoUnitario sin precioUnitario no tiene destino: toda línea con descuento offline " +
-                "tiene que traer también su precio.",
+                "descuentoUnitario o descuentoDeOfertaDeLinea sin precioUnitario no tienen destino: toda línea con " +
+                "descuento offline tiene que traer también su precio.",
                 400);
         }
 
@@ -2850,6 +2858,33 @@ public class ServicioDeVentas(
         foreach (var linea in lineas.Where(TraeComboOffline))
         {
             ExigirComboOfflineValido(linea);
+        }
+
+        foreach (var linea in lineas.Where(l => l.DescuentoDeOfertaDeLinea is not null))
+        {
+            ExigirDescuentoDeLineaOfflineValido(linea);
+        }
+    }
+
+    /// <summary>Descuento de oferta de línea de una línea offline (oferta "solo múltiplos"): va en lugar del descuento
+    /// unitario, nunca en una línea por importe (no lleva ofertas), y queda entre cero y el bruto de las unidades fuera de
+    /// combo, así el neto de esas unidades nunca es negativo. Corre después de <see cref="ExigirComboOfflineValido"/>:
+    /// las unidades de combo ya están dentro de la cantidad de la línea.</summary>
+    private static void ExigirDescuentoDeLineaOfflineValido(LineaDeVenta linea)
+    {
+        var descuento = linea.DescuentoDeOfertaDeLinea!.Value;
+        var unidadesConOferta = linea.Cantidad - (linea.UnidadesConsumidasPorCombo ?? 0m);
+
+        if (linea.DescuentoUnitario is not null
+            || linea.Importe is not null
+            || descuento < 0m
+            || descuento > unidadesConOferta * linea.PrecioUnitario!.Value)
+        {
+            throw new ErrorDominio(
+                "precio_offline_invalido",
+                "El descuento de oferta de línea va en lugar del descuento unitario, no en una línea por importe, y tiene " +
+                "que estar entre cero y el bruto de las unidades fuera de combo.",
+                400);
         }
     }
 

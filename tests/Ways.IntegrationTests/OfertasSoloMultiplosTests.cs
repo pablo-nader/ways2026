@@ -271,26 +271,161 @@ public class OfertasSoloMultiplosTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(11500m, JsonSerializer.Deserialize<PresupuestoDetalle>(textoPresupuesto, OpcionesJson)!.Total);
     }
 
-    /// <summary>La instantánea offline todavía no representa una oferta "solo múltiplos": queda fuera de la curva de
-    /// escalones (el dispositivo cobra lista), mientras que la misma oferta común sí viaja como escalón.</summary>
-    [Fact]
-    public async Task LaInstantaneaDejaFueraDeLosEscalonesALaOfertaSoloMultiplos()
-    {
-        var ctx = await apoyo.PrepararAsync(nameof(LaInstantaneaDejaFueraDeLosEscalonesALaOfertaSoloMultiplos), ModoPuntoVenta.Escritorio);
-        var estricto = await apoyo.ArticuloAsync(ctx, "estricto", 4000m);
-        var comun = await apoyo.ArticuloAsync(ctx, "comun", 4000m);
-        await CrearOfertaAsync(ctx, CuerpoDeOferta(estricto, true));
-        await CrearOfertaAsync(ctx, CuerpoDeOferta(comun, false, nombre: "Comun"));
+    // ---- Instantánea y venta offline ---------------------------------------------------------------
 
-        var respuesta = await ctx.Cajero!.GetAsync("/api/pos/instantanea");
+    private static async Task<string> InstantaneaAsync(Escenario ctx, string ruta)
+    {
+        var respuesta = await ctx.Cajero!.GetAsync(ruta);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
-        var instantanea = JsonSerializer.Deserialize<InstantaneaLegadaDePos>(cuerpo, OpcionesJson)!;
 
-        var conEstricta = Assert.Single(instantanea.Articulos, a => a.IdArticulo == estricto);
-        Assert.Null(conEstricta.Escalones);
-        Assert.Equal(4000m, conEstricta.PrecioFinal);
-        var conComun = Assert.Single(instantanea.Articulos, a => a.IdArticulo == comun);
-        Assert.Equal(2m, Assert.Single(conComun.Escalones!).CantidadDesde);
+        return cuerpo;
+    }
+
+    /// <summary>El escalón de la oferta "solo múltiplos" viaja con la resolución entera en <c>aplicadasCompletas</c> y
+    /// sus campos de siempre a precio de lista, en los dos formatos: un POS anterior cobra lista en esas unidades, nunca
+    /// menos que el servidor. La oferta común no cambia.</summary>
+    [Fact]
+    public async Task LaInstantaneaLlevaLaOfertaSoloMultiplosAparteYLosCamposDeSiempreAPrecioDeLista()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(LaInstantaneaLlevaLaOfertaSoloMultiplosAparteYLosCamposDeSiempreAPrecioDeLista), ModoPuntoVenta.Escritorio);
+        var estricto = await apoyo.ArticuloAsync(ctx, "estricto", 4000m);
+        var comun = await apoyo.ArticuloAsync(ctx, "comun", 4000m);
+        var idEstricta = await CrearOfertaAsync(ctx, CuerpoDeOferta(estricto, true));
+        await CrearOfertaAsync(ctx, CuerpoDeOferta(comun, false, nombre: "Comun"));
+
+        var v2 = JsonSerializer.Deserialize<InstantaneaDePos>(await InstantaneaAsync(ctx, "/api/pos/instantanea?version=2"), OpcionesJson)!;
+        var precio = Assert.Single(Assert.Single(v2.Articulos, a => a.IdArticulo == estricto).PreciosPorLista);
+        var escalon = Assert.Single(precio.Escalones!);
+        Assert.Equal((2m, 4000m, 0m), (escalon.CantidadDesde, escalon.PrecioFinal, escalon.DescuentoUnitario));
+        Assert.Empty(escalon.Aplicadas);
+        var completa = Assert.Single(escalon.AplicadasCompletas!);
+        Assert.Equal((idEstricta, 250m, 2m), (completa.IdOferta, completa.DescuentoUnitario, completa.MultiploDe));
+        Assert.Null(precio.AplicadasCompletas);
+        var precioComun = Assert.Single(Assert.Single(v2.Articulos, a => a.IdArticulo == comun).PreciosPorLista);
+        Assert.Null(Assert.Single(precioComun.Escalones!).AplicadasCompletas);
+
+        var v1 = JsonSerializer.Deserialize<InstantaneaLegadaDePos>(await InstantaneaAsync(ctx, "/api/pos/instantanea"), OpcionesJson)!;
+        var legado = Assert.Single(Assert.Single(v1.Articulos, a => a.IdArticulo == estricto).Escalones!);
+        Assert.Equal((4000m, 0m), (legado.PrecioFinal, legado.DescuentoUnitario));
+        Assert.Equal(3750m, Assert.Single(Assert.Single(v1.Articulos, a => a.IdArticulo == comun).Escalones!).PrecioFinal);
+    }
+
+    private static LineaDeVenta Offline(
+        int idArticulo, decimal cantidad, decimal precio, decimal? descuentoDeLinea = null, decimal? descuentoUnitario = null,
+        decimal? unidades = null, decimal? ahorro = null, int? idCombo = null) =>
+        new(idArticulo, cantidad, null, PrecioUnitario: precio, DescuentoUnitario: descuentoUnitario,
+            UnidadesConsumidasPorCombo: unidades, AhorroDeCombo: ahorro, IdCombo: idCombo,
+            DescuentoDeOfertaDeLinea: descuentoDeLinea);
+
+    private static SolicitudDeVenta VentaOffline(Escenario ctx, long numero, decimal total, params LineaDeVenta[] lineas) =>
+        new(ctx.IdPuntoVenta, null, "TX", null, [.. lineas],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, total, null, 0m)], null, null, NumeroPreasignado: numero);
+
+    private static async Task<ComprobanteEmitido> EmitirOfflineAsync(Escenario ctx, SolicitudDeVenta solicitud)
+    {
+        var respuesta = await ctx.Cajero!.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+
+        return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+    }
+
+    private async Task<List<JsonElement>> DiscrepanciasAsync(Escenario ctx)
+    {
+        await using var db = apoyo.Db(ctx.IdTenant);
+        var filas = await db.Auditoria
+            .Where(a => a.IdTenant == ctx.IdTenant && a.Accion == "venta.discrepancia")
+            .OrderBy(a => a.Id)
+            .ToListAsync();
+
+        return [.. filas.Select(f => JsonDocument.Parse(f.ValorNuevo).RootElement)];
+    }
+
+    /// <summary>Cláusula: la discrepancia de una línea offline compara contra el descuento de LÍNEA que el servidor
+    /// resuelve para la oferta "solo múltiplos". El dispositivo que cobra 1 → 4000, 2 → 7500, 3 → 11500 y 4 → 15000 con
+    /// <c>descuentoDeOfertaDeLinea</c> no se audita; el que cobró la oferta en las 3 unidades (11250) y el POS anterior que
+    /// cobró lista (12000) sí, y en los dos casos se graba lo cobrado.</summary>
+    [Fact]
+    public async Task UnaVentaOfflineSoloMultiplosBienCobradaNoSeAuditaYUnaMalCobradaSi()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(UnaVentaOfflineSoloMultiplosBienCobradaNoSeAuditaYUnaMalCobradaSi), ModoPuntoVenta.Escritorio);
+        await ReservarBloqueAsync(ctx);
+        var estricto = await apoyo.ArticuloAsync(ctx, "estricto", 4000m);
+        await CrearOfertaAsync(ctx, CuerpoDeOferta(estricto, true));
+
+        var numero = 1L;
+        foreach (var (cantidad, descuento, total) in new[] { (1m, 0m, 4000m), (2m, 500m, 7500m), (3m, 500m, 11500m), (4m, 1000m, 15000m) })
+        {
+            var emitido = await EmitirOfflineAsync(ctx, VentaOffline(ctx, numero++, total, Offline(estricto, cantidad, 4000m, descuento)));
+
+            Assert.Equal(total, emitido.Total);
+            Assert.False(Assert.Single(emitido.Items).PrecioDiscrepante);
+        }
+
+        Assert.Empty(await DiscrepanciasAsync(ctx));
+
+        var todasConOferta = await EmitirOfflineAsync(ctx, VentaOffline(ctx, numero++, 11250m, Offline(estricto, 3m, 4000m, descuentoUnitario: 250m)));
+        var aLista = await EmitirOfflineAsync(ctx, VentaOffline(ctx, numero, 12000m, Offline(estricto, 3m, 4000m, descuentoUnitario: 0m)));
+
+        Assert.Equal(11250m, todasConOferta.Total);
+        Assert.True(Assert.Single(todasConOferta.Items).PrecioDiscrepante);
+        Assert.Equal(12000m, aLista.Total);
+        Assert.True(Assert.Single(aLista.Items).PrecioDiscrepante);
+        Assert.Equal(2, (await DiscrepanciasAsync(ctx)).Count);
+    }
+
+    /// <summary>Familia y combos offline, como los cobra el servidor online: los grupos de familia se cuentan sobre el
+    /// documento con el resto en la última línea, y la unidad que consumió un combo no cuenta para los grupos.</summary>
+    [Fact]
+    public async Task LaVentaOfflineDeFamiliaYConComboCobraComoElServidorYNoSeAudita()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(LaVentaOfflineDeFamiliaYConComboCobraComoElServidorYNoSeAudita), ModoPuntoVenta.Escritorio);
+        await ReservarBloqueAsync(ctx);
+        var familia = await apoyo.FamiliaAsync(ctx, "Gaseosas");
+        var coca = await apoyo.ArticuloAsync(ctx, "coca", 4000m, idFamilia: familia);
+        var sprite = await apoyo.ArticuloAsync(ctx, "sprite", 4000m, idFamilia: familia);
+        await CrearOfertaAsync(ctx, CuerpoDeOferta(null, true, idFamilia: familia));
+        var pancho = await apoyo.ArticuloAsync(ctx, "pancho", 4000m);
+        var agua = await apoyo.ArticuloAsync(ctx, "agua", 1000m);
+        await CrearOfertaAsync(ctx, CuerpoDeOferta(pancho, true, nombre: "Pancho 2 x 7500"));
+        var combo = await apoyo.ComboAsync(ctx, 4000m, [Art(pancho), Art(agua)]);
+
+        var deFamilia = await EmitirOfflineAsync(ctx, VentaOffline(ctx, 1, 11500m,
+            Offline(coca, 1m, 4000m, 250m), Offline(sprite, 2m, 4000m, 250m)));
+        var conCombo = await EmitirOfflineAsync(ctx, VentaOffline(ctx, 2, 15500m,
+            Offline(pancho, 4m, 4000m, 500m, unidades: 1m, ahorro: 800m, idCombo: combo),
+            Offline(agua, 1m, 1000m, unidades: 1m, ahorro: 200m, idCombo: combo)));
+
+        Assert.Equal([3750m, 7750m], deFamilia.Items.Select(i => i.Total));
+        Assert.Equal([14700m, 800m], conCombo.Items.Select(i => i.Total));
+        Assert.All(deFamilia.Items.Concat(conCombo.Items), i => Assert.False(i.PrecioDiscrepante));
+        Assert.Empty(await DiscrepanciasAsync(ctx));
+    }
+
+    [Fact]
+    public async Task ElDescuentoDeOfertaDeLineaOfflineFueraDeSuContratoEs400()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(ElDescuentoDeOfertaDeLineaOfflineFueraDeSuContratoEs400), ModoPuntoVenta.Escritorio);
+        await ReservarBloqueAsync(ctx);
+        var estricto = await apoyo.ArticuloAsync(ctx, "estricto", 4000m);
+
+        async Task<string> RechazoAsync(SolicitudDeVenta solicitud)
+        {
+            var respuesta = await ctx.Cajero!.PostAsJsonAsync("/api/ventas", solicitud);
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            return await CodigoAsync(respuesta);
+        }
+
+        Assert.Equal("precio_offline_incompleto", await RechazoAsync(VentaOffline(ctx, 1, 11500m,
+            new LineaDeVenta(estricto, 3m, null, DescuentoDeOfertaDeLinea: 500m))));
+        Assert.Equal("precio_offline_invalido", await RechazoAsync(VentaOffline(ctx, 1, 11500m,
+            Offline(estricto, 3m, 4000m, 500m, descuentoUnitario: 0m))));
+        Assert.Equal("precio_offline_invalido", await RechazoAsync(VentaOffline(ctx, 1, 0m,
+            Offline(estricto, 3m, 4000m, 12000.01m))));
+        Assert.Equal("precio_offline_invalido", await RechazoAsync(VentaOffline(ctx, 1, 12000m,
+            Offline(estricto, 3m, 4000m, -1m))));
+        await using var db = apoyo.Db(ctx.IdTenant);
+        Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
     }
 }
