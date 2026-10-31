@@ -903,6 +903,38 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ cantidad: 3, precioUnitario: 50, descuentoUnitario: 10 })
   })
 
+  // El servidor cobra el payload literal: con una oferta "solo múltiplos" el descuento viaja como importe de línea
+  // (`descuentoDeOfertaDeLinea`) y sin `descuentoUnitario`, que el servidor rechaza junto con él. 3 unidades de
+  // "2 x 7500" a 4000: 500 de descuento, 11500 de total, lo mismo que el ticket y la venta online.
+  it('con una oferta solo múltiplos encola el descuento de línea de los grupos completos en lugar del unitario', async () => {
+    const tramo: EscalonDeCantidad = {
+      cantidadDesde: 2,
+      precioFinal: 4000,
+      descuentoUnitario: 0,
+      aplicadas: [],
+      aplicadasCompletas: [{ idOferta: 90, nombre: '2 x 7500', descuentoUnitario: 250, multiploDe: 2 }],
+    }
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 4000, precioFinal: 4000, escalones: [tramo] })] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 3, codigoBarra: '7790001234567', idLote: null }] }),
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 11500 }],
+      })
+    })
+
+    expect(resultado).toMatchObject({ ok: true })
+    const linea = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
+    expect(linea).toMatchObject({ cantidad: 3, precioUnitario: 4000, descuentoDeOfertaDeLinea: 500 })
+    expect(linea).not.toHaveProperty('descuentoUnitario')
+  })
+
   // judgment-day ronda 2 (SUGGESTION): la cobertura previa nunca ejercitó un carrito de DOS
   // líneas con descuentos MIXTOS a este nivel (`enriquecerLineasConPrecioOffline`) — cada línea
   // tiene que traer el precio/descuento de SU PROPIO artículo, nunca el de la otra.

@@ -34,6 +34,7 @@ import { leerImporteTipeado } from '../api/importeDeVenta'
 import { productoRedondeado, redondearImporte } from '../formato/importes'
 import { parsearNumeroDecimal } from '../formato/numeros'
 import { normalizarParaBuscar } from '../formato/texto'
+import { descuentosDeLinea, descuentoUnitarioDeAplicadas, tieneSoloMultiplos } from './coberturaDeOfertas'
 import { resolverCombos, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
@@ -368,7 +369,9 @@ export function elegirCeldaDeFamilia(
 
 /** Los cuatro campos de precio que rigen para una línea — el escalón o la celda vigente pisa
  * `precioFinal`/`descuentoUnitario`/`aplicadas`, y `precioOriginal` queda SIEMPRE el de la lista
- * (ni el escalón ni la celda lo traen: es constante entre cantidades). */
+ * (ni el escalón ni la celda lo traen: es constante entre cantidades). Son los de la resolución entera del servidor,
+ * con las ofertas "solo múltiplos" incluidas (`descuentoUnitario` es el de una unidad cubierta): el descuento de la
+ * línea con ellas lo calcula `resolverDocumentoOffline`. */
 export type PreciosVigentesOffline = Pick<PrecioDeListaDeInstantanea, 'precioOriginal' | 'precioFinal' | 'descuentoUnitario' | 'aplicadas'>
 
 /**
@@ -381,16 +384,29 @@ export function preciosVigentesOffline(
   cantidad: number,
   cantidadDeFamilia: number = cantidad,
 ): PreciosVigentesOffline {
-  const vigente = elegirCeldaDeFamilia(precio, cantidad, cantidadDeFamilia) ?? elegirEscalon(precio, cantidad)
-  if (!vigente) {
-    const { precioOriginal, precioFinal, descuentoUnitario, aplicadas } = precio
-    return { precioOriginal, precioFinal, descuentoUnitario, aplicadas }
+  const vigente = elegirCeldaDeFamilia(precio, cantidad, cantidadDeFamilia) ?? elegirEscalon(precio, cantidad) ?? precio
+  return resolucionEntera(precio.precioOriginal, vigente)
+}
+
+/**
+ * Con `aplicadasCompletas` (alguna oferta "solo múltiplos"), los campos de siempre del precio, escalón o celda llevan
+ * solo las ofertas comunes —lo que cobra un POS anterior al campo—, así que la resolución entera se rearma con la lista
+ * completa y el mismo tope del motor del servidor (`descuentoUnitarioDeAplicadas`). Sin ella, los campos ya son la
+ * resolución entera.
+ */
+function resolucionEntera(
+  precioOriginal: number,
+  vigente: Pick<PrecioDeListaDeInstantanea, 'precioFinal' | 'descuentoUnitario' | 'aplicadas' | 'aplicadasCompletas'>,
+): PreciosVigentesOffline {
+  if (!Array.isArray(vigente.aplicadasCompletas)) {
+    return { precioOriginal, precioFinal: vigente.precioFinal, descuentoUnitario: vigente.descuentoUnitario, aplicadas: vigente.aplicadas }
   }
+  const descuentoUnitario = descuentoUnitarioDeAplicadas(precioOriginal, vigente.aplicadasCompletas)
   return {
-    precioOriginal: precio.precioOriginal,
-    precioFinal: vigente.precioFinal,
-    descuentoUnitario: vigente.descuentoUnitario,
-    aplicadas: vigente.aplicadas,
+    precioOriginal,
+    precioFinal: redondearImporte(precioOriginal - descuentoUnitario, 2),
+    descuentoUnitario,
+    aplicadas: vigente.aplicadasCompletas,
   }
 }
 
@@ -466,8 +482,10 @@ export function preciosVigentesDeLasLineas(
   })
 }
 
-/** Precios de una línea con el combo que la consumió, si lo hay. */
-export type PreciosDeLineaConCombo = PreciosVigentesOffline & { combo?: ComboDeLinea }
+/** Precios de una línea con el combo que la consumió, si lo hay, y el descuento de oferta de la línea entera
+ * (`descuentoDeLinea`, sin signo y sobre las unidades fuera de combos) solo cuando una oferta "solo múltiplos" aplica:
+ * reemplaza a `cantidad × descuentoUnitario`, igual que en `ResultadoDeResolucion`. */
+export type PreciosDeLineaConCombo = PreciosVigentesOffline & { combo?: ComboDeLinea; descuentoDeLinea?: number }
 
 /** Los combos de la instantánea como candidatos del motor. */
 function candidatosDeCombos(combos: readonly ComboDeInstantanea[]): ComboCandidato[] {
@@ -489,13 +507,46 @@ function candidatosDeCombos(combos: readonly ComboDeInstantanea[]): ComboCandida
  *
  * El ahorro de una línea nunca lleva más de dos decimales (el servidor rechazaría la venta encolada con
  * `combo_offline_invalido`): el motor redondea a dos el importe de lista de lo que consume antes de repartir.
+ *
+ * Después de los combos, las líneas con una oferta "solo múltiplos" llevan `descuentoDeLinea`, con las mismas unidades
+ * que el servidor (`ServicioDeVentas` y `resolver-con-combos`): las de la línea menos las que consumió un combo, y los
+ * grupos de una oferta de familia contados sobre todas las líneas del documento que la llevan (`descuentosDeLinea`).
  */
 export function resolverDocumentoOffline(
   lineas: readonly { idArticulo: number; cantidad: number; importe?: number }[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
 ): { lineas: (PreciosDeLineaConCombo | null)[]; combos: ComboAplicadoEnPrevia[] } {
-  const vigentes = preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio)
+  const conCombos = aplicarCombosOffline(lineas, instantanea, preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio))
+  return { lineas: conDescuentoDeLinea(lineas, conCombos.lineas), combos: conCombos.combos }
+}
+
+function conDescuentoDeLinea(
+  lineas: readonly { cantidad: number }[],
+  precios: (PreciosDeLineaConCombo | null)[],
+): (PreciosDeLineaConCombo | null)[] {
+  const posiciones = precios.flatMap((p, i) => (p && tieneSoloMultiplos(p.aplicadas) ? [i] : []))
+  if (posiciones.length === 0) return precios
+
+  const descuentos = descuentosDeLinea(
+    posiciones.map((i) => {
+      const p = precios[i] as PreciosDeLineaConCombo
+      const unidades = redondearImporte(lineas[i].cantidad - (p.combo?.unidadesConsumidas ?? 0), DECIMALES_DE_PESO)
+      return { unidades, precioOriginal: p.precioOriginal, aplicadas: p.aplicadas }
+    }),
+  )
+  const resultado = [...precios]
+  posiciones.forEach((i, k) => {
+    resultado[i] = { ...(precios[i] as PreciosDeLineaConCombo), descuentoDeLinea: descuentos[k] }
+  })
+  return resultado
+}
+
+function aplicarCombosOffline(
+  lineas: readonly { idArticulo: number; cantidad: number; importe?: number }[],
+  instantanea: InstantaneaDePos,
+  vigentes: (PreciosVigentesOffline | null)[],
+): { lineas: (PreciosDeLineaConCombo | null)[]; combos: ComboAplicadoEnPrevia[] } {
   const candidatos = candidatosDeCombos(instantanea.combos ?? [])
   if (candidatos.length === 0) return { lineas: vigentes, combos: [] }
 

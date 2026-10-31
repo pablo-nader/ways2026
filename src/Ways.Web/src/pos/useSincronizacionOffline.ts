@@ -262,11 +262,15 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`
     // (ya neto) restaba el descuento DOS VECES y sub-registraba toda venta offline con oferta.
     // Por eso el tramo solo aporta `descuentoUnitario`: `precioOriginal` es el bruto y no varía
-    // con la cantidad.
+    // con la cantidad. Con una oferta "solo múltiplos" el descuento viaja como importe de línea y en lugar del unitario
+    // (el servidor rechaza los dos juntos): las unidades que no completan un grupo pagan el precio original.
+    const { descuentoUnitario: _descuentoDeLaEntrada, ...sinDescuento } = linea
     enriquecidas.push({
-      ...linea,
+      ...sinDescuento,
       precioUnitario: precios.precioOriginal,
-      descuentoUnitario: precios.descuentoUnitario,
+      ...(precios.descuentoDeLinea !== undefined
+        ? { descuentoDeOfertaDeLinea: precios.descuentoDeLinea }
+        : { descuentoUnitario: precios.descuentoUnitario }),
       ...(precios.combo
         ? { unidadesConsumidasPorCombo: precios.combo.unidadesConsumidas, ahorroDeCombo: precios.combo.ahorro, idCombo: precios.combo.idCombo }
         : {}),

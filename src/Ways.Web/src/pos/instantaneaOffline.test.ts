@@ -41,6 +41,7 @@ import type {
 } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 import { calcularSubtotalPrevia } from '../api/ventas'
+import { calcularTotalesDeLineaConCombo } from '../api/combos'
 
 const LISTA = 5
 const OTRA_LISTA = 8
@@ -1499,5 +1500,105 @@ describe('lineasConImporteDeArticuloOrdinario', () => {
     const instantanea = instantaneaConImporte({ articulos: [articuloFixture(), ordinarioEn500()] })
 
     expect(lineasConImporteDeArticuloOrdinario([lineaFixture({ idArticulo: FIAMBRERIA })], instantanea)).toEqual([])
+  })
+})
+
+describe('ofertas solo múltiplos offline', () => {
+  // Artículo a 4000 con "2 x 7500" solo múltiplos, como lo arma el servidor: el escalón de 2 deja los campos de siempre a
+  // precio de lista (lo que cobra un POS anterior) y la resolución entera en `aplicadasCompletas`.
+  const ESTRICTA = { idOferta: 90, nombre: '2 x 7500', descuentoUnitario: 250, multiploDe: 2 }
+  const ESCALON_ESTRICTO: EscalonDeCantidad = { cantidadDesde: 2, precioFinal: 4000, descuentoUnitario: 0, aplicadas: [], aplicadasCompletas: [ESTRICTA] }
+  const estricto = (idArticulo: number, sobrescribir: Partial<PrecioDeListaDeInstantanea> = {}) =>
+    articuloDeCombosFixture(idArticulo, 4000, { preciosPorLista: [precioFixture({ precioOriginal: 4000, precioFinal: 4000, escalones: [ESCALON_ESTRICTO], ...sobrescribir })] })
+
+  const totalesDe = (lineas: LineaCarrito[], instantanea: InstantaneaDePos) =>
+    resolverDocumentoOffline(lineas, instantanea, LISTA).lineas.map((p, i) =>
+      p === null
+        ? null
+        : calcularTotalesDeLineaConCombo({
+            cantidad: lineas[i].cantidad,
+            precioOriginal: p.precioOriginal,
+            descuentoUnitario: p.descuentoUnitario,
+            porcentaje: null,
+            combo: p.combo,
+            descuentoDeLinea: p.descuentoDeLinea,
+          }).total,
+    )
+
+  it.each([
+    [1, 4000],
+    [2, 7500],
+    [3, 11500],
+    [4, 15000],
+  ])('cobra lo mismo que el servidor: %d → %d', (cantidad, total) => {
+    expect(totalesDe(lineasDe([PANCHO, cantidad]), instantaneaFixture({ articulos: [estricto(PANCHO)] }))).toEqual([total])
+  })
+
+  it('arma la resolución entera del servidor con aplicadasCompletas y el descuento de línea de los grupos completos', () => {
+    const [linea] = resolverDocumentoOffline(lineasDe([PANCHO, 3]), instantaneaFixture({ articulos: [estricto(PANCHO)] }), LISTA).lineas
+
+    expect(linea).toEqual({ precioOriginal: 4000, precioFinal: 3750, descuentoUnitario: 250, aplicadas: [ESTRICTA], descuentoDeLinea: 500 })
+  })
+
+  it('sin aplicadasCompletas (una instantánea anterior) cobra los campos de siempre y no trae descuento de línea', () => {
+    const anterior = { ...ESCALON_ESTRICTO, aplicadasCompletas: undefined }
+    const [linea] = resolverDocumentoOffline(lineasDe([PANCHO, 3]), instantaneaFixture({ articulos: [estricto(PANCHO, { escalones: [anterior] })] }), LISTA).lineas
+
+    expect(linea).toEqual({ precioOriginal: 4000, precioFinal: 4000, descuentoUnitario: 0, aplicadas: [] })
+  })
+
+  it('una oferta común conserva su forma: sin descuento de línea', () => {
+    const comun = articuloDeCombosFixture(COCA, 4000, {
+      preciosPorLista: [
+        precioFixture({
+          precioOriginal: 4000,
+          precioFinal: 4000,
+          escalones: [{ cantidadDesde: 2, precioFinal: 3750, descuentoUnitario: 250, aplicadas: [{ idOferta: 91, nombre: 'Común', descuentoUnitario: 250 }] }],
+        }),
+      ],
+    })
+    const instantanea = instantaneaFixture({ articulos: [comun] })
+
+    expect(resolverDocumentoOffline(lineasDe([COCA, 3]), instantanea, LISTA).lineas[0]).not.toHaveProperty('descuentoDeLinea')
+    expect(totalesDe(lineasDe([COCA, 3]), instantanea)).toEqual([11250])
+  })
+
+  it('de familia: los grupos se cuentan sobre el documento y el resto cae en la última línea (1 + 2 → 3750 y 7750)', () => {
+    const celda: EscalonDeFamilia = {
+      cantidadDeFamiliaDesde: 2,
+      cantidadDesde: 1,
+      precioFinal: 4000,
+      descuentoUnitario: 0,
+      aplicadas: [],
+      aplicadasCompletas: [{ ...ESTRICTA, porFamilia: true }],
+    }
+    const articulo = (idArticulo: number) =>
+      articuloDeCombosFixture(idArticulo, 4000, { idFamilia: FAMILIA_BEBIDAS, preciosPorLista: [precioFixture({ precioOriginal: 4000, precioFinal: 4000, escalonesDeFamilia: [celda] })] })
+    const instantanea = instantaneaFixture({ articulos: [articulo(COCA), articulo(SPRITE)] })
+    const lineas = lineasDe([COCA, 1], [SPRITE, 2])
+
+    expect(resolverDocumentoOffline(lineas, instantanea, LISTA).lineas.map((l) => l?.descuentoDeLinea)).toEqual([250, 250])
+    expect(totalesDe(lineas, instantanea)).toEqual([3750, 7750])
+  })
+
+  it('con un combo, la unidad consumida no cuenta para los grupos (los mismos números que la venta del servidor)', () => {
+    const combo: ComboDeInstantanea = {
+      idCombo: 8,
+      codigo: 8,
+      nombre: 'Pancho + Agua',
+      precio: 4000,
+      componentes: [
+        { idArticulo: PANCHO, cantidad: 1 },
+        { idArticulo: COCA, cantidad: 1 },
+      ],
+    }
+    const instantanea = instantaneaFixture({ articulos: [estricto(PANCHO), articuloDeCombosFixture(COCA, 1000)], combos: [combo] })
+    const lineas = lineasDe([PANCHO, 4], [COCA, 1])
+
+    const [pancho] = resolverDocumentoOffline(lineas, instantanea, LISTA).lineas
+    expect(pancho?.combo).toEqual({ unidadesConsumidas: 1, ahorro: 800, idCombo: 8 })
+    expect(pancho?.descuentoDeLinea).toBe(500)
+    // Pancho: (3 × 4000 − 500) + 3200 de su parte del combo; la otra línea, 800 de la suya.
+    expect(totalesDe(lineas, instantanea)).toEqual([14700, 800])
   })
 })

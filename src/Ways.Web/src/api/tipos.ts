@@ -1187,7 +1187,10 @@ export type LineaDeResolucion = {
   importe?: number
 }
 
-export type OfertaAplicada = { idOferta: number; nombre: string; descuentoUnitario: number }
+/** `multiploDe` (la cantidad mínima) solo viaja en una oferta "solo múltiplos": su descuento unitario alcanza solo a los
+ * grupos completos de esa cantidad, contados sobre la familia del documento si `porFamilia` (espejo de `OfertaAplicadaDto`;
+ * las dos claves faltan en una oferta común). */
+export type OfertaAplicada = { idOferta: number; nombre: string; descuentoUnitario: number; multiploDe?: number; porFamilia?: boolean }
 
 /** `precioOriginal`/`precioFinal` son `null` cuando no hay precio vigente para el par (artículo,
  * lista) — sin nada que descontar, `aplicadas` queda vacía (espejo de `ResultadoDeResolucion`). */
@@ -1201,6 +1204,9 @@ export type ResultadoDeResolucion = {
   /** Solo en `POST /api/ofertas/resolver-con-combos` y en la vista previa offline, y solo en la línea que
    * un combo consumió (clave ausente en el resto). */
   combo?: ComboDeLinea
+  /** Solo en una línea con una oferta "solo múltiplos" (clave ausente en el resto): el descuento de oferta de la línea
+   * entera, sin signo y sobre sus unidades fuera de combos, que reemplaza a `cantidad × descuentoUnitario`. */
+  descuentoDeLinea?: number
 }
 
 /** Lo que un combo le hizo a una línea (espejo de `ComboEnLineaResuelta`): `unidadesConsumidas` va en la unidad de
@@ -1230,12 +1236,17 @@ export type ResolucionConCombos = { lineas: ResultadoDeResolucion[]; combos: Com
  *
  * `precioOriginal` NO está acá a propósito: es constante entre cantidades, así que el escalón pisa
  * `precioFinal`/`descuentoUnitario`/`aplicadas` y deja el precio de lista del artículo intacto.
+ *
+ * `aplicadasCompletas` solo viaja cuando alguna oferta aplicada es "solo múltiplos": es la resolución entera en el orden
+ * del servidor, y entonces `precioFinal`/`descuentoUnitario`/`aplicadas` llevan solo las ofertas comunes (lo que cobra un
+ * POS anterior al campo). Igual en `EscalonDeFamilia` y en el precio plano.
  */
 export type EscalonDeCantidad = {
   cantidadDesde: number
   precioFinal: number
   descuentoUnitario: number
   aplicadas: OfertaAplicada[]
+  aplicadasCompletas?: OfertaAplicada[] | null
 }
 
 /**
@@ -1251,6 +1262,7 @@ export type EscalonDeFamilia = {
   precioFinal: number
   descuentoUnitario: number
   aplicadas: OfertaAplicada[]
+  aplicadasCompletas?: OfertaAplicada[] | null
 }
 
 /** Precio de un artículo en UNA lista — espejo de `PrecioDeListaDeInstantanea`. */
@@ -1260,6 +1272,7 @@ export type PrecioDeListaDeInstantanea = {
   precioFinal: number
   descuentoUnitario: number
   aplicadas: OfertaAplicada[]
+  aplicadasCompletas?: OfertaAplicada[] | null
   /** Tramos de precio por cantidad, ascendentes por `cantidadDesde` y todos con
    * `cantidadDesde > 1` — nunca incluyen la entrada de cantidad 1, que es el precio plano de
    * arriba. Ausente/`null` significa que el precio plano rige a toda cantidad. */
@@ -2139,6 +2152,9 @@ export type LineaDeVenta = {
   unidadesConsumidasPorCombo?: number
   ahorroDeCombo?: number
   idCombo?: number
+  /** Solo en una venta offline, en la línea con una oferta "solo múltiplos", y en lugar de `descuentoUnitario`: el
+   * descuento de oferta de la línea como importe, sobre las unidades que no consumió un combo (espejo de `LineaDeVenta`). */
+  descuentoDeOfertaDeLinea?: number
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 

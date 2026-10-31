@@ -209,23 +209,30 @@ public sealed record ResolucionConCombos(
 /// el siguiente escalón, si hay) la línea resuelve a estos valores. <c>PrecioOriginal</c> NO se
 /// repite por escalón a propósito — la cantidad no entra en la resolución de precio de lista, así
 /// que es constante para toda la curva y ya viaja una sola vez en el resultado plano; lo único que
-/// varía con la cantidad es el descuento, el final y qué ofertas aplicaron.</summary>
+/// varía con la cantidad es el descuento, el final y qué ofertas aplicaron. Con una oferta "solo múltiplos" los campos
+/// de siempre llevan solo las ofertas comunes y <see cref="AplicadasCompletas"/> la resolución entera
+/// (<see cref="PrecioParaInstantanea"/>); sin ninguna, la clave falta.</summary>
 public sealed record EscalonDeCantidad(
     decimal CantidadDesde,
     decimal PrecioFinal,
     decimal DescuentoUnitario,
-    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<OfertaAplicadaDto>? AplicadasCompletas = null);
 
 /// <summary>Una celda de la grilla de familia, forma HTTP de <c>Ways.Domain.Ofertas.CeldaDeFamilia</c>:
 /// con <see cref="CantidadDeFamiliaDesde"/> unidades de la familia en el carrito y
 /// <see cref="CantidadDesde"/> del propio artículo, la línea resuelve a estos valores. Igual que
-/// <see cref="EscalonDeCantidad"/>, no repite <c>PrecioOriginal</c>.</summary>
+/// <see cref="EscalonDeCantidad"/>, no repite <c>PrecioOriginal</c> y separa las ofertas "solo múltiplos" en
+/// <see cref="AplicadasCompletas"/>.</summary>
 public sealed record EscalonDeFamilia(
     decimal CantidadDeFamiliaDesde,
     decimal CantidadDesde,
     decimal PrecioFinal,
     decimal DescuentoUnitario,
-    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<OfertaAplicadaDto>? AplicadasCompletas = null);
 
 /// <summary>El <see cref="Resultado"/> de siempre (la resolución a la cantidad pedida, byte por
 /// byte lo que devuelve <c>ServicioDeOfertas.ResolverAsync</c>) más la curva de precio por
