@@ -39,10 +39,10 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 
 ## Tasks
 
-- [ ] T1 — Backend: column + migration, domain rule, engine (line-level strict discount), sale totals,
+- [x] T1 — Backend: column + migration, domain rule, engine (line-level strict discount), sale totals,
   API DTOs (alta/edición/listado), docs/10. Unit + integration tests.
-  Implemented in `162b767b`; unit suites green; integration class written but NOT run (Docker daemon was
-  down in the writer session) — tick only after `OfertasSoloMultiplosTests` + guard tests pass.
+  Implemented in `162b767b`; unit suites green; integration 795/795 (offers, sales, combos, remitos,
+  presupuestos, catalog, labels, snapshot, `SuperficieDeAutorizacionTests`, `AislamientoDeTenantTests`), 22 m.
 - [ ] T2 — Offline: snapshot representation of strict components (escalones + family grid), TS engine
   (`instantaneaOffline.ts`, ticket synthesis, combos motor), server discrepancy check. Tests + parity.
 - [ ] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest.
@@ -94,4 +94,4 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 
 ## Next step
 
-Run `OfertasSoloMultiplosTests` and the integration guards with Docker up; then tick T1 and start T2.
+T2 (offline).
