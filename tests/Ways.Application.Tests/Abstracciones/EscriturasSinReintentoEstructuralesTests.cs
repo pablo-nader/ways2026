@@ -142,6 +142,10 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDeCompraAsync" },
         { "Ways.Application/Pagos/ServicioDePagos.Redondeo.cs", "AjustarRedondeoDePagoAsync" },
 
+        // Reasignación de un pago de sueldo: desplaza saldos resultantes y saldos cacheados de dos libros sin clave de
+        // idempotencia; un reintento tras un commit ambiguo los desplazaría dos veces.
+        { "Ways.Application/Pagos/ServicioDePagos.Reasignacion.cs", "ReasignarPersonalAsync" },
+
         // Familias de artículos: editar el nombre y el estado de una familia lee la fila bajo su FOR UPDATE; un
         // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
         // ServicioDeArticulos.ActualizarAsync.
