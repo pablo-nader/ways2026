@@ -996,6 +996,72 @@ public class ArticulosCodigosProveedorTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal("codigo_proveedor_duplicado", await CodigoDeErrorAsync(respuesta));
     }
 
+    /// <summary>Cláusula bajo prueba: el <c>FOR UPDATE</c> sobre la fila del código. Una baja cruda sin
+    /// commitear retiene la fila; la edición espera el lock y, al comitear la baja, no encuentra fila
+    /// viva: 404 y el código de la fila queda intacto.</summary>
+    [Fact]
+    public async Task LaEdicionQueEsperaUnaBajaConcurrenteDaNoEncontradoYNoTocaLaFila()
+    {
+        var c = await PrepararAsync(nameof(LaEdicionQueEsperaUnaBajaConcurrenteDaNoEncontradoYNoTocaLaFila));
+        using var _ = c.Admin;
+        var articulo = await CrearArticuloAsync(c, "Uno");
+        var codigo = await AsociarOkAsync(c.Admin, articulo.Id, c.IdProveedor, "ORIGINAL");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", c.IdTenant);
+        await using var transaccion = await cruda.BeginTransactionAsync();
+        await DarDeBajaCrudoAsync(cruda, codigo.IdCodigoProveedor);
+
+        var edicion = ActualizarAsync(c.Admin, articulo.Id, codigo.IdCodigoProveedor, "PISADO");
+        await Task.Delay(1000);
+        Assert.False(edicion.IsCompleted, "la edición debía quedar esperando el lock de la fila");
+
+        await transaccion.CommitAsync();
+        var respuesta = await edicion;
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        Assert.Equal("ORIGINAL", await CodigoAlmacenadoAsync(codigo.IdCodigoProveedor));
+    }
+
+    /// <summary>Misma cláusula del lado de la baja: la segunda baja que espera a la primera responde 404.</summary>
+    [Fact]
+    public async Task LaBajaQueEsperaOtraBajaConcurrenteDaNoEncontrado()
+    {
+        var c = await PrepararAsync(nameof(LaBajaQueEsperaOtraBajaConcurrenteDaNoEncontrado));
+        using var _ = c.Admin;
+        var articulo = await CrearArticuloAsync(c, "Uno");
+        var codigo = await AsociarOkAsync(c.Admin, articulo.Id, c.IdProveedor, "ORIGINAL");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", c.IdTenant);
+        await using var transaccion = await cruda.BeginTransactionAsync();
+        await DarDeBajaCrudoAsync(cruda, codigo.IdCodigoProveedor);
+
+        var baja = c.Admin.DeleteAsync($"/api/articulos/{articulo.Id}/codigos-proveedor/{codigo.IdCodigoProveedor}");
+        await Task.Delay(1000);
+        Assert.False(baja.IsCompleted, "la baja debía quedar esperando el lock de la fila");
+
+        await transaccion.CommitAsync();
+        var respuesta = await baja;
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    private static async Task DarDeBajaCrudoAsync(NpgsqlConnection cruda, int idCodigo)
+    {
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText = "UPDATE codigos_proveedor SET deleted_at = now(), updated_at = now() WHERE id_codigo_proveedor = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idCodigo });
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+    }
+
+    private async Task<string> CodigoAlmacenadoAsync(int idCodigo)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText = "SELECT codigo FROM codigos_proveedor WHERE id_codigo_proveedor = $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idCodigo });
+        return (string)(await comando.ExecuteScalarAsync())!;
+    }
+
     // ---- backstop del índice único -----------------------------------------------------------
 
     /// <summary>Carrera real: un INSERT crudo sin commitear (invisible al pre-chequeo) bloquea el
