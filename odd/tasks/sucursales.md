@@ -53,10 +53,14 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
 - [x] T1 — `sucursales` table (tenant + empresa scoped), `puntos_venta.id_sucursal NOT NULL`,
   1:1 backfill, RLS, entity/config, PV alta creates its own sucursal, delete-guard bridge,
   docs 09/10. Route: delegated (2+ non-trivial files). Commit b3c906fe.
-- [ ] T2 — Stock tables re-keyed to `id_sucursal`; single upsert helper used by ventas, remitos,
-  compras, stock, lotes; transfers between sucursales; lock order. Route: delegated.
+- [x] T2 — Stock tables re-keyed to `id_sucursal`; single upsert helper used by ventas, remitos,
+  compras, stock, lotes; transfers between sucursales; lock order. Route: delegated (opus writer).
 - [ ] T3 — Reads by sucursal: existencias/vencimientos/reposición, ficha de artículo, MCP
-  `articulo_info`, sales grouped by sucursal. Route: delegated.
+  `articulo_info`, sales grouped by sucursal. Route: delegated. Carries the T2 judgment-day
+  suggestions: MCP copy "punto de venta" → sucursal, stale comments (`ix_stock_punto_venta`,
+  `stock_duplicado` message, "único escritor" vs the mínimos upsert, aggregate-before-lots in
+  compra edición), a unit test pinning `EscritorDeStock.EnOrdenDeLocks`, and moving the
+  `transferencia_misma_sucursal` check before lot resolution.
 - [ ] T4 — Web: sucursales ABM, PV form picks sucursal, stock screens and transfers by sucursal.
   Route: delegated.
 - [ ] T5 — Merge two sucursales (move PVs, sum stock and lots with audited movements).
@@ -89,6 +93,25 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   guard forced → red. judgment-day: APPROVED round 1, no findings from either judge.
   RDD: assess pending (judgment-day is the project's PR gate).
 
+- 2026-10-31: T1 merged (#547). Full local integration suite on T1: 5686 ✔, 0 failed (1 h 12 m).
+- 2026-10-31: T2 done. Migration `StockPorSucursal`: `stock` PK `(id_articulo, id_sucursal)`,
+  `stock_lotes` PK `(id_articulo, id_sucursal, id_lote)`, FKs to sucursales; `movimientos_stock`
+  + `id_sucursal NOT NULL` + `id_sucursal_destino`, keeps `id_punto_venta`. Backfill under
+  `ways_app`, aborts on collapse. `EscritorDeStock` (Application/Stock) replaces the five raw-SQL
+  writers; lock order (sucursal, artículo, lote NULLS FIRST); reversals use the stored sucursal;
+  same-sucursal transfer → 409 `transferencia_misma_sucursal`. Delete guard: Empresa bridges via
+  sucursales; last PV of a sucursal with stock → `punto_venta_en_uso`. Approved out-of-surface
+  edits: `CalculadorDeEdicionDeCompra.cs`, `ServicioDeCompras.Edicion.cs`.
+  Checks: build 0 errors; Domain 2038 ✔; Application 1464 ✔; integration filter (stock, lotes,
+  ventas, remitos, compras, transferencias, conteo, mínimos, reportes, ficha, sucursal,
+  migraciones, RLS, SuperficieDeAutorizacion) 2344 ✔ + 5 MCP ficha tests fixed and re-run in a
+  1493-test subset ✔; guard round 572 ✔. Mutations: reversal by current sucursal, wrong
+  resolver, collision check off, calculator key without sucursal, bridge removed, sucursal usage
+  check skipped/forced — each red. RED came from mutations (code written before tests).
+  judgment-day: APPROVED round 1, no CRITICAL; info: migration holds ledger locks for its
+  duration (deploy off-hours), Down() lossy once PVs share a sucursal, items carried to T3.
+  Deferred to T5: `ResolverSucursalAsync` takes no lock on `puntos_venta`.
+
 ## Next step
 
-T2 — re-key stock to `id_sucursal`, stacked on T1.
+T3 — reads by sucursal.
