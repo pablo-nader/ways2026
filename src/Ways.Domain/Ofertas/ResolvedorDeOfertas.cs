@@ -35,20 +35,29 @@ public static class ResolvedorDeOfertas
         var precioOriginal = linea.PrecioOriginal;
 
         // Base: la de mayor prioridad entre las NO acumulables (spec: Base Selection and
-        // Tie-Break) — empate 1: mayor descuento efectivo; empate 2: menor id_oferta. Si no hay
-        // ninguna no-acumulable que matchee, no hay base (spec: "Acumulable-only candidates
+        // Tie-Break) — empate 1: mayor descuento de línea a la cantidad del umbral
+        // (ClaveDeLinea); empate 2: mayor descuento unitario; empate 3: menor id_oferta. Si no
+        // hay ninguna no-acumulable que matchee, no hay base (spec: "Acumulable-only candidates
         // apply with no base" — el precio original queda como base implícita).
-        var noAcumulables = coincidentes.Where(c => !c.Acumulable).ToList();
-        if (noAcumulables.Count > 0)
+        (OfertaCandidata Candidata, decimal Descuento, FraccionDeDescuento Clave)? candidataBase = null;
+        foreach (var candidata in coincidentes)
         {
-            var candidataBase = noAcumulables
-                .Select(c => (Candidata: c, Descuento: DescuentoDe(c.Beneficio, precioOriginal)))
-                .OrderByDescending(x => x.Candidata.Prioridad)
-                .ThenByDescending(x => x.Descuento)
-                .ThenBy(x => x.Candidata.Id)
-                .First();
+            if (candidata.Acumulable)
+            {
+                continue;
+            }
 
-            aplicadas.Add(candidataBase);
+            var descuento = DescuentoDe(candidata.Beneficio, precioOriginal);
+            var clave = ClaveDeLinea(linea, candidata, descuento);
+            if (candidataBase is not { } actual || GanaLaBase(candidata, descuento, clave, actual))
+            {
+                candidataBase = (candidata, descuento, clave);
+            }
+        }
+
+        if (candidataBase is { } elegida)
+        {
+            aplicadas.Add((elegida.Candidata, elegida.Descuento));
         }
 
         // Todas las acumulables que matchean se suman, sin competir entre sí (spec: "Multiple
@@ -72,6 +81,65 @@ public static class ResolvedorDeOfertas
 
         return new PrecioConOfertas(linea.PrecioOriginal, precioFinal, descuentoTotal, reportadas);
     }
+
+    private static bool GanaLaBase(
+        OfertaCandidata candidata, decimal descuento, FraccionDeDescuento clave,
+        (OfertaCandidata Candidata, decimal Descuento, FraccionDeDescuento Clave) actual)
+    {
+        if (candidata.Prioridad != actual.Candidata.Prioridad)
+        {
+            return candidata.Prioridad > actual.Candidata.Prioridad;
+        }
+
+        var porLinea = clave.CompareTo(actual.Clave);
+        if (porLinea != 0)
+        {
+            return porLinea > 0;
+        }
+
+        if (descuento != actual.Descuento)
+        {
+            return descuento > actual.Descuento;
+        }
+
+        return candidata.Id < actual.Candidata.Id;
+    }
+
+    /// <summary>
+    /// El descuento de línea de <paramref name="candidata"/> por unidad de la línea, a la cantidad de su umbral
+    /// (<see cref="CantidadDelUmbral"/>): una oferta común da <paramref name="descuento"/>; una "solo múltiplos" de N da
+    /// <c>descuento × N × floor(Q / N) / Q</c>, con Q la cantidad del umbral. Para una oferta de artículo, grupo o
+    /// categoría eso es exactamente su descuento de línea dividido la cantidad; para una de familia es su parte
+    /// proporcional del descuento de la familia (el reparto real entre las líneas lo hace <see cref="CoberturaDeOfertas"/>).
+    /// No anticipa las unidades que consuma un combo.
+    /// </summary>
+    internal static FraccionDeDescuento ClaveDeLinea(in LineaAResolver linea, OfertaCandidata candidata, decimal descuento)
+    {
+        if (MultiploDe(candidata) is not { } multiplo)
+        {
+            return new FraccionDeDescuento(descuento, 1m);
+        }
+
+        var cantidad = CantidadDelUmbral(linea, candidata);
+        return cantidad <= 0m
+            ? new FraccionDeDescuento(0m, 1m)
+            : new FraccionDeDescuento(descuento * multiplo * Math.Floor(cantidad / multiplo), cantidad);
+    }
+
+    /// <summary>El tamaño de grupo de una oferta "solo múltiplos" (su cantidad mínima), o <c>null</c> si cubre todas las
+    /// unidades.</summary>
+    internal static decimal? MultiploDe(OfertaCandidata candidata) =>
+        candidata.SoloMultiplos && candidata.CantidadMinima is { } minima && minima > 0m ? minima : null;
+
+    /// <summary>La cantidad contra la que se mide <c>cantidad_minima</c>: la de la familia para una oferta de familia, la
+    /// de la línea para el resto.</summary>
+    internal static decimal CantidadDelUmbral(in LineaAResolver linea, OfertaCandidata candidata) =>
+        candidata.Alcance.IdFamilia is not null ? linea.CantidadDeFamilia : linea.Cantidad;
+
+    /// <summary>El descuento unitario que el motor le calcula a <paramref name="candidata"/> sobre
+    /// <paramref name="original"/>.</summary>
+    internal static decimal DescuentoUnitario(OfertaCandidata candidata, decimal original) =>
+        DescuentoDe(candidata.Beneficio, original);
 
     /// <summary>Spec: resolucion-de-ofertas / Candidate Matching — TODOS los ejes seteados
     /// tienen que matchear (AND), cada eje NULL/vacío no restringe (spec: ofertas / Vigencia
@@ -121,8 +189,7 @@ public static class ResolvedorDeOfertas
             return true;
         }
 
-        var cantidad = candidata.Alcance.IdFamilia is not null ? linea.CantidadDeFamilia : linea.Cantidad;
-        return cantidad >= cantidadMinima;
+        return CantidadDelUmbral(linea, candidata) >= cantidadMinima;
     }
 
     private static bool CoincideAlcance(in LineaAResolver linea, AlcanceDeOferta alcance)
@@ -164,4 +231,13 @@ public static class ResolvedorDeOfertas
 
         return Math.Clamp(redondeado, 0m, original);
     }
+}
+
+/// <summary>Un cociente <c>Numerador / Denominador</c> (denominador positivo) que se compara sin dividir, multiplicando en
+/// cruz: así dos claves de <see cref="ResolvedorDeOfertas.ClaveDeLinea"/> empatan solo si empatan exactamente.</summary>
+internal readonly record struct FraccionDeDescuento(decimal Numerador, decimal Denominador)
+    : IComparable<FraccionDeDescuento>
+{
+    public int CompareTo(FraccionDeDescuento otra) =>
+        (Numerador * otra.Denominador).CompareTo(otra.Numerador * Denominador);
 }
