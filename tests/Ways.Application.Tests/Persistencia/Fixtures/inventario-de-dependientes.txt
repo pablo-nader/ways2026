@@ -24,6 +24,8 @@ Empresa | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tena
 Empresa | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | movimientos_stock via puntos_venta | id_punto_venta_destino,id_tenant | sinmarca
+Empresa | movimientos_stock via sucursales | id_sucursal,id_tenant | sinmarca
+Empresa | movimientos_stock via sucursales | id_sucursal_destino,id_tenant | sinmarca
 Empresa | movimientos_tesoreria via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | movimientos_tesoreria | id_empresa,id_tenant | sinmarca
 Empresa | numeraciones_comprobante via puntos_venta | id_punto_venta,id_tenant | sinmarca
@@ -40,8 +42,8 @@ Empresa | proveedores | id_empresa,id_tenant | marcado
 Empresa | puntos_venta | id_empresa,id_tenant | marcado
 Empresa | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
-Empresa | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
-Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | stock via sucursales | id_sucursal,id_tenant | sinmarca
+Empresa | stock_lotes via sucursales | id_sucursal,id_tenant | sinmarca
 Empresa | sucursales | id_empresa,id_tenant | marcado
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | vitrinas | id_empresa,id_tenant | marcado
@@ -90,8 +92,6 @@ PuntoVenta | parametros | id_punto_venta,id_tenant | marcado
 PuntoVenta | presupuestos | id_punto_venta,id_tenant | marcado
 PuntoVenta | remitos | id_punto_venta,id_tenant | marcado
 PuntoVenta | reservas_numeracion | id_punto_venta,id_tenant | sinmarca
-PuntoVenta | stock | id_punto_venta,id_tenant | sinmarca
-PuntoVenta | stock_lotes | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -100,6 +100,8 @@ Sucursal | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_ten
 Sucursal | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | movimientos_stock via puntos_venta | id_punto_venta_destino,id_tenant | sinmarca
+Sucursal | movimientos_stock | id_sucursal,id_tenant | sinmarca
+Sucursal | movimientos_stock | id_sucursal_destino,id_tenant | sinmarca
 Sucursal | movimientos_tesoreria via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | numeraciones_comprobante via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Sucursal | numeraciones_fiscales via puntos_venta | id_punto_venta,id_tenant | sinmarca
@@ -110,8 +112,8 @@ Sucursal | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | puntos_venta | id_sucursal,id_empresa,id_tenant | marcado
 Sucursal | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
 Sucursal | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
-Sucursal | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
-Sucursal | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | stock | id_sucursal,id_tenant | sinmarca
+Sucursal | stock_lotes | id_sucursal,id_tenant | sinmarca
 Sucursal | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Tenant | acumulados_de_facturacion | id_tenant | sinmarca
 Tenant | alicuotas_comprobante_compra | id_tenant | marcado

@@ -653,9 +653,11 @@ public class ServicioDeOrganizacion(
     /// <summary>
     /// Baja lógica del punto de venta: mínimo estructural primero
     /// (<c>ultimo_punto_venta_de_la_empresa</c>), después el guard de uso. No tiene hijos
-    /// estructurales, así que no hay cascada — sigue adentro de la transacción y del lock igual,
-    /// porque el mínimo cuenta hermanos y sin el lock dos bajas simultáneas podrían leer dos y
-    /// dejar la empresa en cero. *(BO-R10, TO-R4)*
+    /// estructurales; la única cascada es hacia arriba: si era la última caja viva de su sucursal, la
+    /// sucursal cae con él, y entonces el uso propio de la sucursal (su stock) también bloquea con
+    /// <c>punto_venta_en_uso</c>. Sigue adentro de la transacción y del lock porque el mínimo cuenta
+    /// hermanos y sin el lock dos bajas simultáneas podrían leer dos y dejar la empresa en cero.
+    /// *(BO-R10, TO-R4)*
     /// </summary>
     public async Task EliminarPuntoVentaAsync(int id, CancellationToken ct = default)
     {
@@ -690,24 +692,43 @@ public class ServicioDeOrganizacion(
                 "el punto de venta",
                 ct);
 
+            // La sucursal sin ningún punto de venta vivo deja de tener sentido y cae con él, en la misma
+            // escritura y con el mismo instante. El lock de baja del tenant serializa esta lectura.
+            var quedanVivos = await db.PuntosVenta
+                .AnyAsync(p => p.IdSucursal == bajo.IdSucursal && p.Id != bajo.Id, ct);
+
+            var sucursal = quedanVivos
+                ? null
+                : await db.Sucursales.FirstOrDefaultAsync(s => s.Id == bajo.IdSucursal, ct);
+
+            if (sucursal is not null)
+            {
+                // Desde sucursales T2 el stock es de la sucursal: si la baja se la llevaría, su uso propio (stock,
+                // stock_lotes, movimientos_stock) bloquea igual que el del punto de venta. Las ramas por
+                // puntos_venta ya las respondió el guard de arriba.
+                await ExigirSinUsoAsync(
+                    typeof(Sucursal),
+                    sucursal.CreatedAt,
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["Id"] = sucursal.Id,
+                        ["IdEmpresa"] = sucursal.IdEmpresa,
+                        ["IdTenant"] = sucursal.IdTenant
+                    },
+                    "punto_venta_en_uso",
+                    "el punto de venta",
+                    ct,
+                    soloRamas: rama => rama.Puente is null && rama.Tabla != "puntos_venta");
+            }
+
             var momento = reloj.Ahora;
 
             Marcar(bajo, momento);
             RegistrarBajaDePuntoVenta(bajo, momento, porCascada: false);
 
-            // La sucursal sin ningún punto de venta vivo deja de tener sentido: baja en la misma
-            // escritura y con el mismo instante. El lock de baja del tenant serializa esta lectura.
-            var quedanVivos = await db.PuntosVenta
-                .AnyAsync(p => p.IdSucursal == bajo.IdSucursal && p.Id != bajo.Id, ct);
-
-            if (!quedanVivos)
+            if (sucursal is not null)
             {
-                var sucursal = await db.Sucursales.FirstOrDefaultAsync(s => s.Id == bajo.IdSucursal, ct);
-
-                if (sucursal is not null)
-                {
-                    Marcar(sucursal, momento);
-                }
+                Marcar(sucursal, momento);
             }
 
             await db.SaveChangesAsync(ct);
@@ -959,7 +980,8 @@ public class ServicioDeOrganizacion(
         IReadOnlyDictionary<string, object> valoresPorPropiedad,
         string codigo,
         string sujeto,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<RamaDeUso, bool>? soloRamas = null)
     {
         var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
 
@@ -971,7 +993,7 @@ public class ServicioDeOrganizacion(
                     $"{propiedad}, que alguna rama del inspector necesita."))
             .ToList();
 
-        var ramaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(tipoAncla, valoresDeClave, ancla, ct);
+        var ramaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(tipoAncla, valoresDeClave, ancla, ct, soloRamas);
 
         if (ramaEnUso is null)
         {

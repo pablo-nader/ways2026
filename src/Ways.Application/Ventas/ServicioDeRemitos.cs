@@ -494,10 +494,9 @@ public class ServicioDeRemitos(
                 "remito_ya_emitido", "El remito ya no está en borrador en ese punto de venta.", 409);
         }
 
-        // task 5.6: EL CUARTO WRITE SITE — orden ascendente (id_articulo, id_lote NULLS FIRST),
-        // implementado independiente (design decisión 8): sus propios statements crudos, sin
-        // compartir helper con ServicioDeVentas/ServicioDeCompras/ServicioDeStock.
-        var itemsOrdenados = items
+        // task 5.6: EL CUARTO WRITE SITE — el stock se escribe con EscritorDeStock, en su orden de
+        // locks, sobre la sucursal de la caja del remito.
+        var itemsConLote = items
             .Select(item => (
                 Item: item,
                 IdLoteFinal: loteFinalPorItem.TryGetValue(item.Id, out var saldo) ? saldo.IdLote : (int?)null))
@@ -506,7 +505,7 @@ public class ServicioDeRemitos(
             .ThenBy(x => x.IdLoteFinal ?? 0)
             .ToList();
 
-        foreach (var (item, idLoteFinal) in itemsOrdenados)
+        foreach (var (item, idLoteFinal) in itemsConLote)
         {
             var articulo = articuloPorId[item.IdArticulo];
 
@@ -515,20 +514,22 @@ public class ServicioDeRemitos(
             // MaterializarItemsDesdePresupuesto's mutation target 29).
             await CongelarItemAsync(
                 conexion, transaccionCruda, item.Id, idTenant, idLoteFinal, articulo.CostoNominal, ct);
+        }
 
-            var delta = -item.Cantidad;
+        if (itemsConLote.Count > 0)
+        {
+            var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVenta, ct);
 
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta, delta,
-                MotivoStock.Remito, id, idEmpleado, momento, idLoteFinal, ct);
-
-            await UpsertStockAsync(conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta, delta, ct);
-
-            if (idLoteFinal is { } idLote)
-            {
-                await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta, idLote, delta, ct);
-            }
+            await EscritorDeStock.AsentarAsync(
+                conexion, transaccionCruda,
+                itemsConLote.Select(x => new AsientoDeStock(
+                    idTenant, idSucursal, idPuntoVenta, x.Item.IdArticulo, -x.Item.Cantidad, MotivoStock.Remito, idEmpleado,
+                    momento)
+                {
+                    IdLote = x.IdLoteFinal,
+                    IdRemito = id
+                }),
+                ct);
         }
 
         await transaccion.CommitAsync(ct);
@@ -622,34 +623,24 @@ public class ServicioDeRemitos(
             db, contexto, anulado.Value.IdPuntoVenta, ct);
 
         // task 5.8/design decisión 9: movimientos ORIGINALES del ledger (motivo = remito), NUNCA
-        // re-derivados de items_remito — orden ascendente (id_articulo, id_lote), mismo criterio
-        // anti-deadlock que EmitirAsync (por consistencia de convención, no por necesidad estricta
-        // acá). SIN chequeo de negativo: un remito decrementa, su reversa siempre suma — misma
-        // postura, verbatim, que el doc-comment de ServicioDeVentas.UpsertStockLoteAsync (tensión
-        // T8). Citado por miembro y no por línea a propósito (ver la skill claims-match-code): la
-        // cita anterior era un rango de líneas y se corrió hasta apuntar a otro método.
+        // re-derivados de items_remito, escritos en el orden de locks de EscritorDeStock (el mismo de
+        // EmitirAsync). SIN chequeo de negativo: un remito decrementa, su reversa siempre suma
+        // (tensión T8). La reversa vuelve a la sucursal y la caja guardadas en cada movimiento
+        // original, nunca a la sucursal que el punto de venta tenga hoy.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdRemito == id && m.Motivo == MotivoStock.Remito)
-            .OrderBy(m => m.IdArticulo)
-            .ThenBy(m => m.IdLote)
             .ToListAsync(ct);
 
-        foreach (var original in movimientosOriginales)
-        {
-            var inversa = -original.Cantidad;
-
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
-                MotivoStock.Anulacion, id, idEmpleado, momento, original.IdLote, ct);
-
-            await UpsertStockAsync(conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
-
-            if (original.IdLote is { } idLote)
+        await EscritorDeStock.AsentarAsync(
+            conexion, transaccionCruda,
+            movimientosOriginales.Select(original => new AsientoDeStock(
+                idTenant, original.IdSucursal, original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
+                MotivoStock.Anulacion, idEmpleado, momento)
             {
-                await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, idLote, inversa, ct);
-            }
-        }
+                IdLote = original.IdLote,
+                IdRemito = id
+            }),
+            ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -767,87 +758,6 @@ public class ServicioDeRemitos(
     /// (judgment-day ronda 2) — hoy solo <c>IdPuntoVenta</c>, el único campo que
     /// <see cref="AnularAsync"/> necesita para re-verificar el guard bajo el lock ya tomado.</summary>
     private readonly record struct RemitoAnulado(int IdPuntoVenta);
-
-    // ---- statements crudos: EL CUARTO WRITE SITE (design decisión 8 — deliberadamente NO ---------
-    // ---- comparte código con ServicioDeVentas/ServicioDeCompras/ServicioDeStock) -------------------
-
-    /// <summary>design.md:294, mutation target 42: <c>motivo</c> y <c>id_remito</c> (NUNCA
-    /// <c>id_comprobante_venta</c>) — el documento del cuarto write site (proposal §H). Implementado
-    /// independiente de <c>ServicioDeVentas.InsertarMovimientoStockAsync</c> — mismo shape SQL, otra
-    /// clase, otro archivo (la duplicación es el contrato de <c>stock/spec.md:178-189</c>).</summary>
-    private static async Task InsertarMovimientoStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal cantidad, MotivoStock motivo, int idRemito, int idEmpleado, DateTimeOffset creadoEl,
-        int? idLote, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_remito, id_empleado, creado_el, id_lote) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
-
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, cantidad);
-        ParametrosDeComando.Agregar(comando, motivo);
-        ParametrosDeComando.Agregar(comando, idRemito);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.Agregar(comando, creadoEl);
-        ParametrosDeComando.AgregarNulo(comando, idLote);
-
-        await comando.ExecuteNonQueryAsync(ct);
-    }
-
-    /// <summary>design decisión 8: el único statement que toca <c>stock</c> desde este write site —
-    /// su propio row lock (implícito en el <c>INSERT ... ON CONFLICT</c>) reemplaza al advisory
-    /// lock, mismo mecanismo que write site 1, código PROPIO.</summary>
-    private static async Task UpsertStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
-            "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        await comando.ExecuteScalarAsync(ct);
-    }
-
-    /// <summary>Sin chequeo de negativo — decisión 9: una emisión siempre resta (nunca puede dejar
-    /// el saldo negativo por construcción, la reversa de <see cref="AnularAsync"/> siempre suma).
-    /// </summary>
-    private static async Task UpsertStockLoteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        int idLote, decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
-            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idLote);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        await comando.ExecuteScalarAsync(ct);
-    }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {

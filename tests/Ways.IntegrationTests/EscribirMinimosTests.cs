@@ -104,9 +104,10 @@ public class EscribirMinimosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private async Task SembrarStockAsync(Contexto ctx, int idArticulo, decimal cantidad, decimal? minimo = null, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = cantidad,
             Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();
@@ -115,7 +116,8 @@ public class EscribirMinimosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private async Task<bool> ExisteFilaDeStockAsync(Contexto ctx, int idArticulo)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        return await db.Stock.AnyAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+        return await db.Stock.AnyAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal);
     }
 
     private async Task<int> ContarMovimientosAsync(Contexto ctx, int idArticulo)

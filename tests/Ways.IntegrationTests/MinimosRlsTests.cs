@@ -63,9 +63,10 @@ public class MinimosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
         db.Articulos.Add(articulo);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, puntoVenta.Id);
         db.Stock.Add(new Stock
         {
-            IdArticulo = articulo.Id, IdPuntoVenta = puntoVenta.Id, IdTenant = tenant.Id, Cantidad = 10m, Minimo = 5m
+            IdArticulo = articulo.Id, IdSucursal = idSucursal, IdTenant = tenant.Id, Cantidad = 10m, Minimo = 5m
         });
         await db.SaveChangesAsync();
 
@@ -89,13 +90,14 @@ public class MinimosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
     {
         var (idTenantA, idArticuloA, idPuntoVentaA) = await SembrarStockConMinimoAsync(nameof(UnaSesionDeOtroTenantNoVeElMinimoDeLaFila) + "-A");
         var idTenantB = await CrearTenantAjenoAsync(nameof(UnaSesionDeOtroTenantNoVeElMinimoDeLaFila) + "-B");
+        await using var dbPlataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenantB);
 
         await using var comando = cruda.CreateCommand();
-        comando.CommandText = "SELECT count(*) FROM stock WHERE id_articulo = $1 AND id_punto_venta = $2 AND minimo IS NOT NULL";
+        comando.CommandText = "SELECT count(*) FROM stock WHERE id_articulo = $1 AND id_sucursal = $2 AND minimo IS NOT NULL";
         comando.Parameters.Add(new NpgsqlParameter { Value = idArticuloA });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVentaA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(dbPlataforma, idPuntoVentaA) });
 
         var total = (long)(await comando.ExecuteScalarAsync())!;
 
@@ -108,13 +110,14 @@ public class MinimosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
     {
         var (_, idArticuloA, idPuntoVentaA) = await SembrarStockConMinimoAsync(nameof(UnaSesionDeOtroTenantNoPuedeActualizarElMinimo) + "-A");
         var idTenantB = await CrearTenantAjenoAsync(nameof(UnaSesionDeOtroTenantNoPuedeActualizarElMinimo) + "-B");
+        await using var dbPlataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenantB);
 
         await using var comando = cruda.CreateCommand();
-        comando.CommandText = "UPDATE stock SET minimo = 999 WHERE id_articulo = $1 AND id_punto_venta = $2";
+        comando.CommandText = "UPDATE stock SET minimo = 999 WHERE id_articulo = $1 AND id_sucursal = $2";
         comando.Parameters.Add(new NpgsqlParameter { Value = idArticuloA });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVentaA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(dbPlataforma, idPuntoVentaA) });
 
         var filas = await comando.ExecuteNonQueryAsync();
         Assert.Equal(0, filas);
@@ -152,12 +155,12 @@ public class MinimosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
 
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad, minimo, reposicion) " +
+            "INSERT INTO stock (id_articulo, id_sucursal, id_tenant, cantidad, minimo, reposicion) " +
             "VALUES ($1, $2, $3, 0, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
+            "ON CONFLICT (id_articulo, id_sucursal) DO UPDATE " +
             "SET minimo = EXCLUDED.minimo, reposicion = EXCLUDED.reposicion";
         comando.Parameters.Add(new NpgsqlParameter { Value = otroArticulo.Id });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVentaA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(db, idPuntoVentaA) });
         comando.Parameters.Add(new NpgsqlParameter { Value = idTenantB });
         comando.Parameters.Add(new NpgsqlParameter { Value = 15m });
         comando.Parameters.Add(new NpgsqlParameter { Value = (object?)DBNull.Value });

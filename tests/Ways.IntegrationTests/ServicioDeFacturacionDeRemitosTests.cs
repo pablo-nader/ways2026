@@ -165,9 +165,10 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     private async Task SembrarStockAgregadoAsync(Contexto ctx, int idArticulo, decimal cantidad, int? idPuntoVenta = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta ?? ctx.IdPuntoVenta);
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = idPuntoVenta ?? ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }

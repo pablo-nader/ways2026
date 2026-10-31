@@ -51,12 +51,12 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
 {
     public async Task<Existencias> ObtenerExistenciasAsync(int idPuntoVenta, CancellationToken ct = default)
     {
-        // Cláusula bajo prueba (mutation-proof-tests): Where(s => s.IdPuntoVenta == idPuntoVenta)
-        // es lo único que discrimina un punto de venta del otro — mezclar dos PVs del mismo tenant
-        // en una sola respuesta rompería el significado del reporte tanto como en
-        // ServicioDeTesoreria (design decisión 11, misma familia de bug).
+        // Cláusula bajo prueba (mutation-proof-tests): el filtro por la sucursal del punto de venta
+        // es lo único que discrimina una sucursal de otra — mezclar dos del mismo tenant en una sola
+        // respuesta rompería el significado del reporte tanto como en ServicioDeTesoreria (design
+        // decisión 11, misma familia de bug). Las cajas de una misma sucursal ven el mismo stock.
         var crudas = await db.Stock
-            .Where(s => s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == s.IdSucursal))
             .Join(
                 db.Articulos, s => s.IdArticulo, a => a.Id,
                 (s, a) => new { a.Id, a.Nombre, s.Cantidad, s.Minimo, s.Reposicion })
@@ -250,7 +250,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     ///   <c>s.Cantidad &lt;= s.Minimo</c> → con <c>&lt;</c>, el artículo EXACTAMENTE en el punto de
     ///                                   pedido desaparece (spec: The Low-Stock Boundary Is
     ///                                   Inclusive).
-    ///   <c>s.IdPuntoVenta == idPuntoVenta</c> → mezclar dos PVs del mismo tenant rompe el reporte
+    ///   el filtro por la sucursal del punto de venta → mezclar dos sucursales del mismo tenant rompe el reporte
     ///                                   (misma familia de bug que <see cref="ObtenerExistenciasAsync"/>
     ///                                   documenta).
     ///   <c>candidatos.DefaultIfEmpty()</c> → sin el LEFT JOIN, las filas "Sin proveedor"
@@ -285,7 +285,8 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// design decisión 3 es la letra autoritativa sobre el snippet pinneado de la task 4.1).</summary>
     private IQueryable<FilaCrudaDeReposicion> ConstruirQueryDeReposicion(int idPuntoVenta) =>
         from s in db.Stock
-        where s.IdPuntoVenta == idPuntoVenta && s.Minimo != null && s.Cantidad <= s.Minimo
+        where db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == s.IdSucursal)
+            && s.Minimo != null && s.Cantidad <= s.Minimo
         join a in db.Articulos on s.IdArticulo equals a.Id
         join p in db.Proveedores on a.IdProveedorHabitual equals p.Id into candidatos
         from p in candidatos.DefaultIfEmpty()
@@ -305,7 +306,8 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// explícito.</summary>
     private IQueryable<FilaCruda> ConstruirQueryDeVencimientos(int idPuntoVenta) =>
         from stockLote in db.StockLotes
-        where stockLote.IdPuntoVenta == idPuntoVenta && stockLote.Cantidad > 0m
+        where db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == stockLote.IdSucursal)
+            && stockLote.Cantidad > 0m
         join lote in db.Lotes on stockLote.IdLote equals lote.Id
         join articulo in db.Articulos on lote.IdArticulo equals articulo.Id
         orderby lote.FechaVencimiento
@@ -390,7 +392,7 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         CancellationToken ct)
     {
         var query = db.MovimientosStock
-            .Where(m => m.IdPuntoVenta == idPuntoVenta
+            .Where(m => db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == m.IdSucursal)
                      && m.CreadoEl >= desdeUtc && m.CreadoEl < hastaUtcExclusivo
                      && (m.Motivo == MotivoStock.Venta
                          || (m.Motivo == MotivoStock.Anulacion && m.IdComprobanteCompra == null)));

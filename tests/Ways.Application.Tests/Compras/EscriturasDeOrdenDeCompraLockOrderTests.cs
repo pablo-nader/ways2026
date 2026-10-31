@@ -62,7 +62,7 @@ public class EscriturasDeOrdenDeCompraLockOrderTests
         var indiceProyectar = metodo.IndexOf("EscriturasDeOrdenDeCompra.ProyectarEstadoAsync(", StringComparison.Ordinal);
         var indiceItemsQuery = metodo.IndexOf("db.ItemsComprobanteCompra", StringComparison.Ordinal);
         var indiceLotes = metodo.IndexOf("ServicioDeLotes.ResolverOCrearAsync(", StringComparison.Ordinal);
-        var indiceStock = metodo.IndexOf("InsertarMovimientoStockAsync(", StringComparison.Ordinal);
+        var indiceStock = metodo.IndexOf("EscritorDeStock.AsentarAsync(", StringComparison.Ordinal);
         var indiceProveedores = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(", StringComparison.Ordinal);
 
         Assert.True(indiceHeaderLock >= 0, "No se encontró el lock del header (ConfirmarHeaderAsync).");
@@ -71,7 +71,7 @@ public class EscriturasDeOrdenDeCompraLockOrderTests
         Assert.True(indiceProyectar >= 0, "No se encontró la llamada a ProyectarEstadoAsync.");
         Assert.True(indiceItemsQuery >= 0, "No se encontró el read set de items (paso 2).");
         Assert.True(indiceLotes >= 0, "No se encontró la resolución de lotes (paso 2.b).");
-        Assert.True(indiceStock >= 0, "No se encontró InsertarMovimientoStockAsync (paso 3).");
+        Assert.True(indiceStock >= 0, "No se encontró EscritorDeStock.AsentarAsync (paso 3).");
         Assert.True(indiceProveedores >= 0, "No se encontró el lock de proveedores (paso 5).");
 
         // El guard nulo va DESPUÉS del lock del header, y el lock/guard de la OC vive DENTRO de ese
@@ -87,7 +87,7 @@ public class EscriturasDeOrdenDeCompraLockOrderTests
         // ANTES de lotes/stock/proveedores — nunca después (mutation target #21: moverlo tras
         // proveedores debe hacer fallar el rendezvous de confirm×confirm por deadlock).
         Assert.True(indiceProyectar < indiceLotes, "El lock de la OC debe preceder a la resolución de lotes.");
-        Assert.True(indiceProyectar < indiceStock, "El lock de la OC debe preceder al primer InsertarMovimientoStockAsync.");
+        Assert.True(indiceProyectar < indiceStock, "El lock de la OC debe preceder al primer EscritorDeStock.AsentarAsync.");
         Assert.True(indiceProyectar < indiceProveedores, "El lock de la OC debe preceder al lock de proveedores (design decisión 3/6).");
     }
 

@@ -43,7 +43,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdArea, int IdAlicuotaIva,
-        int IdListaPrecio, int IdMedioEfectivo, int IdCliente);
+        int IdListaPrecio, int IdMedioEfectivo, int IdCliente, int IdSucursal);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -102,9 +102,11 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         db.Clientes.Add(cliente);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
-            lista.Id, idMedioEfectivo, cliente.Id);
+            lista.Id, idMedioEfectivo, cliente.Id, idSucursal);
     }
 
     private WaysDbContext Db(int idTenant) =>
@@ -260,7 +262,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         await using var db = Db(ctx.IdTenant);
 
         return await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad)
             .FirstOrDefaultAsync();
     }
@@ -851,11 +853,11 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
             db.StockLotes.Add(new StockLote
             {
-                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
+                IdArticulo = pancho, IdSucursal = ctx.IdSucursal, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
             });
             db.Stock.Add(new Stock
             {
-                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 10m
+                IdArticulo = pancho, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = 10m
             });
             await db.SaveChangesAsync();
         }
@@ -874,7 +876,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         await using var lectura = Db(ctx.IdTenant);
         Assert.Equal(9m, await lectura.StockLotes
-            .Where(sl => sl.IdArticulo == pancho && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == pancho && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).SingleAsync());
         Assert.Equal(9m, await StockAsync(ctx, pancho));
         Assert.Equal(-1m, await StockAsync(ctx, coca));
@@ -1241,11 +1243,11 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
             db.StockLotes.Add(new StockLote
             {
-                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
+                IdArticulo = pancho, IdSucursal = ctx.IdSucursal, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
             });
             db.Stock.Add(new Stock
             {
-                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 10m
+                IdArticulo = pancho, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = 10m
             });
             await db.SaveChangesAsync();
         }
@@ -1267,7 +1269,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         await using var lectura = Db(ctx.IdTenant);
         Assert.Equal(10m, await lectura.StockLotes
-            .Where(sl => sl.IdArticulo == pancho && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == pancho && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).SingleAsync());
         Assert.Equal(10m, await StockAsync(ctx, pancho));
         Assert.Equal(0m, await StockAsync(ctx, coca));
@@ -1297,11 +1299,11 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
             db.StockLotes.Add(new StockLote
             {
-                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
+                IdArticulo = pancho, IdSucursal = ctx.IdSucursal, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
             });
             db.Stock.Add(new Stock
             {
-                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 10m
+                IdArticulo = pancho, IdSucursal = ctx.IdSucursal, IdTenant = ctx.IdTenant, Cantidad = 10m
             });
             await db.SaveChangesAsync();
         }
@@ -1337,7 +1339,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         await using var lectura = Db(ctx.IdTenant);
         Assert.Equal(10m, await lectura.StockLotes
-            .Where(sl => sl.IdArticulo == pancho && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == pancho && sl.IdSucursal == ctx.IdSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).SingleAsync());
     }
 

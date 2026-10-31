@@ -117,9 +117,10 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         Contexto ctx, int idArticulo, decimal cantidad, decimal? minimo = null, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            IdTenant = ctx.IdTenant, IdSucursal = idSucursal, IdArticulo = idArticulo, Cantidad = cantidad,
             Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();

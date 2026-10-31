@@ -56,13 +56,13 @@ public class ServicioDeComprasLockOrderTests
             fuente, "private async Task<CompraDetalle> EjecutarConfirmarAsync(",
             "public async Task<ResultadoAnulacion> AnularAsync(");
 
-        var indiceStockInsert = metodo.LastIndexOf("InsertarMovimientoStockAsync(", StringComparison.Ordinal);
+        var indiceStockInsert = metodo.LastIndexOf("EscritorDeStock.AsentarAsync(", StringComparison.Ordinal);
         var indiceCostoUpdate = metodo.LastIndexOf("ActualizarCostosNominalesAsync(", StringComparison.Ordinal);
         var indiceLockProveedor = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(", StringComparison.Ordinal);
         var indiceLedgerInsert = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(", StringComparison.Ordinal);
         var indiceCommit = metodo.IndexOf("transaccion.CommitAsync(ct);", StringComparison.Ordinal);
 
-        Assert.True(indiceStockInsert >= 0, "No se encontró la última llamada a InsertarMovimientoStockAsync.");
+        Assert.True(indiceStockInsert >= 0, "No se encontró la última llamada a EscritorDeStock.AsentarAsync.");
         Assert.True(indiceCostoUpdate >= 0, "No se encontró la llamada a ActualizarCostosNominalesAsync.");
         Assert.True(indiceLockProveedor >= 0, "No se encontró la llamada a ActualizarSaldoProveedorAsync.");
         Assert.True(indiceLedgerInsert >= 0, "No se encontró la llamada a InsertarMovimientoCcProveedorAsync.");
@@ -70,7 +70,7 @@ public class ServicioDeComprasLockOrderTests
 
         Assert.True(
             indiceLockProveedor > indiceStockInsert,
-            "El lock de proveedores debe aparecer DESPUÉS del último InsertarMovimientoStockAsync (mutation target #19).");
+            "El lock de proveedores debe aparecer DESPUÉS del último EscritorDeStock.AsentarAsync (mutation target #19).");
         Assert.True(
             indiceLockProveedor > indiceCostoUpdate,
             "El lock de proveedores debe aparecer DESPUÉS de ActualizarCostosNominalesAsync (mutation target #19).");
@@ -285,7 +285,7 @@ public class ServicioDeComprasLockOrderTests
     {
         var metodo = EjecutarConfirmar();
 
-        var indiceStock = metodo.LastIndexOf("InsertarMovimientoStockAsync(", StringComparison.Ordinal);
+        var indiceStock = metodo.LastIndexOf("EscritorDeStock.AsentarAsync(", StringComparison.Ordinal);
         var indiceFamilias = metodo.IndexOf("LeerFamiliasDeLosArticulosAsync(", StringComparison.Ordinal);
         var indiceBloqueo = metodo.IndexOf("BloquearArticulosConCostoAsync(", StringComparison.Ordinal);
         var indiceCosto = metodo.LastIndexOf("ActualizarCostosNominalesAsync(", StringComparison.Ordinal);
