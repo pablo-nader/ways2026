@@ -40,17 +40,12 @@ public partial class ServicioDePagos(
     IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lectorDeMovimientos,
     ServicioDeAuditoria auditoria)
 {
-    /// <summary>Resuelve el punto de venta (404 ADR-8) antes que el turno abierto (spec: Pago
-    /// Requires An Open Turno) — mismo orden que <c>ServicioDeVentas.EmitirAsync</c> (design
-    /// decisión 11): un punto de venta apócrifo tiene que dar 404, nunca el 409 de "sin turno
-    /// abierto" de un punto de venta que ni siquiera existe.</summary>
-    public Task<PagoRegistrado> RegistrarAsync(SolicitudDePago solicitud, CancellationToken ct = default) =>
-        ConImporteDeUnSoloMedioAsync(solicitud.Importe, () => RegistrarAsync(ComandoDePago.Desde(solicitud), ct));
-
     /// <summary>Alta del POS con líneas por medio: el importe del pago es la suma de las líneas y el medio
-    /// de compatibilidad es el de la primera. Las rutas /api/gastos no validan el medio contra el servidor (lo filtra el
-    /// cliente): una referencia inexistente la rechaza la FK. Con <see cref="ComandoDePago.ValidarMedios"/> (ruta
-    /// /api/pagos) cada medio se valida como en el alta administrativa.</summary>
+    /// de compatibilidad es el de la primera. Resuelve el punto de venta (404 ADR-8) antes que el turno abierto (spec: Pago
+    /// Requires An Open Turno) — mismo orden que <c>ServicioDeVentas.EmitirAsync</c> (design decisión 11): un punto de venta
+    /// apócrifo tiene que dar 404, nunca el 409 de "sin turno abierto" de un punto de venta que ni siquiera existe. Con
+    /// <see cref="ComandoDePago.ValidarMedios"/> (ruta /api/pagos) cada medio se valida como en el alta administrativa; sin él,
+    /// una referencia inexistente la rechaza la FK.</summary>
     public async Task<PagoRegistrado> RegistrarAsync(ComandoDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -93,19 +88,13 @@ public partial class ServicioDePagos(
 
     /// <summary>stage-gastos-admin-retroactivos (PR3), owner's use case 2: alta administrativa de
     /// un pago SIN turno, pagado directo de la tesorería de la empresa — puede llevar una
-    /// <see cref="SolicitudDePagoDeAdministracion.Fecha"/> retroactiva. A diferencia de <see
-    /// cref="RegistrarAsync"/> (que resuelve el punto de venta y DESPUÉS el turno abierto), acá no
+    /// <see cref="ComandoDePagoDeAdministracion.Fecha"/> retroactiva. A diferencia de <see
+    /// cref="RegistrarAsync(ComandoDePago, CancellationToken)"/> (que resuelve el punto de venta y DESPUÉS el turno abierto), acá no
     /// hay ningún turno que resolver: el orden de validación es empresa (404 ADR-8) → punto de
     /// venta opcional (404 si no existe, 400 si es de otra empresa) → medio de pago (excluye
     /// cuenta corriente, mismo criterio que el POS) → fecha (nunca futura, resuelta en la zona
     /// horaria de la empresa/punto de venta) — recién ahí se abre la transacción de
-    /// escritura.</summary>
-    public Task<PagoRegistrado> RegistrarDeAdministracionAsync(
-        SolicitudDePagoDeAdministracion solicitud, CancellationToken ct = default) =>
-        ConImporteDeUnSoloMedioAsync(
-            solicitud.Importe, () => RegistrarDeAdministracionAsync(ComandoDePagoDeAdministracion.Desde(solicitud), ct));
-
-    /// <summary>Alta administrativa con líneas por medio. Cada medio DISTINTO se valida en orden ascendente de id.</summary>
+    /// escritura. Cada medio DISTINTO se valida en orden ascendente de id.</summary>
     public async Task<PagoRegistrado> RegistrarDeAdministracionAsync(
         ComandoDePagoDeAdministracion solicitud, CancellationToken ct = default)
     {
@@ -238,8 +227,8 @@ public partial class ServicioDePagos(
 
     /// <summary>stage-gasto-a-compra (PR4), owner requirement: cualquier pago (POS o admin) se
     /// puede ligar a una compra DESPUÉS de creado — a diferencia de
-    /// <see cref="SolicitudDePago.IdComprobanteCompra"/>/<see
-    /// cref="SolicitudDePagoDeAdministracion.IdComprobanteCompra"/>, que solo aplican en el alta.
+    /// <see cref="ComandoDePago.IdComprobanteCompra"/>/<see
+    /// cref="ComandoDePagoDeAdministracion.IdComprobanteCompra"/>, que solo aplican en el alta.
     ///
     /// Orden de locks de la transacción (single-read-under-lock + deadlock-safe ordering):
     /// 1) compra <c>FOR UPDATE</c> (E3-S1b; mismo statement/orden relativo que <see
@@ -450,17 +439,6 @@ public partial class ServicioDePagos(
 
     // ---- edición y baja -----------------------------------------------------------------------
 
-    /// <summary>Edición desde el POS: solo mientras el turno del pago siga abierto, decidido bajo
-    /// el lock del turno (un pago sin turno, o con el turno ya cerrado, es <c>409
-    /// gasto_turno_cerrado</c>). Ver <see cref="EjecutarEscrituraAsync"/> para el orden de locks y
-    /// el análisis de ciclo.</summary>
-    public Task<PagoRegistrado> EditarAsync(
-        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default) =>
-        ConImporteDeUnSoloMedioAsync(
-            solicitud.Importe,
-            () => EditarAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct),
-            () => ExigirPagoExistenteAsync(idPago, ct));
-
     /// <summary>update-404-first: un id inexistente (o de otro tenant o dado de baja) responde 404 antes de validar el cuerpo.</summary>
     private async Task ExigirPagoExistenteAsync(int idPago, CancellationToken ct)
     {
@@ -470,7 +448,9 @@ public partial class ServicioDePagos(
         }
     }
 
-    /// <summary>Edición del POS con líneas por medio (reemplaza el conjunto de líneas del pago).</summary>
+    /// <summary>Edición desde el POS con líneas por medio (reemplaza el conjunto de líneas del pago): solo mientras el turno
+    /// del pago siga abierto, decidido bajo el lock del turno (un pago sin turno, o con el turno ya cerrado, es <c>409
+    /// gasto_turno_cerrado</c>). Ver <see cref="EjecutarEscrituraAsync"/> para el orden de locks y el análisis de ciclo.</summary>
     public async Task<PagoRegistrado> EditarAsync(
         int idPago, ComandoDeEdicionDePago solicitud, CancellationToken ct = default)
     {
@@ -496,16 +476,8 @@ public partial class ServicioDePagos(
         return Proyectar(pago, plan.IdMedioPagoDeCompatibilidad);
     }
 
-    /// <summary>Edición administrativa de cualquier pago: con turno abierto, cerrado (recalcula el
-    /// arqueo si cambia algo que el arqueo cuenta) o sin turno.</summary>
-    public Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
-        int idPago, SolicitudDeEdicionDePago solicitud, CancellationToken ct = default) =>
-        ConImporteDeUnSoloMedioAsync(
-            solicitud.Importe,
-            () => EditarDeAdministracionAsync(idPago, ComandoDeEdicionDePago.Desde(solicitud), ct),
-            () => ExigirPagoExistenteAsync(idPago, ct));
-
-    /// <summary>Edición administrativa con líneas por medio (reemplaza el conjunto de líneas del pago).</summary>
+    /// <summary>Edición administrativa de cualquier pago con líneas por medio (reemplaza el conjunto de líneas del pago): con
+    /// turno abierto, cerrado (recalcula el arqueo si cambia algo que el arqueo cuenta) o sin turno.</summary>
     public async Task<PagoDeAdministracionListado> EditarDeAdministracionAsync(
         int idPago, ComandoDeEdicionDePago solicitud, CancellationToken ct = default)
     {
@@ -710,12 +682,6 @@ public partial class ServicioDePagos(
             .GroupBy(a => a.IdComprobanteCompra)
             .ToDictionary(g => g.Key, g => g.Sum(a => a.Importe));
 
-        if (solicitud is { DeUnSoloMedio: true } && itemsVivos.Count > 1)
-        {
-            throw new ErrorDominio(
-                "gasto_con_varios_medios", "El pago tiene varios medios; editalo desde la pantalla nueva.", 409);
-        }
-
         var anterior = await EstadoContableAsync(pago, ct);
         var medioAnterior = itemsVivos.FirstOrDefault()?.IdMedioPago;
         var valorAnterior = PayloadDeEdicion(pago, medioAnterior, anterior.ImportePorMedio);
@@ -737,7 +703,7 @@ public partial class ServicioDePagos(
             pago.Detalle = solicitud.Detalle;
             pago.NumeroFactura = solicitud.NumeroFactura;
             pago.Importe = plan.Total;
-            ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, conservarReferencias: solicitud.DeUnSoloMedio, momento);
+            ReemplazarItemsDelPago(pago, itemsVivos, plan.Lineas, momento);
 
             await AjustarAplicacionesAlNuevoImporteAsync(
                 pago, anterior.Importe, aplicaciones, comprasBloqueadas, momento, ct);
@@ -989,7 +955,7 @@ public partial class ServicioDePagos(
     /// lógica y las líneas nuevas se agregan. La baja lógica conserva el historial y no necesita una excepción en
     /// la guarda de borrados físicos; el constraint trigger diferido suma solo los ítems vivos.</summary>
     private void ReemplazarItemsDelPago(
-        Pago pago, IReadOnlyList<ItemPago> itemsVivos, IReadOnlyList<LineaDePago> lineas, bool conservarReferencias,
+        Pago pago, IReadOnlyList<ItemPago> itemsVivos, IReadOnlyList<LineaDePago> lineas,
         DateTimeOffset momento)
     {
         for (var i = 0; i < lineas.Count; i++)
@@ -1001,12 +967,9 @@ public partial class ServicioDePagos(
             }
 
             var item = itemsVivos[i];
-            var cambiaElMedio = item.IdMedioPago != lineas[i].IdMedioPago;
             item.IdMedioPago = lineas[i].IdMedioPago;
             item.Importe = lineas[i].Importe;
-            item.Referencia = conservarReferencias
-                ? (cambiaElMedio ? null : item.Referencia)
-                : lineas[i].Referencia;
+            item.Referencia = lineas[i].Referencia;
             item.UpdatedAt = momento;
         }
 
@@ -1051,7 +1014,7 @@ public partial class ServicioDePagos(
         ["importe"] = pago.Importe
     };
 
-    /// <summary>Historial paginado (design: API Surface, <c>GET /api/gastos</c>) — mismo criterio
+    /// <summary>Historial paginado (design: API Surface, <c>GET /api/pagos</c>) — mismo criterio
     /// de paginado que <c>ServicioDeTurnos.ListarAsync</c>.</summary>
     public async Task<PaginaDePagos> ListarAsync(
         int? idPuntoVenta = null,
@@ -1104,7 +1067,7 @@ public partial class ServicioDePagos(
         return (await ProyeccionesDePago.ConLineasAsync(db, [fila], ct))[0];
     }
 
-    /// <summary>Historial de gestión (design: API Surface, <c>GET /api/gastos/administracion</c>)
+    /// <summary>Historial de gestión (design: API Surface, <c>GET /api/pagos/administracion</c>)
     /// — filtros amplios (empresa, punto de venta, categoría, origen de fondos, proveedor) y
     /// proyección con nombres resueltos. <c>desde</c>/<c>hasta</c> viajan como <see
     /// cref="DateTimeOffset"/> (mismo shape que <see cref="ListarAsync"/>, el filtro sobre
@@ -1160,12 +1123,11 @@ public partial class ServicioDePagos(
     }
 
     /// <summary>stage-gasto-a-compra (PR4), judgment follow-up: <c>GET
-    /// /api/gastos/administracion/{id}</c> — mismo shape/joins que <see
+    /// /api/pagos/administracion/{id}</c> — mismo shape/joins que <see
     /// cref="ListarDeAdministracionAsync"/> (dangling-fk-read-models), pero de una sola fila. Nace
-    /// para que <c>POST /api/gastos/administracion</c> tenga un <c>Location</c> que realmente
-    /// resuelve (antes apuntaba a <c>/api/gastos/{id}</c>, que exige <c>OperacionDePos</c> pero
-    /// devuelve el shape reducido de <see cref="PagoListado"/> — un mismatch de contrato para un
-    /// cliente que siguiera el header).</summary>
+    /// para que <c>POST /api/pagos/administracion</c> tenga un <c>Location</c> que realmente
+    /// resuelve (la ruta del POS exige <c>OperacionDePos</c> y devuelve el shape reducido de
+    /// <see cref="PagoListado"/> — un mismatch de contrato para un cliente que siguiera el header).</summary>
     public async Task<PagoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default)
     {
         var fila = await db.Pagos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
@@ -1221,16 +1183,11 @@ public partial class ServicioDePagos(
 
     // ---- validación de dominio -------------------------------------------------------------
 
-    /// <summary>Adaptador de las rutas actuales (un solo medio): conserva el código <c>gasto_importe_invalido</c> de su
+    /// <summary>Adaptador de <c>POST /api/compras/{id}/pagos</c> (un solo medio): conserva el código <c>gasto_importe_invalido</c> de su
     /// contrato antes de pasar a la regla de líneas, y falla dentro de la tarea como cualquier método asíncrono.</summary>
     private static async Task<T> ConImporteDeUnSoloMedioAsync<T>(
-        decimal importe, Func<Task<T>> siguiente, Func<Task>? existencia = null)
+        decimal importe, Func<Task<T>> siguiente)
     {
-        if (existencia is not null)
-        {
-            await existencia();
-        }
-
         ExigirImporteValido(importe);
         var redondeado = ImporteDeUnSoloMedio.Redondear(importe);
         ExigirImporteValido(redondeado);
@@ -1413,7 +1370,7 @@ public partial class ServicioDePagos(
     /// toman todas sus compras (aplicadas y vinculada, en id ascendente, antes que el pago): recortan, agrandan o liberan
     /// sus aplicaciones y nada se reaplica a otros pagos.
     ///
-    /// stage-gastos-origen-fondos-pos (PR2): cuando <see cref="SolicitudDePago.OrigenFondos"/> es
+    /// stage-gastos-origen-fondos-pos (PR2): cuando <see cref="ComandoDePago.OrigenFondos"/> es
     /// <see cref="OrigenFondosPago.Tesoreria"/>, <see cref="EscribirMovimientoDeTesoreriaAsync"/>
     /// corre COMO ÚLTIMO paso antes del commit — después del turno <c>FOR SHARE</c>, la compra
     /// ligada <c>FOR UPDATE</c> (si aplica) y el pago a proveedor (si aplica): mismo orden relativo
@@ -1623,7 +1580,7 @@ public partial class ServicioDePagos(
     /// conexión/transacción cruda que <see cref="ExigirCompraLigableAsync"/> reutiliza — nunca una
     /// segunda transacción.
     ///
-    /// stage-gastos-admin-retroactivos (PR3): parámetros primitivos (no el <c>SolicitudDePago</c>
+    /// stage-gastos-admin-retroactivos (PR3): parámetros primitivos (no el <c>ComandoDePago</c>
     /// del POS) para que <see cref="InsertarPagoDeAdministracionAsync"/> lo reuse sin duplicar el
     /// SQL — <paramref name="idPuntoVenta"/> viaja nullable (el camino administrativo no siempre
     /// trae uno).</summary>

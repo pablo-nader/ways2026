@@ -115,6 +115,21 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   Done: `PersistirPagoDeSueldoAsync` writes one pago (header total, no `detalle`) with N items and one treasury
   movement for the total; the plan shape is unchanged; the personal payment writes no audit rows. Integration
   tests (`PagoDePersonalTests`) need CI.
+- [x] E2-L (written; CI pending) — Cleanup of the legacy `/api/gastos` routes, stacked on E2-P: removed the `/api/gastos` and
+  `/api/gastos/administracion` groups, the single-medio request records (`SolicitudDePago`, `SolicitudDePagoDeAdministracion`,
+  `SolicitudDeEdicionDePago`), their `Desde` adapters, the service overloads, `ComandoDeEdicionDePago.DeUnSoloMedio` and the
+  `409 gasto_con_varios_medios` branch. `POST /api/compras/{id}/pagos` keeps its single-medio shape (`ImporteDeUnSoloMedio`); its
+  Location now points to `/api/pagos/administracion/{id}`. Integration tests moved to `/api/pagos` through the test helper
+  `PagoDeUnMedio` (one-line requests); the allowlists of `SuperficieDeAutorizacionTests` lost the `/api/gastos*` entries.
+  Tests deleted: the legacy 409 assertion in `PagosApiConLineasTests` (`...MientrasElPutViejoDa409`) and
+  `PagosConLineasTests.LaRutaActualNoEditaUnPagoConVariosMediosYNoCambiaNada`. Tests ported with new expectations:
+  `PagosEdicionEndpointsTests` (rounding test became rejection of more than 2 decimals; zero amount is
+  `pago_linea_importe_invalido`), `PagosDeAdministracionEndpointsTests` and `PagosEndpointsTests` (same code; unknown medio on the
+  POS alta is now 404 because `/api/pagos` validates the medio). Behavior change: the POS alta no longer rounds a 3-decimal
+  amount, it answers 400. Integration tests were not run locally (Docker down): they need CI.
+- [ ] E2-L2 — Follow-up of E2-L, once every register runs `pos-v0.17.0`: rename the turno-detail JSON key `gastos` to `pagos`
+  and `gastosEnEfectivo`, and drop `PagoListado.idMedioPago` (and the compatibility medio in the listings). Not done in E2-L
+  because the 0.16.0 bundle still reads them (`PagosDelTurno.tsx:353`, `registroDePagos.ts`).
 
 ### E3 slices
 
@@ -408,4 +423,4 @@ contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers 
 
 ## Next step
 
-E1–E6 and E2-W2 are written and shipped as PRs (#500…#523); `pos-v0.16.0` (#524) is tagged on main once it merges. Open: E2-W4 (lift the back-office single-medio restriction once every register runs 0.16.0), E2-P (sueldo as one pago), C (cleanup of `/api/gastos`) and E7 (cobros).
+E1–E6 and E2-W2 are written and shipped as PRs (#500…#523); `pos-v0.16.0` (#524) is tagged on main once it merges. Open: E2-W4 (lift the back-office single-medio restriction once every register runs 0.16.0), E2-P (sueldo as one pago), C (cleanup of `/api/gastos`: done as E2-L, pending its follow-up E2-L2) and E7 (cobros).

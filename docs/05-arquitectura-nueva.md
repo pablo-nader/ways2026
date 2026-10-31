@@ -181,9 +181,9 @@ POST   /api/ventas/{id}/anular
 POST   /api/ventas/{id}/restaurar
 PUT    /api/ventas/{id}/cliente            reasignar
 
-GET    /api/gastos
-POST   /api/gastos
-DELETE /api/gastos/{id}
+GET    /api/pagos
+POST   /api/pagos
+DELETE /api/pagos/administracion/{id}
 
 GET    /api/clientes
 POST   /api/clientes

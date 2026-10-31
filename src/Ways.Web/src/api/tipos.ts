@@ -1848,7 +1848,7 @@ export type PagoConLineas = {
   lineas: LineaDePagoListada[]
 }
 
-/** Fila de `GET /api/gastos/administracion` — espejo de `GastoDeAdministracionListado`, con
+/** Fila de `GET /api/pagos/administracion` — espejo de `PagoDeAdministracionListado`, con
  * nombres ya resueltos (proveedor/área/medio) — un catálogo dado de baja lógica los deja en
  * `null`, la fila nunca desaparece. */
 export type PagoDeAdministracionListado = {
@@ -1895,9 +1895,8 @@ export type AplicacionDePagoListada = {
   fecha: string
 }
 
-/** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
- * `SolicitudDeEdicionDePago`: solo los campos editables (origen de fondos, punto de venta,
- * empresa, turno, fecha y compra ligada no se cambian por esta vía). */
+/** Forma de un solo medio de la edición de un pago. El servidor ya no la acepta (las rutas de compatibilidad se quitaron):
+ * la edición usa `SolicitudDeEdicionDePagoConLineas`. */
 export type SolicitudDeEdicionDePago = {
   categoria: CategoriaPago
   idProveedor: number | null

@@ -6,7 +6,7 @@ using Ways.Domain.Pagos;
 
 namespace Ways.Application.Pagos;
 
-/// <summary>Una sola proyección de <see cref="PagoListado"/> para <c>GET /api/gastos</c> y el
+/// <summary>Una sola proyección de <see cref="PagoListado"/> para <c>GET /api/pagos</c> y el
 /// detalle del turno. Los ids de proveedor y área salen crudos (no anulados por una baja lógica del
 /// catálogo): son los valores con los que se precarga la edición, y anularlos haría que guardarla
 /// cambie el proveedor del pago sin que nadie lo haya pedido.</summary>
