@@ -89,13 +89,14 @@ public class ResolucionSoloMultiplosTests
     }
 
     private static async Task<int> SembrarOfertaAsync(
-        string nombreDeBase, bool soloMultiplos, int? idArticulo = null, int? idFamilia = null)
+        string nombreDeBase, bool soloMultiplos, int? idArticulo = null, int? idFamilia = null,
+        decimal precioUnitario = 3750m, decimal? cantidadMinima = 2m)
     {
         await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
         var oferta = new Oferta
         {
             IdTenant = IdTenant, Nombre = "2 x 7500", IdArticulo = idArticulo, IdFamilia = idFamilia,
-            PrecioUnitario = 3750m, CantidadMinima = 2m, SoloMultiplos = soloMultiplos, Activo = true,
+            PrecioUnitario = precioUnitario, CantidadMinima = cantidadMinima, SoloMultiplos = soloMultiplos, Activo = true,
             CreatedAt = Ahora, UpdatedAt = Ahora
         };
         siembra.Ofertas.Add(oferta);
@@ -208,6 +209,38 @@ public class ResolucionSoloMultiplosTests
         var deLaFamilia = Assert.Single(celda.AplicadasCompletas!);
         Assert.Equal((idDeFamilia, 2m, true), (deLaFamilia.IdOferta, deLaFamilia.MultiploDe, deLaFamilia.PorFamilia));
         Assert.Equal(idDeFamilia, Assert.Single(Assert.Single(resolucion[2].Escalones).AplicadasCompletas!).IdOferta);
+    }
+
+    /// <summary>Con una común de 3800 compitiendo, la curva alterna: donde gana la "solo múltiplos" los campos de siempre
+    /// quedan en el precio de lista y ella viaja en <c>AplicadasCompletas</c>; donde gana la común (desde 2,501, que cubre
+    /// más unidades) el escalón es la común en los campos de siempre, sin <c>AplicadasCompletas</c>. Un POS anterior
+    /// cobra así lista o la común: nunca menos que el servidor.</summary>
+    [Fact]
+    public async Task LaCurvaConUnaComunEnCompetenciaPasaALaComunDondeEstaDaMasDescuentoDeLinea()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idLista = await SembrarListaAsync(nombreDeBase);
+        var articulo = await SembrarArticuloAsync(nombreDeBase, idLista);
+        var idEstricta = await SembrarOfertaAsync(nombreDeBase, soloMultiplos: true, idArticulo: articulo);
+        var idComun = await SembrarOfertaAsync(
+            nombreDeBase, soloMultiplos: false, idArticulo: articulo, precioUnitario: 3800m, cantidadMinima: null);
+
+        var resolucion = await CrearServicio(nombreDeBase).ResolverConEscalonesAsync(
+            Lineas(idLista, (articulo, 1m)), momento: null);
+
+        Assert.Equal(
+            [
+                (2m, Lista, 0m, "", (int?)idEstricta),
+                (2.501m, 3800m, 200m, $"{idComun}", null),
+                (4m, Lista, 0m, "", idEstricta),
+                (5.001m, 3800m, 200m, $"{idComun}", null),
+                (6m, Lista, 0m, "", idEstricta),
+                (7.501m, 3800m, 200m, $"{idComun}", null),
+                (8m, Lista, 0m, "", idEstricta),
+            ],
+            resolucion[0].Escalones.Select(e => (
+                e.CantidadDesde, e.PrecioFinal, e.DescuentoUnitario, string.Join(",", e.Aplicadas.Select(a => a.IdOferta)),
+                e.AplicadasCompletas is null ? (int?)null : Assert.Single(e.AplicadasCompletas).IdOferta)));
     }
 
     /// <summary>La parte común lleva el tope del motor (la suma entre cero y el precio original) y las completas conservan
