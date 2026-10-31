@@ -3860,6 +3860,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
 
+                    b.Property<int?>("IdSucursalFusion")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_sucursal_fusion");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
@@ -3887,6 +3891,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_sucursales_empresa");
+
+                    b.HasIndex("IdSucursalFusion", "IdEmpresa", "IdTenant");
 
                     b.ToTable("sucursales", (string)null);
                 });
@@ -7456,6 +7462,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_sucursales_empresa");
+
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
+                        .WithMany()
+                        .HasForeignKey("IdSucursalFusion", "IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdEmpresa", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_sucursales_fusion");
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Vitrina", b =>

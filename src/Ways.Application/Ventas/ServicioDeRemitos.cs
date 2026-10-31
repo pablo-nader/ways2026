@@ -625,16 +625,20 @@ public class ServicioDeRemitos(
         // task 5.8/design decisión 9: movimientos ORIGINALES del ledger (motivo = remito), NUNCA
         // re-derivados de items_remito, escritos en el orden de locks de EscritorDeStock (el mismo de
         // EmitirAsync). SIN chequeo de negativo: un remito decrementa, su reversa siempre suma
-        // (tensión T8). La reversa vuelve a la sucursal y la caja guardadas en cada movimiento
-        // original, nunca a la sucursal que el punto de venta tenga hoy.
+        // (tensión T8). La reversa firma con la caja guardada en cada movimiento original y vuelve a
+        // su sucursal guardada, o a la que la absorbió si se fusionó, nunca a la sucursal que el punto
+        // de venta tenga hoy.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdRemito == id && m.Motivo == MotivoStock.Remito)
             .ToListAsync(ct);
+        var sucursalDeReversa = await EscritorDeStock.ResolverSucursalesDeReversaAsync(
+            conexion, transaccionCruda, movimientosOriginales.Select(m => m.IdPuntoVenta),
+            movimientosOriginales.Select(m => m.IdSucursal), ct);
 
         await EscritorDeStock.AsentarAsync(
             conexion, transaccionCruda,
             movimientosOriginales.Select(original => new AsientoDeStock(
-                idTenant, original.IdSucursal, original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
+                idTenant, sucursalDeReversa[original.IdSucursal], original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
                 MotivoStock.Anulacion, idEmpleado, momento)
             {
                 IdLote = original.IdLote,

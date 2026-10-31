@@ -53,6 +53,16 @@ public class SucursalConfiguration : IEntityTypeConfiguration<Sucursal>
             .HasConstraintName("fk_sucursales_empresa")
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.Property(s => s.IdSucursalFusion).HasColumnName("id_sucursal_fusion");
+
+        // La sucursal que absorbió a esta es de su misma empresa y de su mismo tenant.
+        builder.HasOne<Sucursal>()
+            .WithMany()
+            .HasForeignKey(s => new { s.IdSucursalFusion, s.IdEmpresa, s.IdTenant })
+            .HasPrincipalKey(s => new { s.Id, s.IdEmpresa, s.IdTenant })
+            .HasConstraintName("fk_sucursales_fusion")
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasIndex(s => s.IdTenant).HasDatabaseName("ix_sucursales_tenant");
         builder.HasIndex(s => new { s.IdEmpresa, s.IdTenant }).HasDatabaseName("ix_sucursales_empresa");
     }

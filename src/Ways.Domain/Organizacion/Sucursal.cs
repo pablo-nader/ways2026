@@ -16,4 +16,8 @@ public class Sucursal : EntidadTenant
     public int IdEmpresa { get; set; }
 
     public required string Nombre { get; set; }
+
+    /// <summary>La sucursal que absorbió a esta en una fusión; nula si nunca se fusionó. FK compuesta: misma empresa y
+    /// mismo tenant. Una reversa de un movimiento guardado acá sigue la cadena hasta la sucursal sin fusión.</summary>
+    public int? IdSucursalFusion { get; set; }
 }

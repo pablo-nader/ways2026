@@ -49,7 +49,8 @@ public readonly record struct FusionDeStockAplicada(int Articulos, int Lotes, in
 public static class EscritorDeStock
 {
     /// <summary>La sucursal del punto de venta, leída dentro de la transacción del llamador. Quien escribe un documento
-    /// nuevo resuelve así la sucursal; una reversa usa la sucursal guardada en los movimientos originales.
+    /// nuevo resuelve así la sucursal; una reversa resuelve la guardada en sus movimientos originales con
+    /// <see cref="ResolverSucursalesDeReversaAsync"/>.
     /// La lectura toma <c>FOR SHARE</c> sobre la fila del punto de venta hasta el commit: mover la caja a otra sucursal
     /// (<c>FOR UPDATE</c> sobre la misma fila) espera a los asientos en vuelo y los que llegan después leen la sucursal
     /// nueva, así que la sucursal que la baja o el movimiento miran vacía no recibe un asiento a mitad de camino. Varios
@@ -66,6 +67,61 @@ public static class EscritorDeStock
         return resultado is null or DBNull
             ? throw new InvalidOperationException($"El punto de venta {idPuntoVenta} no existe o no es visible.")
             : Convert.ToInt32(resultado);
+    }
+
+    /// <summary>
+    /// Dónde asienta una reversa: cada sucursal guardada en los movimientos originales, seguida por
+    /// <c>id_sucursal_fusion</c> hasta una sin fusión. La fusión llevó el stock del origen, con cada lote bajo el mismo
+    /// <c>id_lote</c>, a la sucursal que lo absorbió, y la cadena puede tener varios tramos (A→B y después B→C).
+    /// Devuelve sucursal guardada → sucursal donde asentar.
+    ///
+    /// Orden de locks, antes de cualquier fila de stock: <c>FOR SHARE</c> sobre las cajas que firmarán los asientos, en
+    /// orden de id, y después <c>FOR SHARE</c> sobre cada sucursal que visita. La fusión toma el advisory del tenant,
+    /// <c>FOR UPDATE</c> sobre las cajas de las dos sucursales, <c>FOR UPDATE</c> sobre las dos sucursales y recién
+    /// después el stock: el mismo orden caja → sucursal → stock, sin ciclo. Una reversa en vuelo termina antes de que la
+    /// fusión tome su sucursal o espera sin haber tomado stock y después lee la fusión ya confirmada. Las cajas van
+    /// primero porque el movimiento las referencia y la FK toma <c>FOR KEY SHARE</c>, que choca con el
+    /// <c>FOR UPDATE</c> de la fusión: tomarlas después de una sucursal cerraría un ciclo con una fusión que ya tiene la
+    /// caja y espera esa sucursal.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<int, int>> ResolverSucursalesDeReversaAsync(
+        DbConnection conexion, DbTransaction? transaccion, IEnumerable<int> idsPuntoVenta, IEnumerable<int> idsSucursal,
+        CancellationToken ct)
+    {
+        foreach (var idPuntoVenta in idsPuntoVenta.Distinct().Order())
+        {
+            await using var comando = conexion.CreateCommand();
+            comando.Transaction = transaccion;
+            comando.CommandText = "SELECT 1 FROM puntos_venta WHERE id_punto_venta = $1 FOR SHARE";
+            ParametrosDeComando.Agregar(comando, idPuntoVenta);
+            await comando.ExecuteScalarAsync(ct);
+        }
+
+        var vigentes = new Dictionary<int, int>();
+        foreach (var guardada in idsSucursal.Distinct().Order())
+        {
+            var actual = guardada;
+            while (await LeerFusionDeSucursalAsync(conexion, transaccion, actual, ct) is { } absorbente)
+            {
+                actual = absorbente;
+            }
+
+            vigentes[guardada] = actual;
+        }
+
+        return vigentes;
+    }
+
+    private static async Task<int?> LeerFusionDeSucursalAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idSucursal, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = "SELECT id_sucursal_fusion FROM sucursales WHERE id_sucursal = $1 FOR SHARE";
+        ParametrosDeComando.Agregar(comando, idSucursal);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null or DBNull ? null : Convert.ToInt32(resultado);
     }
 
     /// <summary>Los elementos en el orden de locks del sistema.</summary>
@@ -258,7 +314,9 @@ public static class EscritorDeStock
     /// del sistema. Dentro de cada una van todos los agregados y después todos los lotes, en orden de artículo y lote: no
     /// es el orden intercalado de <see cref="AsentarAsync"/>, pero quien toma el lote de un artículo ya tiene su agregado,
     /// que acá se toma antes que cualquier lote, así que nadie puede tener un lote que esto espere mientras espera algo que
-    /// esto tiene. El llamador ya tiene que haber bloqueado las cajas de las dos sucursales.
+    /// esto tiene. El llamador ya tiene que haber bloqueado con <c>FOR UPDATE</c> las cajas de las dos sucursales y
+    /// después las dos sucursales: un asiento nuevo toma su caja con <c>FOR SHARE</c> y una reversa toma su caja y
+    /// después su sucursal (<see cref="ResolverSucursalesDeReversaAsync"/>), las dos antes de cualquier fila de stock.
     ///
     /// Umbrales: el destino conserva su par <c>minimo</c>/<c>reposicion</c>; donde no tiene ninguno de los dos, toma el
     /// del origen, como par. El origen conserva los suyos (queda dado de baja).

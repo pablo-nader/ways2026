@@ -118,6 +118,24 @@ public class SucursalesEsquemaTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("fk_sucursales_empresa", error.ConstraintName);
     }
 
+    /// <summary>La sucursal que absorbe a otra en una fusión es de su misma empresa y de su mismo tenant
+    /// (<c>fk_sucursales_fusion</c>). La fusión valida el destino bajo lock antes de escribir la columna; esto fija el
+    /// backstop de la base.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnaSucursalSoloSeFusionaEnOtraDeSuEmpresaYSuTenant(bool deOtroTenant)
+    {
+        var s = await SembrarAsync($"{nameof(UnaSucursalSoloSeFusionaEnOtraDeSuEmpresaYSuTenant)}{deOtroTenant}");
+
+        var error = await SqlFallidoAsync(
+            s.IdTenantA, "UPDATE sucursales SET id_sucursal_fusion = $1 WHERE id_sucursal = $2",
+            deOtroTenant ? s.IdSucursalB : s.IdSucursalA2, s.IdSucursalA1);
+
+        Assert.Equal(PostgresErrorCodes.ForeignKeyViolation, error.SqlState);
+        Assert.Equal("fk_sucursales_fusion", error.ConstraintName);
+    }
+
     /// <summary>RLS sobre <c>sucursales</c>: <c>ways_app</c> con el GUC del tenant A no ve la del tenant B y no puede
     /// insertar una con <c>id_tenant</c> ajeno (42501, el WITH CHECK de la policy).</summary>
     [Fact]

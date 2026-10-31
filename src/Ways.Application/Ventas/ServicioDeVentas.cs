@@ -1323,16 +1323,19 @@ public class ServicioDeVentas(
         // EjecutarTransaccionAsync. `id_lote` viaja YA en el movimiento original — etapa 12, slice 8,
         // task 8.3: la reversa lo copia estructuralmente (design: "Exactness is structural, not
         // derived"), sin re-derivar desde items_comprobante_venta ni volver a resolver FEFO. La
-        // reversa vuelve a la sucursal y la caja guardadas en cada movimiento original, nunca a la
-        // sucursal que el punto de venta tenga hoy.
+        // reversa firma con la caja guardada en cada movimiento original y vuelve a su sucursal guardada, o
+        // a la que la absorbió si se fusionó, nunca a la sucursal que el punto de venta tenga hoy.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdComprobanteVenta == id && m.Motivo == MotivoStock.Venta)
             .ToListAsync(ct);
+        var sucursalDeReversa = await EscritorDeStock.ResolverSucursalesDeReversaAsync(
+            conexion, transaccionCruda, movimientosOriginales.Select(m => m.IdPuntoVenta),
+            movimientosOriginales.Select(m => m.IdSucursal), ct);
 
         await EscritorDeStock.AsentarAsync(
             conexion, transaccionCruda,
             movimientosOriginales.Select(original => new AsientoDeStock(
-                idTenant, original.IdSucursal, original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
+                idTenant, sucursalDeReversa[original.IdSucursal], original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
                 MotivoStock.Anulacion, idEmpleado, momento)
             {
                 IdLote = original.IdLote,

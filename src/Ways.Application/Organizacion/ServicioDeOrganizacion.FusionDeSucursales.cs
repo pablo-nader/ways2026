@@ -24,11 +24,14 @@ public partial class ServicioDeOrganizacion
     /// <c>409 sucursal_de_otra_empresa</c>.
     ///
     /// Orden de locks: el advisory del tenant (serializa contra el ABM, el movimiento y la baja de cajas, y contra otra
-    /// fusión), después <c>FOR UPDATE</c> sobre las filas de <c>puntos_venta</c> de las dos sucursales en orden de id, y
-    /// recién después el stock de las dos sucursales en el orden de <see cref="EscritorDeStock"/>. Un escritor de stock
-    /// toma su caja con <c>FOR SHARE</c> antes que cualquier fila de stock, así que o termina antes de que la fusión tome
-    /// su caja o espera, sin haber tomado stock, hasta que la fusión commitea; y cuando sigue, su caja ya resuelve la
-    /// sucursal destino.
+    /// fusión), después <c>FOR UPDATE</c> sobre las filas de <c>puntos_venta</c> de las dos sucursales en orden de id,
+    /// después <c>FOR UPDATE</c> sobre las dos filas de <c>sucursales</c> en orden de id, y recién después el stock de
+    /// las dos sucursales en el orden de <see cref="EscritorDeStock"/>. Un asiento nuevo toma su caja con
+    /// <c>FOR SHARE</c> antes que cualquier fila de stock: o termina antes de que la fusión tome su caja o espera, sin
+    /// haber tomado stock, y cuando sigue su caja ya resuelve la sucursal destino. Una reversa toma su caja y después
+    /// su sucursal guardada con <c>FOR SHARE</c> (<see cref="EscritorDeStock.ResolverSucursalesDeReversaAsync"/>),
+    /// también antes del stock: o termina antes de que la fusión tome la sucursal o espera y, cuando sigue, lee
+    /// <c>id_sucursal_fusion</c> y asienta en el destino.
     /// </summary>
     public async Task<SucursalListado> FusionarSucursalAsync(int id, SucursalFusion datos, CancellationToken ct = default)
     {
@@ -46,11 +49,11 @@ public partial class ServicioDeOrganizacion
         return await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(idTenant, ct);
+            await BloquearCajasDeSucursalesAsync(id, idDestino, ct);
+            await BloquearSucursalesAsync(id, idDestino, ct);
 
             var origen = await BuscarSucursalAsync(id, ct);
             var destino = await BuscarSucursalDeLaEmpresaAsync(idDestino, origen.IdEmpresa, ct);
-
-            await BloquearCajasDeSucursalesAsync(origen.Id, destino.Id, ct);
 
             var cajasDelOrigen = await db.PuntosVenta
                 .Where(p => p.IdSucursal == origen.Id)
@@ -88,6 +91,7 @@ public partial class ServicioDeOrganizacion
                 caja.UpdatedAt = momento;
             }
 
+            origen.IdSucursalFusion = destino.Id;
             Marcar(origen, momento);
 
             var (valorAnterior, valorNuevo) = PayloadDeAuditoria.FusionDeSucursales(
@@ -123,6 +127,20 @@ public partial class ServicioDeOrganizacion
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText =
             "SELECT id_punto_venta FROM puntos_venta WHERE id_sucursal IN ($1, $2) ORDER BY id_punto_venta FOR UPDATE";
+        ParametrosDeComando.Agregar(comando, idSucursalA);
+        ParametrosDeComando.Agregar(comando, idSucursalB);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task BloquearSucursalesAsync(int idSucursalA, int idSucursalB, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "SELECT id_sucursal FROM sucursales WHERE id_sucursal IN ($1, $2) ORDER BY id_sucursal FOR UPDATE";
         ParametrosDeComando.Agregar(comando, idSucursalA);
         ParametrosDeComando.Agregar(comando, idSucursalB);
 
