@@ -613,7 +613,7 @@ function PanelDeLista({
       </div>
 
       <div className="mt-3">
-        <strong className="small text-uppercase text-muted">Historial</strong>
+        <TituloDeSeccion>Historial</TituloDeSeccion>
         <table className="table table-sm mb-0 mt-1">
           <thead>
             <tr>

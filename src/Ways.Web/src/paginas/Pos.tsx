@@ -1703,9 +1703,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     function bloquearPorColaLocal(cantidadPendiente: number, cantidadConError: number): boolean {
       if (cantidadPendiente === 0 && cantidadConError === 0) return false
       const partes: string[] = []
-      if (cantidadPendiente > 0) partes.push(`${pluralizar(cantidadPendiente, 'venta')} sin sincronizar`)
+      if (cantidadPendiente > 0) partes.push(`hay ${pluralizar(cantidadPendiente, 'venta')} sin sincronizar`)
       if (cantidadConError > 0) partes.push(fraseVentasNecesitanAtencion(cantidadConError))
-      setAvisoCerrarCaja(`No se puede cerrar la caja: hay ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
+      setAvisoCerrarCaja(`No se puede cerrar la caja: ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
       return true
     }
 
