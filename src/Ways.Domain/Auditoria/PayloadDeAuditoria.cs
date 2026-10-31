@@ -369,6 +369,24 @@ public static class PayloadDeAuditoria
                 ["sucursal_dada_de_baja"] = sucursalDadaDeBaja
             });
 
+    /// <summary><c>sucursal.fusion</c>. La baja del origen (<c>deleted_at</c> antes y después), el destino, las cajas que
+    /// pasaron (ids en orden) y lo que movió el stock: artículos con saldo, saldos de lote y asientos (dos por saldo).</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        FusionDeSucursales(
+            DateTimeOffset momento, int idSucursalDestino, IReadOnlyList<int> idsPuntosVenta, int articulos, int lotes,
+            int movimientos) => (
+            new Dictionary<string, object?> { ["deleted_at"] = null },
+            new Dictionary<string, object?>
+            {
+                ["deleted_at"] = momento,
+                ["id_sucursal_destino"] = idSucursalDestino,
+                ["puntos_venta"] = idsPuntosVenta.Count,
+                ["ids_puntos_venta"] = idsPuntosVenta.ToList(),
+                ["articulos"] = articulos,
+                ["lotes"] = lotes,
+                ["movimientos"] = movimientos
+            });
+
     /// <summary><c>cobro.aplicacion</c> (E7-S2). Estado del recibo antes y después de aplicar: lo cobrado, lo aplicado,
     /// lo disponible y sus aplicaciones vivas <c>{id_comprobante_venta, importe}</c> ordenadas por venta.</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)

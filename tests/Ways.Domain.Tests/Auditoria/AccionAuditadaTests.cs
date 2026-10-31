@@ -15,7 +15,7 @@ namespace Ways.Domain.Tests.Auditoria;
 /// turno forzado por encima de ella. <c>venta.sobrelimite</c> la agregó la venta local a clientes
 /// identificados: una venta con cuenta corriente que superó el límite sin poder validarlo.
 /// <c>pago.edicion</c>/<c>pago.baja</c> las agregó la edición y baja de pagos.
-/// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales.
+/// <c>pv.alta</c> la agregó el alta de puntos de venta sobre una empresa existente. Las cuatro de sucursales (<c>sucursal.alta|edicion|baja</c> y <c>pv.sucursal</c>) las agregó el ABM de sucursales; <c>sucursal.fusion</c>, la fusión de sucursales.
 /// <c>compra.descarte</c> la agregó el descarte (borrado físico) de un borrador de compra.
 /// <c>compra.edicion</c> la agregó la edición de una compra confirmada.
 /// Los abrevian el dominio como <c>cc.reliquidacion</c> — el formato congelado no admite guiones
@@ -27,9 +27,9 @@ public partial class AccionAuditadaTests
     private static partial Regex FormatoDeAccion();
 
     [Fact]
-    public void TieneTreintaYCuatroEntradas()
+    public void TieneTreintaYCincoEntradas()
     {
-        Assert.Equal(34, AccionAuditada.Todas.Count);
+        Assert.Equal(35, AccionAuditada.Todas.Count);
     }
 
     [Fact]
@@ -100,7 +100,8 @@ public partial class AccionAuditadaTests
             ("sucursal.alta", "sucursal"),
             ("sucursal.edicion", "sucursal"),
             ("sucursal.baja", "sucursal"),
-            ("pv.sucursal", "punto_venta")
+            ("pv.sucursal", "punto_venta"),
+            ("sucursal.fusion", "sucursal")
         ];
 
         var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));

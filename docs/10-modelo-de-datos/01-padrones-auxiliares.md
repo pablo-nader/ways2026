@@ -58,6 +58,17 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
   `por_cascada`) salvo que tenga uso: entonces 409 `sucursal_en_uso`. Es la misma regla que la baja de la última
   caja; unir dos sucursales con stock es la fusión (T5), no un movimiento. El stock no se mueve con la caja.
   Auditoría: `sucursal.alta|edicion|baja` (entidad `sucursal`) y `pv.sucursal` (entidad `punto_venta`).
+- **Fusión (T5).** `POST /api/sucursales/{id}/fusionar {idSucursalDestino}`: el destino es una sucursal viva de la
+  misma empresa (404 / 409 `sucursal_de_otra_empresa`; mismo id 400 `fusion_misma_sucursal`). Las cajas vivas del
+  origen se reapuntan al destino; cada saldo no nulo del origen (agregado fuera de lotes y cada lote, negativos
+  incluidos) genera un par de `movimientos_stock` con motivo `transferencia`, el egreso en el origen y el ingreso en
+  el destino, ambos con `id_sucursal_destino` = destino (`EscritorDeStock.FusionarSucursalesAsync`). Así
+  `stock = Σ movimientos` y `Σ stock_lotes = stock` siguen valiendo en las dos y el origen queda en cero. Firma los
+  asientos la caja viva de menor id de cada lado (la del otro lado si uno no tiene; sin cajas en ninguna, solo se
+  fusiona un origen sin saldo: 409 `sucursal_sin_puntos_venta`). Umbrales: el destino conserva su par
+  `minimo`/`reposicion`; donde no tiene ninguno de los dos, toma el par del origen. El origen queda con
+  `deleted_at` y un solo rastro `sucursal.fusion` (entidad `sucursal`, id del origen) con `id_sucursal_destino`, las
+  cajas que pasaron y los conteos de artículos, lotes y movimientos. Sin motivo nuevo ni migración.
   Sin constraints nuevas: la FK compuesta `fk_puntos_venta_sucursal` queda cubierta por la validación bajo lock
   y, ante una escritura cruda, por el backstop genérico de FKs de `ManejadorDeErrores` (400).
 - **El stock** pasó a la sucursal en T2 (doc 10 §6).

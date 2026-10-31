@@ -166,7 +166,7 @@ public partial class ServicioDeOrganizacion
     ///
     /// Si la caja era la última viva de su sucursal, esa sucursal cae con el movimiento, salvo que tenga uso (stock,
     /// lotes o movimientos): entonces el movimiento se rechaza con <c>409 sucursal_en_uso</c>, la misma regla que la baja
-    /// de la última caja. Mover la única caja de una sucursal con historia es una fusión (etapa posterior), no un movimiento.
+    /// de la última caja. Mover la única caja de una sucursal con historia es una fusión (<see cref="FusionarSucursalAsync"/>), no un movimiento.
     ///
     /// Mismo destino que el actual: no hace nada y no deja rastro. Una sucursal de otra empresa es
     /// <c>409 sucursal_de_otra_empresa</c>; una inexistente, dada de baja o de otro tenant es 404.

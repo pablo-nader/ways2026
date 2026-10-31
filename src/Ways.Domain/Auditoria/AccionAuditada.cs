@@ -162,6 +162,10 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// Mismo dominio abreviado <c>pv</c> que <see cref="PuntoVentaBaja"/>; el stock no se mueve con la caja.</summary>
     public static readonly AccionAuditada PuntoVentaSucursal = new("pv.sucursal", "punto_venta");
 
+    /// <summary>Fusión de una sucursal en otra de su empresa (<c>POST /api/sucursales/{id}/fusionar</c>): sus cajas y su
+    /// stock pasan al destino y la sucursal de origen (<c>id_entidad</c>) queda dada de baja. Un solo rastro por fusión.</summary>
+    public static readonly AccionAuditada SucursalFusion = new("sucursal.fusion", "sucursal");
+
     /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
@@ -217,6 +221,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         SucursalAlta,
         SucursalEdicion,
         SucursalBaja,
-        PuntoVentaSucursal
+        PuntoVentaSucursal,
+        SucursalFusion
     ];
 }

@@ -170,6 +170,12 @@ public static class OrganizacionEndpoints
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Baja lógica de una sucursal sin puntos de venta ni uso.");
 
+        sucursales.MapPost("/{id:int}/fusionar", (
+            ServicioDeOrganizacion servicio, int id, SucursalFusion datos, CancellationToken ct) =>
+            servicio.FusionarSucursalAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Fusiona la sucursal en otra de su empresa: le pasa sus cajas y su stock y queda dada de baja.");
+
         return app;
     }
 }

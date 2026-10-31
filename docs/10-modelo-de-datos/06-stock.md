@@ -136,6 +136,12 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > transferencia_misma_sucursal`. Migración `StockPorSucursal`: backfill desde `puntos_venta.id_sucursal` que
 > aborta si dos filas cayeran sobre la misma clave (no fusiona saldos en silencio). Los contratos HTTP de
 > escritura siguen hablando de punto de venta: un punto de venta escribe sobre el stock de su sucursal.
+>
+> **Fusión de sucursales (T5).** Pasa todo el stock de una sucursal a otra con pares de movimientos `transferencia`
+> (egreso en el origen, ingreso en el destino, `id_sucursal_destino` = destino), uno por saldo de agregado y de lote,
+> negativos incluidos; el origen queda en cero. Toma las filas de las dos sucursales en orden de sucursal y, dentro de
+> cada una, todos los agregados antes que los lotes: un escritor que tiene el lote de un artículo ya tiene su agregado,
+> así que no se cruza. Antes tomó con `FOR UPDATE` las cajas de las dos sucursales (ver doc 01, Sucursales).
 
 > **Estado (sucursales, T3): las lecturas hablan de sucursal.** Los reportes de stock (`GET /api/reportes/stock/`
 > `existencias|vencimientos|vencimientos/resumen|reposicion|reposicion/resumen|rotacion` y los `/export`) piden
