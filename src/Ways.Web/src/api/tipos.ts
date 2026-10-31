@@ -593,6 +593,9 @@ export type SucursalAlta = { idEmpresa: number; nombre: string }
 /** Cuerpo de `PUT /api/sucursales/{id}` — espejo de `SucursalEdicion`: el nombre es lo único editable. */
 export type SucursalEdicion = { nombre: string }
 
+/** Cuerpo de `POST /api/sucursales/{id}/fusionar` — espejo de `SucursalFusion`: la sucursal que absorbe a la del id. */
+export type SucursalFusion = { idSucursalDestino: number }
+
 /** Cuerpo de `POST /api/puntos-venta/{id}/sucursal` — espejo de `PuntoVentaSucursalEdicion`. */
 export type PuntoVentaSucursalEdicion = { idSucursal: number }
 

@@ -17,6 +17,7 @@ import {
   type ColumnasFiltrables,
   type ColumnasOrdenables,
 } from '../componentes/grilla'
+import { ModalDeFusionDeSucursal, type FormularioDeFusion } from './organizacion/ModalDeFusionDeSucursal'
 import { ModalDeSucursal, type FormularioDeSucursal } from './organizacion/ModalDeSucursal'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -45,7 +46,8 @@ const CELDAS = ['id', 'empresa', 'nombre', 'cajas', null]
 
 /**
  * ABM de sucursales (tenant → empresa → sucursal → punto de venta): el stock es de la sucursal y las cajas la
- * comparten. Alta, renombre y baja lógica; mover una caja de sucursal se hace desde Puntos de venta. La baja la
+ * comparten. Alta, renombre, baja lógica y fusión en otra sucursal de la misma empresa (sus cajas y su stock pasan al
+ * destino); mover una caja de sucursal se hace desde Puntos de venta. La baja la
  * rechaza el servidor mientras la sucursal tenga cajas vivas o uso (stock, lotes, movimientos). Mismo patrón
  * de escrituras que `PuntosVenta.tsx`: token de generación para las lecturas y una guarda síncrona de
  * re-entrancia para las escrituras.
@@ -69,6 +71,8 @@ export function Sucursales() {
   /** `ocupado` es el id de la fila en escritura; el alta no tiene fila todavía y usa 0. */
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [baja, setBaja] = useState<SucursalListado | null>(null)
+  const [fusion, setFusion] = useState<FormularioDeFusion | null>(null)
+  const [errorFusion, setErrorFusion] = useState('')
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
   const generacion = useRef(0)
@@ -235,6 +239,60 @@ export function Sucursales() {
     }
   }
 
+  function abrirFusion(sucursal: SucursalListado) {
+    if (ocupadoRef.current) return
+
+    setErrorFusion('')
+    setError('')
+    setAviso('')
+    setFusion({ origen: sucursal, idDestino: '', confirmado: false })
+  }
+
+  function cancelarFusion() {
+    if (ocupadoRef.current) return
+
+    setFusion(null)
+  }
+
+  async function confirmarFusion() {
+    if (!fusion || ocupadoRef.current) return
+
+    const datos = fusion
+    const destino = items.find((s) => String(s.id) === datos.idDestino)
+    if (!destino || !datos.confirmado) return
+
+    const habiaLecturaEnVuelo = cargando
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupado(datos.origen.id)
+    setErrorFusion('')
+    setError('')
+    setAviso('')
+    try {
+      // La respuesta no se compara con la generación: el modal y la tabla quedan inertes hasta que el refresco aterriza.
+      try {
+        await clienteDeOrganizacion.fusionarSucursal(datos.origen.id, { idSucursalDestino: destino.id })
+      } catch (e) {
+        setErrorFusion(e instanceof ErrorApi ? e.message : 'No se pudo fusionar.')
+        if (habiaLecturaEnVuelo) void cargar(++generacion.current)
+
+        return
+      }
+
+      setFormulario((prev) => (prev?.id === datos.origen.id ? null : prev))
+      limpiarFiltros()
+      await refrescarTrasEscribir(
+        token,
+        `Se fusionó "${datos.origen.nombre}" en "${destino.nombre}".`,
+        AVISO_REFRESCO_FALLIDO,
+      )
+      setFusion(null)
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(null)
+    }
+  }
+
   const bloqueado = ocupado !== null || baja !== null
 
   const { filas: filtrados, filtros, cambiar: cambiarFiltro, limpiar: limpiarFiltros, hayFiltros } = useFiltrosDeColumna(
@@ -289,6 +347,19 @@ export function Sucursales() {
               onCancelar={cerrarFormulario}
             />
           )}
+          {fusion && (
+            <ModalDeFusionDeSucursal
+              valor={fusion}
+              sucursales={items}
+              guardando={ocupado !== null}
+              bloqueado={bloqueado}
+              error={errorFusion}
+              focoDeReserva={nuevoRef}
+              onCambio={setFusion}
+              onConfirmar={() => void confirmarFusion()}
+              onCancelar={cancelarFusion}
+            />
+          )}
         </div>
 
         {!cargada ? (
@@ -341,6 +412,14 @@ export function Sucursales() {
                       <td className="text-end">{s.cantidadPuntosVenta}</td>
                       <td className="text-end text-nowrap">
                         <BotonIcono icono="editar" className="me-1" onClick={() => abrirEdicion(s)} disabled={bloqueado} />
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary me-1"
+                          onClick={() => abrirFusion(s)}
+                          disabled={bloqueado}
+                        >
+                          Fusionar
+                        </button>
                         <BotonIcono
                           icono="eliminar"
                           onClick={(evento) => pedirBaja(s, evento.currentTarget)}

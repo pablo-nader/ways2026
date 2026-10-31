@@ -20,6 +20,7 @@ import type {
   PuntoVentaSucursalEdicion,
   SucursalAlta,
   SucursalEdicion,
+  SucursalFusion,
   SucursalListado,
   TenantEdicion,
   TenantListado,
@@ -71,6 +72,9 @@ export const clienteDeOrganizacion = {
   crearSucursal: (datos: SucursalAlta) => api.post<SucursalListado>('/sucursales', datos),
   editarSucursal: (id: number, datos: SucursalEdicion) => api.put<SucursalListado>(`/sucursales/${id}`, datos),
   eliminarSucursal: (id: number) => api.delete<void>(`/sucursales/${id}`),
+  /** Fusiona la sucursal `id` en `idSucursalDestino`: le pasa sus cajas y su stock y la da de baja. Devuelve el destino. */
+  fusionarSucursal: (id: number, datos: SucursalFusion) =>
+    api.post<SucursalListado>(`/sucursales/${id}/fusionar`, datos),
 }
 
 /** La caja que representa a una sucursal ante los endpoints de stock que todavía hablan de punto de venta (ajuste,
