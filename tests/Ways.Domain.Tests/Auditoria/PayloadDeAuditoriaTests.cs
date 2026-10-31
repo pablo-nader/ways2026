@@ -159,6 +159,29 @@ public class PayloadDeAuditoriaTests
                 saldoAnterior: 1000m, saldoNuevo: 1200m, idMovimiento: 77, consumosActualizados: 3, diferencia: 200m));
 
     [Fact]
+    public void LosPayloadsDeSucursalSonConstruiblesYDicenLoQueCambio()
+    {
+        var alta = PayloadDeAuditoria.AltaDeSucursal(7, "Centro");
+        AsumirConstruible(AccionAuditada.SucursalAlta, alta);
+        Assert.Null(alta.Anterior);
+        Assert.Equal(7, alta.Nuevo["id_empresa"]);
+
+        var renombre = PayloadDeAuditoria.RenombreDeSucursal("Centro", "Centro Norte");
+        AsumirConstruible(AccionAuditada.SucursalEdicion, renombre);
+        Assert.Equal("Centro", renombre.Anterior!["nombre"]);
+        Assert.Equal("Centro Norte", renombre.Nuevo["nombre"]);
+
+        var movimiento = PayloadDeAuditoria.CambioDeSucursalDePuntoVenta(3, 4, sucursalDadaDeBaja: true);
+        AsumirConstruible(AccionAuditada.PuntoVentaSucursal, movimiento);
+        Assert.Equal(3, movimiento.Anterior!["id_sucursal"]);
+        Assert.Equal(4, movimiento.Nuevo["id_sucursal"]);
+        Assert.Equal(true, movimiento.Nuevo["sucursal_dada_de_baja"]);
+
+        var baja = PayloadDeAuditoria.BajaDeOrganizacion(DateTimeOffset.UtcNow, porCascada: true);
+        AsumirConstruible(AccionAuditada.SucursalBaja, baja);
+    }
+
+    [Fact]
     public void AltaDePuntoVentaEsConstruibleYNoTieneEstadoPrevio()
     {
         var payload = PayloadDeAuditoria.AltaDePuntoVenta(7, "Sucursal Centro", Ways.Domain.Organizacion.ModoPuntoVenta.Web);

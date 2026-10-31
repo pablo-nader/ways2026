@@ -333,15 +333,7 @@ public class ServicioDeStock(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        // spec: "Same-PV transfer is rejected... before reaching the database" — chequeo puramente
-        // en memoria, antes de cualquier consulta.
-        if (solicitud.IdPuntoVentaOrigen == solicitud.IdPuntoVentaDestino)
-        {
-            throw new ErrorDominio(
-                "transferencia_origen_igual_destino",
-                "El origen y el destino de una transferencia tienen que ser puntos de venta distintos.",
-                400);
-        }
+        var (idPuntoVentaOrigen, idPuntoVentaDestino) = await ResolverExtremosDeTransferenciaAsync(solicitud, ct);
 
         var observaciones = ExigirObservaciones(solicitud.Observaciones);
         var lineas = ExigirLineasDeTransferenciaValidas(solicitud.Lineas);
@@ -349,8 +341,8 @@ public class ServicioDeStock(
         // Pre-checks de existencia/tenant ANTES de la transacción (mismo criterio que
         // AjustarAsync): ResolverPuntoVentaAsync da el mismo 404 para "no existe" y "es de otro
         // tenant" (ADR-8), tanto para origen como para destino.
-        var puntoVentaOrigen = await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaOrigen, ct);
-        var puntoVentaDestino = await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaDestino, ct);
+        var puntoVentaOrigen = await ResolverPuntoVentaAsync(idPuntoVentaOrigen, ct);
+        var puntoVentaDestino = await ResolverPuntoVentaAsync(idPuntoVentaDestino, ct);
 
         // Dos cajas de una misma sucursal comparten el stock: se rechaza antes de resolver lotes, que no tiene
         // sentido hacer para un movimiento que no existe. EjecutarTransferenciaAsync repite la comparación con las
@@ -375,8 +367,72 @@ public class ServicioDeStock(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransferenciaAsync(
-                idTenant, idEmpleado, solicitud.IdPuntoVentaOrigen, solicitud.IdPuntoVentaDestino, lineasResueltas,
+                idTenant, idEmpleado, idPuntoVentaOrigen, idPuntoVentaDestino, lineasResueltas,
                 observaciones, momento, ct));
+    }
+
+    /// <summary>Las dos cajas de la transferencia, vengan como puntos de venta o como sucursales (exactamente una de las
+    /// dos formas, <c>400 transferencia_origen_destino_invalido</c> si no). Mismo origen y destino es
+    /// <c>400 transferencia_origen_igual_destino</c> en cualquiera de las dos formas, en memoria y antes de consultar.
+    /// Una sucursal se traduce a su caja viva de menor id: es solo la caja de trazabilidad del asiento, el stock se
+    /// escribe en la sucursal. Una sucursal inexistente, ajena o dada de baja es 404 y una sin cajas vivas es
+    /// <c>409 sucursal_sin_puntos_venta</c>.</summary>
+    private async Task<(int Origen, int Destino)> ResolverExtremosDeTransferenciaAsync(
+        SolicitudDeTransferencia solicitud, CancellationToken ct)
+    {
+        var porPuntoVenta = solicitud.IdPuntoVentaOrigen is not null || solicitud.IdPuntoVentaDestino is not null;
+        var porSucursal = solicitud.IdSucursalOrigen is not null || solicitud.IdSucursalDestino is not null;
+
+        if (porPuntoVenta == porSucursal
+            || (porPuntoVenta && (solicitud.IdPuntoVentaOrigen is null || solicitud.IdPuntoVentaDestino is null))
+            || (porSucursal && (solicitud.IdSucursalOrigen is null || solicitud.IdSucursalDestino is null)))
+        {
+            throw new ErrorDominio(
+                "transferencia_origen_destino_invalido",
+                "Indicá el origen y el destino de la transferencia como dos puntos de venta o como dos sucursales, no mezclados.",
+                400);
+        }
+
+        var origenIgualDestino = porPuntoVenta
+            ? solicitud.IdPuntoVentaOrigen == solicitud.IdPuntoVentaDestino
+            : solicitud.IdSucursalOrigen == solicitud.IdSucursalDestino;
+
+        if (origenIgualDestino)
+        {
+            throw new ErrorDominio(
+                "transferencia_origen_igual_destino",
+                porPuntoVenta
+                    ? "El origen y el destino de una transferencia tienen que ser puntos de venta distintos."
+                    : "El origen y el destino de una transferencia tienen que ser sucursales distintas.",
+                400);
+        }
+
+        if (porPuntoVenta)
+        {
+            return (solicitud.IdPuntoVentaOrigen!.Value, solicitud.IdPuntoVentaDestino!.Value);
+        }
+
+        return (
+            await ResolverCajaDeSucursalAsync(solicitud.IdSucursalOrigen!.Value, ct),
+            await ResolverCajaDeSucursalAsync(solicitud.IdSucursalDestino!.Value, ct));
+    }
+
+    private async Task<int> ResolverCajaDeSucursalAsync(int idSucursal, CancellationToken ct)
+    {
+        if (!await db.Sucursales.AnyAsync(s => s.Id == idSucursal, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la sucursal {idSucursal}.");
+        }
+
+        var idCaja = await db.PuntosVenta
+            .Where(p => p.IdSucursal == idSucursal)
+            .OrderBy(p => p.Id)
+            .Select(p => (int?)p.Id)
+            .FirstOrDefaultAsync(ct);
+
+        return idCaja
+            ?? throw ErrorDominio.Conflicto(
+                "sucursal_sin_puntos_venta", $"La sucursal {idSucursal} no tiene puntos de venta vivos.");
     }
 
     private async Task<ResultadoTransferencia> EjecutarTransferenciaAsync(
@@ -461,7 +517,8 @@ public class ServicioDeStock(
             .Select(kv => new LineaTransferida(kv.Key.IdArticulo, kv.Key.IdLote, kv.Value.Origen, kv.Value.Destino))
             .ToList();
 
-        return new ResultadoTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado);
+        return new ResultadoTransferencia(
+            idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado, idSucursalOrigen, idSucursalDestino);
     }
 
     private static ErrorDominio ErrorTransferenciaMismaSucursal() =>

@@ -42,7 +42,8 @@ public static class ContextoDeExportacionHttp
         DateOnly desde,
         DateOnly hasta,
         string zonaHoraria,
-        string? cobertura = null) =>
+        string? cobertura = null,
+        string etiquetaDeAlcance = "Punto de venta") =>
         new(
             Empresa: empresa,
             PuntoVenta: puntoVenta,
@@ -51,5 +52,6 @@ public static class ContextoDeExportacionHttp
             ZonaHoraria: zonaHoraria,
             Usuario: usuario.NombreUsuario,
             GeneradoEl: InstanteDeGeneracion.En(reloj.Ahora, zonaHoraria),
-            Cobertura: cobertura);
+            Cobertura: cobertura,
+            EtiquetaDeAlcance: etiquetaDeAlcance);
 }

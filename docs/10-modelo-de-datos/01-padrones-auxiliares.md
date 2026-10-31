@@ -49,9 +49,18 @@ sucursales (                   -- [operativa] id_tenant + id_empresa, doc 09 (co
   con sus mismas marcas de tiempo) y todo punto de venta nuevo recibe la suya en el mismo `SaveChanges`
   (`WaysDbContext`: alta del ABM, aprovisionamiento y siembra pasan por ahí).
 - **Baja.** La de la empresa y la del tenant arrastran sus sucursales; la de un punto de venta baja su
-  sucursal solo si no le queda otro punto de venta vivo.
-- **El stock no cambia en esta etapa:** sigue en `stock`, `stock_lotes` y `movimientos_stock` por
-  `id_punto_venta`. Pasa a la sucursal en T2.
+  sucursal solo si no le queda otro punto de venta vivo. Desde T4 también hay baja directa
+  (`DELETE /api/sucursales/{id}`): 409 `sucursal_con_puntos_venta` si tiene cajas vivas y 409 `sucursal_en_uso`
+  si el inspector encuentra uso propio (stock, lotes, movimientos).
+- **Mover una caja (T4).** `POST /api/puntos-venta/{id}/sucursal`: el destino tiene que ser una sucursal viva de
+  la misma empresa (409 `sucursal_de_otra_empresa`, 404 si no existe, es de otro tenant o está dada de baja). Si
+  la caja era la última viva de su sucursal, esa sucursal cae con el movimiento (audit `sucursal.baja` con
+  `por_cascada`) salvo que tenga uso: entonces 409 `sucursal_en_uso`. Es la misma regla que la baja de la última
+  caja; unir dos sucursales con stock es la fusión (T5), no un movimiento. El stock no se mueve con la caja.
+  Auditoría: `sucursal.alta|edicion|baja` (entidad `sucursal`) y `pv.sucursal` (entidad `punto_venta`).
+  Sin constraints nuevas: la FK compuesta `fk_puntos_venta_sucursal` queda cubierta por la validación bajo lock
+  y, ante una escritura cruda, por el backstop genérico de FKs de `ManejadorDeErrores` (400).
+- **El stock** pasó a la sucursal en T2 (doc 10 §6).
 
 ### Dominios por tenant (rebanada 0 de la tienda online)
 

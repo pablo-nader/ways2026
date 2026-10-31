@@ -32,6 +32,20 @@ tenant  (el cliente que paga: "Supermercados Pérez SRL")
 > por `id_sucursal` y `movimientos_stock` guarda la sucursal además de la caja (doc 10 §6). Alcance de `sucursales`:
 > `id_tenant` + `id_empresa` no-nulos (misma forma que `puntos_venta`); detalle en doc 10 §1.
 
+> **API y movimiento de cajas (sucursales, T4).** `GET /api/sucursales[?idEmpresa=]` (misma policy de lectura que
+> los puntos de venta, porque los filtros de las pantallas de stock lo usan), `POST /api/sucursales`,
+> `PUT /api/sucursales/{id}` (renombre) y `DELETE /api/sucursales/{id}` son de `GestionDeOrganizacion`. El alta
+> de un punto de venta acepta `idSucursal` opcional (viva y de la misma empresa: 404 si no existe o es de otro
+> tenant, 409 `sucursal_de_otra_empresa` si es de otra empresa); sin él nace con la propia. Mover una caja es
+> `POST /api/puntos-venta/{id}/sucursal` con `{idSucursal}`: el destino tiene que ser de la misma empresa y el
+> stock no viaja con la caja, queda en la sucursal. Si la caja era la última viva de su sucursal, esa sucursal
+> cae con el movimiento (`sucursal.baja` con `por_cascada`) salvo que tenga uso: ahí el movimiento se rechaza con
+> 409 `sucursal_en_uso`. Locks: advisory del tenant (el de las bajas) + `FOR UPDATE` sobre la fila del punto de
+> venta, que los escritores que asientan cantidades toman en modo compartido (`FOR SHARE`) al resolver su sucursal
+> (ventas, remitos, compras, ajustes, conteos, transferencias).
+> Transferencias: `POST /api/stock/transferencias` acepta dos puntos de venta (el POS empaquetado) o dos
+> sucursales, nunca mezcladas (400 `transferencia_origen_destino_invalido`).
+
 El negocio actual (Ways/Alsina) es el tenant 1: una empresa, dos puntos de venta (cada uno con su sucursal).
 
 ## Decisión: una base compartida, no una base por tenant
@@ -388,7 +402,9 @@ y editar; desde esta etapa también se puede **dar de baja**, con una única sem
 - **Las sucursales siguen la misma cascada (T1).** La baja de una empresa o de un tenant marca
   sus sucursales con el mismo instante que el resto. La baja de un punto de venta marca su
   sucursal en la misma escritura solo si no le queda otro punto de venta vivo. La sucursal es
-  ancla del inspector (sus dependientes suben por `puntos_venta`) y no tiene endpoint de baja propio todavía.
+  ancla del inspector (sus dependientes suben por `puntos_venta`); desde T4 tiene además su propia baja
+  (`DELETE /api/sucursales/{id}`), que se rechaza con 409 mientras tenga cajas vivas
+  (`sucursal_con_puntos_venta`) o uso: stock, lotes o movimientos (`sucursal_en_uso`).
 - **El conjunto de dependientes se descubre de la metadata de EF, nunca de una lista a mano.**
   Cada tipo que referencia a la entidad cae en exactamente uno de tres buckets (directo,
   puenteado, ignorado) o el build falla, y hay un inventario ordenado versionado como golden:

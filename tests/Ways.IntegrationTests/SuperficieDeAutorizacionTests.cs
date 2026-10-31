@@ -206,6 +206,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // MISMA GestionDeOrganizacion que el PUT/DELETE de arriba; también declarada por ruta, no
         // por grupo, mismo motivo. Ver RutasSinPolicyDeGrupo más abajo.
         ("POST", "/api/puntos-venta/{id:int}/modo"),
+        // Sucursales (T4): mover la caja de sucursal y el ABM de sucursales; mismo grupo sin policy, policy por ruta.
+        ("POST", "/api/puntos-venta/{id:int}/sucursal"),
+        ("POST", "/api/sucursales/"),
+        ("PUT", "/api/sucursales/{id:int}"),
+        ("DELETE", "/api/sucursales/{id:int}"),
 
         // ABM de usuarios — GestionDeUsuarios (Root + Admin, sin Vendedor).
         ("POST", "/api/usuarios/"),
@@ -297,6 +302,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-desktop-pos (DB CHANGE GATE aprobado): mismo punto ciego que el PUT/DELETE de
         // arriba — el flip de modo vive en el mismo grupo sin policy y declara la suya por ruta.
         ("POST", "/api/puntos-venta/{id:int}/modo", Politicas.GestionDeOrganizacion),
+        ("POST", "/api/puntos-venta/{id:int}/sucursal", Politicas.GestionDeOrganizacion),
+        ("POST", "/api/sucursales/", Politicas.GestionDeOrganizacion),
+        ("PUT", "/api/sucursales/{id:int}", Politicas.GestionDeOrganizacion),
+        ("DELETE", "/api/sucursales/{id:int}", Politicas.GestionDeOrganizacion),
         // Alta de punto de venta: mismo punto ciego, la policy se declara por ruta.
         ("POST", "/api/puntos-venta/", Politicas.GestionDeOrganizacion)
     ];

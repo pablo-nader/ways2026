@@ -34,7 +34,7 @@ namespace Ways.Application.Organizacion;
 /// fila en el MISMO <c>SaveChangesAsync</c>, así que o se persisten la baja y su rastro, o ninguno
 /// de los dos.
 /// </summary>
-public class ServicioDeOrganizacion(
+public partial class ServicioDeOrganizacion(
     IWaysDbContext db,
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto,
@@ -491,7 +491,12 @@ public class ServicioDeOrganizacion(
                 .Select(e => e.RazonSocial)
                 .FirstOrDefault(),
             p.Modo,
-            p.EnvioPorDefecto);
+            p.EnvioPorDefecto,
+            p.IdSucursal,
+            db.Sucursales
+                .Where(s => s.Id == p.IdSucursal && s.DeletedAt == null)
+                .Select(s => s.Nombre)
+                .FirstOrDefault());
 
     public async Task<IReadOnlyList<PuntoVentaListado>> ListarPuntosVentaAsync(CancellationToken ct = default) =>
         await db.PuntosVenta
@@ -617,11 +622,16 @@ public class ServicioDeOrganizacion(
 
             var empresa = await BuscarEmpresaAsync(idEmpresa, ct);
 
+            var sucursal = datos.IdSucursal is int idSucursalElegida
+                ? await BuscarSucursalDeLaEmpresaAsync(idSucursalElegida, empresa.Id, ct)
+                : null;
+
             var ahora = reloj.Ahora;
             var puntoVenta = new PuntoVenta
             {
                 IdTenant = empresa.IdTenant,
                 IdEmpresa = empresa.Id,
+                IdSucursal = sucursal?.Id ?? 0,
                 Nombre = nombre,
                 Domicilio = domicilio,
                 Horario = horario,
@@ -636,7 +646,8 @@ public class ServicioDeOrganizacion(
             db.PuntosVenta.Add(puntoVenta);
             await db.SaveChangesAsync(ct);
 
-            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDePuntoVenta(empresa.Id, nombre, modo);
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDePuntoVenta(
+                empresa.Id, nombre, modo, puntoVenta.IdSucursal);
             auditoria.Registrar(new RegistroDeAuditoria(
                 puntoVenta.IdTenant, puntoVenta.Id, AccionAuditada.PuntoVentaAlta, puntoVenta.Id,
                 valorAnterior, valorNuevo));
@@ -666,6 +677,9 @@ public class ServicioDeOrganizacion(
         await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(puntoVenta.IdTenant, ct);
+            // El mismo lock de fila que toma el movimiento de sucursal y que los escritores de stock toman en modo
+            // compartido al resolver la sucursal: un asiento en vuelo termina antes de que se mire el uso.
+            await TomarLockDePuntoVentaAsync(puntoVenta.Id, ct);
 
             var bajo = await BuscarPuntoVentaAsync(id, ct);
 
@@ -981,7 +995,8 @@ public class ServicioDeOrganizacion(
         string codigo,
         string sujeto,
         CancellationToken ct,
-        Func<RamaDeUso, bool>? soloRamas = null)
+        Func<RamaDeUso, bool>? soloRamas = null,
+        Func<string, string>? mensajeDeBloqueo = null)
     {
         var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
 
@@ -1002,7 +1017,11 @@ public class ServicioDeOrganizacion(
 
         var descripcion = EtiquetasDeTablas.DescribirBloqueo(ramaEnUso);
 
-        throw ErrorDominio.Conflicto(codigo, $"No se puede dar de baja {sujeto} porque tiene {descripcion}.");
+        throw ErrorDominio.Conflicto(
+            codigo,
+            mensajeDeBloqueo is null
+                ? $"No se puede dar de baja {sujeto} porque tiene {descripcion}."
+                : mensajeDeBloqueo(descripcion));
     }
 
     /// <summary>

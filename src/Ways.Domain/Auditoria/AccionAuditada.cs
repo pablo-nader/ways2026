@@ -146,6 +146,22 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// crea su primer punto de venta sin pasar por acá.</summary>
     public static readonly AccionAuditada PuntoVentaAlta = new("pv.alta", "punto_venta");
 
+    /// <summary>Alta de una sucursal sobre una empresa existente (<c>POST /api/sucursales</c>) —
+    /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearSucursalAsync</c>. La sucursal que nace con un punto de
+    /// venta no deja este rastro: forma parte del <see cref="PuntoVentaAlta"/>.</summary>
+    public static readonly AccionAuditada SucursalAlta = new("sucursal.alta", "sucursal");
+
+    /// <summary>Renombre de una sucursal (<c>PUT /api/sucursales/{id}</c>).</summary>
+    public static readonly AccionAuditada SucursalEdicion = new("sucursal.edicion", "sucursal");
+
+    /// <summary>Baja lógica de una sucursal: la que pidió el operador (<c>DELETE /api/sucursales/{id}</c>) y la que cae
+    /// al mover su última caja a otra sucursal (<c>por_cascada</c> en el payload).</summary>
+    public static readonly AccionAuditada SucursalBaja = new("sucursal.baja", "sucursal");
+
+    /// <summary>Mover un punto de venta a otra sucursal de la misma empresa (<c>POST /api/puntos-venta/{id}/sucursal</c>).
+    /// Mismo dominio abreviado <c>pv</c> que <see cref="PuntoVentaBaja"/>; el stock no se mueve con la caja.</summary>
+    public static readonly AccionAuditada PuntoVentaSucursal = new("pv.sucursal", "punto_venta");
+
     /// <summary>Edición de una compra confirmada (<c>PUT /api/compras/{id}</c>) — <c>Compras/ServicioDeCompras.cs</c>. El
     /// <c>id_entidad</c> es la compra; el valor nuevo lleva además las diferencias asentadas en stock y cuenta corriente.</summary>
     public static readonly AccionAuditada CompraEdicion = new("compra.edicion", "comprobante_compra");
@@ -197,6 +213,10 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         PuntoVentaAlta,
         CompraEdicion,
         CobroAplicacion,
-        CobroDesaplicacion
+        CobroDesaplicacion,
+        SucursalAlta,
+        SucursalEdicion,
+        SucursalBaja,
+        PuntoVentaSucursal
     ];
 }

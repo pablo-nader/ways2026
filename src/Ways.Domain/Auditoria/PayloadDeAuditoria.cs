@@ -333,15 +333,40 @@ public static class PayloadDeAuditoria
 
     /// <summary><c>pv.alta</c>. Sin estado previo por definición; <c>{id_empresa, nombre, modo}</c>
     /// es la identidad estructural del punto de venta — los datos descriptivos opcionales se
-    /// leen de la propia fila.</summary>
+    /// leen de la propia fila. <c>id_sucursal</c> se agrega cuando el llamador la conoce (la propia
+    /// que le creó el hook o la que eligió el operador).</summary>
     public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
-        AltaDePuntoVenta(int idEmpresa, string nombre, ModoPuntoVenta modo) => (
+        AltaDePuntoVenta(int idEmpresa, string nombre, ModoPuntoVenta modo, int? idSucursal = null) => (
             null,
             new Dictionary<string, object?>
             {
                 ["id_empresa"] = idEmpresa,
                 ["nombre"] = nombre,
-                ["modo"] = modo
+                ["modo"] = modo,
+                ["id_sucursal"] = idSucursal
+            });
+
+    /// <summary><c>sucursal.alta</c>. Sin estado previo; <c>{id_empresa, nombre}</c>.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        AltaDeSucursal(int idEmpresa, string nombre) => (
+            null,
+            new Dictionary<string, object?> { ["id_empresa"] = idEmpresa, ["nombre"] = nombre });
+
+    /// <summary><c>sucursal.edicion</c>. El único campo editable es el nombre.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        RenombreDeSucursal(string nombreAnterior, string nombreNuevo) => (
+            new Dictionary<string, object?> { ["nombre"] = nombreAnterior },
+            new Dictionary<string, object?> { ["nombre"] = nombreNuevo });
+
+    /// <summary><c>pv.sucursal</c>. <c>{id_sucursal}</c> antes y después; <c>sucursal_dada_de_baja</c> dice si la
+    /// sucursal de origen quedó sin cajas ni stock y cayó con el movimiento.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        CambioDeSucursalDePuntoVenta(int idSucursalAnterior, int idSucursalNueva, bool sucursalDadaDeBaja) => (
+            new Dictionary<string, object?> { ["id_sucursal"] = idSucursalAnterior },
+            new Dictionary<string, object?>
+            {
+                ["id_sucursal"] = idSucursalNueva,
+                ["sucursal_dada_de_baja"] = sucursalDadaDeBaja
             });
 
     /// <summary><c>cobro.aplicacion</c> (E7-S2). Estado del recibo antes y después de aplicar: lo cobrado, lo aplicado,

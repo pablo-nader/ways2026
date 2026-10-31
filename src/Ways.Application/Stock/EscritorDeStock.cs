@@ -39,13 +39,17 @@ public readonly record struct AsientoAplicado(
 public static class EscritorDeStock
 {
     /// <summary>La sucursal del punto de venta, leída dentro de la transacción del llamador. Quien escribe un documento
-    /// nuevo resuelve así la sucursal; una reversa usa la sucursal guardada en los movimientos originales.</summary>
+    /// nuevo resuelve así la sucursal; una reversa usa la sucursal guardada en los movimientos originales.
+    /// La lectura toma <c>FOR SHARE</c> sobre la fila del punto de venta hasta el commit: mover la caja a otra sucursal
+    /// (<c>FOR UPDATE</c> sobre la misma fila) espera a los asientos en vuelo y los que llegan después leen la sucursal
+    /// nueva, así que la sucursal que la baja o el movimiento miran vacía no recibe un asiento a mitad de camino. Varios
+    /// escritores de la misma caja no se bloquean entre sí.</summary>
     public static async Task<int> ResolverSucursalAsync(
         DbConnection conexion, DbTransaction? transaccion, int idPuntoVenta, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
-        comando.CommandText = "SELECT id_sucursal FROM puntos_venta WHERE id_punto_venta = $1";
+        comando.CommandText = "SELECT id_sucursal FROM puntos_venta WHERE id_punto_venta = $1 FOR SHARE";
         ParametrosDeComando.Agregar(comando, idPuntoVenta);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
