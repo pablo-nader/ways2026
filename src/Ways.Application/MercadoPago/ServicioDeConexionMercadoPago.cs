@@ -161,17 +161,25 @@ public class ServicioDeConexionMercadoPago(
         return ResultadoDeConexion.Conectado;
     }
 
+    /// <summary>
+    /// La conexión activa si la hay. Sin activa, si la última conexión de la empresa quedó en
+    /// <c>requiere_reconexion</c> responde <c>conectada: false</c> con ese <c>estado</c>, para que la pantalla ofrezca reconectar;
+    /// una desconexión posterior (o ninguna conexión) responde el estado vacío.
+    /// </summary>
     public async Task<EstadoDeConexionMercadoPago> ObtenerAsync(int idEmpresa, CancellationToken ct = default)
     {
         await ExigirEmpresaAsync(idEmpresa, ct);
 
+        // La activa si existe; si no, la más reciente de cualquier estado (la desconectada o la que requiere reconexión).
         var fila = await (
             from c in db.ConexionesMercadoPago
-            where c.IdEmpresa == idEmpresa && c.Estado == EstadoConexionMercadoPago.Activa
+            where c.IdEmpresa == idEmpresa
             join t in db.CuentasTesoreria on c.IdCuentaTesoreria equals t.Id into cuentas
             from t in cuentas.DefaultIfEmpty()
+            orderby c.Estado == EstadoConexionMercadoPago.Activa descending, c.Id descending
             select new
             {
+                c.Estado,
                 c.IdCuentaTesoreria,
                 NombreCuenta = t == null ? null : t.Nombre,
                 c.IdUsuarioMercadoPago,
@@ -179,16 +187,16 @@ public class ServicioDeConexionMercadoPago(
                 c.AccessTokenExpiraEn
             }).FirstOrDefaultAsync(ct);
 
-        return fila is null
-            ? new EstadoDeConexionMercadoPago(false, null, null, null, null, null, null)
-            : new EstadoDeConexionMercadoPago(
-                true,
-                "activa",
-                fila.IdCuentaTesoreria,
-                fila.NombreCuenta,
-                fila.IdUsuarioMercadoPago,
-                fila.FechaConexion,
-                fila.AccessTokenExpiraEn);
+        return fila?.Estado switch
+        {
+            EstadoConexionMercadoPago.Activa => new EstadoDeConexionMercadoPago(
+                true, "activa", fila.IdCuentaTesoreria, fila.NombreCuenta, fila.IdUsuarioMercadoPago, fila.FechaConexion,
+                fila.AccessTokenExpiraEn),
+            EstadoConexionMercadoPago.RequiereReconexion => new EstadoDeConexionMercadoPago(
+                false, "requiere_reconexion", fila.IdCuentaTesoreria, fila.NombreCuenta, fila.IdUsuarioMercadoPago,
+                fila.FechaConexion, null),
+            _ => new EstadoDeConexionMercadoPago(false, null, null, null, null, null, null)
+        };
     }
 
     /// <summary>

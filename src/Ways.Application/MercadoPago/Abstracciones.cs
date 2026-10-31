@@ -2,6 +2,14 @@ using Ways.Domain.MercadoPago;
 
 namespace Ways.Application.MercadoPago;
 
+public static class CodigosDeErrorDeMercadoPago
+{
+    /// <summary><see cref="IClienteOAuthMercadoPago.RenovarAsync"/> lo lanza cuando Mercado Pago rechaza el refresh token con
+    /// un 4xx: la credencial no sirve y hay que reconectar. Cualquier otro fallo (5xx, tiempo agotado, red) lleva otro código y
+    /// es transitorio.</summary>
+    public const string RenovacionRechazada = "mercadopago_renovacion_rechazada";
+}
+
 public interface IClienteOAuthMercadoPago
 {
     /// <summary>Canjea el código de autorización (válido 10 minutos y de un solo uso).</summary>

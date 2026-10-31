@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Ways.Api.ConectorMcp;
 using Ways.Api.Dominios;
 using Ways.Api.Endpoints;
+using Ways.Api.MercadoPago;
 using Ways.Api.OpenApi;
 using Ways.Api.Seguridad;
 using Ways.Api.Spa;
@@ -215,6 +216,9 @@ builder.Services.AddOpenApi(opciones => opciones.DocumentarCamposOpcionales());
 // Conector MCP (experimental, ver ConectorMcp/): con Mcp:Habilitado apagado no registra, mapea ni
 // loguea nada; con una configuración inválida queda deshabilitado sin impedir el arranque.
 var conectorMcp = builder.AgregarConectorMcp();
+
+// Renovación automática de los tokens de Mercado Pago (se apaga sola sin credenciales).
+builder.Services.AddHostedService<RenovacionDeConexionesMercadoPago>();
 
 // Con la política de ruteo por Content-Type, un endpoint con cuerpo JSON queda descartado ante un
 // Content-Type que no es JSON o ante ninguno, y la ruta de respaldo, que acepta cualquier tipo, responde 404.

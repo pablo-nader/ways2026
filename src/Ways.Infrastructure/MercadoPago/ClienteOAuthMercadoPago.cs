@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -46,10 +47,11 @@ public sealed class ClienteOAuthMercadoPago(
                 GrantType = "refresh_token",
                 RefreshToken = refreshToken
             },
-            ct);
+            ct,
+            distinguirRechazo: true);
     }
 
-    private async Task<TokensDeMercadoPago> PedirAsync(SolicitudDeToken solicitud, CancellationToken ct)
+    private async Task<TokensDeMercadoPago> PedirAsync(SolicitudDeToken solicitud, CancellationToken ct, bool distinguirRechazo = false)
     {
         HttpResponseMessage respuesta;
         try
@@ -74,7 +76,12 @@ public sealed class ClienteOAuthMercadoPago(
                 log.LogWarning(
                     "Mercado Pago rechazó el pedido de tokens ({GrantType}) con el estado {Estado}.",
                     solicitud.GrantType, (int)respuesta.StatusCode);
-                throw Fallido();
+
+                // Un 4xx (salvo 408 y 429, que son de tránsito) es un rechazo de las credenciales; un 5xx es de Mercado Pago.
+                throw distinguirRechazo && respuesta.StatusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError
+                    and not HttpStatusCode.RequestTimeout and not HttpStatusCode.TooManyRequests
+                    ? new ErrorDominio(CodigosDeErrorDeMercadoPago.RenovacionRechazada, "Mercado Pago rechazó la renovación del token.", 502)
+                    : Fallido();
             }
 
             try

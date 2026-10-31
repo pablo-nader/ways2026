@@ -90,7 +90,7 @@ heuristic because model + encryption + OAuth exchange are one coherent behavior.
 - [x] T1 — Backend: `conexiones_mercadopago` (migration, entity, RLS, unique indexes with
   backstops), token encryption store, OAuth client, endpoints start / callback / read /
   disconnect, unit + integration tests, doc 10 §07. Route: delegated (2+ non-trivial files).
-- [ ] T2 — Renewal: background job that refreshes tokens before expiry, rotates the refresh
+- [x] T2 — Renewal: background job that refreshes tokens before expiry, rotates the refresh
   token, marks the connection "reconnect needed" when refresh fails. Route: delegated.
 - [ ] T3 — Web: connect / state / disconnect UI with its tests. Route: delegated.
 
@@ -146,6 +146,53 @@ desconectada => date + no material. Partial uniques `WHERE estado = 'activa'`: `
 - Suggestions kept as follow-ups: catch `NotSupportedException` from a non-JSON 2xx in `ClienteOAuthMercadoPago`;
   `ResultadoDeCarrera` evaluated twice in the callback catch; record who disconnected (`id_usuario_desconecto`).
 
+## Model change (T2)
+
+`conexiones_mercadopago` gains the state `requiere_reconexion` and the column `fecha_requiere_reconexion timestamptz NULL`
+(migration `RenovacionDeConexionesMercadoPago`: DDL only, no backfill). CHECKs: `ck_conexiones_mercadopago_estado` now admits the
+third value; `..._activa` also requires `fecha_requiere_reconexion IS NULL`; new `ck_conexiones_mercadopago_requiere_reconexion`
+(date present, `fecha_desconexion` null, the six cipher columns NULL). The partial unique indexes stay `WHERE estado = 'activa'`, so a
+`requiere_reconexion` row holds neither slot and T1's start endpoint (it only blocks on `activa`) lets the empresa connect again.
+Doc 10 §07 updated.
+
+## Decisions (T2)
+
+- Cipher material is wiped on `requiere_reconexion` (same as `desconectada`): the refresh token is useless and keeping it only widens
+  what a DB leak exposes. A decrypt failure (missing master key, tampered row) is NOT treated as a rejection: it is logged and the row
+  is left alone, so a configuration mistake never wipes live connections.
+- The HTTP call runs while the row lock is held (client timeout 15 s). The alternative (call outside, re-check under lock) would let
+  two processes spend the same one-shot refresh token and lose a rotation; with the lock the second waits, re-reads and skips. Cost:
+  a disconnect of that empresa waits up to 15 s. Never two MP calls per connection per run (non-retrying execution strategy, one pass).
+- 4xx from the refresh (except 408/429) = `requiere_reconexion`; 5xx/408/429/timeout/network = untouched, retried next run.
+  The client now throws `mercadopago_renovacion_rechazada` for the 4xx case of `RenovarAsync` only; the code exchange is unchanged.
+- A `user_id` different from the stored one never swaps accounts: `requiere_reconexion`, new tokens discarded.
+- Read endpoint contract: with no `activa`, if the latest connection of the empresa is `requiere_reconexion` it answers
+  `{ conectada: false, estado: "requiere_reconexion", idCuentaTesoreria, nombreCuenta, idUsuarioMercadoPago, fechaConexion }`
+  (no expiry). A later disconnect brings back the empty state. The record shape did not change (no extra field), T3 reads `estado`.
+- Settings: `Ways:MercadoPago:DiasDeAnticipacionRenovacion` (30), `IntervaloRenovacionHoras` (6), `RenovacionAutomatica` (true; the
+  integration fixture sets it to `false` so the job never runs in tests). Non-positive values fall back to the defaults.
+- The service takes `ahora` as a parameter (tests pass it) and exposes `RenovarConexionAsync` per connection, which the run loop calls.
+
+## Evidence (T2)
+
+- `dotnet build Ways.slnx -c Release`: 0 errors.
+- `Ways.Domain.Tests`: 2110 passed. `Ways.Application.Tests` (full, includes the structural guards): 1529 passed. Filtered
+  integration set (`MercadoPago`, `SuperficieDeAutorizacion`, `AislamientoDeTenant`, `Cobertura`, `UpDownUp`,
+  `InventarioDeDependientes`): 77 passed. The full integration suite was left to CI.
+- RED was not observed first for the service tests (they need the new types to compile); mutation evidence replaces it. Mutants
+  applied, test red, reverted: selection predicate `<=` -> `>=` -> `LaCorridaSeleccionaSoloLasConexionesDentroDeLaVentana...` and the
+  two-tenant tests; post-lock `LeToca` re-check removed -> `UnaConexionYaRenovadaPorOtroProceso...` and
+  `UnaConexionFueraDeLaVentana...`; post-lock `Estado == Activa` filter removed -> `UnaConexionDesconectadaEntreLaSeleccion...`;
+  4xx-vs-transient branch (`when` guard) widened to every error -> the five `UnaFallaTransitoria...` cases and the isolation test.
+
+## Open risks (T2)
+
+- If MP rotates the refresh token and our commit then fails (DB down mid-run), the new refresh token is lost; whether MP keeps the old
+  one valid is undocumented. The window is one statement wide; the result is a `requiere_reconexion` on the next run.
+- The background loop itself (delay, timer, exception swallowing) is not driven by a test: only `Habilitada`/disabled start is. A fake
+  `TimeProvider` package is not referenced in the repo.
+- Several app instances each run the job; the row lock makes it safe, not efficient.
+
 ## Next step
 
-Open the T1 PR (stacked-to-main). Then T2 (renewal job) and T3 (web + the login-CSRF fix above).
+Open the T2 PR (stacked on T1). Then T3 (web: connect / state / reconnect + the login-CSRF fix above).

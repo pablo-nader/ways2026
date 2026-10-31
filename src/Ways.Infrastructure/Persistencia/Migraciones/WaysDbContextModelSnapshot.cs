@@ -3459,6 +3459,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_desconexion");
 
+                    b.Property<DateTimeOffset?>("FechaRequiereReconexion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_requiere_reconexion");
+
                     b.Property<DateTimeOffset?>("FechaUltimaRenovacion")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("fecha_ultima_renovacion");
@@ -3532,11 +3536,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("conexiones_mercadopago", null, t =>
                         {
-                            t.HasCheckConstraint("ck_conexiones_mercadopago_activa", "estado <> 'activa' OR (fecha_desconexion IS NULL AND access_token_cifrado IS NOT NULL AND octet_length(access_token_cifrado) > 0 AND access_token_nonce IS NOT NULL AND octet_length(access_token_nonce) = 12 AND access_token_tag IS NOT NULL AND octet_length(access_token_tag) = 16 AND refresh_token_cifrado IS NOT NULL AND octet_length(refresh_token_cifrado) > 0 AND refresh_token_nonce IS NOT NULL AND octet_length(refresh_token_nonce) = 12 AND refresh_token_tag IS NOT NULL AND octet_length(refresh_token_tag) = 16)");
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_activa", "estado <> 'activa' OR (fecha_desconexion IS NULL AND fecha_requiere_reconexion IS NULL AND access_token_cifrado IS NOT NULL AND octet_length(access_token_cifrado) > 0 AND access_token_nonce IS NOT NULL AND octet_length(access_token_nonce) = 12 AND access_token_tag IS NOT NULL AND octet_length(access_token_tag) = 16 AND refresh_token_cifrado IS NOT NULL AND octet_length(refresh_token_cifrado) > 0 AND refresh_token_nonce IS NOT NULL AND octet_length(refresh_token_nonce) = 12 AND refresh_token_tag IS NOT NULL AND octet_length(refresh_token_tag) = 16)");
 
                             t.HasCheckConstraint("ck_conexiones_mercadopago_desconectada", "estado <> 'desconectada' OR (fecha_desconexion IS NOT NULL AND access_token_cifrado IS NULL AND access_token_nonce IS NULL AND access_token_tag IS NULL AND refresh_token_cifrado IS NULL AND refresh_token_nonce IS NULL AND refresh_token_tag IS NULL)");
 
-                            t.HasCheckConstraint("ck_conexiones_mercadopago_estado", "estado IN ('activa', 'desconectada')");
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_estado", "estado IN ('activa', 'desconectada', 'requiere_reconexion')");
+
+                            t.HasCheckConstraint("ck_conexiones_mercadopago_requiere_reconexion", "estado <> 'requiere_reconexion' OR (fecha_requiere_reconexion IS NOT NULL AND fecha_desconexion IS NULL AND access_token_cifrado IS NULL AND access_token_nonce IS NULL AND access_token_tag IS NULL AND refresh_token_cifrado IS NULL AND refresh_token_nonce IS NULL AND refresh_token_tag IS NULL)");
                         });
                 });
 
