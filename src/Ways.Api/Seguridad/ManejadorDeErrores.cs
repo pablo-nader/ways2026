@@ -718,14 +718,14 @@ public class ManejadorDeErrores(
                 LogYClasificarReferenciaInvalida(fk, log),
 
             // stage-5-pos-ventas (Slice 3, task 3.11, db-error-backstops, design: Backstop Map):
-            // pk_stock — exención documentada de prueba de carrera, misma familia que
-            // pk_numeraciones_comprobante: el único escritor de stock (Slice 4/5, INSERT ...
-            // ON CONFLICT DO UPDATE) nunca puede disparar 23505 por construcción. Defensa de
+            // pk_stock (id_articulo, id_sucursal) — exención documentada de prueba de carrera, misma familia
+            // que pk_numeraciones_comprobante: los dos escritores de filas de stock (EscritorDeStock y el upsert
+            // de mínimos, ambos INSERT ... ON CONFLICT DO UPDATE) nunca pueden disparar 23505 por construcción. Defensa de
             // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
             // directo.
             { SqlState: "23505", ConstraintName: string pkStock }
                 when string.Equals(pkStock, "pk_stock", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
+                (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en esa sucursal.", "stock_duplicado"),
 
             // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
             // las cuatro CHECKs de comprobantes_venta/cobros/movimientos_stock

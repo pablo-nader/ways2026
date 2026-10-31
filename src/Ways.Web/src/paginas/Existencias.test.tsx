@@ -90,14 +90,14 @@ function filaFixture(sobrescribir: Partial<FilaExistencia> = {}): FilaExistencia
 }
 
 function existenciasFixture(filas: FilaExistencia[] = [filaFixture()], idPuntoVenta = 10): ExistenciasRespuesta {
-  return { idPuntoVenta, filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', filas }
 }
 
 // stage-13-stock-inteligente, Slice 7 (tarea 7.6): feed de `minimoSugerido` — vacío por default
 // (todas las filas de existencias muestran `—` en Sugerido), sobrescrito puntualmente por los tests
 // de la columna.
 function rotacionFixture(filas: Rotacion['filas'] = [], idPuntoVenta = 10): Rotacion {
-  return { idPuntoVenta, hoy: '2026-08-14', diasDeRotacion: 30, diasCoberturaObjetivo: 7, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', hoy: '2026-08-14', diasDeRotacion: 30, diasCoberturaObjetivo: 7, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
 }
 
 function minimosFixture(sobrescribir: Partial<MinimosDeStock> = {}): MinimosDeStock {

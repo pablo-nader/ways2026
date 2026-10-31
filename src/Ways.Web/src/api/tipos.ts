@@ -2088,7 +2088,8 @@ export type FilaExistencia = {
 
 /** Respuesta de `GET /api/reportes/stock/existencias` — espejo de `Existencias`. */
 export type Existencias = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   filas: FilaExistencia[]
 }
 
@@ -3022,7 +3023,8 @@ export type FilaDeVencimiento = {
  * efectivamente aplicado: el parámetro `dias` de la query si vino, si no el
  * `dias_alerta_vencimiento` resuelto (PV → empresa → default). */
 export type Vencimientos = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   hoy: string
   diasDeAlerta: number
   zonaHoraria: string
@@ -3032,7 +3034,7 @@ export type Vencimientos = {
 /** Respuesta de `GET /api/reportes/stock/vencimientos/resumen` (espejo de
  * `ResumenDeVencimientos`) — el tile de Tablero. Mismos tres conteos que `Vencimientos.filas`
  * agrupados por `FilaDeVencimiento.estado` — nunca una query de agregación separada. */
-export type ResumenDeVencimientos = { idPuntoVenta: number; vencidos: number; porVencer: number; sinFecha: number }
+export type ResumenDeVencimientos = { idSucursal: number; nombreSucursal: string; vencidos: number; porVencer: number; sinFecha: number }
 
 // --- Reposición de stock (stage-13-stock-inteligente, Slices 4/5) ----------------------------
 // Espejo de `Ways.Application.Reportes.Contratos` — alerta y sugerencia de compra
@@ -3064,7 +3066,8 @@ export type FilaDeReposicion = {
  * que `Vencimientos.hoy`/`Vencimientos.zonaHoraria`); `diasDeRotacion` es el horizonte efectivo —
  * el parámetro `dias` de la query si vino, si no `dias_rotacion` (default 30). */
 export type Reposicion = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   hoy: string
   diasDeRotacion: number
   zonaHoraria: string
@@ -3077,7 +3080,7 @@ export type Reposicion = {
  * `sinProveedor` cuenta el grupo "Sin proveedor" (`idProveedor` nulo en `FilaDeReposicion`) — NUNCA
  * conflado con "sin sugerido" (`sugerido` nulo, `reposicion` sin configurar): orchestrator decision
  * 5 (tasks.md) corrigió este nombre sobre la `sinSugerencia` vieja de design.md. */
-export type ResumenDeReposicion = { idPuntoVenta: number; bajoMinimo: number; sinStock: number; sinProveedor: number }
+export type ResumenDeReposicion = { idSucursal: number; nombreSucursal: string; bajoMinimo: number; sinStock: number; sinProveedor: number }
 
 /** Fila de `GET /api/reportes/stock/rotacion` — espejo de `FilaDeRotacion`. Solo existe porque el
  * artículo tuvo AL MENOS UN movimiento calificado (venta o su anulación, nunca la anulación de
@@ -3095,7 +3098,8 @@ export type FilaDeRotacion = {
  * es el horizonte de cobertura efectivamente resuelto que multiplica `minimoSugerido` — mismo
  * criterio de echo obligatorio que `diasDeRotacion`. */
 export type Rotacion = {
-  idPuntoVenta: number
+  idSucursal: number
+  nombreSucursal: string
   hoy: string
   diasDeRotacion: number
   diasCoberturaObjetivo: number

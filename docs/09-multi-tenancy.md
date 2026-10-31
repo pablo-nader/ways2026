@@ -287,7 +287,10 @@ falta, `id_empresa NULL` se reinterpreta como "ámbito default" sin romper datos
 
 > Con sucursales (T2), el stock y su reposición son de la sucursal: las cajas de una sucursal comparten
 > `stock`/`stock_lotes`, y cada movimiento de stock guarda su sucursal y la caja que lo originó (doc 10
-> §6). Las ventas, turnos, numeración y dispositivos siguen siendo por punto de venta.
+> §6). Las ventas, turnos, numeración y dispositivos siguen siendo por punto de venta. Con T3 las lecturas de
+> stock (reportes de existencias, vencimientos, reposición y rotación, y la ficha de artículo) también hablan de
+> sucursal: aceptan `idSucursal` o un `idPuntoVenta` que se resuelve a la suya, y una sucursal dada de baja es
+> inexistente para ellos.
 
 Ventas, gastos, turnos, stock y movimientos nacen en un punto de venta y no se comparten
 jamás. Ya era la regla 10 del legacy ("toda operación scopeada por `id_punto_venta`") y

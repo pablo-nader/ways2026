@@ -307,6 +307,23 @@ public class StockPorSucursalTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(new Dictionary<int, decimal> { [ctx.IdSucursalCompartida] = 10m }, await StockPorSucursalAsync(ctx));
     }
 
+    /// <summary>Cláusula bajo prueba: la comparación de sucursales de <c>TransferirAsync</c> va ANTES de resolver artículos
+    /// y lotes. Con un artículo que no existe, la respuesta es el 409 de la misma sucursal y no el 404 del artículo:
+    /// quien pide un movimiento imposible no paga ninguna resolución.</summary>
+    [Fact]
+    public async Task LaMismaSucursalSeRechazaAntesDeResolverArticulosYLotes()
+    {
+        var ctx = await PrepararAsync(nameof(LaMismaSucursalSeRechazaAntesDeResolverArticulosYLotes));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/stock/transferencias",
+            new SolicitudDeTransferencia(ctx.IdCaja1, ctx.IdCaja2, "Entre cajas", [new LineaDeTransferencia(2_000_000_000, 3m)]));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("transferencia_misma_sucursal", problema.GetProperty("codigo").GetString());
+    }
+
     /// <summary>Una transferencia entre sucursales distintas sigue funcionando y deja la sucursal de destino en las dos
     /// filas espejadas.</summary>
     [Fact]

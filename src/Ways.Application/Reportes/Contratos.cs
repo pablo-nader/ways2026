@@ -197,7 +197,12 @@ public sealed record FilaExistencia(
 /// <summary>Respuesta de <c>GET /api/reportes/stock/existencias</c>. Sin <c>desde</c>/<c>hasta</c>
 /// ni <c>ZonaHoraria</c> (a diferencia del resto de los reportes de esta etapa): el stock no tiene
 /// dimensión temporal, es una foto del estado actual.</summary>
-public sealed record Existencias(int IdPuntoVenta, IReadOnlyList<FilaExistencia> Filas);
+public sealed record Existencias(int IdSucursal, string NombreSucursal, IReadOnlyList<FilaExistencia> Filas);
+
+/// <summary>A qué sucursal se refiere un reporte de stock: la sucursal pedida, o la de la caja que mandó un
+/// cliente anterior a las sucursales. <see cref="IdPuntoVentaDeReferencia"/> solo sirve para resolver los parámetros
+/// por caja (zona horaria, días de alerta y de rotación) y no se devuelve al cliente.</summary>
+public sealed record AlcanceDeStock(int IdSucursal, string NombreSucursal, int IdEmpresa, int? IdPuntoVentaDeReferencia);
 
 /// <summary>Fila de <c>GET /api/reportes/stock/vencimientos</c> (stage-12-lotes-vencimientos,
 /// Slice 13; design decisión 15/16). Solo lotes con <c>stock_lotes.cantidad</c> positivo (spec
@@ -218,13 +223,13 @@ public sealed record FilaDeVencimiento(
 /// horizonte efectivamente aplicado: el parámetro <c>dias</c> de la query si vino, si no el
 /// <c>dias_alerta_vencimiento</c> resuelto (PV → empresa → default).</summary>
 public sealed record Vencimientos(
-    int IdPuntoVenta, DateOnly Hoy, int DiasDeAlerta, string ZonaHoraria, IReadOnlyList<FilaDeVencimiento> Filas);
+    int IdSucursal, string NombreSucursal, DateOnly Hoy, int DiasDeAlerta, string ZonaHoraria, IReadOnlyList<FilaDeVencimiento> Filas);
 
 /// <summary>Respuesta de <c>GET /api/reportes/stock/vencimientos/resumen</c> — el tile de Tablero
 /// (spec: "a Tablero tile MUST surface the counts of vencido, por_vencer, and sin_fecha"). Mismos
 /// tres conteos que <see cref="Vencimientos.Filas"/> agrupados por <see cref="FilaDeVencimiento.Estado"/>
 /// — nunca una query de agregación separada, para que el tile y el reporte no puedan divergir.</summary>
-public sealed record ResumenDeVencimientos(int IdPuntoVenta, int Vencidos, int PorVencer, int SinFecha);
+public sealed record ResumenDeVencimientos(int IdSucursal, string NombreSucursal, int Vencidos, int PorVencer, int SinFecha);
 
 /// <summary>Fila de <c>GET /api/reportes/stock/reposicion</c> (stage-13-stock-inteligente, Slice 4;
 /// design: Interfaces / Contracts, decisión 3). Solo existe porque <c>minimo IS NOT NULL AND
@@ -263,7 +268,7 @@ public sealed record FilaDeReposicion(
 /// "hoy". <see cref="DiasDeRotacion"/> es el horizonte efectivamente resuelto: el parámetro
 /// <c>dias</c> de la query si vino, si no <c>dias_rotacion</c> (default 30).</summary>
 public sealed record Reposicion(
-    int IdPuntoVenta, DateOnly Hoy, int DiasDeRotacion, string ZonaHoraria,
+    int IdSucursal, string NombreSucursal, DateOnly Hoy, int DiasDeRotacion, string ZonaHoraria,
     IReadOnlyList<FilaDeReposicion> Filas);
 
 /// <summary>Respuesta de <c>GET /api/reportes/stock/reposicion/resumen</c> — el tile de Tablero
@@ -279,7 +284,7 @@ public sealed record Reposicion(
 /// un número, y confundirlas es exactamente lo que esta doc-comment y la spec ratificada
 /// (reposicion-de-stock: "sinProveedor counts the Sin proveedor group, not a missing suggestion")
 /// prohíben.</summary>
-public sealed record ResumenDeReposicion(int IdPuntoVenta, int BajoMinimo, int SinStock, int SinProveedor);
+public sealed record ResumenDeReposicion(int IdSucursal, string NombreSucursal, int BajoMinimo, int SinStock, int SinProveedor);
 
 /// <summary>Fila de <c>GET /api/reportes/stock/rotacion</c> (stage-13-stock-inteligente, Slice 5;
 /// design: Interfaces / Contracts, decisión 14). Solo existe porque el artículo tiene AL MENOS UN
@@ -310,5 +315,5 @@ public sealed record FilaDeRotacion(
 /// cref="FilaDeRotacion.MinimoSugerido"/> multiplica — echo obligatorio, mismo criterio que
 /// <see cref="DiasDeRotacion"/>: una sugerencia cuyo horizonte es invisible no es auditable.</summary>
 public sealed record Rotacion(
-    int IdPuntoVenta, DateOnly Hoy, int DiasDeRotacion, int DiasCoberturaObjetivo, string ZonaHoraria,
+    int IdSucursal, string NombreSucursal, DateOnly Hoy, int DiasDeRotacion, int DiasCoberturaObjetivo, string ZonaHoraria,
     IReadOnlyList<FilaDeRotacion> Filas);

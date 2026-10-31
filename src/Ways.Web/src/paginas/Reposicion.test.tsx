@@ -97,7 +97,7 @@ function filaFixture(sobrescribir: Partial<FilaDeReposicion> = {}): FilaDeReposi
 }
 
 function reposicionFixture(filas: FilaDeReposicion[], idPuntoVenta = 10): ReposicionRespuesta {
-  return { idPuntoVenta, hoy: '2026-08-14', diasDeRotacion: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
+  return { idSucursal: idPuntoVenta, nombreSucursal: 'Sucursal central', hoy: '2026-08-14', diasDeRotacion: 30, zonaHoraria: 'America/Argentina/Buenos_Aires', filas }
 }
 
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {

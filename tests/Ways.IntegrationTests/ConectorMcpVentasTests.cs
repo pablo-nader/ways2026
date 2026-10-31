@@ -287,7 +287,7 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
     [InlineData("ventas_resumen", """{}""", "Indicá 'periodo'", null)]
     [InlineData("ventas_resumen", """{"desde":"2026-01-01","hasta":"2027-06-01"}""", "366 días", null)]
     [InlineData("ventas_resumen", """{"periodo":"hoy","empresa":"no-existe"}""", "No encontré la empresa 'no-existe'", null)]
-    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"color"}""", "punto_venta, medio_pago, vendedor, dia", "'agruparPor'")]
+    [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"color"}""", "punto_venta, sucursal, medio_pago, vendedor, dia", "'agruparPor'")]
     [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"dia","limite":0}""", "entre 1 y 50", null)]
     [InlineData("ventas_agrupadas", """{"periodo":"hoy","agruparPor":"dia","limite":51}""", "entre 1 y 50", null)]
     public async Task UnaEntradaInvalidaDevuelveUnResultadoDeErrorConElMotivo(
@@ -396,6 +396,68 @@ public partial class ConectorMcpVentasTests(WaysApiFixture fixture) : IClassFixt
         Assert.DoesNotContain(Lineas(porArticuloDelLocal2.Texto), l => l.StartsWith("COLA-1", StringComparison.Ordinal));
         Assert.Contains(
             "Total de todos los artículos vendidos en el período (base del %): 250,00", Lineas(porArticuloDelLocal2.Texto));
+    }
+
+    /// <summary>Cláusula bajo prueba: <c>sucursalDeCaja[caja]</c> en <c>AgruparAsync</c> (ventas.id_punto_venta →
+    /// puntos_venta.id_sucursal). Local 1 y Local 2 comparten sucursal y suman una sola fila (1.250 en 2 comprobantes);
+    /// Local 3 tiene la suya. Por punto de venta siguen siendo tres filas. Con la sucursal de Local 3 dada de baja
+    /// (dato heredado: la caja y las ventas siguen ahí) su importe no se pierde: queda como "(sucursal id N)". Con
+    /// <c>puntoVenta</c> elegido se agrupa la caja pedida y nada más.</summary>
+    [Fact]
+    public async Task VentasAgrupadasPorSucursalSumaLasCajasDeLaMismaSucursal()
+    {
+        var e = await SembrarEscenarioAsync(nameof(VentasAgrupadasPorSucursalSumaLasCajasDeLaMismaSucursal));
+        var t = e.Tenant;
+        var local2 = await _apoyo.SembrarPuntoVentaAsync(t, "Local 2");
+        var local3 = await _apoyo.SembrarPuntoVentaAsync(t, "Local 3");
+        await using var dbSucursales = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, t.IdTenant));
+        var sucursalCompartida = await SucursalDePrueba.DeAsync(dbSucursales, t.IdPuntoVenta);
+        var sucursalDeLocal3 = await SucursalDePrueba.DeAsync(dbSucursales, local3);
+        await SucursalDePrueba.ReapuntarAsync(fixture, local2, sucursalCompartida);
+
+        var area = await _apoyo.SembrarAreaAsync(t, "Kiosco");
+        var cola = await _apoyo.SembrarArticuloAsync(t, "Cola", "COLA-1", area);
+        var galletita = await _apoyo.SembrarArticuloAsync(t, "Galletita", "GALL-1", area);
+        var alfajor = await _apoyo.SembrarArticuloAsync(t, "Alfajor", "ALF-1", area);
+        var hoy = new DateTimeOffset(2026, 10, 18, 10, 0, 0, TimeSpan.Zero);
+        await _apoyo.SembrarComprobanteConLineasAsync(t, hoy, e.Admin.IdUsuario, [new(cola, "Cola", area, 2m, 1000m)]);
+        await _apoyo.SembrarComprobanteConLineasAsync(
+            t, hoy, e.Admin.IdUsuario, [new(galletita, "Galletita", area, 1m, 250m)], idPuntoVenta: local2);
+        await _apoyo.SembrarComprobanteConLineasAsync(
+            t, hoy, e.Admin.IdUsuario, [new(alfajor, "Alfajor", area, 1m, 100m)], idPuntoVenta: local3);
+
+        await using var host = _apoyo.HostConReloj(RelojDelMediodia, e.Admin.Mail);
+        using var cliente = ApoyoDeConectorMcp.Cliente(host);
+        var token = await AccessTokenAsync(cliente, e.Admin.Mail);
+
+        var porSucursal = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "sucursal", periodo = "hoy" });
+        var porPunto = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "punto_venta", periodo = "hoy" });
+        var deLocal2 = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "sucursal", periodo = "hoy", puntoVenta = "local 2" });
+
+        Assert.False(porSucursal.EsError, porSucursal.Texto);
+        Assert.Contains("Local 1 | 1.250,00 | 2 | 92,6%", Lineas(porSucursal.Texto));
+        Assert.Contains("Local 3 | 100,00 | 1 | 7,4%", Lineas(porSucursal.Texto));
+        Assert.Contains("Total: 1.350,00 en 2 grupos", Lineas(porSucursal.Texto));
+        Assert.DoesNotContain(Lineas(porSucursal.Texto), l => l.StartsWith("Local 2", StringComparison.Ordinal));
+
+        Assert.False(porPunto.EsError, porPunto.Texto);
+        Assert.Contains("Total: 1.350,00 en 3 grupos", Lineas(porPunto.Texto));
+
+        Assert.False(deLocal2.EsError, deLocal2.Texto);
+        Assert.Contains("Local 1 | 250,00 | 1 | 100,0%", Lineas(deLocal2.Texto));
+        Assert.Contains("Total: 250,00 en 1 grupos", Lineas(deLocal2.Texto));
+
+        await SucursalDePrueba.DarDeBajaAsync(fixture, sucursalDeLocal3);
+
+        var conBaja = await LlamarHerramientaAsync(
+            cliente, token, "ventas_agrupadas", new { agruparPor = "sucursal", periodo = "hoy" });
+
+        Assert.False(conBaja.EsError, conBaja.Texto);
+        Assert.Contains($"(sucursal id {sucursalDeLocal3}) | 100,00 | 1 | 7,4%", Lineas(conBaja.Texto));
+        Assert.Contains("Total: 1.350,00 en 2 grupos", Lineas(conBaja.Texto));
     }
 
     /// <summary>Las herramientas de ventas se anuncian con los argumentos que sus descripciones prometen;

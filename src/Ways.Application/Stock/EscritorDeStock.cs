@@ -26,8 +26,10 @@ public readonly record struct AsientoAplicado(
     AsientoDeStock Asiento, int IdMovimiento, decimal CantidadAgregada, decimal? CantidadDelLote);
 
 /// <summary>
-/// El único escritor de <c>movimientos_stock</c>, <c>stock</c> y <c>stock_lotes</c>. Statements crudos sobre la
-/// conexión y la transacción del llamador: no abre transacción propia ni decide la estrategia de reintento, que siguen
+/// El único escritor de <c>movimientos_stock</c> y de las cantidades de <c>stock</c> y <c>stock_lotes</c>. Los umbrales
+/// de reposición (<c>minimo</c>, <c>reposicion</c>) los escribe <c>ServicioDeStock.EscribirMinimosAsync</c> con su propio
+/// upsert, que puede crear la fila de <c>stock</c> en cero pero nunca toca una cantidad ni asienta un movimiento.
+/// Statements crudos sobre la conexión y la transacción del llamador: no abre transacción propia ni decide la estrategia de reintento, que siguen
 /// siendo de cada servicio.
 ///
 /// Orden de locks, uno solo para todo el sistema: <c>(id_sucursal, id_articulo, id_lote NULLS FIRST)</c>. Cada upsert
