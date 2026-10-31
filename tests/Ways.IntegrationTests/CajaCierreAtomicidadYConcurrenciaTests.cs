@@ -322,8 +322,8 @@ public class CajaCierreAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IC
             var solicitudDeCierre = new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 500m)], null);
 
             var tareaPago = ctx.Admin.PostAsJsonAsync(
-                "/api/gastos",
-                new SolicitudDePago(
+                "/api/pagos",
+                PagoDeUnMedio.Pos(
                     ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "pago en carrera con cierre", null,
                     ctx.IdMedioEfectivo, null, 30m));
             var tareaCierre = ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitudDeCierre);

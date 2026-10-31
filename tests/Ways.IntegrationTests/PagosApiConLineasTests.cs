@@ -22,8 +22,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// E2-S4: contrato HTTP <c>/api/pagos</c> con líneas por medio, a la par de <c>/api/gastos</c> (que sigue de un solo medio).
-/// Cada ruta nueva se ejerce por HTTP con el rol que su gemela de gastos exige.
+/// Contrato HTTP <c>/api/pagos</c> con líneas por medio: cada ruta se ejerce por HTTP con el rol que su política exige.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -239,9 +238,9 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     [Fact]
-    public async Task ElHistorialDelPosTraeLasLineasYElPutEditaUnPagoDeDosMediosMientrasElPutViejoDa409()
+    public async Task ElHistorialDelPosTraeLasLineasYElPutEditaUnPagoDeDosMedios()
     {
-        var ctx = await PrepararAsync(nameof(ElHistorialDelPosTraeLasLineasYElPutEditaUnPagoDeDosMediosMientrasElPutViejoDa409));
+        var ctx = await PrepararAsync(nameof(ElHistorialDelPosTraeLasLineasYElPutEditaUnPagoDeDosMedios));
         var vendedor = await CrearVendedorAsync(ctx);
         var idTurno = await AbrirTurnoAsync(ctx, 1000m);
 
@@ -252,12 +251,6 @@ public class PagosApiConLineasTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         var pagina = await vendedor.GetFromJsonAsync<PaginaDePagos>($"/api/pagos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
         Assert.Equal(2, pagina!.Items.Single(p => p.Id == creado.Id).Lineas.Count);
-
-        var viejo = await vendedor.PutAsJsonAsync(
-            $"/api/gastos/{creado.Id}",
-            new SolicitudDeEdicionDePago(CategoriaPago.Otros, null, null, "x", null, ctx.IdEfectivo, null, 100m));
-        Assert.Equal(HttpStatusCode.Conflict, viejo.StatusCode);
-        Assert.Equal("gasto_con_varios_medios", await CodigoAsync(viejo));
 
         var editado = await LeerAsync<PagoConLineas>(
             await vendedor.PutAsJsonAsync($"/api/pagos/{creado.Id}", Edicion(

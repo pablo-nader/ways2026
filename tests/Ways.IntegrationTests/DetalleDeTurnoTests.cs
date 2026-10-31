@@ -153,8 +153,8 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     private static async Task RegistrarPagoAsync(Contexto ctx, HttpClient cliente, int idMedioPago, decimal importe)
     {
         var respuesta = await cliente.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
+            "/api/pagos",
+            PagoDeUnMedio.Pos(ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 

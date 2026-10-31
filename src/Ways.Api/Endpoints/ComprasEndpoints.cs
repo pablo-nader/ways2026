@@ -154,7 +154,7 @@ public static class ComprasEndpoints
             ServicioDePagos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
         {
             var resultado = await servicio.PagarCompraAsync(id, solicitud, ct);
-            return Results.Created($"/api/gastos/administracion/{resultado.Pago.Id}", resultado);
+            return Results.Created($"/api/pagos/administracion/{resultado.Pago.Id}", resultado);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(

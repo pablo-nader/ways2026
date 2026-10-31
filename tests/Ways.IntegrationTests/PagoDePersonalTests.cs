@@ -754,7 +754,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Unauthorized, (await PagarAsync(anonimo, idPersonal, cuerpo)).StatusCode);
     }
 
-    /// <summary>Pagar de la tesorería es de Admin, igual que <c>/api/gastos/administracion</c>: el Supervisor
+    /// <summary>Pagar de la tesorería es de Admin, igual que <c>/api/pagos/administracion</c>: el Supervisor
     /// paga del cajón o descuenta de la cuenta corriente, pero no del fondo de la empresa. Los dos Supervisor
     /// de tesorería van con un cuerpo que además es inválido (sin fecha / sin empresa) para fijar que el 403 se
     /// decide antes que cualquier 400 que dependa del cuerpo.</summary>
@@ -1205,8 +1205,8 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         return (pagos[0].Id, pagos[1].Id);
     }
 
-    private static SolicitudDeEdicionDePago EdicionValida(Contexto ctx) =>
-        new(CategoriaPago.Sueldos, null, null, "Concepto editado", null, ctx.IdMedioEfectivo, null, 5m);
+    private static SolicitudDeEdicionDePagoConLineas EdicionValida(Contexto ctx) =>
+        PagoDeUnMedio.Edicion(CategoriaPago.Sueldos, null, null, "Concepto editado", null, ctx.IdMedioEfectivo, null, 5m);
 
     [Fact]
     public async Task UnPagoDeUnPagoNoSeEditaNiSeDaDeBajaNiSeLigaPorSeparadoYSiguenEditablesLosDemas()
@@ -1218,10 +1218,10 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         foreach (var id in new[] { idDeTesoreria, idDelCajon })
         {
-            var edicionAdmin = await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{id}", EdicionValida(ctx));
+            var edicionAdmin = await ctx.Admin.PutAsJsonAsync($"/api/pagos/administracion/{id}", EdicionValida(ctx));
             Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(edicionAdmin, HttpStatusCode.Conflict));
 
-            var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{id}");
+            var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{id}");
             Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(baja, HttpStatusCode.Conflict));
         }
 
@@ -1230,7 +1230,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         // (la guarda va antes de la comprobación del turno).
         foreach (var id in new[] { idDelCajon, idDeTesoreria })
         {
-            var edicionPos = await ctx.Admin.PutAsJsonAsync($"/api/gastos/{id}", EdicionValida(ctx));
+            var edicionPos = await ctx.Admin.PutAsJsonAsync($"/api/pagos/{id}", EdicionValida(ctx));
             Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(edicionPos, HttpStatusCode.Conflict));
         }
 
@@ -1245,14 +1245,14 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         // Un pago administrativo común sigue editable y con baja.
         var comun = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null, "Gasto común", null,
                 ctx.IdMedioEfectivo, null, 20m));
         var idComun = (await CuerpoAsync(comun, HttpStatusCode.Created)).GetProperty("id").GetInt32();
         Assert.Equal(
-            HttpStatusCode.OK, (await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{idComun}", EdicionValida(ctx))).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{idComun}")).StatusCode);
+            HttpStatusCode.OK, (await ctx.Admin.PutAsJsonAsync($"/api/pagos/administracion/{idComun}", EdicionValida(ctx))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{idComun}")).StatusCode);
     }
 
     /// <summary>El cliente no puede adivinar qué pagos van a responder 409 <c>gasto_de_pago_de_personal</c>: los
@@ -1267,16 +1267,16 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var comunDeAdministracion = await CuerpoAsync(
             await ctx.Admin.PostAsJsonAsync(
-                "/api/gastos/administracion",
-                new SolicitudDePagoDeAdministracion(
+                "/api/pagos/administracion",
+                PagoDeUnMedio.Administracion(
                     FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null, "Gasto común", null,
                     ctx.IdMedioEfectivo, null, 20m)),
             HttpStatusCode.Created);
         var idComunDeAdministracion = comunDeAdministracion.GetProperty("id").GetInt32();
         var comunDelPos = await CuerpoAsync(
             await ctx.Admin.PostAsJsonAsync(
-                "/api/gastos",
-                new SolicitudDePago(
+                "/api/pagos",
+                PagoDeUnMedio.Pos(
                     ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto común del POS", null, ctx.IdMedioEfectivo, null, 15m)),
             HttpStatusCode.Created);
         var idComunDelPos = comunDelPos.GetProperty("id").GetInt32();
@@ -1292,18 +1292,18 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.NotEqual(idAsientoDeTesoreria, idAsientoDelCajon);
 
         var administracion = await CuerpoAsync(
-            await ctx.Admin.GetAsync($"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}&tamanio=50"), HttpStatusCode.OK);
+            await ctx.Admin.GetAsync($"/api/pagos/administracion?idEmpresa={ctx.IdEmpresa}&tamanio=50"), HttpStatusCode.OK);
         var filas = administracion.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("id").GetInt32());
         Assert.Equal(idAsientoDeTesoreria, filas[idDeTesoreria].GetProperty("idMovimientoPersonal").GetInt32());
         Assert.Equal(idAsientoDelCajon, filas[idDelCajon].GetProperty("idMovimientoPersonal").GetInt32());
         Assert.Equal(JsonValueKind.Null, filas[idComunDeAdministracion].GetProperty("idMovimientoPersonal").ValueKind);
 
         var detalle = await CuerpoAsync(
-            await ctx.Admin.GetAsync($"/api/gastos/administracion/{idDeTesoreria}"), HttpStatusCode.OK);
+            await ctx.Admin.GetAsync($"/api/pagos/administracion/{idDeTesoreria}"), HttpStatusCode.OK);
         Assert.Equal(idAsientoDeTesoreria, detalle.GetProperty("idMovimientoPersonal").GetInt32());
 
         var delPos = await CuerpoAsync(
-            await ctx.Admin.GetAsync($"/api/gastos?idPuntoVenta={ctx.IdPuntoVenta}&tamanio=50"), HttpStatusCode.OK);
+            await ctx.Admin.GetAsync($"/api/pagos?idPuntoVenta={ctx.IdPuntoVenta}&tamanio=50"), HttpStatusCode.OK);
         var filasDelPos = delPos.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("id").GetInt32());
         Assert.Equal(idAsientoDelCajon, filasDelPos[idDelCajon].GetProperty("idMovimientoPersonal").GetInt32());
         Assert.Equal(JsonValueKind.Null, filasDelPos[idComunDelPos].GetProperty("idMovimientoPersonal").ValueKind);
@@ -1321,9 +1321,9 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         {
             Assert.Equal(
                 HttpStatusCode.NotFound,
-                (await ctx.Admin.PutAsJsonAsync($"/api/gastos/administracion/{id}", EdicionValida(ctx))).StatusCode);
-            Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{id}")).StatusCode);
-            Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.PutAsJsonAsync($"/api/gastos/{id}", EdicionValida(ctx))).StatusCode);
+                (await ctx.Admin.PutAsJsonAsync($"/api/pagos/administracion/{id}", EdicionValida(ctx))).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{id}")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.PutAsJsonAsync($"/api/pagos/{id}", EdicionValida(ctx))).StatusCode);
         }
     }
 
@@ -1341,7 +1341,7 @@ public class PagoDePersonalTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(idCompra));
+            $"/api/pagos/{idPago}/vincular-compra", new SolicitudDeVincularCompra(idCompra));
 
         Assert.Equal("gasto_de_pago_de_personal", await CodigoAsync(respuesta, HttpStatusCode.Conflict));
         await using var abierto = Abrir(ctx);

@@ -3,8 +3,8 @@
 ## 7. Caja: turnos, arqueos y tesorería
 
 > **Vocabulario (etapa E1):** el *gasto* pasa a llamarse **pago**: tabla `pagos`, columna `id_pago` y tipo de
-> movimiento de tesorería `pago`. Las rutas HTTP siguen siendo `/api/gastos…` (y el valor JSON `Gasto` del tipo de
-> movimiento) hasta el contrato nuevo de la etapa E2.
+> movimiento de tesorería `pago`. Las rutas HTTP pasaron a `/api/pagos…` en E2 y las `/api/gastos…` se quitaron en E2-L (el valor JSON `Gasto` del tipo de
+> movimiento sigue).
 
 ```sql
 turnos_caja (                 -- [operativa]

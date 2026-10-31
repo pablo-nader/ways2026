@@ -23,7 +23,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// stage-gasto-a-compra (PR4), owner requirement: <c>POST /api/gastos/{id}/vincular-compra</c> —
+/// stage-gasto-a-compra (PR4), owner requirement: <c>POST /api/pagos/{id}/vincular-compra</c> —
 /// vínculo posterior a la creación, para un pago que ya existe (POS o admin). Cubre los dos
 /// modos (proveedor ya coincide → solo imputación, sin proveedor → conversión + Pago recién
 /// escrito), el fallback de punto de venta, los rechazos (proveedor que no coincide, ya
@@ -151,10 +151,10 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         Contexto ctx, CategoriaPago categoria = CategoriaPago.Otros, int? idProveedor = null,
         int? idPuntoVenta = null, decimal importe = 500m)
     {
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), ctx.IdEmpresa, idPuntoVenta, categoria, idProveedor, null,
             "Gasto de prueba", null, ctx.IdMedioEfectivo, null, importe);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -208,7 +208,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var saldoAntes = await SaldoDeAsync(ctx.IdTenant, ctx.IdProveedor);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
@@ -237,7 +237,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var saldoAntes = await SaldoDeAsync(ctx.IdTenant, ctx.IdProveedor);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
@@ -267,7 +267,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Null(pago.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
@@ -287,7 +287,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var pago = await RegistrarPagoAdminAsync(ctx, CategoriaPago.Proveedor, ctx.IdProveedor2, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -303,11 +303,11 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var pago = await RegistrarPagoAdminAsync(ctx, CategoriaPago.Otros, idProveedor: null, idPuntoVenta: ctx.IdPuntoVenta);
 
         var primero = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra1.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra1.Id));
         Assert.Equal(HttpStatusCode.OK, primero.StatusCode);
 
         var segundo = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra2.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra2.Id));
         Assert.Equal(HttpStatusCode.Conflict, segundo.StatusCode);
         var problema = await segundo.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("gasto_ya_vinculado", problema.GetProperty("codigo").GetString());
@@ -322,7 +322,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var pago = await RegistrarPagoAdminAsync(ctx, CategoriaPago.Otros, idProveedor: null, idPuntoVenta: ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(borrador.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(borrador.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -339,7 +339,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var pago = await RegistrarPagoAdminAsync(ctx, CategoriaPago.Otros, idProveedor: null, idPuntoVenta: ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -355,7 +355,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var pagoDeB = await RegistrarPagoAdminAsync(ctxB, CategoriaPago.Otros, idProveedor: null, idPuntoVenta: ctxB.IdPuntoVenta);
 
         var respuesta = await ctxA.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pagoDeB.Id}/vincular-compra", new SolicitudDeVincularCompra(compraDeA.Id));
+            $"/api/pagos/{pagoDeB.Id}/vincular-compra", new SolicitudDeVincularCompra(compraDeA.Id));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -369,19 +369,19 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var ctx = await PrepararAsync(nameof(UnPagoDadoDeBajaDevuelveNoEncontradoAlVincular));
         var compra = await CrearYConfirmarCompraAsync(ctx);
         var alta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Otros,
                 null, null, "Gasto de prueba", null, ctx.IdMedioEfectivo, null, 500m));
         var cuerpoAlta = await alta.Content.ReadAsStringAsync();
         Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
         var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpoAlta, OpcionesJson)!;
 
-        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{pago.Id}");
+        var baja = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{pago.Id}");
         Assert.True(baja.StatusCode == HttpStatusCode.NoContent || baja.StatusCode == HttpStatusCode.OK, await baja.Content.ReadAsStringAsync());
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -395,7 +395,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         using var vendedor = await CrearVendedorAsync(ctx, nameof(UnVendedorEsRechazadoConForbidden));
 
         var respuesta = await vendedor.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
@@ -407,10 +407,10 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
     {
         var ctx = await PrepararAsync(nameof(UnProveedorInexistenteEnElAltaAdministrativaDevuelveNoEncontrado));
 
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaPago.Proveedor,
             999999, null, "Gasto con proveedor inexistente", null, ctx.IdMedioEfectivo, null, 100m);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -421,10 +421,10 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         var ctx = await PrepararAsync(nameof(UnProveedorInexistenteEnElAltaDelPosDevuelveNoEncontrado));
         await AbrirTurnoAsync(ctx);
 
-        var solicitud = new SolicitudDePago(
+        var solicitud = PagoDeUnMedio.Pos(
             ctx.IdPuntoVenta, CategoriaPago.Proveedor, 999999, null, "Gasto con proveedor inexistente", null,
             ctx.IdMedioEfectivo, null, 100m);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos", solicitud);
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -455,7 +455,7 @@ public class PagosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         var tareaVincular = clienteVincular.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
 
         await transaccionIniciada.Task;
 
