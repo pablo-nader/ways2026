@@ -258,7 +258,9 @@ Doc 10 §07 updated.
 ## Follow-ups (T3)
 
 - Login-CSRF follow-up from the T1 review: RESOLVED here.
-- Still open from T1: catch `NotSupportedException` from a non-JSON 2xx in `ClienteOAuthMercadoPago`; record who disconnected.
+- Still open from T1: catch `NotSupportedException` from a non-JSON 2xx in `ClienteOAuthMercadoPago` (handled only for the new
+  `ClienteApiMercadoPago` in E2 T1, which maps it to `mercadopago_respuesta_invalida`; the OAuth client is untouched); record who
+  disconnected.
 - A 502 `mercadopago_intercambio_fallido` covers several causes (MP rejection, deactivated cuenta); the web shows one generic message.
 
 ## Judgment-day T3

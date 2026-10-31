@@ -56,6 +56,7 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
     {
         private readonly object _candado = new();
         private readonly List<string> _cuerpos = [];
+        private readonly List<PedidoRegistrado> _pedidos = [];
 
         public long IdUsuario { get; } = NuevoIdUsuario();
 
@@ -63,8 +64,23 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
 
         public Func<string, HttpResponseMessage> Responder { get; set; }
 
+        /// <summary>Si está, responde en lugar de <see cref="Responder"/> y ve el método, la URL y los encabezados del pedido (la
+        /// API de Mercado Pago comparte este manejador con el endpoint de tokens).</summary>
+        public Func<PedidoRegistrado, HttpResponseMessage>? ResponderPedido { get; set; }
+
         /// <summary>Se ejecuta antes de responder; permite sincronizar dos pedidos concurrentes.</summary>
         public Func<Task>? AntesDeResponder { get; set; }
+
+        public IReadOnlyList<PedidoRegistrado> Pedidos
+        {
+            get
+            {
+                lock (_candado)
+                {
+                    return [.. _pedidos];
+                }
+            }
+        }
 
         public IReadOnlyList<string> Cuerpos
         {
@@ -80,9 +96,16 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage pedido, CancellationToken ct)
         {
             var cuerpo = pedido.Content is null ? string.Empty : await pedido.Content.ReadAsStringAsync(ct);
+            var registrado = new PedidoRegistrado(
+                pedido.Method,
+                pedido.RequestUri!,
+                pedido.Headers.Authorization?.ToString(),
+                pedido.Headers.TryGetValues("X-Idempotency-Key", out var claves) ? claves.Single() : null,
+                cuerpo);
             lock (_candado)
             {
                 _cuerpos.Add($"{pedido.Method} {pedido.RequestUri} {cuerpo}");
+                _pedidos.Add(registrado);
             }
 
             if (AntesDeResponder is { } antes)
@@ -90,9 +113,11 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
                 await antes();
             }
 
-            return Responder(cuerpo);
+            return ResponderPedido is { } responderPedido ? responderPedido(registrado) : Responder(cuerpo);
         }
     }
+
+    public sealed record PedidoRegistrado(HttpMethod Metodo, Uri Uri, string? Autorizacion, string? ClaveDeIdempotencia, string Cuerpo);
 
     public static HttpResponseMessage Exitoso(string acceso, string renovacion, long idUsuario) =>
         new(HttpStatusCode.OK)
@@ -151,6 +176,8 @@ public sealed class ApoyoDeMercadoPago(WaysApiFixture fixture)
             }
 
             services.AddHttpClient<IClienteOAuthMercadoPago, ClienteOAuthMercadoPago>(http => http.BaseAddress = new Uri("https://api.mp.test/"))
+                .ConfigurePrimaryHttpMessageHandler(() => mercadoPago);
+            services.AddHttpClient<IClienteApiMercadoPago, ClienteApiMercadoPago>(http => http.BaseAddress = new Uri("https://api.mp.test/"))
                 .ConfigurePrimaryHttpMessageHandler(() => mercadoPago);
         }));
 

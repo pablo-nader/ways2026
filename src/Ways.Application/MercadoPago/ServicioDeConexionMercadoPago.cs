@@ -274,6 +274,35 @@ public class ServicioDeConexionMercadoPago(
         }
     }
 
+    /// <summary>
+    /// Mercado Pago respondió 401 a un token que se creía vigente: un solo <c>UPDATE</c> pasa la conexión a
+    /// <c>requiere_reconexion</c> y borra los seis campos de cifrado. Va guardado por estado Y por el vencimiento del token usado, así
+    /// que una renovación que haya commiteado entre la lectura del token y este 401 (otro vencimiento) deja la fila intacta.
+    /// </summary>
+    public async Task<bool> MarcarRequiereReconexionPorRechazoAsync(
+        int idConexion, DateTimeOffset accessTokenExpiraEn, CancellationToken ct = default)
+    {
+        var ahora = reloj.Ahora;
+        var filas = await db.ConexionesMercadoPago
+            .Where(c => c.Id == idConexion
+                && c.Estado == EstadoConexionMercadoPago.Activa
+                && c.AccessTokenExpiraEn == accessTokenExpiraEn)
+            .ExecuteUpdateAsync(
+                s => s
+                    .SetProperty(c => c.Estado, EstadoConexionMercadoPago.RequiereReconexion)
+                    .SetProperty(c => c.FechaRequiereReconexion, ahora)
+                    .SetProperty(c => c.UpdatedAt, ahora)
+                    .SetProperty(c => c.AccessTokenCifrado, (byte[]?)null)
+                    .SetProperty(c => c.AccessTokenNonce, (byte[]?)null)
+                    .SetProperty(c => c.AccessTokenTag, (byte[]?)null)
+                    .SetProperty(c => c.RefreshTokenCifrado, (byte[]?)null)
+                    .SetProperty(c => c.RefreshTokenNonce, (byte[]?)null)
+                    .SetProperty(c => c.RefreshTokenTag, (byte[]?)null),
+                ct);
+
+        return filas > 0;
+    }
+
     private async Task ExigirEmpresaAsync(int idEmpresa, CancellationToken ct)
     {
         // El filtro de tenant de EF esconde las empresas de otros tenants y las dadas de baja.

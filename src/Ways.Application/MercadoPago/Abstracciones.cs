@@ -12,6 +12,22 @@ public static class CodigosDeErrorDeMercadoPago
     /// <c>invalid_client</c>, 401, 403 o 404 señalan las credenciales o la configuración de la plataforma, no a una conexión.
     /// Los 5xx, el tiempo agotado y la red llevan <c>mercadopago_intercambio_fallido</c> y son transitorios.</summary>
     public const string CredencialesRechazadas = "mercadopago_credenciales_rechazadas";
+
+    /// <summary>La empresa no tiene una conexión activa con Mercado Pago ni una que haya quedado pidiendo reconexión.</summary>
+    public const string NoConectada = "mercadopago_no_conectada";
+
+    /// <summary>La última conexión de la empresa quedó en <c>requiere_reconexion</c>, o Mercado Pago respondió 401 a su token.</summary>
+    public const string RequiereReconexion = "mercadopago_requiere_reconexion";
+
+    /// <summary>Mercado Pago no pudo atender el pedido ahora (408, 429, 5xx, tiempo agotado o red) o no hay un token vigente
+    /// para usar: reintentar más tarde alcanza, la conexión no se toca.</summary>
+    public const string NoDisponible = "mercadopago_no_disponible";
+
+    /// <summary>Mercado Pago rechazó el pedido con un 4xx distinto de 401, 408 y 429. Lo lleva <see cref="ErrorDeApiMercadoPago"/>.</summary>
+    public const string SolicitudRechazada = "mercadopago_solicitud_rechazada";
+
+    /// <summary>Mercado Pago respondió 2xx con un cuerpo que no es el JSON esperado.</summary>
+    public const string RespuestaInvalida = "mercadopago_respuesta_invalida";
 }
 
 public interface IClienteOAuthMercadoPago

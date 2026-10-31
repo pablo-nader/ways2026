@@ -31,6 +31,15 @@ public class OpcionesDeMercadoPago
     /// <summary>Apaga la renovación automática sin tocar las credenciales (los tests de integración la manejan a mano).</summary>
     public bool RenovacionAutomatica { get; set; } = true;
 
+    public const int HorasDeMargenDelTokenPorDefecto = 24;
+
+    /// <summary>Antes de llamar a Mercado Pago, un token al que le quedan estas horas o menos se renueva primero. Es distinto de la
+    /// ventana de 30 días de la renovación en segundo plano. Un valor no positivo vuelve al valor por defecto.</summary>
+    public int HorasDeMargenDelToken { get; set; } = HorasDeMargenDelTokenPorDefecto;
+
+    public TimeSpan MargenDelToken =>
+        TimeSpan.FromHours(HorasDeMargenDelToken > 0 ? HorasDeMargenDelToken : HorasDeMargenDelTokenPorDefecto);
+
     public TimeSpan VentanaDeRenovacion =>
         TimeSpan.FromDays(DiasDeAnticipacionRenovacion > 0 ? DiasDeAnticipacionRenovacion : DiasDeAnticipacionPorDefecto);
 
