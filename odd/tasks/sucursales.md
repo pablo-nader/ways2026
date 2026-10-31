@@ -60,8 +60,8 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   Commit 2087d350.
 - [x] T4 — Sucursales API + ABM, PV picks/moves sucursal, stock screens and transfers by sucursal.
   Route: delegated.
-- [ ] T5 — Merge two sucursales (move PVs, sum stock and lots with audited movements).
-  Route: delegated. Conditional on the customer's current setup.
+- [x] T5 — Merge two sucursales (move PVs, sum stock and lots with audited movements), plus the T4 judges'
+  follow-ups (transfer re-check under lock, PV baja single read, transfer copy). Route: delegated. Commits 16c3bc89, 37c8da13, b687094d.
 - [ ] T6 — `parametros`: sucursal-level keys (`lotes_habilitado`, `zona_horaria`, `dias_*`) vs
   register-level keys (`tolerancia_pago`, `importe_envio`). Route: delegated.
 
@@ -157,7 +157,33 @@ Forecast ~3,500 authored lines over six tasks (T2 is the largest, ~1,200).
   muertos: guard del movimiento, guard de uso y de cajas vivas de la baja, misma empresa (alta y movimiento),
   cascada de baja de la sucursal vacía, `TryGetValue`. Diferido: los ajustes web de Tablero siguen por PV.
 
+- 2026-10-31: T5 done. `POST /api/sucursales/{id}/fusionar {idSucursalDestino}` (GestionDeOrganizacion): 404 primero para
+  origen o destino inexistente, dado de baja o de otro tenant; 400 `sucursal_destino_requerida` / `fusion_misma_sucursal`
+  (mismo criterio que `transferencia_origen_igual_destino`); 409 `sucursal_de_otra_empresa`. Una transacción sin reintento:
+  cajas vivas del origen → destino; `EscritorDeStock.FusionarSucursalesAsync` (primitiva nueva del único escritor) asienta un
+  par `transferencia` por saldo no nulo (agregado fuera de lotes y cada lote, negativos incluidos), egreso en el origen e
+  ingreso en el destino con `id_sucursal_destino`; el origen queda en cero y con `deleted_at`, rastro único
+  `sucursal.fusion` (destino, ids de cajas, artículos, lotes, movimientos). Motivo: `transferencia` (sin motivo nuevo ni
+  migración; las observaciones dicen "Fusión de la sucursal X en Y"). Umbrales: el destino conserva su par
+  `minimo`/`reposicion`; donde no tiene ninguno de los dos toma el par del origen. Caja firmante: la viva de menor id de cada
+  lado (o la del otro lado); sin cajas en ninguna, solo un origen sin saldo (409 `sucursal_sin_puntos_venta`). Locks: advisory
+  del tenant → `FOR UPDATE` de las cajas de las dos sucursales en orden de id → stock de las dos sucursales en orden de
+  sucursal, agregados antes que lotes. Seguimientos de T4: la transferencia relee la sucursal de cada caja con `FOR SHARE` en
+  orden de id (el mismo de la fusión) y rechaza 409 `sucursal_cambio_durante_transferencia` si difiere de la pedida (o, por
+  caja, de la leída antes; reemplaza el chequeo en transacción de misma sucursal, que ya no podía dispararse); la baja de caja
+  lee solo el tenant antes de los locks y la caja una sola vez después; la confirmación de Transferencias dice "entre
+  sucursales". Web: botón "Fusionar" por fila en Sucursales, modal con destino de la misma empresa (sin el origen), texto de
+  lo que pasa y casilla de confirmación; escritura con guarda síncrona y pantalla inerte hasta el refresco.
+  Checks: build 0 errores; Domain 2111 ✔; Application 1476 ✔ (guards); integración filtrada 984 ✔ (24 min, una sola corrida); web build ✔,
+  vitest 8899 ✔ (sin flakes). RED antes del código: la baja de caja (aserción de la cascada) y los 400/409 de la fusión (sin
+  ruta; el de 404 pasaba en falso); la suma de la fusión y la carrera de la transferencia fallaban por la siembra, así que su
+  RED es por mutación. Mutantes muertos: sin lotes, sin negativos, sin par de movimientos
+  (solo saldos), sin baja del origen, sin chequeo de misma empresa, sin chequeo de cambio de sucursal en la transferencia,
+  pre-lectura trackeada en la baja de caja. Prueba de concurrencia: seis ventas en las dos cajas durante la fusión, sin
+  deadlock y con la suma conservada (no determinista; el argumento de orden está en el comentario del servicio).
+  Diferido: la baja de caja que se lleva su sucursal vacía no deja `sucursal.baja` (la marca sin rastro, desde T1).
+
 ## Next step
 
-T5 (condicional a la instalación actual del cliente: fusión de dos sucursales con stock) o T6 (`parametros`
-por sucursal).
+T6: `parametros` por sucursal (`lotes_habilitado`, `zona_horaria`, `dias_*`) frente a los de caja
+(`tolerancia_pago`, `importe_envio`).
