@@ -54,6 +54,12 @@ public static class EscalonesDeCantidad
     /// crecería decenas de escalones por artículo; pasado el tope rige <see cref="SinLaPrioridadEnCompetencia"/>.</summary>
     public const int MaximoDePuntosDeQuiebre = 64;
 
+    /// <summary>Tope de celdas de una grilla de familia con puntos de quiebre, ya colapsada. Las filas y las columnas
+    /// pueden sumar <see cref="MaximoDePuntosDeQuiebre"/> puntos, así que el producto llegaría a unas mil celdas por
+    /// artículo y lista; colapsada, una grilla en la que solo un eje decide por fila queda en una celda por fila. Pasado
+    /// el tope rige <see cref="SinLaPrioridadEnCompetencia"/>: el dispositivo nunca cobra menos que el servidor.</summary>
+    public const int MaximoDeCeldasDeFamilia = 128;
+
     /// <summary>La menor diferencia entre dos cantidades del punto de venta: tres decimales, como <c>cantidad</c>.</summary>
     public const decimal PasoDeCantidad = 0.001m;
 
@@ -122,8 +128,9 @@ public static class EscalonesDeCantidad
     /// con <see cref="SinLaPrioridadEnCompetencia"/> y una fila más en la cantidad de familia siguiente a la de la línea
     /// hace que la grilla rija apenas la familia crece.</para>
     ///
-    /// <para>Las celdas no se colapsan: son pocas (los umbrales de un artículo) y una celda
-    /// repetida no puede dar un precio distinto del que el motor da.</para>
+    /// <para>Las celdas se colapsan (<see cref="Celdas"/>): una fila o una columna que no cambia lo que el dispositivo
+    /// cobra no viaja. Si aun así pasan de <see cref="MaximoDeCeldasDeFamilia"/>, rige el mismo recurso que para los
+    /// puntos de quiebre, cuyas celdas son solo las de los umbrales.</para>
     /// </summary>
     public static IReadOnlyList<CeldaDeFamilia> ConstruirGrillaDeFamilia(
         in LineaAResolver linea, IReadOnlyList<OfertaCandidata> candidatas)
@@ -150,7 +157,6 @@ public static class EscalonesDeCantidad
             }
         }
 
-        var resolverCon = candidatas;
         var pares = Pares(Competidoras(linea, candidatas, desplazamientoDeFamilia: 0m));
         if (umbralesDeFamilia.Count == 0 && !pares.Any(p => EsDeFamilia(p.Estricta) || EsSoloMultiplosDeFamilia(p.Otra)))
         {
@@ -166,24 +172,56 @@ public static class EscalonesDeCantidad
         if (puntosDeFamilia is not null && puntosPropios is not null &&
             puntosDeFamilia.Count + puntosPropios.Count <= MaximoDePuntosDeQuiebre)
         {
-            umbralesDeFamilia.UnionWith(puntosDeFamilia);
-            umbralesPropios.UnionWith(puntosPropios);
-        }
-        else
-        {
-            resolverCon = SinLaPrioridadEnCompetencia(candidatas, pares);
-            umbralesDeFamilia.Add(linea.CantidadDeFamilia + PasoDeCantidad);
+            var celdas = Celdas(
+                linea, [.. umbralesDeFamilia, .. puntosDeFamilia], [.. umbralesPropios, .. puntosPropios], candidatas);
+            if (celdas.Count <= MaximoDeCeldasDeFamilia || pares.Count == 0)
+            {
+                return celdas;
+            }
         }
 
-        var celdas = new List<CeldaDeFamilia>(umbralesDeFamilia.Count * umbralesPropios.Count);
-        foreach (var deFamiliaDesde in umbralesDeFamilia)
+        return Celdas(
+            linea, [.. umbralesDeFamilia, linea.CantidadDeFamilia + PasoDeCantidad], umbralesPropios,
+            SinLaPrioridadEnCompetencia(candidatas, pares));
+    }
+
+    /// <summary>Las celdas de las filas × columnas, resueltas por el motor real con ambas cantidades fijadas, sin las que
+    /// el dispositivo no necesita: una fila igual a la anterior conservada en todas sus columnas, y dentro de una fila una
+    /// columna igual a la anterior conservada (<see cref="MismoResultado"/>). El dispositivo toma la última fila y, en
+    /// ella, la última columna que entran en las cantidades del carrito, así que lo que descartan las dos reglas es
+    /// exactamente lo que ya elegía. La primera columna de cada fila se queda siempre: es la que rige debajo de todas.</summary>
+    private static List<CeldaDeFamilia> Celdas(
+        in LineaAResolver linea, SortedSet<decimal> filas, SortedSet<decimal> columnas,
+        IReadOnlyList<OfertaCandidata> resolverCon)
+    {
+        var celdas = new List<CeldaDeFamilia>();
+        List<PrecioConOfertas>? filaConservada = null;
+
+        foreach (var deFamiliaDesde in filas)
         {
-            foreach (var propio in umbralesPropios)
+            var fila = new List<PrecioConOfertas>(columnas.Count);
+            foreach (var propio in columnas)
             {
-                celdas.Add(new CeldaDeFamilia(
-                    deFamiliaDesde, propio,
-                    ResolvedorDeOfertas.Resolver(
-                        linea with { Cantidad = propio, CantidadDeFamilia = deFamiliaDesde }, resolverCon)));
+                fila.Add(ResolvedorDeOfertas.Resolver(
+                    linea with { Cantidad = propio, CantidadDeFamilia = deFamiliaDesde }, resolverCon));
+            }
+
+            if (filaConservada is not null && fila.Zip(filaConservada).All(par => MismoResultado(par.First, par.Second)))
+            {
+                continue;
+            }
+
+            filaConservada = fila;
+            PrecioConOfertas? vigente = null;
+            var i = 0;
+            foreach (var propio in columnas)
+            {
+                var resolucion = fila[i++];
+                if (vigente is not { } anterior || !MismoResultado(anterior, resolucion))
+                {
+                    celdas.Add(new CeldaDeFamilia(deFamiliaDesde, propio, resolucion));
+                    vigente = resolucion;
+                }
             }
         }
 
@@ -252,8 +290,8 @@ public static class EscalonesDeCantidad
     /// (<see cref="PasoDeCantidad"/>); uno que cae justo en una empata ahí y se desempata por descuento unitario e id, así
     /// que se agregan esa y la siguiente. La competencia termina: si la "solo múltiplos" tiene más descuento unitario
     /// <c>dS</c> que la otra <c>dO</c>, gana siempre a partir de <c>Q &gt; dS × N / (dS − dO)</c>; con menos, no gana
-    /// nunca; con el mismo, contra una común gana justo en los múltiplos si su id es menor (infinitos quiebres,
-    /// <c>null</c>).</para>
+    /// nunca; con el mismo, contra una común no gana nunca (en los múltiplos empatan y el desempate prefiere la común) y
+    /// contra otra "solo múltiplos" de otro tamaño de grupo alterna para siempre (<c>null</c>).</para>
     ///
     /// <para>Una "solo múltiplos" de familia se mide con la cantidad de la familia, que en la curva se mueve junto con la
     /// de la línea (<see cref="ConCantidad"/>).</para>
@@ -429,9 +467,7 @@ public static class EscalonesDeCantidad
             return true;
         }
 
-        return otra.Multiplo is null
-            ? estricta.Candidata.Id > otra.Candidata.Id
-            : otra.Multiplo == multiplo && otra.Desplazamiento == estricta.Desplazamiento;
+        return otra.Multiplo is null || (otra.Multiplo == multiplo && otra.Desplazamiento == estricta.Desplazamiento);
     }
 
     /// <summary>La cantidad del eje en la que las claves de <paramref name="estricta"/> y <paramref name="otra"/> se
