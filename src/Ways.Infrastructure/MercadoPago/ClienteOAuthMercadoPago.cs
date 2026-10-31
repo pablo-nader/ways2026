@@ -94,7 +94,8 @@ public sealed class ClienteOAuthMercadoPago(
 
             try
             {
-                var cuerpo = await respuesta.Content.ReadFromJsonAsync<RespuestaDeToken>(ct);
+                var bytes = await respuesta.Content.ReadAsByteArrayAsync(ct);
+                var cuerpo = JsonSerializer.Deserialize<RespuestaDeToken>(bytes);
                 if (cuerpo is { AccessToken: { Length: > 0 } acceso, RefreshToken: { Length: > 0 } renovacion, ExpiresIn: > 0 and var expira, UserId: > 0 and var usuario })
                 {
                     return new TokensDeMercadoPago(acceso, renovacion, expira, usuario);
@@ -102,7 +103,8 @@ public sealed class ClienteOAuthMercadoPago(
             }
             catch (JsonException)
             {
-                // Se trata igual que una respuesta incompleta, sin volcar el cuerpo.
+                // Se trata igual que una respuesta incompleta, sin volcar el cuerpo. Se leen los bytes y no el texto ni
+                // ReadFromJsonAsync, que lanzan InvalidOperationException ante un charset desconocido en el encabezado.
             }
 
             log.LogWarning("Mercado Pago devolvió una respuesta de tokens incompleta ({GrantType}).", solicitud.GrantType);

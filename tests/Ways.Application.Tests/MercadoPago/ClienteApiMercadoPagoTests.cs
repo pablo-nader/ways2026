@@ -34,15 +34,40 @@ public class ClienteApiMercadoPagoTests
 
         public List<TokenDelVendedorMercadoPago> Rechazados { get; } = [];
 
-        public Task<TokenDelVendedorMercadoPago> ObtenerAccessTokenAsync(int idEmpresa, CancellationToken ct = default) =>
-            Falla is null
-                ? Task.FromResult(new TokenDelVendedorMercadoPago(11, 987654321, Token, Expira))
-                : Task.FromException<TokenDelVendedorMercadoPago>(Falla);
+        /// <summary>Lo que devuelve la marca del rechazo: <c>false</c> es el 401 viejo, cuya fila ya cambió con una renovación.</summary>
+        public bool CambiaFila { get; set; } = true;
+
+        /// <summary>Fallas de la segunda lectura en adelante (la primera usa <see cref="Falla"/>).</summary>
+        public Exception? FallaEnLaRelectura { get; set; }
+
+        /// <summary>Tokens que devuelven las lecturas posteriores a la primera; agotados, repite el último.</summary>
+        public Queue<TokenDelVendedorMercadoPago> Relecturas { get; } = new();
+
+        public int Lecturas { get; private set; }
+
+        public Task<TokenDelVendedorMercadoPago> ObtenerAccessTokenAsync(int idEmpresa, CancellationToken ct = default)
+        {
+            Lecturas++;
+            if (Lecturas > 1 && FallaEnLaRelectura is not null)
+            {
+                return Task.FromException<TokenDelVendedorMercadoPago>(FallaEnLaRelectura);
+            }
+
+            if (Falla is not null)
+            {
+                return Task.FromException<TokenDelVendedorMercadoPago>(Falla);
+            }
+
+            return Task.FromResult(
+                Lecturas > 1 && Relecturas.Count > 0
+                    ? Relecturas.Dequeue()
+                    : new TokenDelVendedorMercadoPago(11, 987654321, Token, Expira));
+        }
 
         public Task<bool> MarcarTokenRechazadoAsync(TokenDelVendedorMercadoPago token, CancellationToken ct = default)
         {
             Rechazados.Add(token);
-            return FallaAlMarcar is null ? Task.FromResult(true) : Task.FromException<bool>(FallaAlMarcar);
+            return FallaAlMarcar is null ? Task.FromResult(CambiaFila) : Task.FromException<bool>(FallaAlMarcar);
         }
     }
 
@@ -224,6 +249,104 @@ public class ClienteApiMercadoPagoTests
         var rechazado = Assert.Single(proveedor.Rechazados);
         Assert.Equal(11, rechazado.IdConexion);
         Assert.Equal(Expira, rechazado.ExpiraEn);
+    }
+
+    private const string TokenRenovado = "APP_USR-7654321-token-renovado-que-tampoco-debe-salir";
+
+    private static readonly TokenDelVendedorMercadoPago Renovado = new(11, 987654321, TokenRenovado, Expira.AddDays(180));
+
+    private static HttpResponseMessage Responder401Luego200(HttpRequestMessage pedido, int vez) =>
+        vez == 1
+            ? Json(HttpStatusCode.Unauthorized, """{"message":"invalid access token"}""")
+            : Json(HttpStatusCode.OK, """{"id":5,"nombre_completo":"Caja 1"}""");
+
+    [Fact]
+    public async Task UnRechazo401ViejoQueNoCambioLaFilaReintentaUnaVezConElTokenRenovadoConLaMismaClaveYElMismoCuerpo()
+    {
+        var vez = 0;
+        var (cliente, manejador, proveedor, _) = Crear((pedido, _) => Responder401Luego200(pedido, ++vez));
+        proveedor.CambiaFila = false;
+        proveedor.Relecturas.Enqueue(Renovado);
+
+        var eco = await cliente.EnviarAsync<Eco>(
+            IdEmpresa, HttpMethod.Post, "/v2/pos", new CuerpoDePrueba("Caja 1", null, 12), "clave-1");
+
+        Assert.Equal(new Eco(5, "Caja 1"), eco);
+        Assert.Equal(2, manejador.Pedidos.Count);
+        var (primero, cuerpoPrimero) = manejador.Pedidos[0];
+        var (segundo, cuerpoSegundo) = manejador.Pedidos[1];
+        Assert.Equal(Token, primero.Headers.Authorization!.Parameter);
+        Assert.Equal(TokenRenovado, segundo.Headers.Authorization!.Parameter);
+        Assert.Equal(["clave-1"], segundo.Headers.GetValues(ClienteApiMercadoPago.EncabezadoDeIdempotencia));
+        Assert.Equal(cuerpoPrimero, cuerpoSegundo);
+        Assert.Equal(HttpMethod.Post, segundo.Method);
+        Assert.Equal(primero.RequestUri, segundo.RequestUri);
+        Assert.Equal(2, proveedor.Lecturas);
+        Assert.Single(proveedor.Rechazados);
+    }
+
+    [Fact]
+    public async Task UnSegundo401TrasElReintentoSigueElCaminoNormalYNuncaHayUnTercerPedido()
+    {
+        var (cliente, manejador, proveedor, logs) = Crear((_, _) => Json(HttpStatusCode.Unauthorized, """{"message":"invalid access token"}"""));
+        proveedor.CambiaFila = false;
+        proveedor.Relecturas.Enqueue(Renovado);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Post, "v2/pos", new CuerpoDePrueba("Caja 1", null, 12), "clave-1"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.RequiereReconexion, error.Codigo);
+        Assert.Equal(2, manejador.Pedidos.Count);
+        Assert.Equal(2, proveedor.Rechazados.Count);
+        Assert.Equal(TokenRenovado, proveedor.Rechazados[1].AccessToken);
+        Assert.Equal(2, proveedor.Lecturas);
+        Assert.All(logs.Mensajes, m =>
+        {
+            Assert.DoesNotContain(Token, m);
+            Assert.DoesNotContain(TokenRenovado, m);
+        });
+    }
+
+    [Fact]
+    public async Task UnRechazo401ViejoSinUnTokenMasNuevoNoReintentaYPideReconectar()
+    {
+        var (cliente, manejador, proveedor, _) = Crear((_, _) => Json(HttpStatusCode.Unauthorized, """{"message":"invalid access token"}"""));
+        proveedor.CambiaFila = false;
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Get, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.RequiereReconexion, error.Codigo);
+        Assert.Single(manejador.Pedidos);
+        Assert.Equal(2, proveedor.Lecturas);
+    }
+
+    [Theory]
+    [InlineData(CodigosDeErrorDeMercadoPago.RequiereReconexion)]
+    [InlineData(CodigosDeErrorDeMercadoPago.NoConectada)]
+    public async Task UnRechazo401ViejoConUnaConexionQueYaNoEstaActivaConservaLaRespuestaDeSiempre(string codigoDeLaRelectura)
+    {
+        var (cliente, manejador, proveedor, _) = Crear((_, _) => Json(HttpStatusCode.Unauthorized, """{"message":"invalid access token"}"""));
+        proveedor.CambiaFila = false;
+        proveedor.FallaEnLaRelectura = new ErrorDominio(codigoDeLaRelectura, "ya no está activa", 409);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Get, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.RequiereReconexion, error.Codigo);
+        Assert.Equal(409, error.EstadoHttp);
+        Assert.Single(manejador.Pedidos);
+    }
+
+    [Fact]
+    public async Task UnRechazo401QueSiCambioLaFilaNuncaReintenta()
+    {
+        var (cliente, manejador, proveedor, _) = Crear((_, _) => Json(HttpStatusCode.Unauthorized, """{"message":"invalid access token"}"""));
+        proveedor.Relecturas.Enqueue(Renovado);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => cliente.EnviarAsync<Eco>(IdEmpresa, HttpMethod.Get, "v2/pos"));
+
+        Assert.Equal(CodigosDeErrorDeMercadoPago.RequiereReconexion, error.Codigo);
+        Assert.Single(manejador.Pedidos);
+        Assert.Equal(1, proveedor.Lecturas);
     }
 
     // ---- Otros 4xx --------------------------------------------------------------------------------------------------

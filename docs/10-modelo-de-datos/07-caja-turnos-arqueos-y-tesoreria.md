@@ -288,6 +288,7 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
     estado text NOT NULL,                    -- 'activa' | 'desconectada' | 'requiere_reconexion' (texto con CHECK, sin enum nativo)
     id_usuario_conecto,                      -- usuario de Ways que inició la conexión
     fecha_conexion timestamptz NOT NULL, fecha_desconexion NULL, fecha_ultima_renovacion NULL,
+    id_usuario_desconecto int NULL,          -- usuario de Ways que la desconectó (NULL mientras no se desconecta y en las anteriores a este campo)
     fecha_requiere_reconexion timestamptz NULL,  -- cuándo la renovación automática la marcó 'requiere_reconexion'
     fecha_ultimo_intento_renovacion timestamptz NULL,  -- último intento de renovar el token que falló (backoff de la renovación previa al uso)
     created_at, updated_at, deleted_at
@@ -304,7 +305,7 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > Constraints: FK `fk_conexiones_mercadopago_tenant` (simple), `fk_conexiones_mercadopago_empresa` (compuesta
 > `(id_empresa, id_tenant)`), `fk_conexiones_mercadopago_cuenta_tesoreria` (compuesta `(id_cuenta_tesoreria, id_empresa,
 > id_tenant)` contra la clave alterna nueva `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_empresa_id_tenant`: la base rechaza una
-> cuenta de otra empresa) y `fk_conexiones_mercadopago_usuario_conecto` (simple a `usuarios`); todas RESTRICT. CHECK
+> cuenta de otra empresa) y `fk_conexiones_mercadopago_usuario_conecto` y `fk_conexiones_mercadopago_usuario_desconecto` (simples a `usuarios`, la segunda nullable); todas RESTRICT. CHECK
 > `ck_conexiones_mercadopago_estado` (`activa`, `desconectada` o `requiere_reconexion`), `ck_conexiones_mercadopago_activa` (activa implica los seis
 > campos de cifrado presentes con nonce de 12 bytes, tag de 16 y blob no vacío, y `fecha_desconexion` y `fecha_requiere_reconexion` nulas),
 > `ck_conexiones_mercadopago_desconectada` (desconectada implica `fecha_desconexion` y los seis campos en `NULL`) y
@@ -313,7 +314,7 @@ conexiones_mercadopago (      -- [operativa por empresa: id_tenant + id_empresa 
 > `ux_conexiones_mercadopago_usuario_activa` `(id_usuario_mercadopago)`, SIN `id_tenant`: una cuenta de Mercado Pago está activa en
 > una sola empresa de todo el sistema (los webhooks resuelven la empresa desde ese id). `ManejadorDeErrores` traduce sus 23505 a
 > 409 `mercadopago_ya_conectada` y `mercadopago_cuenta_en_uso`; el endpoint autenticado `.../completar` los devuelve como tales. Índices de
-> soporte: `ix_conexiones_mercadopago_tenant`, `_empresa`, `_cuenta` y `_usuario_conecto`. RLS estándar.
+> soporte: `ix_conexiones_mercadopago_tenant`, `_empresa`, `_cuenta`, `_usuario_conecto` y `_usuario_desconecto`. Se puede desconectar una conexión `activa` o una que `requiere_reconexion` (pasa a `desconectada`, conserva `fecha_requiere_reconexion` como historia y registra `id_usuario_desconecto`). El `Down()` de `RenovacionDeConexionesMercadoPago` convierte las `requiere_reconexion` en `desconectada` (con su fecha de marca como `fecha_desconexion`) antes de restaurar el CHECK de dos valores. RLS estándar.
 >
 > **Efecto sobre `cuentas_tesoreria`:** la baja lógica de una cuenta con cualquier conexión (activa o desconectada) falla con 409
 > `cuenta_tesoreria_en_uso`, porque la guarda de referencias recorre las FK del modelo. El inventario de dependientes de las bajas de
