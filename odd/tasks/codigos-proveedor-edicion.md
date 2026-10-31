@@ -28,7 +28,15 @@ No schema change. `codigos_proveedor` (doc 10, articulos part) already has `dele
 ## Tasks
 
 - [x] T1 — Backend GET/PUT/DELETE + unit and integration tests. Route: delegated direct (writer trigger: service, endpoints, contracts and tests = 2+ non-trivial files). Evidence: build 0 errors; Domain.Tests 2108/2108; full IntegrationTests 5736/5736 (13 new tests, two race tests); mutation evidence for the "excluding itself" clause and the 404-first ordering. No schema change: the existing 23505 translation already covers edits.
-- [ ] T2 — Web section with table, add/edit/delete + Vitest tests. Route: delegated direct (writer trigger: component, client, types and tests).
+- [x] T2 — Web section with table, add/edit/delete + Vitest tests. Route: delegated direct (writer trigger: component, client, types and tests). Evidence: `tsc -b` clean; lint clean on new files; full vitest 8880/8880; parent spot check of the 3 touched test files 46/46.
+
+## Judgment day (2026-10-31)
+
+Both slices `JUDGMENT: APPROVED` in round 1 (no CRITICAL from either judge). Info carried as follow-ups:
+
+- Backend (both judges, WARNING/SUGGESTION): a concurrent PUT and DELETE on the same code were not serialized (FOR KEY SHARE only on the article). **Resolved** in commit 264c9278 at the owner's request: `FOR UPDATE` on the code row with the live predicate in its WHERE, two deterministic race tests (PUT and DELETE → 404), mutation evidence (removing `FOR UPDATE` turns both red); class 50/50, structural guards 169/169; scoped re-judgment by both judges: fixed, nothing introduced.
+- Web (judge B, WARNING): with more than 200 suppliers the list is truncated; a supplier outside it shows "(no disponible)" and the add select can hold a habitual supplier it does not show (use `opcionesConValorActual`).
+- Web (suggestions): error banner without `role="alert"`, focus not restored after a failed save, empty-state text shown when the initial load fails.
 
 ## Acceptance criteria
 
