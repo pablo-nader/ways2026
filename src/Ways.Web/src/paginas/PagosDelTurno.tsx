@@ -172,8 +172,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     }
   }, [])
 
-  /** Con `propagar`, un fallo vigente se relanza sin tocar el banner ni el detalle: lo avisa quien refresca tras una escritura. */
-  async function cargarDetalle(idTurno: number, miGeneracion: number, propagar = false) {
+  async function cargarDetalle(idTurno: number, miGeneracion: number) {
     setCargandoDetalle(true)
     setErrorDetalle('')
     try {
@@ -182,7 +181,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
       setDetalle(datos)
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
-      if (propagar) throw e
       setDetalle(null)
       setErrorDetalle(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos del turno.')
     } finally {
@@ -237,14 +235,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     setObservaciones('')
     setOrigenFondos('CajaTurno')
   }
-  /** Si la escritura ya se confirmó, un fallo del refresco no la desdice: se avisa aparte. */
-  async function refrescarDetalle(idTurno: number, miGeneracion: number, escrituraConfirmada: boolean) {
-    try {
-      await cargarDetalle(idTurno, miGeneracion, escrituraConfirmada)
-    } catch (e) {
-      toast.advertencia(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos del turno.')
-    }
-  }
 
   async function registrarPago() {
     // regla 11 (react-async-state): guard de reentrancia de primera línea — un doble click en el
@@ -267,7 +257,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     // regla 3: bumpea la generación ANTES de la escritura — cualquier carga de detalle en vuelo
     // desde antes de este alta queda obsoleta aunque su respuesta llegue después.
     const miGeneracion = (generacionRef.current += 1)
-    let escrituraConfirmada = false
 
     try {
       await clienteDePagos.registrar(
@@ -281,7 +270,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
           origenFondos,
         }),
       )
-      escrituraConfirmada = true
       // El alta ya está confirmada: el cajón se abre aunque la respuesta llegue desactualizada.
       if (abreElCajon) {
         try {
@@ -295,7 +283,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
       toast.exito('Pago registrado.')
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
-      toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
+      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
     } finally {
       guardandoRef.current = false
       if (generacionRef.current === miGeneracion) setGuardando(false)
@@ -304,7 +292,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     // regla 6: el refresco del detalle queda aislado del try/catch de la escritura — un alta ya
     // confirmada nunca se reporta como fallida aunque el refresco falle, y corre también tras un
     // error de escritura (por si algo cambió igual, mismo criterio que `Caja.tsx`).
-    await refrescarDetalle(turno.id, miGeneracion, escrituraConfirmada)
+    await cargarDetalle(turno.id, miGeneracion)
   }
 
   function abrirEdicion(pago: PagoDeTurno) {
@@ -331,11 +319,9 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
 
     // regla 3: invalida cualquier carga del detalle anterior a esta escritura.
     const miGeneracion = (generacionRef.current += 1)
-    let escrituraConfirmada = false
 
     try {
       await clienteDePagos.actualizar(edicion.id, solicitud)
-      escrituraConfirmada = true
       if (generacionRef.current !== miGeneracion) return
       setEdicion(null)
       toast.exito('Pago actualizado.')
@@ -351,7 +337,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
 
     // regla 6: el refresco queda aislado de la escritura; tras un 409 también corre, así el
     // `turnoAbierto` de la fila queda al día.
-    await refrescarDetalle(turno.id, miGeneracion, escrituraConfirmada)
+    await cargarDetalle(turno.id, miGeneracion)
   }
 
   const bloqueado = guardando || guardandoEdicion || edicion !== null

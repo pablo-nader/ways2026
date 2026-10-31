@@ -73,6 +73,13 @@ function renderCuenta(ruta = '/personal/1/cuenta') {
   )
 }
 
+/** El refresco fallido tras una escritura confirmada queda en un banner persistente, nunca en un toast. */
+async function bannerDeRefrescoFallido() {
+  const aviso = await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')
+  expect(aviso.closest('[role="alert"]')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).toBeNull()
+}
+
 /** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
 async function toastDeExito(texto: string) {
   const aviso = await screen.findByText(texto)
@@ -854,9 +861,9 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     expect(screen.getByTestId('ruta')).toHaveTextContent('/personal')
   })
 
-  /** Cláusula bajo prueba: la rama `catch` de `refrescarTrasEscribir`. Una escritura confirmada nunca se
+  /** Cláusula bajo prueba: `avisoDeRefrescoFallido`. Una escritura confirmada nunca se
    * reporta como fallida, aunque el refresco posterior explote. */
-  it('un refresco fallido después de escribir avisa que se registró y cierra la modal', async () => {
+  it('un refresco fallido después de escribir deja un banner persistente y cierra la modal', async () => {
     let lecturasHechas = 0
     mockearRutas({
       cuenta: () => (++lecturasHechas === 1 ? Promise.resolve(paginaDeCuenta()) : Promise.reject(new ErrorApi(500, 'error', 'Se cayó.'))),
@@ -869,12 +876,12 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
     await toastDeExito('Horas cargadas.')
-    expect((await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')).closest('[role="status"]')).not.toBeNull()
+    await bannerDeRefrescoFallido()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.queryByText('Se cayó.')).not.toBeInTheDocument()
   })
 
-  it('un refresco de la deuda del cliente fallido también avisa', async () => {
+  it('un refresco de la deuda del cliente fallido también deja el banner persistente', async () => {
     let lecturasDeDeuda = 0
     mockearRutas({
       cliente: () => (++lecturasDeDeuda === 1 ? Promise.resolve(cliente(750)) : Promise.reject(new ErrorApi(500, 'error', 'Se cayó.'))),
@@ -888,7 +895,7 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
     await toastDeExito('Horas cargadas.')
-    expect((await screen.findByText('No se pudo actualizar la vista. Recargá la pantalla.')).closest('[role="status"]')).not.toBeNull()
+    await bannerDeRefrescoFallido()
   })
 
   it('el rechazo de un envío anterior desaparece apenas empieza el reintento, antes de que responda', async () => {

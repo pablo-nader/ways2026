@@ -240,14 +240,12 @@ function PantallaCuentaCorrienteDeProveedor({
 
   // regla 2: cada cambio de filtro/página dispara una nueva consulta — una respuesta
   // desactualizada nunca puede pisar la más reciente.
-  // Con `propagar`, un fallo vigente se relanza sin tocar el banner ni la página: lo avisa quien
-  // refresca tras una escritura.
-  const cargar = useCallback((propagar = false) => {
+  const cargar = useCallback(() => {
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
 
-    return clienteDeCuentaCorrienteDeProveedor
+    clienteDeCuentaCorrienteDeProveedor
       .obtenerEstado(idProveedor, filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
@@ -255,7 +253,6 @@ function PantallaCuentaCorrienteDeProveedor({
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
-        if (propagar) throw e
         setPagina(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
       })
@@ -266,17 +263,8 @@ function PantallaCuentaCorrienteDeProveedor({
   }, [idProveedor, filtros, orden])
 
   useEffect(() => {
-    void cargar()
+    cargar()
   }, [cargar])
-
-  // El éxito de la escritura ya se avisó: si el refresco falla, no lo desdice y se avisa aparte.
-  async function refrescarTrasEscribir() {
-    try {
-      await cargar(true)
-    } catch (e) {
-      toast.advertencia(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
-    }
-  }
 
   // Ascendente → descendente → orden del libro. Cambiar el orden vuelve a la página 1 y conserva el rango; los dos
   // setState se agrupan en un solo render, es decir en una sola consulta.
@@ -516,7 +504,7 @@ function PantallaCuentaCorrienteDeProveedor({
           onPagado={(resultado) => {
             setCompraAPagar(null)
             toast.exito(textoDePagoRegistrado(resultado, formatearMoneda))
-            void refrescarTrasEscribir()
+            cargar()
           }}
         />
       )}
@@ -535,7 +523,7 @@ function PantallaCuentaCorrienteDeProveedor({
             toast.exito(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal — si
             // falla, no pisa el toast de éxito de arriba.
-            void refrescarTrasEscribir()
+            cargar()
           }}
         />
       )}

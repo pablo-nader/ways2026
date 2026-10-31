@@ -26,6 +26,14 @@ function renderPagos() {
   )
 }
 
+/** El fallo de carga queda en el banner persistente de la pantalla: ni es un toast ni hay uno con su texto. */
+async function bannerDeCargaPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
+}
+
 /** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
 async function toastDeExito(texto: string) {
   const aviso = await screen.findByText(texto)
@@ -427,6 +435,47 @@ describe('Pagos (administración) — alta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ fecha: '2026-01-15' })))
+  })
+
+  it('si el listado no se puede refrescar tras el alta, el éxito va en un toast y el fallo queda en el banner', async () => {
+    mockearRutas({})
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await abrirYCompletarFormulario()
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/pagos/administracion')
+        ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El listado no responde.'))
+        : rutasOk(ruta),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await toastDeExito('Pago registrado.')
+    await bannerDeCargaPersistente('El listado no responde.')
+  })
+
+  it('un error de carga previo sigue en pantalla, sin falso vacío, cuando el refresco posterior al alta también falla', async () => {
+    mockearRutas({})
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/pagos/administracion')
+        ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El listado no responde.'))
+        : rutasOk(ruta),
+    )
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    renderPagos()
+
+    await bannerDeCargaPersistente('El listado no responde.')
+    await abrirYCompletarFormulario()
+    const llamadasAlListado = () => apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/pagos/administracion')).length
+    const antes = llamadasAlListado()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await toastDeExito('Pago registrado.')
+    await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+    await bannerDeCargaPersistente('El listado no responde.')
+    expect(screen.queryByText('No hay pagos que coincidan con los filtros.')).not.toBeInTheDocument()
   })
 
   it('al confirmar con éxito, limpia y cierra el formulario, y refresca el listado', async () => {
@@ -1147,7 +1196,7 @@ describe('Pagos (administración) — edición y baja', () => {
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
   })
 
-  it('si el listado no se puede refrescar tras eliminar, avisa el éxito y el fallo con toasts, sin banner de carga', async () => {
+  it('si el listado no se puede refrescar tras eliminar, avisa el éxito con un toast y el fallo con el banner de carga persistente', async () => {
     mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
     apiDeleteMock.mockResolvedValueOnce(undefined)
     renderPagos()
@@ -1163,9 +1212,7 @@ describe('Pagos (administración) — edición y baja', () => {
     await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
 
     await toastDeExito('Pago eliminado.')
-    const advertencia = await screen.findByText('El listado no responde.')
-    expect(advertencia.closest('[role="status"]')).not.toBeNull()
-    expect(document.body.querySelector('.alert-danger')).toBeNull()
+    await bannerDeCargaPersistente('El listado no responde.')
   })
 
   it('cancelar la confirmación no elimina nada', async () => {

@@ -20,6 +20,14 @@ function render(ui: ReactElement) {
   )
 }
 
+/** Un aviso que no se puede perder queda en un banner de la pantalla: ni es un toast ni hay uno con su texto. */
+async function bannerPersistente(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('.ws-toaster')).toBeNull()
+  expect(screen.getAllByText(texto)).toHaveLength(1)
+}
+
 /** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
 async function toastDeExito(texto: string) {
   const aviso = await screen.findByText(texto)
@@ -411,7 +419,7 @@ describe('PagosDelTurno — alta', () => {
     await screen.findByText('$ 500,00')
   })
 
-  it('si el detalle no se puede refrescar tras el alta, avisa el éxito y el fallo con toasts, sin banner de carga', async () => {
+  it('si el detalle no se puede refrescar tras el alta, avisa el éxito con un toast y el fallo con el banner de carga persistente', async () => {
     mockearRutas({ detalle: detalleFixture() })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<PagosDelTurno />)
@@ -424,12 +432,24 @@ describe('PagosDelTurno — alta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await toastDeExito('Pago registrado.')
-    const advertencia = await screen.findByText('El detalle no responde.')
-    expect(advertencia.closest('[role="status"]')).not.toBeNull()
-    expect(document.body.querySelector('.alert-danger')).toBeNull()
+    await bannerPersistente('El detalle no responde.')
   })
 
-  it('un error del servidor se avisa con un toast de error y el formulario no se limpia', async () => {
+  it('un error de carga previo no se pierde cuando el refresco posterior al alta también falla', async () => {
+    mockearRutas({ errorDetalle: new ErrorApi(503, 'no_disponible', 'El detalle no responde.') })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<PagosDelTurno />)
+
+    await bannerPersistente('El detalle no responde.')
+    await completarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await toastDeExito('Pago registrado.')
+    await waitFor(() => expect(apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle')).length).toBeGreaterThanOrEqual(2))
+    await bannerPersistente('El detalle no responde.')
+  })
+
+  it('un error del servidor se avisa con un banner persistente y el formulario no se limpia', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({})
     apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_no_abierto', 'El turno ya no está abierto.'))
@@ -438,9 +458,31 @@ describe('PagosDelTurno — alta', () => {
     await completarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    expect((await screen.findByText('El turno ya no está abierto.')).closest('[role="alert"]')).not.toBeNull()
-    expect(document.body.querySelector('.alert-danger')).toBeNull()
+    await bannerPersistente('El turno ya no está abierto.')
     expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('500,00')
+  })
+
+  it('un 503 resultado_incierto del alta queda en un banner persistente, no en un toast que se va solo', async () => {
+    mockearRutas({})
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(503, 'resultado_incierto', 'No sabemos si el pago se registró. Revisá el listado antes de reintentar.'))
+    render(<PagosDelTurno />)
+
+    await completarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await bannerPersistente('No sabemos si el pago se registró. Revisá el listado antes de reintentar.')
+    expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('500,00')
+  })
+
+  it('una falla de red del alta queda en el banner persistente con el texto genérico', async () => {
+    mockearRutas({})
+    apiPostMock.mockRejectedValueOnce(new Error('Failed to fetch'))
+    render(<PagosDelTurno />)
+
+    await completarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await bannerPersistente('No se pudo registrar el pago.')
   })
 
   it('un importe en blanco o en cero se rechaza sin llegar a pegarle al servidor', async () => {
@@ -641,7 +683,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
       await registrar('Efectivo')
 
-      expect((await screen.findByText('No se pudo registrar el pago.')).closest('[role="alert"]')).not.toBeNull()
+      await bannerPersistente('No se pudo registrar el pago.')
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 

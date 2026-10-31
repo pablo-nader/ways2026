@@ -513,11 +513,12 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     // El ajuste 2xx se reporta como éxito (toast visible) SIEMPRE — el refetch fallido es un
-    // problema DISTINTO, visible aparte como advertencia y sin banner de carga, nunca disfrazado de
-    // fallo del ajuste (regla 6).
+    // problema DISTINTO, visible aparte en el banner de carga persistente, sin toast de advertencia,
+    // nunca disfrazado de fallo del ajuste (regla 6).
     await toastDeExito('Ajuste registrado: -$ 200,00.')
-    expect((await screen.findByText('falló el refresco')).closest('[role="status"]')).not.toBeNull()
-    expect(document.body.querySelector('.alert-danger')).toBeNull()
+    const banner = await screen.findByText('falló el refresco')
+    expect(banner.closest('.alert-danger')).not.toBeNull()
+    expect(banner.closest('[role="status"]')).toBeNull()
   })
 })
 

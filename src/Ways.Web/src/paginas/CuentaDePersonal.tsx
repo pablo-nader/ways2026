@@ -151,6 +151,8 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
 
   const [modal, setModal] = useState<ModalAbierta>(null)
   const [errorDeModal, setErrorDeModal] = useState<ErrorDeCuenta | null>(null)
+  /** Persistente: tras una escritura confirmada la vista pudo quedar vieja y un toast se iría antes de que se lea. */
+  const [avisoDeRefrescoFallido, setAvisoDeRefrescoFallido] = useState(false)
   /** Una entrada por escritura de resultado incierto. Solo se agregan y solo las quita su propio "Ya lo revisé". */
   const [avisosInciertos, setAvisosInciertos] = useState<{ id: number; texto: string }[]>([])
   const ultimoAvisoIncierto = useRef(0)
@@ -337,7 +339,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
       toast.exito(operacion.mensajeOk)
       const { ampliado, fallo } = await releerTrasEscribir(operacion.fecha)
       if (ampliado) toast.exito(notaDeRangoAmpliado(operacion.fecha))
-      if (fallo) toast.advertencia(AVISO_REFRESCO_FALLIDO)
+      setAvisoDeRefrescoFallido(fallo)
     } finally {
       ocupadoRef.current = false
       setEscribiendo(false)
@@ -387,6 +389,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   }
 
   function abrir(cual: Exclude<ModalAbierta, null>) {
+    setAvisoDeRefrescoFallido(false)
     setErrorDeModal(null)
     setHoy(fechaDeHoyParaPago())
     setModal(cual)
@@ -433,6 +436,11 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
             </button>
           </div>
         ))}
+        {avisoDeRefrescoFallido && (
+          <div role="alert" className="alert alert-warning">
+            {AVISO_REFRESCO_FALLIDO}
+          </div>
+        )}
         {errorEmpleado && (
           <div className="alert alert-danger d-flex justify-content-between align-items-center">
             {errorEmpleado}

@@ -196,7 +196,7 @@ export function Pagos() {
       setVinculando(false)
     }
 
-    void refrescarTrasEscribir()
+    cargar()
   }
 
   // Carga inicial: catálogos de tenant, independientes del filtro/formulario.
@@ -240,8 +240,7 @@ export function Pagos() {
     }
   }, [])
 
-  /** Con `propagar`, un fallo vigente se relanza sin tocar el banner: lo avisa quien refresca tras una escritura. */
-  const cargar = useCallback((propagar = false) => {
+  const cargar = useCallback(() => {
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
@@ -254,7 +253,6 @@ export function Pagos() {
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
-        if (propagar) throw e
         setPagina(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos.')
       })
@@ -267,15 +265,6 @@ export function Pagos() {
   useEffect(() => {
     cargar()
   }, [cargar])
-
-  /** El refresco posterior a una escritura ya confirmada: si falla, el éxito no se desdice y el fallo se avisa aparte. */
-  async function refrescarTrasEscribir() {
-    try {
-      await cargar(true)
-    } catch (e) {
-      toast.advertencia(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos.')
-    }
-  }
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDePagosDeAdministracion, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
@@ -342,7 +331,7 @@ export function Pagos() {
       setGuardando(false)
     }
 
-    void refrescarTrasEscribir()
+    cargar()
   }
 
   function abrirAlta() {
@@ -395,9 +384,9 @@ export function Pagos() {
 
       setEdicion(null)
       toast.exito('Pago actualizado.')
-      // regla 6: el refresco está aislado de la escritura; si falla, se avisa aparte y el
+      // regla 6: el refresco está aislado de la escritura; si falla, `error` lo dice aparte y el
       // toast de éxito se mantiene.
-      await refrescarTrasEscribir()
+      await cargar()
     } finally {
       // Sin gate de token a propósito: la guarda de ref impide otra escritura en vuelo.
       escribiendoRef.current = false
@@ -439,7 +428,7 @@ export function Pagos() {
       setBaja(null)
       setDisparadorDeLaBaja(null)
       toast.exito('Pago eliminado.')
-      await refrescarTrasEscribir()
+      await cargar()
     } finally {
       escribiendoRef.current = false
       setEliminando(false)

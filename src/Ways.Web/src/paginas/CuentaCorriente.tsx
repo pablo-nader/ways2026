@@ -662,14 +662,12 @@ function PantallaCuentaCorriente({
 
   // regla 2: cada cambio de filtro dispara una nueva consulta — una respuesta desactualizada
   // nunca puede pisar la más reciente.
-  // Con `propagar`, un fallo vigente se relanza sin tocar el banner ni el estado: lo avisa quien
-  // refresca tras una escritura.
-  const cargarEstado = useCallback((propagar = false) => {
+  const cargarEstado = useCallback(() => {
     const miGeneracion = (generacionEstadoRef.current += 1)
     setCargandoEstado(true)
     setErrorEstado('')
 
-    return clienteDeCuentaCorriente
+    clienteDeCuentaCorriente
       .obtenerEstado(idCliente, desde, hasta, historico)
       .then((datos) => {
         if (generacionEstadoRef.current !== miGeneracion) return
@@ -677,7 +675,6 @@ function PantallaCuentaCorriente({
       })
       .catch((e) => {
         if (generacionEstadoRef.current !== miGeneracion) return
-        if (propagar) throw e
         setEstado(null)
         setErrorEstado(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
       })
@@ -688,17 +685,8 @@ function PantallaCuentaCorriente({
   }, [idCliente, desde, hasta, historico])
 
   useEffect(() => {
-    void cargarEstado()
+    cargarEstado()
   }, [cargarEstado])
-
-  // El éxito de la escritura ya se avisó: si el refresco falla, no lo desdice y se avisa aparte.
-  async function refrescarEstadoTrasEscribir() {
-    try {
-      await cargarEstado(true)
-    } catch (e) {
-      toast.advertencia(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
-    }
-  }
 
   const esConsumidorFinal = clienteInfo?.esConsumidorFinal ?? false
   // Fix 2 (react-async-state regla 7): `clienteInfo !== null` falla cerrado tanto mientras la
@@ -909,7 +897,7 @@ function PantallaCuentaCorriente({
               versionExterna={versionCobros}
               onEscritura={(mensaje) => {
                 toast.exito(mensaje)
-                void refrescarEstadoTrasEscribir()
+                cargarEstado()
               }}
             />
           </>
@@ -932,7 +920,7 @@ function PantallaCuentaCorriente({
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal — si
             // falla, no pisa el toast de éxito de arriba (se avisa aparte).
             setVersionCobros((v) => v + 1)
-            void refrescarEstadoTrasEscribir()
+            cargarEstado()
           }}
         />
       )}
@@ -950,7 +938,7 @@ function PantallaCuentaCorriente({
             setModalAjusteAbierto(false)
             toast.exito(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal.
-            void refrescarEstadoTrasEscribir()
+            cargarEstado()
           }}
         />
       )}
@@ -973,7 +961,7 @@ function PantallaCuentaCorriente({
                 ? 'No había nada para actualizar.'
                 : `Precios actualizados: ${formatearMoneda(resultado.delta)} sobre ${pluralizar(resultado.idsMovimientosCubiertos.length, 'consumo')}.${resultado.hayMas ? ' Quedan más consumos pendientes — corré la reliquidación de nuevo.' : ''}`,
             )
-            void refrescarEstadoTrasEscribir()
+            cargarEstado()
           }}
         />
       )}

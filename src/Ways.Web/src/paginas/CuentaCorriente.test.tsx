@@ -236,11 +236,11 @@ async function toastDeExito(texto: string | RegExp) {
   return aviso
 }
 
-/** Un refresco fallido tras una escritura confirmada se avisa con un toast de advertencia, sin banner de carga. */
-async function toastDeAdvertencia(texto: string) {
+/** Un refresco fallido tras una escritura confirmada deja el banner de carga persistente, sin toast de advertencia. */
+async function bannerDeCargaPersistente(texto: string) {
   const aviso = await screen.findByText(texto)
-  expect(aviso.closest('[role="status"]')).not.toBeNull()
-  expect(document.body.querySelector('.alert-danger')).toBeNull()
+  expect(aviso.closest('.alert-danger')).not.toBeNull()
+  expect(aviso.closest('[role="status"]')).toBeNull()
 }
 
 /** Rutas comunes a toda la pantalla (cliente + medios de pago + puntos de venta + estado de
@@ -578,7 +578,7 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
 
     await toastDeExito('Pago registrado: comprobante 0007-00000003.')
-    await toastDeAdvertencia('No se pudo cargar el estado de cuenta.')
+    await bannerDeCargaPersistente('No se pudo cargar el estado de cuenta.')
     // el toast de éxito del pago sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText('Pago registrado: comprobante 0007-00000003.')).toBeInTheDocument()
   })
@@ -762,7 +762,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     await toastDeExito(/Ajuste registrado/)
-    await toastDeAdvertencia('No se pudo cargar el estado de cuenta.')
+    await bannerDeCargaPersistente('No se pudo cargar el estado de cuenta.')
     // el toast de éxito del ajuste sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText(/Ajuste registrado/)).toBeInTheDocument()
   })
@@ -922,7 +922,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
     await toastDeExito(/Precios actualizados/)
-    await toastDeAdvertencia('No se pudo cargar el estado de cuenta.')
+    await bannerDeCargaPersistente('No se pudo cargar el estado de cuenta.')
     // el toast de éxito de la reliquidación sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText(/Precios actualizados/)).toBeInTheDocument()
   })
