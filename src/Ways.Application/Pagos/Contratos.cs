@@ -130,8 +130,6 @@ public sealed record PaginaDePagosDeAdministracion(
 /// mismo criterio minimalista que <c>SolicitudDeAplicarPrecios</c> para un comando puntual.</summary>
 public sealed record SolicitudDeVincularCompra(int IdComprobanteCompra);
 
-// ---- Edición y baja de pagos ---------------------------------------------------------------
-
 // ---- Pago de una compra desde su detalle o su cuenta corriente --------------------------------
 
 /// <summary>Cuerpo de <c>POST /api/compras/{id}/pagos</c>. La empresa, el punto de venta, el
@@ -161,8 +159,7 @@ internal static class ImporteDeUnSoloMedio
 // Forma interna del servicio: el importe del pago es la suma de sus líneas. Las solicitudes de /api/pagos se adaptan con
 // `AComando`; solo `POST /api/compras/{id}/pagos` conserva la forma `{idMedioPago, importe}` y se adapta a UNA línea con `Desde`.
 
-/// <summary>Alta del POS con líneas por medio. <see cref="ValidarMedios"/> hace que el servidor valide cada medio (existe y
-/// no es cuenta corriente); <c>POST /api/pagos</c> lo activa.</summary>
+/// <summary>Alta del POS con líneas por medio. El servidor valida cada medio (existe y no es cuenta corriente).</summary>
 public sealed record ComandoDePago(
     int IdPuntoVenta,
     CategoriaPago Categoria,
@@ -173,8 +170,7 @@ public sealed record ComandoDePago(
     IReadOnlyList<LineaDePago> Lineas,
     string? NumeroFactura,
     int? IdComprobanteCompra = null,
-    OrigenFondosPago OrigenFondos = OrigenFondosPago.CajaTurno,
-    bool ValidarMedios = false);
+    OrigenFondosPago OrigenFondos = OrigenFondosPago.CajaTurno);
 
 /// <summary>Alta administrativa con líneas por medio. <see cref="Fecha"/> es la fecha de NEGOCIO elegida por el admin: puede
 /// ser retroactiva, nunca futura respecto del "hoy" local de <see cref="IdEmpresa"/>/<see cref="IdPuntoVenta"/>.</summary>
@@ -230,7 +226,7 @@ public sealed record SolicitudDePagoConLineas(
 {
     public ComandoDePago AComando() => new(
         IdPuntoVenta, Categoria, IdProveedor, IdArea, Concepto, Detalle, Lineas, NumeroFactura,
-        IdComprobanteCompra, OrigenFondos, ValidarMedios: true);
+        IdComprobanteCompra, OrigenFondos);
 }
 
 /// <summary>Cuerpo de <c>POST /api/pagos/administracion</c>. <see cref="Fecha"/> es la fecha de NEGOCIO elegida por el admin

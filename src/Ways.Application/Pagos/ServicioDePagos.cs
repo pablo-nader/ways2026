@@ -43,9 +43,8 @@ public partial class ServicioDePagos(
     /// <summary>Alta del POS con líneas por medio: el importe del pago es la suma de las líneas y el medio
     /// de compatibilidad es el de la primera. Resuelve el punto de venta (404 ADR-8) antes que el turno abierto (spec: Pago
     /// Requires An Open Turno) — mismo orden que <c>ServicioDeVentas.EmitirAsync</c> (design decisión 11): un punto de venta
-    /// apócrifo tiene que dar 404, nunca el 409 de "sin turno abierto" de un punto de venta que ni siquiera existe. Con
-    /// <see cref="ComandoDePago.ValidarMedios"/> (ruta /api/pagos) cada medio se valida como en el alta administrativa; sin él,
-    /// una referencia inexistente la rechaza la FK.</summary>
+    /// apócrifo tiene que dar 404, nunca el 409 de "sin turno abierto" de un punto de venta que ni siquiera existe. Cada medio
+    /// se valida como en el alta administrativa.</summary>
     public async Task<PagoRegistrado> RegistrarAsync(ComandoDePago solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -61,10 +60,7 @@ public partial class ServicioDePagos(
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(solicitud.IdPuntoVenta, ct);
 
-        if (solicitud.ValidarMedios)
-        {
-            await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
-        }
+        await ExigirMediosDeLasLineasValidosAsync(plan.Lineas.Select(l => l.IdMedioPago), ct);
 
         // judgment-day PR3 follow-up: sin compra ligada, id_proveedor es un input crudo que
         // ActualizarSaldoProveedorAsync solo descubre inválido con un InvalidOperationException
