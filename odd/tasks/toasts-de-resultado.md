@@ -40,7 +40,7 @@ Route: every task delegated to one writer (2+ non-trivial files each). Delivery:
 - Persistent `aria-live` region so screen readers always announce toasts (both T1 judges, SUGGESTION).
 - Ofertas: a failed list refresh after a write shows the load banner and a warning toast for the same failure (T2 judge B, SUGGESTION).
 - Parametros: same double report (success toast + load banner, no warning toast) when the list refresh fails after a save (T3 judge A, SUGGESTION).
-- Owner to confirm: Usuarios "profile saved, password not changed" is now a 7 s error toast instead of a persistent banner (T3, both judges noted it).
+- Owner decision (2026-10-31): Usuarios "profile saved, password not changed" stays a 7 s error toast.
 - Tests: Parametros save failure and Usuarios Desbloquear failure only cover the generic fallback text, not an `ErrorApi` message (T3 judge A, SUGGESTION).
 
 - SeccionDeCuentas (T4): a failed refresh after an ajuste still shows the load banners (cuentas / libro, with "Reintentar") next to the success toast, no warning toast.
