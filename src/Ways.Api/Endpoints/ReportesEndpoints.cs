@@ -599,11 +599,13 @@ public static class ReportesEndpoints
         // grupo, sin política propia — vista de gestión sobre turnos ajenos, nunca la del cajero.
         grupo.MapGet("/cajas", (
             ServicioDeHistoricoDeCajas servicio, int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
-            int? pagina, int? tamanio, CancellationToken ct) =>
-            servicio.ListarCierresAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+            int? pagina, int? tamanio, string? orden, string? direccion, CancellationToken ct) =>
+            servicio.ListarCierresAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, orden, direccion, ct))
         .WithSummary(
             "Histórico de cierres (turnos cerrados únicamente): totales sumados de los arqueos ya " +
-            "persistidos, nunca re-derivados. Un turno abierto nunca aparece acá.");
+            "persistidos, nunca re-derivados. Un turno abierto nunca aparece acá. orden (turno, puntoVenta, " +
+            "apertura, cierre, esperado, declarado, diferencia) y direccion (ascendente, descendente) ordenan " +
+            "todo el conjunto filtrado antes de paginar; la exportación conserva su orden; 400 si no son válidos.");
 
         // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
         // MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec

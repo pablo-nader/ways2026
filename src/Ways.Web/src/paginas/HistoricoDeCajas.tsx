@@ -2,11 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import { clienteDeReportes, filtrosDeHistoricoDeCajasVacios, rutasDeExportacion, type FiltrosDeHistoricoDeCajas } from '../api/reportes'
+import {
+  clienteDeReportes,
+  esColumnaOrdenableDeHistoricoDeCajas,
+  filtrosDeHistoricoDeCajasVacios,
+  rutasDeExportacion,
+  type FiltrosDeHistoricoDeCajas,
+  type OrdenDeHistoricoDeCajas,
+} from '../api/reportes'
 import type { PaginaDeHistoricoDeCajas, PuntoVentaListado } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -36,6 +45,9 @@ export function HistoricoDeCajas() {
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
 
   const [filtros, setFiltros] = useState<FiltrosDeHistoricoDeCajas>(filtrosDeHistoricoDeCajasVacios())
+  // `null` = el orden de siempre del listado (cierre más reciente primero). Si una consulta falla, la tabla desaparece junto
+  // con su encabezado: nunca queda un encabezado que declare un orden que las filas no tienen.
+  const [orden, setOrden] = useState<OrdenDeHistoricoDeCajas>(null)
   const [pagina, setPagina] = useState<PaginaDeHistoricoDeCajas | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -67,7 +79,7 @@ export function HistoricoDeCajas() {
     setError('')
 
     clienteDeReportes
-      .historicoDeCajas(filtros)
+      .historicoDeCajas(filtros, orden)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
         setPagina(datos)
@@ -81,7 +93,7 @@ export function HistoricoDeCajas() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [filtros])
+  }, [filtros, orden])
 
   useEffect(() => {
     cargar()
@@ -95,6 +107,17 @@ export function HistoricoDeCajas() {
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDeHistoricoDeCajas, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
+  }
+
+  // Ascendente → descendente → orden de siempre. Cambiar el orden vuelve a la página 1 y conserva los filtros; los dos
+  // setState se agrupan en un solo render, es decir en una sola consulta.
+  function alternarOrden(columna: string) {
+    if (!esColumnaOrdenableDeHistoricoDeCajas(columna)) return
+    setOrden((actual) => {
+      const siguiente = siguienteOrden(actual, columna)
+      return siguiente === null ? null : { columna, direccion: siguiente.direccion }
+    })
+    setFiltros((prev) => (prev.pagina === 1 ? prev : { ...prev, pagina: 1 }))
   }
 
   function cambiarPagina(delta: number) {
@@ -177,13 +200,27 @@ export function HistoricoDeCajas() {
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Turno</th>
-                    <th>Punto de venta</th>
-                    <th>Apertura</th>
-                    <th>Cierre</th>
-                    <th className="text-end">Esperado</th>
-                    <th className="text-end">Declarado</th>
-                    <th className="text-end">Diferencia</th>
+                    <EncabezadoOrdenable columna="turno" orden={orden} onAlternar={alternarOrden}>
+                      Turno
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="puntoVenta" orden={orden} onAlternar={alternarOrden}>
+                      Punto de venta
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="apertura" orden={orden} onAlternar={alternarOrden}>
+                      Apertura
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="cierre" orden={orden} onAlternar={alternarOrden}>
+                      Cierre
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="esperado" orden={orden} onAlternar={alternarOrden} className="text-end">
+                      Esperado
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="declarado" orden={orden} onAlternar={alternarOrden} className="text-end">
+                      Declarado
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="diferencia" orden={orden} onAlternar={alternarOrden} className="text-end">
+                      Diferencia
+                    </EncabezadoOrdenable>
                   </tr>
                 </thead>
                 <tbody>

@@ -178,7 +178,8 @@ public sealed record CompraListada(
     DateTimeOffset? FechaRecepcion,
     decimal Total,
     decimal SaldoPendiente,
-    OrigenCompra Origen);
+    OrigenCompra Origen,
+    string? NombreProveedor = null);
 
 /// <summary>Una compra que ya tiene el número que se está por cargar (<c>GET /api/compras/duplicados</c>).
 /// <see cref="NumeroExterno"/> es el texto guardado, que puede estar en otro formato que el buscado.</summary>

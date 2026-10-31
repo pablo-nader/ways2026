@@ -70,7 +70,14 @@ public class ServicioDeRemitos(
             .Take(tamanio)
             .ToListAsync(ct);
 
-        var items = pagados.Select(ProyectarListado).ToList();
+        var clientes = await ReferenciasDeListado.ClientesAsync(db, pagados.Select(r => r.IdCliente).ToList(), ct);
+        var items = pagados
+            .Select(r => ProyectarListado(r) with
+            {
+                NumeroCliente = clientes.GetValueOrDefault(r.IdCliente)?.Numero,
+                NombreCliente = clientes.GetValueOrDefault(r.IdCliente)?.Nombre,
+            })
+            .ToList();
 
         return new PaginaDeRemitos(items, total, pagina, tamanio);
     }

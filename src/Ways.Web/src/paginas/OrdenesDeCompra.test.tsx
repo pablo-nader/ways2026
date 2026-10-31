@@ -99,6 +99,7 @@ function ordenFixture(sobrescribir: Partial<OrdenDeCompraListada> = {}): OrdenDe
     fechaEmision: '2026-08-01T12:00:00Z',
     fechaEsperada: '2026-08-15',
     estado: 'Enviada',
+    nombreProveedor: 'Proveedor Uno SA',
     ...sobrescribir,
   }
 }
@@ -155,6 +156,27 @@ describe('OrdenesDeCompra — listado', () => {
     expect(within(fila).getByText('Proveedor Uno SA')).toBeInTheDocument()
     expect(within(fila).getByText('Local Centro')).toBeInTheDocument()
     expect(within(fila).getByText('Enviada')).toBeInTheDocument()
+  })
+
+  it('un proveedor fuera de la lista de referencia igual muestra el nombre que manda el servidor', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/ordenes-compra?')
+        ? Promise.resolve(
+            paginaFixture({
+              items: [
+                ordenFixture({ id: 2, idProveedor: 777, numero: 31, nombreProveedor: 'Proveedor Remoto SRL' }),
+                ordenFixture({ id: 3, idProveedor: 778, numero: 32, nombreProveedor: null }),
+              ],
+              total: 2,
+            }),
+          )
+        : undefined,
+    )
+    renderPantalla()
+
+    await screen.findByText('31')
+    expect(within(screen.getByText('31').closest('tr')!).getByText('Proveedor Remoto SRL')).toBeInTheDocument()
+    expect(within(screen.getByText('32').closest('tr')!).getByText('Proveedor #778')).toBeInTheDocument()
   })
 
   it('una orden sin número muestra #id', async () => {

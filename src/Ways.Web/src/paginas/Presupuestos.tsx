@@ -12,7 +12,7 @@ import {
   type OrdenDePresupuestos,
 } from '../api/presupuestos'
 import { api, ErrorApi } from '../api/cliente'
-import { clienteDeClientes } from '../api/clientes'
+import { clienteDeClientes, etiquetaDeClienteDeFila } from '../api/clientes'
 import type { ClienteListado, EstadoPresupuesto, PaginaDePresupuestos, PresupuestoListado, PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -135,9 +135,6 @@ export function Presupuestos() {
 
   const puntoVentaPorId: Record<number, PuntoVentaListado> = {}
   for (const pv of puntosVenta ?? []) puntoVentaPorId[pv.id] = pv
-
-  const clientePorId: Record<number, ClienteListado> = {}
-  for (const c of clientes ?? []) clientePorId[c.id] = c
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDePresupuestos, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
@@ -303,7 +300,7 @@ export function Presupuestos() {
                           {p.numeroFormateado ?? `#${p.id}`}
                         </Link>
                       </td>
-                      <td>{clientePorId[p.idCliente] ? etiquetaDeCliente(clientePorId[p.idCliente]) : `Cliente #${p.idCliente}`}</td>
+                      <td>{etiquetaDeClienteDeFila(p)}</td>
                       <td>{puntoVentaPorId[p.idPuntoVenta]?.nombre ?? `PV #${p.idPuntoVenta}`}</td>
                       <td>
                         <span className={`badge ${claseDeBadgeDeEstadoPresupuesto(p.estado)}`}>{etiquetaDeEstadoPresupuesto(p.estado)}</span>
