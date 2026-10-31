@@ -1601,7 +1601,7 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
 
 describe('Articulos — Baja de un artículo desde la grilla', () => {
   /**
-   * Cláusula bajo prueba: el `setAviso` de `confirmarBaja()` en `Articulos.tsx` y el bump de
+   * Cláusula bajo prueba: el `toast.exito` de `confirmarBaja()` en `Articulos.tsx` y el bump de
    * `pedidoDeRefresco` que le pide a `GrillaDeArticulos` refetchear. Mutation-proof-tests: borrar
    * cualquiera de los dos deja este test sin ver el aviso o sin ver la fila actualizada tras el
    * refresco (la fixture de la grilla cambia DESPUÉS de la Baja, así que solo el refresco real la

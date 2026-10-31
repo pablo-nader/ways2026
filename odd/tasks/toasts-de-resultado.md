@@ -35,6 +35,11 @@ Route: every task delegated to one writer (2+ non-trivial files each). Delivery:
 - [ ] T5 — Documents and editors: OrdenDeCompra, Presupuesto, Remito, CompraEditor, VentasDelTurno, Vitrina, CargaSemanalDeHoras, articulos/EditorDePrecios, articulos/SeccionDeDisponibilidad, ModalDeArticulo.
 - [ ] T6 — POS screen (Pos.tsx) and download errors of reports (`errorDescarga`). Needs a POS release to reach the registers.
 
+## Follow-ups
+
+- Persistent `aria-live` region so screen readers always announce toasts (both T1 judges, SUGGESTION).
+- Ofertas: a failed list refresh after a write shows the load banner and a warning toast for the same failure (T2 judge B, SUGGESTION).
+
 ## Acceptance criteria
 
 - No `alert-success` remains for an action result in the migrated files.
