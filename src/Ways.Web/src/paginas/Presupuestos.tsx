@@ -20,6 +20,7 @@ import { EncabezadoOrdenable } from '../componentes/grilla'
 import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { pluralizar } from '../formato/pluralizar'
 
 const OPCIONES_ESTADO: { valor: EstadoPresupuesto | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -331,7 +332,7 @@ export function Presupuestos() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} presupuesto(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'presupuesto')}
               </span>
               <div className="d-flex gap-2">
                 <button

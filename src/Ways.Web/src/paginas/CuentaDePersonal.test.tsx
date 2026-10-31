@@ -436,15 +436,15 @@ describe('CuentaDePersonal — filtros y paginación', () => {
     const evento = userEvent.setup()
     renderCuenta()
     await esperarCuenta()
-    expect(screen.getByText('Página 1 de 3 — 60 movimiento(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 1 de 3 — 60 movimientos')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
 
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
-    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 2 de 3 — 60 movimientos')
     expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=2')
 
     await evento.click(screen.getByRole('button', { name: 'Anterior' }))
-    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 1 de 3 — 60 movimientos')
   })
 
   /** Cláusula bajo prueba: el paso parte de la página que se ve (`cuenta.pagina`), no de la pedida (`filtros.pagina`).
@@ -464,10 +464,10 @@ describe('CuentaDePersonal — filtros y paginación', () => {
     renderCuenta()
     await esperarCuenta()
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
-    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 2 de 3 — 60 movimientos')
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
     await screen.findByText('Se cayó la página tres.')
-    expect(screen.getByText('Página 2 de 3 — 60 movimiento(s)')).toBeInTheDocument()
+    expect(screen.getByText('Página 2 de 3 — 60 movimientos')).toBeInTheDocument()
 
     await evento.click(screen.getByRole('button', { name: boton }))
 
@@ -611,7 +611,7 @@ describe('CuentaDePersonal — cargar horas', () => {
     await esperarCuenta()
     await screen.findByText('Deuda: $ 750,00')
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
-    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 2 de 3 — 60 movimientos')
     expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=2')
     const antesCuenta = lecturasDeCuenta().length
     const antesDeuda = lecturas('/clientes/21').length
@@ -621,7 +621,7 @@ describe('CuentaDePersonal — cargar horas', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
     await screen.findByText('Horas cargadas.')
-    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 1 de 3 — 60 movimientos')
     expect(lecturasDeCuenta()).toHaveLength(antesCuenta + 1)
     expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=1&')
     expect(lecturas('/clientes/21')).toHaveLength(antesDeuda + 1)
@@ -1787,7 +1787,7 @@ describe('CuentaDePersonal — una escritura de resultado incierto', () => {
     await screen.findByText('Horas cargadas.')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled())
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
-    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 2 de 3 — 60 movimientos')
     expect(screen.getByText(primero)).toBeInTheDocument()
     expect(screen.getByText(segundo)).toBeInTheDocument()
 
@@ -1954,9 +1954,9 @@ describe('CuentaDePersonal — orden en el servidor', () => {
     renderCuenta()
     await esperarCuenta()
     await evento.click(screen.getByLabelText('Ver histórico completo'))
-    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 1 de 3 — 60 movimientos')
     await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
-    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 2 de 3 — 60 movimientos')
 
     await evento.click(screen.getByRole('button', { name: /^Saldo resultante/ }))
 
@@ -1966,7 +1966,7 @@ describe('CuentaDePersonal — orden en el servidor', () => {
       expect(ultima).toContain('pagina=1')
       expect(ultima).toContain('historico=true')
     })
-    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
+    await screen.findByText('Página 1 de 3 — 60 movimientos')
   })
 
   it('el orden sobrevive a un cambio de página', async () => {

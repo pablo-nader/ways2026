@@ -43,6 +43,7 @@ import {
   type ColumnasOrdenables,
 } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
+import { TituloDeSeccion } from '../componentes/TituloDeSeccion'
 import { atributosDeCampoDecimal, atributosDeCampoEntero } from '../formato/numeros'
 import { toast } from '../toasts/toasts'
 
@@ -236,7 +237,7 @@ export function Ofertas() {
       .catch(() => {
         setEmpresas([])
         agregarAvisoCatalogo(
-          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (la oferta se crea para todo el tenant).',
+          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (la oferta se crea para todas las empresas).',
         )
       })
     clienteDePrecios
@@ -608,7 +609,7 @@ function ModalDeOferta({
             guardado en vuelo (react-async-state rule 5/9), mismo criterio que Articulos.tsx. */}
         <fieldset disabled={ocupado} className="row g-3 border-0 p-0 m-0">
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Identificación</strong>
+            <TituloDeSeccion>Identificación</TituloDeSeccion>
           </div>
 
           <div className="col-md-5">
@@ -664,7 +665,7 @@ function ModalDeOferta({
               value={valor.idEmpresa}
               onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value === '' ? '' : Number(e.target.value) })}
             >
-              <option value="">Todo el tenant</option>
+              <option value="">Todas las empresas</option>
               {empresas.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.razonSocial}
@@ -675,7 +676,7 @@ function ModalDeOferta({
           </div>
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Alcance (exactamente uno)</strong>
+            <TituloDeSeccion>Alcance (exactamente uno)</TituloDeSeccion>
           </div>
 
           <div className="col-12 d-flex gap-3">
@@ -778,7 +779,7 @@ function ModalDeOferta({
           )}
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Vigencia</strong>
+            <TituloDeSeccion>Vigencia</TituloDeSeccion>
           </div>
 
           <div className="col-md-3">
@@ -888,7 +889,7 @@ function ModalDeOferta({
           </div>
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Beneficio (exactamente uno)</strong>
+            <TituloDeSeccion>Beneficio (exactamente uno)</TituloDeSeccion>
           </div>
 
           <div className="col-12 d-flex gap-3">
@@ -953,12 +954,12 @@ function ModalDeOferta({
           )}
 
           <div className="col-12">
-            <strong className="text-muted small text-uppercase">Listas de precio</strong>
+            <TituloDeSeccion>Listas de precio</TituloDeSeccion>
           </div>
 
           <div className="col-12">
             <div className="form-text mb-1">
-              Sin marcar ninguna lista, la oferta aplica a <strong>todas</strong> las listas del tenant.
+              Sin marcar ninguna lista, la oferta aplica a <strong>todas</strong> las listas de precio de la cuenta.
             </div>
             <div className="d-flex flex-wrap gap-3">
               {opcionesLista.map((o) => (

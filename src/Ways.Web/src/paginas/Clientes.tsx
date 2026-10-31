@@ -374,7 +374,7 @@ export function Clientes() {
               pagina={pagina.pagina}
               tamanio={pagina.tamanio}
               total={pagina.total}
-              unidad="cliente(s)"
+              unidad="cliente"
               deshabilitado={cargando || bloqueado}
               onCambiarPagina={padron.cambiarPagina}
               onCambiarTamanio={padron.cambiarTamanio}

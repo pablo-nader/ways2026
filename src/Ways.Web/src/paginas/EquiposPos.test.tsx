@@ -117,7 +117,7 @@ describe('EquiposPos — revocación', () => {
     const puerta = screen.getByRole('alertdialog', { name: 'Confirmar revocación' })
     expect(puerta).toHaveTextContent('¿Revocar el equipo "Caja 1"?')
     expect(puerta).toHaveTextContent(NOTA_DE_REVOCACION)
-    expect(NOTA_DE_REVOCACION).toMatch(/su punto de venta, el tenant y el usuario que lo vinculó no se van a poder dar de baja/)
+    expect(NOTA_DE_REVOCACION).toMatch(/su punto de venta, la cuenta y el usuario que lo vinculó no se van a poder dar de baja/)
     expect(NOTA_DE_REVOCACION).toMatch(/ventas sin conexión que todavía no sincronizó, se pierden/)
   })
 

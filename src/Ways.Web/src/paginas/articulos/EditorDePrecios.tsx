@@ -7,6 +7,7 @@ import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 import { Modal } from '../../componentes/Modal'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 import { formatearImporte } from '../../formato/importes'
 import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
 import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type FamiliaDelArticulo } from './familia'
@@ -323,7 +324,7 @@ export function EditorDePrecios({
   return (
     <div>
       <div className="d-flex align-items-center justify-content-between">
-        <strong className="text-muted small text-uppercase">Precios por lista</strong>
+        <TituloDeSeccion className="mb-0">Precios por lista</TituloDeSeccion>
         <button
           type="button"
           className="btn btn-sm btn-outline-secondary"
@@ -612,7 +613,7 @@ function PanelDeLista({
       </div>
 
       <div className="mt-3">
-        <strong className="small text-uppercase text-muted">Historial</strong>
+        <TituloDeSeccion>Historial</TituloDeSeccion>
         <table className="table table-sm mb-0 mt-1">
           <thead>
             <tr>
