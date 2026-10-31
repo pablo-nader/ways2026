@@ -544,7 +544,7 @@ export function Proveedores() {
               pagina={pagina.pagina}
               tamanio={pagina.tamanio}
               total={pagina.total}
-              unidad="proveedor(es)"
+              unidad="proveedor"
               deshabilitado={cargando || bloqueado}
               onCambiarPagina={padron.cambiarPagina}
               onCambiarTamanio={padron.cambiarTamanio}

@@ -487,7 +487,9 @@ export function ConteoDeInventario() {
             )}
             {lineasDeLote.length > 0 && lineasDeLoteIncompletas > 0 && (
               <div className="alert alert-warning py-1 px-2 small mb-0">
-                {lineasDeLoteIncompletas} lote(s) sin contar — no se van a incluir en el conteo.
+                {lineasDeLoteIncompletas === 1
+                  ? '1 lote sin contar — no se va a incluir en el conteo.'
+                  : `${lineasDeLoteIncompletas} lotes sin contar — no se van a incluir en el conteo.`}
               </div>
             )}
           </div>

@@ -148,6 +148,7 @@ import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { conFiscalSoloSiSeguroSeFactura, ESPERA_DE_LA_FACTURA_MS, ventaSeguroSeFactura } from '../pos/facturacionAlCobrar'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -1702,7 +1703,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     function bloquearPorColaLocal(cantidadPendiente: number, cantidadConError: number): boolean {
       if (cantidadPendiente === 0 && cantidadConError === 0) return false
       const partes: string[] = []
-      if (cantidadPendiente > 0) partes.push(`${cantidadPendiente} venta(s) sin sincronizar`)
+      if (cantidadPendiente > 0) partes.push(`${pluralizar(cantidadPendiente, 'venta')} sin sincronizar`)
       if (cantidadConError > 0) partes.push(fraseVentasNecesitanAtencion(cantidadConError))
       setAvisoCerrarCaja(`No se puede cerrar la caja: hay ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
       return true

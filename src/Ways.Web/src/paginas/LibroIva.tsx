@@ -262,7 +262,9 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
     <>
       {mostrarDiferencia && (
         <div className="alert alert-warning py-1 px-2 small mb-2" role="alert">
-          {conDiferencia.length} comprobante(s) no cierran contra sus importes: revisá la columna Dif.
+          {conDiferencia.length === 1
+            ? '1 comprobante no cierra contra sus importes: revisá la columna Dif.'
+            : `${conDiferencia.length} comprobantes no cierran contra sus importes: revisá la columna Dif.`}
         </div>
       )}
       <div className="table-responsive">
