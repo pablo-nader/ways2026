@@ -132,6 +132,20 @@ desconectada => date + no material. Partial uniques `WHERE estado = 'activa'`: `
   deleted (reference guard). `RenovarAsync` exists in the client with unit tests; no job (T2).
 - Empty `Ways:MercadoPago` placeholders added to `appsettings.json`.
 
+## Review (T1)
+
+- 2026-10-31 judgment-day on 2f28455e: **APPROVED** in round one, no CRITICAL from either judge. RDD is off
+  (clone-local), so no native review ran.
+- Both judges flagged the same WARNING (info, not auto-fixed): the `state` is not bound to the browser that started
+  the flow, so an Admin could send the authorization URL to someone else's Mercado Pago owner and, if that person
+  consents, link that account to the Admin's empresa (OAuth login-CSRF). Accepted change: T3 moves the completion
+  behind the authenticated web — the callback only redirects `code` + `state` to the tenant's origin, and an
+  authenticated Admin endpoint completes the exchange after checking that the session user and tenant match the
+  state. This also neutralizes judge B's suggestion about the Host-derived origin (the code would only reach a
+  session that started the flow).
+- Suggestions kept as follow-ups: catch `NotSupportedException` from a non-JSON 2xx in `ClienteOAuthMercadoPago`;
+  `ResultadoDeCarrera` evaluated twice in the callback catch; record who disconnected (`id_usuario_desconecto`).
+
 ## Next step
 
-T2 (renewal job), stacked on this branch; then judgment-day for the T1 slice before opening the PR.
+Open the T1 PR (stacked-to-main). Then T2 (renewal job) and T3 (web + the login-CSRF fix above).
