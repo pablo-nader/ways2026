@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Ways.Application.Abstracciones;
+using Ways.Application.Familias;
 using Ways.Domain.Common;
 
 namespace Ways.Api.Seguridad;
@@ -135,16 +136,23 @@ public class ManejadorDeErrores(
 
         contexto.Response.StatusCode = estado;
 
+        var problema = new ProblemDetails
+        {
+            Status = estado,
+            Title = titulo,
+            Extensions = { ["codigo"] = codigo }
+        };
+
+        if (excepcion is ErrorDominioConDatos { Datos.Count: > 0 } conDatos)
+        {
+            problema.Extensions["datos"] = conDatos.Datos;
+        }
+
         return await problemDetails.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = contexto,
             Exception = excepcion,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = estado,
-                Title = titulo,
-                Extensions = { ["codigo"] = codigo }
-            }
+            ProblemDetails = problema
         });
     }
 

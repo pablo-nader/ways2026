@@ -77,22 +77,31 @@ public class ServicioDeAgrupacionDeFamilias(
 
         var problemas = new List<ProblemaDeAgrupacion>();
 
+        // La marca de la familia a la que se sumarían; si la referencia no tiene familia, la del pedido (la que tendría la
+        // nueva).
+        var permiteDesglosarCosto = datos.PermiteDesglosarCosto ?? false;
+
         if (referencia.IdFamilia is { } idFamilia)
         {
             var familia = await db.Familias
                 .AsNoTracking()
                 .Where(f => f.Id == idFamilia)
-                .Select(f => new { f.Nombre, f.Activo })
+                .Select(f => new { f.Nombre, f.Activo, f.PermiteDesglosarCosto })
                 .FirstOrDefaultAsync(ct);
 
             if (familia is null)
             {
                 problemas.Add(new ProblemaDeAgrupacion("no_encontrado", MensajeDeFamiliaInexistente(idFamilia), null, null));
             }
-            else if (ReglaDeFamilias.ResolverAgregado(familia.Activo, tieneMiembrosVivos: true) == ResolucionDeIngresoAFamilia.FamiliaInactiva)
+            else
             {
-                problemas.Add(new ProblemaDeAgrupacion(
-                    "familia_inactiva", MensajeDeFamiliaInactiva(familia.Nombre), null, null));
+                permiteDesglosarCosto = familia.PermiteDesglosarCosto;
+
+                if (ReglaDeFamilias.ResolverAgregado(familia.Activo, tieneMiembrosVivos: true) == ResolucionDeIngresoAFamilia.FamiliaInactiva)
+                {
+                    problemas.Add(new ProblemaDeAgrupacion(
+                        "familia_inactiva", MensajeDeFamiliaInactiva(familia.Nombre), null, null));
+                }
             }
         }
 
@@ -147,8 +156,8 @@ public class ServicioDeAgrupacionDeFamilias(
                 var actuales = ValoresCompartidosDeFamilia.De(articulos[id]);
 
                 return CambiosDe(
-                    articulos[id], actuales, valoresDeLaReferencia, valoresDeLaReferencia.CamposDistintos(actuales), plan,
-                    visibles);
+                    articulos[id], actuales, ValoresQueQuedan(valoresDeLaReferencia, actuales, permiteDesglosarCosto),
+                    valoresDeLaReferencia.CamposDistintos(actuales, permiteDesglosarCosto), plan, visibles);
             })
             .ToList();
 
@@ -182,7 +191,10 @@ public class ServicioDeAgrupacionDeFamilias(
         await NombreDeFamilia.ExigirDisponibleAsync(db, nombre, excluirId: null, ct);
 
         return await AgruparAsync(
-            new Pedido(IdFamiliaExistente: null, NombreNuevo: nombre, datos.IdArticuloReferencia, destinos), ct);
+            new Pedido(
+                IdFamiliaExistente: null, NombreNuevo: nombre, datos.IdArticuloReferencia, destinos,
+                PermiteDesglosarCosto: datos.PermiteDesglosarCosto ?? false),
+            ct);
     }
 
     /// <summary>
@@ -214,9 +226,11 @@ public class ServicioDeAgrupacionDeFamilias(
     /// <summary>Lo que un pedido de agrupar pide, ya normalizado. Con <paramref name="IdFamiliaExistente"/> es el agregado a
     /// esa familia, cuya referencia sale de la base; sin él es el alta de <paramref name="NombreNuevo"/> con
     /// <paramref name="IdArticuloReferencia"/> como modelo. <paramref name="Destinos"/> son los artículos a alinear,
-    /// ascendentes y sin repetir.</summary>
+    /// ascendentes y sin repetir. <paramref name="PermiteDesglosarCosto"/> es la marca con la que nace la familia nueva; al
+    /// agregar a una existente manda la de ESA familia y este valor no se usa.</summary>
     private sealed record Pedido(
-        int? IdFamiliaExistente, string? NombreNuevo, int? IdArticuloReferencia, IReadOnlyList<int> Destinos);
+        int? IdFamiliaExistente, string? NombreNuevo, int? IdArticuloReferencia, IReadOnlyList<int> Destinos,
+        bool PermiteDesglosarCosto = false);
 
     /// <summary>
     /// El camino común de <see cref="CrearAsync"/> y <see cref="AgregarArticulosAsync"/>: UNA transacción, sin reintento
@@ -394,7 +408,11 @@ public class ServicioDeAgrupacionDeFamilias(
 
                 if (familiaExistente is null)
                 {
-                    var familia = new Familia { Nombre = pedido.NombreNuevo!, Activo = true, CreatedAt = ahora, UpdatedAt = ahora };
+                    var familia = new Familia
+                    {
+                        Nombre = pedido.NombreNuevo!, Activo = true, PermiteDesglosarCosto = pedido.PermiteDesglosarCosto,
+                        CreatedAt = ahora, UpdatedAt = ahora
+                    };
                     db.Familias.Add(familia);
                     await db.SaveChangesAsync(ct);
 
@@ -410,6 +428,9 @@ public class ServicioDeAgrupacionDeFamilias(
                     nombreDeLaFamilia = familiaExistente.Nombre;
                 }
 
+                // La marca que rige la alineación: la de la familia que ya existe (leída bajo su FOR SHARE y el lock de
+                // membresía exclusivo) o la de la que se acaba de crear.
+                var permiteDesglosarCosto = familiaExistente?.PermiteDesglosarCosto ?? pedido.PermiteDesglosarCosto;
                 var valores = ValoresCompartidosDeFamilia.De(referencia);
                 var cambios = new List<CambiosDeUnArticulo>(destinos.Count);
 
@@ -417,7 +438,7 @@ public class ServicioDeAgrupacionDeFamilias(
                 {
                     var destino = articulos[id];
                     var actuales = ValoresCompartidosDeFamilia.De(destino);
-                    var campos = valores.CamposDistintos(actuales);
+                    var campos = valores.CamposDistintos(actuales, permiteDesglosarCosto);
                     var entra = destino.IdFamilia != idFamilia;
 
                     if (!destino.ControlaLote && valores.ControlaLote)
@@ -425,7 +446,7 @@ public class ServicioDeAgrupacionDeFamilias(
                         idsConControlDeLoteActivado.Add(destino.Id);
                     }
 
-                    valores.AplicarA(destino);
+                    valores.AplicarA(destino, conservarComposicion: permiteDesglosarCosto);
 
                     if (entra)
                     {
@@ -437,7 +458,8 @@ public class ServicioDeAgrupacionDeFamilias(
                         destino.UpdatedAt = ahora;
                     }
 
-                    cambios.Add(CambiosDe(destino, actuales, valores, campos, plan, visibles));
+                    cambios.Add(CambiosDe(
+                        destino, actuales, ValoresQueQuedan(valores, actuales, permiteDesglosarCosto), campos, plan, visibles));
                 }
 
                 await servicioDePrecios.EscribirAlineacionAsync(plan, idTenant, ahora, ct);
@@ -478,6 +500,13 @@ public class ServicioDeAgrupacionDeFamilias(
                     .Where(par => par.IdArticulo == articulo.Id && par.Resolucion == ResolucionDeAlineacionDePrecios.Alinear)
                     .Select(par => new CambioDePreciosDeLista(par.IdListaPrecio, par.Actual, par.Referencia))
             ]);
+
+    /// <summary>Los dieciséis valores que le quedan a un artículo al alinearlo con la referencia: los de
+    /// <paramref name="deLaReferencia"/> y, si la familia permite desglosar el costo, la composición que el artículo ya
+    /// tenía (<paramref name="actuales"/>), que la alineación no toca.</summary>
+    private static ValoresCompartidosDeFamilia ValoresQueQuedan(
+        ValoresCompartidosDeFamilia deLaReferencia, ValoresCompartidosDeFamilia actuales, bool permiteDesglosarCosto) =>
+        permiteDesglosarCosto ? deLaReferencia.ConComposicionDe(actuales) : deLaReferencia;
 
     private enum Catalogo
     {

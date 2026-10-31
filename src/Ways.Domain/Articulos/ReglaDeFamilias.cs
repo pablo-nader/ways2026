@@ -91,7 +91,8 @@ public static class ReglaDeFamilias
     /// </code>
     /// </summary>
     public static ResolucionDeIngresoAFamilia ResolverIngreso(
-        bool familiaActiva, ValoresCompartidosDeFamilia? referencia, ValoresCompartidosDeFamilia pedidos)
+        bool familiaActiva, ValoresCompartidosDeFamilia? referencia, ValoresCompartidosDeFamilia pedidos,
+        bool permiteDesglosarCosto = false)
     {
         if (!familiaActiva)
         {
@@ -103,10 +104,43 @@ public static class ReglaDeFamilias
             return ResolucionDeIngresoAFamilia.FamiliaSinArticulos;
         }
 
-        return referencia.CamposDistintos(pedidos).Count > 0
-            ? ResolucionDeIngresoAFamilia.ValoresDistintos
-            : ResolucionDeIngresoAFamilia.Permitido;
+        var distintos = referencia.CamposDistintos(pedidos, permiteDesglosarCosto);
+
+        if (distintos.Count == 0)
+        {
+            return ResolucionDeIngresoAFamilia.Permitido;
+        }
+
+        // Con la composición propia de cada miembro, el costo nominal es lo único que el pedido puede traer distinto
+        // del resto sin tocar ningún otro campo compartido: se rechaza con su propio código.
+        return permiteDesglosarCosto && distintos is ["costo_nominal"]
+            ? ResolucionDeIngresoAFamilia.CostoNominalDistinto
+            : ResolucionDeIngresoAFamilia.ValoresDistintos;
     }
+
+    /// <summary>
+    /// El costo nominal con el que se compara el alta de un artículo en una familia (<see cref="ResolverIngreso"/>).
+    /// Sin la marca, o sin composición en el pedido (<paramref name="composicionDelPedido"/> <c>null</c>: no trae costo
+    /// de lista), es el de la referencia. Con la marca y una composición IGUAL a la de la referencia también: el
+    /// nominal guardado de la familia puede ser el efectivo de una compra o el de una réplica de alcance, y no
+    /// coincidir con lo que da esa composición, así que no se recalcula. Solo una composición DISTINTA a la de la
+    /// referencia trae su propio nominal (<paramref name="nominalDelPedido"/>), que se compara con el de la familia.
+    /// </summary>
+    public static decimal? CostoNominalDelIngreso(
+        bool permiteDesglosarCosto, ComposicionDelCosto? composicionDelPedido, ComposicionDelCosto composicionDeLaReferencia,
+        decimal? nominalDelPedido, decimal? nominalDeLaReferencia) =>
+        permiteDesglosarCosto && composicionDelPedido is not null && composicionDelPedido != composicionDeLaReferencia
+            ? nominalDelPedido
+            : nominalDeLaReferencia;
+
+    /// <summary>
+    /// <c>true</c> si una familia puede dejar de permitir desglosar el costo: los miembros vivos
+    /// (<paramref name="composiciones"/>, leídas bajo el lock de membresía exclusivo y las filas de los miembros) tienen
+    /// todos la misma composición del costo, o no hay ninguno. Con composiciones distintas apagar la marca dejaría a la
+    /// familia con miembros que ya no son idénticos en campos que vuelven a ser compartidos.
+    /// </summary>
+    public static bool PuedeApagarElDesgloseDeCosto(IEnumerable<ComposicionDelCosto> composiciones) =>
+        composiciones.Distinct().Count() <= 1;
 
     /// <summary>
     /// La decisión de AGREGAR artículos a una familia que ya existe (doc 10 §3): la regla de ingreso sin la comparación
