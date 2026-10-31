@@ -141,7 +141,8 @@ public class ServicioDeOfertas(
             Prioridad = datos.Prioridad,
             Acumulable = datos.Acumulable,
             Activo = datos.Activo,
-            DisponibleOnline = datos.DisponibleOnline
+            DisponibleOnline = datos.DisponibleOnline,
+            SoloMultiplos = datos.SoloMultiplos
         };
 
         var alcance = ValidarInvariantes(oferta);
@@ -232,7 +233,8 @@ public class ServicioDeOfertas(
             ImporteFijo = datos.ImporteFijo,
             Prioridad = datos.Prioridad,
             Acumulable = datos.Acumulable,
-            Activo = datos.Activo
+            Activo = datos.Activo,
+            SoloMultiplos = datos.SoloMultiplos == true
         };
 
         var alcance = ValidarInvariantes(candidato);
@@ -300,6 +302,9 @@ public class ServicioDeOfertas(
 
             // Omitido ⇒ conserva el valor guardado (un cliente anterior al campo no la saca de la tienda).
             oferta.DisponibleOnline = datos.DisponibleOnline ?? oferta.DisponibleOnline;
+
+            // Omitido ⇒ conserva el valor guardado; sin cantidad mínima no hay grupos que contar y la oferta queda común.
+            oferta.SoloMultiplos = candidato.CantidadMinima is not null && (datos.SoloMultiplos ?? oferta.SoloMultiplos);
             oferta.UpdatedAt = reloj.Ahora;
 
             // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar
@@ -448,7 +453,13 @@ public class ServicioDeOfertas(
                 linea, ResolvedorDeOfertas.Resolver(preparada.Linea, preparada.Candidatas)));
         }
 
-        return (resultado, contexto);
+        // Un documento cuenta los grupos de familia sobre todas sus líneas; sin documento, cada línea es su propio lote.
+        var unidades = lineasPedidas.Select(l => l.Cantidad).ToList();
+        var descuentos = agregarPorFamilia
+            ? DescuentosDeLineaSoloMultiplos(resultado, unidades)
+            : [.. resultado.Select((r, i) => DescuentosDeLineaSoloMultiplos([r], [unidades[i]])[0])];
+
+        return (ConDescuentoDeLinea(resultado, descuentos), contexto);
     }
 
     /// <summary>
@@ -513,7 +524,13 @@ public class ServicioDeOfertas(
         }
 
         var codigoPorCombo = deteccion.Candidatos.ToDictionary(c => c.Id, c => c.Codigo);
-        var conCombos = resultados
+
+        // Las unidades que consumió un combo no llevan oferta: los grupos "solo múltiplos" se cuentan sobre las demás.
+        var unidadesFueraDeCombos = lineasPedidas
+            .Select((l, i) => l.Cantidad - deteccion.Lineas.GetValueOrDefault(i).UnidadesConsumidas)
+            .ToList();
+        var conCombos = ConDescuentoDeLinea(
+                resultados, DescuentosDeLineaSoloMultiplos(resultados, unidadesFueraDeCombos))
             .Select((r, i) => deteccion.Lineas.TryGetValue(i, out var combo)
                 ? r with { Combo = new ComboDeLineaDto(combo.UnidadesConsumidas, combo.Ahorro, combo.IdCombo) }
                 : r)
@@ -597,7 +614,12 @@ public class ServicioDeOfertas(
                 continue;
             }
 
-            var curva = EscalonesDeCantidad.Construir(preparada.Linea, preparada.Candidatas);
+            // La curva le da al dispositivo un precio unitario por tramo de cantidad, y una oferta "solo múltiplos" no
+            // tiene un precio unitario único: cobra el de oferta solo en los grupos completos. Hasta que la instantánea
+            // sepa representarla, queda afuera de la curva y el dispositivo offline cobra a precio de lista; la venta
+            // se sincroniza con su precio y, si la cantidad completa un grupo, la auditoría la marca discrepante.
+            var candidatas = preparada.Candidatas.Where(c => !c.SoloMultiplos).ToList();
+            var curva = EscalonesDeCantidad.Construir(preparada.Linea, candidatas);
 
             var escalones = curva.Escalones
                 .Select(e => new EscalonDeCantidad(
@@ -605,7 +627,7 @@ public class ServicioDeOfertas(
                     ProyectarAplicadas(e.Resolucion.Aplicadas)))
                 .ToList();
 
-            var celdas = EscalonesDeCantidad.ConstruirGrillaDeFamilia(preparada.Linea, preparada.Candidatas);
+            var celdas = EscalonesDeCantidad.ConstruirGrillaDeFamilia(preparada.Linea, candidatas);
             var escalonesDeFamilia = celdas.Count == 0
                 ? null
                 : celdas
@@ -759,7 +781,8 @@ public class ServicioDeOfertas(
                 ReglaDeOfertas.LeerAlcance(o), ReglaDeOfertas.LeerBeneficio(o), o.CantidadMinima,
                 o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
                 ReglaDeOfertas.LeerDiasSemana(o.DiasSemana),
-                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>()))).ToList();
+                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>(),
+                o.SoloMultiplos))).ToList();
 
         // Hasta 3 consultas: precios vigentes en lote para el producto cartesiano de artículos ×
         // listas pedidas (design decision 5 — ServicioDePrecios.PreciosVigentesAsync/
@@ -899,7 +922,56 @@ public class ServicioDeOfertas(
             resuelto.DescuentoUnitario, ProyectarAplicadas(resuelto.Aplicadas));
 
     private static IReadOnlyList<OfertaAplicadaDto> ProyectarAplicadas(IReadOnlyList<OfertaAplicada> aplicadas) =>
-        aplicadas.Select(a => new OfertaAplicadaDto(a.IdOferta, a.Nombre, a.DescuentoUnitario)).ToList();
+        aplicadas.Select(a => new OfertaAplicadaDto(a.IdOferta, a.Nombre, a.DescuentoUnitario, a.MultiploDe, a.PorFamilia))
+            .ToList();
+
+    /// <summary>
+    /// El descuento de oferta de LÍNEA de cada resultado con una oferta "solo múltiplos" (<c>null</c> en los demás), por
+    /// <see cref="CoberturaDeOfertas"/>: <paramref name="unidades"/> son, por posición, las unidades de cada línea que
+    /// cobra la oferta (sin signo y sin las que consumió un combo). Las ofertas de familia cuentan sus grupos sobre todas
+    /// las líneas de <paramref name="resultados"/> que las llevan, así que el llamador pasa un documento entero; para
+    /// líneas independientes, una por llamada. Es la única fórmula: la usan la resolución, la vista previa con combos,
+    /// la venta, el remito y el presupuesto.
+    /// </summary>
+    public static IReadOnlyList<decimal?> DescuentosDeLineaSoloMultiplos(
+        IReadOnlyList<ResultadoDeResolucion> resultados, IReadOnlyList<decimal> unidades)
+    {
+        var descuentos = new decimal?[resultados.Count];
+        var lineas = new List<LineaConOfertas>();
+        var posiciones = new List<int>();
+
+        for (var i = 0; i < resultados.Count; i++)
+        {
+            var resultado = resultados[i];
+            if (resultado.PrecioOriginal is not { } precioOriginal || !resultado.Aplicadas.Any(a => a.MultiploDe is not null))
+            {
+                continue;
+            }
+
+            lineas.Add(new LineaConOfertas(
+                unidades[i], precioOriginal,
+                [.. resultado.Aplicadas.Select(a =>
+                    new OfertaAplicada(a.IdOferta, a.Nombre, a.DescuentoUnitario, a.MultiploDe, a.PorFamilia))]));
+            posiciones.Add(i);
+        }
+
+        if (lineas.Count == 0)
+        {
+            return descuentos;
+        }
+
+        var calculados = CoberturaDeOfertas.DescuentosDeLinea(lineas);
+        for (var k = 0; k < posiciones.Count; k++)
+        {
+            descuentos[posiciones[k]] = calculados[k];
+        }
+
+        return descuentos;
+    }
+
+    private static IReadOnlyList<ResultadoDeResolucion> ConDescuentoDeLinea(
+        IReadOnlyList<ResultadoDeResolucion> resultados, IReadOnlyList<decimal?> descuentos) =>
+        [.. resultados.Select((r, i) => r with { DescuentoDeLinea = descuentos[i] })];
 
     /// <summary>Design: Open Questions, "Time zone for hora_desde/hasta and dias_semana
     /// matching" — v1 usa <see cref="TimeZoneInfo.Local"/> (huso del servidor, no hay huso de
@@ -924,6 +996,7 @@ public class ServicioDeOfertas(
         var alcance = ReglaDeOfertas.LeerAlcance(candidato);
         ReglaDeOfertas.LeerBeneficio(candidato);
         ReglaDeOfertas.ValidarCantidadMinima(candidato.CantidadMinima);
+        ReglaDeOfertas.ValidarSoloMultiplos(candidato.SoloMultiplos, candidato.CantidadMinima);
         ReglaDeOfertas.ValidarVentana(
             candidato.FechaDesde, candidato.FechaHasta, candidato.HoraDesde, candidato.HoraHasta);
         ReglaDeOfertas.LeerDiasSemana(candidato.DiasSemana);
@@ -1139,5 +1212,6 @@ public class ServicioDeOfertas(
         o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
         o.DiasSemana is null ? Array.Empty<int>() : o.DiasSemana.Select(d => (int)d).ToArray(),
         o.CantidadMinima, o.PrecioUnitario, o.Porcentaje, o.ImporteFijo,
-        o.Prioridad, o.Acumulable, o.Activo, idsListas, o.IdFamilia, DisponibleOnline: o.DisponibleOnline);
+        o.Prioridad, o.Acumulable, o.Activo, idsListas, o.IdFamilia, DisponibleOnline: o.DisponibleOnline,
+        SoloMultiplos: o.SoloMultiplos);
 }

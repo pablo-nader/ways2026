@@ -170,7 +170,9 @@ public class ServicioDeEtiquetas(
             filas.Add(new FilaDeEtiqueta(
                 datos.Id, datos.CodigoInterno,
                 codigoBarraPorArticulo.TryGetValue(datos.Id, out var codigoBarra) ? codigoBarra : null,
-                datos.Nombre, datos.UnidadVenta.ToString(), precioOriginal, precioFinal, resultado.Aplicadas));
+                datos.Nombre, datos.UnidadVenta.ToString(), precioOriginal,
+                resultado.DescuentoDeLinea is { } descuentoDeLaUnidad ? precioOriginal - descuentoDeLaUnidad : precioFinal,
+                resultado.Aplicadas));
         }
 
         // Decisión 6 (design.md:57, mutation targets 13/14): soloConOfertaVigente delega POR

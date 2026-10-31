@@ -64,7 +64,10 @@ public static class ResolvedorDeOfertas
         var reportadas = aplicadas
             .OrderByDescending(a => a.Candidata.Prioridad)
             .ThenBy(a => a.Candidata.Id)
-            .Select(a => new OfertaAplicada(a.Candidata.Id, a.Candidata.Nombre, a.Descuento))
+            .Select(a => new OfertaAplicada(
+                a.Candidata.Id, a.Candidata.Nombre, a.Descuento,
+                a.Candidata.SoloMultiplos ? a.Candidata.CantidadMinima : null,
+                a.Candidata.Alcance.IdFamilia is not null))
             .ToList();
 
         return new PrecioConOfertas(linea.PrecioOriginal, precioFinal, descuentoTotal, reportadas);

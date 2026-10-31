@@ -2252,6 +2252,8 @@ public class ServicioDeVentas(
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
         var origenes = new List<(int Linea, TramoDeDevolucion? Tramo)>(lineas.Count);
+        var descuentosSoloMultiplos = DescuentosSoloMultiplosDeLaVenta(
+            lineas, resolucion, combosDetectados, devolucionesDeCombo, ventaOffline);
 
         for (var i = 0; i < lineas.Count; i++)
         {
@@ -2327,7 +2329,8 @@ public class ServicioDeVentas(
 
             lineasParaCalcular.Add(new LineaParaCalcular(
                 cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
-                linea.AjusteManualPorcentaje, comboDeLaLinea.UnidadesConsumidas, comboDeLaLinea.Ahorro));
+                linea.AjusteManualPorcentaje, comboDeLaLinea.UnidadesConsumidas, comboDeLaLinea.Ahorro,
+                descuentosSoloMultiplos[i] is { } descuentoDeLinea ? Math.Sign(cantidadConSigno) * descuentoDeLinea : null));
             origenes.Add((i, null));
         }
 
@@ -2462,6 +2465,34 @@ public class ServicioDeVentas(
         }
 
         return (items, totales, [.. origenes.Select(o => o.Linea)]);
+    }
+
+    /// <summary>El descuento de línea de las ofertas "solo múltiplos" (<see cref="ServicioDeOfertas.DescuentosDeLineaSoloMultiplos"/>)
+    /// de las líneas que cobra el servidor con su resolución: las unidades son las de la línea menos las devueltas por
+    /// tramos de combo y menos las que consumió un combo. Las líneas que no se cobran así (con precio offline, por importe
+    /// en una venta offline) entran con cero unidades: no cubren nada ni suman a los grupos de una familia.</summary>
+    private static IReadOnlyList<decimal?> DescuentosSoloMultiplosDeLaVenta(
+        IReadOnlyList<LineaDeVenta> lineas,
+        IReadOnlyList<ResultadoDeResolucion> resolucion,
+        IReadOnlyDictionary<int, ComboEnLinea> combosDetectados,
+        IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo,
+        bool ventaOffline)
+    {
+        var unidades = new decimal[lineas.Count];
+        for (var i = 0; i < lineas.Count; i++)
+        {
+            var linea = lineas[i];
+            if (linea.PrecioUnitario is not null || (ventaOffline && linea.Importe is not null))
+            {
+                continue;
+            }
+
+            var devueltasPorTramos = devolucionesDeCombo.TryGetValue(i, out var tramos) ? tramos.Sum(t => t.Cantidad) : 0m;
+            var consumidasPorCombo = combosDetectados.GetValueOrDefault(i).UnidadesConsumidas;
+            unidades[i] = Math.Max(linea.Cantidad - devueltasPorTramos - consumidasPorCombo, 0m);
+        }
+
+        return ServicioDeOfertas.DescuentosDeLineaSoloMultiplos(resolucion, unidades);
     }
 
     /// <summary>Neto de línea ESPERADO (bruto − descuento de oferta de las unidades fuera de combo − parte del combo),

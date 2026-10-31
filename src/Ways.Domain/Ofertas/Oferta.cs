@@ -53,6 +53,11 @@ public class Oferta : EntidadTenant
     /// Seteada ⇒ aplica solo cuando la cantidad pedida es <c>&gt;=</c> este valor.</summary>
     public decimal? CantidadMinima { get; set; }
 
+    /// <summary><c>true</c> ⇒ el beneficio alcanza solo a los grupos completos de <see cref="CantidadMinima"/> unidades
+    /// (<c>N × floor(cantidad / N)</c>); las demás pagan el precio original. Exige <see cref="CantidadMinima"/>
+    /// (<see cref="ReglaDeOfertas.ValidarSoloMultiplos"/>).</summary>
+    public bool SoloMultiplos { get; set; }
+
     /// <summary>Beneficio: exactamente uno de los tres tiene que estar seteado — mismo
     /// invariante que el alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/
     /// <see cref="IdCategoria"/>/<see cref="IdFamilia"/>), validado por <see cref="ReglaDeOfertas.LeerBeneficio"/> y respaldado por

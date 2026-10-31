@@ -314,7 +314,8 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
                 ReglaDeOfertas.LeerAlcance(o), ReglaDeOfertas.LeerBeneficio(o), o.CantidadMinima,
                 o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
                 ReglaDeOfertas.LeerDiasSemana(o.DiasSemana),
-                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>()))
+                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>(),
+                o.SoloMultiplos))
             .ToList();
 
         var (fecha, hora, diaSemana) = ServicioDeOfertas.DescomponerHoraLocal(ahora);
@@ -328,9 +329,12 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
 
             var resolucion = ResolvedorDeOfertas.Resolver(linea, candidatas);
 
-            if (resolucion.Aplicadas.FirstOrDefault(a => a.DescuentoUnitario > 0) is { Nombre: { } nombre })
+            // Una oferta "solo múltiplos" con cantidad mínima menor que 1 puede no cubrir la unidad entera: el precio de
+            // una unidad sale del descuento de línea de esa unidad, no del unitario.
+            var descuento = CoberturaDeOfertas.DescuentoDeLinea(resolucion, 1m);
+            if (descuento > 0 && resolucion.Aplicadas.FirstOrDefault(a => a.DescuentoUnitario > 0) is { Nombre: { } nombre })
             {
-                resultado[articulo.Id] = new OfertaDelArticulo(resolucion.PrecioFinal, nombre);
+                resultado[articulo.Id] = new OfertaDelArticulo(resolucion.PrecioOriginal - descuento, nombre);
             }
         }
 
