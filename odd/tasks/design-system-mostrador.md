@@ -86,6 +86,8 @@ in the API); the critique's "no sorting" finding was stale.
 
 ## Progress
 
+- 2026-10-31: #553 (T1) mergeado; #554 (T2) reapuntado a main con auto-merge. #556 (T3, base t2) y #559 (T4, base t3) abiertos con Auto-fix; al mergear cada base, reapuntar el siguiente a main y recién ahí habilitar auto-merge. Judgment-day APPROVED en T3 (fixes ccf31135) y T4 (fix 35e949bb: la nota de baja aclara la sincronización del POS).
+
 - 2026-10-31: PRs abiertos. #553 (T1, base main, auto-merge) y #554 (T2, base `pnader/ds-mostrador-t1`; reapuntar a main cuando #553 se mergee y recién ahí habilitar auto-merge). Judgment-day APPROVED en ambos; advertencias corregidas en b53c6521 (borde de controles, gitignore del POS) y ae347b95 (impresión en negro de estados, guard de nombres de color).
 
 - 2026-10-31: worktree `ds-mostrador`, branch `pnader/ds-mostrador-t1`; styling surface mapped.
