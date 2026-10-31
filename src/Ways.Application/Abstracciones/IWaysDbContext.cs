@@ -36,6 +36,7 @@ public interface IWaysDbContext
     DbSet<Tenant> Tenants { get; }
     DbSet<Empresa> Empresas { get; }
     DbSet<PuntoVenta> PuntosVenta { get; }
+    DbSet<Sucursal> Sucursales { get; }
 
     DbSet<Dominio> Dominios { get; }
 

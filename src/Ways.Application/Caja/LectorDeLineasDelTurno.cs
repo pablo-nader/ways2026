@@ -13,7 +13,7 @@ namespace Ways.Application.Caja;
 /// MISMO filtro que <see cref="ServicioDeResumenDeTurno"/>/<see cref="LectorDeContenidoDeResumen"/>
 /// — spec: Anulados Are Excluded From The Derivation) y sus pagos, sin filtrar por categoría.
 /// Reusa los DTOs de listado ya existentes (<see cref="ComprobanteListado"/>/
-/// <see cref="PagoListado"/>) — mismo shape que <c>GET /api/ventas</c>/<c>GET /api/gastos</c>,
+/// <see cref="PagoListado"/>) — mismo shape que <c>GET /api/ventas</c>/<c>GET /api/pagos</c>,
 /// nunca un tercer contrato para la misma fila.
 /// </summary>
 public class LectorDeLineasDelTurno(IWaysDbContext db)

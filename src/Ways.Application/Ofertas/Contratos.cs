@@ -10,7 +10,8 @@ namespace Ways.Application.Ofertas;
 /// en <c>ObtenerAsync</c>/<c>CrearAsync</c>/<c>ActualizarAsync</c>. <c>NombreArticulo</c> es el
 /// caso inverso: solo lo completa <c>ListarAsync</c> (una query para todas las filas) y las
 /// demás operaciones lo dejan nulo; también es nulo cuando la oferta no es de artículo o el
-/// artículo no es visible (dado de baja).</summary>
+/// artículo no es visible (dado de baja). <see cref="SoloMultiplos"/>: el beneficio alcanza solo a los grupos completos de
+/// <see cref="CantidadMinima"/> unidades.</summary>
 public sealed record OfertaListado(
     int Id,
     string Nombre,
@@ -33,7 +34,8 @@ public sealed record OfertaListado(
     IReadOnlyList<int> IdsListas,
     int? IdFamilia = null,
     string? NombreArticulo = null,
-    bool DisponibleOnline = true);
+    bool DisponibleOnline = true,
+    bool SoloMultiplos = false);
 
 /// <summary>Alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>/
 /// <see cref="IdFamilia"/>) y
@@ -42,7 +44,8 @@ public sealed record OfertaListado(
 /// exclusividad de cada grupo la valida <c>ReglaDeOfertas</c> del lado de
 /// <c>ServicioDeOfertas</c>, no un tipo discriminado acá. <see cref="IdsListas"/>: vacío/omitido
 /// ⇒ la oferta aplica a todas las listas del tenant (spec: Multi-Lista Targeting via
-/// ofertas_listas).</summary>
+/// ofertas_listas). <see cref="SoloMultiplos"/> exige <see cref="CantidadMinima"/> (400
+/// <c>solo_multiplos_sin_cantidad_minima</c>).</summary>
 public sealed record AltaOferta(
     string Nombre,
     int? IdEmpresa,
@@ -63,11 +66,15 @@ public sealed record AltaOferta(
     IReadOnlyList<int>? IdsListas = null,
     bool Activo = true,
     int? IdFamilia = null,
-    bool DisponibleOnline = true);
+    bool DisponibleOnline = true,
+    bool SoloMultiplos = false);
 
 /// <summary>Mismo shape que <see cref="AltaOferta"/> salvo <see cref="DisponibleOnline"/>, que acá es opcional y
 /// <c>null</c> significa "sin cambios": es nullable para que su ausencia en el JSON conserve el valor guardado en vez de
 /// leerse como <c>false</c> y sacar la oferta de la tienda en silencio (un cliente anterior al campo sigue editando).
+/// <see cref="SoloMultiplos"/> sigue el mismo criterio: <c>null</c> conserva el valor guardado, salvo que la edición deje la
+/// oferta sin <see cref="CantidadMinima"/>, que la vuelve una oferta común (sin cantidad mínima no hay grupos que contar);
+/// <c>true</c> sin cantidad mínima es 400 <c>solo_multiplos_sin_cantidad_minima</c>.
 /// A diferencia de
 /// <c>EdicionArticulo</c>/<c>AltaArticulo</c>, acá no hay ninguna columna inmutable que excluir
 /// (<c>codigo_interno</c> no tiene equivalente en <c>ofertas</c>), así que los dos contratos
@@ -93,7 +100,8 @@ public sealed record EdicionOferta(
     IReadOnlyList<int>? IdsListas,
     bool Activo,
     int? IdFamilia = null,
-    bool? DisponibleOnline = null);
+    bool? DisponibleOnline = null,
+    bool? SoloMultiplos = null);
 
 /// <summary>Una línea de entrada para <c>ServicioDeOfertas.ResolverAsync</c> (task 3.6, design:
 /// Resolution Contract) — a diferencia de <c>Ways.Domain.Ofertas.LineaAResolver</c> (pura,
@@ -137,8 +145,18 @@ public enum AgregacionDeResolucion
     PorLinea = 1,
 }
 
-/// <summary>Una oferta aplicada, forma HTTP de <c>Ways.Domain.Ofertas.OfertaAplicada</c>.</summary>
-public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal DescuentoUnitario);
+/// <summary>Una oferta aplicada, forma HTTP de <c>Ways.Domain.Ofertas.OfertaAplicada</c>. <see cref="MultiploDe"/> es la
+/// cantidad mínima de una oferta "solo múltiplos" (su descuento unitario alcanza solo a los grupos completos) y
+/// <see cref="PorFamilia"/> dice si esos grupos se cuentan sobre la familia del documento; las dos claves faltan en el JSON
+/// de una oferta común.</summary>
+public sealed record OfertaAplicadaDto(
+    int IdOferta,
+    string Nombre,
+    decimal DescuentoUnitario,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? MultiploDe = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    bool PorFamilia = false);
 
 /// <summary>Resultado de resolver una línea (spec: resolucion-de-ofertas / Applied Ofertas Are
 /// Reported, Never Persisted) — <see cref="PrecioOriginal"/>/<see cref="PrecioFinal"/> son
@@ -149,7 +167,12 @@ public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal Desc
 /// <see cref="Combo"/> solo lo completa <c>POST /api/ofertas/resolver-con-combos</c> (vista previa de lo que la venta
 /// online cobrará) y solo en las líneas con unidades consumidas por un combo; en cualquier otro camino es <c>null</c> y
 /// el <see cref="JsonIgnoreAttribute"/> deja la clave ausente, así que la respuesta de <c>/resolver</c> es
-/// byte por byte la de siempre.</summary>
+/// byte por byte la de siempre.
+///
+/// <para><see cref="DescuentoDeLinea"/> solo viaja cuando la línea tiene una oferta "solo múltiplos": es el descuento de
+/// oferta de la línea entera (sin signo, sobre sus unidades fuera de combos), que reemplaza a
+/// <c>cantidad × DescuentoUnitario</c> porque las unidades que no completan un grupo pagan el precio original.
+/// <see cref="PrecioFinal"/> y <see cref="DescuentoUnitario"/> siguen siendo los de una unidad con la oferta.</para></summary>
 public sealed record ResultadoDeResolucion(
     int IdArticulo,
     int IdListaPrecio,
@@ -158,7 +181,9 @@ public sealed record ResultadoDeResolucion(
     decimal DescuentoUnitario,
     IReadOnlyList<OfertaAplicadaDto> Aplicadas,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    ComboDeLineaDto? Combo = null);
+    ComboDeLineaDto? Combo = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? DescuentoDeLinea = null);
 
 /// <summary>Lo que los combos le hacen a una línea del documento, igual que lo grabará la venta online:
 /// <see cref="UnidadesConsumidas"/> de la línea entran a un combo (las demás conservan su oferta unitaria; es una
@@ -184,23 +209,30 @@ public sealed record ResolucionConCombos(
 /// el siguiente escalón, si hay) la línea resuelve a estos valores. <c>PrecioOriginal</c> NO se
 /// repite por escalón a propósito — la cantidad no entra en la resolución de precio de lista, así
 /// que es constante para toda la curva y ya viaja una sola vez en el resultado plano; lo único que
-/// varía con la cantidad es el descuento, el final y qué ofertas aplicaron.</summary>
+/// varía con la cantidad es el descuento, el final y qué ofertas aplicaron. Con una oferta "solo múltiplos" los campos
+/// de siempre llevan solo las ofertas comunes y <see cref="AplicadasCompletas"/> la resolución entera
+/// (<see cref="PrecioParaInstantanea"/>); sin ninguna, la clave falta.</summary>
 public sealed record EscalonDeCantidad(
     decimal CantidadDesde,
     decimal PrecioFinal,
     decimal DescuentoUnitario,
-    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<OfertaAplicadaDto>? AplicadasCompletas = null);
 
 /// <summary>Una celda de la grilla de familia, forma HTTP de <c>Ways.Domain.Ofertas.CeldaDeFamilia</c>:
 /// con <see cref="CantidadDeFamiliaDesde"/> unidades de la familia en el carrito y
 /// <see cref="CantidadDesde"/> del propio artículo, la línea resuelve a estos valores. Igual que
-/// <see cref="EscalonDeCantidad"/>, no repite <c>PrecioOriginal</c>.</summary>
+/// <see cref="EscalonDeCantidad"/>, no repite <c>PrecioOriginal</c> y separa las ofertas "solo múltiplos" en
+/// <see cref="AplicadasCompletas"/>.</summary>
 public sealed record EscalonDeFamilia(
     decimal CantidadDeFamiliaDesde,
     decimal CantidadDesde,
     decimal PrecioFinal,
     decimal DescuentoUnitario,
-    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<OfertaAplicadaDto>? AplicadasCompletas = null);
 
 /// <summary>El <see cref="Resultado"/> de siempre (la resolución a la cantidad pedida, byte por
 /// byte lo que devuelve <c>ServicioDeOfertas.ResolverAsync</c>) más la curva de precio por

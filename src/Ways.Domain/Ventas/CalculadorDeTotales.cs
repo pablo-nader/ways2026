@@ -16,10 +16,13 @@ namespace Ways.Domain.Ventas;
 /// <c>bruto − neto</c>, con el neto <c>round((Cantidad − UnidadesConsumidasPorCombo) × (Precio −
 /// DescuentoUnitario)) + round(UnidadesConsumidasPorCombo × Precio − AhorroDeCombo)</c> al peso
 /// entero: la oferta unitaria solo alcanza a las unidades que el combo no consumió. Con ambos en cero
-/// el cálculo es el de siempre.</summary>
+/// el cálculo es el de siempre. <see cref="DescuentoDeOfertaDeLinea"/> reemplaza a
+/// <c>(Cantidad − UnidadesConsumidasPorCombo) × DescuentoUnitario</c> cuando una oferta "solo múltiplos" alcanza solo a
+/// parte de esas unidades (<c>CoberturaDeOfertas</c>): es un importe de línea con el signo de <see cref="Cantidad"/>.
+/// <c>null</c> deja la fórmula unitaria de siempre.</summary>
 public readonly record struct LineaParaCalcular(
     decimal Cantidad, decimal PrecioUnitario, decimal DescuentoUnitario, decimal? AjusteManualPorcentaje = null,
-    decimal UnidadesConsumidasPorCombo = 0m, decimal AhorroDeCombo = 0m);
+    decimal UnidadesConsumidasPorCombo = 0m, decimal AhorroDeCombo = 0m, decimal? DescuentoDeOfertaDeLinea = null);
 
 /// <summary>Una línea ya calculada — lista para materializar en
 /// <see cref="ItemComprobanteVenta"/> (más los campos de snapshot que Slice 4 completa).
@@ -58,7 +61,7 @@ public static class CalculadorDeTotales
             var brutoDeLinea = BrutoDeLinea(linea.Cantidad, linea.PrecioUnitario);
             var netoDeLinea = NetoDeLinea(
                 linea.Cantidad, linea.PrecioUnitario, linea.DescuentoUnitario,
-                linea.UnidadesConsumidasPorCombo, linea.AhorroDeCombo);
+                linea.UnidadesConsumidasPorCombo, linea.AhorroDeCombo, linea.DescuentoDeOfertaDeLinea);
             var descuento = brutoDeLinea - netoDeLinea;
             var ajusteManual = AjusteManualSobre(netoDeLinea, linea.AjusteManualPorcentaje);
             var totalDeLinea = netoDeLinea + ajusteManual;
@@ -107,12 +110,21 @@ public static class CalculadorDeTotales
     /// nunca una cifra redondeada por separado: dos redondeos independientes dejarían centavos o
     /// cobrarían distinto de cantidad × precio final (1166.66 × 3 = 3499.98 cobra 3500). La reusan
     /// el diagnóstico de discrepancia offline y la reliquidación para no tener una segunda fórmula;
-    /// sin combo el resultado es el de siempre.</summary>
+    /// sin combo el resultado es el de siempre. Con <paramref name="descuentoDeOfertaDeLinea"/> (una oferta "solo
+    /// múltiplos") la parte fuera de combo es <c>round(unidades × precio − descuentoDeOfertaDeLinea)</c>: el mismo
+    /// redondeo único, con el descuento ya expresado como importe de línea.</summary>
     public static decimal NetoDeLinea(
         decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario,
-        decimal unidadesConsumidasPorCombo = 0m, decimal ahorroDeCombo = 0m) =>
-        RedondeoDePeso.APesoEntero((cantidadConSigno - unidadesConsumidasPorCombo) * (precioUnitario - descuentoUnitario))
-        + RedondeoDePeso.APesoEntero((unidadesConsumidasPorCombo * precioUnitario) - ahorroDeCombo);
+        decimal unidadesConsumidasPorCombo = 0m, decimal ahorroDeCombo = 0m, decimal? descuentoDeOfertaDeLinea = null)
+    {
+        var unidadesConOferta = cantidadConSigno - unidadesConsumidasPorCombo;
+        var netoConOferta = descuentoDeOfertaDeLinea is { } descuentoDeLinea
+            ? (unidadesConOferta * precioUnitario) - descuentoDeLinea
+            : unidadesConOferta * (precioUnitario - descuentoUnitario);
+
+        return RedondeoDePeso.APesoEntero(netoConOferta)
+            + RedondeoDePeso.APesoEntero((unidadesConsumidasPorCombo * precioUnitario) - ahorroDeCombo);
+    }
 
     /// <summary>Monto del ajuste manual sobre el neto de la línea (bruto − descuento de oferta), con
     /// el signo de <paramref name="porcentaje"/> aplicado a ese neto. Única fórmula del ajuste: la

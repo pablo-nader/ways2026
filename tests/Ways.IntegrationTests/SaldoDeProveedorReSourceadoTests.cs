@@ -274,15 +274,15 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         var idTurno = await AbrirTurnoAsync(ctx);
 
         var pagoPagada = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago total", null,
                 ctx.IdMedioEfectivo, null, 1111m, pagada.Id));
         Assert.Equal(HttpStatusCode.Created, pagoPagada.StatusCode);
 
         var pagoParcial = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago parcial", null,
                 ctx.IdMedioEfectivo, null, 777m, parcial.Id));
         Assert.Equal(HttpStatusCode.Created, pagoParcial.StatusCode);
@@ -332,8 +332,8 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         var pagada = await CrearYConfirmarCompraDeTotalAsync(ctx, 1111m, "0001-00000504");
         var idTurno = await AbrirTurnoAsync(ctx);
         var pagoPagada = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago total", null,
                 ctx.IdMedioEfectivo, null, 1111m, pagada.Id));
         Assert.Equal(HttpStatusCode.Created, pagoPagada.StatusCode);

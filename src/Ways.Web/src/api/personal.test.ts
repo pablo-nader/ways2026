@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { clienteDePersonal } from './personal'
+import {
+  clienteDePersonal,
+  COLUMNAS_ORDENABLES_DE_PERSONAL,
+  esColumnaOrdenableDePersonal,
+  FILTROS_DE_PERSONAL_VACIOS,
+} from './personal'
 import type { DatosDePersonal } from './tipos'
 
 const getMock = vi.fn()
@@ -36,16 +41,53 @@ beforeEach(() => {
 })
 
 describe('clienteDePersonal', () => {
-  it('listar pide el tamaño máximo de página y omite la búsqueda vacía', () => {
-    clienteDePersonal.listar('')
+  it('listarGrilla sin filtros ni orden pide /personal pelado: el tamaño de página es el del servidor', () => {
+    clienteDePersonal.listarGrilla({ filtros: FILTROS_DE_PERSONAL_VACIOS, orden: null, pagina: 1, tamanio: 25 })
 
-    expect(getMock).toHaveBeenCalledWith('/personal?tamanio=200')
+    expect(getMock).toHaveBeenCalledWith('/personal')
   })
 
-  it('listar codifica el término de búsqueda', () => {
-    clienteDePersonal.listar('ana gómez')
+  it('listarGrilla manda la búsqueda, los filtros, los rangos, el orden y la página', () => {
+    clienteDePersonal.listarGrilla({
+      filtros: {
+        ...FILTROS_DE_PERSONAL_VACIOS,
+        busqueda: 'ana gómez',
+        nombre: ' ana ',
+        valorHoraDesde: 100,
+        valorHoraHasta: 250.5,
+        saldoDesde: -30,
+        saldoHasta: 0,
+        usuario: 'lu',
+        cliente: 'paz',
+      },
+      orden: { columna: 'valorHora', direccion: 'descendente' },
+      pagina: 3,
+      tamanio: 50,
+    })
 
-    expect(getMock).toHaveBeenCalledWith('/personal?busqueda=ana+g%C3%B3mez&tamanio=200')
+    const ruta = String(getMock.mock.calls[0][0])
+    const parametros = new URLSearchParams(ruta.split('?')[1])
+
+    expect(ruta.startsWith('/personal?')).toBe(true)
+    expect(Object.fromEntries(parametros)).toEqual({
+      busqueda: 'ana gómez',
+      nombre: 'ana',
+      valorHoraDesde: '100',
+      valorHoraHasta: '250.5',
+      saldoDesde: '-30',
+      saldoHasta: '0',
+      usuario: 'lu',
+      cliente: 'paz',
+      orden: 'valorHora',
+      direccion: 'descendente',
+      pagina: '3',
+      tamanio: '50',
+    })
+  })
+
+  it('las claves de orden son las columnas de datos del servidor y nada más', () => {
+    expect(COLUMNAS_ORDENABLES_DE_PERSONAL.every(esColumnaOrdenableDePersonal)).toBe(true)
+    expect(esColumnaOrdenableDePersonal('acciones')).toBe(false)
   })
 
   it('crear, actualizar y eliminar apuntan al recurso y mandan el cuerpo tal cual', () => {

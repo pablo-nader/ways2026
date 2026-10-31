@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { FilaDeFiltrosDePadron, type CeldaDeFiltroDePadron } from './FilaDeFiltrosDePadron'
@@ -93,6 +93,23 @@ describe('FilaDeFiltrosDePadron', () => {
 
     expect(onCambio).toHaveBeenCalledWith({ desde: 5 }, false)
     expect(onCambio).toHaveBeenCalledWith({ hasta: 9 }, false)
+  })
+
+  it('un rango con admiteNegativos acepta "-500" y uno sin la marca descarta el signo', async () => {
+    const usuario = userEvent.setup()
+    const { onCambio } = montar({
+      celdas: [
+        { tipo: 'rango', claveDesde: 'desde', claveHasta: 'hasta', etiqueta: 'Saldo', admiteNegativos: true },
+      ],
+    })
+
+    await usuario.type(screen.getByLabelText('Saldo desde'), '-500')
+    expect(onCambio).toHaveBeenLastCalledWith({ desde: -500 }, false)
+    cleanup()
+
+    const sinMarca = montar()
+    await usuario.type(screen.getByLabelText('Margen desde'), '-500')
+    expect(sinMarca.onCambio).toHaveBeenLastCalledWith({ desde: 500 }, false)
   })
 
   it('los controles muestran el valor del borrador', () => {

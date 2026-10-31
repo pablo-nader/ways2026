@@ -173,10 +173,13 @@ public class ComprasRemitoYAlicuotasBackfillTests(WaysApiFixture fixture) : ICla
                     var idEmpresa = await EscalarAsync(
                         "INSERT INTO empresas (id_tenant, razon_social, created_at, updated_at) " +
                         "VALUES ($1, $2, now(), now()) RETURNING id_empresa", idTenant, nombre);
+                    var idSucursal = await EscalarAsync(
+                        "INSERT INTO sucursales (id_tenant, id_empresa, nombre, created_at, updated_at) " +
+                        "VALUES ($1, $2, $3, now(), now()) RETURNING id_sucursal", idTenant, idEmpresa, nombre);
                     var idPuntoVenta = await EscalarAsync(
-                        "INSERT INTO puntos_venta (id_tenant, id_empresa, nombre, modo, created_at, updated_at) " +
-                        "VALUES ($1, $2, $3, 'web'::modo_punto_venta, now(), now()) RETURNING id_punto_venta",
-                        idTenant, idEmpresa, nombre);
+                        "INSERT INTO puntos_venta (id_tenant, id_empresa, id_sucursal, nombre, modo, created_at, updated_at) " +
+                        "VALUES ($1, $2, $3, $4, 'web'::modo_punto_venta, now(), now()) RETURNING id_punto_venta",
+                        idTenant, idEmpresa, idSucursal, nombre);
                     var idUsuario = await EscalarAsync(
                         "INSERT INTO usuarios (id_tenant, usuario, mail, id_rol, password_hash, password_algoritmo, " +
                         "password_actualizado_el, created_at, updated_at) " +

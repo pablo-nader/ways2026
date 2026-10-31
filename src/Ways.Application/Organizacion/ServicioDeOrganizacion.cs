@@ -233,9 +233,11 @@ public class ServicioDeOrganizacion(
             var usuarios = await db.Usuarios.Where(u => u.IdTenant == id).ToListAsync(ct);
             var puntosVenta = await db.PuntosVenta.Where(p => p.IdTenant == id).ToListAsync(ct);
             var empresas = await db.Empresas.Where(e => e.IdTenant == id).ToListAsync(ct);
+            var sucursales = await db.Sucursales.Where(s => s.IdTenant == id).ToListAsync(ct);
 
             Marcar(usuarios, momento);
             Marcar(puntosVenta, momento);
+            Marcar(sucursales, momento);
             Marcar(empresas, momento);
 
             // D10 — el ÚNICO escritor de EstadoTenant.Baja, y va en el MISMO SaveChanges que el
@@ -434,8 +436,10 @@ public class ServicioDeOrganizacion(
             var momento = reloj.Ahora;
 
             var puntosVenta = await db.PuntosVenta.Where(p => p.IdEmpresa == id).ToListAsync(ct);
+            var sucursales = await db.Sucursales.Where(s => s.IdEmpresa == id).ToListAsync(ct);
 
             Marcar(puntosVenta, momento);
+            Marcar(sucursales, momento);
             Marcar(bajo, momento);
 
             RegistrarBajaDeEmpresa(bajo, momento, porCascada: false);
@@ -690,6 +694,21 @@ public class ServicioDeOrganizacion(
 
             Marcar(bajo, momento);
             RegistrarBajaDePuntoVenta(bajo, momento, porCascada: false);
+
+            // La sucursal sin ningún punto de venta vivo deja de tener sentido: baja en la misma
+            // escritura y con el mismo instante. El lock de baja del tenant serializa esta lectura.
+            var quedanVivos = await db.PuntosVenta
+                .AnyAsync(p => p.IdSucursal == bajo.IdSucursal && p.Id != bajo.Id, ct);
+
+            if (!quedanVivos)
+            {
+                var sucursal = await db.Sucursales.FirstOrDefaultAsync(s => s.Id == bajo.IdSucursal, ct);
+
+                if (sucursal is not null)
+                {
+                    Marcar(sucursal, momento);
+                }
+            }
 
             await db.SaveChangesAsync(ct);
             return true;

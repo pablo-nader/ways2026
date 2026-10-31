@@ -159,8 +159,8 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
     private static async Task RegistrarPagoAsync(Contexto ctx, int idMedioPago, decimal importe)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);

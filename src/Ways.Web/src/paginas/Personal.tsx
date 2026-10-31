@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { ErrorApi } from '../api/cliente'
-import { clienteDePersonal } from '../api/personal'
+import {
+  clienteDePersonal,
+  esColumnaOrdenableDePersonal,
+  FILTROS_DE_PERSONAL_VACIOS,
+  type ColumnaOrdenableDePersonal,
+  type ConsultaDePersonal,
+  type FiltrosDePersonal,
+} from '../api/personal'
+import { ultimaPaginaDePadron } from '../api/padron'
 import { puedeGestionarCatalogos } from '../api/tipos'
 import type { ClienteListado, PaginaDe, PersonalListado, UsuarioListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
@@ -11,7 +19,11 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
+import { EncabezadoOrdenable } from '../componentes/grilla'
 import { Modal } from '../componentes/Modal'
+import { FilaDeFiltrosDePadron, type CeldaDeFiltroDePadron } from '../componentes/padron/FilaDeFiltrosDePadron'
+import { PaginadorDePadron } from '../componentes/padron/PaginadorDePadron'
+import { usePadronEnServidor } from '../componentes/padron/usePadronEnServidor'
 import { SelectorConBusqueda } from '../componentes/SelectorConBusqueda'
 import { formatearImporte } from '../formato/importes'
 import { sanearTipeoDeHoras } from './cuentaDePersonalFormularios'
@@ -33,6 +45,15 @@ import {
 } from './personalFormulario'
 
 const ID_FORMULARIO_PERSONAL = 'formulario-personal'
+
+const CELDAS_DE_FILTRO: readonly CeldaDeFiltroDePadron<FiltrosDePersonal>[] = [
+  { tipo: 'texto', clave: 'nombre', etiqueta: 'nombre' },
+  { tipo: 'rango', claveDesde: 'valorHoraDesde', claveHasta: 'valorHoraHasta', etiqueta: 'Valor hora' },
+  { tipo: 'rango', claveDesde: 'saldoDesde', claveHasta: 'saldoHasta', etiqueta: 'Saldo', admiteNegativos: true },
+  { tipo: 'texto', clave: 'usuario', etiqueta: 'usuario' },
+  { tipo: 'texto', clave: 'cliente', etiqueta: 'cliente' },
+  { tipo: 'acciones' },
+]
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -57,8 +78,11 @@ export function Personal() {
   const puedeEscribir = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
 
   const [pagina, setPagina] = useState<PaginaDe<PersonalListado> | null>(null)
-  const [busqueda, setBusqueda] = useState('')
+  /** Texto de la caja de búsqueda general, que se aplica con Enter o con Buscar. */
+  const [textoDeBusqueda, setTextoDeBusqueda] = useState('')
   const [cargando, setCargando] = useState(true)
+  /** Hasta la primera respuesta la pantalla es un "Cargando…"; después la tabla y sus filtros no se desmontan. */
+  const [iniciando, setIniciando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
@@ -87,30 +111,55 @@ export function Personal() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo": la ÚNICA guarda de re-entrancia válida. */
   const ocupadoRef = useRef(false)
-  /** Último término que el usuario pidió buscar (o `''` al entrar): el refresco posterior a una
-   * escritura recarga con ese, nunca con el texto tipeado en la caja y todavía no enviado. */
-  const terminoVigente = useRef('')
+  /** Espejo de `bloqueado` (una escritura en vuelo o la puerta de baja abierta) para el temporizador de los filtros, que no lee el render: un filtro tipeado antes espera a que termine. */
+  const bloqueadoRef = useRef(false)
 
-  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
-    terminoVigente.current = termino
-    setCargando(true)
-    try {
-      const resultado = await clienteDePersonal.listar(termino)
-      if (generacion.current !== token) return
-      setPagina(resultado)
-      setError('')
-    } catch (e) {
-      if (generacion.current !== token) return
-      if (propagar) throw e
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el personal.')
-    } finally {
-      if (generacion.current === token) setCargando(false)
-    }
-  }, [])
+  /** La consulta aplicada (filtros, orden, página y tamaño) vive en el hook: el refresco posterior a una escritura
+   * recarga `consultaRef`, nunca el texto tipeado en un filtro y todavía no aplicado. */
+  const padron = usePadronEnServidor<FiltrosDePersonal, ColumnaOrdenableDePersonal>(FILTROS_DE_PERSONAL_VACIOS, {
+    esColumnaOrdenable: esColumnaOrdenableDePersonal,
+    ocupado: () => ocupadoRef.current || bloqueadoRef.current,
+  })
+  const { irAPagina } = padron
 
+  const cargar = useCallback(
+    async (token: number, consulta: ConsultaDePersonal, propagar = false, conservarError = false) => {
+      setCargando(true)
+      try {
+        const resultado = await clienteDePersonal.listarGrilla(consulta)
+        if (generacion.current !== token) return
+
+        // Una baja puede vaciar la última página: se pide la última válida en vez de mostrar "Página 3 de 2".
+        const ultima = ultimaPaginaDePadron(resultado.total, resultado.tamanio)
+        if (resultado.pagina > ultima) {
+          irAPagina(ultima)
+
+          return
+        }
+
+        setPagina(resultado)
+        // La relectura que repone una escritura rechazada no puede borrar el motivo del rechazo.
+        if (!conservarError) setError('')
+      } catch (e) {
+        if (generacion.current !== token) return
+        if (propagar) throw e
+        // Sin filas: el encabezado ya declara el orden pedido y no puede quedar sobre las del orden anterior.
+        setPagina(null)
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el personal.')
+      } finally {
+        if (generacion.current === token) {
+          setCargando(false)
+          setIniciando(false)
+        }
+      }
+    },
+    [irAPagina],
+  )
+
+  // Se vuelve a pedir el listado cada vez que cambia la consulta aplicada (filtros, orden, página o tamaño).
   useEffect(() => {
-    void cargar(++generacion.current, '')
-  }, [cargar])
+    void cargar(++generacion.current, padron.consulta)
+  }, [cargar, padron.consulta])
 
   // Lecturas de referencia (solo quien escribe las necesita). La generación es la propia corrida del
   // efecto: el desmontaje o un cambio de rol la invalidan y una respuesta tardía se descarta.
@@ -155,7 +204,7 @@ export function Personal() {
 
     setAviso(mensajeOk)
     try {
-      await cargar(token, terminoVigente.current, true)
+      await cargar(token, padron.consultaRef.current, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
     }
@@ -190,7 +239,7 @@ export function Personal() {
       } catch (e) {
         if (generacion.current === token) {
           setErrorFormulario(errorAlGuardar(e))
-          if (habiaLecturaEnVuelo) void cargar(++generacion.current, terminoVigente.current)
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, padron.consultaRef.current)
         }
 
         return
@@ -274,6 +323,9 @@ export function Personal() {
     if (!baja || ocupadoRef.current) return
 
     const p = baja
+    // Una lectura en vuelo queda invalidada por el token de esta escritura y su `finally` no baja `cargando`: si la
+    // baja falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setOcupadoBaja(p.id)
@@ -283,6 +335,9 @@ export function Personal() {
         await clienteDePersonal.eliminar(p.id)
       } catch (e) {
         setError(copiaDeBajaDePersonal(e, p.nombre))
+        if (habiaLecturaEnVuelo && generacion.current === token) {
+          void cargar(++generacion.current, padron.consultaRef.current, false, true)
+        }
 
         return
       }
@@ -298,6 +353,9 @@ export function Personal() {
 
   /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera. */
   const bloqueado = guardando || ocupadoBaja !== null || baja !== null
+  useEffect(() => {
+    bloqueadoRef.current = bloqueado
+  })
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -306,15 +364,15 @@ export function Personal() {
         className="form-control form-control-sm"
         placeholder="Buscar por nombre o documento…"
         aria-label="Buscar personal"
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && cargar(++generacion.current, busqueda)}
+        value={textoDeBusqueda}
+        onChange={(e) => setTextoDeBusqueda(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && padron.cambiarFiltros({ busqueda: textoDeBusqueda }, true)}
         disabled={bloqueado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-secondary"
-        onClick={() => cargar(++generacion.current, busqueda)}
+        onClick={() => padron.cambiarFiltros({ busqueda: textoDeBusqueda }, true)}
         disabled={bloqueado}
       >
         Buscar
@@ -377,88 +435,129 @@ export function Personal() {
           />
         )}
 
-        {cargando ? (
+        {iniciando ? (
           <Cargando />
         ) : (
-          <div className="table-responsive">
-            <p className="small text-muted mb-2">
-              Saldo positivo: la empresa le debe al empleado. Saldo negativo: adelanto ya pagado al empleado.
-            </p>
-            <table className="table table-striped table-hover table-bordered align-middle">
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th className="text-end">Valor hora</th>
-                  <th className="text-end">Saldo</th>
-                  <th>Usuario</th>
-                  <th>Cliente</th>
-                  <th className="text-end">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagina?.items.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      {p.nombre}
-                      {p.documento && <div className="text-muted small">{p.documento}</div>}
-                    </td>
-                    <td className="text-end">{formatearMoneda(p.valorHora)}</td>
-                    <td className="text-end">
-                      {formatearMoneda(p.saldo)}
-                      {p.saldo < 0 && <div className="small text-warning-emphasis">Adelanto ya pagado</div>}
-                    </td>
-                    <td>{p.nombreUsuario ?? <SinVincular />}</td>
-                    <td>{p.nombreCliente ?? <SinVincular />}</td>
-                    <td className="text-end text-nowrap">
-                      {/* Un `<Link>` no admite `disabled`: `disabled` de Bootstrap y `tabIndex` son solo
-                          presentación; el `preventDefault` es lo que cancela la navegación. */}
-                      <Link
-                        to={`/personal/${p.id}/cuenta`}
-                        className={`btn btn-sm btn-outline-secondary me-1${bloqueado ? ' disabled' : ''}`}
-                        aria-label={`Cuenta de ${p.nombre}`}
-                        aria-disabled={bloqueado}
-                        tabIndex={bloqueado ? -1 : undefined}
-                        onClick={(evento) => {
-                          if (bloqueado) evento.preventDefault()
-                        }}
-                      >
-                        Cuenta
-                      </Link>
-                      {puedeEscribir && (
-                        <>
-                          <BotonIcono
-                            icono="editar"
-                            etiqueta={`Editar ${p.nombre}`}
-                            className="me-1"
-                            onClick={() => abrirFormulario(aFormulario(p), p)}
-                            disabled={bloqueado}
-                          />
-                          <BotonIcono
-                            icono="eliminar"
-                            etiqueta={`Eliminar ${p.nombre}`}
-                            onClick={(evento) => pedirBaja(p, evento.currentTarget)}
-                            disabled={bloqueado}
-                          />
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {pagina?.items.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="text-center text-muted py-4">
-                      No hay personal que coincida con la búsqueda.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            {pagina && pagina.total > pagina.items.length && (
-              <p className="small text-muted">
-                Se muestran {pagina.items.length} de {pagina.total}. Refiná la búsqueda para ver el resto.
+          <>
+            <div className="table-responsive">
+              <p className="small text-muted mb-2">
+                Saldo positivo: la empresa le debe al empleado. Saldo negativo: adelanto ya pagado al empleado.
               </p>
+              <table className="table table-striped table-hover table-bordered align-middle">
+                <thead>
+                  <tr>
+                    <EncabezadoOrdenable columna="nombre" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Nombre
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable
+                      columna="valorHora"
+                      className="text-end"
+                      orden={padron.consulta.orden}
+                      onAlternar={padron.alternarOrden}
+                    >
+                      Valor hora
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable
+                      columna="saldo"
+                      className="text-end"
+                      orden={padron.consulta.orden}
+                      onAlternar={padron.alternarOrden}
+                    >
+                      Saldo
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="usuario" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Usuario
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="cliente" orden={padron.consulta.orden} onAlternar={padron.alternarOrden}>
+                      Cliente
+                    </EncabezadoOrdenable>
+                    <th scope="col" className="text-end">
+                      Acciones
+                    </th>
+                  </tr>
+                  <FilaDeFiltrosDePadron
+                    celdas={CELDAS_DE_FILTRO}
+                    valores={padron.borrador}
+                    onCambio={padron.cambiarFiltros}
+                    onLimpiar={() => {
+                      setTextoDeBusqueda('')
+                      padron.limpiar()
+                    }}
+                    hayFiltros={padron.hayFiltros}
+                    deshabilitado={bloqueado}
+                  />
+                </thead>
+                <tbody style={cargando ? { opacity: 0.6 } : undefined}>
+                  {pagina?.items.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        {p.nombre}
+                        {p.documento && <div className="text-muted small">{p.documento}</div>}
+                      </td>
+                      <td className="text-end">{formatearMoneda(p.valorHora)}</td>
+                      <td className="text-end">
+                        {formatearMoneda(p.saldo)}
+                        {p.saldo < 0 && <div className="small text-warning-emphasis">Adelanto ya pagado</div>}
+                      </td>
+                      <td>{p.nombreUsuario ?? <SinVincular />}</td>
+                      <td>{p.nombreCliente ?? <SinVincular />}</td>
+                      <td className="text-end text-nowrap">
+                        {/* Un `<Link>` no admite `disabled`: `disabled` de Bootstrap y `tabIndex` son solo
+                            presentación; el `preventDefault` es lo que cancela la navegación. */}
+                        <Link
+                          to={`/personal/${p.id}/cuenta`}
+                          className={`btn btn-sm btn-outline-secondary me-1${bloqueado ? ' disabled' : ''}`}
+                          aria-label={`Cuenta de ${p.nombre}`}
+                          aria-disabled={bloqueado}
+                          tabIndex={bloqueado ? -1 : undefined}
+                          onClick={(evento) => {
+                            if (bloqueado) evento.preventDefault()
+                          }}
+                        >
+                          Cuenta
+                        </Link>
+                        {puedeEscribir && (
+                          <>
+                            <BotonIcono
+                              icono="editar"
+                              etiqueta={`Editar ${p.nombre}`}
+                              className="me-1"
+                              onClick={() => abrirFormulario(aFormulario(p), p)}
+                              disabled={bloqueado}
+                            />
+                            <BotonIcono
+                              icono="eliminar"
+                              etiqueta={`Eliminar ${p.nombre}`}
+                              onClick={(evento) => pedirBaja(p, evento.currentTarget)}
+                              disabled={bloqueado}
+                            />
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {pagina?.items.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-center text-muted py-4">
+                        No hay personal que coincida con los filtros.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {pagina && (
+              <PaginadorDePadron
+                pagina={pagina.pagina}
+                tamanio={pagina.tamanio}
+                total={pagina.total}
+                unidad="persona(s)"
+                deshabilitado={cargando || bloqueado}
+                onCambiarPagina={padron.cambiarPagina}
+                onCambiarTamanio={padron.cambiarTamanio}
+              />
             )}
-          </div>
+          </>
         )}
       </Box>
     </div>

@@ -210,8 +210,8 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Contexto ctx, CategoriaPago categoria, int idMedioPago, decimal importe, int? idArea = null)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(ctx.IdPuntoVenta, categoria, null, idArea, "Gasto de prueba", null, idMedioPago, null, importe));
+            "/api/pagos",
+            PagoDeUnMedio.Pos(ctx.IdPuntoVenta, categoria, null, idArea, "Gasto de prueba", null, idMedioPago, null, importe));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }

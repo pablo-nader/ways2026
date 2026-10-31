@@ -105,7 +105,14 @@ public class ServicioDePresupuestos(
         var zonasPorPuntoVenta = await ResolverZonasPorPuntoVentaAsync(
             pagados.Select(p => p.IdPuntoVenta).Distinct().ToList(), ct);
 
-        var items = pagados.Select(p => ProyectarListado(p, zonasPorPuntoVenta, momento)).ToList();
+        var clientes = await ReferenciasDeListado.ClientesAsync(db, pagados.Select(p => p.IdCliente).ToList(), ct);
+        var items = pagados
+            .Select(p => ProyectarListado(p, zonasPorPuntoVenta, momento) with
+            {
+                NumeroCliente = clientes.GetValueOrDefault(p.IdCliente)?.Numero,
+                NombreCliente = clientes.GetValueOrDefault(p.IdCliente)?.Nombre,
+            })
+            .ToList();
 
         return new PaginaDePresupuestos(items, total, pagina, tamanio);
     }
@@ -712,7 +719,8 @@ public class ServicioDePresupuestos(
             }
 
             lineasParaCalcular.Add(new LineaParaCalcular(
-                lineas[i].Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario));
+                lineas[i].Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
+                DescuentoDeOfertaDeLinea: resultado.DescuentoDeLinea));
         }
 
         var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);

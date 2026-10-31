@@ -12,7 +12,8 @@
  * (precio − descuentoUnitario) para las unidades fuera de un combo, redondeado al peso, más lo que
  * cobra el combo por las unidades que consumió (`unidades × precio − ahorro`, al peso), descuento =
  * bruto − neto, y el ajuste manual de la línea (porcentaje con signo) se aplica sobre ese neto: total
- * de línea = neto + ajuste (`calcularTotalesDeLinea`). Todos los importes del comprobante son pesos enteros.
+ * de línea = neto + ajuste (`calcularTotalesDeLinea`). Con una oferta "solo múltiplos" la parte fuera del combo es
+ * `unidades × precio − descuentoDeLinea`, al peso. Todos los importes del comprobante son pesos enteros.
  * `subtotal`/`descuentoTotal` del comprobante son la suma de esas mismas columnas;
  * `descuentoManualTotal`/`recargoManualTotal` separan los ajustes por el signo del porcentaje y
  * `total = subtotal − descuentoTotal − descuentoManualTotal + recargoManualTotal` — nunca un
@@ -84,6 +85,7 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
       descuentoUnitario: precios.descuentoUnitario,
       porcentaje: linea.ajusteManualPorcentaje,
       combo: precios.combo,
+      descuentoDeLinea: precios.descuentoDeLinea,
     })
     subtotal += bruto
     descuentoTotal += descuento

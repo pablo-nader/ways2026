@@ -131,11 +131,18 @@ function montar(
     if (ruta === '/roles') return Promise.resolve(ROLES)
     if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDePlataforma)
     if (ruta.startsWith('/usuarios')) {
+      // El servidor filtra por tenant: el id, o `sin-tenant` para el personal de plataforma.
+      const tenant = new URLSearchParams(ruta.split('?')[1] ?? '').get('tenant')
+      const filtrados =
+        tenant === null
+          ? items
+          : items.filter((i) => (tenant === 'sin-tenant' ? i.idTenant === null : i.idTenant === Number(tenant)))
+
       return Promise.resolve<PaginaDe<UsuarioListado>>({
-        items,
-        total: items.length,
+        items: filtrados,
+        total: filtrados.length,
         pagina: 1,
-        tamanio: 20,
+        tamanio: 25,
       })
     }
 
@@ -148,10 +155,11 @@ function montar(
 /** Columnas: ID · Usuario · Mail · Tenant · Rol · Estado · Última conexión · Acciones. */
 const COLUMNA_TENANT = 3
 
+/** Las filas de datos: sin la del encabezado ni la de los filtros. */
 function usuariosVisibles() {
   return screen
     .getAllByRole('row')
-    .slice(1)
+    .slice(2)
     .map((f) => within(f).getAllByRole('cell')[1]?.textContent ?? '')
 }
 
@@ -203,19 +211,19 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     expect(celdaDeTenant('staff')).toHaveTextContent(ETIQUETA_PLATAFORMA)
   })
 
-  it('el filtro por tenant angosta las filas sin pedir nada más a la API', async () => {
+  it('el filtro por tenant lo resuelve el servidor: pide el listado con el tenant elegido', async () => {
     const usuario = userEvent.setup()
     montar()
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-    const llamadasAlCargar = apiGetMock.mock.calls.length
-    await usuario.selectOptions(screen.getByLabelText('Tenant'), '3')
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por tenant'), '3')
 
-    expect(usuariosVisibles()).toEqual(['vendedor.este'])
-    expect(apiGetMock.mock.calls).toHaveLength(llamadasAlCargar)
+    expect(apiGetMock).toHaveBeenLastCalledWith('/usuarios?tenant=3')
+    await waitFor(() => expect(usuariosVisibles()).toEqual(['vendedor.este']))
 
-    await usuario.selectOptions(screen.getByLabelText('Tenant'), '')
-    expect(usuariosVisibles()).toEqual(['vendedor.sur', 'vendedor.este', 'staff'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por tenant'), '')
+    await waitFor(() => expect(usuariosVisibles()).toEqual(['vendedor.sur', 'vendedor.este', 'staff']))
+    expect(apiGetMock).toHaveBeenLastCalledWith('/usuarios')
   })
 
   it('el filtro ofrece la opción de plataforma y aísla al personal sin tenant', async () => {
@@ -223,9 +231,21 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     montar()
     await waitFor(() => expect(screen.getByText('staff')).toBeInTheDocument())
 
-    await usuario.selectOptions(screen.getByLabelText('Tenant'), ETIQUETA_OPCION_PLATAFORMA)
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por tenant'), ETIQUETA_OPCION_PLATAFORMA)
 
-    expect(usuariosVisibles()).toEqual(['staff'])
+    expect(apiGetMock).toHaveBeenLastCalledWith('/usuarios?tenant=sin-tenant')
+    await waitFor(() => expect(usuariosVisibles()).toEqual(['staff']))
+  })
+
+  /** El filtro ofrece el universo completo de tenants, no solo los que tienen un usuario en la página cargada. */
+  it('el filtro por tenant ofrece un tenant sin usuarios en la página actual', async () => {
+    montar([cuentaDeTenant], [tenantFixture(2, 'Comercio Sur'), tenantFixture(8, 'Sin usuarios')])
+
+    await waitFor(() =>
+      expect(within(screen.getByLabelText('Filtrar por tenant')).getByRole('option', { name: 'Sin usuarios' })).toHaveValue(
+        '8',
+      ),
+    )
   })
 
   /**
@@ -248,16 +268,30 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     expect(celdaDeTenant('cuenta.homonima')).toHaveTextContent(ETIQUETA_PLATAFORMA)
     expect(celdaDeTenant('staff')).toHaveTextContent(ETIQUETA_PLATAFORMA)
 
-    const etiquetas = within(screen.getByLabelText('Tenant'))
+    await within(screen.getByLabelText('Filtrar por tenant')).findByRole('option', { name: 'Plataforma' })
+    const etiquetas = within(screen.getByLabelText('Filtrar por tenant'))
       .getAllByRole('option')
       .map((o) => o.textContent)
     expect(new Set(etiquetas).size).toBe(etiquetas.length)
 
-    await usuario.selectOptions(screen.getByLabelText('Tenant'), ETIQUETA_OPCION_PLATAFORMA)
-    expect(usuariosVisibles()).toEqual(['staff'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por tenant'), ETIQUETA_OPCION_PLATAFORMA)
+    await waitFor(() => expect(usuariosVisibles()).toEqual(['staff']))
 
-    await usuario.selectOptions(screen.getByLabelText('Tenant'), '9')
-    expect(usuariosVisibles()).toEqual(['cuenta.homonima'])
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por tenant'), '9')
+    await waitFor(() => expect(usuariosVisibles()).toEqual(['cuenta.homonima']))
+  })
+
+  /** Un tenant que se llama como la etiqueta de la opción de plataforma no deja dos opciones idénticas. */
+  it('un tenant llamado como la opción de plataforma se desempata y las etiquetas no se repiten', async () => {
+    montar([cuentaDePlataforma], [tenantFixture(9, ETIQUETA_OPCION_PLATAFORMA)])
+
+    await waitFor(() => expect(within(screen.getByLabelText('Filtrar por tenant')).getAllByRole('option')).toHaveLength(3))
+
+    const opciones = within(screen.getByLabelText('Filtrar por tenant')).getAllByRole('option')
+    const etiquetas = opciones.map((o) => o.textContent)
+
+    expect(new Set(etiquetas).size).toBe(etiquetas.length)
+    expect(opciones.find((o) => o.textContent === ETIQUETA_OPCION_PLATAFORMA)).toHaveValue('sin-tenant')
   })
 
   /**
@@ -272,7 +306,7 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     montar([cuentaDeTenant])
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-    expect(screen.queryByLabelText('Tenant')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Filtrar por tenant')).not.toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: 'Tenant' })).not.toBeInTheDocument()
     expect(screen.queryByText('Comercio Sur')).not.toBeInTheDocument()
 
@@ -282,7 +316,7 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     montar([cuentaDeTenant])
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-    expect(screen.getByLabelText('Tenant')).toBeInTheDocument()
+    expect(screen.getByLabelText('Filtrar por tenant')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: 'Tenant' })).toBeInTheDocument()
     expect(celdaDeTenant('vendedor.sur')).toHaveTextContent('Comercio Sur')
   })
@@ -348,11 +382,13 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     montar()
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-    for (const fila of screen.getAllByRole('row').slice(1)) {
+    for (const fila of screen.getAllByRole('row').slice(2)) {
       expect(within(fila).getAllByRole('cell')[COLUMNA_TENANT]).not.toHaveTextContent(/^\d+$/)
     }
 
-    expect(within(screen.getByLabelText('Tenant')).getByRole('option', { name: 'Comercio Sur' })).toHaveValue('2')
+    expect(
+      await within(screen.getByLabelText('Filtrar por tenant')).findByRole('option', { name: 'Comercio Sur' }),
+    ).toHaveValue('2')
   })
 })
 
@@ -737,43 +773,18 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
     ])
   })
 
-  /**
-   * Cláusula bajo prueba: el `setFiltroTenant((prev) => seleccionVigente(...))` de `cargar` — la
-   * reconciliación ESCRITA en el estado. Derivarla solo al pintar (`tenantVigente`) no alcanza: la
-   * selección inválida sigue viva en `filtroTenant` y se reaplica sola en cuanto la opción
-   * reaparece. El confundidor es justamente ese fallback derivado, así que la observación
-   * discriminante no es "el filtro se ve en Todos mientras la opción no está" sino "las filas
-   * vuelven ENTERAS cuando la opción reaparece".
-   */
-  it('un filtro invalidado por una búsqueda no resucita cuando las filas vuelven', async () => {
+  /** El filtro por tenant es un parámetro más de la consulta: la búsqueda general no lo desarma ni lo reemplaza. */
+  it('la búsqueda general se combina con el filtro por tenant en la misma consulta', async () => {
     const usuario = userEvent.setup()
-    apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/roles') return Promise.resolve(ROLES)
-      if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDesdeFilas([cuentaDeTenant]))
-      if (ruta.startsWith('/usuarios?')) return Promise.resolve(paginaDe([cuentaDeTenant]))
-      if (ruta.startsWith('/usuarios')) {
-        return Promise.resolve(paginaDe([cuentaDeTenant, cuentaDeOtroTenant, cuentaDePlataforma]))
-      }
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
-    })
-
-    render(<Usuarios />)
-    await waitFor(() => expect(screen.getByText('vendedor.este')).toBeInTheDocument())
-
-    await usuario.selectOptions(screen.getByLabelText('Tenant'), '3')
-    expect(usuariosVisibles()).toEqual(['vendedor.este'])
-
-    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
-    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
-    await waitFor(() => expect(usuariosVisibles()).toEqual(['vendedor.sur']))
-
-    await usuario.clear(screen.getByPlaceholderText('Buscar usuario o mail…'))
+    await usuario.selectOptions(screen.getByLabelText('Filtrar por tenant'), '3')
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'este')
     await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
 
-    await waitFor(() => expect(screen.getByText('vendedor.este')).toBeInTheDocument())
-    expect(screen.getByLabelText('Tenant')).toHaveValue('')
-    expect(usuariosVisibles()).toEqual(['vendedor.sur', 'vendedor.este', 'staff'])
+    await waitFor(() => expect(rutasDeUsuarios().at(-1)).toBe('/usuarios?busqueda=este&tenant=3'))
+    expect(screen.getByLabelText('Filtrar por tenant')).toHaveValue('3')
   })
 
   /**
@@ -1452,7 +1463,9 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     expect(screen.getByPlaceholderText('Buscar usuario o mail…')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
-    expect(screen.getByLabelText('Tenant')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por tenant')).toBeDisabled()
+    expect(screen.getByLabelText('Filtrar por usuario')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Limpiar filtros' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Eliminar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
@@ -1488,11 +1501,13 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     montar([cuentaDeTenant])
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
     await usuario.click(botonDeBajaDe('vendedor\\.sur'))
 
     await act(async () => {
       enterEnElBuscador()
     })
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/usuarios?busqueda=sur'))
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
@@ -1537,11 +1552,13 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     render(<Usuarios />)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
     await usuario.click(botonDeBajaDe('vendedor\\.sur'))
     await act(async () => {
       enterEnElBuscador()
     })
-    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    const cuerpo = screen.getAllByRole('rowgroup')[1]
+    expect(cuerpo).toHaveStyle({ opacity: '0.6' })
 
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -1551,7 +1568,7 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
+    await waitFor(() => expect(cuerpo).not.toHaveStyle({ opacity: '0.6' }))
     expect(screen.getByText('vendedor.sur')).toBeInTheDocument()
     expect(apiDeleteMock).not.toHaveBeenCalled()
   })

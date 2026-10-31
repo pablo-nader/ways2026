@@ -44,7 +44,9 @@ export function calcularAjusteManual(neto: number, porcentaje: number | null | u
  * `cantidad × precio` redondeado al peso, el neto es el neto VERDADERO `cantidad × (precio −
  * descuento unitario)` redondeado una sola vez, el descuento de la línea es `bruto − neto` (nunca
  * una cifra redondeada por su cuenta) y el ajuste se aplica sobre ese neto POSTERIOR a las
- * ofertas. Los productos son decimales exactos, con cualquier cantidad de decimales por unidad. */
+ * ofertas. Los productos son decimales exactos, con cualquier cantidad de decimales por unidad. Con `descuentoDeLinea`
+ * (una oferta "solo múltiplos") la parte fuera de combo es `(cantidad − consumidas) × precio − descuentoDeLinea`, con el
+ * mismo único redondeo al peso, como `CalculadorDeTotales.NetoDeLinea`. */
 export function calcularTotalesDeLinea(params: {
   cantidad: number
   precioOriginal: number
@@ -54,12 +56,16 @@ export function calcularTotalesDeLinea(params: {
   unidadesConsumidasPorCombo?: number
   /** Importe de LÍNEA que el combo repartió a esas unidades (lista menos lo que cobra); `0` o ausente sin combo. */
   ahorroDeCombo?: number
+  /** Descuento de oferta de LÍNEA de las unidades fuera de combo, con el signo de `cantidad`; ausente usa el unitario. */
+  descuentoDeLinea?: number
 }): TotalesDeLinea {
   const consumidas = params.unidadesConsumidasPorCombo ?? 0
   const bruto = productoAPeso([params.cantidad, params.precioOriginal])
-  const neto =
-    productoDeDiferenciasAPeso(params.cantidad, consumidas, params.precioOriginal, params.descuentoUnitario) +
-    diferenciaDeProductoAPeso(consumidas, params.precioOriginal, params.ahorroDeCombo ?? 0)
+  const conOferta =
+    params.descuentoDeLinea === undefined
+      ? productoDeDiferenciasAPeso(params.cantidad, consumidas, params.precioOriginal, params.descuentoUnitario)
+      : diferenciaDeProductoAPeso(redondearImporte(params.cantidad - consumidas, 3), params.precioOriginal, params.descuentoDeLinea)
+  const neto = conOferta + diferenciaDeProductoAPeso(consumidas, params.precioOriginal, params.ahorroDeCombo ?? 0)
   const descuento = bruto - neto
   const ajuste = calcularAjusteManual(neto, params.porcentaje)
   return { bruto, descuento, neto, ajuste, total: neto + ajuste }
