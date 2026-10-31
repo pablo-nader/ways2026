@@ -203,7 +203,7 @@ describe('Transferencias — flujo feliz', () => {
     await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
     await usuario.type(screen.getByLabelText('Observaciones'), 'Reposición de sucursal')
     await completarLinea(usuario)
-    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock físicamente entre sucursales\./))
 
     const boton = screen.getByRole('button', { name: 'Transferir' })
     await usuario.click(boton)

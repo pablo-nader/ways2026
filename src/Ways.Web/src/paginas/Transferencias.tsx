@@ -548,7 +548,7 @@ export function Transferencias() {
               onChange={(e) => setConfirmado(e.target.checked)}
             />
             <label className="form-check-label" htmlFor="transferencia-confirmacion">
-              Confirmo que quiero mover este stock físicamente entre puntos de venta. Es irreversible: una vez
+              Confirmo que quiero mover este stock físicamente entre sucursales. Es irreversible: una vez
               transferido, corregirlo requiere una transferencia inversa.
             </label>
           </div>
