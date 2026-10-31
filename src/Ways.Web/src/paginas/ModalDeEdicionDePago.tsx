@@ -13,7 +13,6 @@ import type {
   LineaDePagoListada,
   MedioPagoListado,
   OpcionDeProveedor,
-  OrigenFondosPago,
   SolicitudDeEdicionDePagoConLineas,
 } from '../api/tipos'
 import { EditorDeLineasDePago } from '../componentes/EditorDeLineasDePago'
@@ -27,9 +26,6 @@ type Props = {
   areas: AreaListado[]
   /** Con una compra ligada el servidor exige categoría proveedor y el mismo proveedor (400). */
   ligadoACompra?: boolean
-  /** Solo lo pasa la administración: un pago de caja (`CajaTurno`) se edita con un solo medio hasta el release del POS
-   * que lee varios. El POS no lo pasa y edita siempre con varios medios. */
-  origenFondos?: OrigenFondosPago
   /** Recibe la solicitud con el reparto por medio ya armada y validada de forma local. */
   onGuardarConLineas: (solicitud: SolicitudDeEdicionDePagoConLineas) => void
   /** Avisos de efectos (arqueo recalculado, ajuste compensatorio) mostrados sobre el formulario. */
@@ -53,7 +49,6 @@ export function ModalDeEdicionDePago({
   proveedores,
   areas,
   ligadoACompra = false,
-  origenFondos,
   advertencias = [],
   guardando,
   error,
@@ -63,10 +58,6 @@ export function ModalDeEdicionDePago({
   const [formulario, setFormulario] = useState<FormularioDeEdicionDePago>(() => aFormularioDeEdicion(pago))
   const [lineas, setLineas] = useState<LineaDePagoEditable[]>(() => lineasIniciales(pago))
   const [errorLocal, setErrorLocal] = useState('')
-  // Un pago de caja con un solo medio no pasa a tener varios desde acá hasta que todas las cajas tengan el POS
-  // nuevo; uno que ya nació con varios medios (en el POS nuevo) se edita completo.
-  const [nacioConVariosMedios] = useState(() => lineasIniciales(pago).length > 1)
-  const limitadoAUnMedio = origenFondos === 'CajaTurno' && !nacioConVariosMedios
 
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores)
   // Un catálogo dado de baja (o que no cargó) no puede cambiar el valor del pago en silencio: la
@@ -130,7 +121,6 @@ export function ModalDeEdicionDePago({
             lineas={lineas}
             medios={medios}
             onCambio={(cambio) => setLineas(cambio)}
-            maximoDeLineas={limitadoAUnMedio ? 1 : undefined}
           />
         </div>
 
