@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Listados;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Common;
@@ -786,8 +787,12 @@ public class ServicioDeTurnos(
         int pagina = 1,
         int tamanio = 25,
         EstadoTurno? estado = null,
+        string? orden = null,
+        string? direccion = null,
         CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
@@ -815,8 +820,7 @@ public class ServicioDeTurnos(
 
         var total = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderByDescending(t => t.FechaApertura)
+        var items = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(t => new TurnoListado(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre, t.Estado))
@@ -824,6 +828,37 @@ public class ServicioDeTurnos(
 
         return new PaginaDeTurnos(items, total, pagina, tamanio);
     }
+
+    /// <summary>Sin orden pedido: apertura descendente (el orden de siempre). Con orden: la columna pedida y SIEMPRE
+    /// <c>Id</c> ascendente como desempate. Un turno abierto no tiene cierre: va al final en las dos
+    /// direcciones.</summary>
+    private static IOrderedQueryable<TurnoCaja> Ordenar(
+        IQueryable<TurnoCaja> query, OrdenDeListado<ColumnaDeOrdenDeTurnos>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(t => t.FechaApertura);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeTurnos.Turno => OrdenarPor.Clave(query, t => t.Id, desc),
+            ColumnaDeOrdenDeTurnos.Apertura => OrdenarPor.Clave(query, t => t.FechaApertura, desc),
+            ColumnaDeOrdenDeTurnos.Cierre => OrdenarPor.ClaveConVacios(query, t => t.FechaCierre, desc),
+            _ => query.OrderByDescending(t => t.FechaApertura),
+        };
+
+        return ordenado.ThenBy(t => t.Id);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeTurnos> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeTurnos>(StringComparer.Ordinal)
+        {
+            ["turno"] = ColumnaDeOrdenDeTurnos.Turno,
+            ["apertura"] = ColumnaDeOrdenDeTurnos.Apertura,
+            ["cierre"] = ColumnaDeOrdenDeTurnos.Cierre,
+        };
 
     // ---- resolución interna ---------------------------------------------------------------
 

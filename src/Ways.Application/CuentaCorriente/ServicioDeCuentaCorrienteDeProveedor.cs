@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
+using Ways.Application.Listados;
 using Ways.Application.Pagos;
 using Ways.Domain.Compras;
 using Ways.Domain.Common;
@@ -29,8 +30,10 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
 {
     public async Task<PaginaDeEstadoDeCuentaDeProveedor> ObtenerEstadoDeCuentaAsync(
         int idProveedor, DateTimeOffset? desde, DateTimeOffset? hasta, bool historico,
-        int pagina, int tamanio, CancellationToken ct = default)
+        int pagina, int tamanio, string? orden = null, string? direccion = null, CancellationToken ct = default)
     {
+        var ordenPedido = OrdenDeListado.Interpretar(orden, direccion, ClavesDeOrden);
+
         var saldo = await ResolverSaldoDeProveedorAsync(idProveedor, ct);
 
         pagina = Math.Max(pagina, 1);
@@ -50,7 +53,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
 
         var total = await query.CountAsync(ct);
 
-        var filas = await query
+        var filas = await Ordenar(query, ordenPedido)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
             .Select(m => new
@@ -156,7 +159,7 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
     /// se pierden:
     ///   <c>Where(m => m.IdProveedor == idProveedor)</c> → sin él, el ledger de un proveedor
     ///                                                      filtra otros (cross-tenant/cross-proveedor)
-    ///   <c>ThenByDescending(Id)</c>                     → con <c>fecha</c> empatada (<c>RelojFijo</c>,
+    ///   <c>ThenByDescending(Id)</c> (en <see cref="Ordenar"/>) → con <c>fecha</c> empatada (<c>RelojFijo</c>,
     ///                                                      o confirmar + contramovimiento) la
     ///                                                      paginación duplica y saltea (mutation
     ///                                                      target #25, task 4.16)
@@ -180,8 +183,64 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
             consulta = consulta.Where(m => m.Fecha <= hastaAplicado);
         }
 
-        return consulta.OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id);
+        return consulta;
     }
+
+    /// <summary>Sin orden pedido: fecha e <c>Id</c> descendentes (el orden de siempre del libro). Con orden: la
+    /// columna pedida y SIEMPRE <c>Id</c> ascendente como desempate; ordenar nunca recalcula nada, cada fila
+    /// conserva el saldo resultante guardado. "Tipo" ordena por la etiqueta de la celda y "Comprobante/Pago" por
+    /// lo que la celda muestra: ascendente va primero las compras y después los gastos, descendente primero los
+    /// gastos y después las compras; dentro de cada grupo el número ordena como número (10 después de 9), no como
+    /// texto. Los movimientos sin referencia (la celda dice un guion) van al final en las dos direcciones. Un detalle ausente
+    /// también va al final.</summary>
+    private static IOrderedQueryable<MovimientoCuentaCorrienteProveedor> Ordenar(
+        IQueryable<MovimientoCuentaCorrienteProveedor> query, OrdenDeListado<ColumnaDeOrdenDeCuentaDeProveedor>? orden)
+    {
+        if (orden is not { } pedido)
+        {
+            return query.OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id);
+        }
+
+        var desc = pedido.Descendente;
+        var ordenado = pedido.Columna switch
+        {
+            ColumnaDeOrdenDeCuentaDeProveedor.Fecha => OrdenarPor.Clave(query, m => m.Fecha, desc),
+            ColumnaDeOrdenDeCuentaDeProveedor.Tipo => OrdenarPor.Clave(
+                query, EtiquetasDeMovimientoDeCuenta.SelectorDeTipoDeProveedor(), desc),
+            ColumnaDeOrdenDeCuentaDeProveedor.Referencia => OrdenarPorReferencia(query, desc),
+            ColumnaDeOrdenDeCuentaDeProveedor.Detalle => OrdenarPor.ClaveConVacios(query, m => m.Detalle, desc),
+            ColumnaDeOrdenDeCuentaDeProveedor.Importe => OrdenarPor.Clave(query, m => m.Importe, desc),
+            ColumnaDeOrdenDeCuentaDeProveedor.SaldoResultante => OrdenarPor.Clave(query, m => m.SaldoResultante, desc),
+            _ => query.OrderByDescending(m => m.Fecha),
+        };
+
+        return ordenado.ThenBy(m => m.Id);
+    }
+
+    private static IOrderedQueryable<MovimientoCuentaCorrienteProveedor> OrdenarPorReferencia(
+        IQueryable<MovimientoCuentaCorrienteProveedor> query, bool descendente)
+    {
+        var sinReferenciaAlFinal = query.OrderBy(m => m.IdComprobanteCompra == null && m.IdPago == null);
+
+        return descendente
+            ? sinReferenciaAlFinal
+                .ThenByDescending(m => m.IdComprobanteCompra == null)
+                .ThenByDescending(m => m.IdComprobanteCompra ?? m.IdPago)
+            : sinReferenciaAlFinal
+                .ThenBy(m => m.IdComprobanteCompra == null)
+                .ThenBy(m => m.IdComprobanteCompra ?? m.IdPago);
+    }
+
+    public static readonly IReadOnlyDictionary<string, ColumnaDeOrdenDeCuentaDeProveedor> ClavesDeOrden =
+        new Dictionary<string, ColumnaDeOrdenDeCuentaDeProveedor>(StringComparer.Ordinal)
+        {
+            ["fecha"] = ColumnaDeOrdenDeCuentaDeProveedor.Fecha,
+            ["tipo"] = ColumnaDeOrdenDeCuentaDeProveedor.Tipo,
+            ["referencia"] = ColumnaDeOrdenDeCuentaDeProveedor.Referencia,
+            ["detalle"] = ColumnaDeOrdenDeCuentaDeProveedor.Detalle,
+            ["importe"] = ColumnaDeOrdenDeCuentaDeProveedor.Importe,
+            ["saldoResultante"] = ColumnaDeOrdenDeCuentaDeProveedor.SaldoResultante,
+        };
 
     /// <summary>ADR-8: mismo 404 para "no existe" y "es de otro tenant" — mismo criterio que
     /// <c>ServicioDeSaldoDeProveedor.ResolverProveedorAsync</c>, pero trae <c>Saldo</c> en la misma

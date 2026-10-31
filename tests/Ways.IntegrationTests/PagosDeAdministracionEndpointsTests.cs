@@ -23,7 +23,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// stage-gastos-admin-retroactivos (PR3), owner's use case 2: <c>POST/GET
-/// /api/gastos/administracion</c> punta a punta — alta administrativa SIN turno, pagada de la
+/// /api/pagos/administracion</c> punta a punta — alta administrativa SIN turno, pagada de la
 /// tesorería de la empresa, con fecha de negocio potencialmente retroactiva. Mismo patrón de
 /// fixture/siembra que <c>PagosOrigenFondosTesoreriaTests</c>/
 /// <c>CuentaCorrienteProveedorPagoPorPagoTests</c>.
@@ -116,7 +116,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         return (empresa.Id, puntoVenta.Id);
     }
 
-    private static SolicitudDePagoDeAdministracion Solicitud(
+    private static SolicitudDePagoDeAdministracionConLineas Solicitud(
         Contexto ctx,
         DateOnly fecha,
         decimal importe = 100m,
@@ -126,7 +126,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         int? idMedioPago = null,
         int? idComprobanteCompra = null,
         string concepto = "Gasto administrativo") =>
-        new(
+        PagoDeUnMedio.Administracion(
             fecha, ctx.IdEmpresa, idPuntoVenta, categoria, idProveedor, null, concepto, null,
             idMedioPago ?? ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
 
@@ -141,7 +141,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var fechaRetroactiva = Hoy().AddDays(-10);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, fechaRetroactiva, importe: 500m));
+            "/api/pagos/administracion", Solicitud(ctx, fechaRetroactiva, importe: 500m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
@@ -172,13 +172,13 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
 
         // Un primer movimiento de tesorería YA existente en la cadena de la empresa (pago de HOY).
         var primero = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), importe: 100m));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), importe: 100m));
         Assert.True(primero.StatusCode == HttpStatusCode.Created, await primero.Content.ReadAsStringAsync());
 
         var antesDelAlta = DateTimeOffset.UtcNow;
         var fechaRetroactiva = Hoy().AddDays(-30);
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, fechaRetroactiva, importe: 60m));
+            "/api/pagos/administracion", Solicitud(ctx, fechaRetroactiva, importe: 60m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -208,7 +208,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoConFechaFuturaSeRechaza));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy().AddDays(1)));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy().AddDays(1)));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -221,7 +221,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoConFechaDeHoyEsAceptado));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy()));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy()));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
@@ -234,11 +234,11 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoConImporteCeroSeRechaza));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), importe: 0m));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), importe: 0m));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("gasto_importe_invalido", problema.GetProperty("codigo").GetString());
+        Assert.Equal("pago_linea_importe_invalido", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]
@@ -247,7 +247,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoConConceptoEnBlancoSeRechaza));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), concepto: "   "));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), concepto: "   "));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -262,7 +262,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoConMedioDePagoDeCuentaCorrienteSeRechaza));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), idMedioPago: ctx.IdMedioCuentaCorriente));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), idMedioPago: ctx.IdMedioCuentaCorriente));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -278,8 +278,8 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var otro = await PrepararAsync(nameof(UnPagoAdministrativoContraUnaEmpresaDeOtroTenantDevuelve404) + "-otro");
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 Hoy(), otro.IdEmpresa, null, CategoriaPago.Otros, null, null, "Empresa ajena", null,
                 ctx.IdMedioEfectivo, null, 100m));
 
@@ -293,7 +293,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var (_, idPuntoVentaDeOtraEmpresa) = await SembrarOtraEmpresaAsync(ctx.IdTenant, "Sucursal ajena");
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), idPuntoVenta: idPuntoVentaDeOtraEmpresa));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), idPuntoVenta: idPuntoVentaDeOtraEmpresa));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -306,7 +306,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoConPuntoDeVentaInexistenteDevuelve404));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), idPuntoVenta: 999999));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), idPuntoVenta: 999999));
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -330,7 +330,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         await db.SaveChangesAsync();
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
+            "/api/pagos/administracion",
             Solicitud(
                 ctx, Hoy().AddDays(-5), importe: 250m, categoria: CategoriaPago.Proveedor, idProveedor: proveedor.Id,
                 idPuntoVenta: ctx.IdPuntoVenta));
@@ -371,7 +371,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         await db.SaveChangesAsync();
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
+            "/api/pagos/administracion",
             Solicitud(ctx, Hoy(), categoria: CategoriaPago.Proveedor, idProveedor: proveedor.Id, idPuntoVenta: null));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
@@ -388,7 +388,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         using var vendedor = await CrearVendedorAsync(ctx, nameof(UnVendedorEsRechazadoConForbiddenDelEndpointAdministrativo));
 
         var respuesta = await vendedor.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy()));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy()));
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
@@ -398,7 +398,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
     {
         using var cliente = fixture.CreateClient();
 
-        var respuesta = await cliente.GetAsync("/api/gastos/administracion");
+        var respuesta = await cliente.GetAsync("/api/pagos/administracion");
 
         Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
     }
@@ -417,7 +417,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var turno = JsonSerializer.Deserialize<TurnoResumen>(cuerpoApertura, OpcionesJson)!;
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), importe: 300m, idPuntoVenta: ctx.IdPuntoVenta));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), importe: 300m, idPuntoVenta: ctx.IdPuntoVenta));
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
 
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>(
@@ -441,15 +441,15 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(ElListadoDeAdministracionFiltraPorEmpresaOrigenYProveedorEIncluyeFilasSinPuntoDeVenta));
 
         var sinPv = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), importe: 111m, idPuntoVenta: null));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), importe: 111m, idPuntoVenta: null));
         Assert.True(sinPv.StatusCode == HttpStatusCode.Created, await sinPv.Content.ReadAsStringAsync());
 
         var conPv = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion", Solicitud(ctx, Hoy(), importe: 222m, idPuntoVenta: ctx.IdPuntoVenta));
+            "/api/pagos/administracion", Solicitud(ctx, Hoy(), importe: 222m, idPuntoVenta: ctx.IdPuntoVenta));
         Assert.True(conPv.StatusCode == HttpStatusCode.Created, await conPv.Content.ReadAsStringAsync());
 
         var pagina = await ctx.Admin.GetFromJsonAsync<PaginaDePagosDeAdministracion>(
-            $"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}&origenFondos=Tesoreria", OpcionesJson);
+            $"/api/pagos/administracion?idEmpresa={ctx.IdEmpresa}&origenFondos=Tesoreria", OpcionesJson);
         Assert.NotNull(pagina);
         Assert.Equal(2, pagina!.Total);
         Assert.Contains(pagina.Items, i => i.Importe == 111m && i.IdPuntoVenta == null);
@@ -477,7 +477,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         await db.SaveChangesAsync();
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
+            "/api/pagos/administracion",
             Solicitud(
                 ctx, Hoy(), importe: 400m, categoria: CategoriaPago.Proveedor, idProveedor: proveedor.Id,
                 idPuntoVenta: ctx.IdPuntoVenta));
@@ -497,7 +497,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         }
 
         var pagina = await ctx.Admin.GetFromJsonAsync<PaginaDePagosDeAdministracion>(
-            $"/api/gastos/administracion?idEmpresa={ctx.IdEmpresa}", OpcionesJson);
+            $"/api/pagos/administracion?idEmpresa={ctx.IdEmpresa}", OpcionesJson);
         Assert.NotNull(pagina);
 
         var fila = Assert.Single(pagina!.Items, i => i.Id == pago.Id);
@@ -508,7 +508,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
 
         // regla 2: un filtro `idProveedor` contra un id ya invisible no matchea nada.
         var filtrado = await ctx.Admin.GetFromJsonAsync<PaginaDePagosDeAdministracion>(
-            $"/api/gastos/administracion?idProveedor={proveedor.Id}", OpcionesJson);
+            $"/api/pagos/administracion?idProveedor={proveedor.Id}", OpcionesJson);
         Assert.Equal(0, filtrado!.Total);
     }
 
@@ -520,7 +520,7 @@ public class PagosDeAdministracionEndpointsTests(WaysApiFixture fixture) : IClas
         var ctx = await PrepararAsync(nameof(UnPagoAdministrativoLigadoAUnaCompraQueNoEsDeProveedorSeRechaza));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
+            "/api/pagos/administracion",
             Solicitud(ctx, Hoy(), categoria: CategoriaPago.Otros, idComprobanteCompra: 1));
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);

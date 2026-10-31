@@ -10,7 +10,7 @@ import {
   type OrdenDeRemitos,
 } from '../api/remitos'
 import { api, ErrorApi } from '../api/cliente'
-import { clienteDeClientes } from '../api/clientes'
+import { clienteDeClientes, etiquetaDeClienteDeFila } from '../api/clientes'
 import type { ClienteListado, EstadoRemito, PaginaDeRemitos, PuntoVentaListado, RemitoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -131,9 +131,6 @@ export function Remitos() {
 
   const puntoVentaPorId: Record<number, PuntoVentaListado> = {}
   for (const pv of puntosVenta ?? []) puntoVentaPorId[pv.id] = pv
-
-  const clientePorId: Record<number, ClienteListado> = {}
-  for (const c of clientes ?? []) clientePorId[c.id] = c
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDeRemitos, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
@@ -276,7 +273,7 @@ export function Remitos() {
                           {r.numeroFormateado ?? `#${r.id}`}
                         </Link>
                       </td>
-                      <td>{clientePorId[r.idCliente] ? etiquetaDeCliente(clientePorId[r.idCliente]) : `Cliente #${r.idCliente}`}</td>
+                      <td>{etiquetaDeClienteDeFila(r)}</td>
                       <td>{puntoVentaPorId[r.idPuntoVenta]?.nombre ?? `PV #${r.idPuntoVenta}`}</td>
                       <td>
                         <span className={`badge ${claseDeBadgeDeEstadoRemito(r.estado)}`}>{etiquetaDeEstadoRemito(r.estado)}</span>

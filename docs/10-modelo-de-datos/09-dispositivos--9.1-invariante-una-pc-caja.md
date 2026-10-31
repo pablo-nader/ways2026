@@ -59,6 +59,9 @@ puntos_venta (
 );
 ```
 
+`puntos_venta` también lleva `id_sucursal integer NOT NULL` (FK compuesta a `sucursales`, ver doc 10 §1;
+sucursales T1): cada caja pertenece a una sucursal de su empresa, hoy la suya propia 1:1.
+
 `puntos_venta` también lleva `envio_por_defecto boolean NOT NULL DEFAULT false` (ventas con
 envío): si es `true`, las ventas nuevas del POS de ese punto de venta arrancan con "Con envío"
 tildado y el cajero puede cambiarlo en cada venta. Se edita con `PUT /api/puntos-venta/{id}`

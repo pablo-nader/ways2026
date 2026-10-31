@@ -84,16 +84,12 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // efectivo contado y cierra, así que exigirle GestionDeCatalogo le sacaría a Vendedor la
         // operación que este modo existe para modelar.
         ("POST", "/api/caja/turnos/{id:int}/cierre-por-retiro"),
-        // stage-6-turnos-caja (Slice 3, task 3.2): captura de pago — sin GestionDeCatalogo
-        // apilado, mismo criterio que las rutas de caja de arriba (spec: pagos / Pago
-        // Authorization, un Vendedor tiene que poder registrar un pago).
-        ("POST", "/api/gastos/"),
+        // stage-6-turnos-caja (Slice 3, task 3.2) y E2-S4: captura de pago con líneas por medio — sin GestionDeCatalogo
+        // apilado, mismo criterio que las rutas de caja de arriba (spec: pagos / Pago Authorization, un Vendedor tiene que
+        // poder registrar un pago). Positivos por rol: PagosApiConLineasTests.
+        ("POST", "/api/pagos/"),
         // Edición de un pago del turno abierto desde el POS: mismo criterio que el alta. Su prueba
         // positiva por rol es PagosEdicionEndpointsTests.UnVendedorEditaUnPagoDeSuTurnoAbierto.
-        ("PUT", "/api/gastos/{id:int}"),
-        // E2-S4: contrato nuevo con líneas por medio, mismas políticas que su gemelo de gastos (alta y edición del POS sin
-        // GestionDeCatalogo apilado). Positivos por rol: PagosApiConLineasTests.
-        ("POST", "/api/pagos/"),
         ("PUT", "/api/pagos/{id:int}"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan
@@ -415,13 +411,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // GET /api/caja/turnos/{id} y GET /api/caja/turnos (historial) — mismo criterio que
         // "/api/stock", las tres rutas de lectura de CajaEndpoints quedan bajo OperacionDePos.
         "/api/caja/turnos",
-        // stage-6-turnos-caja (Slice 3, task 3.5): GET /api/gastos (historial) — mismo criterio
+        // stage-6-turnos-caja (Slice 3, task 3.5) y E2-S4: GET /api/pagos (historial con líneas) — mismo criterio
         // que "/api/caja/turnos".
-        "/api/gastos",
-        // E2-S4: GET /api/pagos (historial con líneas) — mismo criterio que "/api/gastos".
         "/api/pagos",
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): GET /api/compras
-        // (listado) y GET /api/compras/{id} (detalle) — mismo criterio que "/api/gastos".
+        // (listado) y GET /api/compras/{id} (detalle) — mismo criterio que "/api/pagos".
         "/api/compras",
         // stage-8-compras-transferencias-inventario (Slice 4, task 4.4): GET
         // /api/proveedores/{id}/saldo — mapeada TOP-LEVEL bajo OperacionDePos (el AND-composition
@@ -432,7 +426,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // judgment-day Slice 5, ronda 2, juez A — WARNING: omisión preexistente del Slice 2 que
         // este hallazgo destapó. stage-17-presupuestos-y-remitos (Slice 2, task 2.x): GET
         // /api/presupuestos (listado) y GET /api/presupuestos/{id}/{para-venta} — el grupo agrupa
-        // SOLO bajo OperacionDePos (mismo criterio que "/api/stock"/"/api/gastos"), pero nunca se
+        // SOLO bajo OperacionDePos (mismo criterio que "/api/stock"/"/api/pagos"), pero nunca se
         // había agregado a este segundo guard.
         "/api/presupuestos",
         // stage-17-presupuestos-y-remitos (Slice 5, design decisión 17/proposal decisión 10): GET
@@ -527,8 +521,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // sus dominios). Por prefijo de grupo, para que un GET nuevo caiga bajo el guard sin edición.
         ("/api/plataforma", Politicas.SoloPlataforma),
         // Historial de gestión de pagos: solo Admin también en las lecturas (mueve dinero de la tesorería sin turno).
-        ("/api/pagos/administracion", Politicas.GestionDeCatalogo),
-        ("/api/gastos/administracion", Politicas.GestionDeCatalogo)
+        ("/api/pagos/administracion", Politicas.GestionDeCatalogo)
     ];
 
     [Fact]

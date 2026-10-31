@@ -994,16 +994,38 @@ describe('Pagos (administración) — edición y baja', () => {
     )
   })
 
-  it('un pago de caja se edita con un solo medio: sin "Agregar medio"', async () => {
-    mockearRutas({ pagina: paginaFixture([pagoDeCajaCerrado()]) })
+  it('un pago de caja con un solo medio ofrece "Agregar medio" y guarda las dos líneas', async () => {
+    mockearRutas({
+      medios: [medioEfectivo, medioCuentaCorriente, medioTransferencia],
+      pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Flete', importe: 1000, origenFondos: 'CajaTurno', idTurnoCaja: 9, turnoAbierto: false })]),
+    })
+    apiPutMock.mockResolvedValueOnce({ id: 31 })
     renderPagos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Editar pago Flete' }))
 
     const d = within(await screen.findByRole('dialog', { name: 'Editar pago' }))
-    expect(d.getByLabelText('Importe de la línea 1')).toBeInTheDocument()
-    expect(d.queryByRole('button', { name: 'Agregar medio' })).not.toBeInTheDocument()
-    expect(d.getByRole('button', { name: 'Guardar cambios' })).toBeEnabled()
+    await d.findAllByRole('option', { name: 'Transferencia' })
+    expect(d.getByRole('button', { name: 'Agregar medio' })).toBeEnabled()
+
+    await userEvent.clear(d.getByLabelText('Importe de la línea 1'))
+    await userEvent.type(d.getByLabelText('Importe de la línea 1'), '600')
+    await userEvent.click(d.getByRole('button', { name: 'Agregar medio' }))
+    await userEvent.selectOptions(d.getByLabelText('Medio de la línea 2'), 'Transferencia')
+    await userEvent.type(d.getByLabelText('Importe de la línea 2'), '400')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/pagos/administracion/31',
+        expect.objectContaining({
+          lineas: [
+            { idMedioPago: 1, importe: 600, referencia: null },
+            { idMedioPago: 4, importe: 400, referencia: null },
+          ],
+        }),
+      ),
+    )
   })
 
   it('un pago de tesorería se edita con varios medios: ofrece "Agregar medio"', async () => {

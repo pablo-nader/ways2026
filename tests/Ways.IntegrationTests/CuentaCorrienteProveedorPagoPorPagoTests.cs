@@ -142,10 +142,10 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         return JsonSerializer.Deserialize<TurnoResumen>(cuerpo, OpcionesJson)!.Id;
     }
 
-    private static SolicitudDePago SolicitudDePago(
+    private static SolicitudDePagoConLineas SolicitudDePago(
         Contexto ctx, decimal importe, int? idComprobanteCompra = null, int? idProveedor = null,
         CategoriaPago categoria = CategoriaPago.Proveedor) =>
-        new(
+        PagoDeUnMedio.Pos(
             ctx.IdPuntoVenta, categoria, idProveedor ?? (categoria == CategoriaPago.Proveedor ? ctx.IdProveedor : null),
             null, "Pago a proveedor", null, ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
 
@@ -163,7 +163,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePago(ctx, importe: 1000m, idComprobanteCompra: compra.Id));
+            "/api/pagos", SolicitudDePago(ctx, importe: 1000m, idComprobanteCompra: compra.Id));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -199,7 +199,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         await CrearYConfirmarCompraAsync(ctx, costoUnitario: 80m); // saldo previo = 800
         await AbrirTurnoAsync(ctx);
 
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 300m));
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 300m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -227,8 +227,8 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         // servicio lo ignora: SolicitudDePago.IdProveedor solo se usa cuando la categoría ES
         // proveedor) — discrimina el conjunto "categoria = proveedor" del predicado.
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Servicios, ctx.IdProveedor, null, "Gasto de servicios", null,
                 ctx.IdMedioEfectivo, null, 200m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -252,8 +252,8 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         // ya excluía). Construido directo (no vía SolicitudDePago, que RELLENA id_proveedor con
         // ctx.IdProveedor por defecto cuando la categoría es proveedor).
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, null, null, "Gasto sin proveedor", null,
                 ctx.IdMedioEfectivo, null, 200m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -271,7 +271,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
     {
         var ctx = await PrepararAsync(nameof(UnPagoDeProveedorSinTurnoAbiertoEsRechazadoYNoEscribeMovimiento));
 
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 200m));
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 200m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
         var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
@@ -291,7 +291,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         var ctx = await PrepararAsync(nameof(ElPagoAProveedorSigueApareciendoEnElEgresoPorCategoriaDelResumenSinTerminoNuevo));
         var turno = await AbrirTurnoAsync(ctx);
 
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 120m));
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 120m));
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
 
         var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno}/resumen", OpcionesJson);
@@ -313,8 +313,8 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         await CrearYConfirmarCompraAsync(ctx, costoUnitario: 150m); // saldo previo = 1500
         await AbrirTurnoAsync(ctx);
 
-        var tareaUno = ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 300m));
-        var tareaDos = ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 200m));
+        var tareaUno = ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 300m));
+        var tareaDos = ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 200m));
 
         await Task.WhenAll(tareaUno, tareaDos);
 
@@ -373,7 +373,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         // El pago corre COMPLETO por el call site real mientras la anulación sigue pausada, todavía
         // sin ningún lock propio.
         var respuestaPago = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePago(ctx, importe: 400m, idComprobanteCompra: compra.Id));
+            "/api/pagos", SolicitudDePago(ctx, importe: 400m, idComprobanteCompra: compra.Id));
         var cuerpoPago = await respuestaPago.Content.ReadAsStringAsync();
         Assert.True(respuestaPago.StatusCode == HttpStatusCode.Created, cuerpoPago);
 
@@ -435,7 +435,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         var tareaPago = clientePago.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePago(ctx, importe: 1000m, idComprobanteCompra: compra.Id));
+            "/api/pagos", SolicitudDePago(ctx, importe: 1000m, idComprobanteCompra: compra.Id));
 
         await transaccionIniciada.Task;
 
@@ -496,7 +496,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         HttpResponseMessage respuesta;
         try
         {
-            respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 200m));
+            respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 200m));
         }
         finally
         {
@@ -530,7 +530,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         await AbrirTurnoAsync(ctx);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos", SolicitudDePago(ctx, importe: 600m, idComprobanteCompra: compra.Id));
+            "/api/pagos", SolicitudDePago(ctx, importe: 600m, idComprobanteCompra: compra.Id));
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, await respuesta.Content.ReadAsStringAsync());
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
@@ -575,7 +575,7 @@ public class CuentaCorrienteProveedorPagoPorPagoTests(WaysApiFixture fixture) : 
         var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        var respuesta = await cliente.PostAsJsonAsync("/api/gastos", SolicitudDePago(ctx, importe: 150m));
+        var respuesta = await cliente.PostAsJsonAsync("/api/pagos", SolicitudDePago(ctx, importe: 150m));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;

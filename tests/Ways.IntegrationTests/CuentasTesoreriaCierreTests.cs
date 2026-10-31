@@ -608,10 +608,10 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         await SembrarPagoAsync(ctx, turno, medio, 1000m);
 
         var pagoRespuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto original", null, medio, null, 40m,
-                OrigenFondos: OrigenFondosPago.CajaTurno));
+                origenFondos: OrigenFondosPago.CajaTurno));
         var cuerpoPago = await pagoRespuesta.Content.ReadAsStringAsync();
         Assert.True(pagoRespuesta.StatusCode == HttpStatusCode.Created, cuerpoPago);
         var idPago = JsonDocument.Parse(cuerpoPago).RootElement.GetProperty("id").GetInt32();
@@ -621,8 +621,8 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(2, antes.Count);
 
         var edicion = await ctx.Admin.PutAsJsonAsync(
-            $"/api/gastos/administracion/{idPago}",
-            new SolicitudDeEdicionDePago(CategoriaPago.Otros, null, null, "Gasto editado", null, medio, null, 90m));
+            $"/api/pagos/administracion/{idPago}",
+            PagoDeUnMedio.Edicion(CategoriaPago.Otros, null, null, "Gasto editado", null, medio, null, 90m));
         Assert.True(edicion.StatusCode == HttpStatusCode.OK, await edicion.Content.ReadAsStringAsync());
 
         await using (var db = Db(ctx))

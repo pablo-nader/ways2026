@@ -102,16 +102,34 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
   `PagosEdicionEndpointsTests`, `QuitarMedioDeLaCabeceraDelPagoMigracionTests`.
 - [ ] E2-S4 (written; CI pending) — Wire contract `/api/pagos` with lines (POS alta/list/edit, administración CRUD, `de-compra/{idCompra}`, `vincular-compra`), same policies as the `/api/gastos` twins; `/api/gastos` and `POST /api/compras/{id}/pagos` untouched. New request records `Solicitud*ConLineas`, responses `PagoConLineas` / `ResultadoDePagoDeCompraConLineas` (key `pago`). The POS alta through `/api/pagos` validates each medio server-side (`ComandoDePago.ValidarMedios`); the legacy route still does not. Listings reuse `PagoListado`/`PagoDeAdministracionListado` (they keep the compatibility `idMedioPago`; trimming it is stage-C cleanup). Integration tests (`PagosApiConLineasTests`, allowlist entries in `SuperficieDeAutorizacionTests`) need CI.
 - [x] E2-W1 — Web foundation: types and clients for the `/api/pagos` contract, pure helpers (`api/lineasDePago.ts`, with tests) and the shared `EditorDeLineasDePago` component. The POS payment form (`PagosDelTurno`, still on `/api/gastos` with one medio) does NOT use it yet: pending, tracked under E2-W2.
-- [x] E2-W2 — Web: lines in the POS payment form. `PagosDelTurno` alta uses `EditorDeLineasDePago` (max 20 lines) and posts `POST /api/pagos` (`SolicitudDePagoConLineas`); the cash-drawer availability warning, the shortfall and the drawer pulse consider only the Efectivo lines paid from the shift cash (`importeEnEfectivoDeCaja`, `haySalidaDeEfectivoDeCaja`). The shift list and `DetalleDeTurnoListas` show the reparto (`textoDeMediosDelPago`) when a pago has more than one medio. `ModalDeEdicionDePago` is now lines-only and the POS edits through `PUT /api/pagos/{id}`; the legacy one-medio mode and the `/gastos` client calls are gone from the web (the backend keeps the legacy routes for old bundles). The administration part shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`). Web release: POS bundle needs Ways.Desktop bump + tag `pos-v0.16.0` to reach the registers.
-- [ ] E2-W4 — Lift the back-office CajaTurno single-line restriction (`Pagos`/`ModalDeEdicionDePago` `origenFondos` prop, `maximoDeLineas=1` and the read-only note) once every register runs `pos-v0.16.0`. Not lifted in W2 on purpose: installed registers keep the old bundle until each caja updates.
+- [x] E2-W2 — Web: lines in the POS payment form. `PagosDelTurno` alta uses `EditorDeLineasDePago` (max 20 lines) and posts `POST /api/pagos` (`SolicitudDePagoConLineas`); the cash-drawer availability warning, the shortfall and the drawer pulse consider only the Efectivo lines paid from the shift cash (`importeEnEfectivoDeCaja`, `haySalidaDeEfectivoDeCaja`). The shift list and `DetalleDeTurnoListas` show the reparto (`textoDeMediosDelPago`) when a pago has more than one medio. `ModalDeEdicionDePago` is now lines-only and the POS edits through `PUT /api/pagos/{id}`; the legacy one-medio mode and the `/gastos` client calls are gone from the web (the backend kept the legacy routes for old bundles until E2-L removed them). The administration part shipped with W3 (branch `pnader/pagos-e2-w1-w3-web`). Web release: POS bundle needs Ways.Desktop bump + tag `pos-v0.16.0` to reach the registers.
+- [x] E2-W4 — Lift the back-office CajaTurno single-line restriction (`Pagos`/`ModalDeEdicionDePago` `origenFondos` prop, `maximoDeLineas=1` and the read-only note) once every register runs `pos-v0.16.0`. Not lifted in W2 on purpose: installed registers keep the old bundle until each caja updates. Done: removed the `origenFondos` prop and the `maximoDeLineas=1` limit from `ModalDeEdicionDePago`; back-office now edits a CajaTurno pago with N lines (test flipped RED→GREEN).
 - [x] E2-W3 — Web: administración (`Pagos`/`ModalDeAltaDePago`/edición with lines, `/api/pagos/administracion`) and pagar compra (`ModalDePagoDeCompra` via `/api/pagos/de-compra/{idCompra}`, result key `pago`; `CompraEditor` and `CuentaCorrienteDeProveedor` updated; `vincular-compra` and `desdePago` read on `/api/pagos`). Personal payments untouched (E2-P).
 - [x] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items. Done by S3b (column, FK and index
   dropped).
-- [ ] E2-P — Pago de sueldo en un solo pago, después del release del POS (and after E2-W2): the personal payment with N
+- [x] E2-P (written; CI pending) — Pago de sueldo en un solo pago, después del release del POS (and after E2-W2): the personal payment with N
   lines becomes ONE pago with N items and one treasury movement for the total (`referencia` only in the items; the
   desglose already reads `item.referencia ?? pago.detalle`). Deferred because the installed POS bundle reads only
   `idMedioPago`/`importe` from the turno detail `gastos` and `/api/gastos`, so the merge would show 6000 efectivo + 500
   transferencia as one 6500 row under efectivo.
+  Done: `PersistirPagoDeSueldoAsync` writes one pago (header total, no `detalle`) with N items and one treasury
+  movement for the total; the plan shape is unchanged; the personal payment writes no audit rows. Integration
+  tests (`PagoDePersonalTests`) need CI.
+- [x] E2-L (written; CI pending) — Cleanup of the legacy `/api/gastos` routes, stacked on E2-P: removed the `/api/gastos` and
+  `/api/gastos/administracion` groups, the single-medio request records (`SolicitudDePago`, `SolicitudDePagoDeAdministracion`,
+  `SolicitudDeEdicionDePago`), their `Desde` adapters, the service overloads, `ComandoDeEdicionDePago.DeUnSoloMedio` and the
+  `409 gasto_con_varios_medios` branch. `POST /api/compras/{id}/pagos` keeps its single-medio shape (`ImporteDeUnSoloMedio`); its
+  Location now points to `/api/pagos/administracion/{id}`. Integration tests moved to `/api/pagos` through the test helper
+  `PagoDeUnMedio` (one-line requests); the allowlists of `SuperficieDeAutorizacionTests` lost the `/api/gastos*` entries.
+  Tests deleted: the legacy 409 assertion in `PagosApiConLineasTests` (`...MientrasElPutViejoDa409`) and
+  `PagosConLineasTests.LaRutaActualNoEditaUnPagoConVariosMediosYNoCambiaNada`. Tests ported with new expectations:
+  `PagosEdicionEndpointsTests` (rounding test became rejection of more than 2 decimals; zero amount is
+  `pago_linea_importe_invalido`), `PagosDeAdministracionEndpointsTests` and `PagosEndpointsTests` (same code; unknown medio on the
+  POS alta is now 404 because `/api/pagos` validates the medio). Behavior change: the POS alta no longer rounds a 3-decimal
+  amount, it answers 400. Integration tests were not run locally (Docker down): they need CI.
+- [ ] E2-L2 — Follow-up of E2-L, once every register runs `pos-v0.17.0`: rename the turno-detail JSON key `gastos` to `pagos`
+  and `gastosEnEfectivo`, and drop `PagoListado.idMedioPago` (and the compatibility medio in the listings). Not done in E2-L
+  because the 0.16.0 bundle still reads them (`PagosDelTurno.tsx:353`, `registroDePagos.ts`).
 
 ### E3 slices
 
@@ -405,4 +423,4 @@ contract of ventas (`pagos: PagoDeVenta[]`) is NOT renamed: installed registers 
 
 ## Next step
 
-E1–E6 and E2-W2 are written and shipped as PRs (#500…#523); `pos-v0.16.0` (#524) is tagged on main once it merges. Open: E2-W4 (lift the back-office single-medio restriction once every register runs 0.16.0), E2-P (sueldo as one pago), C (cleanup of `/api/gastos`) and E7 (cobros).
+E1–E7 are shipped (#500…#534, `pos-v0.16.0`). After every register ran 0.16.0 (owner confirmation 2026-10-30): E2-W4 (#535), E2-P (#536), E2-L (cleanup of `/api/gastos`) and the `pos-v0.17.0` release (#537, carries the E7-W1 POS screens). Open: E2-L2 (rename the turno-detail key `gastos`, `gastosEnEfectivo`, drop `PagoListado.idMedioPago`) once every register runs 0.17.0.

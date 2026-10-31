@@ -27,8 +27,8 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// Edición y baja de pagos: <c>PUT /api/gastos/{id}</c> (POS, turno abierto),
-/// <c>PUT /api/gastos/administracion/{id}</c> y <c>DELETE /api/gastos/administracion/{id}</c>
+/// Edición y baja de pagos: <c>PUT /api/pagos/{id}</c> (POS, turno abierto),
+/// <c>PUT /api/pagos/administracion/{id}</c> y <c>DELETE /api/pagos/administracion/{id}</c>
 /// (admin, cualquier pago), con sus ajustes de cuenta corriente de proveedor y de tesorería, el
 /// recálculo del arqueo de un turno cerrado y la auditoría.
 /// </summary>
@@ -156,10 +156,10 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         OrigenFondosPago origen = OrigenFondosPago.CajaTurno)
     {
         var respuesta = await cliente.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, categoria, idProveedor, null, "Gasto original", null, idMedioPago, null, importe,
-                OrigenFondos: origen));
+                origenFondos: origen));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -170,8 +170,8 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         int? idPuntoVenta = null, int? idComprobanteCompra = null)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos/administracion",
-            new SolicitudDePagoDeAdministracion(
+            "/api/pagos/administracion",
+            PagoDeUnMedio.Administracion(
                 DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, idPuntoVenta, categoria, idProveedor,
                 null, "Gasto admin", null, ctx.IdMedioEfectivo, null, importe, idComprobanteCompra));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -179,16 +179,16 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
     }
 
-    private static SolicitudDeEdicionDePago Edicion(
+    private static SolicitudDeEdicionDePagoConLineas Edicion(
         decimal importe, int idMedioPago, CategoriaPago categoria = CategoriaPago.Otros, int? idProveedor = null,
         int? idArea = null, string concepto = "Concepto editado", string? detalle = null, string? numeroFactura = null) =>
-        new(categoria, idProveedor, idArea, concepto, detalle, idMedioPago, numeroFactura, importe);
+        PagoDeUnMedio.Edicion(categoria, idProveedor, idArea, concepto, detalle, idMedioPago, numeroFactura, importe);
 
-    private static async Task<HttpResponseMessage> EditarPosAsync(HttpClient cliente, int idPago, SolicitudDeEdicionDePago solicitud) =>
-        await cliente.PutAsJsonAsync($"/api/gastos/{idPago}", solicitud);
+    private static async Task<HttpResponseMessage> EditarPosAsync(HttpClient cliente, int idPago, SolicitudDeEdicionDePagoConLineas solicitud) =>
+        await cliente.PutAsJsonAsync($"/api/pagos/{idPago}", solicitud);
 
-    private static async Task<HttpResponseMessage> EditarAdminAsync(HttpClient cliente, int idPago, SolicitudDeEdicionDePago solicitud) =>
-        await cliente.PutAsJsonAsync($"/api/gastos/administracion/{idPago}", solicitud);
+    private static async Task<HttpResponseMessage> EditarAdminAsync(HttpClient cliente, int idPago, SolicitudDeEdicionDePagoConLineas solicitud) =>
+        await cliente.PutAsJsonAsync($"/api/pagos/administracion/{idPago}", solicitud);
 
     private static async Task<string> CodigoDeErrorAsync(HttpResponseMessage respuesta) =>
         JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement.GetProperty("codigo").GetString()!;
@@ -334,7 +334,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
 
         Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(ctx.Admin, ajeno.Id, Edicion(10m, ctx.IdMedioEfectivo))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await EditarAdminAsync(ctx.Admin, ajeno.Id, Edicion(10m, ctx.IdMedioEfectivo))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{ajeno.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{ajeno.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(ctx.Admin, int.MaxValue, Edicion(10m, ctx.IdMedioEfectivo))).StatusCode);
 
         await using var db = Db(otro);
@@ -359,27 +359,29 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         }
     }
 
-    /// <summary>Las rutas actuales redondean el importe a 2 decimales como lo hacía numeric(14,2): 10.005 se guarda
-    /// como 10.01 en el alta y en la edición, sin 400 <c>pago_linea_importe_invalido</c>.</summary>
+    /// <summary>Un importe con más de 2 decimales se rechaza en el alta y en la edición con 400
+    /// <c>pago_linea_importe_invalido</c>: no se redondea en silencio y el pago queda como estaba.</summary>
     [Fact]
-    public async Task LasRutasActualesRedondeanElImporteComoAntes()
+    public async Task UnImporteConMasDeDosDecimalesSeRechazaEnElAltaYEnLaEdicion()
     {
-        var ctx = await PrepararAsync(nameof(LasRutasActualesRedondeanElImporteComoAntes));
+        var ctx = await PrepararAsync(nameof(UnImporteConMasDeDosDecimalesSeRechazaEnElAltaYEnLaEdicion));
         await AbrirTurnoAsync(ctx, 0m);
 
-        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 10.005m, ctx.IdMedioEfectivo);
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
+                ctx.IdPuntoVenta, CategoriaPago.Otros, null, null, "Gasto con tres decimales", null,
+                ctx.IdMedioEfectivo, null, 10.005m));
+        Assert.Equal(HttpStatusCode.BadRequest, alta.StatusCode);
+        Assert.Equal("pago_linea_importe_invalido", await CodigoDeErrorAsync(alta));
 
-        await using (var db = Db(ctx))
-        {
-            Assert.Equal(10.01m, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Importe).SingleAsync());
-            Assert.Equal(10.01m, await db.ItemsPago.Where(i => i.IdPago == pago.Id).Select(i => i.Importe).SingleAsync());
-        }
-
+        var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 10m, ctx.IdMedioEfectivo);
         var edicion = await EditarPosAsync(ctx.Admin, pago.Id, Edicion(20.005m, ctx.IdMedioEfectivo));
-        Assert.Equal(HttpStatusCode.OK, edicion.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, edicion.StatusCode);
+        Assert.Equal("pago_linea_importe_invalido", await CodigoDeErrorAsync(edicion));
 
-        await using var dbEditado = Db(ctx);
-        Assert.Equal(20.01m, await dbEditado.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Importe).SingleAsync());
+        await using var db = Db(ctx);
+        Assert.Equal(10m, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Importe).SingleAsync());
     }
 
     [Fact]
@@ -390,7 +392,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var pago = await RegistrarPagoPosAsync(ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo);
         var idCuentaCorriente = await MedioDeCuentaCorrienteAsync(ctx);
 
-        Assert.Equal("gasto_importe_invalido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(0m, ctx.IdMedioEfectivo))));
+        Assert.Equal("pago_linea_importe_invalido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(0m, ctx.IdMedioEfectivo))));
         Assert.Equal("gasto_concepto_requerido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(5m, ctx.IdMedioEfectivo, concepto: "  "))));
         Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(ctx.Admin, pago.Id, Edicion(5m, int.MaxValue))).StatusCode);
         Assert.Equal("gasto_medio_pago_cuenta_corriente_invalido", await CodigoDeErrorAsync(await EditarPosAsync(ctx.Admin, pago.Id, Edicion(5m, idCuentaCorriente))));
@@ -494,7 +496,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var pago = await RegistrarPagoAdminAsync(ctx, 90m);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await EditarAdminAsync(vendedor, pago.Id, Edicion(10m, ctx.IdMedioEfectivo))).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await vendedor.DeleteAsync($"/api/gastos/administracion/{pago.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await vendedor.DeleteAsync($"/api/pagos/administracion/{pago.Id}")).StatusCode);
 
         await using var db = Db(ctx);
         Assert.Equal(90m, await db.Pagos.Where(g => g.Id == pago.Id).Select(g => g.Importe).SingleAsync());
@@ -626,11 +628,11 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         await CerrarTurnoAsync(
             ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 555m), new ConteoDeclarado(ctx.IdMedioElectronico, 0m));
 
-        var respuesta = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{electronico.Id}");
+        var respuesta = await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{electronico.Id}");
         Assert.Equal(HttpStatusCode.NoContent, respuesta.StatusCode);
 
-        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.GetAsync($"/api/gastos/administracion/{electronico.Id}")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{electronico.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.GetAsync($"/api/pagos/administracion/{electronico.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{electronico.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await EditarAdminAsync(ctx.Admin, electronico.Id, Edicion(5m, ctx.IdMedioEfectivo))).StatusCode);
 
         await using var db = Db(ctx);
@@ -734,7 +736,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         await CerrarTurnoAsync(
             ctx.Admin, idTurno, new ConteoDeclarado(ctx.IdMedioEfectivo, 940m), new ConteoDeclarado(ctx.IdMedioElectronico, 0m));
 
-        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{pago.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{pago.Id}")).StatusCode);
 
         await using var db = Db(ctx);
         var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == idTurno).ToListAsync();
@@ -761,7 +763,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         await RegistrarPagoAdminAsync(ctx, 1000m, CategoriaPago.Proveedor, ctx.IdProveedor, ctx.IdPuntoVenta);
         var pago = await RegistrarPagoAdminAsync(ctx, 300m, CategoriaPago.Proveedor, ctx.IdProveedor, ctx.IdPuntoVenta);
 
-        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{pago.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/pagos/administracion/{pago.Id}")).StatusCode);
 
         await using var db = Db(ctx);
         var items = await db.ItemsPago.IgnoreQueryFilters().Where(i => i.IdPago == pago.Id).ToListAsync();
@@ -852,7 +854,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
             .SingleAsync(m => m.IdProveedor == ctx.IdProveedor && m.Tipo == TipoMovimientoCcProveedor.Ajuste);
         Assert.Equal(50m, ajuste.Importe);
 
-        var pos = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>("/api/gastos?tamanio=50", OpcionesJson);
+        var pos = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>("/api/pagos?tamanio=50", OpcionesJson);
         Assert.Equal(idCompra, pos!.Items.Single(g => g.Id == pago.Id).IdComprobanteCompra);
     }
 
@@ -899,7 +901,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
             23m, ctx.IdMedioEfectivo, CategoriaPago.Proveedor, ctx.IdProveedor, ctx.IdArea, "Con todo", "Detalle", "FC-9"))).StatusCode);
         var sinTurno = await RegistrarPagoAdminAsync(ctx, 33m);
 
-        var pos = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>("/api/gastos?tamanio=50", OpcionesJson);
+        var pos = await ctx.Admin.GetFromJsonAsync<PaginaDePagos>("/api/pagos?tamanio=50", OpcionesJson);
         var abierto = pos!.Items.Single(g => g.Id == deTurnoAbierto.Id);
         Assert.Equal(
             (idTurnoAbierto, true, ctx.IdProveedor, ctx.IdArea, "Con todo", "Detalle", "FC-9"),
@@ -910,7 +912,7 @@ public class PagosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(((int?)null, false), (administrativo.IdTurnoCaja, administrativo.TurnoAbierto));
         Assert.Null(abierto.IdComprobanteCompra);
 
-        var admin = await ctx.Admin.GetFromJsonAsync<PaginaDePagosDeAdministracion>("/api/gastos/administracion?tamanio=50", OpcionesJson);
+        var admin = await ctx.Admin.GetFromJsonAsync<PaginaDePagosDeAdministracion>("/api/pagos/administracion?tamanio=50", OpcionesJson);
         Assert.True(admin!.Items.Single(g => g.Id == deTurnoAbierto.Id).TurnoAbierto);
         Assert.False(admin.Items.Single(g => g.Id == deTurnoCerrado.Id).TurnoAbierto);
         Assert.False(admin.Items.Single(g => g.Id == sinTurno.Id).TurnoAbierto);

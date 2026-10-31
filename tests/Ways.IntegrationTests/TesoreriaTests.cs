@@ -419,10 +419,10 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
             .Where(m => m.Comportamiento == Ways.Domain.Catalogos.ComportamientoMedioPago.Efectivo)
             .Select(m => m.Id).FirstAsync();
 
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
             "Alquiler de depósito", null, idMedioEfectivo, null, 15000m);
-        var alta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
 
         var libro = await ListarAsync(ctx.Admin, ctx.IdEmpresa);
@@ -679,8 +679,8 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
             foreach (var (categoria, concepto) in new[] { (CategoriaPago.Sueldos, "zz original"), (CategoriaPago.Impuestos, "zz impuesto") })
             {
                 var alta = await ctx.Admin.PostAsJsonAsync(
-                    "/api/gastos/administracion",
-                    new SolicitudDePagoDeAdministracion(
+                    "/api/pagos/administracion",
+                    PagoDeUnMedio.Administracion(
                         new DateOnly(2026, 8, 1), ctx.IdEmpresa, null, categoria, null, null,
                         concepto, null, idMedioEfectivo, null, 15000m));
                 Assert.Equal(HttpStatusCode.Created, alta.StatusCode);

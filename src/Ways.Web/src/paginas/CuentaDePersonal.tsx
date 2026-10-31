@@ -8,8 +8,10 @@ import {
   ampliarRangoParaFecha,
   clienteDeCuentaDePersonal,
   conElRangoEfectivo,
+  esColumnaOrdenableDeCuentaDePersonal,
   filtrosDeCuentaDePersonalIniciales,
   type FiltrosDeCuentaDePersonal,
+  type OrdenDeCuentaDePersonal,
 } from '../api/cuentaDePersonal'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { puedeGestionarCatalogos } from '../api/tipos'
@@ -26,6 +28,8 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoFecha } from '../componentes/CampoFecha'
 import { Cargando } from '../componentes/Cargando'
+import { EncabezadoOrdenable } from '../componentes/grilla'
+import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { isoATexto } from '../formato/fechas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -128,6 +132,10 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   const [filtros, setFiltros] = useState<FiltrosDeCuentaDePersonal>(() => filtrosDeCuentaDePersonalIniciales())
   const filtrosAlMontar = useRef(filtros)
   const [cuenta, setCuenta] = useState<PaginaDeCuentaDePersonal | null>(null)
+  // El orden con el que llegaron las filas que se ven: los encabezados declaran este, no el pedido, así una lectura que
+  // falla nunca deja un encabezado que afirme un orden que las filas no tienen. null = el orden del libro.
+  const [ordenDeLaCuenta, setOrdenDeLaCuenta] = useState<OrdenDeCuentaDePersonal>(null)
+  const ordenDeLaCuentaRef = useRef<OrdenDeCuentaDePersonal>(null)
   const [cargandoCuenta, setCargandoCuenta] = useState(true)
   const [errorCuenta, setErrorCuenta] = useState('')
 
@@ -175,11 +183,15 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
         const resultado = await clienteDeCuentaDePersonal.obtener(idPersonal, pedidos)
         if (generacionDeLaCuenta.current !== token) return
         setCuenta(resultado)
+        ordenDeLaCuentaRef.current = pedidos.orden ?? null
+        setOrdenDeLaCuenta(ordenDeLaCuentaRef.current)
         setFiltros((previos) => conElRangoEfectivo(previos, resultado))
         setErrorCuenta('')
       } catch (e) {
         if (generacionDeLaCuenta.current !== token) return
         if (e instanceof ErrorApi && e.estado === 404) setNoEncontrado(true)
+        // Un orden que no llegó no queda pedido: el próximo clic en un encabezado parte del orden que se ve.
+        setFiltros((previos) => ({ ...previos, orden: ordenDeLaCuentaRef.current }))
         if (propagar) throw e
         setErrorCuenta(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
       } finally {
@@ -256,6 +268,14 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
     const siguientes = { ...filtros, ...cambios, ...(volverALaPrimera && { pagina: 1 }) }
     setFiltros(siguientes)
     void cargarCuenta(siguientes)
+  }
+
+  // Ascendente → descendente → orden del libro, a partir del último orden pedido. Cambiar el orden vuelve a la primera
+  // página y conserva el rango. Con una escritura en vuelo la pantalla está inerte: el encabezado no hace nada.
+  function alternarOrden(columna: string) {
+    if (ocupadoRef.current || !esColumnaOrdenableDeCuentaDePersonal(columna)) return
+    const siguiente = siguienteOrden(filtros.orden ?? null, columna)
+    cambiarFiltros({ orden: siguiente === null ? null : { columna, direccion: siguiente.direccion } })
   }
 
   /** Relee el estado de cuenta desde la primera página, con el rango ensanchado hasta el día de lo escrito, y la
@@ -506,13 +526,27 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
               <table className="table table-sm table-striped table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Fecha</th>
-                    <th>Tipo</th>
-                    <th className="text-end">Horas</th>
-                    <th className="text-end">Valor hora</th>
-                    <th className="text-end">Importe</th>
-                    <th className="text-end">Saldo resultante</th>
-                    <th>Detalle</th>
+                    <EncabezadoOrdenable columna="fecha" orden={ordenDeLaCuenta} onAlternar={alternarOrden}>
+                      Fecha
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="tipo" orden={ordenDeLaCuenta} onAlternar={alternarOrden}>
+                      Tipo
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="horas" orden={ordenDeLaCuenta} onAlternar={alternarOrden} className="text-end">
+                      Horas
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="valorHora" orden={ordenDeLaCuenta} onAlternar={alternarOrden} className="text-end">
+                      Valor hora
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="importe" orden={ordenDeLaCuenta} onAlternar={alternarOrden} className="text-end">
+                      Importe
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="saldoResultante" orden={ordenDeLaCuenta} onAlternar={alternarOrden} className="text-end">
+                      Saldo resultante
+                    </EncabezadoOrdenable>
+                    <EncabezadoOrdenable columna="detalle" orden={ordenDeLaCuenta} onAlternar={alternarOrden}>
+                      Detalle
+                    </EncabezadoOrdenable>
                   </tr>
                 </thead>
                 <tbody>

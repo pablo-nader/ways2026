@@ -129,11 +129,11 @@ public class AplicacionesDePagoEndpointsTests(WaysApiFixture fixture) : IClassFi
         Contexto ctx, decimal importe, int? idComprobanteCompra = null, CategoriaPago categoria = CategoriaPago.Proveedor,
         int? idProveedor = null)
     {
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), ctx.IdEmpresa, ctx.IdPuntoVenta, categoria,
             idProveedor ?? (categoria == CategoriaPago.Proveedor ? ctx.IdProveedor : null), null,
             "Pago de prueba", null, ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
-        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PagoRegistrado>(cuerpo, OpcionesJson)!;
@@ -440,10 +440,10 @@ public class AplicacionesDePagoEndpointsTests(WaysApiFixture fixture) : IClassFi
     {
         var ctx = await PrepararAsync(nameof(DesaplicarUnPagoAdoptadoSinPuntoDeVentaLiberaDeVerdadYLaAuditoriaCoincideConLaBase));
         var compra = await CrearCompraAsync(ctx);
-        var solicitud = new SolicitudDePagoDeAdministracion(
+        var solicitud = PagoDeUnMedio.Administracion(
             FechaDelNegocio.Hoy(), ctx.IdEmpresa, null, CategoriaPago.Otros, null, null,
             "Pago sin punto de venta", null, ctx.IdMedioEfectivo, null, 500m, null);
-        var alta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var alta = await ctx.Admin.PostAsJsonAsync("/api/pagos/administracion", solicitud);
         var cuerpoAlta = await alta.Content.ReadAsStringAsync();
         Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
         var pago = JsonSerializer.Deserialize<PagoRegistrado>(cuerpoAlta, OpcionesJson)!;
@@ -525,7 +525,7 @@ public class AplicacionesDePagoEndpointsTests(WaysApiFixture fixture) : IClassFi
         await AplicarOkAsync(ctx, pago.Id, (compraA.Id, 100m));
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            $"/api/gastos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compraB.Id));
+            $"/api/pagos/{pago.Id}/vincular-compra", new SolicitudDeVincularCompra(compraB.Id));
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         Assert.Equal("pago_sin_disponible", await CodigoDeErrorAsync(respuesta));

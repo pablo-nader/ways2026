@@ -12,8 +12,15 @@ export type CeldaDeFiltroDePadron<F extends FiltrosDePadron> =
   /** Número entero exacto: solo deja tipear dígitos. */
   | { tipo: 'entero'; clave: keyof F & string; etiqueta: string }
   | { tipo: 'opciones'; clave: keyof F & string; etiqueta: string; opciones: readonly OpcionDeFiltroDePadron[] }
-  /** Rango inclusivo de un importe: dos campos, desde y hasta. */
-  | { tipo: 'rango'; claveDesde: keyof F & string; claveHasta: keyof F & string; etiqueta: string }
+  /** Rango inclusivo de un importe: dos campos, desde y hasta. `admiteNegativos` deja tipear un "-" inicial (un saldo
+   * puede ser a favor o en contra); por defecto el importe no es negativo. */
+  | {
+      tipo: 'rango'
+      claveDesde: keyof F & string
+      claveHasta: keyof F & string
+      etiqueta: string
+      admiteNegativos?: boolean
+    }
   /** La celda de acciones: lleva el botón que limpia los filtros. */
   | { tipo: 'acciones' }
   | { tipo: 'vacia' }
@@ -109,6 +116,7 @@ export function FilaDeFiltrosDePadron<F extends FiltrosDePadron>({
                 <div className="d-flex gap-1">
                   <CampoImporte
                     aria-label={`${celda.etiqueta} desde`}
+                    admiteNegativos={celda.admiteNegativos}
                     className="form-control form-control-sm"
                     valor={comoNumero(valores[celda.claveDesde])}
                     disabled={deshabilitado}
@@ -116,6 +124,7 @@ export function FilaDeFiltrosDePadron<F extends FiltrosDePadron>({
                   />
                   <CampoImporte
                     aria-label={`${celda.etiqueta} hasta`}
+                    admiteNegativos={celda.admiteNegativos}
                     className="form-control form-control-sm"
                     valor={comoNumero(valores[celda.claveHasta])}
                     disabled={deshabilitado}

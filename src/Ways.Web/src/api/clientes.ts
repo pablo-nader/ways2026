@@ -7,6 +7,17 @@ import { api } from './cliente'
 import { construirQueryDePadron, type ConsultaDePadron } from './padron'
 import type { AltaCliente, ClienteListado, EdicionCliente, ListaPrecioAsignable, PaginaDe } from './tipos'
 
+/** Texto de la celda "Cliente" de un listado de documentos: lo que resolvió el servidor para esa fila, nunca
+ * una lista de referencia acotada. Un cliente dado de baja llega sin número ni nombre y se rotula por su id. */
+export function etiquetaDeClienteDeFila(fila: {
+  idCliente: number
+  numeroCliente?: number | null
+  nombreCliente?: string | null
+}): string {
+  if (fila.numeroCliente == null || fila.nombreCliente == null) return `Cliente #${fila.idCliente}`
+  return `#${fila.numeroCliente} — ${fila.nombreCliente}`
+}
+
 /** Claves de `orden` que acepta `GET /api/clientes`: una por cada columna de datos de la grilla. */
 export const COLUMNAS_ORDENABLES_DE_CLIENTES = [
   'numero',

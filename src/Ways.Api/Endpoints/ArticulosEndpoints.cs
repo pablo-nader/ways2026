@@ -180,6 +180,27 @@ public static class ArticulosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Asocia al artículo el código que un proveedor imprime en su factura (idempotente).");
 
+        grupo.MapGet("/{id:int}/codigos-proveedor", (
+            ServicioDeArticulos servicio, int id, CancellationToken ct) =>
+            servicio.ListarCodigosProveedorAsync(id, ct))
+        .WithSummary("Lista los códigos de proveedor vivos del artículo.");
+
+        grupo.MapPut("/{id:int}/codigos-proveedor/{idCodigoProveedor:int}", (
+            ServicioDeArticulos servicio, int id, int idCodigoProveedor,
+            ActualizacionCodigoProveedor datos, CancellationToken ct) =>
+            servicio.ActualizarCodigoProveedorAsync(id, idCodigoProveedor, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Cambia el código de proveedor del artículo; 409 si otro código vivo del proveedor ya lo tiene.");
+
+        grupo.MapDelete("/{id:int}/codigos-proveedor/{idCodigoProveedor:int}", async (
+            ServicioDeArticulos servicio, int id, int idCodigoProveedor, CancellationToken ct) =>
+        {
+            await servicio.EliminarCodigoProveedorAsync(id, idCodigoProveedor, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Da de baja el código de proveedor del artículo y libera el par (proveedor, código).");
+
         grupo.MapDelete("/{id:int}/codigos-barra/{idCodigoBarra:int}", async (
             ServicioDeArticulos servicio, int id, int idCodigoBarra, CancellationToken ct) =>
         {

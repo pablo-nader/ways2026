@@ -130,7 +130,8 @@ public sealed record OrdenDeCompraListada(
     long? Numero,
     DateTimeOffset FechaEmision,
     DateOnly? FechaEsperada,
-    EstadoOrdenCompra Estado);
+    EstadoOrdenCompra Estado,
+    string? NombreProveedor = null);
 
 /// <summary>Slice 5 (design decisión 15, task 5.2) — mismo shape que
 /// <c>PaginaDeEstadoDeCuentaDeProveedor</c>/<c>PaginaDeCompras</c>: <c>CountAsync</c> +

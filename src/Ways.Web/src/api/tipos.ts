@@ -947,7 +947,15 @@ export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: stri
 // menor id.
 
 /** Fila de `GET /api/familias`: `cantidadArticulos` cuenta solo los miembros vivos. */
-export type FamiliaListado = { id: number; nombre: string; activo: boolean; cantidadArticulos: number }
+export type FamiliaListado = {
+  id: number
+  nombre: string
+  activo: boolean
+  cantidadArticulos: number
+  /** Con la marca, cada miembro tiene su propia composición del costo; el costo nominal sigue siendo el mismo. El
+   * servidor siempre lo manda; ausente se lee como `false`. */
+  permiteDesglosarCosto?: boolean
+}
 
 /** Miembro vivo de una familia. `idMarca` viaja `null` cuando el artículo no tiene marca o la suya está
  * dada de baja: el servidor nunca expone un id colgante. */
@@ -992,19 +1000,29 @@ export type FamiliaDetalle = {
   id: number
   nombre: string
   activo: boolean
+  /** Ver `FamiliaListado.permiteDesglosarCosto`. */
+  permiteDesglosarCosto?: boolean
   articulos: MiembroDeFamilia[]
   valores: ValoresCompartidosDeLaFamilia | null
   precios: EstadoDePreciosDeLista[]
 }
 
-/** Cuerpo de `PUT /api/familias/{id}`: lo único de una familia que se edita. Los dos campos son obligatorios: el
- * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas. */
-export type EdicionFamilia = { nombre: string; activo: boolean }
+/** Cuerpo de `PUT /api/familias/{id}`: lo que de una familia se edita. `nombre` y `activo` son obligatorios: el
+ * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas.
+ * `permiteDesglosarCosto` ausente conserva la marca; `false` la apaga solo si todos los miembros tienen la misma
+ * composición del costo (409 `composicion_distinta`) y toma un lock exclusivo aunque ya esté apagada, así que solo
+ * se manda cuando el usuario la cambió. */
+export type EdicionFamilia = { nombre: string; activo: boolean; permiteDesglosarCosto?: boolean }
 
 /** Cuerpo de `POST /api/familias/previsualizacion`: qué pasaría si se agruparan `idsArticulos` con
  * `idArticuloReferencia` como modelo. Se admiten hasta 100 destinos además de la referencia. Si la referencia ya es
  * miembro de una familia, agrupar sería sumar los artículos a ESA familia; si no, crear una nueva. */
-export type SolicitudDePrevisualizacion = { idArticuloReferencia: number; idsArticulos: number[] }
+export type SolicitudDePrevisualizacion = {
+  idArticuloReferencia: number
+  idsArticulos: number[]
+  /** Solo cuenta si la referencia no tiene familia: con la marca, `campos` no incluye la composición del costo. */
+  permiteDesglosarCosto?: boolean
+}
 
 /** El cambio de UNA lista fija para un artículo que se alinea: su estado de precios actual y el de la referencia. */
 export type CambioDePreciosDeLista = { idListaPrecio: number; actual: EstadoDePrecios; nuevo: EstadoDePrecios }
@@ -1038,7 +1056,7 @@ export type PrevisualizacionDeAgrupacion = {
 
 /** Cuerpo de `POST /api/familias`: crea la familia con la referencia, que es siempre miembro aunque no figure en
  * `idsArticulos`, y los artículos, que se alinean con ella. Ninguno puede pertenecer ya a una familia. */
-export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[] }
+export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[]; permiteDesglosarCosto?: boolean }
 
 /** Cuerpo de `POST /api/familias/{id}/articulos`: suma artículos a la familia, alineados con su referencia. */
 export type AgregadoDeArticulos = { idsArticulos: number[] }
@@ -1863,7 +1881,7 @@ export type PagoConLineas = {
   lineas: LineaDePagoListada[]
 }
 
-/** Fila de `GET /api/gastos/administracion` — espejo de `GastoDeAdministracionListado`, con
+/** Fila de `GET /api/pagos/administracion` — espejo de `PagoDeAdministracionListado`, con
  * nombres ya resueltos (proveedor/área/medio) — un catálogo dado de baja lógica los deja en
  * `null`, la fila nunca desaparece. */
 export type PagoDeAdministracionListado = {
@@ -1910,9 +1928,8 @@ export type AplicacionDePagoListada = {
   fecha: string
 }
 
-/** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
- * `SolicitudDeEdicionDePago`: solo los campos editables (origen de fondos, punto de venta,
- * empresa, turno, fecha y compra ligada no se cambian por esta vía). */
+/** Forma de un solo medio de la edición de un pago. El servidor ya no la acepta (las rutas de compatibilidad se quitaron):
+ * la edición usa `SolicitudDeEdicionDePagoConLineas`. */
 export type SolicitudDeEdicionDePago = {
   categoria: CategoriaPago
   idProveedor: number | null
@@ -2728,6 +2745,8 @@ export type CompraListada = {
   total: number
   saldoPendiente: number
   origen: OrigenCompra
+  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
+  nombreProveedor?: string | null
 }
 
 /** Fila de `GET /api/compras/duplicados` (espejo de `CompraDuplicada`): una compra no anulada del mismo
@@ -3545,6 +3564,8 @@ export type OrdenDeCompraListada = {
   fechaEmision: string
   fechaEsperada: string | null
   estado: EstadoOrdenCompra
+  /** Razón social que resuelve el servidor; `null` si el proveedor fue dado de baja. */
+  nombreProveedor?: string | null
 }
 
 /** Página de `GET /api/ordenes-compra` (espejo de `PaginaDeOrdenesDeCompra`). */
@@ -3651,6 +3672,9 @@ export type PresupuestoListado = {
   convertible: boolean
   total: number
   estado: EstadoPresupuesto
+  /** Número y nombre que resuelve el servidor; `null` si el cliente fue dado de baja. */
+  numeroCliente?: number | null
+  nombreCliente?: string | null
 }
 
 /** Página de `GET /api/presupuestos` (espejo de `PaginaDePresupuestos`). */
@@ -3731,6 +3755,9 @@ export type RemitoListado = {
   total: number
   estado: EstadoRemito
   idComprobanteVenta: number | null
+  /** Número y nombre que resuelve el servidor; `null` si el cliente fue dado de baja. */
+  numeroCliente?: number | null
+  nombreCliente?: string | null
 }
 
 /** Página de `GET /api/remitos` (espejo de `PaginaDeRemitos`). */

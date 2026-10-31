@@ -14,6 +14,15 @@ public class PuntoVenta : EntidadTenant
     /// de un tenant no puede referenciar la empresa de otro tenant ni por bug.</summary>
     public int IdEmpresa { get; set; }
 
+    /// <summary>La sucursal a la que pertenece este punto de venta (siempre de la misma empresa:
+    /// lo garantiza la FK compuesta). Todo punto de venta nuevo recibe la suya salvo que se asigne
+    /// otra.</summary>
+    public int IdSucursal { get; set; }
+
+    /// <summary>Solo para dar de alta el punto de venta junto con su sucursal en el mismo
+    /// <c>SaveChanges</c> (ver <c>WaysDbContext</c>); no se carga en las lecturas.</summary>
+    public Sucursal? Sucursal { get; set; }
+
     public required string Nombre { get; set; }
 
     public string? Domicilio { get; set; }

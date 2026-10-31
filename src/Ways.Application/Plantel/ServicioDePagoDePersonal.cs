@@ -15,8 +15,8 @@ namespace Ways.Application.Plantel;
 
 /// <summary>
 /// Pago a un empleado en una sola transacción: un asiento <c>pago</c> en el libro del personal (la cabecera),
-/// el descuento opcional de la cuenta corriente del cliente vinculado, y un pago de sueldos por cada línea de
-/// dinero, con su egreso de tesorería o su impacto en el arqueo del turno según el origen elegido en cada pago.
+/// el descuento opcional de la cuenta corriente del cliente vinculado, y un único pago de sueldos con un ítem por
+/// línea de dinero, con su egreso de tesorería por el total o su impacto en el arqueo del turno según el origen elegido.
 /// La autorización (<c>GestionDeCuentaDePersonal</c>: Admin y Supervisor) se aplica en la capa de API; además,
 /// el origen tesorería es solo de Admin y se rechaza acá con 403. Un personal inexistente, dado de baja o de
 /// otro tenant responde 404 antes de validar el cuerpo.
@@ -141,12 +141,12 @@ public sealed class ServicioDePagoDePersonal(
         var lineas = new List<LineaDeDesglose>();
         if (plan.OrigenFondos is { } origenFondos)
         {
-            var pagos = await servicioDePagos.PersistirPagosDeSueldoAsync(
+            var persistido = await servicioDePagos.PersistirPagoDeSueldoAsync(
                 idTenant, entorno, origenFondos, nombre, idMovimiento, plan.Lineas, idEmpleado, momento, ct);
 
-            lineas.AddRange(pagos.Select(g => new LineaDeDesglose(
-                g.Pago.Id, g.Item.Id, g.Item.IdMedioPago, entorno.NombresDeMedios.GetValueOrDefault(g.Item.IdMedioPago),
-                g.Item.Importe, g.Pago.OrigenFondos, g.Pago.Detalle)));
+            lineas.AddRange(persistido.Items.Select(item => new LineaDeDesglose(
+                persistido.Pago.Id, item.Id, item.IdMedioPago, entorno.NombresDeMedios.GetValueOrDefault(item.IdMedioPago),
+                item.Importe, persistido.Pago.OrigenFondos, item.Referencia)));
         }
 
         await transaccion.CommitAsync(ct);

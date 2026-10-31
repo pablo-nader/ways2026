@@ -13,6 +13,7 @@ Empresa | clientes | id_empresa,id_tenant | marcado
 Empresa | combos | id_empresa,id_tenant | marcado
 Empresa | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | conexiones_mercadopago | id_empresa,id_tenant | marcado
 Empresa | cuentas_tesoreria | id_empresa,id_tenant | marcado
 Empresa | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | facturaciones_de_venta | id_empresa,id_tenant | marcado
@@ -42,6 +43,7 @@ Empresa | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | sucursales | id_empresa,id_tenant | marcado
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | vitrinas | id_empresa,id_tenant | marcado
 Familia | articulos | id_familia,id_tenant | marcado
@@ -92,6 +94,26 @@ PuntoVenta | reservas_numeracion | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | stock | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | stock_lotes | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
+Sucursal | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | movimientos_stock via puntos_venta | id_punto_venta_destino,id_tenant | sinmarca
+Sucursal | movimientos_tesoreria via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | numeraciones_comprobante via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | numeraciones_fiscales via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | pagos via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | puntos_venta | id_sucursal,id_empresa,id_tenant | marcado
+Sucursal | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
+Sucursal | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Sucursal | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Tenant | acumulados_de_facturacion | id_tenant | sinmarca
 Tenant | alicuotas_comprobante_compra | id_tenant | marcado
 Tenant | aplicaciones_cobro | id_tenant | marcado
@@ -111,6 +133,7 @@ Tenant | combos | id_tenant | marcado
 Tenant | combos_componentes | id_tenant | sinmarca
 Tenant | comprobantes_compra | id_tenant | marcado
 Tenant | comprobantes_venta | id_tenant | marcado
+Tenant | conexiones_mercadopago | id_tenant | marcado
 Tenant | cuentas_tesoreria | id_tenant | marcado
 Tenant | dispositivos | id_tenant | marcado
 Tenant | dominios | id_tenant | marcado
@@ -156,6 +179,7 @@ Tenant | remitos | id_tenant | marcado
 Tenant | reservas_numeracion | id_tenant | sinmarca
 Tenant | stock | id_tenant | sinmarca
 Tenant | stock_lotes | id_tenant | sinmarca
+Tenant | sucursales | id_tenant | marcado
 Tenant | turnos_caja | id_tenant | marcado
 Tenant | usuarios | id_tenant | marcado
 Tenant | vitrinas | id_tenant | marcado
@@ -164,6 +188,7 @@ Usuario | aplicaciones_pago | id_empleado | marcado
 Usuario | auditoria | id_actor | excluido
 Usuario | comprobantes_compra | id_empleado | marcado
 Usuario | comprobantes_venta | id_empleado | marcado
+Usuario | conexiones_mercadopago | id_usuario_conecto | marcado
 Usuario | dispositivos | id_usuario_alta | marcado
 Usuario | jornadas_personal | id_empleado | sinmarca
 Usuario | movimientos_caja | id_empleado | sinmarca

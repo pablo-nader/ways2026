@@ -270,6 +270,30 @@ public class ReglaDeFamiliasTests
     }
 
     // =================================================================================================
+    // Costo nominal del alta con la marca de desglose de costo
+    // =================================================================================================
+
+    private static readonly ComposicionDelCosto ComposicionDeLaReferencia =
+        new(50m, CostoListaPor.Unidad, true, 10m, 0m);
+
+    [Theory]
+    [InlineData(true, false, false, 99)] // misma composición: hereda el nominal guardado, no el del pedido
+    [InlineData(true, true, false, 54)] // composición distinta: trae el nominal propio
+    [InlineData(true, false, true, 99)] // sin costo de lista: hereda
+    [InlineData(false, true, false, 99)] // sin la marca: hereda siempre
+    public void ElAltaSoloTraeSuPropioNominalConLaMarcaYUnaComposicionDistintaALaDeLaReferencia(
+        bool permiteDesglosarCosto, bool composicionDistinta, bool sinComposicion, int esperado)
+    {
+        var pedida = sinComposicion
+            ? null
+            : composicionDistinta ? ComposicionDeLaReferencia with { CostoLista = 60m } : ComposicionDeLaReferencia with { };
+
+        Assert.Equal(
+            esperado,
+            ReglaDeFamilias.CostoNominalDelIngreso(permiteDesglosarCosto, pedida, ComposicionDeLaReferencia, 54m, 99m));
+    }
+
+    // =================================================================================================
     // Agregar artículos a una familia existente: estado de la familia × miembros vivos
     // =================================================================================================
 

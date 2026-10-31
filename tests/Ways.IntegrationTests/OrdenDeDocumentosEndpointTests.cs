@@ -91,8 +91,10 @@ internal static class SembradoDeDocumentos
     };
 
     /// <summary>Recorre todas las páginas de a <paramref name="tamanio"/> y devuelve la secuencia completa de ids.
-    /// <paramref name="query"/> NO lleva <c>pagina</c> ni <c>tamanio</c>: un entero duplicado se bindea como 400.</summary>
-    public static async Task<List<int>> RecorrerAsync(HttpClient cliente, string ruta, string query, int tamanio = 2)
+    /// <paramref name="query"/> NO lleva <c>pagina</c> ni <c>tamanio</c>: un entero duplicado se bindea como 400.
+    /// <paramref name="propiedadDelId"/> es la propiedad del id de cada fila en el contrato del endpoint.</summary>
+    public static async Task<List<int>> RecorrerAsync(
+        HttpClient cliente, string ruta, string query, int tamanio = 2, string propiedadDelId = "id")
     {
         var ids = new List<int>();
         for (var pagina = 1; pagina <= 10; pagina++)
@@ -101,7 +103,7 @@ internal static class SembradoDeDocumentos
             var respuesta = await cliente.GetAsync(url);
             Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
             using var json = JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync());
-            ids.AddRange(json.RootElement.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetInt32()));
+            ids.AddRange(json.RootElement.GetProperty("items").EnumerateArray().Select(i => i.GetProperty(propiedadDelId).GetInt32()));
             if (pagina * tamanio >= json.RootElement.GetProperty("total").GetInt32()) break;
         }
 

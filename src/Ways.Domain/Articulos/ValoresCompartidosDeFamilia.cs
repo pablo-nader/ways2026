@@ -12,6 +12,13 @@ namespace Ways.Domain.Articulos;
 /// <see cref="Articulo.IdFamilia"/>. El estado de precios de las listas fijas también es compartido,
 /// pero vive en <c>precios</c> y lo replica quien escribe precios, no este registro.
 ///
+/// <para>Composición del costo: cuando la familia permite desglosar el costo (<see cref="Familia.PermiteDesglosarCosto"/>),
+/// cinco de los dieciséis campos pasan a ser PROPIOS de cada miembro —<c>costo_lista</c>, <c>costo_lista_por</c>,
+/// <c>costo_lista_incluye_iva</c>, <c>descuento_proveedor</c> e <c>impuesto_interno</c>, ver
+/// <see cref="ColumnasDeLaComposicion"/>— y <see cref="CamposDistintos"/> y <see cref="AplicarA"/> los dejan afuera
+/// con su parámetro; los otros once, incluidos <c>id_alicuota_iva</c>, <c>unidades_por_bulto</c> y
+/// <c>costo_nominal</c>, siguen compartidos. Sin la marca, el comportamiento es el de siempre.</para>
+///
 /// Un campo nuevo de <see cref="Articulo"/> debe clasificarse como compartido (se agrega acá) o
 /// propio: la prueba <c>TodaPropiedadDeArticuloEstaClasificada</c> falla hasta que se decida.
 /// </summary>
@@ -33,6 +40,17 @@ public sealed record ValoresCompartidosDeFamilia(
     decimal ImpuestoInterno,
     decimal? CostoNominal)
 {
+    /// <summary>Las columnas de la composición del costo, en el orden de declaración de este registro: las que una
+    /// familia que permite desglosar el costo deja de compartir.</summary>
+    public static readonly IReadOnlyList<string> ColumnasDeLaComposicion =
+    [
+        "costo_lista",
+        "costo_lista_por",
+        "costo_lista_incluye_iva",
+        "descuento_proveedor",
+        "impuesto_interno"
+    ];
+
     public static ValoresCompartidosDeFamilia De(Articulo articulo) => new(
         articulo.IdArea,
         articulo.IdCategoria,
@@ -53,8 +71,10 @@ public sealed record ValoresCompartidosDeFamilia(
 
     /// <summary>Copia SOLO los dieciséis campos compartidos sobre <paramref name="articulo"/>. No toca
     /// ningún campo propio, la familia, el tenant ni los sellos de auditoría: quien persiste decide
-    /// <c>UpdatedAt</c>.</summary>
-    public void AplicarA(Articulo articulo)
+    /// <c>UpdatedAt</c>. Con <paramref name="conservarComposicion"/> copia solo los once que una familia que permite
+    /// desglosar el costo sigue compartiendo y deja la composición del costo (<see cref="ColumnasDeLaComposicion"/>)
+    /// del artículo como está.</summary>
+    public void AplicarA(Articulo articulo, bool conservarComposicion = false)
     {
         articulo.IdArea = IdArea;
         articulo.IdCategoria = IdCategoria;
@@ -66,18 +86,37 @@ public sealed record ValoresCompartidosDeFamilia(
         articulo.EsProducto = EsProducto;
         articulo.ControlaLote = ControlaLote;
         articulo.AcumulaEnVenta = AcumulaEnVenta;
+        articulo.CostoNominal = CostoNominal;
+
+        if (conservarComposicion)
+        {
+            return;
+        }
+
         articulo.CostoLista = CostoLista;
         articulo.CostoListaPor = CostoListaPor;
         articulo.CostoListaIncluyeIva = CostoListaIncluyeIva;
         articulo.DescuentoProveedor = DescuentoProveedor;
         articulo.ImpuestoInterno = ImpuestoInterno;
-        articulo.CostoNominal = CostoNominal;
     }
+
+    /// <summary>Este registro con la composición del costo de <paramref name="otros"/>: lo que queda guardado en un
+    /// artículo de una familia que permite desglosar el costo cuando se le aplica este registro con
+    /// <c>conservarComposicion</c> (<see cref="AplicarA"/>).</summary>
+    public ValoresCompartidosDeFamilia ConComposicionDe(ValoresCompartidosDeFamilia otros) => this with
+    {
+        CostoLista = otros.CostoLista,
+        CostoListaPor = otros.CostoListaPor,
+        CostoListaIncluyeIva = otros.CostoListaIncluyeIva,
+        DescuentoProveedor = otros.DescuentoProveedor,
+        ImpuestoInterno = otros.ImpuestoInterno
+    };
 
     /// <summary>Nombres de columna (<c>id_area</c>, <c>costo_lista</c>, …) de los campos en que
     /// este registro difiere de <paramref name="otros"/>, en el orden de declaración. Vacío si son
-    /// idénticos.</summary>
-    public IReadOnlyList<string> CamposDistintos(ValoresCompartidosDeFamilia otros)
+    /// idénticos. Con <paramref name="permiteDesglosarCosto"/> la composición del costo es propia de cada artículo y
+    /// no se compara (<see cref="ColumnasDeLaComposicion"/>); <c>costo_nominal</c> sí.</summary>
+    public IReadOnlyList<string> CamposDistintos(ValoresCompartidosDeFamilia otros, bool permiteDesglosarCosto = false)
     {
         var distintos = new List<string>();
 
@@ -161,6 +200,8 @@ public sealed record ValoresCompartidosDeFamilia(
             distintos.Add("costo_nominal");
         }
 
-        return distintos;
+        return permiteDesglosarCosto
+            ? [.. distintos.Where(columna => !ColumnasDeLaComposicion.Contains(columna))]
+            : distintos;
     }
 }

@@ -221,14 +221,16 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     /// <c>costo_nominal</c>, que el servidor calcula y el pedido no trae.</summary>
     public static readonly string[] ColumnasPedibles = [.. ColumnasCompartidas.Where(c => c != "costo_nominal")];
 
-    public async Task<int> SembrarFamiliaAsync(Entorno e, string nombre, bool activa = true, bool dadaDeBaja = false)
+    public async Task<int> SembrarFamiliaAsync(
+        Entorno e, string nombre, bool activa = true, bool dadaDeBaja = false, bool permiteDesglosarCosto = false)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow;
 
         var familia = new Familia
         {
-            IdTenant = e.IdTenant, Nombre = nombre, Activo = activa, CreatedAt = ahora, UpdatedAt = ahora,
+            IdTenant = e.IdTenant, Nombre = nombre, Activo = activa, PermiteDesglosarCosto = permiteDesglosarCosto,
+            CreatedAt = ahora, UpdatedAt = ahora,
             DeletedAt = dadaDeBaja ? ahora : null
         };
         db.Familias.Add(familia);

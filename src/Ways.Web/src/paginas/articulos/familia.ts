@@ -53,6 +53,16 @@ export const CAMPOS_COMPARTIDOS: readonly CampoCompartido[] = [
   { clave: 'costoNominal', columna: 'costo_nominal', etiqueta: 'Costo nominal', tipo: 'decimal' },
 ]
 
+/** La composición del costo: con la marca "permite desglosar costo" de la familia es propia de cada miembro (el costo
+ * nominal, calculado a partir de ella, sigue siendo compartido). Espeja a `ComposicionDelCosto` del servidor. */
+export const CLAVES_DE_COMPOSICION: readonly ClaveCompartida[] = [
+  'costoLista',
+  'costoListaPor',
+  'costoListaIncluyeIva',
+  'descuentoProveedor',
+  'impuestoInterno',
+]
+
 /** Lo que el artículo tiene propio y nunca comparte con su familia. */
 export const CAMPOS_PROPIOS = 'nombre, descripción, códigos, marca, activo y disponibilidad por empresa'
 
@@ -110,8 +120,31 @@ function sonIguales(a: number | string | boolean | null, b: number | string | bo
  * un miembro de una familia obliga a preguntar el alcance: sin ninguno, solo cambian campos propios y no
  * hay nada que replicar a los demás miembros.
  */
-export function camposCompartidosModificados(original: Formulario, actual: Formulario): CampoCompartido[] {
-  return CAMPOS_COMPARTIDOS.filter((campo) => !sonIguales(valorComparable(original, campo), valorComparable(actual, campo)))
+export function camposCompartidosModificados(original: Formulario, actual: Formulario, desglosaCosto = false): CampoCompartido[] {
+  return CAMPOS_COMPARTIDOS.filter(
+    (campo) =>
+      !(desglosaCosto && CLAVES_DE_COMPOSICION.includes(campo.clave)) &&
+      !sonIguales(valorComparable(original, campo), valorComparable(actual, campo)),
+  )
+}
+
+/**
+ * Las claves de la composición del costo cuyo valor en `actual` difiere del de la referencia de la familia (`valores`). Es lo
+ * que dice, en un alta dentro de una familia que desglosa el costo, si el costo nominal que se muestra es el de la
+ * familia (nada tocado) o el que daría la composición propia.
+ */
+export function composicionDistintaDeLaFamilia(actual: Formulario, valores: ValoresCompartidosDeLaFamilia): CampoCompartido[] {
+  const deLaFamilia = { ...actual, ...valoresDeFamiliaAFormulario(valores) }
+  return CAMPOS_COMPARTIDOS.filter(
+    (campo) =>
+      CLAVES_DE_COMPOSICION.includes(campo.clave) && !sonIguales(valorComparable(deLaFamilia, campo), valorComparable(actual, campo)),
+  )
+}
+
+/** `true` si la familia elegida (la del detalle cargado) tiene la marca que deja cada miembro con su composición del costo.
+ * Mientras el detalle de esa familia no llegó no se sabe, y se trata como que no la tiene. */
+export function desglosaCostoLaFamilia(idFamilia: number | '', detalle: FamiliaDetalle | null): boolean {
+  return idFamilia !== '' && detalle !== null && detalle.id === idFamilia && detalle.permiteDesglosarCosto === true
 }
 
 /**
@@ -246,7 +279,48 @@ export function altaConFamiliaLista(
   return !familia.cargando && familia.error === '' && familia.detalle?.id === idFamilia && familia.detalle.valores !== null
 }
 
+/** En un alta dentro de una familia que desglosa el costo: qué se toma de la familia y qué se carga acá. */
+export const AYUDA_DE_ALTA_CON_DESGLOSE =
+  'Esta familia permite desglosar el costo: el costo de lista, su base, el descuento y los impuestos internos son propios del artículo, pero el costo nominal tiene que coincidir con el de la familia.'
+
+/** En un miembro de una familia que desglosa el costo. */
+export const AYUDA_DE_MIEMBRO_CON_DESGLOSE =
+  'Los campos compartidos y los precios son iguales en toda la familia. El costo de lista, su base, el descuento y los impuestos internos son propios de cada artículo: si el costo nominal no cambia, se guardan solo en este; si cambia, se pregunta si el cambio llega a todos los artículos o solo a este.'
+
 export const PREGUNTA_DE_ALCANCE = '¿Aplicar el cambio a toda la familia?'
+
+/** El costo nominal que cambia, como lo informa el servidor al pedir el alcance de una familia que desglosa el costo. */
+export type CambioDeNominal = { anterior: number | null; nuevo: number | null }
+
+function importeODesconocido(valor: unknown): number | null | undefined {
+  if (valor === null) return null
+  return typeof valor === 'number' && Number.isFinite(valor) ? valor : undefined
+}
+
+/** El cambio de nominal de `datos` (`costoNominalAnterior` y `costoNominalNuevo`), o `null` si el servidor no lo mandó o no
+ * tiene esa forma: la pregunta de alcance se hace igual, solo que sin esa línea. */
+export function cambioDeNominalDeDatos(datos: Record<string, unknown> | undefined): CambioDeNominal | null {
+  if (datos === undefined) return null
+  const anterior = importeODesconocido(datos.costoNominalAnterior)
+  const nuevo = importeODesconocido(datos.costoNominalNuevo)
+  return anterior === undefined || nuevo === undefined ? null : { anterior, nuevo }
+}
+
+/** `El costo nominal pasa de $ 100,00 a $ 120,00`; un lado sin valor se dice "sin costo". */
+export function textoDeCambioDeNominal(cambio: CambioDeNominal): string {
+  const importe = (valor: number | null) => (valor === null ? 'sin costo' : formatearImporte(valor, { simbolo: true }))
+  return `El costo nominal pasa de ${importe(cambio.anterior)} a ${importe(cambio.nuevo)}`
+}
+
+/** Un alta dentro de una familia que desglosa el costo cuya composición da otro nominal que el de la familia. */
+export function avisoDeNominalDistintoDeFamilia(datos: Record<string, unknown> | undefined, mensaje: string): string {
+  const familia = importeODesconocido(datos?.costoNominalDeLaFamilia)
+  const pedido = importeODesconocido(datos?.costoNominalDelPedido)
+  const importe = (valor: number | null) => (valor === null ? 'sin costo' : formatearImporte(valor, { simbolo: true }))
+  if (familia === undefined || pedido === undefined) return `${mensaje} El artículo no se creó.`
+
+  return `La composición del costo da un costo nominal de ${importe(pedido)} y el de la familia es ${importe(familia)}: tienen que coincidir. Ajustá el costo de lista, el descuento o el impuesto interno. El artículo no se creó.`
+}
 
 /** Con qué se abre la pregunta de alcance cuando se conoce la familia del artículo. */
 export function contextoDeAlcance(familia: FamiliaDelArticulo): string {
@@ -255,6 +329,9 @@ export function contextoDeAlcance(familia: FamiliaDelArticulo): string {
 
 /** Lo que el servidor rechaza cuando un artículo no puede entrar a la familia elegida en un alta. */
 export const CODIGOS_DE_CONFLICTO_DE_ALTA = ['familia_valores_distintos', 'familia_inactiva', 'familia_sin_articulos'] as const
+
+/** El alta dentro de una familia que desglosa el costo da otro costo nominal que el de la familia (409). */
+export const CODIGO_NOMINAL_DISTINTO_DE_FAMILIA = 'costo_nominal_distinto_de_familia'
 
 export const AVISO_DE_FAMILIA_CAMBIO =
   'La pertenencia del artículo a su familia cambió desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.'

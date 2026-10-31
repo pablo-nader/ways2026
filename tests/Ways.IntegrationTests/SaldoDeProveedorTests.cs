@@ -168,8 +168,8 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
     private static async Task<HttpResponseMessage> RegistrarPagoLigadoAsync(
         Contexto ctx, HttpClient cliente, int idComprobanteCompra, decimal importe) =>
         await cliente.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, null, null, "Pago de compra", null, ctx.IdMedioEfectivo,
                 null, importe, idComprobanteCompra));
 
@@ -282,8 +282,8 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         // Pago de categoría proveedor, mismo proveedor, SIN idComprobanteCompra.
         var respuesta = await ctx.Admin.PostAsJsonAsync(
-            "/api/gastos",
-            new SolicitudDePago(
+            "/api/pagos",
+            PagoDeUnMedio.Pos(
                 ctx.IdPuntoVenta, CategoriaPago.Proveedor, ctx.IdProveedor, null, "Pago suelto", null,
                 ctx.IdMedioEfectivo, null, 500m));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);

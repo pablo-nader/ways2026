@@ -164,7 +164,27 @@ internal static class MembresiaDeFamilias
 
     /// <summary>Lo que necesita saber de una familia quien le agrega artículos —el alta de un artículo dentro de ella o
     /// agrupar artículos en una que ya existe—: su nombre, para los mensajes, y si está activa.</summary>
-    public sealed record FamiliaParaIngresar(string Nombre, bool Activa);
+    public sealed record FamiliaParaIngresar(string Nombre, bool Activa, bool PermiteDesglosarCosto);
+
+    /// <summary>La marca <c>permite_desglosar_costo</c> de la familia, leída DENTRO de la transacción y DESPUÉS de tomar
+    /// el lock de membresía —compartido o exclusivo—: quien la apaga toma el exclusivo, así que el valor leído no puede
+    /// pasar de <c>true</c> a <c>false</c> hasta el commit. Encenderla no toma ese lock y es inocuo: los miembros ya
+    /// son idénticos en los campos que pasan a ser propios. Una lectura escalar sin lock de fila: quien escribe la
+    /// fila de la familia es la edición de la familia, que no se espera con los escritores de artículos por ella.</summary>
+    public static async Task<bool> LeerPermiteDesglosarCostoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT permite_desglosar_costo FROM familias WHERE id_familia = $1 AND id_tenant = $2";
+
+        ParametrosDeComando.Agregar(comando, idFamilia);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        // La FK compuesta de articulos garantiza que la familia de un miembro existe.
+        return await comando.ExecuteScalarAsync(ct) is true;
+    }
 
     /// <summary>La familia a la que van a entrar artículos —uno nuevo, en el alta de un artículo, o los pedidos, al
     /// agrupar en una familia que ya existe—: VIVA (<c>deleted_at IS NULL</c>) y de este tenant, leída y bloqueada
@@ -180,7 +200,7 @@ internal static class MembresiaDeFamilias
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
-            "SELECT nombre, activo FROM familias " +
+            "SELECT nombre, activo, permite_desglosar_costo FROM familias " +
             "WHERE id_familia = $1 AND id_tenant = $2 AND deleted_at IS NULL " +
             "FOR SHARE";
 
@@ -190,7 +210,7 @@ internal static class MembresiaDeFamilias
         await using var lector = await comando.ExecuteReaderAsync(ct);
 
         return await lector.ReadAsync(ct)
-            ? new FamiliaParaIngresar(lector.GetString(0), lector.GetBoolean(1))
+            ? new FamiliaParaIngresar(lector.GetString(0), lector.GetBoolean(1), lector.GetBoolean(2))
             : null;
     }
 
@@ -198,10 +218,10 @@ internal static class MembresiaDeFamilias
     /// <paramref name="queHayQueIndicar"/> completa la oración que nombra la familia y la cantidad de
     /// artículos vivos (<see cref="ErrorDominio"/> no lleva datos estructurados): lo que cada escritor
     /// le pide al cliente que decida. Se lee acá, solo en el camino de error, bajo el mismo lock de
-    /// membresía.</summary>
+    /// membresía. Con <paramref name="datos"/> el error los lleva estructurados (<see cref="ErrorDominioConDatos"/>).</summary>
     public static async Task<ErrorDominio> ErrorDeAlcanceRequeridoAsync(
         DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, string queHayQueIndicar,
-        CancellationToken ct)
+        CancellationToken ct, IReadOnlyDictionary<string, object?>? datos = null)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
@@ -223,9 +243,11 @@ internal static class MembresiaDeFamilias
         var cantidad = lector.GetInt64(1);
         var articulos = cantidad == 1 ? "1 artículo" : $"{cantidad} artículos";
 
-        return ErrorDominio.Conflicto(
-            "alcance_requerido",
-            $"El artículo pertenece a la familia \"{nombre}\" ({articulos}): {queHayQueIndicar}");
+        var mensaje = $"El artículo pertenece a la familia \"{nombre}\" ({articulos}): {queHayQueIndicar}";
+
+        return datos is null
+            ? ErrorDominio.Conflicto("alcance_requerido", mensaje)
+            : ErrorDominioConDatos.Conflicto("alcance_requerido", mensaje, datos);
     }
 
     /// <summary>409 <c>familia_cambio</c>: la pertenencia que el cliente daba por cierta ya no lo es

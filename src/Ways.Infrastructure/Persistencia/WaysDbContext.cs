@@ -17,6 +17,7 @@ using Ways.Domain.Common;
 using Ways.Domain.Compras;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
+using Ways.Domain.MercadoPago;
 using Ways.Domain.Pagos;
 using Ways.Domain.Combos;
 using Ways.Domain.Ofertas;
@@ -39,6 +40,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Empresa> Empresas => Set<Empresa>();
     public DbSet<PuntoVenta> PuntosVenta => Set<PuntoVenta>();
+    public DbSet<Sucursal> Sucursales => Set<Sucursal>();
 
     // Dominios propios de cada tenant (rebanada 0 de la tienda online): ServicioDeDominios los
     // administra y ResolvedorDeDominios los lee para resolver el tenant desde el host.
@@ -196,6 +198,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // (AsignadorDeNumeroFiscal, slice 4) recibe el WaysDbContext concreto por parámetro y opera
     // con ADO.NET crudo, no un DbSet de la interfaz.
     public DbSet<CertificadoFiscal> CertificadosFiscales => Set<CertificadoFiscal>();
+    public DbSet<ConexionMercadoPago> ConexionesMercadoPago => Set<ConexionMercadoPago>();
     public DbSet<NumeracionFiscal> NumeracionesFiscales => Set<NumeracionFiscal>();
 
     // Facturación por medio de pago: la decisión por venta (operativa, expuesta en IWaysDbContext) y el
@@ -372,8 +375,45 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
+    /// <summary>
+    /// Todo punto de venta nuevo que no trae sucursal recibe la propia (1:1, con su nombre), en el
+    /// mismo <c>SaveChanges</c> y por lo tanto en la misma transacción. Un único punto de paso:
+    /// el alta del ABM, el aprovisionamiento y la siembra quedan cubiertos sin repetir la regla.
+    /// </summary>
+    private void CrearSucursalDeLosPuntosDeVentaNuevos()
+    {
+        foreach (var entrada in ChangeTracker.Entries<PuntoVenta>().ToList())
+        {
+            var puntoVenta = entrada.Entity;
+
+            if (entrada.State != EntityState.Added || puntoVenta.IdSucursal != 0 || puntoVenta.Sucursal is not null)
+            {
+                continue;
+            }
+
+            // Sin empresa no hay sucursal posible: EF no puede resolver la FK compartida con un
+            // IdEmpresa en 0 y Postgres rechaza el punto de venta igual (fk_puntos_venta_empresa).
+            if (puntoVenta.IdEmpresa == 0)
+            {
+                continue;
+            }
+
+            puntoVenta.Sucursal = new Sucursal
+            {
+                IdTenant = puntoVenta.IdTenant,
+                IdEmpresa = puntoVenta.IdEmpresa,
+                Nombre = puntoVenta.Nombre,
+                CreatedAt = puntoVenta.CreatedAt,
+                UpdatedAt = puntoVenta.UpdatedAt,
+                DeletedAt = puntoVenta.DeletedAt
+            };
+        }
+    }
+
     private void EstamparTenant()
     {
+        CrearSucursalDeLosPuntosDeVentaNuevos();
+
         RechazarEscriturasDeNumeracionCliente();
         RechazarEscriturasDeNumeracionArticulo();
         RechazarEscriturasDeNumeracionComprobante();

@@ -368,7 +368,7 @@ export function Compras() {
                         </Link>
                         {c.origen === 'Asistente' && <span className="badge text-bg-info ms-2">Asistente</span>}
                       </td>
-                      <td>{proveedorPorId[c.idProveedor]?.razonSocial ?? `Proveedor #${c.idProveedor}`}</td>
+                      <td>{c.nombreProveedor ?? `Proveedor #${c.idProveedor}`}</td>
                       <td>{tipoPorId[c.idTipoComprobante]?.codigo ?? `#${c.idTipoComprobante}`}</td>
                       <td>
                         <span className={`badge ${claseDeBadgeDeEstado(c.estado)}`}>{etiquetaDeEstadoCompra(c.estado)}</span>
