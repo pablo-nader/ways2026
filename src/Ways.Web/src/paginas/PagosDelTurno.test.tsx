@@ -1,12 +1,31 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render as renderizar, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi } from '../api/cliente'
 import { pulsoDeCajon } from '../impresion/plantillas'
 import { PagosDelTurno } from './PagosDelTurno'
+import { Toaster } from '../toasts/Toaster'
 import type { CajaDeEscritorio } from './Pos'
 import type { AreaListado, DetalleDeTurno, PagoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
+
+/** Las pantallas avisan el resultado con toasts: el `Toaster` va siempre junto a la pantalla. */
+function render(ui: ReactElement) {
+  return renderizar(
+    <>
+      {ui}
+      <Toaster />
+    </>,
+  )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
+}
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -385,35 +404,32 @@ describe('PagosDelTurno — alta', () => {
     mockearRutas({ detalle: detalleFixture([pagoFixture({ id: 9, importe: 500 })]) })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('')
     expect(screen.getByLabelText('Observaciones (opcional)')).toHaveValue('')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Otros')
     await screen.findByText('$ 500,00')
   })
 
-  // RDD-W1 (judgment-day): cláusula bajo prueba: el `setAviso('')` movido ANTES de las
-  // validaciones client-side en `registrarPago`. Mutación verificada (mutation-proof-tests):
-  // devolviendo ese `setAviso('')` a después de los `return` de validación, este test vuelve a
-  // ver "Pago registrado." conviviendo con el error — restaurado el orden, vuelve a verde.
-  it('un segundo submit con el formulario vacío después de un alta exitosa limpia el aviso de éxito', async () => {
+  it('si el detalle no se puede refrescar tras el alta, avisa el éxito y el fallo con toasts, sin banner de carga', async () => {
     mockearRutas({ detalle: detalleFixture() })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<PagosDelTurno />)
 
     await completarFormulario()
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.endsWith('/detalle') ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El detalle no responde.')) : rutasOk(ruta),
+    )
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-    await screen.findByText('Pago registrado.')
 
-    // `limpiarFormulario` dejó el importe en blanco: este segundo submit falla la validación
-    // client-side, sin llegar a pegarle al servidor.
-    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
-
-    await screen.findByText('Línea 1: elegí el medio de pago.')
-    expect(screen.queryByText('Pago registrado.')).not.toBeInTheDocument()
+    await toastDeExito('Pago registrado.')
+    const advertencia = await screen.findByText('El detalle no responde.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
-  it('un error del servidor se muestra inline y el formulario no se limpia', async () => {
+  it('un error del servidor se avisa con un toast de error y el formulario no se limpia', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({})
     apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_no_abierto', 'El turno ya no está abierto.'))
@@ -422,7 +438,8 @@ describe('PagosDelTurno — alta', () => {
     await completarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('El turno ya no está abierto.')
+    expect((await screen.findByText('El turno ya no está abierto.')).closest('[role="alert"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('500,00')
   })
 
@@ -573,7 +590,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
       await registrar('Efectivo')
 
-      await screen.findByText('Pago registrado.')
+      await toastDeExito('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith('la apertura de cajón', pulsoDeCajon())
     })
@@ -589,7 +606,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
       await registrar('Efectivo')
 
-      await screen.findByText('Pago registrado.')
+      await toastDeExito('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
       expect(screen.queryByText('No se pudo registrar el pago.')).not.toBeInTheDocument()
       expect(screen.getByLabelText('Importe de la línea 1')).toHaveValue('')
@@ -624,7 +641,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
       await registrar('Efectivo')
 
-      await screen.findByText('No se pudo registrar el pago.')
+      expect((await screen.findByText('No se pudo registrar el pago.')).closest('[role="alert"]')).not.toBeNull()
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 
@@ -639,7 +656,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
       await registrar(medio, origen)
 
-      await screen.findByText('Pago registrado.')
+      await toastDeExito('Pago registrado.')
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 
@@ -650,7 +667,7 @@ describe('PagosDelTurno — efectivo en caja', () => {
 
       await registrar('Efectivo')
 
-      expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
+      await toastDeExito('Pago registrado.')
     })
   })
 })
@@ -708,7 +725,7 @@ describe('PagosDelTurno — área del alta', () => {
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(screen.getByLabelText('Área')).toHaveValue('10')
   })
 
@@ -938,7 +955,7 @@ describe('PagosDelTurno — edición', () => {
         }),
       ),
     )
-    await screen.findByText('Pago actualizado.')
+    await toastDeExito('Pago actualizado.')
     expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     const llamadasDetalle = apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle'))
     expect(llamadasDetalle.length).toBeGreaterThanOrEqual(2)
@@ -1111,7 +1128,7 @@ describe('PagosDelTurno — varios medios', () => {
         }),
       ),
     )
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(screen.queryByLabelText('Importe de la línea 2')).not.toBeInTheDocument()
   })
 
@@ -1173,7 +1190,7 @@ describe('PagosDelTurno — varios medios', () => {
     expect(screen.queryByText(/Disponible en caja/)).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
   })
 
@@ -1186,7 +1203,7 @@ describe('PagosDelTurno — varios medios', () => {
     await cargarDosLineas('600', '400')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith('la apertura de cajón', pulsoDeCajon())
   })
 
@@ -1232,7 +1249,7 @@ describe('PagosDelTurno — varios medios', () => {
         }),
       ),
     )
-    await screen.findByText('Pago actualizado.')
+    await toastDeExito('Pago actualizado.')
   })
 
   it('en la edición se puede agregar un medio a un pago de un solo medio', async () => {

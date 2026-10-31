@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
+import { toast } from '../toasts/toasts'
 import { errorDeLineasDePago, lineaDePagoVacia, type LineaDePagoEditable } from '../api/lineasDePago'
 import { clienteDePagos, copiaDeFalloDeEdicion, esPagoOriginadoEnPersonal } from '../api/registroDePagos'
 import { clienteDeProveedores } from '../api/proveedores'
@@ -118,7 +119,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [errorGuardar, setErrorGuardar] = useState('')
-  const [aviso, setAviso] = useState('')
 
   // Carga inicial: medios de pago y proveedores — catálogos de tenant, independientes del turno
   // (nunca cambian si el turno se cierra/abre de nuevo). Cada uno con su propio try/catch: que
@@ -172,7 +172,8 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     }
   }, [])
 
-  async function cargarDetalle(idTurno: number, miGeneracion: number) {
+  /** Con `propagar`, un fallo vigente se relanza sin tocar el banner ni el detalle: lo avisa quien refresca tras una escritura. */
+  async function cargarDetalle(idTurno: number, miGeneracion: number, propagar = false) {
     setCargandoDetalle(true)
     setErrorDetalle('')
     try {
@@ -181,6 +182,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
       setDetalle(datos)
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
+      if (propagar) throw e
       setDetalle(null)
       setErrorDetalle(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos del turno.')
     } finally {
@@ -235,17 +237,20 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     setObservaciones('')
     setOrigenFondos('CajaTurno')
   }
+  /** Si la escritura ya se confirmó, un fallo del refresco no la desdice: se avisa aparte. */
+  async function refrescarDetalle(idTurno: number, miGeneracion: number, escrituraConfirmada: boolean) {
+    try {
+      await cargarDetalle(idTurno, miGeneracion, escrituraConfirmada)
+    } catch (e) {
+      toast.advertencia(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos del turno.')
+    }
+  }
 
   async function registrarPago() {
     // regla 11 (react-async-state): guard de reentrancia de primera línea — un doble click en el
     // mismo tick le gana al re-render que deshabilita el botón.
     if (guardandoRef.current) return
     if (!turno || !puntoVenta) return
-
-    // regla 14 (react-async-state): el aviso de éxito es un slot propio de ESTE submit — se
-    // limpia antes de las validaciones client-side para que un intento fallido nunca lo deje
-    // conviviendo con el error de validación (RDD-W1).
-    setAviso('')
 
     const errorDeLineas = errorDeLineasDePago(lineas)
     if (errorDeLineas !== null) {
@@ -262,6 +267,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     // regla 3: bumpea la generación ANTES de la escritura — cualquier carga de detalle en vuelo
     // desde antes de este alta queda obsoleta aunque su respuesta llegue después.
     const miGeneracion = (generacionRef.current += 1)
+    let escrituraConfirmada = false
 
     try {
       await clienteDePagos.registrar(
@@ -275,6 +281,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
           origenFondos,
         }),
       )
+      escrituraConfirmada = true
       // El alta ya está confirmada: el cajón se abre aunque la respuesta llegue desactualizada.
       if (abreElCajon) {
         try {
@@ -285,10 +292,10 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
       }
       if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
-      setAviso('Pago registrado.')
+      toast.exito('Pago registrado.')
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
-      setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
+      toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
     } finally {
       guardandoRef.current = false
       if (generacionRef.current === miGeneracion) setGuardando(false)
@@ -297,12 +304,11 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
     // regla 6: el refresco del detalle queda aislado del try/catch de la escritura — un alta ya
     // confirmada nunca se reporta como fallida aunque el refresco falle, y corre también tras un
     // error de escritura (por si algo cambió igual, mismo criterio que `Caja.tsx`).
-    await cargarDetalle(turno.id, miGeneracion)
+    await refrescarDetalle(turno.id, miGeneracion, escrituraConfirmada)
   }
 
   function abrirEdicion(pago: PagoDeTurno) {
     if (guardandoRef.current) return
-    setAviso('')
     setErrorGuardar('')
     setErrorEdicion('')
     setEdicion(pago)
@@ -325,12 +331,14 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
 
     // regla 3: invalida cualquier carga del detalle anterior a esta escritura.
     const miGeneracion = (generacionRef.current += 1)
+    let escrituraConfirmada = false
 
     try {
       await clienteDePagos.actualizar(edicion.id, solicitud)
+      escrituraConfirmada = true
       if (generacionRef.current !== miGeneracion) return
       setEdicion(null)
-      setAviso('Pago actualizado.')
+      toast.exito('Pago actualizado.')
     } catch (e) {
       if (generacionRef.current !== miGeneracion) return
       setErrorEdicion(copiaDeFalloDeEdicion(e))
@@ -343,7 +351,7 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
 
     // regla 6: el refresco queda aislado de la escritura; tras un 409 también corre, así el
     // `turnoAbierto` de la fila queda al día.
-    await cargarDetalle(turno.id, miGeneracion)
+    await refrescarDetalle(turno.id, miGeneracion, escrituraConfirmada)
   }
 
   const bloqueado = guardando || guardandoEdicion || edicion !== null
@@ -395,7 +403,6 @@ export function PagosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeE
             {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
             {errorProveedores && <div className="alert alert-warning py-1 px-2 small">{errorProveedores}</div>}
             {errorAreas && <div className="alert alert-warning py-1 px-2 small">{errorAreas}</div>}
-            {aviso && <div className="alert alert-success">{aviso}</div>}
             {errorGuardar && <div className="alert alert-danger">{errorGuardar}</div>}
 
             <fieldset disabled={bloqueado} className="row g-2 align-items-end border-0 p-0 m-0 mb-3">

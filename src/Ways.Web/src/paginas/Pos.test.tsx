@@ -9,6 +9,7 @@ import { reiniciarLotesDeFacturacionParaTests } from '../pos/loteDeFacturacion'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import {
   MENSAJE_DE_ATAJO_SIN_DATOS,
   MENSAJE_DE_IMPORTE_INVALIDO,
@@ -76,6 +77,7 @@ function arbolDePos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
         <Route path="/presupuestos" element={<div>Presupuestos</div>} />
         <Route path="/caja/cierre" element={<PlaceholderDeCierreDeCaja />} />
       </Routes>
+      <Toaster />
     </MemoryRouter>
   )
 }
@@ -2665,7 +2667,9 @@ describe('Pos — recibo del pago a cuenta en el escritorio', () => {
 
     await pagar()
 
-    expect(await screen.findByText('Pago registrado: comprobante 0007-00000900.')).toBeInTheDocument()
+    const aviso = await screen.findByText('Pago registrado: comprobante 0007-00000900.')
+    expect(aviso.closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(await screen.findByText('$ 200,00', { selector: '.fs-5' })).toBeInTheDocument()
   })
 })

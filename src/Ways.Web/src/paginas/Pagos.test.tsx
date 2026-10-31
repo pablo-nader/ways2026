@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pagos } from './Pagos'
+import { Toaster } from '../toasts/Toaster'
+import { ErrorApi } from '../api/cliente'
 import type {
   AreaListado,
   EmpresaListado,
@@ -19,8 +21,16 @@ function renderPagos() {
   return render(
     <MemoryRouter initialEntries={['/pagos']}>
       <Pagos />
+      <Toaster />
     </MemoryRouter>,
   )
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 const apiGetMock = vi.fn()
@@ -428,7 +438,7 @@ describe('Pagos (administración) — alta', () => {
     mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 9, importe: 1500, concepto: 'Alquiler de septiembre' })]) })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     expect(screen.queryByLabelText('Concepto')).not.toBeInTheDocument()
     await screen.findByText('Alquiler de septiembre')
   })
@@ -581,7 +591,7 @@ describe('Pagos (administración) — alta', () => {
     await act(async () => resolverPost({ id: 1 }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
+    await toastDeExito('Pago registrado.')
     expect(screen.getByRole('button', { name: 'Nuevo pago' })).toBeEnabled()
   })
 
@@ -673,7 +683,7 @@ describe('Pagos (administración) — área del alta', () => {
     await completarYRegistrar()
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/administracion', expect.objectContaining({ idArea: 11 })))
 
-    await screen.findByText('Pago registrado.')
+    await toastDeExito('Pago registrado.')
     await abrirFormulario()
     expect(screen.getByLabelText('Área')).toHaveValue('10')
 
@@ -847,7 +857,7 @@ describe('Pagos (administración) — vincular a una compra existente', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/pagos/3/vincular-compra', { idComprobanteCompra: 9 }))
-    expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
+    await toastDeExito('Pago vinculado a la compra.')
     // El picker se cierra tras el éxito.
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
@@ -887,7 +897,7 @@ describe('Pagos (administración) — vincular a una compra existente', () => {
 
     resolverPost({ id: 3, idComprobanteCompra: 9 })
 
-    expect(await screen.findByText('Pago vinculado a la compra.')).toBeInTheDocument()
+    await toastDeExito('Pago vinculado a la compra.')
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
 })
@@ -957,7 +967,7 @@ describe('Pagos (administración) — edición y baja', () => {
         }),
       ),
     )
-    await screen.findByText('Pago actualizado.')
+    await toastDeExito('Pago actualizado.')
     expect(screen.queryByRole('dialog', { name: 'Editar pago' })).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
   })
@@ -1132,9 +1142,30 @@ describe('Pagos (administración) — edición y baja', () => {
     await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/pagos/administracion/31'))
-    await screen.findByText('Pago eliminado.')
+    await toastDeExito('Pago eliminado.')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+  })
+
+  it('si el listado no se puede refrescar tras eliminar, avisa el éxito y el fallo con toasts, sin banner de carga', async () => {
+    mockearRutas({ pagina: paginaFixture([pagoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    apiDeleteMock.mockResolvedValueOnce(undefined)
+    renderPagos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar pago Alquiler' }))
+    const confirmacion = await screen.findByRole('alertdialog', { name: 'Confirmar eliminación' })
+    const rutasOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/pagos/administracion')
+        ? Promise.reject(new ErrorApi(503, 'no_disponible', 'El listado no responde.'))
+        : rutasOk(ruta),
+    )
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
+
+    await toastDeExito('Pago eliminado.')
+    const advertencia = await screen.findByText('El listado no responde.')
+    expect(advertencia.closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
   })
 
   it('cancelar la confirmación no elimina nada', async () => {

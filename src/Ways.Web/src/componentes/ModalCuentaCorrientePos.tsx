@@ -24,6 +24,7 @@ import { Cargando } from './Cargando'
 import { EncabezadoOrdenable, useOrdenamiento, type ColumnasOrdenables } from './grilla'
 import { Modal } from './Modal'
 import { ModalPagoACuenta } from './ModalPagoACuenta'
+import { toast } from '../toasts/toasts'
 
 const DIAS_DE_MOVIMIENTOS_POR_DEFECTO = 7
 
@@ -101,7 +102,6 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
   const consultaPedidaRef = useRef<string | null>(null)
 
   const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
-  const [aviso, setAviso] = useState('')
 
   // react-async-state regla 2: cada consulta toma su generación; una respuesta de un cliente o un
   // rango ya abandonados nunca pisa la más reciente. `alResolver` se invoca siempre, con el saldo o
@@ -178,7 +178,6 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
   function elegirCliente(id: number) {
     const encontrado = opcionesBusqueda.find((c) => c.id === id)
     if (!encontrado) return
-    setAviso('')
     setClienteElegido(encontrado)
   }
 
@@ -205,7 +204,7 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
         }}
         onRegistrado={(comprobante) => {
           setModalPagoAbierto(false)
-          setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
+          toast.exito(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
           // El pago recién hecho cae dentro del rango por defecto: se vuelve a él para verlo.
           const rango = rangoDeLosUltimosDias(DIAS_DE_MOVIMIENTOS_POR_DEFECTO)
           setDesde(rango.desde)
@@ -289,7 +288,6 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
         </>
       ) : (
         <>
-          {aviso && <div className="alert alert-success py-1 px-2 small">{aviso}</div>}
           {errorEstado && (
             <div className="alert alert-danger py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
               <span>{errorEstado}</span>

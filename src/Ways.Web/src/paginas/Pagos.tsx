@@ -20,6 +20,7 @@ import { clienteDeCompras, filtrosDeComprasVacios } from '../api/compras'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
 import { ErrorApi } from '../api/cliente'
+import { toast } from '../toasts/toasts'
 import { CATEGORIAS_PAGO, ORIGENES_DE_FONDOS_PAGO } from '../api/tipos'
 import type {
   AreaListado,
@@ -117,7 +118,6 @@ export function Pagos() {
   const [errorGuardar, setErrorGuardar] = useState('')
   /** Cambia en cada rechazo: el mismo mensaje repetido igual se vuelve a anunciar y a traer a la vista. */
   const [disparoDeError, setDisparoDeError] = useState(0)
-  const [aviso, setAviso] = useState('')
 
   const generacionRef = useRef(0)
   /** Destino de foco si el disparador ya no es alcanzable al cerrar un modal. */
@@ -186,7 +186,7 @@ export function Pagos() {
       await clienteDePagos.vincularCompra(idGasto, idComprobanteCompra)
       if (generacionVinculoRef.current !== miGeneracion) return
       cerrarPicker()
-      setAviso('Pago vinculado a la compra.')
+      toast.exito('Pago vinculado a la compra.')
     } catch (e) {
       if (generacionVinculoRef.current !== miGeneracion) return
       setPickerError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el pago a la compra.')
@@ -196,7 +196,7 @@ export function Pagos() {
       setVinculando(false)
     }
 
-    cargar()
+    void refrescarTrasEscribir()
   }
 
   // Carga inicial: catálogos de tenant, independientes del filtro/formulario.
@@ -240,7 +240,8 @@ export function Pagos() {
     }
   }, [])
 
-  const cargar = useCallback(() => {
+  /** Con `propagar`, un fallo vigente se relanza sin tocar el banner: lo avisa quien refresca tras una escritura. */
+  const cargar = useCallback((propagar = false) => {
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
@@ -253,6 +254,7 @@ export function Pagos() {
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
+        if (propagar) throw e
         setPagina(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos.')
       })
@@ -265,6 +267,15 @@ export function Pagos() {
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  /** El refresco posterior a una escritura ya confirmada: si falla, el éxito no se desdice y el fallo se avisa aparte. */
+  async function refrescarTrasEscribir() {
+    try {
+      await cargar(true)
+    } catch (e) {
+      toast.advertencia(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los pagos.')
+    }
+  }
 
   function cambiarFiltro(cambios: Partial<Omit<FiltrosDePagosDeAdministracion, 'pagina' | 'tamanio'>>) {
     setFiltros((prev) => ({ ...prev, ...cambios, pagina: 1 }))
@@ -296,8 +307,6 @@ export function Pagos() {
     // regla 11: guard de reentrancia de primera línea.
     if (guardandoRef.current) return
 
-    setAviso('')
-
     if (!formularioDePagoDeAdministracionCompleto(formulario)) {
       setErrorGuardar(
         formulario.fecha.trim() !== '' && formulario.idEmpresa !== '' && formulario.concepto.trim() !== ''
@@ -322,7 +331,7 @@ export function Pagos() {
     try {
       await clienteDePagosDeAdministracion.registrar(aSolicitudDePagoDeAdministracion(formulario))
       limpiarFormulario()
-      setAviso('Pago registrado.')
+      toast.exito('Pago registrado.')
       setMostrarFormulario(false)
     } catch (e) {
       setErrorGuardar(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago.')
@@ -333,11 +342,10 @@ export function Pagos() {
       setGuardando(false)
     }
 
-    cargar()
+    void refrescarTrasEscribir()
   }
 
   function abrirAlta() {
-    setAviso('')
     setErrorGuardar('')
     setMostrarFormulario(true)
   }
@@ -356,7 +364,6 @@ export function Pagos() {
 
   function abrirEdicion(pago: PagoDeAdministracionListado) {
     if (ocupadoEscribiendo()) return
-    setAviso('')
     setErrorEdicion('')
     setEdicion(pago)
   }
@@ -387,10 +394,10 @@ export function Pagos() {
       }
 
       setEdicion(null)
-      setAviso('Pago actualizado.')
-      // regla 6: el refresco está aislado de la escritura; si falla, `error` lo dice aparte y el
-      // aviso de éxito se mantiene.
-      await cargar()
+      toast.exito('Pago actualizado.')
+      // regla 6: el refresco está aislado de la escritura; si falla, se avisa aparte y el
+      // toast de éxito se mantiene.
+      await refrescarTrasEscribir()
     } finally {
       // Sin gate de token a propósito: la guarda de ref impide otra escritura en vuelo.
       escribiendoRef.current = false
@@ -403,7 +410,6 @@ export function Pagos() {
     setDisparadorDeLaBaja(disparador)
     setBaja(pago)
     setErrorBaja('')
-    setAviso('')
   }
 
   function cancelarBaja() {
@@ -432,8 +438,8 @@ export function Pagos() {
 
       setBaja(null)
       setDisparadorDeLaBaja(null)
-      setAviso('Pago eliminado.')
-      await cargar()
+      toast.exito('Pago eliminado.')
+      await refrescarTrasEscribir()
     } finally {
       escribiendoRef.current = false
       setEliminando(false)
@@ -489,7 +495,6 @@ export function Pagos() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Pagos" variante="inverse" herramientas={herramientas}>
         {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja

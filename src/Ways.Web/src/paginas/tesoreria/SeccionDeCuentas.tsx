@@ -23,6 +23,7 @@ import {
   nombreDelMedio,
 } from './cuentas'
 import { pluralizar } from '../../formato/pluralizar'
+import { toast } from '../../toasts/toasts'
 
 const TAMANIO_DE_PAGINA = 25
 const RUTA_ABM_DE_CUENTAS = '/caja/cuentas-tesoreria'
@@ -70,7 +71,6 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
   const generacionLibroRef = useRef(0)
 
   const [modalAbierto, setModalAbierto] = useState(false)
-  const [confirmacion, setConfirmacion] = useState('')
   const [avisoIncierto, setAvisoIncierto] = useState('')
 
   const cuentaElegida: CuentaConSaldo | null = cuentas?.cuentas.find((c) => c.id === idCuenta) ?? null
@@ -111,7 +111,6 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
     setIdCuenta(null)
     setLibro(null)
     setModalAbierto(false)
-    setConfirmacion('')
     setAvisoIncierto('')
     cargarCuentas()
   }, [cargarCuentas])
@@ -152,7 +151,6 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
     if (id === idCuenta) return
     setLibro(null)
     setPagina(1)
-    setConfirmacion('')
     setAvisoIncierto('')
     setIdCuenta(id)
   }
@@ -173,7 +171,7 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
     // El rango que se va a mostrar tras el refresco: el elegido o el de los últimos siete días hasta hoy. Con fechas monótonas el
     // ajuste puede llevar una fecha futura (si la cola de la cuenta la tiene) y quedar fuera también del rango por defecto.
     const fuera = instanteFueraDelRango(resultado.movimiento.fecha, rangoElegido ?? rangoUltimosSieteDias())
-    setConfirmacion(
+    toast.exito(
       `Ajuste registrado. Saldo de ${cuentaElegida?.nombre ?? 'la cuenta'}: ${moneda(resultado.saldoActual)}.` +
         (fuera ? ' El ajuste quedó fuera del rango mostrado: ampliá las fechas para verlo en el libro.' : ''),
     )
@@ -182,7 +180,6 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
 
   function alSerIncierto() {
     setModalAbierto(false)
-    setConfirmacion('')
     setAvisoIncierto(
       `No se pudo confirmar el ajuste de ${cuentaElegida?.nombre ?? 'la cuenta'}. Ya se volvió a cargar el libro: verificá si figura antes de reintentarlo.`,
     )
@@ -213,15 +210,6 @@ export function SeccionDeCuentas({ idEmpresa }: Props) {
               <span>{errorCuentas}</span>
               <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargarCuentas}>
                 Reintentar
-              </button>
-            </div>
-          )}
-
-          {confirmacion && (
-            <div className="alert alert-success py-2 px-3 small d-flex justify-content-between align-items-center">
-              <span>{confirmacion}</span>
-              <button type="button" className="btn btn-sm btn-outline-success" onClick={() => setConfirmacion('')}>
-                Cerrar aviso
               </button>
             </div>
           )}

@@ -33,6 +33,7 @@ import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { isoATexto } from '../formato/fechas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { toast } from '../toasts/toasts'
 import { ModalDeAjuste, ModalDeHoras, ModalDePago } from './CuentaDePersonalModales'
 import { desactualizaLaDeuda, errorDeEscritura, esRechazoCierto, type Escritura } from './cuentaDePersonalErrores'
 import {
@@ -61,7 +62,7 @@ import { pluralizar } from '../formato/pluralizar'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
-const AVISO_REFRESCO_FALLIDO = 'Pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO = 'No se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_SIN_MEDIOS = 'No se pudieron cargar todos los datos del pago: no se pueden agregar líneas de dinero.'
 const AVISO_SIN_EMPRESAS =
   'No se pudieron cargar las empresas: no se puede pagar desde la caja general. El pago desde la caja del turno y el descuento siguen disponibles.'
@@ -150,7 +151,6 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
 
   const [modal, setModal] = useState<ModalAbierta>(null)
   const [errorDeModal, setErrorDeModal] = useState<ErrorDeCuenta | null>(null)
-  const [aviso, setAviso] = useState('')
   /** Una entrada por escritura de resultado incierto. Solo se agregan y solo las quita su propio "Ya lo revisé". */
   const [avisosInciertos, setAvisosInciertos] = useState<{ id: number; texto: string }[]>([])
   const ultimoAvisoIncierto = useRef(0)
@@ -305,7 +305,6 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   async function resolverResultadoIncierto(operacion: Operacion) {
     const id = ++ultimoAvisoIncierto.current
     setModal(null)
-    setAviso('')
     setAvisosInciertos((previos) => [...previos, { id, texto: avisoDeResultadoIncierto(operacion.descripcion, true) }])
 
     const { ampliado, fallo } = await releerTrasEscribir(operacion.fecha)
@@ -335,10 +334,10 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
       }
 
       setModal(null)
-      setAviso(operacion.mensajeOk)
+      toast.exito(operacion.mensajeOk)
       const { ampliado, fallo } = await releerTrasEscribir(operacion.fecha)
-      const notas = [ampliado && notaDeRangoAmpliado(operacion.fecha), fallo && AVISO_REFRESCO_FALLIDO].filter(Boolean)
-      setAviso([operacion.mensajeOk, ...notas].join(' '))
+      if (ampliado) toast.exito(notaDeRangoAmpliado(operacion.fecha))
+      if (fallo) toast.advertencia(AVISO_REFRESCO_FALLIDO)
     } finally {
       ocupadoRef.current = false
       setEscribiendo(false)
@@ -388,7 +387,6 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   }
 
   function abrir(cual: Exclude<ModalAbierta, null>) {
-    setAviso('')
     setErrorDeModal(null)
     setHoy(fechaDeHoyParaPago())
     setModal(cual)
@@ -435,7 +433,6 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
             </button>
           </div>
         ))}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorEmpleado && (
           <div className="alert alert-danger d-flex justify-content-between align-items-center">
             {errorEmpleado}

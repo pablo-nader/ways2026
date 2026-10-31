@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeccionDeCuentas } from './SeccionDeCuentas'
+import { Toaster } from '../../toasts/Toaster'
 import { ErrorApi } from '../../api/cliente'
 import { ROL } from '../../api/tipos'
 import type {
@@ -135,8 +136,20 @@ function rutaDeLibro(ruta: string): number | null {
 
 function montar(idEmpresa: number | null = 1) {
   return render(<SeccionDeCuentas idEmpresa={idEmpresa} />, {
-    wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter>,
+    wrapper: ({ children }) => (
+      <MemoryRouter>
+        {children}
+        <Toaster />
+      </MemoryRouter>
+    ),
   })
+}
+
+/** El resultado de una escritura se avisa con un toast de éxito, nunca con un banner. */
+async function toastDeExito(texto: string | RegExp) {
+  const aviso = await screen.findByText(texto)
+  expect(aviso.closest('[role="status"]')).not.toBeNull()
+  expect(document.body.querySelector('.alert-success')).toBeNull()
 }
 
 function llamadasA(prefijo: string) {
@@ -457,7 +470,7 @@ describe('SeccionDeCuentas — ajuste de saldo', () => {
     await usuario.type(screen.getByLabelText('Concepto'), 'Conciliación')
     await usuario.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
-    expect(await screen.findByText('Ajuste registrado. Saldo de Mercado Pago: $ 1.750,00.')).toBeInTheDocument()
+    await toastDeExito('Ajuste registrado. Saldo de Mercado Pago: $ 1.750,00.')
     expect(screen.queryByRole('radio', { name: 'Tengo el saldo real' })).not.toBeInTheDocument()
     await waitFor(() => expect(antesCuentas()).toBe(cuentasConLista + 2))
     await waitFor(() => expect(antesLibro()).toBe(libroAntes + 1))
@@ -541,7 +554,7 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
 
     vi.setSystemTime(new Date(2026, 9, 13, 0, 10))
     await ajustar(usuario)
-    await screen.findByText(/Ajuste registrado/)
+    await toastDeExito(/Ajuste registrado/)
 
     await waitFor(() => expect(ultimoLibro()).toContain('hasta=2026-10-13T23:59:59.999'))
     expect(ultimoLibro()).toContain('desde=2026-10-07T00:00:00')
@@ -565,7 +578,7 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
     vi.setSystemTime(new Date(2026, 9, 13, 0, 10))
     await ajustar(usuario)
 
-    expect(await screen.findByText(/El ajuste quedó fuera del rango mostrado/)).toBeInTheDocument()
+    await toastDeExito(/El ajuste quedó fuera del rango mostrado/)
     await waitFor(() => expect(ultimoLibro()).toContain('hasta=2026-10-12T23:59:59.999'))
   })
 
@@ -584,7 +597,7 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
     await screen.findByLabelText('Totales del período')
     await ajustar(usuario)
 
-    expect(await screen.findByText(/El ajuste quedó fuera del rango mostrado/)).toBeInTheDocument()
+    await toastDeExito(/El ajuste quedó fuera del rango mostrado/)
   })
 
   it('con el rango editado que sí incluye el ajuste no hay aviso', async () => {
@@ -601,7 +614,7 @@ describe('SeccionDeCuentas — rango por defecto con el reloj fijado', () => {
     await usuario.type(desde, '01/10/2026')
     await ajustar(usuario)
 
-    expect(await screen.findByText(/Ajuste registrado/)).toBeInTheDocument()
+    await toastDeExito(/Ajuste registrado/)
     expect(screen.queryByText(/quedó fuera del rango mostrado/)).not.toBeInTheDocument()
   })
 })
