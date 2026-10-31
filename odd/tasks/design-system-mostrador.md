@@ -49,7 +49,7 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
   theme script in admin.html/pos.html so a light user sees no dark flash; `DESIGN.md`; a Vitest
   test that reads `tema.css` as text and asserts every token exists in both themes and the
   contrast pairs of the system (4.5:1 text, 3:1 control borders and focus).
-- [ ] **T2 Global component skin** (route: delegated writer). Tables (no stripes or vertical
+- [x] **T2 Global component skin** (route: delegated writer). Tables (no stripes or vertical
   borders, sunken header, hover, tabular numbers), buttons (`btn-success` → brand, secondary
   with `line-control` border), form controls, badges as pills with `-soft` tones, alerts with
   `-soft` tones, `.box` header without the accent bar, navbar active item underline, modal
@@ -60,6 +60,7 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
 - Shared components: section headings as real headings, FilterBar with visible labels, sortable
   table headers, real plurals in pagers.
 - Screen-by-screen polish starting with Artículos (critique findings).
+- Print from the dark theme: contextual table/alert variables are not reset in @media print (judgment-day T1, inferential).
 - Desktop POS release (bump Ways.Desktop + tag `pos-v*`) so the cash registers get the new look.
 
 ## Acceptance criteria
@@ -70,7 +71,11 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
 
 ## Progress
 
+- 2026-10-31: PRs abiertos. #553 (T1, base main, auto-merge) y #554 (T2, base `pnader/ds-mostrador-t1`; reapuntar a main cuando #553 se mergee y recién ahí habilitar auto-merge). Judgment-day APPROVED en ambos; advertencias corregidas en b53c6521 (borde de controles, gitignore del POS) y ae347b95 (impresión en negro de estados, guard de nombres de color).
+
 - 2026-10-31: worktree `ds-mostrador`, branch `pnader/ds-mostrador-t1`; styling surface mapped.
 - 2026-10-31: T1 hecha en `7bfbeb51`. RED: `tema.test.ts` 58 de 59 fallaban contra el `tema.css` anterior; GREEN: 59/59. Mutación (ink-muted claro a `#b0aea8`) mató 4 casos y se revirtió.
   `npm test` 282 archivos / 8916 tests OK; `npm run build` OK (5 woff2 emitidos como archivos, sin `data:`); `npm run lint` sin errores (solo warnings previos).
   Pre-paint: archivo externo `public/tema-inicial.js` porque la CSP de Tauri es `script-src 'self'`. Familia de fontsource = "… Variable": `publico.css` pide 'Bricolage Grotesque' a secas, se resuelve con `:root .publico { --pub-fuente-titulo }` en `tema.css` sin tocar `publico.css`.
+- 2026-10-31: T2 hecha en `1bc03677`. `componentes.css` nuevo, importado tras `tema.css` en las 4 entradas; `.box` en `template.css`; las reglas contextuales de tabla (solo oscuro) pasaron a tokens para ambos temas. RED: `componentes.test.ts` fallaba por falta del archivo; GREEN 6/6; mutacion (hex y token inexistente anadidos) mato 3 casos y se revirtio.
+  `npm test` 283 archivos / 8922 tests OK (una corrida previa fallo `Pos.test` autofocus; pasa solo y en la repeticion: flaky por carga); `npm run build` OK; `npm run lint` sin errores.
