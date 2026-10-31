@@ -149,12 +149,31 @@ public static class ResolvedorDeOfertas
     /// <c>Contains</c> plano alcanza para el match jerárquico.</summary>
     public static bool Coincide(in LineaAResolver linea, OfertaCandidata candidata)
     {
+        if (!CoincideSinCantidad(linea, candidata))
+        {
+            return false;
+        }
+
+        if (candidata.CantidadMinima is not { } cantidadMinima)
+        {
+            return true;
+        }
+
+        return CantidadDelUmbral(linea, candidata) >= cantidadMinima;
+    }
+
+    /// <summary>Todos los ejes de <see cref="Coincide"/> salvo <c>cantidad_minima</c>: alcance, lista objetivo, día de
+    /// semana y ventana de fechas y horas. Lo usa quien necesita saber qué ofertas existen para un artículo sin
+    /// importar la cantidad (la marca de ofertas del POS). Con <paramref name="considerarLista"/> en <c>false</c> la
+    /// lista objetivo tampoco restringe: se desconoce la lista del cliente.</summary>
+    public static bool CoincideSinCantidad(in LineaAResolver linea, OfertaCandidata candidata, bool considerarLista = true)
+    {
         if (!CoincideAlcance(linea, candidata.Alcance))
         {
             return false;
         }
 
-        if (candidata.ListasObjetivo.Count > 0 && !candidata.ListasObjetivo.Contains(linea.IdListaPrecio))
+        if (considerarLista && candidata.ListasObjetivo.Count > 0 && !candidata.ListasObjetivo.Contains(linea.IdListaPrecio))
         {
             return false;
         }
@@ -179,17 +198,7 @@ public static class ResolvedorDeOfertas
             return false;
         }
 
-        if (candidata.HoraHasta is { } horaHasta && linea.Hora > horaHasta)
-        {
-            return false;
-        }
-
-        if (candidata.CantidadMinima is not { } cantidadMinima)
-        {
-            return true;
-        }
-
-        return CantidadDelUmbral(linea, candidata) >= cantidadMinima;
+        return candidata.HoraHasta is not { } horaHasta || linea.Hora <= horaHasta;
     }
 
     private static bool CoincideAlcance(in LineaAResolver linea, AlcanceDeOferta alcance)
