@@ -18,6 +18,7 @@ import { EncabezadoOrdenable } from '../componentes/grilla'
 import { siguienteOrden } from '../componentes/grilla/ordenamiento'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { pluralizar } from '../formato/pluralizar'
 
 const OPCIONES_ESTADO: { valor: EstadoRemito | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -295,7 +296,7 @@ export function Remitos() {
 
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} remito(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'remito')}
               </span>
               <div className="d-flex gap-2">
                 <button

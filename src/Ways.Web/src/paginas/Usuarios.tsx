@@ -718,7 +718,7 @@ export function Usuarios() {
                 pagina={pagina.pagina}
                 tamanio={pagina.tamanio}
                 total={pagina.total}
-                unidad="usuario(s)"
+                unidad="usuario"
                 deshabilitado={cargando || bloqueado}
                 onCambiarPagina={padron.cambiarPagina}
                 onCambiarTamanio={padron.cambiarTamanio}

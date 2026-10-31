@@ -164,7 +164,7 @@ export function Combos() {
       .catch(() => {
         setEmpresas([])
         agregarAvisoCatalogo(
-          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (el combo se crea para todo el tenant).',
+          'No se pudieron cargar las empresas: el selector de empresa no va a estar disponible (el combo se crea para todas las empresas).',
         )
       })
   }, [cargar])
