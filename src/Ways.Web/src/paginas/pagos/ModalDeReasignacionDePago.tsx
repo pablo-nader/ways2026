@@ -63,7 +63,7 @@ export function ModalDeReasignacionDePago({ pago, guardando, error, onConfirmar,
       <fieldset disabled={guardando} className="border-0 p-0 m-0">
         <dl className="row small mb-3">
           <dt className="col-4">Fecha</dt>
-          <dd className="col-8">{pago.fecha.slice(0, 10)}</dd>
+          <dd className="col-8">{new Date(pago.fecha).toLocaleDateString('es-AR')}</dd>
           <dt className="col-4">Concepto</dt>
           <dd className="col-8">{pago.concepto}</dd>
           <dt className="col-4">Importe</dt>
