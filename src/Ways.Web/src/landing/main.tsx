@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import 'bootstrap/dist/css/bootstrap.min.css'
 import '../estilos/tema.css'
+import '../estilos/componentes.css'
 import '../publico/publico.css'
 
 import { Landing } from './Landing'

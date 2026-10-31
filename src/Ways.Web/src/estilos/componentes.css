@@ -1,0 +1,405 @@
+/*
+ * Piel Mostrador de los componentes de Bootstrap (ver DESIGN.md). Se carga después de tema.css y
+ * no renombra clases: reasigna las variables `--bs-*` de cada componente a los tokens `--ws-*`.
+ * Los selectores repiten la especificidad de Bootstrap para ganar solo por orden de carga y
+ * dejar que las clases de cada pantalla sigan ganando. Las reglas de impresión viven en
+ * impresion.css y no se tocan acá.
+ */
+
+/* ----- Tablas ----- */
+
+.table {
+  --bs-table-border-color: var(--ws-line);
+  --bs-table-striped-bg: transparent;
+  --bs-table-striped-color: var(--bs-table-color);
+  --bs-table-hover-bg: var(--ws-surface-sunken);
+  --bs-table-hover-color: var(--ws-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.table > :not(caption) > * > * {
+  padding: 0.625rem var(--ws-space-3);
+}
+
+.table-sm > :not(caption) > * > * {
+  padding: var(--ws-space-1) var(--ws-space-2);
+}
+
+.table-bordered > :not(caption) > * {
+  border-width: 0;
+}
+
+.table-bordered > :not(caption) > * > * {
+  border-width: 0 0 var(--bs-border-width);
+}
+
+.table > :not(:last-child) > :last-child > * {
+  border-bottom-color: var(--bs-table-border-color);
+}
+
+.table > thead > tr > th {
+  --bs-table-bg: var(--ws-surface-sunken);
+  --bs-table-color: var(--ws-ink-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.table-primary {
+  --bs-table-color: var(--ws-brand-ink);
+  --bs-table-bg: var(--ws-brand-soft);
+  --bs-table-border-color: color-mix(in srgb, var(--ws-brand-ink) 25%, var(--ws-brand-soft));
+  --bs-table-striped-bg: var(--ws-brand-soft);
+  --bs-table-striped-color: var(--ws-brand-ink);
+  --bs-table-active-bg: color-mix(in srgb, var(--ws-brand-ink) 14%, var(--ws-brand-soft));
+  --bs-table-active-color: var(--ws-brand-ink);
+  --bs-table-hover-bg: color-mix(in srgb, var(--ws-brand-ink) 14%, var(--ws-brand-soft));
+  --bs-table-hover-color: var(--ws-brand-ink);
+}
+
+.table-secondary {
+  --bs-table-color: var(--ws-ink-muted);
+  --bs-table-bg: var(--ws-surface-sunken);
+  --bs-table-border-color: var(--ws-line);
+  --bs-table-striped-bg: var(--ws-surface-sunken);
+  --bs-table-striped-color: var(--ws-ink-muted);
+  --bs-table-active-bg: color-mix(in srgb, var(--ws-ink-muted) 14%, var(--ws-surface-sunken));
+  --bs-table-active-color: var(--ws-ink-muted);
+  --bs-table-hover-bg: color-mix(in srgb, var(--ws-ink-muted) 14%, var(--ws-surface-sunken));
+  --bs-table-hover-color: var(--ws-ink-muted);
+}
+
+.table-success {
+  --bs-table-color: var(--ws-ok);
+  --bs-table-bg: var(--ws-ok-soft);
+  --bs-table-border-color: color-mix(in srgb, var(--ws-ok) 25%, var(--ws-ok-soft));
+  --bs-table-striped-bg: var(--ws-ok-soft);
+  --bs-table-striped-color: var(--ws-ok);
+  --bs-table-active-bg: color-mix(in srgb, var(--ws-ok) 14%, var(--ws-ok-soft));
+  --bs-table-active-color: var(--ws-ok);
+  --bs-table-hover-bg: color-mix(in srgb, var(--ws-ok) 14%, var(--ws-ok-soft));
+  --bs-table-hover-color: var(--ws-ok);
+}
+
+.table-warning {
+  --bs-table-color: var(--ws-warn);
+  --bs-table-bg: var(--ws-warn-soft);
+  --bs-table-border-color: color-mix(in srgb, var(--ws-warn) 25%, var(--ws-warn-soft));
+  --bs-table-striped-bg: var(--ws-warn-soft);
+  --bs-table-striped-color: var(--ws-warn);
+  --bs-table-active-bg: color-mix(in srgb, var(--ws-warn) 14%, var(--ws-warn-soft));
+  --bs-table-active-color: var(--ws-warn);
+  --bs-table-hover-bg: color-mix(in srgb, var(--ws-warn) 14%, var(--ws-warn-soft));
+  --bs-table-hover-color: var(--ws-warn);
+}
+
+.table-danger {
+  --bs-table-color: var(--ws-danger);
+  --bs-table-bg: var(--ws-danger-soft);
+  --bs-table-border-color: color-mix(in srgb, var(--ws-danger) 25%, var(--ws-danger-soft));
+  --bs-table-striped-bg: var(--ws-danger-soft);
+  --bs-table-striped-color: var(--ws-danger);
+  --bs-table-active-bg: color-mix(in srgb, var(--ws-danger) 14%, var(--ws-danger-soft));
+  --bs-table-active-color: var(--ws-danger);
+  --bs-table-hover-bg: color-mix(in srgb, var(--ws-danger) 14%, var(--ws-danger-soft));
+  --bs-table-hover-color: var(--ws-danger);
+}
+
+.table-info {
+  --bs-table-color: var(--ws-info);
+  --bs-table-bg: var(--ws-info-soft);
+  --bs-table-border-color: color-mix(in srgb, var(--ws-info) 25%, var(--ws-info-soft));
+  --bs-table-striped-bg: var(--ws-info-soft);
+  --bs-table-striped-color: var(--ws-info);
+  --bs-table-active-bg: color-mix(in srgb, var(--ws-info) 14%, var(--ws-info-soft));
+  --bs-table-active-color: var(--ws-info);
+  --bs-table-hover-bg: color-mix(in srgb, var(--ws-info) 14%, var(--ws-info-soft));
+  --bs-table-hover-color: var(--ws-info);
+}
+
+.table-primary .text-muted,
+.table-secondary .text-muted,
+.table-success .text-muted,
+.table-info .text-muted,
+.table-warning .text-muted,
+.table-danger .text-muted {
+  color: inherit !important;
+  opacity: 0.75;
+}
+
+.table-warning .form-control::placeholder,
+.table-danger .form-control::placeholder {
+  color: inherit;
+  opacity: 0.6;
+}
+
+/* ----- Botones ----- */
+
+.btn {
+  --bs-btn-font-weight: 600;
+  --bs-btn-border-radius: var(--ws-radius-md);
+  --bs-btn-disabled-opacity: 0.5;
+}
+
+.btn-sm {
+  --bs-btn-border-radius: var(--ws-radius-md);
+  --bs-btn-font-size: 0.8125rem;
+}
+
+.btn-lg {
+  --bs-btn-border-radius: var(--ws-radius-xl);
+}
+
+.btn-secondary,
+.btn-outline-secondary,
+.btn-light {
+  --bs-btn-color: var(--ws-ink);
+  --bs-btn-bg: var(--ws-surface);
+  --bs-btn-border-color: var(--ws-line-control);
+  --bs-btn-hover-color: var(--ws-ink);
+  --bs-btn-hover-bg: var(--ws-surface-sunken);
+  --bs-btn-hover-border-color: var(--ws-line-control);
+  --bs-btn-active-color: var(--ws-ink);
+  --bs-btn-active-bg: var(--ws-surface-sunken);
+  --bs-btn-active-border-color: var(--ws-line-control);
+  --bs-btn-disabled-color: var(--ws-ink);
+  --bs-btn-disabled-bg: var(--ws-surface);
+  --bs-btn-disabled-border-color: var(--ws-line-control);
+}
+
+.btn-danger {
+  --bs-btn-color: var(--ws-danger);
+  --bs-btn-bg: var(--ws-danger-soft);
+  --bs-btn-border-color: var(--ws-danger-soft);
+  --bs-btn-hover-color: var(--ws-danger);
+  --bs-btn-hover-bg: color-mix(in srgb, var(--ws-danger) 14%, var(--ws-danger-soft));
+  --bs-btn-hover-border-color: color-mix(in srgb, var(--ws-danger) 14%, var(--ws-danger-soft));
+  --bs-btn-active-color: var(--ws-danger);
+  --bs-btn-active-bg: color-mix(in srgb, var(--ws-danger) 22%, var(--ws-danger-soft));
+  --bs-btn-active-border-color: color-mix(in srgb, var(--ws-danger) 22%, var(--ws-danger-soft));
+  --bs-btn-disabled-color: var(--ws-danger);
+  --bs-btn-disabled-bg: var(--ws-danger-soft);
+  --bs-btn-disabled-border-color: var(--ws-danger-soft);
+}
+
+.btn-outline-danger {
+  --bs-btn-color: var(--ws-danger);
+  --bs-btn-border-color: var(--ws-line-control);
+  --bs-btn-hover-color: var(--ws-danger);
+  --bs-btn-hover-bg: var(--ws-danger-soft);
+  --bs-btn-hover-border-color: var(--ws-line-control);
+  --bs-btn-active-color: var(--ws-danger);
+  --bs-btn-active-bg: color-mix(in srgb, var(--ws-danger) 14%, var(--ws-danger-soft));
+  --bs-btn-active-border-color: var(--ws-line-control);
+  --bs-btn-disabled-color: var(--ws-danger);
+  --bs-btn-disabled-border-color: var(--ws-line-control);
+}
+
+/* ----- Badges ----- */
+
+.badge {
+  --bs-badge-border-radius: var(--ws-radius-pill);
+  --bs-badge-padding-x: 0.75em;
+  --bs-badge-padding-y: 0.3em;
+  --bs-badge-font-size: 0.75rem;
+  --bs-badge-font-weight: 600;
+}
+
+.badge.text-bg-primary,
+.badge.bg-primary {
+  color: var(--ws-brand-ink) !important;
+  background-color: var(--ws-brand-soft) !important;
+}
+
+.badge.text-bg-success,
+.badge.bg-success {
+  color: var(--ws-ok) !important;
+  background-color: var(--ws-ok-soft) !important;
+}
+
+.badge.text-bg-warning,
+.badge.bg-warning {
+  color: var(--ws-warn) !important;
+  background-color: var(--ws-warn-soft) !important;
+}
+
+.badge.text-bg-danger,
+.badge.bg-danger {
+  color: var(--ws-danger) !important;
+  background-color: var(--ws-danger-soft) !important;
+}
+
+.badge.text-bg-info,
+.badge.bg-info {
+  color: var(--ws-info) !important;
+  background-color: var(--ws-info-soft) !important;
+}
+
+.badge.text-bg-secondary,
+.badge.bg-secondary,
+.badge.text-bg-light,
+.badge.bg-light {
+  color: var(--ws-ink-muted) !important;
+  background-color: var(--ws-surface-sunken) !important;
+}
+
+/* ----- Alertas ----- */
+
+.alert {
+  --bs-alert-border-radius: var(--ws-radius-md);
+  --bs-alert-border-color: transparent;
+}
+
+.alert-primary {
+  --bs-alert-color: var(--ws-brand-ink);
+  --bs-alert-bg: var(--ws-brand-soft);
+  --bs-alert-border-color: transparent;
+  --bs-alert-link-color: var(--ws-brand-ink);
+}
+
+.alert-secondary {
+  --bs-alert-color: var(--ws-ink-muted);
+  --bs-alert-bg: var(--ws-surface-sunken);
+  --bs-alert-border-color: transparent;
+  --bs-alert-link-color: var(--ws-ink-muted);
+}
+
+.alert-success {
+  --bs-alert-color: var(--ws-ok);
+  --bs-alert-bg: var(--ws-ok-soft);
+  --bs-alert-border-color: transparent;
+  --bs-alert-link-color: var(--ws-ok);
+}
+
+.alert-warning {
+  --bs-alert-color: var(--ws-warn);
+  --bs-alert-bg: var(--ws-warn-soft);
+  --bs-alert-border-color: transparent;
+  --bs-alert-link-color: var(--ws-warn);
+}
+
+.alert-danger {
+  --bs-alert-color: var(--ws-danger);
+  --bs-alert-bg: var(--ws-danger-soft);
+  --bs-alert-border-color: transparent;
+  --bs-alert-link-color: var(--ws-danger);
+}
+
+.alert-info {
+  --bs-alert-color: var(--ws-info);
+  --bs-alert-bg: var(--ws-info-soft);
+  --bs-alert-border-color: transparent;
+  --bs-alert-link-color: var(--ws-info);
+}
+
+.alert-link {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* ----- Barra de navegación y menús ----- */
+
+.ways-navbar .navbar-nav {
+  --bs-nav-link-color: var(--ws-ink-muted);
+  --bs-nav-link-hover-color: var(--ws-ink);
+  --bs-navbar-hover-color: var(--ws-ink);
+  --bs-navbar-active-color: var(--ws-ink);
+}
+
+.ways-navbar .nav-link {
+  border-radius: var(--ws-radius-md);
+  padding-inline: var(--ws-space-3);
+  font-weight: 600;
+}
+
+.ways-navbar .nav-link:hover,
+.ways-navbar .nav-link.show {
+  background-color: var(--ws-surface-sunken);
+}
+
+.ways-navbar .nav-link.active {
+  border-radius: 0;
+  box-shadow: inset 0 -2px 0 var(--ws-brand);
+}
+
+.dropdown-menu {
+  --bs-dropdown-bg: var(--ws-surface-raised);
+  --bs-dropdown-border-color: var(--ws-line);
+  --bs-dropdown-border-radius: var(--ws-radius-lg);
+  --bs-dropdown-box-shadow: var(--ws-shadow-overlay);
+  --bs-dropdown-link-color: var(--ws-ink);
+  --bs-dropdown-link-hover-color: var(--ws-ink);
+  --bs-dropdown-link-hover-bg: var(--ws-surface-sunken);
+}
+
+/* ----- Modales ----- */
+
+.modal,
+.modal-content {
+  --bs-modal-bg: var(--ws-surface-raised);
+  --bs-modal-border-width: 0;
+  --bs-modal-border-radius: var(--ws-radius-xl);
+  --bs-modal-inner-border-radius: var(--ws-radius-xl);
+  --bs-modal-box-shadow: var(--ws-shadow-overlay);
+  --bs-modal-header-border-color: var(--ws-line);
+  --bs-modal-footer-border-color: var(--ws-line);
+}
+
+.modal-backdrop {
+  --bs-backdrop-bg: var(--ws-overlay);
+  --bs-backdrop-opacity: 1;
+}
+
+/* ----- Formularios ----- */
+
+:root,
+[data-bs-theme] {
+  --bs-form-invalid-color: var(--ws-danger);
+  --bs-form-invalid-border-color: var(--ws-danger);
+}
+
+.form-label {
+  margin-bottom: var(--ws-space-1);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ws-ink);
+}
+
+.form-text {
+  font-size: 0.8125rem;
+  color: var(--ws-ink-muted);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  background-color: var(--ws-surface-sunken);
+  color: var(--ws-ink-muted);
+}
+
+.form-control.is-invalid,
+.form-select.is-invalid {
+  border-color: var(--ws-danger);
+}
+
+.form-control.is-invalid:focus,
+.form-select.is-invalid:focus {
+  box-shadow: none;
+}
+
+.invalid-feedback {
+  color: var(--ws-danger);
+}
+
+/* ----- Paginación ----- */
+
+.pagination {
+  --bs-pagination-color: var(--ws-ink);
+  --bs-pagination-hover-color: var(--ws-ink);
+  --bs-pagination-hover-bg: var(--ws-surface-sunken);
+  --bs-pagination-active-color: var(--ws-brand-ink);
+  --bs-pagination-active-bg: var(--ws-brand-soft);
+  --bs-pagination-active-border-color: var(--ws-brand-soft);
+}
+
+.page-item.active .page-link {
+  font-weight: 700;
+}

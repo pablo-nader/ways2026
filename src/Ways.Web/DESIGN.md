@@ -9,6 +9,7 @@ El back office, el POS y la tienda comparten estos tokens. Su modo es **operar**
 - Los tokens son variables CSS `--ws-*` en `src/estilos/tema.css`: los colores por tema (`[data-bs-theme='light']` y `[data-bs-theme='dark']`), lo demás en `:root`.
 - Bootstrap 5.3 sigue funcionando debajo: sus variables `--bs-*` apuntan a los tokens. Las clases que usan las pantallas no se renombran.
 - Los alias `--ways-fondo`, `--ways-barra`, `--ways-sombra`, `--ways-naranja`, `--ways-gris` y `--ways-fuente` se conservan para el CSS anterior.
+- `src/estilos/componentes.css` se carga justo después de `tema.css` y viste los componentes de Bootstrap (tablas, botones, badges, alertas, navegación, modales, formularios, paginación) reasignando sus variables `--bs-*` a los tokens. Solo usa `var(--ws-*)` y `var(--bs-*)`; `componentes.test.ts` lo verifica. El panel `.box` vive en `template.css`.
 - `src/estilos/tema.test.ts` lee `tema.css` y verifica que cada token exista en los dos temas y que los pares cumplan el contraste.
 - La tienda pública (`publico.css`, `--pub-*`) tiene su propio tema y solo hereda la tipografía.
 - La salida impresa (`@media print`, `impresion.css`) es siempre negro sobre blanco.
@@ -61,7 +62,8 @@ El back office, el POS y la tienda comparten estos tokens. Su modo es **operar**
 
 - Foco: anillo sólido de 2px en `focus` con 2px de separación, 3:1 sobre `bg`, `surface` y `surface-sunken`.
 - Deshabilitado: opacidad .5 y cursor bloqueado; el motivo se explica en texto cerca, no solo en un `title`.
-- Hover de fila en `surface-sunken`; fila seleccionada en `brand-soft`.
+- Hover de fila en `surface-sunken`; fila seleccionada en `brand-soft`. Las tablas no llevan cebra ni bordes verticales: `table-striped` y `table-bordered` quedan en el markup sin efecto visual.
+- `btn-success` (el "guardar" de las pantallas) se ve como la acción principal de marca; `btn-secondary`, `btn-outline-secondary` y `btn-light` son el botón secundario con borde `line-control`.
 - Mientras se guarda, todo el formulario queda inerte y el botón dice "Guardando…".
 - Movimiento mínimo y solo como respuesta a una acción; se respeta `prefers-reduced-motion`.
 
