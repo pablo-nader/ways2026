@@ -44,6 +44,7 @@ import {
 } from './familia'
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { GestorDeCodigosProveedor } from './GestorDeCodigosProveedor'
+import { GestorDeOfertas } from './GestorDeOfertas'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 import { SeccionDeFamilia } from './SeccionDeFamilia'
 import { SeccionDeDisponibilidad } from './SeccionDeDisponibilidad'
@@ -1182,6 +1183,13 @@ export function FormularioArticulo({
             bloqueadoPorPadre={bloqueado}
             alDeEscribir={alDeEscribir}
             alCambiar={alCambiarTienda}
+          />
+          <GestorDeOfertas
+            idArticulo={valor.id}
+            nombreArticulo={valor.nombre}
+            familia={familiaDelArticulo(valor.idFamilia, familia.detalle)}
+            bloqueadoPorPadre={bloqueado}
+            alDeEscribir={alDeEscribir}
           />
         </>
       )}
