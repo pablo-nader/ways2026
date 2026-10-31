@@ -32,7 +32,7 @@ public record MovimientoDePersonal(
 /// <summary>Cuerpo de <c>POST /api/personal/{id}/pagos</c>. <see cref="Fecha"/> es obligatoria: es el día del
 /// asiento en el libro del personal y, con origen tesorería, la fecha de negocio de los pagos (puede ser
 /// retroactiva, nunca futura). <see cref="DescuentoDeCuentaCorriente"/> baja la deuda del cliente vinculado al
-/// personal y no mueve dinero. <see cref="Lineas"/> son las entregas de dinero, cada una un pago de sueldos;
+/// personal y no mueve dinero. <see cref="Lineas"/> son las entregas de dinero, cada una un ítem del único pago de sueldos;
 /// <see cref="OrigenFondos"/> es obligatorio con líneas y se rechaza sin ellas. <see cref="IdEmpresa"/> solo se
 /// indica con origen tesorería; <see cref="IdPuntoVenta"/> es obligatorio con el cajón o con descuento.
 /// <see cref="Detalle"/> queda en el asiento del personal.</summary>

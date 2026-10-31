@@ -215,9 +215,9 @@ public sealed record SolicitudDePagoDeCompra(DateOnly Fecha, decimal Importe, in
 /// la compra después de este pago, leído bajo el mismo lock que lo validó.</summary>
 public sealed record ResultadoDePagoDeCompra([property: JsonPropertyName("gasto")] PagoRegistrado Pago, decimal Pagado, decimal SaldoPendiente);
 
-/// <summary>Un pago de sueldo recién persistido junto con su único ítem: el desglose del libro de personal lista una
+/// <summary>El pago de sueldo recién persistido junto con sus ítems: el desglose del libro de personal lista una
 /// línea por ítem.</summary>
-public sealed record PagoDeSueldoPersistido(Pago Pago, ItemPago Item);
+public sealed record PagoDeSueldoPersistido(Pago Pago, IReadOnlyList<ItemPago> Items);
 
 /// <summary>Redondeo del importe de las rutas actuales (un solo medio): el mismo que aplicaba Postgres al persistir en
 /// <c>numeric(14,2)</c> (mitad lejos de cero), para que un importe con más de dos decimales se comporte como antes.</summary>
