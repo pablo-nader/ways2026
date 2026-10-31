@@ -46,7 +46,7 @@ present; with `cantidad_minima` null the flag is rejected (400) — see T1.
 - [x] T2 — Offline: snapshot representation of strict components (escalones + family grid), TS engine
   (`instantaneaOffline.ts`, ticket synthesis, combos motor), server discrepancy check. Tests + parity.
   Implemented in `56d9c749` on `pnader/ofertas-solo-multiplos-t2` (stacked on T1). Evidence below.
-- [ ] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest. Also the online
+- [x] T3 — Web admin: checkbox in the offer modal, mapping helpers, summary text. Vitest. Also the online
   POS cart preview (`api/ventas.ts` `previaDeLinea`) must use `descuentoDeLinea` when present (judge A: 3 units
   preview 11250 while the server charges 11500).
 - [ ] T4 — Engine follow-ups from judgment-day T1 (WARNING, both judges): base selection among non-acumulable
@@ -164,3 +164,16 @@ offer, so common family offers changed the snapshot body/ETag against the docume
 family offers report it (test `UnaOfertaComunDeFamiliaNoSeInformaPorFamilia`; Domain 2060/2060, Application
 1377/1377, integration snapshot/offers/offline 81/81). Both judges' SUGGESTION: the discrepancy audit row stores
 the per-unit `DescuentoEsperado` for strict lines while the comparison used the line discount — informational.
+
+## T3 evidence (2026-10-30)
+
+Route: delegated direct (writer trigger). Admin offers screen: checkbox "Solo múltiplos de la cantidad" (disabled and
+unchecked without cantidad mínima; `aAltaOferta` never sends `soloMultiplos: true` without it), `aValoresOferta` and
+`OfertaListado.soloMultiplos`, summary "(solo múltiplos de N)". Cart preview: `previaDeLinea` passes
+`resultado.descuentoDeLinea` (3 units of 4000 with 2 x 3750 → 11500; mutation removing it fails 2 tests). The only
+consumer of the line total is `previaDeLinea` (via `Pos.tsx` and `calcularSubtotalPrevia`). Public store: `online/carrito.ts`
+totals `precio × cantidad` with the price shown on the card; it does not resolve quantity offers, so nothing changed.
+
+## Judgment-day T3
+
+`JUDGMENT: APPROVED` — polished: page-level edit tests (checkbox checked from the saved offer, emptied minimum sends `soloMultiplos: false`), `aria-describedby` and a "requires cantidad mínima" hint on the checkbox, `descuentoDeLinea` JSDoc aligned with the code, and `previaDeLinea` cases (combo, return, zero discount).
