@@ -889,7 +889,7 @@ public class ServicioDeArticulos(
                 datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor, datos.ImpuestoInterno);
         var nominalDelPedido = referencia is null
             ? null
-            :ReglaDeFamilias.CostoNominalDelIngreso(
+            : ReglaDeFamilias.CostoNominalDelIngreso(
                 familia.PermiteDesglosarCosto, composicionDelPedido, ComposicionDelCosto.De(referencia),
                 costoNominalDelPedido, referencia.CostoNominal);
         var pedidos = ValoresCompartidosDe(datos, nominalDelPedido);
