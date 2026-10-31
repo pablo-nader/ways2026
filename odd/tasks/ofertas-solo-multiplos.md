@@ -155,4 +155,12 @@ applied with 0 covered units when another base wins on some lines (judge B, SUGG
 
 ## Next step
 
-Judgment-day for the T2 slice, then T3 (web admin + cart preview).
+T3 (web admin + cart preview).
+
+## Judgment-day T2 (2026-10-30)
+
+`JUDGMENT: APPROVED` — no CRITICAL. Judge B WARNING fixed inline: `PorFamilia` was reported for every family
+offer, so common family offers changed the snapshot body/ETag against the documented guarantee; now only strict
+family offers report it (test `UnaOfertaComunDeFamiliaNoSeInformaPorFamilia`; Domain 2060/2060, Application
+1377/1377, integration snapshot/offers/offline 81/81). Both judges' SUGGESTION: the discrepancy audit row stores
+the per-unit `DescuentoEsperado` for strict lines while the comparison used the line discount — informational.
