@@ -1878,21 +1878,20 @@ public partial class ServicioDePagos(
             idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona), nombresDeMedios);
     }
 
-    /// <summary>Un pago de categoría sueldos por línea de dinero, cada uno con su único ítem, dentro de la transacción
-    /// del llamador, que ya tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que
-    /// el alta del POS y el alta administrativa: el pago del cajón entra al arqueo del turno por su origen
-    /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe su egreso encadenado con
+    /// <summary>Un solo pago de categoría sueldos con un ítem por línea de dinero, dentro de la transacción del
+    /// llamador, que ya tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que
+    /// el alta del POS y el alta administrativa: el pago del cajón entra al arqueo del turno por sus ítems y su origen
+    /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe un único egreso por el total encadenado con
     /// <see cref="EscribirMovimientoDeTesoreriaAsync"/>, cuyo advisory de la empresa es el ÚLTIMO lock de la
     /// transacción. El pago de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería, la
-    /// fecha de negocio elegida. Cada pago apunta al movimiento <c>pago</c> del libro de personal y repite la
-    /// referencia de su línea en el detalle y en el ítem. Un solo pago con varios ítems queda para después del release
-    /// del POS instalado, que no lee las líneas.</summary>
-    public async Task<IReadOnlyList<PagoDeSueldoPersistido>> PersistirPagosDeSueldoAsync(
+    /// fecha de negocio elegida. El pago apunta al movimiento <c>pago</c> del libro de personal y la referencia de cada
+    /// línea vive solo en su ítem; la cabecera no lleva detalle.</summary>
+    public async Task<PagoDeSueldoPersistido> PersistirPagoDeSueldoAsync(
         int idTenant, EntornoDePagoDeSueldo entorno, OrigenFondosPago origenFondos, string nombreDelPersonal,
         int idMovimientoPersonal, IReadOnlyList<LineaDePagoDePersonal> lineas, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct = default)
     {
-        var pagos = lineas.Select(linea => new Pago
+        var pago = new Pago
         {
             IdTenant = idTenant,
             IdEmpresa = entorno.IdEmpresa,
@@ -1903,23 +1902,23 @@ public partial class ServicioDePagos(
             Categoria = CategoriaPago.Sueldos,
             OrigenFondos = origenFondos,
             Concepto = $"Pago de personal: {nombreDelPersonal}",
-            Detalle = linea.Referencia,
-            Importe = linea.Importe,
+            Detalle = null,
+            Importe = lineas.Sum(l => l.Importe),
             IdMovimientoPersonal = idMovimientoPersonal,
             CreatedAt = momento,
             UpdatedAt = momento
-        }).ToList();
+        };
 
-        db.Pagos.AddRange(pagos);
+        db.Pagos.Add(pago);
         await db.SaveChangesAsync(ct);
 
-        var items = pagos.Select((pago, i) => new ItemPago
+        var items = lineas.Select(linea => new ItemPago
         {
             IdTenant = idTenant,
             IdPago = pago.Id,
-            IdMedioPago = lineas[i].IdMedioPago,
-            Importe = lineas[i].Importe,
-            Referencia = lineas[i].Referencia,
+            IdMedioPago = linea.IdMedioPago,
+            Importe = linea.Importe,
+            Referencia = linea.Referencia,
             CreatedAt = momento,
             UpdatedAt = momento
         }).ToList();
@@ -1929,13 +1928,10 @@ public partial class ServicioDePagos(
 
         if (origenFondos == OrigenFondosPago.Tesoreria)
         {
-            foreach (var pago in pagos)
-            {
-                await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
-            }
+            await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, pago, idEmpleado, momento, ct);
         }
 
-        return pagos.Select((pago, i) => new PagoDeSueldoPersistido(pago, items[i])).ToList();
+        return new PagoDeSueldoPersistido(pago, items);
     }
 
     // ---- resolución interna ---------------------------------------------------------------

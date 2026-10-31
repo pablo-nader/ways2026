@@ -107,11 +107,14 @@ Stacked on the Gasto → Pago rename. Each slice is one PR through judgment-day.
 - [x] E2-W3 — Web: administración (`Pagos`/`ModalDeAltaDePago`/edición with lines, `/api/pagos/administracion`) and pagar compra (`ModalDePagoDeCompra` via `/api/pagos/de-compra/{idCompra}`, result key `pago`; `CompraEditor` and `CuentaCorrienteDeProveedor` updated; `vincular-compra` and `desdePago` read on `/api/pagos`). Personal payments untouched (E2-P).
 - [x] E2-C — Cleanup: drop `pagos.id_medio_pago` once every reader uses the items. Done by S3b (column, FK and index
   dropped).
-- [ ] E2-P — Pago de sueldo en un solo pago, después del release del POS (and after E2-W2): the personal payment with N
+- [x] E2-P (written; CI pending) — Pago de sueldo en un solo pago, después del release del POS (and after E2-W2): the personal payment with N
   lines becomes ONE pago with N items and one treasury movement for the total (`referencia` only in the items; the
   desglose already reads `item.referencia ?? pago.detalle`). Deferred because the installed POS bundle reads only
   `idMedioPago`/`importe` from the turno detail `gastos` and `/api/gastos`, so the merge would show 6000 efectivo + 500
   transferencia as one 6500 row under efectivo.
+  Done: `PersistirPagoDeSueldoAsync` writes one pago (header total, no `detalle`) with N items and one treasury
+  movement for the total; the plan shape is unchanged; the personal payment writes no audit rows. Integration
+  tests (`PagoDePersonalTests`) need CI.
 
 ### E3 slices
 
