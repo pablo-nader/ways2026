@@ -200,6 +200,16 @@
     --ws-surface-raised: #ffffff;
     --ws-ink: #000000;
     --ws-ink-muted: #000000;
+    --ws-brand-ink: #000000;
+    --ws-ok: #000000;
+    --ws-warn: #000000;
+    --ws-danger: #000000;
+    --ws-info: #000000;
+    --ws-brand-soft: #ffffff;
+    --ws-ok-soft: #ffffff;
+    --ws-warn-soft: #ffffff;
+    --ws-danger-soft: #ffffff;
+    --ws-info-soft: #ffffff;
     --ws-shadow-panel: none;
     --ws-shadow-overlay: none;
     --bs-body-color: #000000;

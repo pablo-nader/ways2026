@@ -40,7 +40,7 @@ describe('componentes.css', () => {
 
   it('no usa los nombres de color white, black, red, green, blue, orange, gray ni grey como valor', () => {
     const css = sinComentarios(componentesCss)
-    const nombres = [...css.matchAll(/:\s*[^;{}]*\b(white|black|red|green|blue|orange|gray|grey)\b[^;{}]*;/g)].map((m) => m[0])
+    const nombres = [...css.matchAll(/:\s*[^;{}]*(?<![-\w])(white|black|red|green|blue|orange|gray|grey)(?![-\w])[^;{}]*;/g)].map((m) => m[0])
 
     expect(nombres).toEqual([])
   })
