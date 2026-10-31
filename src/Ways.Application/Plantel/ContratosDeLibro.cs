@@ -45,7 +45,7 @@ public record SolicitudDePagoDePersonal(
     IReadOnlyList<LineaDeSolicitudDePago>? Lineas,
     string? Detalle);
 
-/// <summary><see cref="Referencia"/> (cupón u operación) queda en el detalle del pago de la línea.</summary>
+/// <summary><see cref="Referencia"/> (cupón u operación) queda en el ítem de la línea.</summary>
 public record LineaDeSolicitudDePago(int IdMedioPago, decimal Importe, string? Referencia);
 
 /// <summary>Composición de un pago: el descuento de cuenta corriente (si hubo) y una línea por cada ítem de
