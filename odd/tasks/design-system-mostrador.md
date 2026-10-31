@@ -60,6 +60,7 @@ Slice 1 = T1, slice 2 = T2 (based on T1). Each PR passes judgment-day before ope
 - Shared components: section headings as real headings, FilterBar with visible labels, sortable
   table headers, real plurals in pagers.
 - Screen-by-screen polish starting with Artículos (critique findings).
+- Print from the dark theme: contextual table/alert variables are not reset in @media print (judgment-day T1, inferential).
 - Desktop POS release (bump Ways.Desktop + tag `pos-v*`) so the cash registers get the new look.
 
 ## Acceptance criteria
