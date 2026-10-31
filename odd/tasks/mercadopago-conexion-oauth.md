@@ -261,6 +261,21 @@ Doc 10 §07 updated.
 - Still open from T1: catch `NotSupportedException` from a non-JSON 2xx in `ClienteOAuthMercadoPago`; record who disconnected.
 - A 502 `mercadopago_intercambio_fallido` covers several causes (MP rejection, deactivated cuenta); the web shows one generic message.
 
+## Judgment-day T3
+
+- 2026-10-31 on 5d864d06: **APPROVED** in round one, no CRITICAL. Both judges confirm the login-CSRF is closed
+  (foreign or forged state → 403 before any Mercado Pago call; no open redirect; code only in the fragment, cleared
+  before the first await).
+- Shared, low severity (info): after `window.location.assign` the card keeps `ocupado`, so a bfcache restore (browser
+  Back from Mercado Pago) leaves it stuck on "Conectando…" until a reload → reset on `pageshow` with `persisted`.
+- Judge B only (suspect, info): a failed re-read after connect/disconnect keeps the stale state with no error; the
+  callback comment overstates "el código no queda en logs" (the callback's own query still carries it); the fragment
+  is cleared only when the Admin section mounts; the open disconnect confirmation ignores `bloqueado`.
+
+## Status
+
+E1 complete: T1 #555 (merged), T2 #558, T3 (this PR). All follow-ups above stay open for a small polish slice.
+
 ## Next step
 
-Open the T3 PR (stacked on T2) after judgment-day. Then E2 (stores/POS in Mercado Pago).
+E2 (stores/POS in Mercado Pago, on top of `sucursales`).
