@@ -144,12 +144,20 @@ public sealed record SolicitudDeVenta(
 /// (paquete anterior de la caja) se registra por el importe tipeado, sin lista; en ambos casos queda fuera del
 /// todas-o-ninguna del precio de las demás.
 /// En una nota de crédito asociada es el precio unitario con que se vendió la línea que se devuelve (el que ya lleva el
-/// porcentaje de la lista): el servidor lo toma tal cual y no lo aplica de nuevo.</summary>
+/// porcentaje de la lista): el servidor lo toma tal cual y no lo aplica de nuevo.
+///
+/// <see cref="DescuentoDeOfertaDeLinea"/> (ofertas "solo múltiplos" offline) es el descuento de oferta que el dispositivo
+/// cobró en la línea como IMPORTE DE LÍNEA, sobre las unidades que no consumió un combo: reemplaza a
+/// <c>DescuentoUnitario × (Cantidad − UnidadesConsumidasPorCombo)</c>, porque las unidades que no completan un grupo
+/// pagan el precio original. Solo junto a <see cref="PrecioUnitario"/> (400 <c>precio_offline_incompleto</c> sin él) y en
+/// lugar de <see cref="DescuentoUnitario"/>: con los dos, en una línea por importe, negativo o mayor que el bruto de esas
+/// unidades es 400 <c>precio_offline_invalido</c>. El servidor lo graba tal cual (un solo redondeo al peso del neto, como
+/// <c>CalculadorDeTotales</c>) y audita la diferencia contra el descuento de línea que resuelve hoy.</summary>
 public sealed record LineaDeVenta(
     int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null,
     decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null, decimal? AjusteManualPorcentaje = null,
     decimal? UnidadesConsumidasPorCombo = null, decimal? AhorroDeCombo = null, int? IdCombo = null,
-    decimal? Importe = null);
+    decimal? Importe = null, decimal? DescuentoDeOfertaDeLinea = null);
 
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de
 /// <see cref="LineaDeVenta"/>, SÍ lleva dinero: <see cref="Importe"/>/<see cref="Vuelto"/> son lo

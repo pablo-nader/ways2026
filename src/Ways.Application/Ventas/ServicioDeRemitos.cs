@@ -931,7 +931,8 @@ public class ServicioDeRemitos(
             }
 
             lineasParaCalcular.Add(new LineaParaCalcular(
-                lineas[i].Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario));
+                lineas[i].Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
+                DescuentoDeOfertaDeLinea: resultado.DescuentoDeLinea));
         }
 
         var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);

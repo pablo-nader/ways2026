@@ -3517,6 +3517,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDefaultValue(0)
                         .HasColumnName("prioridad");
 
+                    b.Property<bool>("SoloMultiplos")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("solo_multiplos");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");

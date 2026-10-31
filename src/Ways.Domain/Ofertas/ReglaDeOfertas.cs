@@ -108,6 +108,19 @@ public static class ReglaDeOfertas
         }
     }
 
+    /// <summary>"Solo múltiplos" cuenta grupos de <c>cantidad_minima</c> unidades: sin cantidad mínima no hay grupo que
+    /// contar.</summary>
+    public static void ValidarSoloMultiplos(bool soloMultiplos, decimal? cantidadMinima)
+    {
+        if (soloMultiplos && cantidadMinima is null)
+        {
+            throw new ErrorDominio(
+                "solo_multiplos_sin_cantidad_minima",
+                "Una oferta solo por múltiplos tiene que tener una cantidad mínima.",
+                400);
+        }
+    }
+
     /// <summary>Spec: Vigencia Window Semantics — cada eje de vigencia (fecha/hora) es
     /// independientemente opcional (<c>NULL</c> = sin restricción en ese eje); seteados ambos
     /// extremos de un eje, el "hasta" tiene que ser mayor o igual al "desde" (inclusive, mismo

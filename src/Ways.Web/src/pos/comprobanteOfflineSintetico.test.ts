@@ -321,6 +321,31 @@ describe('construirComprobanteOfflineSintetico', () => {
     expect(comprobante).toMatchObject({ subtotal: 200, descuentoTotal: 0, total: 200 })
   })
 
+  // Oferta "solo múltiplos" 2 x 7500 a 4000: el escalón trae los campos de siempre a lista y la resolución entera en
+  // `aplicadasCompletas`. 3 unidades: un grupo de 2 con la oferta y la tercera a lista, como el servidor.
+  it('con una oferta solo múltiplos el ticket cobra la oferta solo en los grupos completos: 3 unidades → 11500', () => {
+    const tramo: EscalonDeCantidad = {
+      cantidadDesde: 2,
+      precioFinal: 4000,
+      descuentoUnitario: 0,
+      aplicadas: [],
+      aplicadasCompletas: [{ idOferta: 90, nombre: '2 x 7500', descuentoUnitario: 250, multiploDe: 2 }],
+    }
+    const comprobante = construir({
+      numero: 16,
+      numeroVisible: '0007-00000016',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ cantidad: 3 })],
+      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 4000, precioFinal: 4000, escalones: [tramo] })]),
+      pagos: [],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items[0]).toMatchObject({ cantidad: 3, precioUnitario: 4000, descuento: 500, total: 11500, idOferta: 90 })
+    expect(comprobante).toMatchObject({ subtotal: 12000, descuentoTotal: 500, total: 11500 })
+  })
+
   it('encabezado: numero/numeroVisible/idPuntoVenta/idCliente/estado/fecha/pagos vienen tal cual se pasaron', () => {
     const ahora = new Date('2026-09-20T10:05:00.000Z')
     const comprobante = construir({

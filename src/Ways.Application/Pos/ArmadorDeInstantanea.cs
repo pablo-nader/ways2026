@@ -135,14 +135,19 @@ public static class ArmadorDeInstantanea
                     continue;
                 }
 
+                var plano = PrecioParaInstantanea.Separar(
+                    precioOriginal, linea.Resultado.PrecioFinal ?? precioOriginal, linea.Resultado.DescuentoUnitario,
+                    linea.Resultado.Aplicadas);
+
                 precios.Add(new PrecioDeListaDeInstantanea(
                     idsLista[j],
                     precioOriginal,
-                    linea.Resultado.PrecioFinal ?? precioOriginal,
-                    linea.Resultado.DescuentoUnitario,
-                    linea.Resultado.Aplicadas,
+                    plano.PrecioFinal,
+                    plano.DescuentoUnitario,
+                    plano.Aplicadas,
                     linea.Escalones.Count == 0 ? null : linea.Escalones,
-                    linea.EscalonesDeFamilia is { Count: > 0 } ? linea.EscalonesDeFamilia : null));
+                    linea.EscalonesDeFamilia is { Count: > 0 } ? linea.EscalonesDeFamilia : null,
+                    plano.AplicadasCompletas));
             }
 
             if (precios.Count == 0 && !porImporte)

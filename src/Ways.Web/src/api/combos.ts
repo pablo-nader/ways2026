@@ -32,6 +32,8 @@ export function calcularTotalesDeLineaConCombo(params: {
   descuentoUnitario: number
   porcentaje: number | null | undefined
   combo?: Pick<ComboDeLinea, 'unidadesConsumidas' | 'ahorro'> | null
+  /** Descuento de oferta de LÍNEA de una oferta "solo múltiplos" (`ResultadoDeResolucion.descuentoDeLinea`). */
+  descuentoDeLinea?: number
 }): TotalesDeLinea {
   const { combo: comboCrudo, ...resto } = params
   const combo = comboVigenteDeLinea(params.cantidad, comboCrudo)

@@ -16,6 +16,7 @@ ofertas (                     -- [catálogo]
     dias_semana smallint[] NULL,             -- {1..7}; NULL = todos
     -- disparador
     cantidad_minima numeric(12,3) NULL,      -- NULL = sin mínimo (oferta directa)
+    solo_multiplos  boolean NOT NULL DEFAULT false,  -- el beneficio alcanza solo a grupos completos de cantidad_minima
     -- beneficio: exactamente uno
     precio_unitario numeric(14,2) NULL,      -- "a $X la unidad" (ex precioOferta/precioCant)
     porcentaje      numeric(5,2)  NULL,      -- "X% de descuento"
@@ -62,6 +63,25 @@ una familia disuelta. Es inerte (la familia ya no tiene miembros, así que el re
 mismo residual abierto que `GuardaDeReferencias` documenta para los grupos; cerrarlo
 (`BloquearSiEstaVivaAsync` en el escritor) es un seguimiento pendiente para los escritores que todavía no lo
 cierran, ofertas incluidas; los escritores de artículos ya lo tienen cerrado.
+
+**Solo múltiplos (ofertas-solo-multiplos, 2026-10-30):** con `solo_multiplos = true` el beneficio alcanza solo a
+`N × floor(q / N)` unidades (`N = cantidad_minima`); el resto paga el precio original. Con un artículo a 4000 y
+"2 x 7500" (precio unitario 3750, mínimo 2): 1 → 4000, 2 → 7500, 3 → 11500, 4 → 15000; sin la marca, 3 → 11250
+(la fórmula del legacy, `docs/01` B2). Vale para los tres beneficios: cada uno es un descuento unitario `d` y el
+descuento de la línea es `d × N × floor(q / N)`. Exige `cantidad_minima` (400 `solo_multiplos_sin_cantidad_minima`;
+una edición que quita el mínimo sin mandar el campo la vuelve común). No hay CHECK de esquema: el único escritor es
+`ServicioDeOfertas`, que lo valida, y el motor trata una fila con la marca y sin mínimo como oferta común.
+
+- `q` es la cantidad de la línea que cobra la oferta: sin las unidades que consumió un combo. Una oferta de familia
+  cuenta los grupos sobre la suma de las líneas del documento que la llevan y reparte las unidades cubiertas en el
+  orden de las líneas: las que no completan un grupo caen en las últimas.
+- La elección de la oferta ganadora no cambia (prioridad, descuento unitario, id). La detección de combos compara
+  contra el descuento unitario completo, así que es conservadora frente a una oferta "solo múltiplos".
+- El item guarda el descuento como importe (`descuento = bruto − neto`, neto al peso entero) y conserva `id_oferta`.
+- La resolución (`/api/ofertas/resolver`, `/resolver-con-combos`) devuelve `descuentoDeLinea` solo en las líneas con
+  una oferta "solo múltiplos", y `multiploDe`/`porFamilia` en esas ofertas aplicadas.
+- La instantánea offline todavía no las representa: quedan fuera de la curva de escalones y de la grilla de familia,
+  así que el dispositivo cobra a lista y, si la cantidad completa al menos un grupo, la venta sincronizada queda marcada como discrepante.
 
 Migración `OfertasPorFamilia`: revertirla (`Down`) aborta con `23514` mientras alguna oferta tenga alcance por
 familia, porque el CHECK anterior de tres columnas no admite esa fila; esas ofertas hay que eliminarlas o

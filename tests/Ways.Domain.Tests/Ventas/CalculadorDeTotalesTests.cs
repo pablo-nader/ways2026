@@ -577,4 +577,27 @@ public class CalculadorDeTotalesTests
         Assert.Equal(-2727m, resultado.Items[0].Total);
         Assert.Equal(-2727m, resultado.Total);
     }
+
+    [Fact]
+    public void ElDescuentoDeOfertaDeLineaReemplazaAlUnitarioEnLasUnidadesFueraDelCombo()
+    {
+        // 5 unidades a 4000, 2 en un combo con 1000 de ahorro; de las 3 restantes una oferta solo múltiplos cubre 2
+        // con 250 cada una ⇒ neto (3 × 4000 − 500) + (2 × 4000 − 1000) = 18500. El unitario (250) no se usa.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(5m, 4000m, 250m, null, 2m, 1000m, DescuentoDeOfertaDeLinea: 500m)]);
+
+        Assert.Equal(20000m, resultado.Subtotal);
+        Assert.Equal(1500m, resultado.Items[0].Descuento);
+        Assert.Equal(18500m, resultado.Total);
+    }
+
+    [Fact]
+    public void ElDescuentoDeOfertaDeLineaLlevaElSignoDeLaCantidad()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(-3m, 4000m, 250m, DescuentoDeOfertaDeLinea: -500m)]);
+
+        Assert.Equal(-500m, resultado.Items[0].Descuento);
+        Assert.Equal(-11500m, resultado.Total);
+    }
 }

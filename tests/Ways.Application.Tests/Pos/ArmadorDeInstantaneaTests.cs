@@ -207,6 +207,42 @@ public class ArmadorDeInstantaneaTests
         Assert.Null(Assert.Single(resultado[1].PreciosPorLista).EscalonesDeFamilia);
     }
 
+    /// <summary>Una oferta "solo múltiplos" que ya aplica a cantidad 1 (cantidad mínima 1, por ejemplo en kilos) queda
+    /// fuera del precio plano que leen los POS anteriores, también en el formato original, y viaja en
+    /// <c>aplicadasCompletas</c>; un precio sin ella no lleva la clave.</summary>
+    [Fact]
+    public void ElPrecioPlanoSeparaLaOfertaSoloMultiplosYSinEllaNoLlevaLaClave()
+    {
+        var articulos = new[]
+        {
+            new ArticuloAResolver(11, "A11", "Queso", 21, true, UnidadVenta.Peso),
+            new ArticuloAResolver(12, "A12", "Pan", 21, true, UnidadVenta.Unidad),
+        };
+        var estricta = new OfertaAplicadaDto(80, "Por kilo entero", 300m, MultiploDe: 1m);
+        var comun = new OfertaAplicadaDto(81, "Común", 100m);
+        var resolucion = new[]
+        {
+            Resuelto(11, 3, 2000m, 1600m, 400m, aplicadas: [estricta, comun]),
+            Resuelto(12, 3, 500m, 400m, 100m, aplicadas: [comun]),
+        };
+
+        var resultado = ArmarArticulos(
+            articulos, [3], resolucion, new Dictionary<int, IReadOnlyList<string>>(), new Dictionary<int, decimal> { [21] = 21m });
+
+        var queso = Assert.Single(resultado[0].PreciosPorLista);
+        Assert.Equal((1900m, 100m), (queso.PrecioFinal, queso.DescuentoUnitario));
+        Assert.Equal([comun], queso.Aplicadas);
+        Assert.Equal([estricta, comun], queso.AplicadasCompletas);
+        Assert.Null(Assert.Single(resultado[1].PreciosPorLista).AplicadasCompletas);
+        Assert.DoesNotContain(
+            "AplicadasCompletas", System.Text.Json.JsonSerializer.Serialize(resultado[1]), StringComparison.Ordinal);
+
+        var legada = Assert.Single(
+            ProyectarLegada(Instantanea([resultado[0]], [Cliente(1, 1, idLista: 3)])).Articulos);
+        Assert.Equal((1900m, 100m), (legada.PrecioFinal, legada.DescuentoUnitario));
+        Assert.Equal([comun], legada.Aplicadas);
+    }
+
     /// <summary>La tecla viaja con su artículo y, ausente, la clave se omite del JSON: la etiqueta de contenido de la
     /// instantánea de un tenant sin teclas no cambia.</summary>
     [Fact]

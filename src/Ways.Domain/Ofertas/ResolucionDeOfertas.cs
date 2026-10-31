@@ -33,6 +33,8 @@ public readonly record struct LineaAResolver(
 /// de semana) lo evalúa <see cref="ResolvedorDeOfertas.Coincide"/> antes de aplicar la
 /// aritmética. <see cref="DiasSemana"/>/<see cref="ListasObjetivo"/> vacíos ⇒ sin restricción
 /// (spec: ofertas / Vigencia Window Semantics, Multi-Lista Targeting via ofertas_listas).
+/// <see cref="SoloMultiplos"/> con <see cref="CantidadMinima"/> seteada hace que el beneficio alcance solo a los grupos
+/// completos de <see cref="CantidadMinima"/> unidades (<see cref="CoberturaDeOfertas"/>); sin cantidad mínima no tiene efecto.
 /// </summary>
 public readonly record struct OfertaCandidata(
     int Id,
@@ -47,16 +49,22 @@ public readonly record struct OfertaCandidata(
     TimeOnly? HoraDesde,
     TimeOnly? HoraHasta,
     IReadOnlySet<int> DiasSemana,
-    IReadOnlySet<int> ListasObjetivo);
+    IReadOnlySet<int> ListasObjetivo,
+    bool SoloMultiplos = false);
 
 /// <summary>Una oferta efectivamente aplicada a una línea — solo para reporte (design: Resolution
 /// Contract). El orden en que aparece en <see cref="PrecioConOfertas.Aplicadas"/> (descendente
-/// <c>Prioridad</c>, luego ascendente <c>IdOferta</c>) no afecta el monto calculado.</summary>
-public readonly record struct OfertaAplicada(int IdOferta, string Nombre, decimal DescuentoUnitario);
+/// <c>Prioridad</c>, luego ascendente <c>IdOferta</c>) no afecta el monto calculado. <see cref="MultiploDe"/> es la
+/// cantidad mínima de una oferta "solo múltiplos" (<c>null</c> en cualquier otra): el descuento unitario alcanza solo a
+/// <c>MultiploDe × floor(cantidad / MultiploDe)</c> unidades, contadas sobre la familia del documento cuando
+/// <see cref="PorFamilia"/> (ver <see cref="CoberturaDeOfertas"/>).</summary>
+public readonly record struct OfertaAplicada(
+    int IdOferta, string Nombre, decimal DescuentoUnitario, decimal? MultiploDe = null, bool PorFamilia = false);
 
 /// <summary>Resultado de resolver UNA línea — <see cref="DescuentoUnitario"/> es la suma ya
 /// clampeada de todos los <see cref="OfertaAplicada.DescuentoUnitario"/> (design: arithmetic
-/// table, "Total = min(Σ discounts, PrecioOriginal)").</summary>
+/// table, "Total = min(Σ discounts, PrecioOriginal)"). Con una oferta "solo múltiplos" aplicada, el descuento de la
+/// línea no es <c>cantidad × DescuentoUnitario</c>: lo calcula <see cref="CoberturaDeOfertas"/>.</summary>
 public readonly record struct PrecioConOfertas(
     decimal PrecioOriginal,
     decimal PrecioFinal,
