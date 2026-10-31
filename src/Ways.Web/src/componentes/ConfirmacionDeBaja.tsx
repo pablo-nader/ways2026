@@ -63,7 +63,7 @@ function esAlcanzable(elemento: HTMLElement | null): elemento is HTMLElement {
   )
 }
 
-const NOTA_DE_BAJA_LOGICA = 'La baja es lógica: los datos dejan de verse, pero no se borran de la base.'
+export const NOTA_DE_BAJA_LOGICA = 'La baja es lógica: los datos dejan de verse, pero no se borran de la base.'
 
 export function ConfirmacionDeBaja({
   titulo,
