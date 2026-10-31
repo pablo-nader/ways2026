@@ -119,9 +119,10 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     private async Task SembrarStockAsync(Contexto ctx, int idArticulo, int idPuntoVenta, decimal cantidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, idPuntoVenta);
         db.Stock.Add(new Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = idPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }
@@ -233,11 +234,13 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var filaSinIdentificar = movimientos.Single(m => m.IdLote == loteSinIdentificar.Id);
         Assert.Equal(40m, filaSinIdentificar.Cantidad);
 
-        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+        var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal);
         Assert.Equal(40m, stock.Cantidad);
 
+        var idSucursal2 = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var stockLoteSinIdentificar = await db.StockLotes.SingleAsync(
-            sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == loteSinIdentificar.Id);
+            sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal2 && sl.IdLote == loteSinIdentificar.Id);
         Assert.Equal(40m, stockLoteSinIdentificar.Cantidad);
     }
 
@@ -311,18 +314,21 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             var idLoteSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
                 conexion, null, ctx.IdTenant, idArticulo, ahora, CancellationToken.None);
 
+            var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
             db.MovimientosStock.Add(new MovimientoStock
             {
-                IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = -5m,
+                IdTenant = ctx.IdTenant, IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdSucursal = idSucursal, Cantidad = -5m,
                 Motivo = MotivoStock.Venta, IdLote = idLoteSinIdentificar, IdEmpleado = ctx.IdUsuarioAdmin, CreadoEl = ahora
             });
 
-            var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+            var idSucursal2 = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
+            var stock = await db.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal2);
             stock.Cantidad -= 5m;
 
+            var idSucursal3 = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
             db.StockLotes.Add(new StockLote
             {
-                IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLoteSinIdentificar,
+                IdArticulo = idArticulo, IdSucursal = idSucursal3, IdLote = idLoteSinIdentificar,
                 IdTenant = ctx.IdTenant, Cantidad = -5m
             });
 
@@ -331,11 +337,13 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         await using (var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
-            var stockAntes = await dbAntes.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+            var idSucursal4 = await SucursalDePrueba.DeAsync(dbAntes, ctx.IdPuntoVenta);
+            var stockAntes = await dbAntes.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal4);
             Assert.Equal(35m, stockAntes.Cantidad);
 
+            var idSucursal5 = await SucursalDePrueba.DeAsync(dbAntes, ctx.IdPuntoVenta);
             var sumaLotesAntes = await dbAntes.StockLotes
-                .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal5)
                 .SumAsync(sl => sl.Cantidad);
             Assert.Equal(-5m, sumaLotesAntes);
         }
@@ -345,9 +353,11 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         await using var db2 = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
-        var stockDespues = await db2.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta);
+        var idSucursal6 = await SucursalDePrueba.DeAsync(db2, ctx.IdPuntoVenta);
+        var stockDespues = await db2.Stock.SingleAsync(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal6);
+        var idSucursal7 = await SucursalDePrueba.DeAsync(db2, ctx.IdPuntoVenta);
         var sumaLotesDespues = await db2.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal7)
             .SumAsync(sl => sl.Cantidad);
 
         Assert.Equal(35m, stockDespues.Cantidad);
@@ -403,9 +413,10 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             db.Lotes.Add(loteFechado);
             await db.SaveChangesAsync();
 
+            var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
             db.StockLotes.Add(new StockLote
             {
-                IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteFechado.Id,
+                IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteFechado.Id,
                 IdTenant = ctx.IdTenant, Cantidad = 18m
             });
             await db.SaveChangesAsync();
@@ -459,8 +470,9 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             m => m.IdArticulo == articulo.Id && m.IdPuntoVenta == ctx.IdPuntoVenta && m.Motivo == MotivoStock.Reclasificacion));
 
         var loteSinIdentificar = await db.Lotes.SingleAsync(l => l.IdArticulo == articulo.Id && l.EsSinIdentificar);
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var stockLote = await db.StockLotes.SingleAsync(
-            sl => sl.IdArticulo == articulo.Id && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == loteSinIdentificar.Id);
+            sl => sl.IdArticulo == articulo.Id && sl.IdSucursal == idSucursal && sl.IdLote == loteSinIdentificar.Id);
         Assert.Equal(60m, stockLote.Cantidad);
     }
 
@@ -493,8 +505,9 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             m => m.IdArticulo == articulo.Id && m.IdPuntoVenta == ctx.IdPuntoVenta && m.Motivo == MotivoStock.Reclasificacion));
 
         var loteSinIdentificar = await db.Lotes.SingleAsync(l => l.IdArticulo == articulo.Id && l.EsSinIdentificar);
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         var stockLote = await db.StockLotes.SingleAsync(
-            sl => sl.IdArticulo == articulo.Id && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == loteSinIdentificar.Id);
+            sl => sl.IdArticulo == articulo.Id && sl.IdSucursal == idSucursal && sl.IdLote == loteSinIdentificar.Id);
         Assert.Equal(17m, stockLote.Cantidad);
     }
 

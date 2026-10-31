@@ -158,9 +158,10 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
     private async Task SembrarStockLoteAsync(Contexto ctx, int idArticulo, int idLote, decimal cantidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }
@@ -168,9 +169,10 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
     private async Task SembrarStockAgregadoAsync(Contexto ctx, int idArticulo, decimal cantidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.Stock.Add(new Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
     }
@@ -178,16 +180,18 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
     private async Task<decimal> LeerStockAsync(Contexto ctx, int idArticulo)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         return await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == idSucursal)
             .Select(s => s.Cantidad).FirstOrDefaultAsync();
     }
 
     private async Task<decimal> LeerStockLoteAsync(Contexto ctx, int idArticulo, int idLote)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         return await db.StockLotes
-            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdSucursal == idSucursal && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).FirstOrDefaultAsync();
     }
 
@@ -610,7 +614,7 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
 
         await using var transaccionBloqueo = await conexionBloqueo.BeginTransactionAsync();
         await using (var comandoBloqueo = new NpgsqlCommand(
-            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_punto_venta = $2 AND id_lote = $3 FOR UPDATE",
+            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_sucursal = " + SucursalDePrueba.Sql("$2") + " AND id_lote = $3 FOR UPDATE",
             conexionBloqueo, transaccionBloqueo))
         {
             comandoBloqueo.Parameters.AddWithValue(idArticulo);

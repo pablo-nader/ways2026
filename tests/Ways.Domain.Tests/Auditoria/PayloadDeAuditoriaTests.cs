@@ -91,7 +91,7 @@ public class PayloadDeAuditoriaTests
         var nuevo = anterior with { Total = 60m, Lineas = [new LineaAuditadaDeCompra(5, 6m, 60m)] };
         var payload = PayloadDeAuditoria.EdicionDeCompra(
             anterior, nuevo,
-            [new DiferenciaDeStockDeCompra(5, 2, null, -4m)],
+            [new DiferenciaDeStockDeCompra(5, 2, 2, null, -4m)],
             [new DiferenciaDeCuentaDeCompra(7, -40m)]);
 
         AsumirConstruible(AccionAuditada.CompraEdicion, payload);

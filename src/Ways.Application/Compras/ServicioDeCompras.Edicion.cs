@@ -331,15 +331,18 @@ public partial class ServicioDeCompras
 
         // 5. Stock por diferencia contra el libro de la compra (confirmación y ediciones previas), un movimiento por clave
         // que cambia.
+        // El libro conserva la sucursal de cada movimiento; lo nuevo va a la sucursal actual de la caja de recepción.
         var libroDeStock = (await db.MovimientosStock
                 .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
-                .Select(m => new { m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad })
+                .Select(m => new { m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad })
                 .ToListAsync(ct))
-            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdPuntoVenta, m.IdLote, m.Cantidad))
+            .Select(m => new CantidadDeStockDeCompra(m.IdArticulo, m.IdSucursal, m.IdPuntoVenta, m.IdLote, m.Cantidad))
             .ToList();
+        var idSucursalNueva = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, solicitud.IdPuntoVenta, ct);
         var stockNuevo = itemsNuevos
             .Where(i => i.IdArticulo is not null)
-            .Select(i => new CantidadDeStockDeCompra(i.IdArticulo!.Value, solicitud.IdPuntoVenta, i.IdLote, i.Cantidad))
+            .Select(i => new CantidadDeStockDeCompra(
+                i.IdArticulo!.Value, idSucursalNueva, solicitud.IdPuntoVenta, i.IdLote, i.Cantidad))
             .ToList();
         var diferenciasDeStock = CalculadorDeEdicionDeCompra.DiferenciasDeStock(libroDeStock, stockNuevo);
 
@@ -631,53 +634,66 @@ public partial class ServicioDeCompras
         return [.. desvinculados.OrderBy(d => d.IdPago)];
     }
 
-    /// <summary>Un movimiento <c>compra</c> con signo por cada clave que cambia, el upsert del agregado de stock por
-    /// (artículo, punto de venta) y el de cada lote. Las diferencias vienen ascendentes por artículo, punto de venta y
-    /// lote; el agregado se escribe una vez por (artículo, punto de venta) con la suma de sus claves, así que un lote que
-    /// baja y otro que sube del mismo artículo no producen un negativo transitorio. Un negativo solo se rechaza donde la
-    /// edición RESTA: <c>compra_edicion_stock_negativo</c>.</summary>
+    /// <summary>Un movimiento <c>compra</c> con signo por cada clave que cambia (con su caja), el upsert del agregado de
+    /// stock por (sucursal, artículo) y el de cada lote por (sucursal, artículo, lote). Las diferencias vienen en el orden
+    /// de locks de <see cref="EscritorDeStock"/>; el agregado y cada lote se escriben una vez con la suma de sus claves,
+    /// así que un lote que baja y otro que sube, o dos cajas de la misma sucursal, no producen un negativo transitorio. Un
+    /// negativo solo se rechaza donde la edición RESTA: <c>compra_edicion_stock_negativo</c>.</summary>
     private static async Task AsentarDiferenciasDeStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCompra, int idEmpleado,
         DateTimeOffset momento, IReadOnlyList<DiferenciaDeStockDeCompra> diferencias, CancellationToken ct)
     {
         var observaciones = $"Edición de la compra #{idCompra}";
 
-        foreach (var grupo in diferencias.GroupBy(d => (d.IdArticulo, d.IdPuntoVenta)))
+        foreach (var grupo in diferencias.GroupBy(d => (d.IdSucursal, d.IdArticulo)))
         {
             foreach (var diferencia in grupo)
             {
-                await InsertarMovimientoStockAsync(
-                    conexion, transaccion, idTenant, diferencia.IdArticulo, diferencia.IdPuntoVenta, diferencia.Delta,
-                    MotivoStock.Compra, idCompra, idEmpleado, momento, diferencia.IdLote, observaciones, ct);
+                await EscritorDeStock.InsertarMovimientoAsync(
+                    conexion, transaccion,
+                    new AsientoDeStock(
+                        idTenant, diferencia.IdSucursal, diferencia.IdPuntoVenta, diferencia.IdArticulo, diferencia.Delta,
+                        MotivoStock.Compra, idEmpleado, momento)
+                    {
+                        IdLote = diferencia.IdLote,
+                        Observaciones = observaciones,
+                        IdComprobanteCompra = idCompra
+                    },
+                    ct);
             }
 
             var netoDelGrupo = grupo.Sum(d => d.Delta);
             if (netoDelGrupo != 0m)
             {
-                var agregado = await UpsertStockAsync(
-                    conexion, transaccion, idTenant, grupo.Key.IdArticulo, grupo.Key.IdPuntoVenta, netoDelGrupo, ct);
+                var agregado = await EscritorDeStock.SumarAStockAsync(
+                    conexion, transaccion, idTenant, grupo.Key.IdSucursal, grupo.Key.IdArticulo, netoDelGrupo, ct);
 
                 if (netoDelGrupo < 0m && agregado < 0m)
                 {
                     throw new ErrorDominio(
                         "compra_edicion_stock_negativo",
-                        $"El artículo {grupo.Key.IdArticulo} quedaría con stock negativo en el punto de venta " +
-                        $"{grupo.Key.IdPuntoVenta} al editar esta compra.",
+                        $"El artículo {grupo.Key.IdArticulo} quedaría con stock negativo en la sucursal " +
+                        $"{grupo.Key.IdSucursal} al editar esta compra.",
                         409);
                 }
             }
 
-            foreach (var diferencia in grupo.Where(d => d.IdLote is not null))
+            foreach (var lote in grupo.Where(d => d.IdLote is not null).GroupBy(d => d.IdLote!.Value))
             {
-                var delLote = await UpsertStockLoteAsync(
-                    conexion, transaccion, idTenant, diferencia.IdArticulo, diferencia.IdPuntoVenta, diferencia.IdLote!.Value,
-                    diferencia.Delta, ct);
+                var netoDelLote = lote.Sum(d => d.Delta);
+                if (netoDelLote == 0m)
+                {
+                    continue;
+                }
 
-                if (diferencia.Delta < 0m && delLote < 0m)
+                var delLote = await EscritorDeStock.SumarAStockDeLoteAsync(
+                    conexion, transaccion, idTenant, grupo.Key.IdSucursal, grupo.Key.IdArticulo, lote.Key, netoDelLote, ct);
+
+                if (netoDelLote < 0m && delLote < 0m)
                 {
                     throw new ErrorDominio(
                         "compra_edicion_stock_negativo",
-                        $"El lote {diferencia.IdLote} del artículo {diferencia.IdArticulo} quedaría con stock negativo al " +
+                        $"El lote {lote.Key} del artículo {grupo.Key.IdArticulo} quedaría con stock negativo al " +
                         "editar esta compra.",
                         409);
                 }

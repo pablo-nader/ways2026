@@ -40,7 +40,7 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdArea, int IdAlicuotaIva,
-        int IdListaPrecio, int IdMedioEfectivo, int IdMedioCuentaCorriente);
+        int IdListaPrecio, int IdMedioEfectivo, int IdMedioCuentaCorriente, int IdSucursal);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -103,9 +103,11 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         });
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, resultado.IdPuntoVenta);
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
-            lista.Id, idMedioEfectivo, medioCc.Id);
+            lista.Id, idMedioEfectivo, medioCc.Id, idSucursal);
     }
 
     private async Task<int> SembrarArticuloConPrecioAsync(Contexto ctx, string nombre, decimal precio)
@@ -172,7 +174,7 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad)
             .FirstOrDefaultAsync();
         var saldo = await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();
@@ -384,7 +386,7 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.Motivo == MotivoStock.Anulacion));
 
         var cantidad = await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(-4m, cantidad);
 
@@ -676,7 +678,7 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
                 1, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Anulacion));
 
             var cantidad = await db.Stock
-                .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Where(s => s.IdArticulo == idArticulo && s.IdSucursal == ctx.IdSucursal)
                 .Select(s => s.Cantidad).FirstAsync();
             Assert.Equal(0m, cantidad);
         }

@@ -304,13 +304,15 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         db.Lotes.AddRange(loteConSaldo, loteSinSaldo, loteSinIdentificar);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteConSaldo.Id, IdTenant = ctx.IdTenant, Cantidad = 5m
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteConSaldo.Id, IdTenant = ctx.IdTenant, Cantidad = 5m
         });
+        var idSucursal2 = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteSinSaldo.Id, IdTenant = ctx.IdTenant, Cantidad = 0m
+            IdArticulo = idArticulo, IdSucursal = idSucursal2, IdLote = loteSinSaldo.Id, IdTenant = ctx.IdTenant, Cantidad = 0m
         });
         // loteSinIdentificar deliberadamente SIN fila de stock_lotes: decisión 6 lo incluye igual.
         await db.SaveChangesAsync();
@@ -361,13 +363,15 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         db.Lotes.AddRange(lotePedidoSaldoCero, loteNoPedidoSaldoCero);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = lotePedidoSaldoCero.Id, IdTenant = ctx.IdTenant, Cantidad = 0m
+            IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = lotePedidoSaldoCero.Id, IdTenant = ctx.IdTenant, Cantidad = 0m
         });
+        var idSucursal2 = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.Add(new StockLote
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteNoPedidoSaldoCero.Id, IdTenant = ctx.IdTenant, Cantidad = 0m
+            IdArticulo = idArticulo, IdSucursal = idSucursal2, IdLote = loteNoPedidoSaldoCero.Id, IdTenant = ctx.IdTenant, Cantidad = 0m
         });
         await db.SaveChangesAsync();
 
@@ -459,10 +463,11 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         db.Lotes.AddRange(loteVencido, loteMedio, loteVigente, loteSinIdentificar);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.AddRange(
-            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVencido.Id, IdTenant = ctx.IdTenant, Cantidad = 5m },
-            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteMedio.Id, IdTenant = ctx.IdTenant, Cantidad = 3m },
-            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVigente.Id, IdTenant = ctx.IdTenant, Cantidad = 2m });
+            new StockLote { IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteVencido.Id, IdTenant = ctx.IdTenant, Cantidad = 5m },
+            new StockLote { IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteMedio.Id, IdTenant = ctx.IdTenant, Cantidad = 3m },
+            new StockLote { IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteVigente.Id, IdTenant = ctx.IdTenant, Cantidad = 2m });
         // loteSinIdentificar deliberadamente sin fila de stock_lotes: saldo 0, incluido igual (decisión 6).
         await db.SaveChangesAsync();
 
@@ -518,9 +523,10 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         db.Lotes.AddRange(loteVencido, loteVigente);
         await db.SaveChangesAsync();
 
+        var idSucursal = await SucursalDePrueba.DeAsync(db, ctx.IdPuntoVenta);
         db.StockLotes.AddRange(
-            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVencido.Id, IdTenant = ctx.IdTenant, Cantidad = 5m },
-            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVigente.Id, IdTenant = ctx.IdTenant, Cantidad = 5m });
+            new StockLote { IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteVencido.Id, IdTenant = ctx.IdTenant, Cantidad = 5m },
+            new StockLote { IdArticulo = idArticulo, IdSucursal = idSucursal, IdLote = loteVigente.Id, IdTenant = ctx.IdTenant, Cantidad = 5m });
         await db.SaveChangesAsync();
 
         var respuesta = await ctx.Admin.GetAsync($"/api/stock/lotes?idPuntoVenta={ctx.IdPuntoVenta}&idArticulo={idArticulo}");

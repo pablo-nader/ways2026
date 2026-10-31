@@ -442,7 +442,7 @@ public class ServicioDeVentas(
                 {
                     // Ningún lote con saldo positivo (design decisión 7) — get-or-create perezoso
                     // del lote sin identificar, statement crudo, invisible al contador de
-                    // presupuesto (misma familia que UpsertStockAsync).
+                    // presupuesto (misma familia que EscritorDeStock).
                     var conexionParaLotes = await ObtenerConexionAbiertaAsync(ct);
                     var idSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
                         conexionParaLotes, transaccion: null, idTenant, idArticulo, momento, ct);
@@ -1319,38 +1319,26 @@ public class ServicioDeVentas(
 
         // 2. Movimientos de stock inversos — uno por cada movimiento ORIGINAL de motivo = venta
         // de este comprobante (nunca recalculado desde items: ver el doc-comment de
-        // AnularAsync). Orden ascendente (id_articulo, id_lote), mismo criterio anti-deadlock que
-        // EjecutarTransaccionAsync paso 5 (design decisión 2/8/9), aunque acá no hay otra venta
-        // concurrente compitiendo por las mismas filas — se mantiene por consistencia de
-        // convención, no por necesidad estricta. `id_lote` viaja YA en el movimiento original —
-        // etapa 12, slice 8, task 8.3: la reversa lo copia estructuralmente (design: "Exactness is
-        // structural, not derived"), sin re-derivar desde items_comprobante_venta ni volver a
-        // resolver FEFO. El `ThenBy(IdLote)` de abajo es un IQueryable: el orden de los NULLs queda
-        // en manos de la traducción SQL del provider (Postgres por default hace NULLS LAST en ASC),
-        // no de una comparación en memoria — acá es convención, no defensivo, por eso no repite el
-        // `ThenBy(HasValue).ThenBy(?? 0)` explícito del paso 5.
+        // AnularAsync), escritos en el orden de locks de EscritorDeStock, el mismo del paso 5 de
+        // EjecutarTransaccionAsync. `id_lote` viaja YA en el movimiento original — etapa 12, slice 8,
+        // task 8.3: la reversa lo copia estructuralmente (design: "Exactness is structural, not
+        // derived"), sin re-derivar desde items_comprobante_venta ni volver a resolver FEFO. La
+        // reversa vuelve a la sucursal y la caja guardadas en cada movimiento original, nunca a la
+        // sucursal que el punto de venta tenga hoy.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdComprobanteVenta == id && m.Motivo == MotivoStock.Venta)
-            .OrderBy(m => m.IdArticulo)
-            .ThenBy(m => m.IdLote)
             .ToListAsync(ct);
 
-        foreach (var original in movimientosOriginales)
-        {
-            var inversa = -original.Cantidad;
-
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
-                MotivoStock.Anulacion, id, idEmpleado, momento, original.IdLote, ct);
-
-            await UpsertStockAsync(conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
-
-            if (original.IdLote is { } idLote)
+        await EscritorDeStock.AsentarAsync(
+            conexion, transaccionCruda,
+            movimientosOriginales.Select(original => new AsientoDeStock(
+                idTenant, original.IdSucursal, original.IdPuntoVenta, original.IdArticulo, -original.Cantidad,
+                MotivoStock.Anulacion, idEmpleado, momento)
             {
-                await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, idLote, inversa, ct);
-            }
-        }
+                IdLote = original.IdLote,
+                IdComprobanteVenta = id
+            }),
+            ct);
 
         // 3. Contramovimiento de cuenta corriente — uno por cada consumo/pago ORIGINAL de este
         // comprobante (spec: consumo-cuenta-corriente / Anulación Produces A Contramovimiento;
@@ -1794,37 +1782,31 @@ public class ServicioDeVentas(
                 ct);
         }
 
-        // 5. Stock — ORDEN ASCENDENTE por (id_articulo, id_lote NULLS FIRST) (design decisión 2/8/9,
-        // no negociable): el upsert de abajo toma su propio row lock de forma implícita, así que
-        // dos ventas que comparten artículos/lotes en orden distinto se deadlockearían sin este
-        // orden total. `ThenBy(HasValue).ThenBy(?? 0)` en vez de `ThenBy(IdLote ?? 0)` a secas
-        // (decisión 9): el segundo es una correctness claim que solo funciona porque las columnas
-        // identity arrancan en 1; el primero declara la intención (NULLS FIRST) sin depender de la
-        // configuración de una secuencia — es el mutation target de la task 8.7. Un artículo con
+        // 5. Stock — ORDEN ASCENDENTE por (id_sucursal, id_articulo, id_lote NULLS FIRST), el de
+        // EscritorDeStock.EnOrdenDeLocks (design decisión 2/8/9, no negociable): cada upsert toma su
+        // propio row lock de forma implícita, así que dos ventas que comparten artículos/lotes en
+        // orden distinto se deadlockearían sin este orden total. Un artículo con
         // EsProducto = false es un servicio (doc 10 §3: "false = servicio: no toca stock") — se
         // salta ENTERO, ni movimiento ni upsert, en vez de escribir un movimiento sin sentido para
         // algo que nunca tuvo una fila en stock. La línea de concepto libre del envío (sin artículo) cae en el mismo
         // filtro: EsProducto = false. El upsert agregado (`stock`, id_lote NULL) corre
         // SIEMPRE, primero; el upsert de `stock_lotes` solo cuando el item resolvió un lote.
-        foreach (var item in plan.Items
-                     .Where(i => i.EsProducto)
-                     .OrderBy(i => i.IdArticulo)
-                     .ThenBy(i => i.IdLote.HasValue)
-                     .ThenBy(i => i.IdLote ?? 0))
+        // El stock es de la sucursal de la caja, resuelta acá, dentro de la transacción; EscritorDeStock aplica el orden.
+        var lineasDeStock = plan.Items.Where(i => i.EsProducto).ToList();
+        if (lineasDeStock.Count > 0)
         {
-            var delta = -item.Cantidad;
+            var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, plan.IdPuntoVenta, ct);
 
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, plan.IdTenant, item.IdArticulo!.Value, plan.IdPuntoVenta, delta,
-                MotivoStock.Venta, comprobante.Id, plan.IdEmpleado, plan.Momento, item.IdLote, ct);
-
-            await UpsertStockAsync(conexion, transaccionCruda, plan.IdTenant, item.IdArticulo!.Value, plan.IdPuntoVenta, delta, ct);
-
-            if (item.IdLote is { } idLote)
-            {
-                await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, plan.IdTenant, item.IdArticulo!.Value, plan.IdPuntoVenta, idLote, delta, ct);
-            }
+            await EscritorDeStock.AsentarAsync(
+                conexion, transaccionCruda,
+                lineasDeStock.Select(item => new AsientoDeStock(
+                    plan.IdTenant, idSucursal, plan.IdPuntoVenta, item.IdArticulo!.Value, -item.Cantidad, MotivoStock.Venta,
+                    plan.IdEmpleado, plan.Momento)
+                {
+                    IdLote = item.IdLote,
+                    IdComprobanteVenta = comprobante.Id
+                }),
+                ct);
         }
 
         // 6. Cuenta corriente — un pago por vez, en el orden pedido (raw ADO: un
@@ -2517,94 +2499,6 @@ public class ServicioDeVentas(
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que
     // AsignadorDeNumeroComprobante) --------------------------------------------------------------
-
-    /// <summary>Design: The Sale Transaction, paso 5 — INSERT simple, sin upsert: usa
-    /// <c>ExecuteNonQueryAsync</c> (nunca dispara <c>ReaderExecuting</c>/<c>ScalarExecuting</c>),
-    /// así que el guard de presupuesto de consultas (task 4.12) no lo ve. Ojo con la simplificación
-    /// fácil acá: el guard SÍ ve los dos <c>SaveChangesAsync</c> de la mitad transaccional
-    /// (comprobante e items/pagos, <see cref="EjecutarTransaccionAsync"/>) — Npgsql dispara
-    /// <c>ReaderExecuting</c> también en un <c>INSERT ... RETURNING</c> para leer la clave
-    /// generada, no solo en un <c>SELECT</c>. El presupuesto sigue dando un número constante
-    /// porque esos dos <c>SaveChangesAsync</c> no escalan con la cantidad de líneas/pagos; esta
-    /// escritura sí escala (una por línea) y por quedar fuera de <c>ReaderExecuting</c> no aporta
-    /// al conteo — no es un N+1 a corregir, es auténticamente invisible al guard.</summary>
-    private static async Task InsertarMovimientoStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal cantidad, MotivoStock motivo, int idComprobanteVenta, int idEmpleado, DateTimeOffset creadoEl,
-        int? idLote, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_venta, id_empleado, creado_el, id_lote) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
-
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, cantidad);
-        ParametrosDeComando.Agregar(comando, motivo);
-        ParametrosDeComando.Agregar(comando, idComprobanteVenta);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.Agregar(comando, creadoEl);
-        ParametrosDeComando.AgregarNulo(comando, idLote);
-
-        await comando.ExecuteNonQueryAsync(ct);
-    }
-
-    /// <summary>Design decisión 1: el único statement que toca <c>stock</c> — su propio row lock
-    /// (implícito en el <c>INSERT ... ON CONFLICT</c>) es lo que reemplaza al advisory lock.
-    /// <c>RETURNING</c> vía <c>ExecuteScalarAsync</c> (no <c>ExecuteReaderAsync</c>): mismo
-    /// motivo que <see cref="InsertarMovimientoStockAsync"/>, invisible al guard de presupuesto.</summary>
-    private static async Task UpsertStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
-            "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        await comando.ExecuteScalarAsync(ct);
-    }
-
-    /// <summary>Etapa 12, slice 8 (design: "Write site 1" — "UpsertStockLoteAsync: la MISMA forma
-    /// que UpsertStockAsync, una clave más"): mismo shape que
-    /// <see cref="Ways.Application.Compras.ServicioDeCompras"/>'s sibling (Slice 5) y
-    /// <c>ServicioDeLotes.ResolverOCrearAsync</c> (Slice 3) — <c>INSERT ... ON CONFLICT DO UPDATE
-    /// ... RETURNING</c>, nunca <c>DO NOTHING</c>. Sin chequeo de negativo acá (a diferencia de
-    /// compras): revertir una venta siempre SUMA de vuelta, nunca puede dejar el saldo negativo.</summary>
-    private static async Task UpsertStockLoteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        int idLote, decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
-            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idLote);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        await comando.ExecuteScalarAsync(ct);
-    }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {

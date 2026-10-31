@@ -61,7 +61,8 @@ public class StockRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         db.Articulos.Add(articulo);
         await db.SaveChangesAsync();
 
-        db.Stock.Add(new Stock { IdArticulo = articulo.Id, IdPuntoVenta = puntoVenta.Id, IdTenant = tenant.Id, Cantidad = 10m });
+        var idSucursal = await SucursalDePrueba.DeAsync(db, puntoVenta.Id);
+        db.Stock.Add(new Stock { IdArticulo = articulo.Id, IdSucursal = idSucursal, IdTenant = tenant.Id, Cantidad = 10m });
         await db.SaveChangesAsync();
 
         return (tenant.Id, articulo.Id, puntoVenta.Id);
@@ -86,9 +87,9 @@ public class StockRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", tenantB.Id);
 
         await using var comando = cruda.CreateCommand();
-        comando.CommandText = "SELECT count(*) FROM stock WHERE id_articulo = $1 AND id_punto_venta = $2";
+        comando.CommandText = "SELECT count(*) FROM stock WHERE id_articulo = $1 AND id_sucursal = $2";
         comando.Parameters.Add(new NpgsqlParameter { Value = idArticuloA });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVentaA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(db, idPuntoVentaA) });
 
         var total = (long)(await comando.ExecuteScalarAsync())!;
 
@@ -115,9 +116,9 @@ public class StockRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", tenantB.Id);
 
         await using var comando = cruda.CreateCommand();
-        comando.CommandText = "UPDATE stock SET cantidad = cantidad + 1 WHERE id_articulo = $1 AND id_punto_venta = $2";
+        comando.CommandText = "UPDATE stock SET cantidad = cantidad + 1 WHERE id_articulo = $1 AND id_sucursal = $2";
         comando.Parameters.Add(new NpgsqlParameter { Value = idArticuloA });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVentaA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(db, idPuntoVentaA) });
 
         var filas = await comando.ExecuteNonQueryAsync();
         Assert.Equal(0, filas);
@@ -158,9 +159,9 @@ public class StockRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
 
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) VALUES ($1, $2, $3, 0)";
+            "INSERT INTO stock (id_articulo, id_sucursal, id_tenant, cantidad) VALUES ($1, $2, $3, 0)";
         comando.Parameters.Add(new NpgsqlParameter { Value = otroArticulo.Id });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVentaA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = await SucursalDePrueba.DeAsync(db, idPuntoVentaA) });
         comando.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });
 
         // 42501 = insufficient_privilege (violación de WITH CHECK) -- se dispara antes de
@@ -188,7 +189,8 @@ public class StockRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         await db.SaveChangesAsync();
 
         await using var sesionB = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, tenantB.Id));
-        var visible = await sesionB.Stock.AnyAsync(s => s.IdArticulo == idArticuloA && s.IdPuntoVenta == idPuntoVentaA);
+        var idSucursalA = await SucursalDePrueba.DeAsync(db, idPuntoVentaA);
+        var visible = await sesionB.Stock.AnyAsync(s => s.IdArticulo == idArticuloA && s.IdSucursal == idSucursalA);
 
         Assert.False(visible);
     }

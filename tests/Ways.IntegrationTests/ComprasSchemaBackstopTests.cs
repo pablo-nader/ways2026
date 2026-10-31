@@ -670,9 +670,9 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO movimientos_stock (id_tenant, id_articulo, id_punto_venta, cantidad, motivo, " +
+            "INSERT INTO movimientos_stock (id_tenant, id_articulo, id_punto_venta, id_sucursal, cantidad, motivo, " +
             "id_comprobante_compra, id_empleado, creado_el) " +
-            "VALUES ($1, $2, $3, 5, 'compra', $4, $5, now())";
+            $"VALUES ($1, $2, $3, {SucursalDePrueba.Sql("$3")}, 5, 'compra', $4, $5, now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });

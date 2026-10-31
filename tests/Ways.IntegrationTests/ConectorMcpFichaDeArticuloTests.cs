@@ -35,7 +35,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
 
     private sealed record Escenario(
         TenantDeVentas Tenant, ApoyoDeConectorMcp.UsuarioDeTenant Admin, ApoyoDeConectorMcp.UsuarioDeTenant Supervisor,
-        ApoyoDeConectorMcp.UsuarioDeTenant Vendedor, int IdCola, int IdPepsi, int IdPuntoVentaCerrado);
+        ApoyoDeConectorMcp.UsuarioDeTenant Vendedor, int IdCola, int IdPepsi, int IdSucursalCerrada);
 
     private sealed class ContextoFijo(int idUsuario, int idTenant) : IContextoDeUsuario
     {
@@ -118,7 +118,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         await _apoyo.SembrarStockAsync(t, cola, deposito, 3.5m);
         await _apoyo.SembrarStockAsync(t, cola, cerrado, 7m);
         await _apoyo.SembrarStockAsync(t, pepsi, t.IdPuntoVenta, 999m);
-        await _apoyo.DarDeBajaPuntoVentaAsync(t, cerrado);
+        var sucursalCerrada = await _apoyo.DarDeBajaPuntoVentaAsync(t, cerrado);
 
         var empleado = admin.IdUsuario;
         await _apoyo.SembrarComprobanteConLineasAsync(t, HoyAlMediodia, empleado, [new(cola, "Cola 2L", area, 2m, 600m)]);
@@ -142,7 +142,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         await _apoyo.SembrarCompraAsync(t, sur, empleado, EstadoCompra.Confirmada, new(2026, 10, 16, 15, 0, 0, TimeSpan.Zero),
             new(2026, 10, 16), "0001-0000777", [new(pepsi, 3m, 55.55m)]);
 
-        return new Escenario(t, admin, supervisor, vendedor, cola, pepsi, cerrado);
+        return new Escenario(t, admin, supervisor, vendedor, cola, pepsi, sucursalCerrada);
     }
 
     private async Task<ResultadoDeHerramienta> LlamarComoAsync(
@@ -170,7 +170,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         conMinimo ? "punto de venta | cantidad | mínimo" : "punto de venta | cantidad",
         conMinimo ? "Local 1 | 12 | 5" : "Local 1 | 12",
         conMinimo ? "Depósito | 3,5 | -" : "Depósito | 3,5",
-        conMinimo ? $"(punto de venta id {idCerrado}) | 7 | -" : $"(punto de venta id {idCerrado}) | 7",
+        conMinimo ? $"(sucursal id {idCerrado}) | 7 | -" : $"(sucursal id {idCerrado}) | 7",
         "",
         "Ventas de los últimos 30 días (2026-09-19 a 2026-10-18, zona horaria: America/Argentina/Buenos_Aires): 2 unidades, importe 800,00",
         "",
@@ -202,7 +202,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         var supervisor = await LlamarComoAsync(e.Supervisor, new { articulo = "COLA-2L" });
 
         Assert.False(admin.EsError, admin.Texto);
-        Assert.Equal(FichaDeColaEsperada(e.IdCola, e.IdPuntoVentaCerrado), Lineas(admin.Texto));
+        Assert.Equal(FichaDeColaEsperada(e.IdCola, e.IdSucursalCerrada), Lineas(admin.Texto));
         Assert.Equal(admin.Texto, supervisor.Texto);
     }
 
@@ -216,7 +216,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         var veintiuna = await LlamarComoAsync(e.Admin, new { articulo = "COLA-2L", compras = 21 });
 
         Assert.False(dos.EsError, dos.Texto);
-        Assert.Equal(FichaDeColaEsperada(e.IdCola, e.IdPuntoVentaCerrado, comprasMostradas: 2), Lineas(dos.Texto));
+        Assert.Equal(FichaDeColaEsperada(e.IdCola, e.IdSucursalCerrada, comprasMostradas: 2), Lineas(dos.Texto));
         Assert.True(cero.EsError);
         Assert.Contains("entre 1 y 20", cero.Texto);
         Assert.True(veintiuna.EsError);
@@ -237,7 +237,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         Assert.False(resultado.EsError, resultado.Texto);
         Assert.Equal(
             [
-                .. FichaDeColaEsperada(e.IdCola, e.IdPuntoVentaCerrado, conMinimo: false).Take(16),
+                .. FichaDeColaEsperada(e.IdCola, e.IdSucursalCerrada, conMinimo: false).Take(16),
                 "",
                 "Ventas: requiere Supervisor o Admin.",
                 "Costos y compras: no disponibles para tu rol."
@@ -267,7 +267,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         var resultado = await LlamarComoAsync(a.Admin, new { articulo = "COLA-2L" });
 
         Assert.False(resultado.EsError, resultado.Texto);
-        Assert.Equal(FichaDeColaEsperada(a.IdCola, a.IdPuntoVentaCerrado), Lineas(resultado.Texto));
+        Assert.Equal(FichaDeColaEsperada(a.IdCola, a.IdSucursalCerrada), Lineas(resultado.Texto));
         foreach (var ajeno in new[] { "424", "31.337", "123.456", "Proveedor Ajeno", "9999-0000001", "31.415" })
         {
             Assert.DoesNotContain(ajeno, resultado.Texto);
@@ -305,7 +305,7 @@ public partial class ConectorMcpFichaDeArticuloTests(WaysApiFixture fixture) : I
         var ficha = await servicio.ObtenerAsync(new SolicitudDeFichaDeArticulo("COLA-2L", null, 5, true, true));
 
         Assert.Equal(a.IdCola, ficha.Id);
-        Assert.Equal(["Local 1", "Depósito", $"(punto de venta id {a.IdPuntoVentaCerrado})"], ficha.Stock.Select(s => s.PuntoVenta).ToArray());
+        Assert.Equal(["Local 1", "Depósito", $"(sucursal id {a.IdSucursalCerrada})"], ficha.Stock.Select(s => s.PuntoVenta).ToArray());
         Assert.Equal(4, ficha.Costos!.TotalDeCompras);
         Assert.DoesNotContain(ficha.Costos.Compras, c => c.Proveedor == "Proveedor Ajeno");
     }

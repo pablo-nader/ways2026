@@ -43,9 +43,11 @@ public class ServicioDeStock(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes,
     ServicioDeAuditoria auditoria)
 {
+    /// <summary>El saldo que ve el punto de venta: el de su sucursal, compartido con las otras cajas de ella.</summary>
     public async Task<decimal> ObtenerCantidadAsync(int idPuntoVenta, int idArticulo, CancellationToken ct = default) =>
         await db.Stock
-            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+            .Where(s => s.IdArticulo == idArticulo
+                && db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == s.IdSucursal))
             .Select(s => s.Cantidad)
             .FirstOrDefaultAsync(ct);
 
@@ -88,20 +90,22 @@ public class ServicioDeStock(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        var idMovimientoStock = await InsertarMovimientoStockAsync(
-            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, MotivoStock.Ajuste, idEmpleado,
-            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote, ct);
+        var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVenta, ct);
 
-        var nuevaCantidad = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, ct);
-
-        // Etapa 12, slice 11 (design: Write site 3 — "aggregate upsert then lot upsert, in that
-        // order"): el agregado SIEMPRE upsertea primero (lock order, decisión 6/9 del proposal);
-        // el lote solo cuando el artículo es lote-efectivo. Sin rechazo de negatividad — el ajuste
-        // es la operación que CORRIGE un saldo negativo (spec: "no negativity refusal").
-        if (idLote is { } idLoteEfectivo)
-        {
-            await UpsertStockLoteAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, idLoteEfectivo, cantidad, ct);
-        }
+        // El agregado siempre antes que el lote (orden de locks de EscritorDeStock); el lote solo cuando el artículo es
+        // lote-efectivo. Sin rechazo de negatividad: el ajuste es la operación que CORRIGE un saldo negativo.
+        var aplicado = (await EscritorDeStock.AsentarAsync(
+            conexion, transaccionCruda,
+            [
+                new AsientoDeStock(idTenant, idSucursal, idPuntoVenta, idArticulo, cantidad, MotivoStock.Ajuste, idEmpleado, momento)
+                {
+                    IdLote = idLote,
+                    Observaciones = observaciones
+                }
+            ],
+            ct))[0];
+        var idMovimientoStock = aplicado.IdMovimiento;
+        var nuevaCantidad = aplicado.CantidadAgregada;
 
         // Etapa 14, slice 4 (design decisión 9, call site 9): before-image derivado del RETURNING
         // autoritativo del upsert (nueva − delta), JAMÁS un segundo SELECT — mutation target del
@@ -162,10 +166,11 @@ public class ServicioDeStock(
         DbConnection conexion, int idTenant, SolicitudDeMinimos solicitud, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
+        // Los umbrales son de la sucursal del punto de venta: la fila de stock que comparten sus cajas.
         comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad, minimo, reposicion) " +
-            "VALUES ($1, $2, $3, 0, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
+            "INSERT INTO stock (id_articulo, id_sucursal, id_tenant, cantidad, minimo, reposicion) " +
+            "SELECT $1, pv.id_sucursal, $3, 0, $4::numeric, $5::numeric FROM puntos_venta pv WHERE pv.id_punto_venta = $2 " +
+            "ON CONFLICT (id_articulo, id_sucursal) DO UPDATE " +
             "SET minimo = EXCLUDED.minimo, reposicion = EXCLUDED.reposicion " +
             "RETURNING cantidad, minimo, reposicion";
 
@@ -257,22 +262,28 @@ public class ServicioDeStock(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        var idMovimientoStock = await InsertarMovimientoStockAsync(
-            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, MotivoStock.Decomiso, idEmpleado,
-            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote, ct);
+        var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVenta, ct);
 
-        var nuevaAgregada = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, ct);
+        var aplicado = (await EscritorDeStock.AsentarAsync(
+            conexion, transaccionCruda,
+            [
+                new AsientoDeStock(idTenant, idSucursal, idPuntoVenta, idArticulo, delta, MotivoStock.Decomiso, idEmpleado, momento)
+                {
+                    IdLote = idLote,
+                    Observaciones = observaciones
+                }
+            ],
+            ct))[0];
+        var idMovimientoStock = aplicado.IdMovimiento;
+        var nuevaAgregada = aplicado.CantidadAgregada;
 
         if (idLote is { } idLoteEfectivo)
         {
-            var nuevaDelLote = await UpsertStockLoteAsync(
-                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, idLoteEfectivo, delta, ct);
-
             // spec lotes-y-vencimientos: "the target balance (the lot's stock_lotes.cantidad when
             // lot-effective, otherwise stock.cantidad)" — SOLO el lote decide cuando es
             // lote-efectivo, el agregado nunca se vuelve a chequear acá (a diferencia de una
             // transferencia, que chequea ambos).
-            if (nuevaDelLote < 0m)
+            if (aplicado.CantidadDelLote < 0m)
             {
                 throw new ErrorDominio(
                     "stock_insuficiente_para_decomiso",
@@ -310,11 +321,12 @@ public class ServicioDeStock(
     /// lote-efectiva resuelve su <c>idLote</c> (explícito o FEFO-defaulted) en la fase de
     /// resolución, ANTES de que la transacción abra, y esa fase es también donde corren el
     /// rechazo de duplicados <c>(IdArticulo, IdLote)</c> post-defaulting (decisión 11) y el
-    /// chequeo de <c>transferencia_lote_vencido</c>. Dentro de la transacción, un único orden
-    /// ascendente sobre las <c>≥2N</c> claves <c>(id_articulo, id_punto_venta, id_lote NULLS
-    /// FIRST)</c> — nunca "todo el origen, después todo el destino" — es lo que evita el deadlock
-    /// contra una transferencia inversa simultánea (B→A) y contra un checkout concurrente del
-    /// mismo artículo/lote en cualquiera de los dos puntos de venta.</summary>
+    /// chequeo de <c>transferencia_lote_vencido</c>. El stock es de la sucursal: dentro de la transacción se resuelven
+    /// las dos sucursales, una transferencia entre cajas de la misma sucursal se rechaza
+    /// (<c>409 transferencia_misma_sucursal</c>) y las <c>2N</c> claves se escriben en el orden de locks de
+    /// <see cref="EscritorDeStock"/> <c>(id_sucursal, id_articulo, id_lote NULLS FIRST)</c>, el que evita el deadlock
+    /// contra una transferencia inversa simultánea y contra un checkout concurrente en cualquiera de las dos
+    /// sucursales.</summary>
     public async Task<ResultadoTransferencia> TransferirAsync(SolicitudDeTransferencia solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -368,67 +380,79 @@ public class ServicioDeStock(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        var claves = ConstruirClavesOrdenadas(idPuntoVentaOrigen, idPuntoVentaDestino, lineas);
-        // Etapa 12, slice 10, judgment-day fix (juez A, FIX 1): clave ensanchada a
-        // (IdArticulo, IdLote) — dos líneas del mismo artículo con lotes distintos son ACEPTADAS
-        // por spec y no pueden colapsar en una sola fila del response (dto-contract-honesty).
-        var resultadosPorArticuloYLote = new Dictionary<(int IdArticulo, int? IdLote), (decimal Origen, decimal Destino)>();
+        var idSucursalOrigen = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaOrigen, ct);
+        var idSucursalDestino = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVentaDestino, ct);
 
-        foreach (var clave in claves)
+        // Dos cajas de una misma sucursal comparten el stock: entre ellas no hay nada que transferir.
+        if (idSucursalOrigen == idSucursalDestino)
         {
-            if (clave.IdLote is null)
+            throw new ErrorDominio(
+                "transferencia_misma_sucursal",
+                "El origen y el destino pertenecen a la misma sucursal y comparten el stock; no hay nada que transferir.",
+                409);
+        }
+
+        // Un asiento por línea y por lado: el movimiento (con su lote) y los upserts del agregado y del lote.
+        // EscritorDeStock los escribe en el orden de locks (sucursal, artículo, lote) sobre las 2N claves, el mismo
+        // orden que un checkout o una transferencia inversa simultánea, así que ninguna se deadlockea con esta.
+        var asientos = lineas
+            .SelectMany(l => new[]
             {
-                // Elemento AGREGADO (design decisión 10): el ledger se escribe ACÁ, cargando
-                // IdLoteDelMovimiento cuando la línea era lote-efectiva — el elemento LOTE (más
-                // abajo) nunca escribe una segunda fila de movimientos_stock para el mismo par.
-                await InsertarMovimientoStockAsync(
-                    conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.Delta,
-                    MotivoStock.Transferencia, idEmpleado, observaciones, momento,
-                    idComprobanteCompra: null, idPuntoVentaDestino, clave.IdLoteDelMovimiento, ct);
+                AsientoDeTransferencia(idSucursalOrigen, idPuntoVentaOrigen, -l.Cantidad, l),
+                AsientoDeTransferencia(idSucursalDestino, idPuntoVentaDestino, l.Cantidad, l)
+            })
+            .ToList();
 
-                var nueva = await UpsertStockAsync(conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.Delta, ct);
-
-                // La RETURNING del upsert ES el chequeo de suficiencia (design decisión 5): sin
-                // segunda consulta, sin TOCTOU. Back-office tightening (spec: Insufficient Origin
-                // Stock Is Refused) — asimétrico a propósito respecto de una venta, que nunca bloquea.
-                if (clave.Delta < 0m && nueva < 0m)
-                {
-                    throw new ErrorDominio(
-                        "stock_insuficiente_para_transferencia",
-                        $"No hay stock suficiente del artículo {clave.IdArticulo} en el punto de venta de origen para transferir.",
-                        409);
-                }
-
-                var claveResultado = (clave.IdArticulo, clave.IdLoteDelMovimiento);
-                var previo = resultadosPorArticuloYLote.TryGetValue(claveResultado, out var existente) ? existente : (Origen: 0m, Destino: 0m);
-                resultadosPorArticuloYLote[claveResultado] = clave.IdPuntoVenta == idPuntoVentaOrigen
-                    ? (nueva, previo.Destino)
-                    : (previo.Origen, nueva);
-            }
-            else
+        AsientoDeStock AsientoDeTransferencia(int idSucursal, int idPuntoVenta, decimal delta, LineaDeTransferenciaResuelta linea) =>
+            new(idTenant, idSucursal, idPuntoVenta, linea.IdArticulo, delta, MotivoStock.Transferencia, idEmpleado, momento)
             {
-                // Elemento LOTE: upsert de stock_lotes SOLO, sin fila de ledger propia (el
-                // movimiento ya se escribió en el elemento agregado del mismo par). La RETURNING
-                // es la suficiencia POR LOTE (spec: "even when the origin's aggregate
-                // stock.cantidad is sufficient" — decisión 7 de la propuesta).
-                var nuevaDelLote = await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.IdLote.Value, clave.Delta, ct);
+                IdLote = linea.IdLote,
+                Observaciones = observaciones,
+                IdPuntoVentaDestino = idPuntoVentaDestino,
+                IdSucursalDestino = idSucursalDestino
+            };
 
-                if (clave.Delta < 0m && nuevaDelLote < 0m)
-                {
-                    throw new ErrorDominio(
-                        "stock_insuficiente_para_transferencia",
-                        $"No hay stock suficiente del lote {clave.IdLote} del artículo {clave.IdArticulo} en el punto de venta de origen para transferir.",
-                        409);
-                }
+        var aplicados = await EscritorDeStock.AsentarAsync(conexion, transaccionCruda, asientos, ct);
+
+        // Los RETURNING de los upserts SON el chequeo de suficiencia: sin segunda consulta, sin TOCTOU. Solo el lado que
+        // resta, y por lote además del agregado (un agregado suficiente puede esconder un lote que no alcanza).
+        // Asimétrico a propósito respecto de una venta, que nunca bloquea.
+        foreach (var aplicado in aplicados.Where(a => a.Asiento.Cantidad < 0m))
+        {
+            if (aplicado.CantidadAgregada < 0m)
+            {
+                throw new ErrorDominio(
+                    "stock_insuficiente_para_transferencia",
+                    $"No hay stock suficiente del artículo {aplicado.Asiento.IdArticulo} en el punto de venta de origen para transferir.",
+                    409);
             }
+
+            if (aplicado.CantidadDelLote < 0m)
+            {
+                throw new ErrorDominio(
+                    "stock_insuficiente_para_transferencia",
+                    $"No hay stock suficiente del lote {aplicado.Asiento.IdLote} del artículo {aplicado.Asiento.IdArticulo} en el punto de venta de origen para transferir.",
+                    409);
+            }
+        }
+
+        // Clave (IdArticulo, IdLote): dos líneas del mismo artículo con lotes distintos son aceptadas y no pueden
+        // colapsar en una sola fila del response (dto-contract-honesty). El saldo informado es el agregado posterior.
+        var resultadosPorArticuloYLote = new Dictionary<(int IdArticulo, int? IdLote), (decimal Origen, decimal Destino)>();
+        foreach (var aplicado in aplicados)
+        {
+            var claveResultado = (aplicado.Asiento.IdArticulo, aplicado.Asiento.IdLote);
+            var previo = resultadosPorArticuloYLote.TryGetValue(claveResultado, out var existente) ? existente : (Origen: 0m, Destino: 0m);
+            resultadosPorArticuloYLote[claveResultado] = aplicado.Asiento.IdSucursal == idSucursalOrigen
+                ? (aplicado.CantidadAgregada, previo.Destino)
+                : (previo.Origen, aplicado.CantidadAgregada);
         }
 
         await transaccion.CommitAsync(ct);
 
         var lineasResultado = resultadosPorArticuloYLote
             .OrderBy(kv => kv.Key.IdArticulo)
-            .ThenBy(kv => kv.Key.IdLote.HasValue)   // NULLS FIRST, mismo criterio que ConstruirClavesOrdenadas
+            .ThenBy(kv => kv.Key.IdLote.HasValue)   // NULLS FIRST, mismo criterio que EscritorDeStock
             .ThenBy(kv => kv.Key.IdLote ?? 0)
             .Select(kv => new LineaTransferida(kv.Key.IdArticulo, kv.Key.IdLote, kv.Value.Origen, kv.Value.Destino))
             .ToList();
@@ -439,39 +463,8 @@ public class ServicioDeStock(
     /// <summary>Línea de transferencia YA resuelta (design: "LineaResuelta") — <see cref="IdLote"/>
     /// es <c>null</c> para un artículo sin control de lote efectivo, o el lote explícito/FEFO-defaulted
     /// para uno lote-efectivo. Producida por <see cref="ResolverLineasDeTransferenciaAsync"/>, fuera
-    /// de la transacción — <see cref="ConstruirClavesOrdenadas"/> nunca vuelve a tocar <c>lotes</c>.</summary>
+    /// de la transacción: dentro de ella nunca se vuelve a tocar <c>lotes</c>.</summary>
     private readonly record struct LineaDeTransferenciaResuelta(int IdArticulo, decimal Cantidad, int? IdLote);
-
-    /// <summary>Etapa 12, slice 10 (design: Write site 3 — "the lot travels"): claves ensanchadas a
-    /// <c>(IdArticulo, IdPuntoVenta, IdLote, Delta, IdLoteDelMovimiento)</c>. Por línea
-    /// lote-efectiva, 4 claves — agregado + su movimiento y saldo del lote, en origen y en
-    /// destino; por línea sin lote, las 2 de siempre. El orden asc
-    /// <c>(id_articulo, id_punto_venta, id_lote NULLS FIRST)</c> es el mismo orden total que los
-    /// otros dos sitios de escritura (decisión 6, spec stock), lo que hace posible el joint proof
-    /// checkout-vs-transferencia (task 10.12).</summary>
-    private readonly record struct ClaveDeStock(int IdArticulo, int IdPuntoVenta, int? IdLote, decimal Delta, int? IdLoteDelMovimiento);
-
-    private static List<ClaveDeStock> ConstruirClavesOrdenadas(
-        int idPuntoVentaOrigen, int idPuntoVentaDestino, IReadOnlyList<LineaDeTransferenciaResuelta> lineas) =>
-        lineas
-            .SelectMany(l => l.IdLote is { } lote
-                ? new[]
-                  {
-                      new ClaveDeStock(l.IdArticulo, idPuntoVentaOrigen, null, -l.Cantidad, lote),   // agregada + su movimiento
-                      new ClaveDeStock(l.IdArticulo, idPuntoVentaOrigen, lote, -l.Cantidad, null),    // saldo del lote
-                      new ClaveDeStock(l.IdArticulo, idPuntoVentaDestino, null, l.Cantidad, lote),
-                      new ClaveDeStock(l.IdArticulo, idPuntoVentaDestino, lote, l.Cantidad, null)
-                  }
-                : new[]
-                  {
-                      new ClaveDeStock(l.IdArticulo, idPuntoVentaOrigen, null, -l.Cantidad, null),
-                      new ClaveDeStock(l.IdArticulo, idPuntoVentaDestino, null, l.Cantidad, null)
-                  })
-            .OrderBy(c => c.IdArticulo)
-            .ThenBy(c => c.IdPuntoVenta)
-            .ThenBy(c => c.IdLote.HasValue)          // NULLS FIRST — decisión 9
-            .ThenBy(c => c.IdLote ?? 0)
-            .ToList();
 
     /// <summary>Etapa 12, slice 10 (design: Write site 3, fase de resolución — "keeps lotes and
     /// reads out of the transaction entirely"): para cada línea lote-efectiva, resuelve su lote
@@ -670,7 +663,7 @@ public class ServicioDeStock(
 
     /// <summary>Design decisión 10: el cliente manda el TOTAL contado, nunca un delta. El delta
     /// se deriva del lado del servidor bajo el mismo lock de fila que <c>AjustarAsync</c> usa
-    /// (el upsert no-op de <see cref="BloquearYCrearSiFaltaStockAsync"/>), así que un conteo
+    /// (el upsert no-op de <see cref="EscritorDeStock.BloquearYCrearSiFaltaAsync"/>), así que un conteo
     /// nunca puede pisar una venta que corrió entre el conteo físico y el submit.
     ///
     /// Etapa 12, slice 12 (design decisión 18 — exactly-one-of; decisión 12 — conteo por lote):
@@ -716,7 +709,7 @@ public class ServicioDeStock(
             // Etapa 12, slice 12, judgment-day fix (juez B, FIX 2): SELECT-first estilo
             // ResolverIdLoteEfectivoAsync — nunca dejar que la FK real de stock_lotes/lotes
             // rechace un id_lote inexistente/ajeno con un 500 crudo dentro del upsert no-op de
-            // BloquearYCrearSiFaltaStockLoteAsync.
+            // EscritorDeStock.BloquearYCrearSiFaltaDeLoteAsync.
             await ExigirLotesDeConteoExistenAsync(solicitud.IdPuntoVenta, solicitud.IdArticulo, lotesValidados, ct);
 
             return await estrategia.ExecuteAsync(async () =>
@@ -739,7 +732,8 @@ public class ServicioDeStock(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        var actual = await BloquearYCrearSiFaltaStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, ct);
+        var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVenta, ct);
+        var actual = await EscritorDeStock.BloquearYCrearSiFaltaAsync(conexion, transaccionCruda, idTenant, idSucursal, idArticulo, ct);
         var delta = contada - actual;
 
         if (delta == 0m)
@@ -752,11 +746,17 @@ public class ServicioDeStock(
             return new ResultadoConteo(idPuntoVenta, idArticulo, actual, actual, 0m, MovimientoRegistrado: false);
         }
 
-        var idMovimientoStock = await InsertarMovimientoStockAsync(
-            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, MotivoStock.Inventario, idEmpleado,
-            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote: null, ct);
-
-        var final = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, ct);
+        var aplicado = (await EscritorDeStock.AsentarAsync(
+            conexion, transaccionCruda,
+            [
+                new AsientoDeStock(idTenant, idSucursal, idPuntoVenta, idArticulo, delta, MotivoStock.Inventario, idEmpleado, momento)
+                {
+                    Observaciones = observaciones
+                }
+            ],
+            ct))[0];
+        var idMovimientoStock = aplicado.IdMovimiento;
+        var final = aplicado.CantidadAgregada;
 
         if (final != contada)
         {
@@ -801,14 +801,16 @@ public class ServicioDeStock(
 
         // ---- ADQUISICIÓN: todos los locks, en el orden pineado (agregado, después cada lote
         // ascendente por id_lote) — ningún delta escrito todavía.
-        var actualAgregado = await BloquearYCrearSiFaltaStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, ct);
+        var idSucursal = await EscritorDeStock.ResolverSucursalAsync(conexion, transaccionCruda, idPuntoVenta, ct);
+        var actualAgregado = await EscritorDeStock.BloquearYCrearSiFaltaAsync(
+            conexion, transaccionCruda, idTenant, idSucursal, idArticulo, ct);
 
         var lotesAscendentes = lotes.OrderBy(l => l.IdLote).ToList();
         var actualPorLote = new Dictionary<int, decimal>();
         foreach (var lote in lotesAscendentes)
         {
-            actualPorLote[lote.IdLote] = await BloquearYCrearSiFaltaStockLoteAsync(
-                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, lote.IdLote, ct);
+            actualPorLote[lote.IdLote] = await EscritorDeStock.BloquearYCrearSiFaltaDeLoteAsync(
+                conexion, transaccionCruda, idTenant, idSucursal, idArticulo, lote.IdLote, ct);
         }
 
         // ---- APLICACIÓN: todos los locks ya están tomados. Un lote sin diferencia no escribe fila
@@ -837,19 +839,23 @@ public class ServicioDeStock(
                 continue;
             }
 
-            var idMovimientoDelLote = await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, deltaDelLote, MotivoStock.Inventario,
-                idEmpleado, observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, lote.IdLote, ct);
-            movimientosGenerados.Add(idMovimientoDelLote);
+            // El agregado acumula la SUMA de los deltas por lote (design decisión 12): un asiento por lote con
+            // diferencia, que re-bloquea filas que esta transacción ya tiene.
+            var aplicado = (await EscritorDeStock.AsentarAsync(
+                conexion, transaccionCruda,
+                [
+                    new AsientoDeStock(
+                        idTenant, idSucursal, idPuntoVenta, idArticulo, deltaDelLote, MotivoStock.Inventario, idEmpleado, momento)
+                    {
+                        IdLote = lote.IdLote,
+                        Observaciones = observaciones
+                    }
+                ],
+                ct))[0];
+            movimientosGenerados.Add(aplicado.IdMovimiento);
 
-            var finalDelLote = await UpsertStockLoteAsync(
-                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, lote.IdLote, deltaDelLote, ct);
-
-            // El agregado acumula la SUMA de los deltas por lote (design decisión 12) — un upsert
-            // por lote con diferencia, nunca uno solo con el total al final: mismo criterio de
-            // "re-lock de una fila que esta transacción ya tiene" que Write site 3 usa en
-            // transferencias (decisión 8).
-            cantidadAgregadaFinal = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, deltaDelLote, ct);
+            var finalDelLote = aplicado.CantidadDelLote!.Value;
+            cantidadAgregadaFinal = aplicado.CantidadAgregada;
 
             deltaAgregado += deltaDelLote;
             resultadosPorLote.Add(new LoteContado(lote.IdLote, finalDelLote, actualDelLote, deltaDelLote, MovimientoRegistrado: true));
@@ -874,173 +880,6 @@ public class ServicioDeStock(
         return new ResultadoConteo(
             idPuntoVenta, idArticulo, cantidadAgregadaFinal, actualAgregado, deltaAgregado,
             MovimientoRegistrado: deltaAgregado != 0m, resultadosPorLote);
-    }
-
-    /// <summary>Upsert no-op — <c>SET cantidad = stock.cantidad</c> — que crea la fila si falta
-    /// (con <c>cantidad = 0</c>) Y toma el row lock en el mismo statement, sin escribir ningún
-    /// delta todavía (design decisión 5: "the conteo uses the same primitive as a no-op upsert to
-    /// create-if-missing and lock in one statement, then derives the delta").
-    /// <para>Etapa 12, Slice 4 (design: Reconciliation — "BloquearYCrearSiFaltaStockAsync ya
-    /// existe para esto exacto"): <c>internal</c> a propósito, no un duplicado — la fila agregada
-    /// del par de reconciliación (design decisión 13, paso 2) toma el MISMO lock no-op que
-    /// <c>ContarAsync</c>, reusado directamente desde <c>ServicioDeLotes.ReconciliarAsync</c>.</para></summary>
-    internal static async Task<decimal> BloquearYCrearSiFaltaStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, 0) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
-            "SET cantidad = stock.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idTenant);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert no-op de stock no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
-    }
-
-    /// <summary>Etapa 12, slice 12 (design decisión 12 — "the stock_lotes twin is a copy with a
-    /// third key"): mismo upsert no-op que <see cref="BloquearYCrearSiFaltaStockAsync"/> un nivel
-    /// arriba, sobre <c>stock_lotes</c> — crea la fila del lote si falta (<c>cantidad = 0</c>) Y
-    /// toma su row lock en el mismo statement, sin escribir ningún delta todavía.</summary>
-    private static async Task<decimal> BloquearYCrearSiFaltaStockLoteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta, int idLote,
-        CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4, 0) " +
-            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
-            "SET cantidad = stock_lotes.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idLote);
-        ParametrosDeComando.Agregar(comando, idTenant);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert no-op de stock_lotes no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
-    }
-
-    // ---- statements crudos (misma convención que ServicioDeVentas) --------------------------------
-
-    /// <summary><see cref="idComprobanteCompra"/>/<see cref="idPuntoVentaDestino"/> quedan en
-    /// <c>null</c> para todo llamador de esta clase (Ajuste/Transferencia/Inventario) salvo
-    /// <see cref="idPuntoVentaDestino"/> en <see cref="EjecutarTransferenciaAsync"/> —
-    /// <c>id_comprobante_compra</c> nunca se escribe fuera de
-    /// <c>ServicioDeCompras.ConfirmarAsync</c>/<c>AnularAsync</c> (Slice 2, doc-comment de
-    /// <see cref="Ways.Domain.Stock.MovimientoStock.IdComprobanteCompra"/>); el parámetro se suma
-    /// acá solo por simetría de firma con el statement gemelo de <c>ServicioDeCompras</c> (design:
-    /// File Changes — "the two raw statements gain motivo/idComprobanteCompra/idPuntoVentaDestino
-    /// parameters").</summary>
-    /// <summary>Etapa 12, slice 10: gana <paramref name="idLote"/> (design decisión 10 — en una
-    /// transferencia, el ledger se escribe en el elemento AGREGADO de <c>ConstruirClavesOrdenadas</c>
-    /// y lleva el <c>IdLoteDelMovimiento</c> de esa clave; <c>Ajustar</c>/<c>Contar</c> siguen
-    /// pasando <c>null</c>, sin cambio de comportamiento).
-    ///
-    /// Etapa 14, slice 4 (tasks.md Orchestrator Decision #15; design Open Questions): gana
-    /// <c>RETURNING id_movimiento_stock</c> / <c>ExecuteScalarAsync</c>, devuelve <c>int</c> — el
-    /// único cambio fuera de los doce call sites nombrados, necesario para alimentar los payloads
-    /// de <c>stock.ajuste</c>/<c>stock.decomiso</c>/<c>stock.conteo</c>. <see
-    /// cref="EjecutarTransferenciaAsync"/> ignora el valor devuelto y su comportamiento queda
-    /// byte-idéntico — sigue sin escribir auditoría (proposal decisión 5).</summary>
-    private static async Task<int> InsertarMovimientoStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal cantidad, MotivoStock motivo, int idEmpleado, string? observaciones, DateTimeOffset creadoEl,
-        int? idComprobanteCompra, int? idPuntoVentaDestino, int? idLote, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_empleado, observaciones, " +
-            "id_comprobante_compra, id_punto_venta_destino, creado_el, id_lote) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
-            "RETURNING id_movimiento";
-
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, cantidad);
-        ParametrosDeComando.Agregar(comando, motivo);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.AgregarNulo(comando, observaciones);
-        ParametrosDeComando.AgregarNulo(comando, idComprobanteCompra);
-        ParametrosDeComando.AgregarNulo(comando, idPuntoVentaDestino);
-        ParametrosDeComando.Agregar(comando, creadoEl);
-        ParametrosDeComando.AgregarNulo(comando, idLote);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El INSERT de movimientos_stock no devolvió ninguna fila.");
-
-        return Convert.ToInt32(resultado);
-    }
-
-    private static async Task<decimal> UpsertStockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4) " +
-            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
-            "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
-    }
-
-    /// <summary>Etapa 12, slice 10 (design: Write site 3 — "UpsertStockLoteAsync: la MISMA forma
-    /// que UpsertStockAsync, una clave más"): mismo shape que
-    /// <c>Ways.Application.Ventas.ServicioDeVentas</c>/<c>Ways.Application.Compras.ServicioDeCompras</c>
-    /// (copia deliberada, no compartida — mismo criterio de "frentes en paralelo" que el resto de
-    /// la etapa). La <c>RETURNING</c> es el chequeo de suficiencia POR LOTE (spec transferencias-de-stock:
-    /// "Insufficient Origin Stock Is Refused" extendido al lote) — sin segunda consulta, sin TOCTOU.</summary>
-    private static async Task<decimal> UpsertStockLoteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        int idLote, decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
-            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idLote);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
@@ -1226,7 +1065,7 @@ public class ServicioDeStock(
     /// <see cref="ServicioDeLotes.LeerSaldosAsync"/> — mismo criterio que
     /// <see cref="ResolverIdLoteEfectivoAsync"/>, ANTES de la transacción. Sin esto, un
     /// <c>idLote</c> inexistente/ajeno solo se descubre dentro de la FK cruda del upsert no-op de
-    /// <see cref="BloquearYCrearSiFaltaStockLoteAsync"/> — un 500, nunca un 400.</summary>
+    /// <see cref="EscritorDeStock.BloquearYCrearSiFaltaDeLoteAsync"/> — un 500, nunca un 400.</summary>
     private async Task ExigirLotesDeConteoExistenAsync(
         int idPuntoVenta, int idArticulo, IReadOnlyList<ConteoDeLote> lotes, CancellationToken ct)
     {

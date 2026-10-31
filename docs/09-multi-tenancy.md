@@ -28,8 +28,8 @@ tenant  (el cliente que paga: "Supermercados Pérez SRL")
 > **Estado (sucursales, T1):** la tabla `sucursales` y `puntos_venta.id_sucursal NOT NULL` existen
 > y cada punto de venta tiene la suya (1:1, con su nombre; el backfill de la migración
 > `Sucursales` creó una por cada punto de venta existente y cualquier alta nueva crea la suya en
-> la misma transacción). **El stock sigue colgado del punto de venta**: `stock`, `stock_lotes` y
-> `movimientos_stock` no cambian en esta etapa y pasan a la sucursal en T2. Alcance de `sucursales`:
+> la misma transacción). Desde T2 el stock es de la sucursal: `stock` y `stock_lotes` se claven
+> por `id_sucursal` y `movimientos_stock` guarda la sucursal además de la caja (doc 10 §6). Alcance de `sucursales`:
 > `id_tenant` + `id_empresa` no-nulos (misma forma que `puntos_venta`); detalle en doc 10 §1.
 
 El negocio actual (Ways/Alsina) es el tenant 1: una empresa, dos puntos de venta (cada uno con su sucursal).
@@ -285,9 +285,9 @@ falta, `id_empresa NULL` se reinterpreta como "ámbito default" sin romper datos
 
 ### Operativa: siempre por punto de venta
 
-> Con sucursales, el stock (y su reposición) se muda del punto de venta a la sucursal en T2; las
-> ventas, turnos, numeración y dispositivos siguen siendo por punto de venta. Hasta T2 esta
-> sección vale tal cual.
+> Con sucursales (T2), el stock y su reposición son de la sucursal: las cajas de una sucursal comparten
+> `stock`/`stock_lotes`, y cada movimiento de stock guarda su sucursal y la caja que lo originó (doc 10
+> §6). Las ventas, turnos, numeración y dispositivos siguen siendo por punto de venta.
 
 Ventas, gastos, turnos, stock y movimientos nacen en un punto de venta y no se comparten
 jamás. Ya era la regla 10 del legacy ("toda operación scopeada por `id_punto_venta`") y

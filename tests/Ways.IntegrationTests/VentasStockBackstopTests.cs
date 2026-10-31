@@ -285,8 +285,8 @@ public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<Wa
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO movimientos_stock (id_tenant, id_articulo, id_punto_venta, cantidad, motivo, " +
-            "id_empleado, creado_el) VALUES ($1, $2, $3, 0, 'ajuste', $4, now())";
+            "INSERT INTO movimientos_stock (id_tenant, id_articulo, id_punto_venta, id_sucursal, cantidad, motivo, " +
+            "id_empleado, creado_el) VALUES ($1, $2, $3, " + SucursalDePrueba.Sql("$3") + ", 0, 'ajuste', $4, now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
@@ -342,7 +342,8 @@ public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<Wa
         {
             await using var comando = cruda.CreateCommand();
             comando.CommandText =
-                "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) VALUES ($1, $2, $3, 0)";
+                "INSERT INTO stock (id_articulo, id_sucursal, id_tenant, cantidad) VALUES ($1, " +
+                SucursalDePrueba.Sql("$2") + ", $3, 0)";
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
             comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });

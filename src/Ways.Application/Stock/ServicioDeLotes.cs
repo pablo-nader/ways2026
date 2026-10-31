@@ -19,11 +19,11 @@ namespace Ways.Application.Stock;
 /// 5-10) consumen <see cref="ResolverOCrearAsync"/>/<see cref="ResolverSinIdentificarAsync"/>/
 /// <see cref="LeerSaldosAsync"/> por su propia conexión/transacción — esta clase no abre
 /// transacción propia para esos tres métodos, mismo criterio que
-/// <c>ServicioDeStock.InsertarMovimientoStockAsync</c>/<c>UpsertStockAsync</c> (statements
+/// <see cref="EscritorDeStock"/> (statements
 /// crudos, sin dueño de la transacción).
 ///
 /// Slice 4 agrega <see cref="ReconciliarAsync"/> (design decisión 13/14): acá SÍ es dueña de su
-/// propia transacción, UNA POR PAR <c>(articulo, punto de venta)</c> — nunca una transacción para
+/// propia transacción, UNA POR PAR <c>(articulo, sucursal)</c> — nunca una transacción para
 /// todo el lote de pares (decisión 13: un flip tenant-wide no puede retener locks de stock de
 /// todas las PV de un artículo mientras alguien está cobrando).
 /// </summary>
@@ -125,7 +125,7 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
     // ---- saldos (design decisión 6) -------------------------------------------------------------
 
     /// <summary>UNA query, acotada por decisión 6 a "lotes físicamente presentes, más los que el
-    /// cliente nombró": <c>lotes ⟕ stock_lotes</c> del punto de venta pedido, filtrado a
+    /// cliente nombró": <c>lotes ⟕ stock_lotes</c> de la sucursal del punto de venta pedido, filtrado a
     /// <c>cantidad &lt;&gt; 0 OR es_sin_identificar OR id_lote IN (@lotesPedidos)</c>. Nunca
     /// devuelve TODOS los lotes históricos del artículo (un yogurt recibido semanalmente durante
     /// tres años son 150 filas por línea de carrito en el camino más caliente del sistema).</summary>
@@ -140,7 +140,8 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var saldos =
             from lote in db.Lotes
             where idsArticulo.Contains(lote.IdArticulo)
-            join stockLote in db.StockLotes.Where(sl => sl.IdPuntoVenta == idPuntoVenta)
+            join stockLote in db.StockLotes.Where(sl =>
+                    db.PuntosVenta.Any(pv => pv.Id == idPuntoVenta && pv.IdSucursal == sl.IdSucursal))
                 on lote.Id equals stockLote.IdLote into stockLotesDelLote
             from stockLote in stockLotesDelLote.DefaultIfEmpty()
             where (stockLote != null && stockLote.Cantidad != 0m)
@@ -157,10 +158,11 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
     // Reconciles Pre-Existing Stock Without Moving The Aggregate) ---------------------------------
 
     /// <summary>Reconcilia el stock preexistente hacia el lote sin identificar cuando el control
-    /// efectivo de lote se activa para un par <c>(articulo, punto de venta)</c>. Alcance: si
+    /// efectivo de lote se activa para un par <c>(articulo, sucursal)</c>; <paramref name="idPuntoVenta"/> acota a la
+    /// sucursal de ese punto de venta. Alcance: si
     /// <paramref name="idArticulo"/>/<paramref name="idPuntoVenta"/> son <c>null</c>, se resuelve
     /// sobre TODOS los pares con fila de <c>stock</c> cuyo artículo tiene <c>controla_lote = true</c>
-    /// Y cuyo punto de venta pertenece a una empresa con <c>lotes_habilitado</c> efectivo
+    /// Y cuya sucursal pertenece a una empresa con <c>lotes_habilitado</c> efectivo
     /// <c>true</c> — el mismo AND que <see cref="Domain.Stock.ReglaDeLotes.ControlEfectivo"/>, acá
     /// resuelto por SQL en vez de en memoria porque el conjunto puede cubrir varias empresas.
     /// Idempotente por par (design decisión 13): un re-run amplio nunca reescribe un par ya
@@ -178,22 +180,21 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             await ResolverArticuloAsync(idArticuloPedido, ct);
         }
 
+        int? idSucursalPedida = null;
         if (idPuntoVenta is { } idPuntoVentaPedido)
         {
-            await ResolverPuntoVentaAsync(idPuntoVentaPedido, ct);
+            idSucursalPedida = (await ResolverPuntoVentaAsync(idPuntoVentaPedido, ct)).IdSucursal;
         }
 
-        // Una fila de stock ya identifica un único (articulo, punto_venta) por PK — el join con
-        // puntos_venta agrega el id_empresa sin duplicar filas, sin necesitar Distinct().
+        // Una fila de stock ya identifica un único (articulo, sucursal) por PK.
         var pares = await (
             from stock in db.Stock
             where (idArticulo == null || stock.IdArticulo == idArticulo)
-               && (idPuntoVenta == null || stock.IdPuntoVenta == idPuntoVenta)
+               && (idSucursalPedida == null || stock.IdSucursal == idSucursalPedida)
             join articulo in db.Articulos on stock.IdArticulo equals articulo.Id
             where articulo.ControlaLote
-            join puntoVenta in db.PuntosVenta on stock.IdPuntoVenta equals puntoVenta.Id
-            orderby stock.IdArticulo, stock.IdPuntoVenta
-            select new { stock.IdArticulo, stock.IdPuntoVenta, puntoVenta.IdEmpresa })
+            orderby stock.IdSucursal, stock.IdArticulo
+            select new { stock.IdArticulo, stock.IdSucursal })
             .ToListAsync(ct);
 
         if (pares.Count == 0)
@@ -201,9 +202,22 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             return new ResultadoDeReconciliacion(ParesReconciliados: 0, ParesSinResiduo: 0);
         }
 
+        // lotes_habilitado todavía se resuelve por punto de venta: el de la sucursal es el pedido o, sin uno, el de menor
+        // id de sus cajas vivas. Ese punto de venta también queda como caja de origen de los movimientos. Una sucursal sin
+        // cajas vivas no se reconcilia.
+        var idsSucursal = pares.Select(p => p.IdSucursal).Distinct().ToList();
+        var cajaPorSucursal = (await db.PuntosVenta
+                .Where(pv => idsSucursal.Contains(pv.IdSucursal))
+                .Select(pv => new { pv.Id, pv.IdSucursal, pv.IdEmpresa })
+                .ToListAsync(ct))
+            .GroupBy(pv => pv.IdSucursal)
+            .ToDictionary(
+                g => g.Key,
+                g => g.FirstOrDefault(pv => pv.Id == idPuntoVenta) ?? g.OrderBy(pv => pv.Id).First());
+
         // "lotes_habilitado" resuelto por empresa/PV (ADR-13), traído en un solo query para las
         // empresas involucradas — nunca N+1 por par.
-        var idsEmpresa = pares.Select(p => p.IdEmpresa).Distinct().ToList();
+        var idsEmpresa = cajaPorSucursal.Values.Select(c => c.IdEmpresa).Distinct().ToList();
         var candidatosLotesHabilitado = await db.Parametros
             .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && idsEmpresa.Contains(p.IdEmpresa))
             .ToListAsync(ct);
@@ -214,11 +228,16 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         foreach (var par in pares)
         {
+            if (!cajaPorSucursal.TryGetValue(par.IdSucursal, out var caja))
+            {
+                continue;
+            }
+
             var candidatosDeEmpresa = candidatosLotesHabilitado
-                .Where(p => p.IdEmpresa == par.IdEmpresa && (p.IdPuntoVenta == null || p.IdPuntoVenta == par.IdPuntoVenta))
+                .Where(p => p.IdEmpresa == caja.IdEmpresa && (p.IdPuntoVenta == null || p.IdPuntoVenta == caja.Id))
                 .ToList();
             var lotesHabilitadoJson = ResolucionDeParametros.Resolver(
-                ParametroConocido.LotesHabilitado.Clave, candidatosDeEmpresa, par.IdPuntoVenta);
+                ParametroConocido.LotesHabilitado.Clave, candidatosDeEmpresa, caja.Id);
 
             if (!JsonSerializer.Deserialize<bool>(lotesHabilitadoJson))
             {
@@ -226,7 +245,7 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             }
 
             var escribioAlgo = await estrategia.ExecuteAsync(()
-                => ReconciliarParAsync(idTenant, idEmpleado, par.IdArticulo, par.IdPuntoVenta, momento, ct));
+                => ReconciliarParAsync(idTenant, idEmpleado, par.IdArticulo, par.IdSucursal, caja.Id, momento, ct));
 
             if (escribioAlgo)
             {
@@ -241,14 +260,14 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         return new ResultadoDeReconciliacion(reconciliados, sinResiduo);
     }
 
-    /// <summary>Design decisión 13, los seis pasos, UNA transacción por par. Design decisión 14:
-    /// <c>stock</c> jamás se toca — el par de <c>movimientos_stock</c> suma cero por construcción,
-    /// así que <c>stock.cantidad = SUM(movimientos)</c> se sostiene sin ningún upsert de la caché
-    /// agregada. Devuelve <c>true</c> si escribió el par (residuo ≠ 0), <c>false</c> si el par ya
-    /// estaba reconciliado (residuo 0, commit sin escribir nada — spec: "A second reconciliation
-    /// run is a no-op").</summary>
+    /// <summary>Design decisión 13, los seis pasos, UNA transacción por par <c>(articulo, sucursal)</c>. Design decisión
+    /// 14: <c>stock</c> jamás se toca — el par de <c>movimientos_stock</c> suma cero por construcción, así que
+    /// <c>stock.cantidad = SUM(movimientos)</c> se sostiene sin ningún upsert de la caché agregada. Devuelve
+    /// <c>true</c> si escribió el par (residuo ≠ 0), <c>false</c> si el par ya estaba reconciliado (residuo 0, commit
+    /// sin escribir nada — spec: "A second reconciliation run is a no-op").</summary>
     private async Task<bool> ReconciliarParAsync(
-        int idTenant, int idEmpleado, int idArticulo, int idPuntoVenta, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idEmpleado, int idArticulo, int idSucursal, int idPuntoVenta, DateTimeOffset momento,
+        CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -259,14 +278,13 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // nunca después de tomar el lock de la fila agregada.
         var idSinIdentificar = await ResolverSinIdentificarAsync(conexion, transaccionCruda, idTenant, idArticulo, momento, ct);
 
-        // 2. fila agregada, PRIMERO dentro del segundo tier (design decisión 3/8) — reusa el
-        // upsert no-op de ContarAsync, mismo lock, mismo criterio de create-if-missing.
-        var agregado = await ServicioDeStock.BloquearYCrearSiFaltaStockAsync(
-            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, ct);
+        // 2. fila agregada, PRIMERO dentro del segundo tier (design decisión 3/8) — el mismo upsert no-op del conteo,
+        // mismo lock, mismo criterio de create-if-missing.
+        var agregado = await EscritorDeStock.BloquearYCrearSiFaltaAsync(
+            conexion, transaccionCruda, idTenant, idSucursal, idArticulo, ct);
 
-        // 3. SUM(stock_lotes) bajo lock, ascendente por id_lote — mismo orden global que el resto
-        // de la etapa (subquery porque Postgres rechaza FOR UPDATE combinado con una agregación).
-        var sumaLotes = await SumarStockLotesBajoLockAsync(conexion, transaccionCruda, idArticulo, idPuntoVenta, ct);
+        // 3. SUM(stock_lotes) bajo lock, ascendente por id_lote — el orden de locks de EscritorDeStock.
+        var sumaLotes = await EscritorDeStock.SumarLotesBajoLockAsync(conexion, transaccionCruda, idSucursal, idArticulo, ct);
 
         // 4. residuo.
         var residuo = agregado - sumaLotes;
@@ -285,96 +303,17 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // 6. par neto cero, motivo = reclasificacion SIEMPRE (spec: "Reclasificación never uses
         // motivo ajuste"), stock_lotes del sin-identificar recibe el residuo — stock NO se toca
         // (decisión 14).
-        await InsertarMovimientoReclasificacionAsync(
-            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, -residuo, idEmpleado, idLote: null, momento, ct);
-        await InsertarMovimientoReclasificacionAsync(
-            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, residuo, idEmpleado, idSinIdentificar, momento, ct);
+        var reclasificacion = new AsientoDeStock(
+            idTenant, idSucursal, idPuntoVenta, idArticulo, -residuo, MotivoStock.Reclasificacion, idEmpleado, momento);
+        await EscritorDeStock.InsertarMovimientoAsync(conexion, transaccionCruda, reclasificacion, ct);
+        await EscritorDeStock.InsertarMovimientoAsync(
+            conexion, transaccionCruda, reclasificacion with { Cantidad = residuo, IdLote = idSinIdentificar }, ct);
 
-        await UpsertStockLoteAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, idSinIdentificar, residuo, ct);
+        await EscritorDeStock.SumarAStockDeLoteAsync(
+            conexion, transaccionCruda, idTenant, idSucursal, idArticulo, idSinIdentificar, residuo, ct);
 
         await transaccion.CommitAsync(ct);
         return true;
-    }
-
-    /// <summary>Postgres no permite <c>FOR UPDATE</c> junto con una función de agregación en el
-    /// mismo <c>SELECT</c> ("FOR UPDATE is not allowed with aggregate functions") — la subquery
-    /// toma el lock fila por fila, ascendente por <c>id_lote</c> (mismo orden global que el resto
-    /// de la etapa), y la agregación corre en la query exterior, ya sobre filas bloqueadas.</summary>
-    private static async Task<decimal> SumarStockLotesBajoLockAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idArticulo, int idPuntoVenta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "SELECT COALESCE(SUM(cantidad), 0) FROM (" +
-            "  SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_punto_venta = $2 " +
-            "  ORDER BY id_lote FOR UPDATE" +
-            ") bloqueadas";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("La suma bajo lock de stock_lotes no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
-    }
-
-    /// <summary>Fila de <c>movimientos_stock</c> con <c>motivo = reclasificacion</c> fijo — el
-    /// único motivo que este método escribe, nunca <c>ajuste</c> (spec: "Reclasificación never
-    /// uses motivo ajuste"). Copia deliberada del statement de <c>ServicioDeStock</c> (no
-    /// compartida): los frentes en paralelo de esta etapa viven en archivos distintos a propósito
-    /// (design: Slicing — "Conflict surface between fronts").</summary>
-    private static async Task InsertarMovimientoReclasificacionAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        decimal cantidad, int idEmpleado, int? idLote, DateTimeOffset creadoEl, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_empleado, id_lote, creado_el) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
-
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, cantidad);
-        ParametrosDeComando.Agregar(comando, MotivoStock.Reclasificacion);
-        ParametrosDeComando.Agregar(comando, idEmpleado);
-        ParametrosDeComando.AgregarNulo(comando, idLote);
-        ParametrosDeComando.Agregar(comando, creadoEl);
-
-        await comando.ExecuteNonQueryAsync(ct);
-    }
-
-    /// <summary>Misma forma atómica que <c>ServicioDeStock.UpsertStockAsync</c>, una clave más
-    /// (design: Write site 1 — "UpsertStockLoteAsync: la MISMA forma que UpsertStockAsync, una
-    /// clave más"). Acá el único llamador es <see cref="ReconciliarParAsync"/>, siempre sobre el
-    /// lote sin identificar.</summary>
-    private static async Task<decimal> UpsertStockLoteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
-        int idLote, decimal delta, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
-            "VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
-            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
-            "RETURNING cantidad";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idPuntoVenta);
-        ParametrosDeComando.Agregar(comando, idLote);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, delta);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
-
-        return Convert.ToDecimal(resultado);
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)

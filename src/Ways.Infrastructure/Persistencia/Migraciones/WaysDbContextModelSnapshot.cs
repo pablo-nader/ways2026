@@ -4880,6 +4880,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_remito");
 
+                    b.Property<int>("IdSucursal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_sucursal");
+
+                    b.Property<int?>("IdSucursalDestino")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_sucursal_destino");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
@@ -4919,8 +4927,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdRemito", "IdTenant")
                         .HasDatabaseName("ix_movimientos_stock_remito");
 
-                    b.HasIndex("IdArticulo", "IdPuntoVenta", "IdTenant")
-                        .HasDatabaseName("ix_movimientos_stock_articulo_punto_venta");
+                    b.HasIndex("IdSucursal", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_stock_sucursal");
+
+                    b.HasIndex("IdSucursalDestino", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_stock_sucursal_destino");
+
+                    b.HasIndex("IdArticulo", "IdSucursal", "IdTenant")
+                        .HasDatabaseName("ix_movimientos_stock_articulo_sucursal");
 
                     b.HasIndex("IdLote", "IdArticulo", "IdTenant")
                         .HasDatabaseName("ix_movimientos_stock_lote");
@@ -4937,9 +4951,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_articulo");
 
-                    b.Property<int>("IdPuntoVenta")
+                    b.Property<int>("IdSucursal")
                         .HasColumnType("integer")
-                        .HasColumnName("id_punto_venta");
+                        .HasColumnName("id_sucursal");
 
                     b.Property<decimal>("Cantidad")
                         .ValueGeneratedOnAdd()
@@ -4959,7 +4973,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("reposicion");
 
-                    b.HasKey("IdArticulo", "IdPuntoVenta")
+                    b.HasKey("IdArticulo", "IdSucursal")
                         .HasName("pk_stock");
 
                     b.HasIndex("IdTenant")
@@ -4968,8 +4982,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdArticulo", "IdTenant")
                         .HasDatabaseName("ix_stock_articulo");
 
-                    b.HasIndex("IdPuntoVenta", "IdTenant")
-                        .HasDatabaseName("ix_stock_punto_venta");
+                    b.HasIndex("IdSucursal", "IdTenant")
+                        .HasDatabaseName("ix_stock_sucursal");
 
                     b.ToTable("stock", (string)null);
                 });
@@ -4980,9 +4994,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_articulo");
 
-                    b.Property<int>("IdPuntoVenta")
+                    b.Property<int>("IdSucursal")
                         .HasColumnType("integer")
-                        .HasColumnName("id_punto_venta");
+                        .HasColumnName("id_sucursal");
 
                     b.Property<int>("IdLote")
                         .HasColumnType("integer")
@@ -4998,14 +5012,14 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
 
-                    b.HasKey("IdArticulo", "IdPuntoVenta", "IdLote")
+                    b.HasKey("IdArticulo", "IdSucursal", "IdLote")
                         .HasName("pk_stock_lotes");
 
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_stock_lotes_tenant");
 
-                    b.HasIndex("IdPuntoVenta", "IdTenant")
-                        .HasDatabaseName("ix_stock_lotes_punto_venta");
+                    b.HasIndex("IdSucursal", "IdTenant")
+                        .HasDatabaseName("ix_stock_lotes_sucursal");
 
                     b.HasIndex("IdLote", "IdArticulo", "IdTenant")
                         .HasDatabaseName("ix_stock_lotes_lote");
@@ -7803,6 +7817,21 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_movimientos_stock_remito");
 
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
+                        .WithMany()
+                        .HasForeignKey("IdSucursal", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_stock_sucursal");
+
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
+                        .WithMany()
+                        .HasForeignKey("IdSucursalDestino", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_stock_sucursal_destino");
+
                     b.HasOne("Ways.Domain.Stock.Lote", null)
                         .WithMany()
                         .HasForeignKey("IdLote", "IdArticulo", "IdTenant")
@@ -7828,13 +7857,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .IsRequired()
                         .HasConstraintName("fk_stock_articulo");
 
-                    b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
                         .WithMany()
-                        .HasForeignKey("IdPuntoVenta", "IdTenant")
+                        .HasForeignKey("IdSucursal", "IdTenant")
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("fk_stock_punto_venta");
+                        .HasConstraintName("fk_stock_sucursal");
                 });
 
             modelBuilder.Entity("Ways.Domain.Stock.StockLote", b =>
@@ -7846,13 +7875,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .IsRequired()
                         .HasConstraintName("fk_stock_lotes_tenant");
 
-                    b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
+                    b.HasOne("Ways.Domain.Organizacion.Sucursal", null)
                         .WithMany()
-                        .HasForeignKey("IdPuntoVenta", "IdTenant")
+                        .HasForeignKey("IdSucursal", "IdTenant")
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("fk_stock_lotes_punto_venta");
+                        .HasConstraintName("fk_stock_lotes_sucursal");
 
                     b.HasOne("Ways.Domain.Stock.Lote", null)
                         .WithMany()

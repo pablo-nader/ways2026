@@ -3,15 +3,17 @@
 ## 6. Stock
 
 ```sql
-stock (                       -- [operativa]
-    id_articulo, id_punto_venta,
+stock (                       -- [operativa] (por sucursal desde sucursales T2)
+    id_articulo, id_sucursal,                -- FK (id_sucursal, id_tenant) → sucursales
     cantidad numeric(12,3) NOT NULL DEFAULT 0,          -- cache del libro
     minimo numeric(12,3) NULL, reposicion numeric(12,3) NULL,
-    PRIMARY KEY (id_articulo, id_punto_venta)
+    PRIMARY KEY (id_articulo, id_sucursal)
 );
 
 movimientos_stock (           -- [operativa]
-    id_movimiento, id_articulo, id_punto_venta,
+    id_movimiento, id_articulo,
+    id_sucursal,                             -- la clave de stock que movió (sucursales T2)
+    id_punto_venta,                          -- la caja que originó el movimiento (trazabilidad)
     cantidad numeric(12,3),                  -- con signo: venta −, compra +, anulación inversa
     motivo   motivo_stock,                   -- enum: venta | compra | anulacion | ajuste
                                              --     | transferencia | inventario
@@ -19,6 +21,7 @@ movimientos_stock (           -- [operativa]
                                              --     | remito (Etapa 17, noveno valor)
     id_comprobante_venta NULL, id_comprobante_compra NULL,
     id_punto_venta_destino NULL,             -- transferencias entre locales (nuevo)
+    id_sucursal_destino NULL,                -- sucursal de destino de la transferencia (T2)
     id_lote NULL,                            -- dimensión de lote (Etapa 12)
     id_remito NULL,                          -- documento del cuarto write site (Etapa 17)
     id_empleado, observaciones, creado_el
@@ -39,9 +42,9 @@ lotes (                        -- [catálogo — tenant-wide, sin id_empresa, co
 -- fecha distinta se rechaza (409 lote_vencimiento_incompatible) en vez de sobrescribir.
 
 stock_lotes (                  -- [operativa] (Etapa 12)
-    id_articulo, id_punto_venta, id_lote, id_tenant,
+    id_articulo, id_sucursal, id_lote, id_tenant,
     cantidad numeric(12,3) NOT NULL DEFAULT 0,          -- cache del libro, por lote
-    PRIMARY KEY (id_articulo, id_punto_venta, id_lote)
+    PRIMARY KEY (id_articulo, id_sucursal, id_lote)
 );
 -- PK-only, sin auditoría — mismo criterio que `stock`. Sin CHECK sobre cantidad: un saldo
 -- de lote negativo está permitido en el mostrador (legacy parity), refusado solo en
@@ -115,9 +118,24 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > intencional).
 
 > **Edición de una compra confirmada (E6):** `motivo = compra` también lo escribe `ServicioDeCompras.ActualizarConfirmadaAsync`: un
-> movimiento por clave `(artículo, punto de venta, lote)` con la DIFERENCIA con signo (positivo o negativo, nunca cero) contra lo que el
+> movimiento por clave `(artículo, sucursal, punto de venta, lote)` con la DIFERENCIA con signo (positivo o negativo, nunca cero) contra lo que el
 > libro de esa compra ya suma, con `observaciones = 'Edición de la compra #id'`. Por eso el libro de una compra puede tener varios
 > movimientos `compra` de la misma clave; la anulación revierte la suma neta por clave, no cada uno.
+
+> **Estado (sucursales, T2): el stock es de la sucursal.** `stock` y `stock_lotes` se claven por
+> `(id_articulo, id_sucursal[, id_lote])` con FK `(id_sucursal, id_tenant)` → `sucursales`; las cajas de una
+> sucursal comparten la fila, y `minimo`/`reposicion` son por sucursal. `movimientos_stock` gana
+> `id_sucursal NOT NULL` (y `id_sucursal_destino` en las transferencias) y CONSERVA `id_punto_venta` como la
+> caja que originó el movimiento. Los invariantes valen por sucursal: `stock.cantidad = Σ cantidad` de
+> `movimientos_stock` por `(id_articulo, id_sucursal)`, y `Σ stock_lotes = stock` para un artículo
+> lote-efectivo. Un solo escritor (`EscritorDeStock`) para ventas, remitos, compras, ajustes, decomisos,
+> transferencias, conteos y lotes, con un solo orden de locks `(id_sucursal, id_articulo, id_lote NULLS
+> FIRST)`. Cada escritor resuelve la sucursal desde la caja dentro de su transacción; las anulaciones y la
+> edición de una compra revierten sobre la sucursal guardada en los movimientos originales, nunca la que la
+> caja tenga después. Una transferencia entre dos cajas de la misma sucursal se rechaza con `409
+> transferencia_misma_sucursal`. Migración `StockPorSucursal`: backfill desde `puntos_venta.id_sucursal` que
+> aborta si dos filas cayeran sobre la misma clave (no fusiona saldos en silencio). Los contratos HTTP siguen
+> hablando de punto de venta: un punto de venta lee el stock de su sucursal.
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
