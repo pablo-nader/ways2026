@@ -14,7 +14,7 @@ import type { OfertaListado } from '../../api/tipos'
 import { AuthContext } from '../../auth/AuthContext'
 import { BotonIcono } from '../../componentes/BotonIcono'
 import { Cargando } from '../../componentes/Cargando'
-import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
+import { ConfirmacionDeBaja, NOTA_DE_BAJA_LOGICA } from '../../componentes/ConfirmacionDeBaja'
 import { cargarCatalogosDeOferta, type CatalogosDeOferta } from '../ofertas/catalogos'
 import { ModalDeOferta } from '../ofertas/ModalDeOferta'
 import { validarFormulario } from '../ofertas/validarFormulario'
@@ -379,7 +379,7 @@ function ContenidoDeLasOfertas({ idArticulo, nombreArticulo, familia, bloqueadoP
             ocupado={ocupado}
             disparador={baja.disparador}
             regreso={contenedorRef}
-            nota={avisoDeFamilia(baja.oferta.idFamilia) ?? undefined}
+            nota={[avisoDeFamilia(baja.oferta.idFamilia), NOTA_DE_BAJA_LOGICA].filter(Boolean).join(' ')}
             error={errorDeBaja || null}
             onConfirmar={() => void confirmarBaja()}
             onCancelar={cancelarBaja}

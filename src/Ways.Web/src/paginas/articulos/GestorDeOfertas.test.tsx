@@ -35,6 +35,7 @@ vi.mock('../../api/articulos', () => ({
   clienteDeArticulos: { obtener: vi.fn(), listar: vi.fn() },
 }))
 
+import { NOTA_DE_BAJA_LOGICA } from '../../componentes/ConfirmacionDeBaja'
 import { GestorDeOfertas } from './GestorDeOfertas'
 
 function oferta(sobrescribir: Partial<OfertaListado> = {}): OfertaListado {
@@ -492,13 +493,14 @@ describe('GestorDeOfertas', () => {
       await screen.findByText('Verano')
 
       await usuario.click(screen.getByRole('button', { name: 'Eliminar oferta Verano' }))
-      expect(await screen.findByText(AVISO)).toBeTruthy()
+      expect(await screen.findByText(`${AVISO} ${NOTA_DE_BAJA_LOGICA}`)).toBeTruthy()
       await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Confirmar baja' })).toBeNull())
 
       await usuario.click(screen.getByRole('button', { name: 'Eliminar oferta Dos por uno' }))
       await screen.findByRole('button', { name: 'Confirmar baja' })
-      expect(screen.queryByText(AVISO)).toBeNull()
+      expect(screen.getByText(NOTA_DE_BAJA_LOGICA)).toBeTruthy()
+      expect(screen.queryByText(AVISO, { exact: false })).toBeNull()
     })
   })
 })
