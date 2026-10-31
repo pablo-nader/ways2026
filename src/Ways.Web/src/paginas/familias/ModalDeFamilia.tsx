@@ -1,8 +1,16 @@
 import { useEffect, useRef } from 'react'
 import { ErrorDeFormulario } from '../../componentes/ErrorDeFormulario'
 import { Modal } from '../../componentes/Modal'
+import { AYUDA_DE_DESGLOSAR_COSTO, ETIQUETA_DE_DESGLOSAR_COSTO } from './edicion'
 
-export type FormularioDeFamilia = { id: number; nombre: string; activo: boolean }
+/** `permiteDesglosarCostoInicial` es la marca tal como estaba al abrir: solo un cambio de la casilla viaja al guardar. */
+export type FormularioDeFamilia = {
+  id: number
+  nombre: string
+  activo: boolean
+  permiteDesglosarCosto: boolean
+  permiteDesglosarCostoInicial: boolean
+}
 
 const ID_FORMULARIO_FAMILIA = 'formulario-familia'
 
@@ -80,6 +88,25 @@ export function ModalDeFamilia({ valor, guardando, error, focoDeReserva, onCambi
             </select>
             <div id="ff-estado-ayuda" className="form-text">
               Una familia inactiva no admite artículos nuevos.
+            </div>
+          </div>
+
+          <div className="col-12">
+            <div className="form-check">
+              <input
+                id="ff-desglosar-costo"
+                type="checkbox"
+                className="form-check-input"
+                checked={valor.permiteDesglosarCosto}
+                aria-describedby="ff-desglosar-costo-ayuda"
+                onChange={(e) => onCambio({ ...valor, permiteDesglosarCosto: e.target.checked })}
+              />
+              <label className="form-check-label" htmlFor="ff-desglosar-costo">
+                {ETIQUETA_DE_DESGLOSAR_COSTO}
+              </label>
+            </div>
+            <div id="ff-desglosar-costo-ayuda" className="form-text">
+              {AYUDA_DE_DESGLOSAR_COSTO}
             </div>
           </div>
         </fieldset>

@@ -148,7 +148,14 @@ public static class PagosEndpoints
         })
         .WithSummary("Da de baja cualquier pago, revirtiendo sus efectos; recalcula el arqueo si es de un turno cerrado.");
 
-        administracion.MapGet("/{id:int}", (ServicioDePagos servicio, int id, CancellationToken ct) =>
+        administracion.MapPost("/{id:int}/reasignar-personal", async (
+            ServicioDePagos servicio, int id, SolicitudDeReasignacionDePago? solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.ReasignarPersonalAsync(id, solicitud, ct)))
+        .WithSummary(
+            "Mueve un pago de sueldo al libro de otro empleado y corrige los saldos resultantes de los dos libros; " +
+            "rechaza los pagos con descuento de cuenta corriente.");
+
+        administracion.MapGet("/{id:int}",(ServicioDePagos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDeAdministracionAsync(id, ct))
         .WithSummary("Detalle de un pago de gestión con sus líneas.");
 

@@ -278,7 +278,7 @@ describe('Transferencias — líneas incompletas', () => {
     await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
 
     expect(screen.getByText('Línea incompleta — no se va a transferir.')).toBeInTheDocument()
-    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a transferir.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea incompleta — no se va a transferir.')).toBeInTheDocument()
 
     await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
     await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
@@ -701,7 +701,7 @@ describe('Transferencias — cantidad según la unidad de venta', () => {
 
     expect(cantidad).toHaveClass('is-invalid')
     expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera. No se va a transferir.')).toBeInTheDocument()
-    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a transferir.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea incompleta — no se va a transferir.')).toBeInTheDocument()
   })
 
   it('un artículo por peso conserva el paso de 0.001 y acepta fracciones', async () => {

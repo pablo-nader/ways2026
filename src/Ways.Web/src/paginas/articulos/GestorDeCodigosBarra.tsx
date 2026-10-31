@@ -3,6 +3,7 @@ import { clienteDeArticulos } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import type { CodigoBarraListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
+import { TituloDeSeccion } from '../../componentes/TituloDeSeccion'
 import { advertenciaDeCodigoBarra } from './validacionCodigoBarra'
 
 /**
@@ -104,7 +105,7 @@ export function GestorDeCodigosBarra({
 
   return (
     <div>
-      <strong className="text-muted small text-uppercase">Códigos de barra</strong>
+      <TituloDeSeccion>Códigos de barra</TituloDeSeccion>
       {error && <div className="alert alert-danger py-1 px-2 small mt-2">{error}</div>}
 
       {cargando ? (

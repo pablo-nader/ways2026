@@ -46,19 +46,48 @@ public readonly record struct CeldaDeFamilia(
 /// </summary>
 public static class EscalonesDeCantidad
 {
+    /// <summary>Tope de puntos de quiebre por "solo múltiplos" (<see cref="DescubrirPuntosDeQuiebre"/>) que puede agregar
+    /// una curva, o una grilla de familia sumando sus dos ejes. Una "solo múltiplos" de descuento unitario <c>dS</c>
+    /// contra una común de <c>dO</c> compite durante <c>dS / (dS − dO)</c> grupos y cada grupo agrega a lo sumo tres
+    /// puntos (el múltiplo y un cruce con la cantidad siguiente): 250 contra 200 en grupos de 2 agrega 12, y con una común
+    /// a un 5 % o más por debajo nunca pasa de 60. Más cerca, la competencia dura tantos grupos que la instantánea
+    /// crecería decenas de escalones por artículo; pasado el tope rige <see cref="SinLaPrioridadEnCompetencia"/>.</summary>
+    public const int MaximoDePuntosDeQuiebre = 64;
+
+    /// <summary>La menor diferencia entre dos cantidades del punto de venta: tres decimales, como <c>cantidad</c>.</summary>
+    public const decimal PasoDeCantidad = 0.001m;
+
     /// <summary>Punto de entrada único de producción: resuelve la línea a su propia cantidad,
-    /// descubre los umbrales, resuelve en cada uno con el motor real y colapsa los que no cambian
+    /// descubre los umbrales y los puntos de quiebre, resuelve en cada uno con el motor real y colapsa los que no cambian
     /// nada. <see cref="CurvaDeCantidad.Escalones"/> sale ascendente por
     /// <see cref="EscalonResuelto.CantidadDesde"/> y NUNCA incluye la cantidad de la propia línea:
     /// esa es <see cref="CurvaDeCantidad.Base"/> (para la instantánea, los campos planos de
     /// cantidad 1). La base se resuelve UNA sola vez y se devuelve junto con los escalones, así el
-    /// llamador no la vuelve a calcular para el resultado plano.</summary>
+    /// llamador no la vuelve a calcular para el resultado plano.
+    ///
+    /// <para>Si los puntos de quiebre superan <see cref="MaximoDePuntosDeQuiebre"/> (o no terminan nunca), los escalones
+    /// por encima de la cantidad de la línea se resuelven con <see cref="SinLaPrioridadEnCompetencia"/> desde la cantidad
+    /// siguiente: el dispositivo cobra igual o más que el servidor, nunca menos, y la auditoría de diferencias lo
+    /// registra.</para></summary>
     public static CurvaDeCantidad Construir(
         in LineaAResolver linea, IReadOnlyList<OfertaCandidata> candidatas)
     {
         var resolucionDeLaLinea = ResolvedorDeOfertas.Resolver(linea, candidatas);
 
-        var umbrales = DescubrirUmbrales(linea, candidatas);
+        var resolverCon = candidatas;
+        var umbrales = new SortedSet<decimal>();
+        if (DescubrirPuntosDeQuiebre(linea, candidatas) is { } puntos)
+        {
+            umbrales.UnionWith(DescubrirUmbrales(linea, candidatas));
+            umbrales.UnionWith(puntos);
+        }
+        else
+        {
+            resolverCon = SinLaPrioridadEnCompetencia(candidatas, ParesDeLaCurva(linea, candidatas));
+            umbrales.UnionWith(DescubrirUmbrales(linea, resolverCon));
+            umbrales.Add(linea.Cantidad + PasoDeCantidad);
+        }
+
         if (umbrales.Count == 0)
         {
             return new CurvaDeCantidad(resolucionDeLaLinea, []);
@@ -68,7 +97,7 @@ public static class EscalonesDeCantidad
         foreach (var umbral in umbrales)
         {
             candidatos.Add(new EscalonResuelto(
-                umbral, ResolvedorDeOfertas.Resolver(ConCantidad(linea, umbral), candidatas)));
+                umbral, ResolvedorDeOfertas.Resolver(ConCantidad(linea, umbral), resolverCon)));
         }
 
         return new CurvaDeCantidad(resolucionDeLaLinea, Colapsar(resolucionDeLaLinea, candidatos));
@@ -85,6 +114,13 @@ public static class EscalonesDeCantidad
     /// más los umbrales de las demás candidatas con <c>cantidad_minima</c>. Cada celda es el
     /// producto cartesiano, resuelto por el motor real con ambas cantidades fijadas: así el
     /// dispositivo elige una celda en vez de evaluar ofertas.</para>
+    ///
+    /// <para>Con ofertas "solo múltiplos" en competencia cada eje suma sus puntos de quiebre: los de una "solo múltiplos"
+    /// de familia dependen solo de la cantidad de la familia, los de una de artículo, grupo o categoría solo de la propia.
+    /// Una "solo múltiplos" de familia contra una de otro alcance con la misma prioridad depende de las dos cantidades a la
+    /// vez y no entra en una grilla: ahí, igual que pasado <see cref="MaximoDePuntosDeQuiebre"/>, las celdas se resuelven
+    /// con <see cref="SinLaPrioridadEnCompetencia"/> y una fila más en la cantidad de familia siguiente a la de la línea
+    /// hace que la grilla rija apenas la familia crece.</para>
     ///
     /// <para>Las celdas no se colapsan: son pocas (los umbrales de un artículo) y una celda
     /// repetida no puede dar un precio distinto del que el motor da.</para>
@@ -114,15 +150,40 @@ public static class EscalonesDeCantidad
             }
         }
 
+        var resolverCon = candidatas;
+        var pares = Pares(Competidoras(linea, candidatas, desplazamientoDeFamilia: 0m));
+        if (umbralesDeFamilia.Count == 0 && !pares.Any(p => EsDeFamilia(p.Estricta) || EsSoloMultiplosDeFamilia(p.Otra)))
+        {
+            return [];
+        }
+
+        var deFamilia = pares.Where(p => EsDeFamilia(p.Estricta) && !EsSoloMultiplosPropia(p.Otra)).ToList();
+        var propios = pares.Where(p => !EsDeFamilia(p.Estricta) && !EsSoloMultiplosDeFamilia(p.Otra)).ToList();
+        var separables = deFamilia.Count + propios.Count == pares.Count;
+
+        var puntosDeFamilia = separables ? PuntosDelEje(deFamilia, linea.CantidadDeFamilia) : null;
+        var puntosPropios = separables ? PuntosDelEje(propios, linea.Cantidad) : null;
+        if (puntosDeFamilia is not null && puntosPropios is not null &&
+            puntosDeFamilia.Count + puntosPropios.Count <= MaximoDePuntosDeQuiebre)
+        {
+            umbralesDeFamilia.UnionWith(puntosDeFamilia);
+            umbralesPropios.UnionWith(puntosPropios);
+        }
+        else
+        {
+            resolverCon = SinLaPrioridadEnCompetencia(candidatas, pares);
+            umbralesDeFamilia.Add(linea.CantidadDeFamilia + PasoDeCantidad);
+        }
+
         var celdas = new List<CeldaDeFamilia>(umbralesDeFamilia.Count * umbralesPropios.Count);
-        foreach (var deFamilia in umbralesDeFamilia)
+        foreach (var deFamiliaDesde in umbralesDeFamilia)
         {
             foreach (var propio in umbralesPropios)
             {
                 celdas.Add(new CeldaDeFamilia(
-                    deFamilia, propio,
+                    deFamiliaDesde, propio,
                     ResolvedorDeOfertas.Resolver(
-                        linea with { Cantidad = propio, CantidadDeFamilia = deFamilia }, candidatas)));
+                        linea with { Cantidad = propio, CantidadDeFamilia = deFamiliaDesde }, resolverCon)));
             }
         }
 
@@ -178,11 +239,241 @@ public static class EscalonesDeCantidad
     }
 
     /// <summary>
+    /// Las cantidades por encima de <see cref="LineaAResolver.Cantidad"/> en las que la base de <paramref name="linea"/>
+    /// puede cambiar por la competencia entre una oferta "solo múltiplos" y otra no acumulable de la misma prioridad
+    /// (<see cref="ResolvedorDeOfertas"/> las ordena por descuento de línea), ascendentes; <c>null</c> si son más de
+    /// <see cref="MaximoDePuntosDeQuiebre"/> o no terminan nunca. Complementa a <see cref="DescubrirUmbrales"/>, que da las
+    /// de <c>cantidad_minima</c>.
+    ///
+    /// <para>Por unidad de línea, una común vale su descuento <c>d</c> y una "solo múltiplos" de N vale
+    /// <c>d × N × k / Q</c> entre <c>Q = kN</c> y <c>(k + 1)N</c>, con Q la cantidad de su umbral. Los quiebres son los
+    /// múltiplos <c>kN</c> (la clave salta) y los cruces de dos claves dentro de un tramo, que se resuelven en forma
+    /// cerrada. Un cruce que cae entre dos cantidades del punto de venta se lleva a la siguiente
+    /// (<see cref="PasoDeCantidad"/>); uno que cae justo en una empata ahí y se desempata por descuento unitario e id, así
+    /// que se agregan esa y la siguiente. La competencia termina: si la "solo múltiplos" tiene más descuento unitario
+    /// <c>dS</c> que la otra <c>dO</c>, gana siempre a partir de <c>Q &gt; dS × N / (dS − dO)</c>; con menos, no gana
+    /// nunca; con el mismo, contra una común gana justo en los múltiplos si su id es menor (infinitos quiebres,
+    /// <c>null</c>).</para>
+    ///
+    /// <para>Una "solo múltiplos" de familia se mide con la cantidad de la familia, que en la curva se mueve junto con la
+    /// de la línea (<see cref="ConCantidad"/>).</para>
+    /// </summary>
+    public static IReadOnlyList<decimal>? DescubrirPuntosDeQuiebre(
+        in LineaAResolver linea, IReadOnlyList<OfertaCandidata> candidatas) =>
+        PuntosDelEje(ParesDeLaCurva(linea, candidatas), linea.Cantidad);
+
+    /// <summary>
+    /// <paramref name="candidatas"/> sin las no acumulables de prioridad menor o igual a la mayor de
+    /// <paramref name="pares"/>: lo que el dispositivo cobra cuando los puntos de quiebre no entran en
+    /// <see cref="MaximoDePuntosDeQuiebre"/>. Nunca cobra menos que el servidor: si la base del servidor tiene mayor
+    /// prioridad, es la misma; si no, el dispositivo se queda sin base y solo suma las acumulables. Sacar solo la "solo
+    /// múltiplos" no alcanzaría: subiría una base de menor prioridad que puede dar más descuento.
+    /// </summary>
+    private static IReadOnlyList<OfertaCandidata> SinLaPrioridadEnCompetencia(
+        IReadOnlyList<OfertaCandidata> candidatas, IReadOnlyList<(Competidora Estricta, Competidora Otra)> pares)
+    {
+        if (pares.Count == 0)
+        {
+            return candidatas;
+        }
+
+        var prioridad = pares.Max(p => p.Estricta.Candidata.Prioridad);
+        return candidatas.Where(c => c.Acumulable || c.Prioridad > prioridad).ToList();
+    }
+
+    /// <summary>Una no acumulable que puede ser base de la línea, con lo que su clave de línea necesita sobre un eje de
+    /// cantidad <c>u</c>: <see cref="Descuento"/> unitario, <see cref="Multiplo"/> (solo una "solo múltiplos" con
+    /// descuento) y <see cref="Desplazamiento"/>, la diferencia entre la cantidad de su umbral y <c>u</c>.</summary>
+    private readonly record struct Competidora(
+        OfertaCandidata Candidata, decimal Descuento, decimal? Multiplo, decimal Desplazamiento);
+
+    private static List<(Competidora Estricta, Competidora Otra)> ParesDeLaCurva(
+        in LineaAResolver linea, IReadOnlyList<OfertaCandidata> candidatas) =>
+        Pares(Competidoras(linea, candidatas, linea.CantidadDeFamilia - linea.Cantidad));
+
+    private static List<Competidora> Competidoras(
+        in LineaAResolver linea, IReadOnlyList<OfertaCandidata> candidatas, decimal desplazamientoDeFamilia)
+    {
+        var sinTopeDeCantidad = linea with { Cantidad = decimal.MaxValue, CantidadDeFamilia = decimal.MaxValue };
+        var competidoras = new List<Competidora>();
+
+        foreach (var candidata in candidatas)
+        {
+            if (candidata.Acumulable || !ResolvedorDeOfertas.Coincide(sinTopeDeCantidad, candidata))
+            {
+                continue;
+            }
+
+            var descuento = ResolvedorDeOfertas.DescuentoUnitario(candidata, linea.PrecioOriginal);
+            var multiplo = descuento > 0m ? ResolvedorDeOfertas.MultiploDe(candidata) : null;
+            competidoras.Add(new Competidora(
+                candidata, descuento, multiplo,
+                candidata.Alcance.IdFamilia is not null ? desplazamientoDeFamilia : 0m));
+        }
+
+        return competidoras;
+    }
+
+    private static List<(Competidora Estricta, Competidora Otra)> Pares(List<Competidora> competidoras)
+    {
+        var pares = new List<(Competidora, Competidora)>();
+        foreach (var estricta in competidoras.Where(c => c.Multiplo is not null))
+        {
+            foreach (var otra in competidoras)
+            {
+                if (otra.Candidata.Id != estricta.Candidata.Id &&
+                    otra.Candidata.Prioridad == estricta.Candidata.Prioridad)
+                {
+                    pares.Add((estricta, otra));
+                }
+            }
+        }
+
+        return pares;
+    }
+
+    private static bool EsDeFamilia(Competidora competidora) => competidora.Candidata.Alcance.IdFamilia is not null;
+
+    private static bool EsSoloMultiplosDeFamilia(Competidora competidora) =>
+        competidora.Multiplo is not null && EsDeFamilia(competidora);
+
+    private static bool EsSoloMultiplosPropia(Competidora competidora) =>
+        competidora.Multiplo is not null && !EsDeFamilia(competidora);
+
+    /// <summary>Los puntos de quiebre de <paramref name="pares"/> sobre un eje, mayores a <paramref name="desde"/>;
+    /// <c>null</c> si no terminan o pasan de <see cref="MaximoDePuntosDeQuiebre"/>.</summary>
+    private static List<decimal>? PuntosDelEje(
+        IReadOnlyList<(Competidora Estricta, Competidora Otra)> pares, decimal desde)
+    {
+        decimal? hasta = null;
+        foreach (var (estricta, otra) in pares)
+        {
+            if (!Termina(estricta, otra, out var cota))
+            {
+                return null;
+            }
+
+            if (cota is { } valor && (hasta is null || valor > hasta))
+            {
+                hasta = valor;
+            }
+        }
+
+        if (hasta is not { } fin || fin <= desde)
+        {
+            return [];
+        }
+
+        var particion = new SortedSet<decimal> { desde };
+        foreach (var estricta in pares.Select(p => p.Estricta).DistinctBy(e => e.Candidata.Id))
+        {
+            var multiplo = estricta.Multiplo!.Value;
+            var primero = Math.Floor((desde + estricta.Desplazamiento) / multiplo) + 1m;
+            var ultimo = Math.Floor((fin + estricta.Desplazamiento) / multiplo);
+            if (ultimo - primero + 1m > MaximoDePuntosDeQuiebre)
+            {
+                return null;
+            }
+
+            for (var k = primero; k <= ultimo; k++)
+            {
+                particion.Add((k * multiplo) - estricta.Desplazamiento);
+            }
+        }
+
+        var puntos = new SortedSet<decimal>(particion.Where(p => p > desde));
+        if (puntos.Count > MaximoDePuntosDeQuiebre)
+        {
+            return null;
+        }
+
+        var tramos = particion.ToList();
+        tramos.Add(fin);
+
+        for (var i = 0; i < tramos.Count - 1; i++)
+        {
+            foreach (var (estricta, otra) in pares)
+            {
+                if (Cruce(estricta, otra, tramos[i]) is { } cruce && cruce >= tramos[i] && cruce <= tramos[i + 1])
+                {
+                    var siguiente = Math.Ceiling(cruce / PasoDeCantidad) * PasoDeCantidad;
+                    puntos.Add(siguiente);
+                    if (siguiente == cruce)
+                    {
+                        puntos.Add(siguiente + PasoDeCantidad);
+                    }
+                }
+            }
+        }
+
+        var resultado = puntos.Where(p => p > desde).ToList();
+        return resultado.Count > MaximoDePuntosDeQuiebre ? null : resultado;
+    }
+
+    /// <summary><c>false</c> si el orden entre <paramref name="estricta"/> y <paramref name="otra"/> cambia infinitas
+    /// veces; si no, <paramref name="cota"/> es la cantidad del eje a partir de la que ya no cambia (<c>null</c>: la
+    /// clave de línea no lo cambia nunca).</summary>
+    private static bool Termina(Competidora estricta, Competidora otra, out decimal? cota)
+    {
+        cota = null;
+        var multiplo = estricta.Multiplo!.Value;
+
+        if (estricta.Descuento > otra.Descuento)
+        {
+            cota = (estricta.Descuento * multiplo / (estricta.Descuento - otra.Descuento)) - estricta.Desplazamiento;
+            return true;
+        }
+
+        if (estricta.Descuento < otra.Descuento)
+        {
+            return true;
+        }
+
+        return otra.Multiplo is null
+            ? estricta.Candidata.Id > otra.Candidata.Id
+            : otra.Multiplo == multiplo && otra.Desplazamiento == estricta.Desplazamiento;
+    }
+
+    /// <summary>La cantidad del eje en la que las claves de <paramref name="estricta"/> y <paramref name="otra"/> se
+    /// igualan dentro del tramo que empieza en <paramref name="desde"/> (sin múltiplos adentro), si la hay.</summary>
+    private static decimal? Cruce(Competidora estricta, Competidora otra, decimal desde)
+    {
+        var deLaEstricta = Coeficiente(estricta, desde);
+        if (deLaEstricta == 0m)
+        {
+            return null;
+        }
+
+        if (otra.Multiplo is null)
+        {
+            return otra.Descuento == 0m ? null : (deLaEstricta / otra.Descuento) - estricta.Desplazamiento;
+        }
+
+        var deLaOtra = Coeficiente(otra, desde);
+        if (deLaOtra == 0m || deLaOtra == deLaEstricta)
+        {
+            return null;
+        }
+
+        return ((deLaOtra * estricta.Desplazamiento) - (deLaEstricta * otra.Desplazamiento)) /
+            (deLaEstricta - deLaOtra);
+    }
+
+    /// <summary>El numerador de la clave de una "solo múltiplos" en el tramo de <paramref name="cantidad"/>:
+    /// <c>d × N × floor((u + desplazamiento) / N)</c>.</summary>
+    private static decimal Coeficiente(Competidora competidora, decimal cantidad)
+    {
+        var multiplo = competidora.Multiplo!.Value;
+        return competidora.Descuento * multiplo * Math.Floor((cantidad + competidora.Desplazamiento) / multiplo);
+    }
+
+    /// <summary>
     /// Descarta los escalones que no cambian nada: un umbral cuyo resultado es igual al del escalón
     /// VIGENTE (el anterior CONSERVADO, o <paramref name="resolucionDeLaLinea"/> para el primero) es
-    /// puro ruido de payload. Llegando desde <see cref="Construir"/> el caso real es uno solo: la
+    /// puro ruido de payload. Llegando desde <see cref="Construir"/> los casos reales son dos: la
     /// oferta del umbral PIERDE contra la base vigente (la directa que ya aplicaba, o un escalón
-    /// anterior de mayor prioridad). El otro caso clásico — la oferta del umbral no matchea por
+    /// anterior de mayor prioridad), o un punto de quiebre de <see cref="DescubrirPuntosDeQuiebre"/>
+    /// en el que la ganadora no cambia (un cruce empatado que sigue ganando la misma). El otro caso clásico — la oferta del umbral no matchea por
     /// fecha/hora/alcance — no llega hasta acá, lo filtra antes
     /// <see cref="DescubrirUmbrales"/>; este colapso lo descartaría igual, y eso es justamente lo
     /// que lo vuelve la red que hace que un umbral espurio nunca altere la curva.

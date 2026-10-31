@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { calcularTotalesDeLinea } from '../api/ajusteManual'
-import type { OfertaAplicada } from '../api/tipos'
+import type { EscalonDeCantidad, OfertaAplicada, PrecioDeListaDeInstantanea } from '../api/tipos'
 import { descuentosDeLinea, descuentoUnitarioDeAplicadas, tieneSoloMultiplos } from './coberturaDeOfertas'
+import { preciosVigentesOffline } from './instantaneaOffline'
 
 // Tabla de paridad servidor/web: los mismos casos y números que
 // `tests/Ways.Domain.Tests/Ofertas/CoberturaDeOfertasTests.cs` (`CoberturaDeOfertas` más `CalculadorDeTotales`). Las
@@ -102,5 +103,73 @@ describe('coberturaDeOfertas — aritmética del POS', () => {
     expect(descuentoUnitarioDeAplicadas(100, [estricta(60), comun(70)])).toBe(100)
     expect(descuentoUnitarioDeAplicadas(4000, [estricta(0.1), comun(0.2)])).toBe(0.3)
     expect(descuentoUnitarioDeAplicadas(4000, [])).toBe(0)
+  })
+})
+
+// Paridad de la curva con una "solo múltiplos" y una común en competencia: los escalones son los que arma el servidor
+// (`EscalonesDeCantidad.Construir`, ver `LaCurvaAlternaEntreLaSoloMultiplosYLaComunHastaQueLaSoloMultiplosGanaSiempre` y
+// `LaCurvaConUnaComunEnCompetenciaPasaALaComunDondeEstaDaMasDescuentoDeLinea`) y los totales, los de
+// `LosTotalesDelDispositivoConLaCurvaDelEjemploSonLosDelServidor` en `PuntosDeQuiebreSoloMultiplosTests.cs`. Un cambio de
+// un número en una de las tablas exige el mismo cambio en la otra.
+describe('coberturaDeOfertas — curva con una solo múltiplos y una común en competencia', () => {
+  const laComun = comun(200, 2)
+  const conLaEstricta = (cantidadDesde: number): EscalonDeCantidad => ({
+    cantidadDesde,
+    precioFinal: PRECIO,
+    descuentoUnitario: 0,
+    aplicadas: [],
+    aplicadasCompletas: [estricta()],
+  })
+  const conLaComun = (cantidadDesde: number): EscalonDeCantidad => ({
+    cantidadDesde,
+    precioFinal: 3800,
+    descuentoUnitario: 200,
+    aplicadas: [laComun],
+  })
+  const precio: PrecioDeListaDeInstantanea = {
+    idListaPrecio: 1,
+    precioOriginal: PRECIO,
+    precioFinal: 3800,
+    descuentoUnitario: 200,
+    aplicadas: [laComun],
+    escalones: [conLaEstricta(2), conLaComun(2.501), conLaEstricta(4), conLaComun(5.001), conLaEstricta(6), conLaComun(7.501), conLaEstricta(8)],
+  }
+
+  function totalOffline(cantidad: number): number {
+    const vigente = preciosVigentesOffline(precio, cantidad)
+    const [descuentoDeLinea] = descuentosDeLinea([{ unidades: cantidad, precioOriginal: PRECIO, aplicadas: vigente.aplicadas }])
+    return calcularTotalesDeLinea({
+      cantidad,
+      precioOriginal: PRECIO,
+      descuentoUnitario: vigente.descuentoUnitario,
+      porcentaje: null,
+      descuentoDeLinea,
+    }).total
+  }
+
+  it.each([
+    [1, 3800],
+    [2, 7500],
+    [2.5, 9500],
+    [2.501, 9504],
+    [3, 11400],
+    [4, 15000],
+    [5, 19000],
+    [5.001, 19004],
+    [7, 26500],
+    [7.5, 28500],
+    [7.501, 28504],
+    [9, 34000],
+    [11, 41500],
+  ])('a %s unidades el POS cobra lo mismo que el servidor: %s', (cantidad, total) => {
+    expect(totalOffline(cantidad)).toBe(total)
+  })
+
+  it('un POS anterior a aplicadasCompletas nunca cobra menos que el servidor', () => {
+    // Usa los campos de siempre del escalón vigente: cantidad × precioFinal, sin cobertura.
+    for (const [cantidad, total] of [[2, 7500], [3, 11400], [4, 15000], [8, 30000], [11, 41500]] as const) {
+      const vigente = [...(precio.escalones ?? [])].reverse().find((e) => e.cantidadDesde <= cantidad) ?? precio
+      expect(cantidad * vigente.precioFinal).toBeGreaterThanOrEqual(total)
+    }
   })
 })

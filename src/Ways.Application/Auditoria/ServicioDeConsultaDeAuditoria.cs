@@ -203,6 +203,7 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
             ["pago.aplicacion"] = "Aplicación de pago a compras",
             ["pago.desaplicacion"] = "Desaplicación de pago de una compra",
             ["pago.redondeo"] = "Ajuste de redondeo de pago",
+            ["pago.reasignacion"] = "Reasignación de pago de sueldo",
             ["cobro.aplicacion"] = "Aplicación de cobro a ventas",
             ["cobro.desaplicacion"] = "Desaplicación de cobro de una venta",
             ["stock.ajuste"] = "Ajuste de stock",

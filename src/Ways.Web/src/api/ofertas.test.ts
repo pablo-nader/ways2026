@@ -26,6 +26,7 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
     horaHasta: null,
     diasSemana: [],
     cantidadMinima: null,
+    soloMultiplos: false,
     precioUnitario: null,
     porcentaje: null,
     importeFijo: null,
@@ -404,5 +405,36 @@ describe('resumenDeBeneficio', () => {
 
   it('formatea el beneficio por precio unitario', () => {
     expect(resumenDeBeneficio(ofertaFixture({ idArticulo: 1, precioUnitario: 500 }))).toBe('Precio unitario $ 500,00')
+  })
+})
+
+describe('solo múltiplos de la cantidad mínima', () => {
+  it('el formulario vacío no lo marca y el alta lo manda en false', () => {
+    expect(formularioOfertaVacio().soloMultiplos).toBe(false)
+    expect(aAltaOferta({ ...formularioOfertaVacio(), nombre: 'O' }).soloMultiplos).toBe(false)
+  })
+
+  it('con cantidad mínima y la casilla marcada el alta manda soloMultiplos true', () => {
+    const alta = aAltaOferta({ ...formularioOfertaVacio(), nombre: 'O', cantidadMinima: '2', soloMultiplos: true })
+
+    expect(alta.soloMultiplos).toBe(true)
+  })
+
+  it('sin cantidad mínima el alta nunca manda soloMultiplos true, aunque el formulario lo tenga marcado', () => {
+    const alta = aAltaOferta({ ...formularioOfertaVacio(), nombre: 'O', cantidadMinima: '  ', soloMultiplos: true })
+
+    expect(alta.soloMultiplos).toBe(false)
+  })
+
+  it('aValoresOferta lleva soloMultiplos del listado al formulario', () => {
+    expect(aValoresOferta(ofertaFixture({ idArticulo: 1, porcentaje: 5, cantidadMinima: 2, soloMultiplos: true })).soloMultiplos).toBe(true)
+    expect(aValoresOferta(ofertaFixture({ idArticulo: 1, porcentaje: 5 })).soloMultiplos).toBe(false)
+  })
+
+  it('el resumen aclara "solo múltiplos" con la cantidad mínima y no lo dice en una oferta común', () => {
+    const estricta = ofertaFixture({ idArticulo: 1, precioUnitario: 3750, cantidadMinima: 2, soloMultiplos: true })
+
+    expect(resumenDeBeneficio(estricta)).toBe('Precio unitario $ 3.750,00 (solo múltiplos de 2)')
+    expect(resumenDeBeneficio({ ...estricta, soloMultiplos: false })).toBe('Precio unitario $ 3.750,00')
   })
 })

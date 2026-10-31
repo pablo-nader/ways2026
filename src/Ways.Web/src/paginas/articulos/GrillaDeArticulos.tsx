@@ -14,10 +14,11 @@ import { siguienteOrden } from '../../componentes/grilla/ordenamiento'
 import { formatearImporte } from '../../formato/importes'
 import { etiquetaDeProveedor } from './helpers'
 import { BotonIcono, EnlaceIcono } from '../../componentes/BotonIcono'
+import { pluralizar } from '../../formato/pluralizar'
 
 const DEMORA_DEBOUNCE_MS = 300
 const TAMANIOS_DE_PAGINA = [25, 50, 100]
-const AVISO_SIN_LISTA_DE_PRECIO = 'El tenant no tiene una lista de precio por defecto configurada.'
+const AVISO_SIN_LISTA_DE_PRECIO = 'La cuenta no tiene una lista de precio por defecto configurada.'
 
 type BorradorDeTexto = Pick<FiltrosDeGrillaDeArticulos, 'codigo' | 'nombre' | 'precioDesde' | 'precioHasta'>
 
@@ -363,7 +364,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
           {pagina && (
             <div className="d-flex justify-content-between align-items-center">
               <span className="small text-muted">
-                Página {pagina.pagina} de {totalPaginas} — {pagina.total} artículo(s)
+                Página {pagina.pagina} de {totalPaginas} — {pluralizar(pagina.total, 'artículo')}
               </span>
               <div className="d-flex gap-2 align-items-center">
                 <select

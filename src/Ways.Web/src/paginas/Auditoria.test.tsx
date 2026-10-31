@@ -273,7 +273,7 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     renderAuditoria()
 
     expect(await screen.findByText('#7')).toBeInTheDocument()
-    const celdaPv = screen.getByTitle('Evento de todo el tenant')
+    const celdaPv = screen.getByTitle('Evento de toda la cuenta')
     expect(within(celdaPv).getByText('—')).toBeInTheDocument()
     // Sugerencia 1 (judgment-day ronda 1): `etiquetaDeAccion` es reducible a `return accion` sin
     // fallar ningún test previo — la celda de acción debe mostrar la etiqueta en español del

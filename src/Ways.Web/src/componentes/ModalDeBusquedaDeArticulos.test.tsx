@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDeBusquedaDeArticulos } from './ModalDeBusquedaDeArticulos'
 import type { ArticuloListado, PaginaDe, ResultadoDeResolucion } from '../api/tipos'
+import type { OfertasVigentesDeArticulo } from '../api/ofertasVigentes'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -397,5 +398,147 @@ describe('ModalDeBusquedaDeArticulos — resultados paginados por el servidor', 
       expect(within(th).queryByRole('button')).not.toBeInTheDocument()
       expect(th).not.toHaveAttribute('aria-sort')
     }
+  })
+})
+
+describe('ModalDeBusquedaDeArticulos — marca de ofertas vigentes', () => {
+  const vigentesDe9: OfertasVigentesDeArticulo[] = [
+    {
+      idArticulo: 9,
+      ofertas: [
+        {
+          idOferta: 1,
+          nombre: 'Gaseosas',
+          alcance: 'Articulo',
+          cantidadMinima: 3,
+          soloMultiplos: false,
+          porcentaje: 10,
+          precioUnitario: null,
+          importeFijo: null,
+          fechaHasta: null,
+          acumulable: false,
+        },
+      ],
+    },
+  ]
+
+  function simularApi(vigentes: (cuerpo: unknown) => Promise<unknown>) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=fa')) return Promise.resolve(paginaDe([articuloListadoFixture()]))
+      if (ruta.startsWith('/articulos?busqueda=co'))
+        return Promise.resolve(paginaDe([articuloListadoFixture({ id: 10, codigoInterno: 'A0010', nombre: 'Coca 1L' })]))
+      return Promise.reject(new Error(ruta))
+    })
+    apiPostMock.mockImplementation((ruta: string, cuerpo: unknown) => {
+      if (ruta === '/ofertas/resolver') return Promise.resolve<ResultadoDeResolucion[]>([])
+      if (ruta === '/ofertas/vigentes') return vigentes(cuerpo)
+      return Promise.reject(new Error(ruta))
+    })
+  }
+
+  function buscar(termino: string) {
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: termino } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+  }
+
+  it('muestra la marca solo en el artículo con ofertas y el tooltip trae la condición de cantidad', async () => {
+    simularApi(() => Promise.resolve(vigentesDe9))
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    buscar('fa')
+
+    const marca = await screen.findByRole('button', { name: 'Oferta' })
+    expect(screen.getAllByRole('tooltip')).toHaveLength(1)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Gaseosas — 10% de descuento · Llevando 3')
+
+    fireEvent.focus(marca)
+    expect(screen.getByRole('tooltip')).toHaveAttribute('data-visible', 'true')
+  })
+
+  it('la consulta viaja con los ids, idEmpresa e idListaPrecio', async () => {
+    simularApi(() => Promise.resolve([]))
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ idEmpresa: 7, idListaPrecio: 3 })} />)
+    buscar('fa')
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/ofertas/vigentes', { idsArticulos: [9], idEmpresa: 7, idListaPrecio: 3 }),
+    )
+  })
+
+  it('un artículo sin ofertas no lleva marca', async () => {
+    simularApi(() => Promise.resolve([]))
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    buscar('fa')
+
+    await screen.findByText('Fanta 1.5L')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ofertas/vigentes', expect.anything()))
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('si falla la consulta de ofertas la búsqueda lista igual, sin marca ni error', async () => {
+    simularApi(() => Promise.reject(new Error('boom')))
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    buscar('fa')
+
+    expect(await screen.findByText('Fanta 1.5L')).toBeInTheDocument()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ofertas/vigentes', expect.anything()))
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `generacionRef.current !== generacion` en `cargarVigentes`; sin ella la respuesta tardía de
+   * "fa" (que trae ofertas del id 10) pintaría la marca en el resultado de "co". */
+  it('una respuesta tardía de una búsqueda vieja no pinta marcas en la nueva', async () => {
+    let resolverViejo: (v: OfertasVigentesDeArticulo[]) => void = () => {}
+    simularApi((cuerpo) => {
+      const ids = (cuerpo as { idsArticulos: number[] }).idsArticulos
+      if (ids[0] === 9) return new Promise((resolver) => (resolverViejo = resolver as typeof resolverViejo))
+      return Promise.resolve([])
+    })
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    buscar('fa')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ofertas/vigentes', expect.objectContaining({ idsArticulos: [9] })))
+
+    buscar('co')
+    expect(await screen.findByText('Coca 1L')).toBeInTheDocument()
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ofertas/vigentes', expect.objectContaining({ idsArticulos: [10] })))
+
+    resolverViejo([{ ...vigentesDe9[0], idArticulo: 10 }])
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('Escape oculta el tooltip sin cerrar el modal; el siguiente Escape sí lo cierra', async () => {
+    simularApi(() => Promise.resolve(vigentesDe9))
+    const onCerrar = vi.fn()
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ onCerrar })} />)
+    buscar('fa')
+    const marca = await screen.findByRole('button', { name: 'Oferta' })
+    fireEvent.focus(marca)
+
+    fireEvent.keyDown(marca, { key: 'Escape' })
+    expect(screen.getByRole('tooltip')).toHaveAttribute('data-visible', 'false')
+    expect(onCerrar).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(marca, { key: 'Escape' })
+    expect(onCerrar).toHaveBeenCalledTimes(1)
+  })
+
+  it('el clic en la marca no agrega el artículo', async () => {
+    simularApi(() => Promise.resolve(vigentesDe9))
+    const onAgregar = vi.fn()
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar })} />)
+    buscar('fa')
+    fireEvent.click(await screen.findByRole('button', { name: 'Oferta' }))
+
+    expect(onAgregar).not.toHaveBeenCalled()
   })
 })
