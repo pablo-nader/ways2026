@@ -18,6 +18,7 @@ import {
 } from '../componentes/grilla'
 import { ModalDeNuevoTenant } from './tenants/ModalDeNuevoTenant'
 import { ModalDeTenant, type FormularioDeTenant } from './tenants/ModalDeTenant'
+import { toast } from '../toasts/toasts'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -93,7 +94,6 @@ export function Tenants() {
   const [cargada, setCargada] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
   const [parametros, setParametros] = useSearchParams()
   const [edicion, setEdicion] = useState<FormularioDeTenant | null>(null)
   /** El rechazo del renombrado vive en el modal; `error` queda para lo que le pasó a la pantalla. */
@@ -191,11 +191,11 @@ export function Tenants() {
   async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
     if (generacion.current !== token) return
 
-    setAviso(mensajeOk)
+    toast.exito(mensajeOk)
     try {
       await cargar(token, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+      if (generacion.current === token) toast.advertencia(avisoDeFallo)
     }
   }
 
@@ -234,7 +234,6 @@ export function Tenants() {
     ocupadoRef.current = true
     setOcupado(tenant.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDeOrganizacion[accion](tenant.id)
@@ -265,12 +264,11 @@ export function Tenants() {
     setDisparadorDeLaPuerta(disparador)
     setConfirmacion(pendiente)
     setError('')
-    setAviso('')
   }
 
   /** Cancelar no supersede NADA: solo cierra la puerta. Por eso no acuña generación —hacerlo
-   * descartaba una lectura en vuelo y dejaba la pantalla clavada en "Cargando…"— y limpia los dos
-   * avisos, en simetría con la apertura: un 409 en rojo al lado de una puerta que ya no está es un
+   * descartaba una lectura en vuelo y dejaba la pantalla clavada en "Cargando…"— y limpia el
+   * error, en simetría con la apertura: un 409 en rojo al lado de una puerta que ya no está es un
    * banner huérfano. */
   function cancelarConfirmacion() {
     if (ocupadoRef.current) return
@@ -278,7 +276,6 @@ export function Tenants() {
     setDisparadorDeLaPuerta(null)
     setConfirmacion(null)
     setError('')
-    setAviso('')
   }
 
   function confirmar() {
@@ -303,7 +300,6 @@ export function Tenants() {
     ocupadoRef.current = true
     setOcupado(fila.id)
     setError('')
-    setAviso('')
     try {
       try {
         await clienteDeOrganizacion.eliminarTenant(fila.id)
@@ -341,14 +337,12 @@ export function Tenants() {
   function abrirEdicion(tenant: TenantListado) {
     setEdicion({ id: tenant.id, nombre: tenant.nombre })
     setError('')
-    setAviso('')
     setErrorDeEdicion('')
   }
 
   function abrirAlta() {
     setCreando(true)
     setError('')
-    setAviso('')
   }
 
   const herramientas = (
@@ -363,7 +357,6 @@ export function Tenants() {
     <div className="container-fluid py-4">
       <Box titulo="Tenants" variante="inverse" herramientas={herramientas}>
         {error && !confirmacion && <div className="alert alert-danger">{error}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {confirmacion && (
           <ConfirmacionDeBaja

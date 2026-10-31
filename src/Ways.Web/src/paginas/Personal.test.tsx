@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Personal } from './Personal'
 import { ROL } from '../api/tipos'
 import { ErrorApi } from '../api/cliente'
+import { Toaster } from '../toasts/Toaster'
 import type { ClienteListado, PaginaDe, PersonalListado, UsuarioListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -52,6 +53,7 @@ function renderPersonal() {
   return render(
     <>
       <Personal />
+      <Toaster />
       <SondaDeRuta />
     </>,
     { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> },
@@ -306,7 +308,8 @@ describe('Personal — alta', () => {
         horarioHabitual: null,
       }),
     )
-    expect(await screen.findByText('Personal "Carla" creado.')).toBeInTheDocument()
+    expect((await screen.findByText('Personal "Carla" creado.')).closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-success')).toBeNull()
     expect(await screen.findByText('Carla')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -449,7 +452,7 @@ describe('Personal — edición', () => {
         horarioHabitual: null,
       }),
     )
-    expect(await screen.findByText('Personal "Ana Gómez" actualizado.')).toBeInTheDocument()
+    expect((await screen.findByText('Personal "Ana Gómez" actualizado.')).closest('[role="status"]')).not.toBeNull()
   })
 })
 
@@ -540,7 +543,7 @@ describe('Personal — baja', () => {
     await usuarioEvento.click(await screen.findByRole('button', { name: 'Confirmar baja' }))
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/personal/1'))
-    expect(await screen.findByText('Personal "Ana Gómez" dado de baja.')).toBeInTheDocument()
+    expect((await screen.findByText('Personal "Ana Gómez" dado de baja.')).closest('[role="status"]')).not.toBeNull()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
@@ -680,7 +683,7 @@ describe('Personal — esqueleto asíncrono', () => {
       await delete_.promesa
     })
 
-    expect(await screen.findByText('Personal "Ana Gómez" dado de baja.')).toBeInTheDocument()
+    expect((await screen.findByText('Personal "Ana Gómez" dado de baja.')).closest('[role="status"]')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Editar Beto Ruiz' })).toBeDisabled()
@@ -713,10 +716,12 @@ describe('Personal — esqueleto asíncrono', () => {
     await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(
-      await screen.findByText(
-        'Personal "Carla" creado. Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+      (await screen.findByText('Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')).closest(
+        '[role="status"]',
       ),
-    ).toBeInTheDocument()
+    ).not.toBeNull()
+    expect(screen.getByText('Personal "Carla" creado.').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.queryByText('Se cayó.')).not.toBeInTheDocument()
   })
@@ -736,10 +741,12 @@ describe('Personal — esqueleto asíncrono', () => {
     await usuarioEvento.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     expect(
-      await screen.findByText(
-        'Personal "Ana Gómez" dado de baja. Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.',
+      (await screen.findByText('Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.')).closest(
+        '[role="status"]',
       ),
-    ).toBeInTheDocument()
+    ).not.toBeNull()
+    expect(screen.getByText('Personal "Ana Gómez" dado de baja.').closest('[role="status"]')).not.toBeNull()
+    expect(document.body.querySelector('.alert-danger')).toBeNull()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
@@ -846,28 +853,6 @@ describe('Personal — cada acción borra lo que dijo la anterior', () => {
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByText(/tiene movimientos registrados en su cuenta/)).not.toBeInTheDocument()
-  })
-
-  /** Cláusulas bajo prueba: el `setAviso('')` de `abrirFormulario` (Agregar y Editar comparten la
-   * función) y el de `pedirBaja`. */
-  it.each([
-    ['Agregar', 'dialog'],
-    ['Editar Ana Gómez', 'dialog'],
-    ['Eliminar Ana Gómez', 'alertdialog'],
-  ] as const)('el aviso de un guardado anterior no sobrevive a "%s"', async (boton, rol) => {
-    apiPostMock.mockResolvedValue(personal({ id: 2 }))
-    const usuarioEvento = userEvent.setup()
-    renderPersonal()
-    await abrirAlta(usuarioEvento)
-    await llenarAlta(usuarioEvento)
-    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
-    await screen.findByText('Personal "Carla" creado.')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled())
-
-    await usuarioEvento.click(screen.getByRole('button', { name: boton }))
-
-    await screen.findByRole(rol)
-    expect(screen.queryByText('Personal "Carla" creado.')).not.toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: el `setError('')` de `abrirFormulario`. */
