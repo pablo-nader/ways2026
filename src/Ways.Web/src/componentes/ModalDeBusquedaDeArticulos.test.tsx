@@ -450,7 +450,7 @@ describe('ModalDeBusquedaDeArticulos — marca de ofertas vigentes', () => {
 
     const marca = await screen.findByRole('button', { name: 'Oferta' })
     expect(screen.getAllByRole('tooltip')).toHaveLength(1)
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Gaseosas — 10% off · Llevando 3')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Gaseosas — 10% de descuento · Llevando 3')
 
     fireEvent.focus(marca)
     expect(screen.getByRole('tooltip')).toHaveAttribute('data-visible', 'true')

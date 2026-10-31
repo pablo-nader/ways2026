@@ -1,5 +1,6 @@
 import { api } from './cliente'
 import { formatearImporte } from '../formato/importes'
+import { formatearNumeroDecimal } from '../formato/numeros'
 
 export type AlcanceDeOfertaVigente = 'Articulo' | 'Grupo' | 'Categoria' | 'Familia'
 
@@ -35,7 +36,7 @@ export function obtenerOfertasVigentes(solicitud: SolicitudDeOfertasVigentes): P
 }
 
 function textoDeBeneficio(o: OfertaVigente): string {
-  if (o.porcentaje !== null) return `${o.porcentaje}% off`
+  if (o.porcentaje !== null) return `${formatearNumeroDecimal(o.porcentaje)}% de descuento`
   if (o.precioUnitario !== null) return `${formatearImporte(o.precioUnitario, { simbolo: true })} c/u`
   if (o.importeFijo !== null) return `${formatearImporte(o.importeFijo, { simbolo: true })} menos`
   return ''
@@ -43,7 +44,9 @@ function textoDeBeneficio(o: OfertaVigente): string {
 
 function textoDeCondicion(o: OfertaVigente): string {
   if (o.cantidadMinima === null) return ''
-  return o.soloMultiplos ? `cada ${o.cantidadMinima}` : `Llevando ${o.cantidadMinima}`
+  const cantidad = formatearNumeroDecimal(o.cantidadMinima)
+  const deFamilia = o.alcance === 'Familia' ? ' de la familia' : ''
+  return o.soloMultiplos ? `cada ${cantidad}${deFamilia}` : `Llevando ${cantidad}${deFamilia}`
 }
 
 function textoDeFechaHasta(fechaHasta: string | null): string {

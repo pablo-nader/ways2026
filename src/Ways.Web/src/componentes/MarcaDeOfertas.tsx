@@ -43,8 +43,9 @@ export function MarcaDeOfertas({ ofertas }: { ofertas: OfertaVigente[] }) {
 
     function alTeclear(evento: KeyboardEvent) {
       if (evento.key !== 'Escape') return
-      evento.stopPropagation()
       setDescartado(true)
+      // Solo con el foco en la marca el Escape es para el tooltip; si apenas está el mouse encima, también cierra el modal.
+      if (conFoco) evento.stopPropagation()
     }
 
     window.addEventListener('keydown', alTeclear, true)
@@ -55,7 +56,7 @@ export function MarcaDeOfertas({ ofertas }: { ofertas: OfertaVigente[] }) {
       window.removeEventListener('scroll', colocar, true)
       window.removeEventListener('resize', colocar)
     }
-  }, [visible])
+  }, [visible, conFoco])
 
   const etiqueta = ofertas.length === 1 ? 'Oferta' : `Ofertas (${ofertas.length})`
 

@@ -41,7 +41,7 @@ describe('MarcaDeOfertas', () => {
 
     fireEvent.mouseEnter(boton.parentElement as HTMLElement)
     expect(tooltip).toHaveAttribute('data-visible', 'true')
-    expect(tooltip).toHaveTextContent('Gaseosas — 10% off')
+    expect(tooltip).toHaveTextContent('Gaseosas — 10% de descuento')
     expect(tooltip).toHaveTextContent('Pack — $ 200,00 menos · cada 3')
 
     fireEvent.mouseLeave(boton.parentElement as HTMLElement)
@@ -66,6 +66,20 @@ describe('MarcaDeOfertas', () => {
     expect(enDocument).not.toHaveBeenCalled()
 
     fireEvent.keyDown(boton, { key: 'Escape' })
+    expect(enDocument).toHaveBeenCalledTimes(1)
+    document.removeEventListener('keydown', enDocument)
+  })
+
+  it('con el mouse encima y sin foco, Escape oculta el tooltip y sigue hasta document', () => {
+    const enDocument = vi.fn()
+    document.addEventListener('keydown', enDocument)
+    render(<MarcaDeOfertas ofertas={[oferta()]} />)
+    fireEvent.mouseEnter(screen.getByRole('button').parentElement!)
+    expect(screen.getByRole('tooltip')).toHaveAttribute('data-visible', 'true')
+
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+
+    expect(screen.getByRole('tooltip')).toHaveAttribute('data-visible', 'false')
     expect(enDocument).toHaveBeenCalledTimes(1)
     document.removeEventListener('keydown', enDocument)
   })

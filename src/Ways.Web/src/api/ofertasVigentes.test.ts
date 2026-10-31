@@ -23,8 +23,23 @@ function oferta(sobrescribir: Partial<OfertaVigente> = {}): OfertaVigente {
 }
 
 describe('textoDeOfertaVigente', () => {
+  it('porcentaje y cantidad con decimales llevan coma', () => {
+    expect(textoDeOfertaVigente(oferta({ porcentaje: 12.5, cantidadMinima: 0.5 }))).toBe(
+      'Gaseosas — 12,5% de descuento · Llevando 0,5',
+    )
+  })
+
+  it('una oferta de familia aclara que la cantidad es de la familia', () => {
+    expect(textoDeOfertaVigente(oferta({ alcance: 'Familia', porcentaje: 10, cantidadMinima: 3 }))).toBe(
+      'Gaseosas — 10% de descuento · Llevando 3 de la familia',
+    )
+    expect(
+      textoDeOfertaVigente(oferta({ alcance: 'Familia', porcentaje: 10, cantidadMinima: 3, soloMultiplos: true })),
+    ).toBe('Gaseosas — 10% de descuento · cada 3 de la familia')
+  })
+
   it('porcentaje', () => {
-    expect(textoDeOfertaVigente(oferta({ porcentaje: 10 }))).toBe('Gaseosas — 10% off')
+    expect(textoDeOfertaVigente(oferta({ porcentaje: 10 }))).toBe('Gaseosas — 10% de descuento')
   })
 
   it('precio unitario', () => {
@@ -36,25 +51,25 @@ describe('textoDeOfertaVigente', () => {
   })
 
   it('cantidad mínima sin múltiplos', () => {
-    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, cantidadMinima: 3 }))).toBe('Gaseosas — 10% off · Llevando 3')
+    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, cantidadMinima: 3 }))).toBe('Gaseosas — 10% de descuento · Llevando 3')
   })
 
   it('cantidad mínima con solo múltiplos', () => {
     expect(textoDeOfertaVigente(oferta({ porcentaje: 10, cantidadMinima: 3, soloMultiplos: true }))).toBe(
-      'Gaseosas — 10% off · cada 3',
+      'Gaseosas — 10% de descuento · cada 3',
     )
   })
 
   it('solo múltiplos sin cantidad mínima no agrega condición', () => {
-    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, soloMultiplos: true }))).toBe('Gaseosas — 10% off')
+    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, soloMultiplos: true }))).toBe('Gaseosas — 10% de descuento')
   })
 
   it('fecha hasta como dd/mm', () => {
-    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, fechaHasta: '2026-11-05' }))).toBe('Gaseosas — 10% off · hasta 05/11')
+    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, fechaHasta: '2026-11-05' }))).toBe('Gaseosas — 10% de descuento · hasta 05/11')
   })
 
   it('fecha con formato inesperado se omite', () => {
-    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, fechaHasta: 'mañana' }))).toBe('Gaseosas — 10% off')
+    expect(textoDeOfertaVigente(oferta({ porcentaje: 10, fechaHasta: 'mañana' }))).toBe('Gaseosas — 10% de descuento')
   })
 
   it('todo junto', () => {
